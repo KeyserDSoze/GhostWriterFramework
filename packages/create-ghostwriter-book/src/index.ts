@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { stdin as input, stdout as output } from "node:process";
@@ -231,10 +231,33 @@ function resolveReaderCliPath(require: NodeRequire, packageRoot: string): string
 
 function resolveCoreDependency(targetDir: string, packageRoot: string): string {
   const localCorePath = path.resolve(packageRoot, "../core");
-  if (existsSync(path.join(localCorePath, "package.json"))) {
+  if (isWorkspaceDevelopmentInstall(packageRoot) && existsSync(path.join(localCorePath, "package.json"))) {
     const relative = path.relative(targetDir, localCorePath).split(path.sep).join("/");
     return `file:${relative.startsWith(".") ? relative : `./${relative}`}`;
   }
 
-  return "^0.1.0";
+  return `^${readPackageVersion(packageRoot)}`;
+}
+
+function isWorkspaceDevelopmentInstall(packageRoot: string): boolean {
+  const workspacePackageJsonPath = path.resolve(packageRoot, "..", "..", "package.json");
+  if (!existsSync(workspacePackageJsonPath)) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(workspacePackageJsonPath, "utf8")) as { workspaces?: unknown };
+    return Array.isArray(parsed.workspaces) && parsed.workspaces.includes("packages/*");
+  } catch {
+    return false;
+  }
+}
+
+function readPackageVersion(packageRoot: string): string {
+  try {
+    const parsed = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8")) as { version?: string };
+    return parsed.version ?? "0.1.0";
+  } catch {
+    return "0.1.0";
+  }
 }
