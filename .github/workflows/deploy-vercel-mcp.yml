@@ -9,6 +9,9 @@ on:
     paths:
       - api/**
       - vercel.json
+      - package.json
+      - package-lock.json
+      - packages/core/**
       - packages/mcp-server/**
 
 concurrency:
@@ -33,7 +36,7 @@ jobs:
         run: npm ci
 
       - name: Validate Vercel MCP build inputs
-        run: npm run build -w @ghostwriter/mcp-server && npm run test -w @ghostwriter/mcp-server
+        run: npm run build -w @ghostwriter/core && npm run test -w @ghostwriter/mcp-server
 
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
