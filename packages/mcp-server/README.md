@@ -47,6 +47,8 @@ That serves:
 
 The repository root includes a Vercel-ready API route at `api/mcp.ts`.
 
+The package also includes `packages/mcp-server/api/` and `packages/mcp-server/vercel.json`, so a Vercel project rooted at `packages/mcp-server` can deploy the same public MCP surface without requiring a separate static build output setup.
+
 Use the Vercel deployment for:
 
 - `setup_framework`

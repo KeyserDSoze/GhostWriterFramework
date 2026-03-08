@@ -1,0 +1,90 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro";
+import { getMcpTools, getOpencodeConfig } from "../../lib/docs";
+
+const tools = await getMcpTools();
+const localTools = tools.filter((tool) => tool.surface === "local");
+const publicTools = tools.filter((tool) => tool.surface === "public");
+const localCategories = [...new Set(localTools.map((tool) => tool.category))];
+const opencodeConfig = await getOpencodeConfig();
+---
+
+<DocsLayout title="MCP Integration" description="GhostWriter MCP setup and tool reference" activeHref="/mcp/">
+  <section class="hero">
+    <p class="eyebrow">Integration</p>
+    <h1>MCP server integration</h1>
+    <p class="lede">
+      GhostWriter exposes a local stdio MCP server for repo mutations and a public HTTP MCP surface for setup and research. This page is generated from the actual MCP source files, so the tool list reflects the implementation.
+    </p>
+  </section>
+
+  <section class="grid cards">
+    <article class="card">
+      <h3>Local stdio MCP</h3>
+      <p>Use for canon creation, chapter and scene work, assets, renames, validation, resumes, evaluations, and EPUB export.</p>
+      <pre><code>npx @ghostwriter/mcp-server</code></pre>
+    </article>
+    <article class="card">
+      <h3>Public HTTP MCP</h3>
+      <p>Use for setup guidance, repository spec help, and Wikipedia research. Intended for `/mcp` and `/health` deployment on Vercel.</p>
+      <pre><code>https://&lt;your-deployment&gt;/mcp</code></pre>
+    </article>
+  </section>
+
+  <section style="margin-top: 1.5rem;">
+    <h2>OpenCode config</h2>
+    <article class="doc-prose">
+      <pre><code>{opencodeConfig}</code></pre>
+    </article>
+  </section>
+
+  <section style="margin-top: 1.5rem;">
+    <h2>Local MCP tools</h2>
+    <div class="grid" style="gap: 1rem;">
+      {localCategories.map((category) => (
+        <article class="card">
+          <h3>{category}</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Tool</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              {localTools.filter((tool) => tool.category === category).map((tool) => (
+                <tr>
+                  <td><code>{tool.name}</code></td>
+                  <td>{tool.description}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section style="margin-top: 1.5rem;">
+    <h2>Public HTTP MCP tools</h2>
+    <article class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>Tool</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          {publicTools.map((tool) => (
+            <tr>
+              <td><code>{tool.name}</code></td>
+              <td>{tool.description}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </article>
+    <div class="source-note">Tool lists are parsed from <code>packages/mcp-server/src/index.ts</code> and <code>packages/mcp-server/src/public-http-server.ts</code>.</div>
+  </section>
+</DocsLayout>

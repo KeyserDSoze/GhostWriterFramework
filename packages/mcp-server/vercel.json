@@ -1,0 +1,13 @@
+{
+  "rewrites": [
+    {
+      "source": "/mcp",
+      "destination": "/api/mcp"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/health"
+    }
+  ],
+  "outputDirectory": "public"
+}

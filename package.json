@@ -9,6 +9,8 @@
   "scripts": {
     "build": "npm run build -w @ghostwriter/core && npm run build -w @ghostwriter/mcp-server && npm run build -w @ghostwriter/create-book && npm run build -w @ghostwriter/astro-reader",
     "create:book": "node packages/create-ghostwriter-book/dist/index.js",
+    "docs:build": "npm run build -w @ghostwriter/docs-site",
+    "docs:dev": "npm run dev -w @ghostwriter/docs-site",
     "pack:all": "npm pack --dry-run -w @ghostwriter/core && npm pack --dry-run -w @ghostwriter/mcp-server && npm pack --dry-run -w @ghostwriter/astro-reader && npm pack --dry-run -w @ghostwriter/create-book",
     "publish:all": "node scripts/publish-workspaces.mjs",
     "release:check": "npm run build && npm run validate && npm run test && npm run pack:all",

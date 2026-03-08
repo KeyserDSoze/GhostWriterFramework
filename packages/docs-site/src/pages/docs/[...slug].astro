@@ -1,0 +1,30 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro";
+import { getDocBySlug, getDocEntries } from "../../lib/docs";
+
+export async function getStaticPaths() {
+  const docs = await getDocEntries();
+  return docs.map((doc) => ({
+    params: { slug: doc.slug.join("/") },
+    props: { slug: doc.slug },
+  }));
+}
+
+const { slug } = Astro.props;
+const doc = await getDocBySlug(slug);
+
+if (!doc) {
+  throw new Error(`Documentation entry not found for ${slug.join("/")}.`);
+}
+---
+
+<DocsLayout title={doc.title} description={doc.summary} activeHref={doc.href}>
+  <section class="hero">
+    <p class="eyebrow">{doc.groupLabel}</p>
+    <h1>{doc.title}</h1>
+    <p class="lede">{doc.summary}</p>
+    <div class="source-note">Source: <code>{doc.sourcePath}</code></div>
+  </section>
+
+  <article class="doc-prose" set:html={doc.html} />
+</DocsLayout>

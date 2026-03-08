@@ -1,0 +1,69 @@
+---
+import DocsLayout from "../layouts/DocsLayout.astro";
+import { getDocGroups, getMcpTools } from "../lib/docs";
+import { withBase } from "../lib/paths";
+
+const groups = await getDocGroups();
+const tools = await getMcpTools();
+const localToolCount = tools.filter((tool) => tool.surface === "local").length;
+const publicToolCount = tools.filter((tool) => tool.surface === "public").length;
+---
+
+<DocsLayout title="Home" description="GhostWriter Framework docs site" activeHref="/">
+  <section class="hero">
+    <p class="eyebrow">GitHub Pages</p>
+    <h1>GhostWriter Framework docs</h1>
+    <p class="lede">
+      This site is built from the repository itself: root docs, package READMEs, and live MCP tool definitions are collected during build so the published reference stays aligned with the codebase.
+    </p>
+  </section>
+
+  <section class="grid cards">
+    <article class="card">
+      <h3>Scattered markdown, one site</h3>
+      <p>Root docs, package READMEs, and agent rules are aggregated automatically into a single navigation tree.</p>
+      <a class="pill" href={withBase("/docs/")}>Browse docs</a>
+    </article>
+    <article class="card">
+      <h3>MCP integration reference</h3>
+      <p>See local and public MCP surfaces, setup patterns, and live tool lists extracted from the server source.</p>
+      <a class="pill" href={withBase("/mcp/")}>Open MCP docs</a>
+    </article>
+    <article class="card">
+      <h3>Packages at a glance</h3>
+      <p>Jump straight into `core`, `mcp-server`, `create-book`, and `astro-reader` package documentation.</p>
+      <a class="pill" href={withBase("/docs/create-ghostwriter-book/")}>Starter CLI</a>
+    </article>
+  </section>
+
+  <section style="margin-top: 1.5rem;">
+    <h2>What is synced into this site</h2>
+    <div class="grid cards">
+      {groups.map((group) => (
+        <article class="card">
+          <h3>{group.label}</h3>
+          <p>{group.docs.length} generated page{group.docs.length === 1 ? "" : "s"}.</p>
+          <div class="grid" style="gap: 0.45rem;">
+            {group.docs.map((doc) => (
+              <a href={withBase(doc.href)}>{doc.title}</a>
+            ))}
+          </div>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section style="margin-top: 1.5rem;">
+    <h2>MCP coverage</h2>
+    <div class="grid cards">
+      <article class="card">
+        <h3>Local stdio server</h3>
+        <p>{localToolCount} documented tools for repository mutations, canon search, assets, validation, and exports.</p>
+      </article>
+      <article class="card">
+        <h3>Public HTTP surface</h3>
+        <p>{publicToolCount} documented tools for setup help, repository spec guidance, and Wikipedia research.</p>
+      </article>
+    </div>
+  </section>
+</DocsLayout>

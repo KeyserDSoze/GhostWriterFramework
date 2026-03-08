@@ -1,0 +1,32 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro";
+import { getDocGroups } from "../../lib/docs";
+import { withBase } from "../../lib/paths";
+
+const groups = await getDocGroups();
+---
+
+<DocsLayout title="All Docs" description="All aggregated GhostWriter docs" activeHref="/docs/">
+  <section class="hero">
+    <p class="eyebrow">Documentation Index</p>
+    <h1>All synced markdown docs</h1>
+    <p class="lede">Every page here is generated from markdown already present in the repository.</p>
+  </section>
+
+  <div class="grid" style="gap: 1.25rem;">
+    {groups.map((group) => (
+      <section>
+        <h2>{group.label}</h2>
+        <div class="grid cards">
+          {group.docs.map((doc) => (
+            <article class="card">
+              <h3><a href={withBase(doc.href)}>{doc.title}</a></h3>
+              <p>{doc.summary}</p>
+              <div class="source-note">Source: <code>{doc.sourcePath}</code></div>
+            </article>
+          ))}
+        </div>
+      </section>
+    ))}
+  </div>
+</DocsLayout>

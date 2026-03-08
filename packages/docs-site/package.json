@@ -1,0 +1,21 @@
+{
+  "name": "@ghostwriter/docs-site",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "GitHub Pages documentation site for GhostWriter Framework.",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "astro": "^5.14.1",
+    "fast-glob": "^3.3.3",
+    "marked": "^16.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.9.3"
+  }
+}

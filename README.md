@@ -43,6 +43,12 @@ For a publish-ready workspace check:
 npm run release:check
 ```
 
+Build the GitHub Pages documentation site locally with:
+
+```bash
+npm run docs:build
+```
+
 ## Create a new book repo
 
 Build the framework once, then scaffold a new local-first book repo:
@@ -257,6 +263,7 @@ Two workflows are included:
 - `.github/workflows/ci.yml`: runs build, validation, and tests on pushes and pull requests
 - `.github/workflows/publish-npm.yml`: publishes the npm packages on manual dispatch or GitHub Release publish
 - `.github/workflows/deploy-vercel-mcp.yml`: deploys the public HTTP MCP endpoint to Vercel
+- `.github/workflows/deploy-docs-pages.yml`: builds and publishes the documentation site to GitHub Pages
 
 To enable npm publishing from GitHub:
 
