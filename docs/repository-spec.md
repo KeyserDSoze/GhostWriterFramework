@@ -11,6 +11,7 @@ guidelines/
   chapter-rules.md
   voices.md
   structure.md
+  images.md
 characters/
 items/
 locations/
@@ -35,6 +36,14 @@ research/
     en/
     it/
 assets/
+  book/
+  characters/
+  items/
+  locations/
+  factions/
+  timelines/events/
+  secrets/
+  chapters/
 .opencode/skills/ghostwriter-book/SKILL.md
 .claude/skills/ghostwriter-book/SKILL.md
 ```
@@ -134,3 +143,12 @@ status: hidden
 - use `evaluations/` for structural critique, continuity checks, and quality notes
 - if content is historical or factual, fetch research before writing canon
 - prefer updating existing canon files over duplicating similar facts elsewhere
+
+## Asset conventions
+
+- keep binary images under `assets/`, not beside canon markdown files
+- mirror canon structure inside `assets/`, for example `assets/characters/lyra-vale/primary.png`
+- keep asset metadata and prompt history in sibling markdown files such as `assets/characters/lyra-vale/primary.md`
+- default image orientation is portrait and default aspect ratio is `2:3`
+- chapter scene assets live under `assets/chapters/<chapter-slug>/paragraphs/<paragraph-slug>/`
+- store the book-level visual language in `guidelines/images.md`

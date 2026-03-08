@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import {
+  assetSchema,
   characterRoleTierSchema,
   characterStoryRoleSchema,
+  createAssetPrompt,
   createChapter,
   createCharacterProfile,
   createEntity,
@@ -19,6 +23,12 @@ import {
   exportEpub,
   initializeBookRepo,
   listRelatedCanon,
+  readAsset,
+  registerAsset,
+  renameChapter,
+  renameEntity,
+  renameParagraph,
+  renderMarkdown,
   searchBook,
   syncAllResumes,
   syncChapterEvaluation,
@@ -50,6 +60,9 @@ const entityTypeSchema = z.enum([
   "secret",
   "timeline-event",
 ]);
+
+const imageOrientationSchema = z.enum(["portrait", "landscape", "square"]);
+const imageProviderSchema = z.enum(["openai"]);
 
 const wizardKindSchema = z.enum([
   "character",
@@ -1184,6 +1197,160 @@ server.tool(
 );
 
 server.tool(
+  "create_asset_prompt",
+  "Create an asset prompt markdown file in the canonical assets tree for a book, entity, chapter, or paragraph image.",
+  {
+    rootPath: z.string().min(1),
+    subject: z.string().min(1),
+    assetKind: z.string().min(1).optional(),
+    extension: z.string().min(1).default("png"),
+    overwrite: z.boolean().default(false),
+    promptStyleRef: z.string().default("guideline:images"),
+    orientation: imageOrientationSchema.default("portrait"),
+    aspectRatio: z.string().default("2:3"),
+    provider: z.string().optional(),
+    model: z.string().optional(),
+    body: z.string().optional(),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({ rootPath, subject, assetKind, extension, overwrite, promptStyleRef, orientation, aspectRatio, provider, model, body, frontmatter }) => {
+    const result = await createAssetPrompt(rootPath, {
+      subject,
+      assetKind,
+      extension,
+      overwrite,
+      promptStyleRef,
+      orientation,
+      aspectRatio,
+      provider,
+      model,
+      body,
+      frontmatter,
+    });
+
+    return textResponse(`Created asset prompt ${result.assetId} at ${result.filePath}. Image target: ${result.imagePath}.`);
+  },
+);
+
+server.tool(
+  "register_asset",
+  "Copy an existing image into the canonical assets tree and create its matching prompt metadata file.",
+  {
+    rootPath: z.string().min(1),
+    subject: z.string().min(1),
+    sourceFilePath: z.string().min(1),
+    assetKind: z.string().min(1).optional(),
+    extension: z.string().min(1).optional(),
+    overwrite: z.boolean().default(false),
+    promptStyleRef: z.string().default("guideline:images"),
+    orientation: imageOrientationSchema.default("portrait"),
+    aspectRatio: z.string().default("2:3"),
+    provider: z.string().optional(),
+    model: z.string().optional(),
+    body: z.string().optional(),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({ rootPath, subject, sourceFilePath, assetKind, extension, overwrite, promptStyleRef, orientation, aspectRatio, provider, model, body, frontmatter }) => {
+    const result = await registerAsset(rootPath, {
+      subject,
+      sourceFilePath,
+      assetKind,
+      extension,
+      overwrite,
+      promptStyleRef,
+      orientation,
+      aspectRatio,
+      provider,
+      model,
+      body,
+      frontmatter,
+    });
+
+    return textResponse(`Registered asset ${result.assetId} at ${result.filePath}. Image stored at ${result.imagePath}.`);
+  },
+);
+
+server.tool(
+  "generate_asset_image",
+  "Generate an image for a canonical subject, save it into the assets tree, and keep the asset prompt metadata in sync.",
+  {
+    rootPath: z.string().min(1),
+    subject: z.string().min(1),
+    assetKind: z.string().min(1).optional(),
+    prompt: z.string().optional(),
+    provider: imageProviderSchema.default("openai"),
+    model: z.string().default("gpt-image-1"),
+    overwrite: z.boolean().default(false),
+    promptStyleRef: z.string().optional(),
+    orientation: imageOrientationSchema.optional(),
+    aspectRatio: z.string().optional(),
+  },
+  async ({ rootPath, subject, assetKind, prompt, provider, model, overwrite, promptStyleRef, orientation, aspectRatio }) => {
+    let asset = await readAsset(rootPath, subject, assetKind);
+
+    if (!asset && !prompt) {
+      throw new Error("Prompt is required the first time an asset image is generated for a subject.");
+    }
+
+    const effectivePrompt = (prompt ?? extractPromptSection(asset?.body ?? "")).trim();
+    if (!effectivePrompt) {
+      throw new Error("No prompt found. Provide prompt explicitly or store it under the # Prompt section of the asset markdown file.");
+    }
+
+    const effectiveOrientation = orientation ?? asset?.metadata.orientation ?? "portrait";
+    const effectiveAspectRatio = aspectRatio ?? asset?.metadata.aspect_ratio ?? "2:3";
+    const effectivePromptStyleRef = promptStyleRef ?? asset?.metadata.prompt_style_ref ?? "guideline:images";
+
+    if (!asset) {
+      await createAssetPrompt(rootPath, {
+        subject,
+        assetKind,
+        extension: "png",
+        promptStyleRef: effectivePromptStyleRef,
+        orientation: effectiveOrientation,
+        aspectRatio: effectiveAspectRatio,
+        provider,
+        model,
+        body: buildAssetPromptBody(subject, effectivePrompt),
+      });
+      asset = await readAsset(rootPath, subject, assetKind);
+    }
+
+    if (!asset) {
+      throw new Error("Failed to initialize asset metadata before image generation.");
+    }
+
+    if (asset.imageExists && !overwrite) {
+      throw new Error(`Image already exists at ${asset.imagePath}. Set overwrite=true to replace it.`);
+    }
+
+    const imageBuffer = await generateImageBuffer({
+      prompt: effectivePrompt,
+      provider,
+      model,
+      orientation: effectiveOrientation,
+      aspectRatio: effectiveAspectRatio,
+    });
+
+    await mkdir(path.dirname(asset.imagePath), { recursive: true });
+    await writeFile(asset.imagePath, imageBuffer);
+
+    const nextFrontmatter = assetSchema.parse({
+      ...asset.metadata,
+      prompt_style_ref: effectivePromptStyleRef,
+      orientation: effectiveOrientation,
+      aspect_ratio: effectiveAspectRatio,
+      provider,
+      model,
+    });
+    const nextBody = prompt ? buildAssetPromptBody(subject, effectivePrompt) : asset.body;
+    await writeFile(asset.path, renderMarkdown(nextFrontmatter, nextBody), "utf8");
+
+    return textResponse(`Generated ${provider} image for ${subject} at ${asset.imagePath} using ${model}.`);
+  },
+);
+
+server.tool(
   "update_chapter",
   "Update an existing chapter metadata file and optional chapter notes body. Use this for summary, POV, tags, and chapter notes changes without touching chapter numbering or folder naming.",
   {
@@ -1276,7 +1443,7 @@ server.tool(
 
 server.tool(
   "update_entity",
-  "Update an existing entity file by patching frontmatter and optionally replacing or appending markdown body content.",
+  "Update an existing entity file by patching frontmatter and optionally replacing or appending markdown body content. Use rename_entity when the slug, id, or asset folder must move.",
   {
     rootPath: z.string().min(1),
     kind: entityTypeSchema,
@@ -1295,6 +1462,70 @@ server.tool(
     });
 
     return textResponse(`Updated ${kind} at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "rename_entity",
+  "Rename an entity in a safe way: update its slug and id, move its markdown file, and move any matching asset folder if present.",
+  {
+    rootPath: z.string().min(1),
+    kind: entityTypeSchema,
+    slugOrId: z.string().min(1),
+    newNameOrTitle: z.string().min(1),
+    newSlug: z.string().optional(),
+  },
+  async ({ rootPath, kind, slugOrId, newNameOrTitle, newSlug }) => {
+    const result = await renameEntity(rootPath, {
+      kind,
+      slugOrId,
+      newNameOrTitle,
+      newSlug,
+    });
+
+    return textResponse(`Renamed ${kind} from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`);
+  },
+);
+
+server.tool(
+  "rename_chapter",
+  "Rename a chapter title or number, move its folder, and move any matching chapter or paragraph asset folders if present.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    newTitle: z.string().min(1),
+    newNumber: z.number().int().positive().optional(),
+  },
+  async ({ rootPath, chapter, newTitle, newNumber }) => {
+    const result = await renameChapter(rootPath, {
+      chapter,
+      newTitle,
+      newNumber,
+    });
+
+    return textResponse(`Renamed chapter from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`);
+  },
+);
+
+server.tool(
+  "rename_paragraph",
+  "Rename a paragraph or scene title or number, move its markdown file, and move any matching paragraph asset folder if present.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+    newTitle: z.string().min(1),
+    newNumber: z.number().int().positive().optional(),
+  },
+  async ({ rootPath, chapter, paragraph, newTitle, newNumber }) => {
+    const result = await renameParagraph(rootPath, {
+      chapter,
+      paragraph,
+      newTitle,
+      newNumber,
+    });
+
+    return textResponse(`Renamed paragraph from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`);
   },
 );
 
@@ -1482,6 +1713,112 @@ function textResponse(text: string) {
   return {
     content: [{ type: "text" as const, text }],
   };
+}
+
+function extractPromptSection(body: string): string {
+  const match = body.match(/^# Prompt\s*\n([\s\S]*)$/m);
+  if (!match) {
+    return "";
+  }
+
+  const afterHeading = match[1];
+  const nextHeadingIndex = afterHeading.search(/^#\s/m);
+  return (nextHeadingIndex === -1 ? afterHeading : afterHeading.slice(0, nextHeadingIndex)).trim();
+}
+
+function buildAssetPromptBody(subject: string, prompt: string): string {
+  return [
+    "# Intent",
+    "",
+    `Generated asset prompt for ${subject}.`,
+    "",
+    "# Prompt",
+    "",
+    prompt,
+    "",
+    "# Notes",
+    "",
+    "Keep this image visually aligned with guidelines/images.md and existing recurring canon art.",
+  ].join("\n");
+}
+
+async function generateImageBuffer(options: {
+  prompt: string;
+  provider: z.infer<typeof imageProviderSchema>;
+  model: string;
+  orientation: z.infer<typeof imageOrientationSchema>;
+  aspectRatio: string;
+}): Promise<Buffer> {
+  switch (options.provider) {
+    case "openai":
+      return generateOpenAiImage(options);
+    default:
+      throw new Error(`Unsupported image provider: ${options.provider}`);
+  }
+}
+
+async function generateOpenAiImage(options: {
+  prompt: string;
+  model: string;
+  orientation: z.infer<typeof imageOrientationSchema>;
+  aspectRatio: string;
+}): Promise<Buffer> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is required to generate images with the OpenAI provider.");
+  }
+
+  const response = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: options.model,
+      prompt: options.prompt,
+      size: resolveOpenAiImageSize(options.orientation, options.aspectRatio),
+    }),
+  });
+
+  const json = (await response.json()) as {
+    error?: { message?: string };
+    data?: Array<{ b64_json?: string }>;
+  };
+
+  if (!response.ok) {
+    throw new Error(json.error?.message ?? `OpenAI image generation failed with status ${response.status}.`);
+  }
+
+  const base64 = json.data?.[0]?.b64_json;
+  if (!base64) {
+    throw new Error("OpenAI image generation returned no image payload.");
+  }
+
+  return Buffer.from(base64, "base64");
+}
+
+function resolveOpenAiImageSize(
+  orientation: z.infer<typeof imageOrientationSchema>,
+  aspectRatio: string,
+): "1024x1536" | "1536x1024" | "1024x1024" {
+  if (aspectRatio === "1:1" || orientation === "square") {
+    return "1024x1024";
+  }
+
+  if (orientation === "landscape") {
+    return "1536x1024";
+  }
+
+  return "1024x1536";
+}
+
+function formatMovedAssetsNote(movedAssetPaths: string[]): string {
+  if (movedAssetPaths.length === 0) {
+    return "";
+  }
+
+  return ` Moved asset path ${movedAssetPaths[0]} -> ${movedAssetPaths[1]}.`;
 }
 
 function wizardChecklist(options: {

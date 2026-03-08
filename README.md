@@ -127,6 +127,8 @@ Project-level OpenCode and agent rules live in `AGENTS.md`.
 - `create_entity`: create faster stubs for other canon files
 - `update_chapter`, `update_paragraph`: update existing chapter and scene files without structural migration
 - `update_entity`: patch frontmatter and body on existing canon files
+- `create_asset_prompt`, `register_asset`, `generate_asset_image`: manage canonical art prompts and image files
+- `rename_entity`, `rename_chapter`, `rename_paragraph`: rename canon safely and move matching asset folders too
 - `search_book`: search the repository before inventing canon
 - `list_related_canon`: find files that reference an id or concept
 - `sync_resume`: refresh chapter or total summaries from current files
@@ -169,11 +171,18 @@ To enable npm publishing from GitHub:
 
 The publish workflow runs `npm run release:check` first, then publishes in dependency order.
 
-For the Vercel deploy workflow, add these repository secrets:
+For the Vercel deploy workflow, add this repository secret:
 
 - `VERCEL_TOKEN`
-- `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID`
+
+The workflow is already pinned to:
+
+- `VERCEL_ORG_ID=team_Jut3umUxSp1D1Z1sqmv4iUjc`
+- `VERCEL_PROJECT_ID=prj_b9bxn0P4ilMmG40DiZoZ057qA1Zj`
+
+For local or CI image generation with `generate_asset_image`, also set:
+
+- `OPENAI_API_KEY`
 
 ## Vercel MCP
 

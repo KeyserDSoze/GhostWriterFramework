@@ -1,7 +1,9 @@
 import YAML from "yaml";
 
 function frontmatterBlock(frontmatter: Record<string, unknown>): string {
-  const yaml = YAML.stringify(frontmatter).trimEnd();
+  const yaml = YAML.stringify(frontmatter)
+    .trimEnd()
+    .replace(/^aspect_ratio:\s+([0-9]+:[0-9]+)$/m, 'aspect_ratio: "$1"');
   return `---\n${yaml}\n---\n`;
 }
 
@@ -143,6 +145,20 @@ export function defaultBodyForType(type: string): string {
         "# Key Facts",
         "",
         "# Relevance To Book",
+      ].join("\n");
+    case "asset":
+      return [
+        "# Intent",
+        "",
+        "Describe what this image should communicate in the book.",
+        "",
+        "# Prompt",
+        "",
+        "Write the exact generation prompt here.",
+        "",
+        "# Notes",
+        "",
+        "Capture style constraints, continuity notes, and variation guidance.",
       ].join("\n");
     default:
       return "# Notes\n";

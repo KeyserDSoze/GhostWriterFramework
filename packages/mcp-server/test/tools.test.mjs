@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -59,6 +59,12 @@ test("mcp server tools support guided creation and structural updates", async ()
       title: "First Scene",
     });
 
+    const assetText = await callToolText(client, "create_asset_prompt", {
+      rootPath,
+      subject: "character:lyra-vale",
+      body: "# Prompt\n\nPortrait of Lyra Vale.",
+    });
+
     const wizardStart = await callToolText(client, "start_wizard", {
       kind: "chapter",
       rootPath,
@@ -95,6 +101,26 @@ test("mcp server tools support guided creation and structural updates", async ()
       body: "# Scene\n\nThe walls watch first.",
     });
 
+    const renameEntityText = await callToolText(client, "rename_entity", {
+      rootPath,
+      kind: "character",
+      slugOrId: "lyra-vale",
+      newNameOrTitle: "Lyra Voss",
+    });
+
+    const renameChapterText = await callToolText(client, "rename_chapter", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+      newTitle: "Opening Gambit",
+    });
+
+    const renameParagraphText = await callToolText(client, "rename_paragraph", {
+      rootPath,
+      chapter: "chapter:001-opening-gambit",
+      paragraph: "001-first-scene",
+      newTitle: "Watching Walls",
+    });
+
     const searchText = await callToolText(client, "search_book", {
       rootPath,
       query: "signal",
@@ -104,14 +130,20 @@ test("mcp server tools support guided creation and structural updates", async ()
     const resumeText = await callToolText(client, "sync_all_resumes", { rootPath });
     const evaluationText = await callToolText(client, "evaluate_book", { rootPath });
     const validationText = await callToolText(client, "validate_book", { rootPath });
+    const movedAssetPrompt = await readFile(path.join(rootPath, "assets", "characters", "lyra-voss", "primary.md"), "utf8");
 
     assert.match(setupText, /npx @ghostwriter\/create-book/);
     assert.match(specText, /GhostWriter repository structure/);
+    assert.match(assetText, /Created asset prompt/);
     assert.match(finalizeText, /Created chapter/);
     assert.match(searchText, /The Signal/i);
+    assert.match(renameEntityText, /Renamed character/);
+    assert.match(renameChapterText, /Renamed chapter/);
+    assert.match(renameParagraphText, /Renamed paragraph/);
     assert.match(resumeText, /Synced 2 chapter resumes/);
     assert.match(evaluationText, /Synced book evaluation/);
     assert.match(validationText, /Validation passed/);
+    assert.match(movedAssetPrompt, /subject: character:lyra-voss/);
   } finally {
     await transport.close();
     await rm(rootPath, { recursive: true, force: true });

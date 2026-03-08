@@ -19,6 +19,15 @@ export const BOOK_DIRECTORIES = [
   "research/wikipedia/en",
   "research/wikipedia/it",
   "assets",
+  "assets/book",
+  "assets/characters",
+  "assets/items",
+  "assets/locations",
+  "assets/factions",
+  "assets/timelines",
+  "assets/timelines/events",
+  "assets/secrets",
+  "assets/chapters",
   ".opencode/skills",
   ".claude/skills",
 ] as const;
@@ -45,6 +54,7 @@ export const GUIDELINE_FILES = {
   chapterRules: "guidelines/chapter-rules.md",
   voices: "guidelines/voices.md",
   structure: "guidelines/structure.md",
+  images: "guidelines/images.md",
 } as const;
 
 export const TIMELINE_MAIN_FILE = "timelines/main.md";
@@ -64,4 +74,5 @@ export const CONTENT_GLOB = [
   "resumes/**/*.md",
   "evaluations/**/*.md",
   "research/**/*.md",
+  "assets/**/*.md",
 ];

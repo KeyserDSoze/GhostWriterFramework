@@ -4,7 +4,9 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 import { getBookRoot, loadEntityPageData } from "../../lib/book";
 import MetadataSection from "../../components/MetadataSection.astro";
 import RelatedLinks from "../../components/RelatedLinks.astro";
+import AssetFigure from "../../components/AssetFigure.astro";
 import { loadRelatedCanonLinks } from "../../lib/canon";
+import { loadAssetFigure } from "../../lib/assets";
 import { listEntities, pathExists } from "@ghostwriter/core";
 import path from "node:path";
 
@@ -35,6 +37,7 @@ const metaEntries = [
   ["Fears", entity.metadata.fears],
 ].filter(([, value]) => value !== undefined && value !== null && (!Array.isArray(value) || value.length > 0));
 const relatedLinks = await loadRelatedCanonLinks(String(entity.metadata.id ?? `character:${slug}`), [entity.metadata.refs, ...metaEntries.map(([, value]) => value)]);
+const figure = await loadAssetFigure(String(entity.metadata.id ?? `character:${slug}`), String(entity.metadata.name ?? slug));
 ---
 
 <BaseLayout title={String(entity.metadata.name ?? slug)} description={String(entity.metadata.function_in_book ?? "Character entry") } activeSection="characters">
@@ -43,6 +46,7 @@ const relatedLinks = await loadRelatedCanonLinks(String(entity.metadata.id ?? `c
     <h1>{String(entity.metadata.name ?? slug)}</h1>
     <p class="lede">{String(entity.metadata.function_in_book ?? entity.metadata.story_role ?? "Canonical character entry.")}</p>
     <div class="chapter-meta"><a href="/characters/">Back to characters</a></div>
+    {figure && <AssetFigure figure={figure} className="hero-media" />}
   </section>
 
   <section class="section">

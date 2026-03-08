@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import fg from "fast-glob";
 import matter from "gray-matter";
@@ -9,6 +9,7 @@ import {
   CONTENT_GLOB,
   DEFAULT_CANON,
   ENTITY_TYPE_TO_DIRECTORY,
+  ENTITY_TYPES,
   GUIDELINE_FILES,
   SKILL_NAME,
   TIMELINE_MAIN_FILE,
@@ -16,6 +17,7 @@ import {
   TOTAL_RESUME_FILE,
 } from "./constants.js";
 import {
+  assetSchema,
   bookSchema,
   characterSchema,
   chapterSchema,
@@ -28,6 +30,7 @@ import {
   researchNoteSchema,
   secretSchema,
   type BookFrontmatter,
+  type AssetFrontmatter,
   type CharacterFrontmatter,
   type ChapterFrontmatter,
   type EntityType,
@@ -77,6 +80,24 @@ type CreateEntityInput = {
   body?: string;
   overwrite?: boolean;
   frontmatter?: Record<string, unknown>;
+};
+
+type CreateAssetPromptInput = {
+  subject: string;
+  assetKind?: string;
+  extension?: string;
+  overwrite?: boolean;
+  promptStyleRef?: string;
+  orientation?: AssetFrontmatter["orientation"];
+  aspectRatio?: string;
+  provider?: string;
+  model?: string;
+  body?: string;
+  frontmatter?: Record<string, unknown>;
+};
+
+type RegisterAssetInput = CreateAssetPromptInput & {
+  sourceFilePath: string;
 };
 
 type CreateCharacterProfileInput = {
@@ -214,6 +235,19 @@ type RelatedCanonHit = {
   score: number;
 };
 
+type RenameResult = {
+  oldPath: string;
+  newPath: string;
+  updatedReferences: number;
+  movedAssetPaths: string[];
+};
+
+type ParsedAssetSubject =
+  | { type: "book"; subject: "book" }
+  | { type: EntityType; subject: string; slug: string }
+  | { type: "chapter"; subject: string; chapterSlug: string }
+  | { type: "paragraph"; subject: string; chapterSlug: string; paragraphSlug: string };
+
 export async function initializeBookRepo(
   rootPath: string,
   options: {
@@ -305,6 +339,32 @@ export async function initializeBookRepo(
         scope: "structure",
       }),
       "# Blueprint\n\nDescribe act structure, pacing, and recurring motifs.\n",
+    ),
+    created,
+  );
+
+  await ensureFile(
+    root,
+    GUIDELINE_FILES.images,
+    renderMarkdown(
+      guidelineSchema.parse({
+        type: "guideline",
+        id: "guideline:images",
+        title: "Image Style",
+        scope: "visuals",
+      }),
+      [
+        "# Visual Direction",
+        "",
+        "- Default orientation: portrait",
+        "- Default aspect ratio: 2:3",
+        "- Keep recurring characters visually consistent across assets.",
+        "- Use this file as the global visual style reference for all generated or imported images.",
+        "",
+        "# Notes",
+        "",
+        "Document palette, medium, lighting, costume rules, and camera language here.",
+      ].join("\n"),
     ),
     created,
   );
@@ -737,6 +797,352 @@ export async function createParagraph(
   return { filePath, paragraphId: `paragraph:${chapter}:${slug}` };
 }
 
+export async function createAssetPrompt(
+  rootPath: string,
+  options: CreateAssetPromptInput,
+): Promise<{ filePath: string; imagePath: string; assetId: string }> {
+  const root = path.resolve(rootPath);
+  const prepared = prepareAssetTarget(root, options.subject, options.assetKind, options.extension);
+
+  if (!options.overwrite && (await pathExists(prepared.markdownFilePath))) {
+    throw new Error(`Asset prompt already exists: ${prepared.markdownFilePath}`);
+  }
+
+  await mkdir(path.dirname(prepared.markdownFilePath), { recursive: true });
+
+  const frontmatter = assetSchema.parse({
+    type: "asset",
+    id: prepared.assetId,
+    subject: prepared.parsedSubject.subject,
+    asset_kind: prepared.assetKind,
+    path: prepared.imageRelativePath,
+    prompt_style_ref: options.promptStyleRef ?? "guideline:images",
+    orientation: options.orientation ?? "portrait",
+    aspect_ratio: options.aspectRatio ?? "2:3",
+    provider: options.provider,
+    model: options.model,
+    canon: DEFAULT_CANON,
+    ...options.frontmatter,
+  });
+
+  await writeFile(
+    prepared.markdownFilePath,
+    renderMarkdown(frontmatter, options.body ?? defaultBodyForType("asset")),
+    "utf8",
+  );
+
+  return {
+    filePath: prepared.markdownFilePath,
+    imagePath: prepared.imageFilePath,
+    assetId: prepared.assetId,
+  };
+}
+
+export async function readAsset(
+  rootPath: string,
+  subject: string,
+  assetKind?: string,
+): Promise<{
+  path: string;
+  metadata: AssetFrontmatter;
+  body: string;
+  imagePath: string;
+  imageExists: boolean;
+} | null> {
+  const root = path.resolve(rootPath);
+  const prepared = prepareAssetTarget(root, subject, assetKind);
+
+  if (!(await pathExists(prepared.markdownFilePath))) {
+    return null;
+  }
+
+  const document = await readMarkdownFile(prepared.markdownFilePath, assetSchema);
+  const imagePath = path.join(root, document.frontmatter.path);
+  return {
+    path: prepared.markdownFilePath,
+    metadata: document.frontmatter,
+    body: document.body,
+    imagePath,
+    imageExists: await pathExists(imagePath),
+  };
+}
+
+export async function registerAsset(
+  rootPath: string,
+  options: RegisterAssetInput,
+): Promise<{ filePath: string; imagePath: string; assetId: string }> {
+  const root = path.resolve(rootPath);
+  const sourceFilePath = path.resolve(options.sourceFilePath);
+
+  if (!(await pathExists(sourceFilePath))) {
+    throw new Error(`Asset source file does not exist: ${sourceFilePath}`);
+  }
+
+  const prepared = prepareAssetTarget(root, options.subject, options.assetKind, options.extension ?? path.extname(sourceFilePath));
+
+  if (!options.overwrite && ((await pathExists(prepared.markdownFilePath)) || (await pathExists(prepared.imageFilePath)))) {
+    throw new Error(`Asset already exists at ${prepared.imageFilePath}`);
+  }
+
+  await mkdir(path.dirname(prepared.imageFilePath), { recursive: true });
+  await copyFile(sourceFilePath, prepared.imageFilePath);
+
+  const frontmatter = assetSchema.parse({
+    type: "asset",
+    id: prepared.assetId,
+    subject: prepared.parsedSubject.subject,
+    asset_kind: prepared.assetKind,
+    path: prepared.imageRelativePath,
+    prompt_style_ref: options.promptStyleRef ?? "guideline:images",
+    orientation: options.orientation ?? "portrait",
+    aspect_ratio: options.aspectRatio ?? "2:3",
+    provider: options.provider,
+    model: options.model,
+    canon: DEFAULT_CANON,
+    ...options.frontmatter,
+  });
+
+  await writeFile(
+    prepared.markdownFilePath,
+    renderMarkdown(frontmatter, options.body ?? defaultBodyForType("asset")),
+    "utf8",
+  );
+
+  return {
+    filePath: prepared.markdownFilePath,
+    imagePath: prepared.imageFilePath,
+    assetId: prepared.assetId,
+  };
+}
+
+export async function renameEntity(
+  rootPath: string,
+  options: {
+    kind: EntityType;
+    slugOrId: string;
+    newNameOrTitle: string;
+    newSlug?: string;
+  },
+): Promise<RenameResult> {
+  const root = path.resolve(rootPath);
+  const oldFilePath = resolveEntityFilePath(root, options.kind, options.slugOrId);
+
+  if (!(await pathExists(oldFilePath))) {
+    throw new Error(`Entity does not exist: ${oldFilePath}`);
+  }
+
+  const raw = await readFile(oldFilePath, "utf8");
+  const parsed = matter(raw);
+  const oldSlug = path.basename(oldFilePath, ".md");
+  const nextSlug = normalizeRenameSlug(options.newSlug ?? options.newNameOrTitle);
+  const newFilePath = path.join(root, ENTITY_TYPE_TO_DIRECTORY[options.kind], `${nextSlug}.md`);
+  const labelKey = getEntityLabelKey(options.kind);
+  const oldId = `${options.kind}:${oldSlug}`;
+  const newId = `${options.kind}:${nextSlug}`;
+
+  if (oldFilePath !== newFilePath && (await pathExists(newFilePath))) {
+    throw new Error(`Entity already exists at destination: ${newFilePath}`);
+  }
+
+  const validated = entitySchemaMap[options.kind].parse({
+    ...(parsed.data as Record<string, unknown>),
+    id: newId,
+    [labelKey]: options.newNameOrTitle,
+  });
+
+  if (oldFilePath !== newFilePath) {
+    await rename(oldFilePath, newFilePath);
+  }
+
+  await writeFile(newFilePath, renderMarkdown(validated, String(parsed.content ?? "").trim()), "utf8");
+
+  const movedAssetPaths = await moveAssetDirectoryIfPresent(root, oldId, newId);
+  const updatedReferences = await replaceReferencesInMarkdownFiles(root, [
+    [oldId, newId],
+    [`asset:${options.kind}:${oldSlug}:`, `asset:${options.kind}:${nextSlug}:`],
+    [assetDirectoryPrefix(oldId), assetDirectoryPrefix(newId)],
+  ]);
+
+  return {
+    oldPath: oldFilePath,
+    newPath: newFilePath,
+    updatedReferences,
+    movedAssetPaths,
+  };
+}
+
+export async function renameChapter(
+  rootPath: string,
+  options: {
+    chapter: string;
+    newTitle: string;
+    newNumber?: number;
+  },
+): Promise<RenameResult> {
+  const root = path.resolve(rootPath);
+  const oldFilePath = resolveChapterMetadataFilePath(root, options.chapter);
+
+  if (!(await pathExists(oldFilePath))) {
+    throw new Error(`Chapter does not exist: ${oldFilePath}`);
+  }
+
+  const oldChapterSlug = normalizeChapterReference(options.chapter);
+  const raw = await readFile(oldFilePath, "utf8");
+  const parsed = matter(raw);
+  const current = chapterSchema.parse(parsed.data);
+  const nextNumber = options.newNumber ?? current.number;
+  const newChapterSlug = chapterSlug(nextNumber, options.newTitle);
+  const oldFolderPath = path.join(root, "chapters", oldChapterSlug);
+  const newFolderPath = path.join(root, "chapters", newChapterSlug);
+  const newFilePath = path.join(newFolderPath, "chapter.md");
+
+  if (oldFolderPath !== newFolderPath && (await pathExists(newFolderPath))) {
+    throw new Error(`Chapter already exists at destination: ${newFolderPath}`);
+  }
+
+  if (oldFolderPath !== newFolderPath) {
+    await rename(oldFolderPath, newFolderPath);
+  }
+
+  const validated = chapterSchema.parse({
+    ...current,
+    id: `chapter:${newChapterSlug}`,
+    number: nextNumber,
+    title: options.newTitle,
+  });
+  await writeFile(newFilePath, renderMarkdown(validated, String(parsed.content ?? "").trim()), "utf8");
+
+  const oldResumePath = path.join(root, "resumes", "chapters", `${oldChapterSlug}.md`);
+  const newResumePath = path.join(root, "resumes", "chapters", `${newChapterSlug}.md`);
+  if (await pathExists(oldResumePath)) {
+    if (oldResumePath !== newResumePath && (await pathExists(newResumePath))) {
+      throw new Error(`Resume already exists at destination: ${newResumePath}`);
+    }
+    if (oldResumePath !== newResumePath) {
+      await rename(oldResumePath, newResumePath);
+    }
+
+    const resumeRaw = await readFile(newResumePath, "utf8");
+    const resumeParsed = matter(resumeRaw);
+    await writeFile(
+      newResumePath,
+      renderMarkdown(
+        {
+          ...(resumeParsed.data as Record<string, unknown>),
+          id: `resume:chapter:${newChapterSlug}`,
+          title: `Resume ${newChapterSlug}`,
+        },
+        String(resumeParsed.content ?? "").trim(),
+      ),
+      "utf8",
+    );
+  }
+
+  const oldEvaluationPath = path.join(root, "evaluations", "chapters", `${oldChapterSlug}.md`);
+  const newEvaluationPath = path.join(root, "evaluations", "chapters", `${newChapterSlug}.md`);
+  if (await pathExists(oldEvaluationPath)) {
+    if (oldEvaluationPath !== newEvaluationPath && (await pathExists(newEvaluationPath))) {
+      throw new Error(`Evaluation already exists at destination: ${newEvaluationPath}`);
+    }
+    if (oldEvaluationPath !== newEvaluationPath) {
+      await rename(oldEvaluationPath, newEvaluationPath);
+    }
+
+    const evaluationRaw = await readFile(newEvaluationPath, "utf8");
+    const evaluationParsed = matter(evaluationRaw);
+    await writeFile(
+      newEvaluationPath,
+      renderMarkdown(
+        {
+          ...(evaluationParsed.data as Record<string, unknown>),
+          id: `evaluation:chapter:${newChapterSlug}`,
+          title: `Evaluation ${newChapterSlug}`,
+        },
+        String(evaluationParsed.content ?? "").trim(),
+      ),
+      "utf8",
+    );
+  }
+
+  const oldChapterId = `chapter:${oldChapterSlug}`;
+  const newChapterId = `chapter:${newChapterSlug}`;
+  const movedAssetPaths = await moveAssetDirectoryIfPresent(root, oldChapterId, newChapterId);
+  const updatedReferences = await replaceReferencesInMarkdownFiles(root, [
+    [oldChapterId, newChapterId],
+    [`paragraph:${oldChapterSlug}:`, `paragraph:${newChapterSlug}:`],
+    [`asset:chapter:${oldChapterSlug}:`, `asset:chapter:${newChapterSlug}:`],
+    [`asset:paragraph:${oldChapterSlug}:`, `asset:paragraph:${newChapterSlug}:`],
+    [`resume:chapter:${oldChapterSlug}`, `resume:chapter:${newChapterSlug}`],
+    [`evaluation:chapter:${oldChapterSlug}`, `evaluation:chapter:${newChapterSlug}`],
+    [assetDirectoryPrefix(oldChapterId), assetDirectoryPrefix(newChapterId)],
+  ]);
+
+  return {
+    oldPath: oldFilePath,
+    newPath: newFilePath,
+    updatedReferences,
+    movedAssetPaths,
+  };
+}
+
+export async function renameParagraph(
+  rootPath: string,
+  options: {
+    chapter: string;
+    paragraph: string;
+    newTitle: string;
+    newNumber?: number;
+  },
+): Promise<RenameResult> {
+  const root = path.resolve(rootPath);
+  const chapterSlugValue = normalizeChapterReference(options.chapter);
+  const oldFilePath = await resolveParagraphFilePath(root, chapterSlugValue, options.paragraph);
+
+  if (!(await pathExists(oldFilePath))) {
+    throw new Error(`Paragraph does not exist: ${oldFilePath}`);
+  }
+
+  const raw = await readFile(oldFilePath, "utf8");
+  const parsed = matter(raw);
+  const current = paragraphSchema.parse(parsed.data);
+  const oldParagraphSlug = path.basename(oldFilePath, ".md");
+  const nextNumber = options.newNumber ?? current.number;
+  const newParagraphSlug = paragraphFilename(nextNumber, options.newTitle).replace(/\.md$/i, "");
+  const newFilePath = path.join(root, "chapters", chapterSlugValue, `${newParagraphSlug}.md`);
+
+  if (oldFilePath !== newFilePath && (await pathExists(newFilePath))) {
+    throw new Error(`Paragraph already exists at destination: ${newFilePath}`);
+  }
+
+  if (oldFilePath !== newFilePath) {
+    await rename(oldFilePath, newFilePath);
+  }
+
+  const validated = paragraphSchema.parse({
+    ...current,
+    id: `paragraph:${chapterSlugValue}:${newParagraphSlug}`,
+    number: nextNumber,
+    title: options.newTitle,
+  });
+  await writeFile(newFilePath, renderMarkdown(validated, String(parsed.content ?? "").trim()), "utf8");
+
+  const oldParagraphId = `paragraph:${chapterSlugValue}:${oldParagraphSlug}`;
+  const newParagraphId = `paragraph:${chapterSlugValue}:${newParagraphSlug}`;
+  const movedAssetPaths = await moveAssetDirectoryIfPresent(root, oldParagraphId, newParagraphId);
+  const updatedReferences = await replaceReferencesInMarkdownFiles(root, [
+    [oldParagraphId, newParagraphId],
+    [`asset:paragraph:${chapterSlugValue}:${oldParagraphSlug}:`, `asset:paragraph:${chapterSlugValue}:${newParagraphSlug}:`],
+    [assetDirectoryPrefix(oldParagraphId), assetDirectoryPrefix(newParagraphId)],
+  ]);
+
+  return {
+    oldPath: oldFilePath,
+    newPath: newFilePath,
+    updatedReferences,
+    movedAssetPaths,
+  };
+}
+
 export async function readBook(
   rootPath: string,
 ): Promise<MarkdownDocument<BookFrontmatter> | null> {
@@ -952,6 +1358,7 @@ export async function updateEntity(
 
   const raw = await readFile(filePath, "utf8");
   const parsed = matter(raw);
+  assertNoForbiddenPatchKeys(options.frontmatterPatch, ["type", "id"]);
   const mergedFrontmatter = {
     ...(parsed.data as Record<string, unknown>),
     ...(options.frontmatterPatch ?? {}),
@@ -1501,6 +1908,11 @@ async function validateFile(root: string, filePath: string): Promise<void> {
     return;
   }
 
+  if (relativePath.startsWith("assets/")) {
+    assetSchema.parse(data);
+    return;
+  }
+
   if (relativePath.startsWith("chapters/") && path.basename(filePath) === "chapter.md") {
     chapterSchema.parse(data);
     return;
@@ -1532,6 +1944,179 @@ async function validateFile(root: string, filePath: string): Promise<void> {
   if (!stats.isFile()) {
     throw new Error(`Not a regular file: ${relativePath}`);
   }
+}
+
+function prepareAssetTarget(root: string, subject: string, assetKindInput?: string, extensionInput?: string) {
+  const parsedSubject = parseAssetSubject(subject);
+  const assetKind = normalizeAssetKind(assetKindInput ?? defaultAssetKindForSubject(parsedSubject));
+  const extension = normalizeAssetExtension(extensionInput ?? "png");
+  const assetDirectory = resolveAssetDirectory(root, parsedSubject);
+  const imageFilePath = path.join(assetDirectory, `${assetKind}.${extension}`);
+  const markdownFilePath = path.join(assetDirectory, `${assetKind}.md`);
+  const imageRelativePath = toPosixPath(path.relative(root, imageFilePath));
+
+  return {
+    parsedSubject,
+    assetKind,
+    assetId: buildAssetId(parsedSubject, assetKind),
+    imageFilePath,
+    markdownFilePath,
+    imageRelativePath,
+  };
+}
+
+function parseAssetSubject(subject: string): ParsedAssetSubject {
+  const normalized = subject.trim();
+
+  if (normalized === "book") {
+    return { type: "book", subject: "book" };
+  }
+
+  if (normalized.startsWith("chapter:")) {
+    return {
+      type: "chapter",
+      subject: `chapter:${normalizeChapterReference(normalized)}`,
+      chapterSlug: normalizeChapterReference(normalized),
+    };
+  }
+
+  if (normalized.startsWith("paragraph:")) {
+    const [, chapterPart, paragraphPart] = normalized.split(":");
+    if (!chapterPart || !paragraphPart) {
+      throw new Error(`Invalid paragraph subject: ${subject}`);
+    }
+
+    return {
+      type: "paragraph",
+      subject: `paragraph:${chapterPart}:${paragraphPart}`,
+      chapterSlug: chapterPart,
+      paragraphSlug: paragraphPart,
+    };
+  }
+
+  const entityKind = ENTITY_TYPES.find((candidate) => normalized.startsWith(`${candidate}:`));
+  if (!entityKind) {
+    throw new Error(`Unsupported asset subject: ${subject}`);
+  }
+
+  return {
+    type: entityKind,
+    subject: normalized,
+    slug: normalized.slice(`${entityKind}:`.length),
+  };
+}
+
+function resolveAssetDirectory(root: string, subject: ParsedAssetSubject): string {
+  switch (subject.type) {
+    case "book":
+      return path.join(root, "assets", "book");
+    case "chapter":
+      return path.join(root, "assets", "chapters", subject.chapterSlug);
+    case "paragraph":
+      return path.join(root, "assets", "chapters", subject.chapterSlug, "paragraphs", subject.paragraphSlug);
+    default:
+      return path.join(root, "assets", ENTITY_TYPE_TO_DIRECTORY[subject.type], subject.slug);
+  }
+}
+
+function assetDirectoryPrefix(subject: string): string {
+  const parsed = parseAssetSubject(subject);
+  return `${toPosixPath(path.relative(".", resolveAssetDirectory(".", parsed)))}/`;
+}
+
+function buildAssetId(subject: ParsedAssetSubject, assetKind: string): string {
+  switch (subject.type) {
+    case "book":
+      return `asset:book:${assetKind}`;
+    case "chapter":
+      return `asset:chapter:${subject.chapterSlug}:${assetKind}`;
+    case "paragraph":
+      return `asset:paragraph:${subject.chapterSlug}:${subject.paragraphSlug}:${assetKind}`;
+    default:
+      return `asset:${subject.type}:${subject.slug}:${assetKind}`;
+  }
+}
+
+function defaultAssetKindForSubject(subject: ParsedAssetSubject): string {
+  return subject.type === "book" ? "cover" : "primary";
+}
+
+function normalizeAssetKind(value: string): string {
+  const normalized = slugify(value);
+  if (!normalized) {
+    throw new Error("Asset kind must contain at least one alphanumeric character.");
+  }
+  return normalized;
+}
+
+function normalizeAssetExtension(value: string): string {
+  const normalized = value.replace(/^\./, "").trim().toLowerCase();
+  if (!normalized) {
+    throw new Error("Asset extension cannot be empty.");
+  }
+  return normalized;
+}
+
+function normalizeRenameSlug(value: string): string {
+  const normalized = slugify(value);
+  if (!normalized) {
+    throw new Error("Rename target must produce a non-empty slug.");
+  }
+  return normalized;
+}
+
+function getEntityLabelKey(kind: EntityType): "name" | "title" {
+  return kind === "secret" || kind === "timeline-event" ? "title" : "name";
+}
+
+async function moveAssetDirectoryIfPresent(root: string, oldSubject: string, newSubject: string): Promise<string[]> {
+  const oldDirectory = resolveAssetDirectory(root, parseAssetSubject(oldSubject));
+  const newDirectory = resolveAssetDirectory(root, parseAssetSubject(newSubject));
+
+  if (oldDirectory === newDirectory || !(await pathExists(oldDirectory))) {
+    return [];
+  }
+
+  if (await pathExists(newDirectory)) {
+    throw new Error(`Asset destination already exists: ${newDirectory}`);
+  }
+
+  await mkdir(path.dirname(newDirectory), { recursive: true });
+  await rename(oldDirectory, newDirectory);
+  return [oldDirectory, newDirectory];
+}
+
+async function replaceReferencesInMarkdownFiles(root: string, replacements: Array<[string, string]>): Promise<number> {
+  const filtered = replacements
+    .filter(([from, to]) => from && to && from !== to)
+    .sort((left, right) => right[0].length - left[0].length);
+
+  if (filtered.length === 0) {
+    return 0;
+  }
+
+  const files = await fg(CONTENT_GLOB, {
+    cwd: root,
+    absolute: true,
+    onlyFiles: true,
+    ignore: ["**/node_modules/**", "**/dist/**", "**/.astro/**"],
+  });
+  let updatedCount = 0;
+
+  for (const filePath of files) {
+    const original = await readFile(filePath, "utf8");
+    let next = original;
+
+    for (const [from, to] of filtered) {
+      next = next.split(from).join(to);
+    }
+
+    if (next === original) continue;
+    await writeFile(filePath, next, "utf8");
+    updatedCount += 1;
+  }
+
+  return updatedCount;
 }
 
 function resolveEntityFilePath(root: string, kind: EntityType, slugOrId: string): string {

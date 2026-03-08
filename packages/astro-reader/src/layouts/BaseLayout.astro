@@ -247,6 +247,29 @@ const { title, description, activeSection = "home" } = Astro.props;
         text-decoration: none;
       }
 
+      .media-frame {
+        margin: 1.25rem 0 0;
+      }
+
+      .media-frame img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 24px;
+        border: 1px solid var(--line);
+        box-shadow: var(--shadow);
+        object-fit: cover;
+        background: rgba(255, 255, 255, 0.45);
+      }
+
+      .hero-media {
+        max-width: min(360px, 100%);
+      }
+
+      .scene-media {
+        max-width: min(420px, 100%);
+      }
+
       .chapter-meta {
         color: var(--muted);
         font-size: 0.95rem;

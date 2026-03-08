@@ -60,11 +60,18 @@ Use the local stdio server for actual filesystem writing and repo mutations.
 
 The repository includes `.github/workflows/deploy-vercel-mcp.yml`.
 
-To enable it, add these GitHub repository secrets:
+To enable it, add this GitHub repository secret:
 
 - `VERCEL_TOKEN`
-- `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID`
+
+The workflow already targets:
+
+- `VERCEL_ORG_ID=team_Jut3umUxSp1D1Z1sqmv4iUjc`
+- `VERCEL_PROJECT_ID=prj_b9bxn0P4ilMmG40DiZoZ057qA1Zj`
+
+If you want local image generation through `generate_asset_image`, also set:
+
+- `OPENAI_API_KEY`
 
 ## Typical usage
 
@@ -75,8 +82,14 @@ Point OpenCode or another MCP client at the built server and use tools such as:
 - `create_location`
 - `create_chapter`
 - `create_paragraph`
+- `create_asset_prompt`
+- `register_asset`
+- `generate_asset_image`
 - `update_chapter`
 - `update_paragraph`
+- `rename_entity`
+- `rename_chapter`
+- `rename_paragraph`
 - `start_wizard` / `wizard_answer` / `wizard_finalize`
 - `sync_all_resumes`
 - `evaluate_book`

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ENTITY_TYPES } from "./constants.js";
 
 const canonSchema = z.enum(["draft", "canon", "deprecated"]);
+const imageOrientationSchema = z.enum(["portrait", "landscape", "square"]);
 
 const yamlDateStringSchema = z.union([z.string(), z.date()]).transform((value) =>
   typeof value === "string" ? value : value.toISOString(),
@@ -171,6 +172,20 @@ export const timelineEventSchema = baseSchema
   })
   .passthrough();
 
+export const assetSchema = baseSchema
+  .extend({
+    type: z.literal("asset"),
+    subject: z.string().min(1),
+    asset_kind: z.string().min(1).default("primary"),
+    path: z.string().min(1),
+    prompt_style_ref: z.string().optional(),
+    orientation: imageOrientationSchema.default("portrait"),
+    aspect_ratio: z.string().min(1).default("2:3"),
+    provider: z.string().optional(),
+    model: z.string().optional(),
+  })
+  .passthrough();
+
 export const chapterSchema = z
   .object({
     type: z.literal("chapter"),
@@ -231,6 +246,7 @@ export const anyKnownSchema = z.discriminatedUnion("type", [
   factionSchema,
   secretSchema,
   timelineEventSchema,
+  assetSchema,
   chapterSchema,
   paragraphSchema,
   researchNoteSchema,
@@ -244,6 +260,7 @@ export type LocationFrontmatter = z.infer<typeof locationSchema>;
 export type FactionFrontmatter = z.infer<typeof factionSchema>;
 export type SecretFrontmatter = z.infer<typeof secretSchema>;
 export type TimelineEventFrontmatter = z.infer<typeof timelineEventSchema>;
+export type AssetFrontmatter = z.infer<typeof assetSchema>;
 export type ChapterFrontmatter = z.infer<typeof chapterSchema>;
 export type ParagraphFrontmatter = z.infer<typeof paragraphSchema>;
 export type ResearchNoteFrontmatter = z.infer<typeof researchNoteSchema>;

@@ -4,7 +4,9 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 import { getBookRoot, loadEntityPageData } from "../../lib/book";
 import MetadataSection from "../../components/MetadataSection.astro";
 import RelatedLinks from "../../components/RelatedLinks.astro";
+import AssetFigure from "../../components/AssetFigure.astro";
 import { loadRelatedCanonLinks } from "../../lib/canon";
+import { loadAssetFigure } from "../../lib/assets";
 import { listEntities, pathExists } from "@ghostwriter/core";
 import path from "node:path";
 
@@ -28,6 +30,7 @@ const metaEntries = [
   ["Consequences", entity.metadata.consequences],
 ].filter(([, value]) => value !== undefined && value !== null && (!Array.isArray(value) || value.length > 0));
 const relatedLinks = await loadRelatedCanonLinks(String(entity.metadata.id ?? `timeline-event:${slug}`), [entity.metadata.refs, ...metaEntries.map(([, value]) => value)]);
+const figure = await loadAssetFigure(String(entity.metadata.id ?? `timeline-event:${slug}`), String(entity.metadata.title ?? slug));
 ---
 
 <BaseLayout title={String(entity.metadata.title ?? slug)} description={String(entity.metadata.significance ?? entity.metadata.function_in_book ?? "Timeline event") } activeSection="timeline">
@@ -36,6 +39,7 @@ const relatedLinks = await loadRelatedCanonLinks(String(entity.metadata.id ?? `t
     <h1>{String(entity.metadata.title ?? slug)}</h1>
     <p class="lede">{String(entity.metadata.significance ?? entity.metadata.function_in_book ?? "Canonical timeline event.")}</p>
     <div class="chapter-meta"><a href="/timeline/">Back to timeline</a></div>
+    {figure && <AssetFigure figure={figure} className="hero-media" />}
   </section>
 
   <section class="section">

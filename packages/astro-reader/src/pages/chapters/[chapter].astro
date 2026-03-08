@@ -5,7 +5,9 @@ import { getBookRoot, loadChapterPageData } from "../../lib/book";
 import LinkedValue from "../../components/LinkedValue.astro";
 import MetadataSection from "../../components/MetadataSection.astro";
 import RelatedLinks from "../../components/RelatedLinks.astro";
+import AssetFigure from "../../components/AssetFigure.astro";
 import { loadRelatedCanonLinks } from "../../lib/canon";
+import { loadAssetFigure } from "../../lib/assets";
 import { listChapters, pathExists } from "@ghostwriter/core";
 import path from "node:path";
 
@@ -30,10 +32,12 @@ const chapterMetaEntries = [
   ["Tags", chapter.metadata.tags],
 ].filter(([, value]) => value !== undefined && value !== null && (!Array.isArray(value) || value.length > 0));
 const chapterRelatedLinks = await loadRelatedCanonLinks(String(chapter.metadata.id), [chapter.metadata.pov, chapter.metadata.timeline_ref]);
+const chapterFigure = await loadAssetFigure(String(chapter.metadata.id), chapter.metadata.title);
 const renderedParagraphs = await Promise.all(
   chapter.paragraphs.map(async (paragraph) => ({
     ...paragraph,
     anchorId: `scene-${path.basename(paragraph.path, ".md")}`,
+    figure: await loadAssetFigure(String(paragraph.metadata.id), paragraph.metadata.title),
     html: await marked.parse(paragraph.body),
   })),
 );
@@ -47,6 +51,7 @@ const renderedParagraphs = await Promise.all(
     <div class="chapter-meta">
       <a href="/">Back to contents</a>
     </div>
+    {chapterFigure && <AssetFigure figure={chapterFigure} className="hero-media" />}
   </section>
 
   {chapter.body && (
@@ -80,6 +85,7 @@ const renderedParagraphs = await Promise.all(
               Viewpoint: <LinkedValue value={paragraph.metadata.viewpoint} />
             </p>
           )}
+          {paragraph.figure && <AssetFigure figure={paragraph.figure} className="scene-media" />}
           <div class="prose" set:html={paragraph.html} />
         </article>
       ))

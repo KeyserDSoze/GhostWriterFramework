@@ -1,9 +1,12 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import { loadHomePageData } from "../lib/book";
+import AssetFigure from "../components/AssetFigure.astro";
+import { loadAssetFigure } from "../lib/assets";
 
 const { ready, root, book, chapters, characters, locations, factions, items, secrets, timelineEvents } = await loadHomePageData();
 const title = book?.frontmatter.title ?? "GhostWriter Reader";
+const coverFigure = await loadAssetFigure("book", `${title} cover`);
 ---
 
 <BaseLayout title={title} description="Read a GhostWriter repository chapter by chapter." activeSection="home">
@@ -15,6 +18,8 @@ const title = book?.frontmatter.title ?? "GhostWriter Reader";
         ? "A local-first reading view over the canonical book repository. Chapters, scenes, and metadata stay in markdown; the site simply renders them."
         : "Set GHOSTWRITER_BOOK_ROOT to a GhostWriter book repository and this reader will render its chapters automatically."}
     </p>
+
+    {coverFigure && <AssetFigure figure={coverFigure} className="hero-media" />}
 
     <div class="grid stats">
       <div class="card">

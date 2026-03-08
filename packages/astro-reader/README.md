@@ -30,6 +30,7 @@ npx @ghostwriter/astro-reader reader --book-root .. --package-name my-book-reade
 - item index and detail pages
 - secret index and detail pages
 - timeline index and event detail pages
+- automatic rendering of canonical book, entity, chapter, and scene images when matching assets exist
 
 ## Local development
 
