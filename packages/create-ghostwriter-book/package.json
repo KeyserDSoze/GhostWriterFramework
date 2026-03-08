@@ -1,0 +1,39 @@
+{
+  "name": "@ghostwriter/create-book",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Starter CLI to scaffold a GhostWriter book repository.",
+  "license": "MIT",
+  "bin": {
+    "create-ghostwriter-book": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "ghostwriter",
+    "books",
+    "starter",
+    "astro",
+    "writing"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@ghostwriter/astro-reader": "^0.1.0",
+    "@ghostwriter/core": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

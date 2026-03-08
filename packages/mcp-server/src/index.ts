@@ -1,0 +1,1933 @@
+#!/usr/bin/env node
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+import {
+  characterRoleTierSchema,
+  characterStoryRoleSchema,
+  createChapter,
+  createCharacterProfile,
+  createEntity,
+  createFactionProfile,
+  createItemProfile,
+  createLocationProfile,
+  createParagraph,
+  createSecretProfile,
+  createTimelineEventProfile,
+  evaluateBook,
+  exportEpub,
+  initializeBookRepo,
+  listRelatedCanon,
+  searchBook,
+  syncAllResumes,
+  syncChapterEvaluation,
+  syncChapterResume,
+  syncTotalResume,
+  updateChapter,
+  updateEntity,
+  updateParagraph,
+  validateBook,
+  writeWikipediaResearchSnapshot,
+} from "@ghostwriter/core";
+import {
+  buildRepositorySpecSummary,
+  buildSetupInstructions,
+  fetchWikipediaPage,
+  searchWikipedia,
+} from "./public-tools.js";
+
+const server = new McpServer({
+  name: "ghostwriter-local",
+  version: "0.1.0",
+});
+
+const entityTypeSchema = z.enum([
+  "character",
+  "item",
+  "location",
+  "faction",
+  "secret",
+  "timeline-event",
+]);
+
+const wizardKindSchema = z.enum([
+  "character",
+  "location",
+  "faction",
+  "item",
+  "secret",
+  "timeline-event",
+  "chapter",
+  "paragraph",
+]);
+
+type WizardKind = z.infer<typeof wizardKindSchema>;
+type WizardStepType = "string" | "int" | "bool" | "stringArray";
+
+type WizardStep = {
+  key: string;
+  prompt: string;
+  type: WizardStepType;
+  required?: boolean;
+  condition?: (data: Record<string, unknown>) => boolean;
+};
+
+type WizardSession = {
+  id: string;
+  kind: WizardKind;
+  rootPath: string;
+  steps: WizardStep[];
+  stepIndex: number;
+  data: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+const wizardSessions = new Map<string, WizardSession>();
+
+const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
+  character: [
+    { key: "name", prompt: "What is the character's name?", type: "string", required: true },
+    { key: "roleTier", prompt: "What is the role tier? main, supporting, secondary, minor, or background?", type: "string", required: true },
+    { key: "storyRole", prompt: "What is the story role? protagonist, antagonist, mentor, ally, foil, love-interest, comic-relief, or other?", type: "string" },
+    { key: "speakingStyle", prompt: "How does the character speak? Describe rhythm, vocabulary, tone, and verbal habits.", type: "string", required: true },
+    { key: "backgroundSummary", prompt: "What shaped this character before the story begins?", type: "string", required: true },
+    { key: "functionInBook", prompt: "What narrative function does this character serve in the book?", type: "string", required: true },
+    { key: "age", prompt: "How old is the character, if known?", type: "int" },
+    { key: "occupation", prompt: "What is their occupation, role, or public identity?", type: "string" },
+    { key: "origin", prompt: "Where do they come from?", type: "string" },
+    { key: "firstImpression", prompt: "What first impression should the reader get?", type: "string" },
+    { key: "traits", prompt: "List important traits, comma separated if needed.", type: "stringArray" },
+    { key: "mannerisms", prompt: "List notable mannerisms or repeated behaviors.", type: "stringArray" },
+    { key: "desires", prompt: "What does the character want?", type: "stringArray" },
+    { key: "fears", prompt: "What does the character fear?", type: "stringArray" },
+    { key: "internalConflict", prompt: "What internal conflict defines this character?", type: "string" },
+    { key: "externalConflict", prompt: "What external conflict defines this character?", type: "string" },
+    { key: "arc", prompt: "How should the character change across the book?", type: "string" },
+    { key: "relationships", prompt: "List important relationships or tensions.", type: "stringArray" },
+    { key: "factions", prompt: "List faction ids or names tied to this character.", type: "stringArray" },
+    { key: "homeLocation", prompt: "What is the character's home location id or name?", type: "string" },
+    { key: "introducedIn", prompt: "In which chapter is the character introduced?", type: "string" },
+    { key: "historical", prompt: "Is this character historical or fact-checked? yes or no.", type: "bool" },
+    { key: "wikipediaTitle", prompt: "If historical, what Wikipedia page should be used for verification?", type: "string", condition: (data) => Boolean(data.historical) },
+  ],
+  location: [
+    { key: "name", prompt: "What is the location name?", type: "string", required: true },
+    { key: "locationKind", prompt: "What kind of location is it? city, district, fortress, room, landscape, etc.", type: "string" },
+    { key: "region", prompt: "What larger region, nation, or zone contains it?", type: "string" },
+    { key: "atmosphere", prompt: "What should the place feel like on the page?", type: "string", required: true },
+    { key: "functionInBook", prompt: "Why does this location matter narratively?", type: "string", required: true },
+    { key: "landmarks", prompt: "List the key landmarks.", type: "stringArray" },
+    { key: "risks", prompt: "List the dangers or pressures associated with this location.", type: "stringArray" },
+    { key: "factionsPresent", prompt: "Which factions are active here?", type: "stringArray" },
+    { key: "basedOnRealPlace", prompt: "Is it based on a real place or historical site? yes or no.", type: "bool" },
+    { key: "timelineRef", prompt: "What timeline reference anchors this location, if any?", type: "string" },
+    { key: "historical", prompt: "Should this location be fact-checked as historical or factual? yes or no.", type: "bool" },
+    { key: "wikipediaTitle", prompt: "If fact-checked, what Wikipedia page should be used?", type: "string", condition: (data) => Boolean(data.historical) || Boolean(data.basedOnRealPlace) },
+  ],
+  faction: [
+    { key: "name", prompt: "What is the faction name?", type: "string", required: true },
+    { key: "factionKind", prompt: "What kind of faction is it? government, guild, cult, company, order, etc.", type: "string" },
+    { key: "mission", prompt: "What does the faction want?", type: "string", required: true },
+    { key: "ideology", prompt: "How does the faction justify itself?", type: "string", required: true },
+    { key: "functionInBook", prompt: "What narrative pressure does this faction create?", type: "string", required: true },
+    { key: "publicImage", prompt: "How is the faction perceived publicly?", type: "string" },
+    { key: "hiddenAgenda", prompt: "What hidden agenda or private motive does it have?", type: "string" },
+    { key: "leaders", prompt: "Who leads the faction?", type: "stringArray" },
+    { key: "allies", prompt: "Who are its allies?", type: "stringArray" },
+    { key: "enemies", prompt: "Who are its enemies?", type: "stringArray" },
+    { key: "methods", prompt: "What methods does it use to get results?", type: "stringArray" },
+    { key: "baseLocation", prompt: "What is the faction's base location?", type: "string" },
+    { key: "historical", prompt: "Should this faction be checked against history or factual research? yes or no.", type: "bool" },
+    { key: "wikipediaTitle", prompt: "If factual, what Wikipedia page should be used?", type: "string", condition: (data) => Boolean(data.historical) },
+  ],
+  item: [
+    { key: "name", prompt: "What is the item name?", type: "string", required: true },
+    { key: "itemKind", prompt: "What kind of item is it? artifact, weapon, document, relic, tool, etc.", type: "string" },
+    { key: "appearance", prompt: "What does the item look like?", type: "string", required: true },
+    { key: "purpose", prompt: "What does the item do or enable?", type: "string", required: true },
+    { key: "functionInBook", prompt: "Why does the item matter to the story?", type: "string", required: true },
+    { key: "significance", prompt: "Why is the item especially valuable or symbolic?", type: "string" },
+    { key: "originStory", prompt: "Where does the item come from?", type: "string" },
+    { key: "powers", prompt: "List powers or capabilities.", type: "stringArray" },
+    { key: "limitations", prompt: "List limits, risks, or costs.", type: "stringArray" },
+    { key: "owner", prompt: "Who currently owns or carries the item?", type: "string" },
+    { key: "introducedIn", prompt: "Where is the item introduced?", type: "string" },
+    { key: "historical", prompt: "Is this item historical or fact-checked? yes or no.", type: "bool" },
+    { key: "wikipediaTitle", prompt: "If factual, what Wikipedia page should be used?", type: "string", condition: (data) => Boolean(data.historical) },
+  ],
+  secret: [
+    { key: "title", prompt: "What is the secret title or short label?", type: "string", required: true },
+    { key: "secretKind", prompt: "What kind of secret is it? identity, betrayal, crime, prophecy, origin, etc.", type: "string" },
+    { key: "functionInBook", prompt: "Why does this secret exist in the story?", type: "string", required: true },
+    { key: "stakes", prompt: "What changes if the secret is revealed or suppressed?", type: "string", required: true },
+    { key: "protectedBy", prompt: "Who or what protects the secret?", type: "stringArray" },
+    { key: "falseBeliefs", prompt: "What false beliefs does this secret create or preserve?", type: "stringArray" },
+    { key: "revealStrategy", prompt: "How should the reveal be staged?", type: "string" },
+    { key: "holders", prompt: "Who knows the truth?", type: "stringArray" },
+    { key: "revealIn", prompt: "In which chapter should it be revealed?", type: "string" },
+    { key: "knownFrom", prompt: "From which chapter can the reader safely know it?", type: "string" },
+    { key: "timelineRef", prompt: "What timeline reference anchors the secret?", type: "string" },
+    { key: "historical", prompt: "Does this secret depend on factual or historical verification? yes or no.", type: "bool" },
+    { key: "wikipediaTitle", prompt: "If factual, what Wikipedia page should be used?", type: "string", condition: (data) => Boolean(data.historical) },
+  ],
+  "timeline-event": [
+    { key: "title", prompt: "What is the event title?", type: "string", required: true },
+    { key: "date", prompt: "What is the date or chronology marker?", type: "string" },
+    { key: "participants", prompt: "Who participates in this event?", type: "stringArray" },
+    { key: "significance", prompt: "Why is this event important?", type: "string" },
+    { key: "functionInBook", prompt: "What is this event used for in the book?", type: "string" },
+    { key: "consequences", prompt: "List the consequences of the event.", type: "stringArray" },
+    { key: "historical", prompt: "Should this event be checked against history or factual research? yes or no.", type: "bool" },
+    { key: "wikipediaTitle", prompt: "If factual, what Wikipedia page should be used?", type: "string", condition: (data) => Boolean(data.historical) },
+  ],
+  chapter: [
+    { key: "number", prompt: "What chapter number should be created?", type: "int", required: true },
+    { key: "title", prompt: "What is the chapter title?", type: "string", required: true },
+    { key: "summary", prompt: "What is the chapter summary?", type: "string" },
+    { key: "pov", prompt: "Which POV ids or names drive this chapter?", type: "stringArray" },
+    { key: "timelineRef", prompt: "What timeline reference should this chapter carry?", type: "string" },
+    { key: "tags", prompt: "List chapter tags.", type: "stringArray" },
+    { key: "body", prompt: "Optional chapter notes body or beat scaffold.", type: "string" },
+  ],
+  paragraph: [
+    { key: "chapter", prompt: "Which chapter should contain this paragraph? Use chapter id or folder slug.", type: "string", required: true },
+    { key: "number", prompt: "What paragraph number should be created?", type: "int", required: true },
+    { key: "title", prompt: "What is the paragraph or scene title?", type: "string", required: true },
+    { key: "summary", prompt: "What is the scene summary?", type: "string" },
+    { key: "viewpoint", prompt: "Which viewpoint id or name drives this scene?", type: "string" },
+    { key: "tags", prompt: "List scene tags.", type: "stringArray" },
+    { key: "body", prompt: "Optional body text for the scene stub.", type: "string" },
+  ],
+};
+
+server.tool(
+  "init_book_repo",
+  "Create the local GhostWriter repository structure for a book project, including folders, guidelines, summaries, evaluations, and reusable skills.",
+  {
+    rootPath: z.string().min(1),
+    title: z.string().min(1),
+    author: z.string().optional(),
+    language: z.string().default("en"),
+    createSkills: z.boolean().default(true),
+  },
+  async ({ rootPath, title, author, language, createSkills }) => {
+    const result = await initializeBookRepo(rootPath, {
+      title,
+      author,
+      language,
+      createSkills,
+    });
+
+    return textResponse(
+      [
+        `Initialized GhostWriter book repo at ${result.rootPath}.`,
+        `Created ${result.created.length} seed files and directories.`,
+        result.created.length > 0 ? `Created files: ${result.created.join(", ")}` : "All seed files already existed.",
+      ].join("\n"),
+    );
+  },
+);
+
+server.tool(
+  "setup_framework",
+  "Return the exact npx commands and setup steps to bootstrap a new GhostWriter project from scratch.",
+  {
+    projectName: z.string().optional(),
+    title: z.string().optional(),
+    language: z.string().default("en"),
+    withReader: z.boolean().default(true),
+    sample: z.boolean().default(false),
+    readerDir: z.string().default("reader"),
+  },
+  async ({ projectName, title, language, withReader, sample, readerDir }) => {
+    return textResponse(
+      buildSetupInstructions({
+        projectName,
+        title,
+        language,
+        withReader,
+        sample,
+        readerDir,
+      }),
+    );
+  },
+);
+
+server.tool(
+  "repository_spec",
+  "Return the GhostWriter repository model and canon rules so clients can understand the book framework structure.",
+  {},
+  async () => textResponse(buildRepositorySpecSummary()),
+);
+
+server.tool(
+  "start_wizard",
+  "Start a multi-step guided wizard session for creating canon files or chapter structures. Use this when the user has not provided all required details yet.",
+  {
+    kind: wizardKindSchema,
+    rootPath: z.string().min(1),
+    seed: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({ kind, rootPath, seed }) => {
+    const session = createWizardSession(kind, rootPath, seed);
+    return textResponse(renderWizardResponse(session, "started"));
+  },
+);
+
+server.tool(
+  "wizard_answer",
+  "Answer the current prompt in a running wizard session and receive the next guided question.",
+  {
+    sessionId: z.string().min(1),
+    answer: z.unknown().optional(),
+    skip: z.boolean().default(false),
+  },
+  async ({ sessionId, answer, skip }) => {
+    const session = wizardSessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown wizard session: ${sessionId}`);
+    }
+
+    applyWizardAnswer(session, answer, skip);
+    return textResponse(renderWizardResponse(session, "updated"));
+  },
+);
+
+server.tool(
+  "wizard_status",
+  "Inspect the current state of a wizard session, including collected fields and the next question.",
+  {
+    sessionId: z.string().min(1),
+  },
+  async ({ sessionId }) => {
+    const session = wizardSessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown wizard session: ${sessionId}`);
+    }
+
+    return textResponse(renderWizardResponse(session, "status"));
+  },
+);
+
+server.tool(
+  "wizard_finalize",
+  "Finalize a wizard session and write the corresponding file or folder into the local book repository.",
+  {
+    sessionId: z.string().min(1),
+    slug: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+    body: z.string().optional(),
+    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.enum(["en", "it"]).default("en"),
+  },
+  async ({ sessionId, slug, overwrite, frontmatter, body, saveWikipediaResearch, wikipediaLang }) => {
+    const session = wizardSessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown wizard session: ${sessionId}`);
+    }
+
+    const result = await finalizeWizardSession(session, {
+      slug,
+      overwrite,
+      frontmatter,
+      body,
+      saveWikipediaResearch,
+      wikipediaLang,
+    });
+    wizardSessions.delete(sessionId);
+    return textResponse(result);
+  },
+);
+
+server.tool(
+  "wizard_cancel",
+  "Cancel a wizard session and discard its in-memory answers.",
+  {
+    sessionId: z.string().min(1),
+  },
+  async ({ sessionId }) => {
+    const existed = wizardSessions.delete(sessionId);
+    return textResponse(existed ? `Cancelled wizard session ${sessionId}.` : `Wizard session ${sessionId} was not active.`);
+  },
+);
+
+server.tool(
+  "character_wizard",
+  "Return the GhostWriter character creation checklist so the agent can gather the right information before creating a character file.",
+  {
+    name: z.string().optional(),
+  },
+  async ({ name }) => {
+    const label = name?.trim() || "new character";
+    return textResponse(
+      [
+        `Character wizard for ${label}`,
+        "",
+        "Required fields for create_character:",
+        "1. Name",
+        "2. Role tier: main, supporting, secondary, minor, background",
+        "3. Speaking style: how they talk, rhythm, vocabulary, tone",
+        "4. Background summary: what shaped them before the story starts",
+        "5. Function in book: why this character exists in the story",
+        "",
+        "Strong optional fields:",
+        "- Story role: protagonist, antagonist, mentor, ally, foil, love-interest, comic-relief, other",
+        "- Age, occupation, origin, first impression",
+        "- Traits and mannerisms",
+        "- Desires and fears",
+        "- Internal and external conflict",
+        "- Arc",
+        "- Relationships",
+        "- Factions, home location, first chapter",
+        "- Historical flag and Wikipedia title if factual verification is needed",
+      ].join("\n"),
+    );
+  },
+);
+
+server.tool(
+  "create_character",
+  "Create a rich character file using the GhostWriter character wizard fields. Use this instead of the generic entity tool when the user is adding a real story character.",
+  {
+    rootPath: z.string().min(1),
+    name: z.string().min(1),
+    slug: z.string().optional(),
+    aliases: z.array(z.string()).default([]),
+    roleTier: characterRoleTierSchema,
+    storyRole: characterStoryRoleSchema.default("other"),
+    speakingStyle: z.string().min(1),
+    backgroundSummary: z.string().min(1),
+    functionInBook: z.string().min(1),
+    age: z.number().int().nonnegative().optional(),
+    occupation: z.string().optional(),
+    origin: z.string().optional(),
+    firstImpression: z.string().optional(),
+    arc: z.string().optional(),
+    internalConflict: z.string().optional(),
+    externalConflict: z.string().optional(),
+    traits: z.array(z.string()).default([]),
+    mannerisms: z.array(z.string()).default([]),
+    desires: z.array(z.string()).default([]),
+    fears: z.array(z.string()).default([]),
+    relationships: z.array(z.string()).default([]),
+    factions: z.array(z.string()).default([]),
+    homeLocation: z.string().optional(),
+    introducedIn: z.string().optional(),
+    timelineAges: z.record(z.string(), z.number().int().nonnegative()).default({}),
+    overwrite: z.boolean().default(false),
+    historical: z.boolean().default(false),
+    wikipediaTitle: z.string().optional(),
+    wikipediaLang: z.enum(["en", "it"]).default("en"),
+    saveWikipediaResearch: z.boolean().default(true),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({
+    rootPath,
+    name,
+    slug,
+    aliases,
+    roleTier,
+    storyRole,
+    speakingStyle,
+    backgroundSummary,
+    functionInBook,
+    age,
+    occupation,
+    origin,
+    firstImpression,
+    arc,
+    internalConflict,
+    externalConflict,
+    traits,
+    mannerisms,
+    desires,
+    fears,
+    relationships,
+    factions,
+    homeLocation,
+    introducedIn,
+    timelineAges,
+    overwrite,
+    historical,
+    wikipediaTitle,
+    wikipediaLang,
+    saveWikipediaResearch,
+    frontmatter,
+  }) => {
+    const { sources, note: wikipediaNote } = await collectHistoricalResearchSupport({
+      historical,
+      wikipediaTitle,
+      wikipediaLang,
+      rootPath,
+      slug,
+      saveWikipediaResearch,
+    });
+
+    const result = await createCharacterProfile(rootPath, {
+      name,
+      slug,
+      aliases,
+      roleTier,
+      storyRole,
+      speakingStyle,
+      backgroundSummary,
+      functionInBook,
+      age,
+      occupation,
+      origin,
+      firstImpression,
+      arc,
+      internalConflict,
+      externalConflict,
+      traits,
+      mannerisms,
+      desires,
+      fears,
+      relationships,
+      factions,
+      homeLocation,
+      introducedIn,
+      timelineAges,
+      overwrite,
+      historical,
+      sources,
+      frontmatter,
+    });
+
+    return textResponse(`Created character at ${result.filePath}.${wikipediaNote}`);
+  },
+);
+
+server.tool(
+  "location_wizard",
+  "Return the GhostWriter location creation checklist so the agent can gather the right details before creating a location file.",
+  {
+    name: z.string().optional(),
+  },
+  async ({ name }) =>
+    textResponse(
+      wizardChecklist({
+        title: `Location wizard for ${name?.trim() || "new location"}`,
+        requiredHeading: "Required fields for create_location:",
+        required: [
+          "Name",
+          "Atmosphere: what the place feels like on the page",
+          "Function in book: why this place matters to the story",
+        ],
+        optionalHeading: "Strong optional fields:",
+        optional: [
+          "Location kind, region, timeline reference",
+          "Landmarks and risks",
+          "Factions present",
+          "Whether it is based on a real place or historical site",
+          "Historical flag and Wikipedia title if factual verification is needed",
+        ],
+      }),
+    ),
+);
+
+server.tool(
+  "create_location",
+  "Create a rich location file with atmosphere, story function, landmarks, risks, and optional historical research support.",
+  {
+    rootPath: z.string().min(1),
+    name: z.string().min(1),
+    slug: z.string().optional(),
+    locationKind: z.string().optional(),
+    region: z.string().optional(),
+    atmosphere: z.string().min(1),
+    functionInBook: z.string().min(1),
+    landmarks: z.array(z.string()).default([]),
+    risks: z.array(z.string()).default([]),
+    factionsPresent: z.array(z.string()).default([]),
+    basedOnRealPlace: z.boolean().default(false),
+    timelineRef: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    historical: z.boolean().default(false),
+    wikipediaTitle: z.string().optional(),
+    wikipediaLang: z.enum(["en", "it"]).default("en"),
+    saveWikipediaResearch: z.boolean().default(true),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({
+    rootPath,
+    name,
+    slug,
+    locationKind,
+    region,
+    atmosphere,
+    functionInBook,
+    landmarks,
+    risks,
+    factionsPresent,
+    basedOnRealPlace,
+    timelineRef,
+    overwrite,
+    historical,
+    wikipediaTitle,
+    wikipediaLang,
+    saveWikipediaResearch,
+    frontmatter,
+  }) => {
+    const { sources, note } = await collectHistoricalResearchSupport({
+      historical,
+      wikipediaTitle,
+      wikipediaLang,
+      rootPath,
+      slug,
+      saveWikipediaResearch,
+    });
+
+    const result = await createLocationProfile(rootPath, {
+      name,
+      slug,
+      locationKind,
+      region,
+      atmosphere,
+      functionInBook,
+      landmarks,
+      risks,
+      factionsPresent,
+      basedOnRealPlace,
+      timelineRef,
+      overwrite,
+      historical,
+      sources,
+      frontmatter,
+    });
+
+    return textResponse(`Created location at ${result.filePath}.${note}`);
+  },
+);
+
+server.tool(
+  "faction_wizard",
+  "Return the GhostWriter faction creation checklist so the agent can gather the right details before creating a faction file.",
+  {
+    name: z.string().optional(),
+  },
+  async ({ name }) =>
+    textResponse(
+      wizardChecklist({
+        title: `Faction wizard for ${name?.trim() || "new faction"}`,
+        requiredHeading: "Required fields for create_faction:",
+        required: [
+          "Name",
+          "Mission: what the faction wants",
+          "Ideology: how it justifies itself",
+          "Function in book: what narrative pressure it creates",
+        ],
+        optionalHeading: "Strong optional fields:",
+        optional: [
+          "Faction kind, public image, hidden agenda",
+          "Leaders, allies, enemies, methods",
+          "Base location",
+          "Historical flag and Wikipedia title if factual verification is needed",
+        ],
+      }),
+    ),
+);
+
+server.tool(
+  "create_faction",
+  "Create a rich faction file with mission, ideology, methods, alliances, and optional historical research support.",
+  {
+    rootPath: z.string().min(1),
+    name: z.string().min(1),
+    slug: z.string().optional(),
+    factionKind: z.string().optional(),
+    mission: z.string().min(1),
+    ideology: z.string().min(1),
+    functionInBook: z.string().min(1),
+    publicImage: z.string().optional(),
+    hiddenAgenda: z.string().optional(),
+    leaders: z.array(z.string()).default([]),
+    allies: z.array(z.string()).default([]),
+    enemies: z.array(z.string()).default([]),
+    methods: z.array(z.string()).default([]),
+    baseLocation: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    historical: z.boolean().default(false),
+    wikipediaTitle: z.string().optional(),
+    wikipediaLang: z.enum(["en", "it"]).default("en"),
+    saveWikipediaResearch: z.boolean().default(true),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({
+    rootPath,
+    name,
+    slug,
+    factionKind,
+    mission,
+    ideology,
+    functionInBook,
+    publicImage,
+    hiddenAgenda,
+    leaders,
+    allies,
+    enemies,
+    methods,
+    baseLocation,
+    overwrite,
+    historical,
+    wikipediaTitle,
+    wikipediaLang,
+    saveWikipediaResearch,
+    frontmatter,
+  }) => {
+    const { sources, note } = await collectHistoricalResearchSupport({
+      historical,
+      wikipediaTitle,
+      wikipediaLang,
+      rootPath,
+      slug,
+      saveWikipediaResearch,
+    });
+
+    const result = await createFactionProfile(rootPath, {
+      name,
+      slug,
+      factionKind,
+      mission,
+      ideology,
+      functionInBook,
+      publicImage,
+      hiddenAgenda,
+      leaders,
+      allies,
+      enemies,
+      methods,
+      baseLocation,
+      overwrite,
+      historical,
+      sources,
+      frontmatter,
+    });
+
+    return textResponse(`Created faction at ${result.filePath}.${note}`);
+  },
+);
+
+server.tool(
+  "item_wizard",
+  "Return the GhostWriter item creation checklist so the agent can gather the right details before creating an item file.",
+  {
+    name: z.string().optional(),
+  },
+  async ({ name }) =>
+    textResponse(
+      wizardChecklist({
+        title: `Item wizard for ${name?.trim() || "new item"}`,
+        requiredHeading: "Required fields for create_item:",
+        required: [
+          "Name",
+          "Appearance",
+          "Purpose: what the item does or enables",
+          "Function in book: why the item matters to the story",
+        ],
+        optionalHeading: "Strong optional fields:",
+        optional: [
+          "Item kind, significance, origin story",
+          "Owner and chapter of introduction",
+          "Powers and limitations",
+          "Historical flag and Wikipedia title if factual verification is needed",
+        ],
+      }),
+    ),
+);
+
+server.tool(
+  "create_item",
+  "Create a rich item file with appearance, purpose, significance, ownership, and optional historical research support.",
+  {
+    rootPath: z.string().min(1),
+    name: z.string().min(1),
+    slug: z.string().optional(),
+    itemKind: z.string().optional(),
+    appearance: z.string().min(1),
+    purpose: z.string().min(1),
+    functionInBook: z.string().min(1),
+    significance: z.string().optional(),
+    originStory: z.string().optional(),
+    powers: z.array(z.string()).default([]),
+    limitations: z.array(z.string()).default([]),
+    owner: z.string().optional(),
+    introducedIn: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    historical: z.boolean().default(false),
+    wikipediaTitle: z.string().optional(),
+    wikipediaLang: z.enum(["en", "it"]).default("en"),
+    saveWikipediaResearch: z.boolean().default(true),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({
+    rootPath,
+    name,
+    slug,
+    itemKind,
+    appearance,
+    purpose,
+    functionInBook,
+    significance,
+    originStory,
+    powers,
+    limitations,
+    owner,
+    introducedIn,
+    overwrite,
+    historical,
+    wikipediaTitle,
+    wikipediaLang,
+    saveWikipediaResearch,
+    frontmatter,
+  }) => {
+    const { sources, note } = await collectHistoricalResearchSupport({
+      historical,
+      wikipediaTitle,
+      wikipediaLang,
+      rootPath,
+      slug,
+      saveWikipediaResearch,
+    });
+
+    const result = await createItemProfile(rootPath, {
+      name,
+      slug,
+      itemKind,
+      appearance,
+      purpose,
+      functionInBook,
+      significance,
+      originStory,
+      powers,
+      limitations,
+      owner,
+      introducedIn,
+      overwrite,
+      historical,
+      sources,
+      frontmatter,
+    });
+
+    return textResponse(`Created item at ${result.filePath}.${note}`);
+  },
+);
+
+server.tool(
+  "secret_wizard",
+  "Return the GhostWriter secret creation checklist so the agent can gather the right details before creating a secret file.",
+  {
+    title: z.string().optional(),
+  },
+  async ({ title }) =>
+    textResponse(
+      wizardChecklist({
+        title: `Secret wizard for ${title?.trim() || "new secret"}`,
+        requiredHeading: "Required fields for create_secret:",
+        required: [
+          "Title",
+          "Function in book: why this secret exists narratively",
+          "Stakes: what changes if it is revealed or suppressed",
+        ],
+        optionalHeading: "Strong optional fields:",
+        optional: [
+          "Secret kind",
+          "Who holds it and who protects it",
+          "False beliefs created by the secret",
+          "Reveal strategy, reveal chapter, known-from chapter, timeline reference",
+          "Historical flag and Wikipedia title if factual verification is needed",
+        ],
+      }),
+    ),
+);
+
+server.tool(
+  "create_secret",
+  "Create a rich secret file with stakes, holders, protection, reveal strategy, and spoiler thresholds.",
+  {
+    rootPath: z.string().min(1),
+    title: z.string().min(1),
+    slug: z.string().optional(),
+    secretKind: z.string().optional(),
+    functionInBook: z.string().min(1),
+    stakes: z.string().min(1),
+    protectedBy: z.array(z.string()).default([]),
+    falseBeliefs: z.array(z.string()).default([]),
+    revealStrategy: z.string().optional(),
+    holders: z.array(z.string()).default([]),
+    revealIn: z.string().optional(),
+    knownFrom: z.string().optional(),
+    timelineRef: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    historical: z.boolean().default(false),
+    wikipediaTitle: z.string().optional(),
+    wikipediaLang: z.enum(["en", "it"]).default("en"),
+    saveWikipediaResearch: z.boolean().default(true),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({
+    rootPath,
+    title,
+    slug,
+    secretKind,
+    functionInBook,
+    stakes,
+    protectedBy,
+    falseBeliefs,
+    revealStrategy,
+    holders,
+    revealIn,
+    knownFrom,
+    timelineRef,
+    overwrite,
+    historical,
+    wikipediaTitle,
+    wikipediaLang,
+    saveWikipediaResearch,
+    frontmatter,
+  }) => {
+    const { sources, note } = await collectHistoricalResearchSupport({
+      historical,
+      wikipediaTitle,
+      wikipediaLang,
+      rootPath,
+      slug,
+      saveWikipediaResearch,
+    });
+
+    const result = await createSecretProfile(rootPath, {
+      title,
+      slug,
+      secretKind,
+      functionInBook,
+      stakes,
+      protectedBy,
+      falseBeliefs,
+      revealStrategy,
+      holders,
+      revealIn,
+      knownFrom,
+      timelineRef,
+      overwrite,
+      historical,
+      sources,
+      frontmatter,
+    });
+
+    return textResponse(`Created secret at ${result.filePath}.${note}`);
+  },
+);
+
+server.tool(
+  "timeline_event_wizard",
+  "Return the GhostWriter timeline event checklist so the agent can gather the right details before creating a timeline event file.",
+  {
+    title: z.string().optional(),
+  },
+  async ({ title }) =>
+    textResponse(
+      wizardChecklist({
+        title: `Timeline event wizard for ${title?.trim() || "new event"}`,
+        requiredHeading: "Required fields for create_timeline_event:",
+        required: [
+          "Title",
+          "Optional date or chronology marker",
+          "Participants",
+          "Why the event matters and what it changes",
+        ],
+        optionalHeading: "Strong optional fields:",
+        optional: [
+          "Function in book",
+          "Consequences",
+          "Historical flag and Wikipedia title if factual verification is needed",
+          "Use start_wizard with kind timeline-event for a true guided session",
+        ],
+      }),
+    ),
+);
+
+server.tool(
+  "create_timeline_event",
+  "Create a timeline event file with participants, significance, consequences, and optional factual research support.",
+  {
+    rootPath: z.string().min(1),
+    title: z.string().min(1),
+    slug: z.string().optional(),
+    date: z.string().optional(),
+    participants: z.array(z.string()).default([]),
+    significance: z.string().optional(),
+    functionInBook: z.string().optional(),
+    consequences: z.array(z.string()).default([]),
+    overwrite: z.boolean().default(false),
+    historical: z.boolean().default(false),
+    wikipediaTitle: z.string().optional(),
+    wikipediaLang: z.enum(["en", "it"]).default("en"),
+    saveWikipediaResearch: z.boolean().default(true),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({
+    rootPath,
+    title,
+    slug,
+    date,
+    participants,
+    significance,
+    functionInBook,
+    consequences,
+    overwrite,
+    historical,
+    wikipediaTitle,
+    wikipediaLang,
+    saveWikipediaResearch,
+    frontmatter,
+  }) => {
+    const { sources, note } = await collectHistoricalResearchSupport({
+      historical,
+      wikipediaTitle,
+      wikipediaLang,
+      rootPath,
+      slug,
+      saveWikipediaResearch,
+    });
+
+    const result = await createTimelineEventProfile(rootPath, {
+      title,
+      slug,
+      date,
+      participants,
+      significance,
+      functionInBook,
+      consequences,
+      overwrite,
+      historical,
+      sources,
+      frontmatter,
+    });
+
+    return textResponse(`Created timeline event at ${result.filePath}.${note}`);
+  },
+);
+
+server.tool(
+  "chapter_wizard",
+  "Return the GhostWriter chapter checklist so the agent can gather the right details before creating a chapter.",
+  {
+    title: z.string().optional(),
+  },
+  async ({ title }) =>
+    textResponse(
+      wizardChecklist({
+        title: `Chapter wizard for ${title?.trim() || "new chapter"}`,
+        requiredHeading: "Required fields for create_chapter:",
+        required: [
+          "Chapter number",
+          "Chapter title",
+        ],
+        optionalHeading: "Strong optional fields:",
+        optional: [
+          "Summary",
+          "POV ids",
+          "Timeline reference",
+          "Tags",
+          "Notes body or beat scaffold",
+          "Use start_wizard with kind chapter for a true guided session",
+        ],
+      }),
+    ),
+);
+
+server.tool(
+  "paragraph_wizard",
+  "Return the GhostWriter paragraph or scene checklist so the agent can gather the right details before creating a paragraph file.",
+  {
+    title: z.string().optional(),
+  },
+  async ({ title }) =>
+    textResponse(
+      wizardChecklist({
+        title: `Paragraph wizard for ${title?.trim() || "new scene"}`,
+        requiredHeading: "Required fields for create_paragraph:",
+        required: [
+          "Target chapter id or slug",
+          "Paragraph number",
+          "Paragraph or scene title",
+        ],
+        optionalHeading: "Strong optional fields:",
+        optional: [
+          "Summary",
+          "Viewpoint",
+          "Tags",
+          "Optional body text",
+          "Use start_wizard with kind paragraph for a true guided session",
+        ],
+      }),
+    ),
+);
+
+server.tool(
+  "create_entity",
+  "Create a canonical entity markdown file inside the local book repository. Use this for quick stubs, items, locations, factions, secrets, and timeline events. Prefer create_character for full story characters.",
+  {
+    rootPath: z.string().min(1),
+    kind: entityTypeSchema,
+    slug: z.string().optional(),
+    body: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+    historical: z.boolean().default(false),
+    wikipediaTitle: z.string().optional(),
+    wikipediaLang: z.enum(["en", "it"]).default("en"),
+    saveWikipediaResearch: z.boolean().default(true),
+  },
+  async ({
+    rootPath,
+    kind,
+    slug,
+    body,
+    overwrite,
+    frontmatter,
+    historical,
+    wikipediaTitle,
+    wikipediaLang,
+    saveWikipediaResearch,
+  }) => {
+    let wikipediaNote = "";
+    let mergedFrontmatter: Record<string, unknown> = { ...frontmatter, historical };
+
+    if (historical && wikipediaTitle) {
+      const { sources, note } = await collectHistoricalResearchSupport({
+        historical,
+        wikipediaTitle,
+        wikipediaLang,
+        rootPath,
+        slug,
+        saveWikipediaResearch,
+      });
+      mergedFrontmatter = {
+        ...mergedFrontmatter,
+        sources: uniqueStrings([
+          ...(Array.isArray(mergedFrontmatter.sources) ? mergedFrontmatter.sources.filter(isString) : []),
+          ...sources,
+        ]),
+      };
+      wikipediaNote = note;
+    }
+
+    const result = await createEntity(rootPath, kind, {
+      slug,
+      body,
+      overwrite,
+      frontmatter: mergedFrontmatter,
+    });
+
+    return textResponse(
+      `Created ${kind} at ${result.filePath}.${wikipediaNote}`,
+    );
+  },
+);
+
+server.tool(
+  "create_chapter",
+  "Create a chapter folder, chapter metadata file, and paired resume and evaluation files in the local book repository.",
+  {
+    rootPath: z.string().min(1),
+    number: z.number().int().positive(),
+    title: z.string().min(1),
+    body: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({ rootPath, number, title, body, overwrite, frontmatter }) => {
+    const result = await createChapter(rootPath, {
+      number,
+      title,
+      body,
+      overwrite,
+      frontmatter,
+    });
+
+    return textResponse(
+      `Created chapter ${result.chapterId} at ${result.chapterFilePath}.`,
+    );
+  },
+);
+
+server.tool(
+  "create_paragraph",
+  "Create a numbered paragraph or scene markdown file inside an existing chapter folder.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    number: z.number().int().positive(),
+    title: z.string().min(1),
+    body: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({ rootPath, chapter, number, title, body, overwrite, frontmatter }) => {
+    const result = await createParagraph(rootPath, {
+      chapter,
+      number,
+      title,
+      body,
+      overwrite,
+      frontmatter,
+    });
+
+    return textResponse(
+      `Created paragraph ${result.paragraphId} at ${result.filePath}.`,
+    );
+  },
+);
+
+server.tool(
+  "update_chapter",
+  "Update an existing chapter metadata file and optional chapter notes body. Use this for summary, POV, tags, and chapter notes changes without touching chapter numbering or folder naming.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+    body: z.string().optional(),
+    appendBody: z.string().optional(),
+  },
+  async ({ rootPath, chapter, frontmatterPatch, body, appendBody }) => {
+    const result = await updateChapter(rootPath, {
+      chapter,
+      frontmatterPatch,
+      body,
+      appendBody,
+    });
+
+    return textResponse(`Updated chapter at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "update_paragraph",
+  "Update an existing paragraph or scene markdown file. Use this for summary, viewpoint, tags, and body revisions without renumbering or renaming the file.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+    body: z.string().optional(),
+    appendBody: z.string().optional(),
+  },
+  async ({ rootPath, chapter, paragraph, frontmatterPatch, body, appendBody }) => {
+    const result = await updateParagraph(rootPath, {
+      chapter,
+      paragraph,
+      frontmatterPatch,
+      body,
+      appendBody,
+    });
+
+    return textResponse(`Updated paragraph at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "search_book",
+  "Search the local book repository across canon, chapters, notes, summaries, and research before drafting or editing.",
+  {
+    rootPath: z.string().min(1),
+    query: z.string().min(1),
+    scopes: z.array(z.string()).optional(),
+    limit: z.number().int().positive().max(25).default(10),
+  },
+  async ({ rootPath, query, scopes, limit }) => {
+    const hits = await searchBook(rootPath, query, { scopes, limit });
+
+    if (hits.length === 0) {
+      return textResponse(`No matches found for "${query}".`);
+    }
+
+    const lines = hits.map(
+      (hit, index) =>
+        `${index + 1}. [${hit.type}] ${hit.title} :: ${hit.path}\n   ${hit.excerpt}`,
+    );
+
+    return textResponse(lines.join("\n"));
+  },
+);
+
+server.tool(
+  "validate_book",
+  "Validate GhostWriter frontmatter and file placement rules inside the local book repository.",
+  {
+    rootPath: z.string().min(1),
+  },
+  async ({ rootPath }) => {
+    const result = await validateBook(rootPath);
+
+    if (result.valid) {
+      return textResponse(`Validation passed. Checked ${result.checked} markdown files.`);
+    }
+
+    const errorLines = result.errors.map((error, index) => `${index + 1}. ${error.path}: ${error.message}`);
+    return textResponse(
+      `Validation failed. Checked ${result.checked} markdown files.\n${errorLines.join("\n")}`,
+    );
+  },
+);
+
+server.tool(
+  "update_entity",
+  "Update an existing entity file by patching frontmatter and optionally replacing or appending markdown body content.",
+  {
+    rootPath: z.string().min(1),
+    kind: entityTypeSchema,
+    slugOrId: z.string().min(1),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+    body: z.string().optional(),
+    appendBody: z.string().optional(),
+  },
+  async ({ rootPath, kind, slugOrId, frontmatterPatch, body, appendBody }) => {
+    const result = await updateEntity(rootPath, {
+      kind,
+      slugOrId,
+      frontmatterPatch,
+      body,
+      appendBody,
+    });
+
+    return textResponse(`Updated ${kind} at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "list_related_canon",
+  "List canon files that reference or mention a given id or query, useful before writing scenes or revising continuity.",
+  {
+    rootPath: z.string().min(1),
+    idOrQuery: z.string().min(1),
+    limit: z.number().int().positive().max(20).default(10),
+  },
+  async ({ rootPath, idOrQuery, limit }) => {
+    const hits = await listRelatedCanon(rootPath, idOrQuery, { limit });
+
+    if (hits.length === 0) {
+      return textResponse(`No related canon files found for ${idOrQuery}.`);
+    }
+
+    return textResponse(
+      hits
+        .map((hit, index) => `${index + 1}. [${hit.type}] ${hit.title} :: ${hit.path} (${hit.reason})`)
+        .join("\n"),
+    );
+  },
+);
+
+server.tool(
+  "sync_resume",
+  "Refresh a chapter resume or the total book resume from the current repository state without calling another model.",
+  {
+    rootPath: z.string().min(1),
+    scope: z.enum(["chapter", "total"]),
+    chapter: z.string().optional(),
+  },
+  async ({ rootPath, scope, chapter }) => {
+    if (scope === "chapter") {
+      if (!chapter) {
+        throw new Error("chapter is required when scope is chapter.");
+      }
+
+      const result = await syncChapterResume(rootPath, chapter);
+      return textResponse(`Synced chapter resume at ${result.filePath}.`);
+    }
+
+    const result = await syncTotalResume(rootPath);
+    return textResponse(`Synced total resume at ${result.filePath} using ${result.chapterCount} chapters.`);
+  },
+);
+
+server.tool(
+  "sync_all_resumes",
+  "Refresh every chapter resume and the total book resume in one pass.",
+  {
+    rootPath: z.string().min(1),
+  },
+  async ({ rootPath }) => {
+    const result = await syncAllResumes(rootPath);
+    return textResponse(
+      `Synced ${result.chapterCount} chapter resumes and total resume at ${result.totalFilePath}.`,
+    );
+  },
+);
+
+server.tool(
+  "evaluate_chapter",
+  "Refresh the deterministic evaluation scaffold for a chapter so the agent can review pacing, continuity, and revision targets.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+  },
+  async ({ rootPath, chapter }) => {
+    const result = await syncChapterEvaluation(rootPath, chapter);
+    return textResponse(`Synced chapter evaluation scaffold at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "evaluate_book",
+  "Refresh the total evaluation scaffold for the whole book and optionally refresh chapter evaluations too.",
+  {
+    rootPath: z.string().min(1),
+    syncChapterEvaluations: z.boolean().default(true),
+  },
+  async ({ rootPath, syncChapterEvaluations }) => {
+    const result = await evaluateBook(rootPath, { syncChapterEvaluations });
+    return textResponse(
+      `Synced book evaluation at ${result.filePath} using ${result.chapterCount} chapters.${
+        result.chapterEvaluationFiles.length > 0
+          ? ` Also refreshed ${result.chapterEvaluationFiles.length} chapter evaluation files.`
+          : ""
+      }`,
+    );
+  },
+);
+
+server.tool(
+  "wikipedia_search",
+  "Search English or Italian Wikipedia for historical or factual research before adding canon to the book repository.",
+  {
+    query: z.string().min(1),
+    lang: z.enum(["en", "it"]).default("en"),
+    limit: z.number().int().positive().max(10).default(5),
+  },
+  async ({ query, lang, limit }) => {
+    const results = await searchWikipedia(query, lang, limit);
+
+    if (results.length === 0) {
+      return textResponse(`No Wikipedia matches found for "${query}" in ${lang}.`);
+    }
+
+    return textResponse(
+      results
+        .map(
+          (entry, index) =>
+            `${index + 1}. ${entry.title}\n   ${entry.snippet}\n   ${entry.url}`,
+        )
+        .join("\n"),
+    );
+  },
+);
+
+server.tool(
+  "wikipedia_page",
+  "Fetch a Wikipedia page summary and optionally save it into research/wikipedia inside the local book repository.",
+  {
+    title: z.string().min(1),
+    lang: z.enum(["en", "it"]).default("en"),
+    rootPath: z.string().optional(),
+    saveToResearch: z.boolean().default(false),
+    slug: z.string().optional(),
+  },
+  async ({ title, lang, rootPath, saveToResearch, slug }) => {
+    const page = await fetchWikipediaPage(title, lang);
+    let researchPath = "";
+
+    if (saveToResearch) {
+      if (!rootPath) {
+        throw new Error("rootPath is required when saveToResearch is true.");
+      }
+
+      researchPath = await writeWikipediaResearchSnapshot(rootPath, {
+        lang,
+        title: page.title,
+        pageUrl: page.url,
+        slug,
+        summary: page.extract,
+        body: page.description ? `Description: ${page.description}` : undefined,
+      });
+    }
+
+    return textResponse(
+      `${page.title}\n${page.description ?? ""}\n\n${page.extract}\n\n${page.url}${researchPath ? `\nSaved to ${researchPath}` : ""}`,
+    );
+  },
+);
+
+server.tool(
+  "export_epub",
+  "Export the current book repository into an EPUB file from the ordered chapter and paragraph markdown files.",
+  {
+    rootPath: z.string().min(1),
+    outputPath: z.string().optional(),
+    title: z.string().optional(),
+    author: z.string().optional(),
+    language: z.string().optional(),
+  },
+  async ({ rootPath, outputPath, title, author, language }) => {
+    const result = await exportEpub(rootPath, {
+      outputPath,
+      title,
+      author,
+      language,
+    });
+
+    return textResponse(
+      `Exported EPUB with ${result.chapterCount} chapters to ${result.outputPath}.`,
+    );
+  },
+);
+
+const transport = new StdioServerTransport();
+await server.connect(transport);
+
+function textResponse(text: string) {
+  return {
+    content: [{ type: "text" as const, text }],
+  };
+}
+
+function wizardChecklist(options: {
+  title: string;
+  requiredHeading: string;
+  required: string[];
+  optionalHeading: string;
+  optional: string[];
+}): string {
+  return [
+    options.title,
+    "",
+    options.requiredHeading,
+    ...options.required.map((entry, index) => `${index + 1}. ${entry}`),
+    "",
+    options.optionalHeading,
+    ...options.optional.map((entry) => `- ${entry}`),
+  ].join("\n");
+}
+
+async function collectHistoricalResearchSupport(options: {
+  historical: boolean;
+  wikipediaTitle?: string;
+  wikipediaLang: "en" | "it";
+  rootPath: string;
+  slug?: string;
+  saveWikipediaResearch: boolean;
+}): Promise<{ sources: string[]; note: string }> {
+  if (!options.historical || !options.wikipediaTitle) {
+    return { sources: [], note: "" };
+  }
+
+  const page = await fetchWikipediaPage(options.wikipediaTitle, options.wikipediaLang);
+  let note = "";
+
+  if (options.saveWikipediaResearch) {
+    const researchPath = await writeWikipediaResearchSnapshot(options.rootPath, {
+      lang: options.wikipediaLang,
+      title: page.title,
+      pageUrl: page.url,
+      slug: options.slug,
+      summary: page.extract,
+      body: page.description ? `Description: ${page.description}` : undefined,
+    });
+    note = ` Saved research snapshot to ${researchPath}.`;
+  }
+
+  return { sources: [page.url], note };
+}
+
+function createWizardSession(kind: WizardKind, rootPath: string, seed: Record<string, unknown>): WizardSession {
+  const id = createWizardSessionId();
+  const session: WizardSession = {
+    id,
+    kind,
+    rootPath,
+    steps: wizardDefinitions[kind],
+    stepIndex: 0,
+    data: { ...seed },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const next = getNextWizardStep(session);
+  session.stepIndex = next.index;
+  wizardSessions.set(id, session);
+  return session;
+}
+
+function applyWizardAnswer(session: WizardSession, answer: unknown, skip: boolean): void {
+  const next = getNextWizardStep(session);
+  if (!next.step) {
+    throw new Error(`Wizard session ${session.id} is already ready to finalize.`);
+  }
+
+  if (skip) {
+    if (next.step.required) {
+      throw new Error(`Cannot skip required field ${next.step.key}.`);
+    }
+    session.data[next.step.key] = null;
+  } else {
+    session.data[next.step.key] = parseWizardAnswer(next.step, answer);
+  }
+
+  session.updatedAt = new Date().toISOString();
+  session.stepIndex = getNextWizardStep(session, next.index + 1).index;
+}
+
+function renderWizardResponse(session: WizardSession, state: "started" | "updated" | "status"): string {
+  const next = getNextWizardStep(session);
+  const completed = countAnsweredWizardSteps(session);
+  const total = session.steps.filter((step) => step.condition?.(session.data) !== false).length;
+  const lines = [
+    `Wizard ${state}: ${session.kind}`,
+    `Session: ${session.id}`,
+    `Progress: ${completed}/${total}`,
+    "",
+  ];
+
+  if (next.step) {
+    lines.push(`Next field: ${next.step.key}`);
+    lines.push(next.step.prompt);
+    lines.push("");
+  } else {
+    lines.push("Wizard is complete and ready to finalize.");
+    lines.push("Call wizard_finalize to create the file or folder.");
+    lines.push("");
+  }
+
+  lines.push("Collected data:");
+  lines.push(...formatWizardDataLines(session.data));
+  return lines.join("\n");
+}
+
+async function finalizeWizardSession(
+  session: WizardSession,
+  options: {
+    slug?: string;
+    overwrite: boolean;
+    frontmatter: Record<string, unknown>;
+    body?: string;
+    saveWikipediaResearch: boolean;
+    wikipediaLang: "en" | "it";
+  },
+): Promise<string> {
+  const pending = getNextWizardStep(session);
+  if (pending.step) {
+    throw new Error(`Wizard session ${session.id} is not complete. Next required field: ${pending.step.key}`);
+  }
+
+  const data = sanitizeWizardData(session.data);
+  const historical = Boolean(data.historical);
+  const wikipediaTitle = stringOrUndefined(data.wikipediaTitle);
+  const research = await collectHistoricalResearchSupport({
+    historical,
+    wikipediaTitle,
+    wikipediaLang: options.wikipediaLang,
+    rootPath: session.rootPath,
+    slug: options.slug,
+    saveWikipediaResearch: options.saveWikipediaResearch,
+  });
+
+  switch (session.kind) {
+    case "character": {
+      const result = await createCharacterProfile(session.rootPath, {
+        slug: options.slug,
+        overwrite: options.overwrite,
+        name: requireString(data.name, "name"),
+        roleTier: requireCharacterRoleTier(data.roleTier),
+        storyRole: stringOrUndefined(data.storyRole) as never,
+        speakingStyle: requireString(data.speakingStyle, "speakingStyle"),
+        backgroundSummary: requireString(data.backgroundSummary, "backgroundSummary"),
+        functionInBook: requireString(data.functionInBook, "functionInBook"),
+        age: numberOrUndefined(data.age),
+        occupation: stringOrUndefined(data.occupation),
+        origin: stringOrUndefined(data.origin),
+        firstImpression: stringOrUndefined(data.firstImpression),
+        arc: stringOrUndefined(data.arc),
+        internalConflict: stringOrUndefined(data.internalConflict),
+        externalConflict: stringOrUndefined(data.externalConflict),
+        traits: stringArrayOrEmpty(data.traits),
+        mannerisms: stringArrayOrEmpty(data.mannerisms),
+        desires: stringArrayOrEmpty(data.desires),
+        fears: stringArrayOrEmpty(data.fears),
+        relationships: stringArrayOrEmpty(data.relationships),
+        factions: stringArrayOrEmpty(data.factions),
+        homeLocation: stringOrUndefined(data.homeLocation),
+        introducedIn: stringOrUndefined(data.introducedIn),
+        historical,
+        sources: research.sources,
+        body: options.body,
+        frontmatter: options.frontmatter,
+      });
+      return `Created ${session.kind} at ${result.filePath}.${research.note}`;
+    }
+    case "location": {
+      const result = await createLocationProfile(session.rootPath, {
+        slug: options.slug,
+        overwrite: options.overwrite,
+        name: requireString(data.name, "name"),
+        locationKind: stringOrUndefined(data.locationKind),
+        region: stringOrUndefined(data.region),
+        atmosphere: requireString(data.atmosphere, "atmosphere"),
+        functionInBook: requireString(data.functionInBook, "functionInBook"),
+        landmarks: stringArrayOrEmpty(data.landmarks),
+        risks: stringArrayOrEmpty(data.risks),
+        factionsPresent: stringArrayOrEmpty(data.factionsPresent),
+        basedOnRealPlace: Boolean(data.basedOnRealPlace),
+        timelineRef: stringOrUndefined(data.timelineRef),
+        historical,
+        sources: research.sources,
+        body: options.body,
+        frontmatter: options.frontmatter,
+      });
+      return `Created ${session.kind} at ${result.filePath}.${research.note}`;
+    }
+    case "faction": {
+      const result = await createFactionProfile(session.rootPath, {
+        slug: options.slug,
+        overwrite: options.overwrite,
+        name: requireString(data.name, "name"),
+        factionKind: stringOrUndefined(data.factionKind),
+        mission: requireString(data.mission, "mission"),
+        ideology: requireString(data.ideology, "ideology"),
+        functionInBook: requireString(data.functionInBook, "functionInBook"),
+        publicImage: stringOrUndefined(data.publicImage),
+        hiddenAgenda: stringOrUndefined(data.hiddenAgenda),
+        leaders: stringArrayOrEmpty(data.leaders),
+        allies: stringArrayOrEmpty(data.allies),
+        enemies: stringArrayOrEmpty(data.enemies),
+        methods: stringArrayOrEmpty(data.methods),
+        baseLocation: stringOrUndefined(data.baseLocation),
+        historical,
+        sources: research.sources,
+        body: options.body,
+        frontmatter: options.frontmatter,
+      });
+      return `Created ${session.kind} at ${result.filePath}.${research.note}`;
+    }
+    case "item": {
+      const result = await createItemProfile(session.rootPath, {
+        slug: options.slug,
+        overwrite: options.overwrite,
+        name: requireString(data.name, "name"),
+        itemKind: stringOrUndefined(data.itemKind),
+        appearance: requireString(data.appearance, "appearance"),
+        purpose: requireString(data.purpose, "purpose"),
+        functionInBook: requireString(data.functionInBook, "functionInBook"),
+        significance: stringOrUndefined(data.significance),
+        originStory: stringOrUndefined(data.originStory),
+        powers: stringArrayOrEmpty(data.powers),
+        limitations: stringArrayOrEmpty(data.limitations),
+        owner: stringOrUndefined(data.owner),
+        introducedIn: stringOrUndefined(data.introducedIn),
+        historical,
+        sources: research.sources,
+        body: options.body,
+        frontmatter: options.frontmatter,
+      });
+      return `Created ${session.kind} at ${result.filePath}.${research.note}`;
+    }
+    case "secret": {
+      const result = await createSecretProfile(session.rootPath, {
+        slug: options.slug,
+        overwrite: options.overwrite,
+        title: requireString(data.title, "title"),
+        secretKind: stringOrUndefined(data.secretKind),
+        functionInBook: requireString(data.functionInBook, "functionInBook"),
+        stakes: requireString(data.stakes, "stakes"),
+        protectedBy: stringArrayOrEmpty(data.protectedBy),
+        falseBeliefs: stringArrayOrEmpty(data.falseBeliefs),
+        revealStrategy: stringOrUndefined(data.revealStrategy),
+        holders: stringArrayOrEmpty(data.holders),
+        revealIn: stringOrUndefined(data.revealIn),
+        knownFrom: stringOrUndefined(data.knownFrom),
+        timelineRef: stringOrUndefined(data.timelineRef),
+        historical,
+        sources: research.sources,
+        body: options.body,
+        frontmatter: options.frontmatter,
+      });
+      return `Created ${session.kind} at ${result.filePath}.${research.note}`;
+    }
+    case "timeline-event": {
+      const result = await createTimelineEventProfile(session.rootPath, {
+        slug: options.slug,
+        overwrite: options.overwrite,
+        title: requireString(data.title, "title"),
+        date: stringOrUndefined(data.date),
+        participants: stringArrayOrEmpty(data.participants),
+        significance: stringOrUndefined(data.significance),
+        functionInBook: stringOrUndefined(data.functionInBook),
+        consequences: stringArrayOrEmpty(data.consequences),
+        historical,
+        sources: research.sources,
+        body: options.body,
+        frontmatter: options.frontmatter,
+      });
+      return `Created ${session.kind} at ${result.filePath}.${research.note}`;
+    }
+    case "chapter": {
+      const result = await createChapter(session.rootPath, {
+        number: requireNumber(data.number, "number"),
+        title: requireString(data.title, "title"),
+        body: options.body ?? stringOrUndefined(data.body),
+        overwrite: options.overwrite,
+        frontmatter: {
+          summary: stringOrUndefined(data.summary),
+          pov: stringArrayOrEmpty(data.pov),
+          timeline_ref: stringOrUndefined(data.timelineRef),
+          tags: stringArrayOrEmpty(data.tags),
+          ...options.frontmatter,
+        },
+      });
+      return `Created ${session.kind} at ${result.chapterFilePath}.`;
+    }
+    case "paragraph": {
+      const result = await createParagraph(session.rootPath, {
+        chapter: requireString(data.chapter, "chapter"),
+        number: requireNumber(data.number, "number"),
+        title: requireString(data.title, "title"),
+        body: options.body ?? stringOrUndefined(data.body),
+        overwrite: options.overwrite,
+        frontmatter: {
+          summary: stringOrUndefined(data.summary),
+          viewpoint: stringOrUndefined(data.viewpoint),
+          tags: stringArrayOrEmpty(data.tags),
+          ...options.frontmatter,
+        },
+      });
+      return `Created ${session.kind} at ${result.filePath}.`;
+    }
+    default:
+      throw new Error(`Unsupported wizard kind: ${session.kind}`);
+  }
+}
+
+function getNextWizardStep(session: WizardSession, startIndex = session.stepIndex): { step: WizardStep | null; index: number } {
+  for (let index = startIndex; index < session.steps.length; index += 1) {
+    const step = session.steps[index];
+    if (step.condition && !step.condition(session.data)) continue;
+    if (hasWizardKey(session.data, step.key)) continue;
+    return { step, index };
+  }
+
+  return { step: null, index: session.steps.length };
+}
+
+function countAnsweredWizardSteps(session: WizardSession): number {
+  return session.steps.filter((step) => step.condition?.(session.data) !== false && hasWizardKey(session.data, step.key)).length;
+}
+
+function hasWizardKey(data: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(data, key);
+}
+
+function parseWizardAnswer(step: WizardStep, answer: unknown): unknown {
+  if (answer === undefined || answer === null) {
+    if (step.required) {
+      throw new Error(`Field ${step.key} requires an answer.`);
+    }
+    return null;
+  }
+
+  switch (step.type) {
+    case "string": {
+      const value = typeof answer === "string" ? answer.trim() : String(answer).trim();
+      if (!value && step.required) {
+        throw new Error(`Field ${step.key} requires a non-empty answer.`);
+      }
+      return value || null;
+    }
+    case "int": {
+      const value = typeof answer === "number" ? answer : Number(String(answer).trim());
+      if (!Number.isInteger(value)) {
+        throw new Error(`Field ${step.key} requires an integer answer.`);
+      }
+      return value;
+    }
+    case "bool": {
+      if (typeof answer === "boolean") return answer;
+      const normalized = String(answer).trim().toLowerCase();
+      if (["y", "yes", "true", "1"].includes(normalized)) return true;
+      if (["n", "no", "false", "0"].includes(normalized)) return false;
+      throw new Error(`Field ${step.key} requires yes/no or true/false.`);
+    }
+    case "stringArray": {
+      if (Array.isArray(answer)) {
+        return answer.map((value) => String(value).trim()).filter(Boolean);
+      }
+      const normalized = String(answer)
+        .split(/\r?\n|,|;/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+      return normalized;
+    }
+    default:
+      return answer;
+  }
+}
+
+function sanitizeWizardData(data: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(data).filter(([, value]) => {
+      if (value === null || value === undefined) return false;
+      if (typeof value === "string") return value.trim().length > 0;
+      if (Array.isArray(value)) return value.length > 0;
+      return true;
+    }),
+  );
+}
+
+function formatWizardDataLines(data: Record<string, unknown>): string[] {
+  const sanitized = sanitizeWizardData(data);
+  const entries = Object.entries(sanitized);
+  if (entries.length === 0) return ["- No answers collected yet."];
+  return entries.map(([key, value]) => `- ${key}: ${formatWizardValue(value)}`);
+}
+
+function formatWizardValue(value: unknown): string {
+  if (Array.isArray(value)) return value.join(", ");
+  return String(value);
+}
+
+function requireString(value: unknown, key: string): string {
+  const parsed = stringOrUndefined(value);
+  if (!parsed) {
+    throw new Error(`Wizard field ${key} is required.`);
+  }
+  return parsed;
+}
+
+function requireNumber(value: unknown, key: string): number {
+  const parsed = numberOrUndefined(value);
+  if (parsed === undefined) {
+    throw new Error(`Wizard field ${key} is required.`);
+  }
+  return parsed;
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function stringArrayOrEmpty(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0) : [];
+}
+
+function requireCharacterRoleTier(value: unknown) {
+  return characterRoleTierSchema.parse(requireString(value, "roleTier"));
+}
+
+function createWizardSessionId(): string {
+  return `wiz_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}

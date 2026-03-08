@@ -1,0 +1,52 @@
+{
+  "name": "@ghostwriter/astro-reader",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Astro reader and scaffolding CLI for GhostWriter book repositories.",
+  "license": "MIT",
+  "bin": {
+    "ghostwriter-reader-init": "cli-dist/cli.js"
+  },
+  "exports": {
+    "./scaffold": {
+      "types": "./cli-dist/scaffold.d.ts",
+      "import": "./cli-dist/scaffold.js"
+    }
+  },
+  "files": [
+    "cli-dist",
+    "dist",
+    "src",
+    "astro.config.mjs",
+    "tsconfig.json"
+  ],
+  "keywords": [
+    "ghostwriter",
+    "astro",
+    "books",
+    "reader",
+    "markdown"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build:cli": "tsc -p tsconfig.cli.json",
+    "dev": "astro dev",
+    "build": "npm run build:cli && astro build",
+    "preview": "astro preview",
+    "test": "npm run build:cli && node --test test/**/*.test.mjs"
+  },
+  "dependencies": {
+    "@ghostwriter/core": "^0.1.0",
+    "astro": "^5.14.1",
+    "marked": "^16.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.9.3"
+  }
+}

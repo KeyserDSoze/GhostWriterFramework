@@ -1,0 +1,36 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { loadEntityIndexData } from "../../lib/book";
+
+const { ready, entities } = await loadEntityIndexData("faction");
+---
+
+<BaseLayout title="Factions" description="Browse the factions of the book." activeSection="factions">
+  <section class="hero">
+    <p class="eyebrow">Canon Atlas</p>
+    <h1>Factions</h1>
+    <p class="lede">Map institutions, cults, guilds, and hidden power structures shaping the story.</p>
+  </section>
+
+  {ready ? (
+    <section class="section">
+      <div class="catalog-grid">
+        {entities.map((entity) => (
+          <article class="card catalog-card">
+            <a href={`/factions/${entity.slug}/`}>
+              <div class="chapter-number">{String(entity.metadata.faction_kind ?? "faction")}</div>
+              <h2 class="chapter-title">{String(entity.metadata.name ?? entity.slug)}</h2>
+              <div class="chapter-meta">{String(entity.metadata.function_in_book ?? entity.metadata.mission ?? "Open the entry to inspect power, ideology, and methods.")}</div>
+              <div class="chip-row">
+                {entity.metadata.base_location && <span class="chip">{String(entity.metadata.base_location)}</span>}
+                {entity.metadata.historical && <span class="chip">historical</span>}
+              </div>
+            </a>
+          </article>
+        ))}
+      </div>
+    </section>
+  ) : (
+    <div class="empty">No book repository detected for the reader.</div>
+  )}
+</BaseLayout>

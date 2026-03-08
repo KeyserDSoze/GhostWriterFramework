@@ -1,0 +1,48 @@
+{
+  "name": "@ghostwriter/core",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Core schemas, repo scaffolding, search, validation, and export helpers for GhostWriter book repositories.",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "ghostwriter",
+    "books",
+    "markdown",
+    "mcp",
+    "writing"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/**/*.test.mjs",
+    "validate": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "epub-gen-memory": "^1.0.2",
+    "fast-glob": "^3.3.3",
+    "gray-matter": "^4.0.3",
+    "marked": "^16.3.0",
+    "yaml": "^2.8.1",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.9.3"
+  }
+}

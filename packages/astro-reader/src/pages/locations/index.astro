@@ -1,0 +1,36 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { loadEntityIndexData } from "../../lib/book";
+
+const { ready, entities } = await loadEntityIndexData("location");
+---
+
+<BaseLayout title="Locations" description="Browse the book locations." activeSection="locations">
+  <section class="hero">
+    <p class="eyebrow">Canon Atlas</p>
+    <h1>Locations</h1>
+    <p class="lede">Track atmosphere, landmarks, risks, and narrative function across the world of the book.</p>
+  </section>
+
+  {ready ? (
+    <section class="section">
+      <div class="catalog-grid">
+        {entities.map((entity) => (
+          <article class="card catalog-card">
+            <a href={`/locations/${entity.slug}/`}>
+              <div class="chapter-number">{String(entity.metadata.location_kind ?? "location")}</div>
+              <h2 class="chapter-title">{String(entity.metadata.name ?? entity.slug)}</h2>
+              <div class="chapter-meta">{String(entity.metadata.atmosphere ?? entity.metadata.function_in_book ?? "Open the entry to inspect place notes.")}</div>
+              <div class="chip-row">
+                {entity.metadata.region && <span class="chip">{String(entity.metadata.region)}</span>}
+                {entity.metadata.based_on_real_place && <span class="chip">real-world basis</span>}
+              </div>
+            </a>
+          </article>
+        ))}
+      </div>
+    </section>
+  ) : (
+    <div class="empty">No book repository detected for the reader.</div>
+  )}
+</BaseLayout>
