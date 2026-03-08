@@ -7,6 +7,8 @@ const localTools = tools.filter((tool) => tool.surface === "local");
 const publicTools = tools.filter((tool) => tool.surface === "public");
 const localCategories = [...new Set(localTools.map((tool) => tool.category))];
 const opencodeConfig = await getOpencodeConfig();
+const publicMcpUrl = process.env.MCP_PUBLIC_URL ?? "https://narrarium.space/mcp";
+const publicHealthUrl = process.env.MCP_HEALTH_URL ?? "https://narrarium.space/health";
 ---
 
 <DocsLayout title="MCP Integration" description="GhostWriter MCP setup and tool reference" activeHref="/mcp/">
@@ -27,7 +29,8 @@ const opencodeConfig = await getOpencodeConfig();
     <article class="card">
       <h3>Public HTTP MCP</h3>
       <p>Use for setup guidance, repository spec help, and Wikipedia research. Intended for `/mcp` and `/health` deployment on Vercel.</p>
-      <pre><code>https://&lt;your-deployment&gt;/mcp</code></pre>
+      <pre><code>{publicMcpUrl}</code></pre>
+      <p><strong>Health:</strong> <code>{publicHealthUrl}</code></p>
     </article>
   </section>
 

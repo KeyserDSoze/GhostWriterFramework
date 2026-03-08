@@ -71,6 +71,10 @@ The workflow already targets:
 - `VERCEL_ORG_ID=team_Jut3umUxSp1D1Z1sqmv4iUjc`
 - `VERCEL_PROJECT_ID=prj_b9bxn0P4ilMmG40DiZoZ057qA1Zj`
 
+Production endpoint target:
+
+- `https://narrarium.space/mcp`
+
 If you want local image generation through `generate_asset_image`, also set:
 
 - `OPENAI_API_KEY`

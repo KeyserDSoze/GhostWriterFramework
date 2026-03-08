@@ -265,6 +265,12 @@ Two workflows are included:
 - `.github/workflows/deploy-vercel-mcp.yml`: deploys the public HTTP MCP endpoint to Vercel
 - `.github/workflows/deploy-docs-pages.yml`: builds and publishes the documentation site to GitHub Pages
 
+Current production domains:
+
+- docs site: `https://narrarium.net`
+- public MCP endpoint: `https://narrarium.space/mcp`
+- public MCP health: `https://narrarium.space/health`
+
 To enable npm publishing from GitHub:
 
 1. Add the repository secret `NPM_TOKEN`
