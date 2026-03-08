@@ -138,6 +138,101 @@ Project-level OpenCode and agent rules live in `AGENTS.md`.
 - `wikipedia_search` and `wikipedia_page`: research factual or historical material
 - `export_epub`: turn the repository into an EPUB
 
+## Practical image examples
+
+With the local MCP server and `OPENAI_API_KEY` configured, a typical image workflow looks like this.
+
+| Use case | Subject | Asset path | Typical tool flow |
+| --- | --- | --- | --- |
+| Book cover | `book` | `assets/book/cover.*` | `register_asset` or `generate_asset_image` |
+| Character portrait | `character:lyra-vale` | `assets/characters/lyra-vale/primary.*` | `create_asset_prompt` -> `generate_asset_image` |
+| Chapter art | `chapter:001-the-arrival` | `assets/chapters/001-the-arrival/primary.*` | `create_asset_prompt` -> `generate_asset_image` |
+| Scene art | `paragraph:001-the-arrival:001-at-the-gate` | `assets/chapters/001-the-arrival/paragraphs/001-at-the-gate/primary.*` | `generate_asset_image` directly or after `create_asset_prompt` |
+
+Create a reusable character portrait prompt:
+
+```json
+{
+  "tool": "create_asset_prompt",
+  "arguments": {
+    "rootPath": "C:/books/my-book",
+    "subject": "character:lyra-vale",
+    "body": "# Intent\n\nPrimary portrait for Lyra.\n\n# Prompt\n\nPortrait of Lyra Vale, guarded expression, harbor fog, muted cinematic palette, portrait composition, 2:3 ratio.\n\n# Notes\n\nKeep facial features consistent across future chapter and scene art.",
+    "orientation": "portrait",
+    "aspectRatio": "2:3"
+  }
+}
+```
+
+Generate the actual image into `assets/characters/lyra-vale/primary.png`:
+
+```json
+{
+  "tool": "generate_asset_image",
+  "arguments": {
+    "rootPath": "C:/books/my-book",
+    "subject": "character:lyra-vale",
+    "provider": "openai",
+    "model": "gpt-image-1"
+  }
+}
+```
+
+Generate a scene image directly for a paragraph:
+
+```json
+{
+  "tool": "generate_asset_image",
+  "arguments": {
+    "rootPath": "C:/books/my-book",
+    "subject": "paragraph:001-the-arrival:001-at-the-gate",
+    "prompt": "Lyra arriving at Gray Harbor's gate in cold fog, suspicious guards, cinematic portrait framing, book-cover quality illustration, 2:3 ratio.",
+    "provider": "openai",
+    "model": "gpt-image-1"
+  }
+}
+```
+
+Import an image you created elsewhere into the canonical assets tree:
+
+```json
+{
+  "tool": "register_asset",
+  "arguments": {
+    "rootPath": "C:/books/my-book",
+    "subject": "book",
+    "assetKind": "cover",
+    "sourceFilePath": "C:/renders/my-book-cover.png",
+    "body": "# Intent\n\nMain book cover.\n\n# Prompt\n\nFinal cover prompt used for the external render."
+  }
+}
+```
+
+Generate chapter art into `assets/chapters/001-the-arrival/primary.png`:
+
+```json
+{
+  "tool": "generate_asset_image",
+  "arguments": {
+    "rootPath": "C:/books/my-book",
+    "subject": "chapter:001-the-arrival",
+    "prompt": "Lyra approaching Gray Harbor through cold fog, chapter-opening illustration, portrait orientation, dramatic negative space, consistent with the book's visual language.",
+    "provider": "openai",
+    "model": "gpt-image-1"
+  }
+}
+```
+
+The recommended place for reusable style rules and prompt templates is `guidelines/images.md`.
+
+The Astro reader now auto-renders these canonical assets when present for:
+
+- `book` cover on the home page
+- entity detail pages such as characters, locations, factions, items, secrets, and timeline events
+- chapter pages and paragraph or scene sections
+
+If you later rename canon with `rename_entity`, `rename_chapter`, or `rename_paragraph`, GhostWriter also moves the matching asset folders.
+
 ## Repository spec
 
 The current repository convention is documented in `docs/repository-spec.md`.

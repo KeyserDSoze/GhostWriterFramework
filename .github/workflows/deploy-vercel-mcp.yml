@@ -21,6 +21,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     env:
       VERCEL_ORG_ID: team_Jut3umUxSp1D1Z1sqmv4iUjc
       VERCEL_PROJECT_ID: prj_b9bxn0P4ilMmG40DiZoZ057qA1Zj

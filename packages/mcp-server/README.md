@@ -94,6 +94,73 @@ Point OpenCode or another MCP client at the built server and use tools such as:
 - `sync_all_resumes`
 - `evaluate_book`
 
+## Practical asset examples
+
+| Use case | Subject | Asset path |
+| --- | --- | --- |
+| Book cover | `book` | `assets/book/cover.*` |
+| Character portrait | `character:lyra-vale` | `assets/characters/lyra-vale/primary.*` |
+| Chapter art | `chapter:001-the-arrival` | `assets/chapters/001-the-arrival/primary.*` |
+| Scene art | `paragraph:001-the-arrival:001-at-the-gate` | `assets/chapters/001-the-arrival/paragraphs/001-at-the-gate/primary.*` |
+
+Create a portrait prompt for a character:
+
+```json
+{
+  "tool": "create_asset_prompt",
+  "arguments": {
+    "rootPath": "C:/books/my-book",
+    "subject": "character:lyra-vale",
+    "body": "# Prompt\n\nPortrait of Lyra Vale, guarded expression, harbor fog, muted cinematic palette, portrait composition, 2:3 ratio."
+  }
+}
+```
+
+Generate the image with OpenAI into the canonical asset path:
+
+```json
+{
+  "tool": "generate_asset_image",
+  "arguments": {
+    "rootPath": "C:/books/my-book",
+    "subject": "character:lyra-vale",
+    "provider": "openai",
+    "model": "gpt-image-1"
+  }
+}
+```
+
+Import an existing render as the book cover:
+
+```json
+{
+  "tool": "register_asset",
+  "arguments": {
+    "rootPath": "C:/books/my-book",
+    "subject": "book",
+    "assetKind": "cover",
+    "sourceFilePath": "C:/renders/my-book-cover.png"
+  }
+}
+```
+
+Generate chapter art directly:
+
+```json
+{
+  "tool": "generate_asset_image",
+  "arguments": {
+    "rootPath": "C:/books/my-book",
+    "subject": "chapter:001-the-arrival",
+    "prompt": "Lyra approaching Gray Harbor through cold fog, chapter-opening illustration, portrait orientation, dramatic negative space, consistent with the book's visual language.",
+    "provider": "openai",
+    "model": "gpt-image-1"
+  }
+}
+```
+
+If you later rename canon with `rename_entity`, `rename_chapter`, or `rename_paragraph`, the MCP moves matching asset folders too.
+
 ## OpenCode example
 
 ```json
