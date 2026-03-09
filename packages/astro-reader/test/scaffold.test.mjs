@@ -18,8 +18,10 @@ test("reader scaffold includes canon index pages and configurable core dependenc
 
     const packageJson = JSON.parse(await readFile(path.join(rootPath, "package.json"), "utf8"));
     const bookConfig = await readFile(path.join(rootPath, "src", "lib", "book-config.ts"), "utf8");
+    const bookConfigScript = await readFile(path.join(rootPath, "scripts", "book-config.mjs"), "utf8");
     const bookHelper = await readFile(path.join(rootPath, "src", "lib", "book.ts"), "utf8");
     const exportScript = await readFile(path.join(rootPath, "scripts", "export-epub.mjs"), "utf8");
+    const devScript = await readFile(path.join(rootPath, "scripts", "dev.mjs"), "utf8");
     const pagesWorkflow = await readFile(path.join(rootPath, ".github", "workflows", "deploy-pages.yml"), "utf8");
     const cname = await readFile(path.join(rootPath, "public", "CNAME"), "utf8");
     const charactersPage = await readFile(path.join(rootPath, "src", "pages", "characters", "index.astro"), "utf8");
@@ -31,10 +33,14 @@ test("reader scaffold includes canon index pages and configurable core dependenc
 
     assert.equal(result.coreDependency, "file:../../packages/core");
     assert.equal(packageJson.dependencies.narrarium, "file:../../packages/core");
+    assert.equal(packageJson.dependencies.chokidar, "^4.0.3");
+    assert.equal(packageJson.scripts.dev, "node ./scripts/dev.mjs");
     assert.equal(packageJson.scripts["export:epub"], "node ./scripts/export-epub.mjs");
     assert.match(bookConfig, /defaultBookRoot = "\.\."/);
+    assert.match(bookConfigScript, /defaultBookRoot = "\.\."/);
     assert.match(bookHelper, /from "\.\/book-config\.js"/);
-    assert.match(exportScript, /exportEpub/);
+    assert.match(exportScript, /exportReaderEpub/);
+    assert.match(devScript, /Watching book files/);
     assert.match(pagesWorkflow, /Deploy Reader To GitHub Pages/);
     assert.match(pagesWorkflow, /SITE_URL: https:\/\/example.com/);
     assert.equal(cname.trim(), "example.com");

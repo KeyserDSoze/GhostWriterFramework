@@ -34,6 +34,7 @@ npx narrarium-astro-reader reader --book-root .. --package-name my-book-reader
 - timeline index and event detail pages
 - automatic rendering of canonical book, entity, chapter, and scene images when matching assets exist
 - automatic EPUB export for `public/downloads/book.epub`
+- live watcher for book markdown, canon, and assets during `npm run dev`
 - web-only canon mention popups and light or dark theme toggle
 - popup tabs for overview, notes, metadata, and image previews
 - starter GitHub Pages deployment workflow when scaffolded into a standalone app
@@ -47,6 +48,7 @@ npm run dev
 ```
 
 The generated reader expects `NARRARIUM_BOOK_ROOT` to point at a Narrarium book repository.
-Both `npm run dev` and `npm run build` refresh the EPUB automatically before Astro runs.
+`npm run dev` now watches the linked book repo, regenerates the EPUB on changes, and triggers a full browser reload.
+`npm run build` also refreshes the EPUB automatically before Astro builds.
 
 You can also pass `--pages-domain example.com` when scaffolding to emit `public/CNAME` and a Pages workflow already pointed at that domain.

@@ -32,6 +32,7 @@ output.write(
     "- npm install",
     "- copy .env.example to .env if you want a local override",
     "- npm run dev",
+    "- The dev server will watch the linked book repo, refresh the EPUB, and reload the site while you write",
   ].join("\n"),
 );
 

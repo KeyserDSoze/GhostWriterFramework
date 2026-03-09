@@ -57,7 +57,7 @@ Build the framework once, then scaffold a new local-first book repo:
 npm run create:book -- my-book --title "My Book" --language en --sample
 ```
 
-The starter now scaffolds a reader in `reader/` by default, installs its dependencies, prepares OpenCode config, includes a GitHub Pages workflow for the generated site, and writes root `npm run dev` / `npm run build` / `npm run export:epub` scripts for convenience.
+The starter now scaffolds a reader in `reader/` by default, installs its dependencies, prepares OpenCode config, includes a GitHub Pages workflow for the generated site, writes root `npm run dev` / `npm run build` / `npm run export:epub` scripts for convenience, and wires `npm run dev` to watch your book files for live reload plus EPUB refresh while you write.
 You can also preconfigure the generated reader for a custom domain with `--pages-domain your-domain.com`.
 
 If you want a book repo without the reader scaffold:
@@ -112,7 +112,7 @@ Create a standalone Astro reader app inside or beside a book repo:
 npm run reader:init -- reader --book-root .. --package-name my-book-reader
 ```
 
-The reader now includes dedicated indexes for chapters, characters, locations, factions, items, secrets, and timeline events.
+The reader now includes dedicated indexes for chapters, characters, locations, factions, items, secrets, and timeline events, plus live file watching during `npm run dev`.
 
 ## OpenCode config
 

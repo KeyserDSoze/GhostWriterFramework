@@ -20,7 +20,7 @@ You can also use the published package directly with `npx`:
 npx create-narrarium-book my-book --title "My Book" --language en
 ```
 
-By default the starter now scaffolds a reader app in `reader/` and installs its dependencies automatically.
+By default the starter now scaffolds a reader app in `reader/`, installs its dependencies automatically, and wires live book watching into `npm run dev`.
 It also writes a root `package.json` so you can run the reader from the book root with `npm run dev`, `npm run build`, and `npm run export:epub`.
 If you already know the GitHub Pages custom domain, pass `--pages-domain your-domain.com` to preconfigure the generated reader and Pages workflow.
 
@@ -30,7 +30,7 @@ If you already know the GitHub Pages custom domain, pass `--pages-domain your-do
 - `guidelines/`, `resumes/`, `evaluations/`, and `research/wikipedia/`
 - `opencode.jsonc` plus bundled Narrarium skills for OpenCode and Claude
 - optional sample content
-- standalone Astro reader scaffold with theme toggle, EPUB export, and GitHub Pages workflow
+- standalone Astro reader scaffold with theme toggle, live reload while writing, EPUB export, and GitHub Pages workflow
 - root-level convenience scripts that proxy to the generated reader app
 
 ## Useful flags

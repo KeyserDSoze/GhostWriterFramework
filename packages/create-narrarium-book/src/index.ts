@@ -121,6 +121,7 @@ output.write(
     ...(readerPath ? [`- Reader scaffold created at ${readerPath}`] : []),
     ...(readerInstalled ? ["- Reader dependencies were installed automatically"] : []),
     ...(readerPath ? ["- From the book root you can now run `npm run dev`, `npm run build`, or `npm run export:epub`"] : []),
+    ...(readerPath ? ["- `npm run dev` watches the book files, refreshes the EPUB, and reloads the site while you write"] : []),
     ...(readerPath ? ["- The generated reader already includes auto-EPUB export and a GitHub Pages workflow"] : []),
     ...(resolved.pagesDomain ? [`- GitHub Pages custom domain preset: https://${resolved.pagesDomain}`] : []),
   ].join("\n"),

@@ -18,6 +18,7 @@ export async function scaffoldReaderSite(targetDir, options = {}) {
     await Promise.all([
         copyFile(path.join(packageRoot, "astro.config.mjs"), path.join(targetRoot, "astro.config.mjs")),
         copyFile(path.join(packageRoot, "tsconfig.json"), path.join(targetRoot, "tsconfig.json")),
+        cp(path.join(packageRoot, "scripts"), path.join(targetRoot, "scripts"), { recursive: true }),
         cp(path.join(packageRoot, "src", "components"), path.join(targetRoot, "src", "components"), { recursive: true }),
         cp(path.join(packageRoot, "src", "lib"), path.join(targetRoot, "src", "lib"), { recursive: true }),
         cp(path.join(packageRoot, "src", "layouts"), path.join(targetRoot, "src", "layouts"), { recursive: true }),
@@ -29,13 +30,14 @@ export async function scaffoldReaderSite(targetDir, options = {}) {
         type: "module",
         scripts: {
             "export:epub": "node ./scripts/export-epub.mjs",
-            dev: "npm run export:epub && astro dev",
+            dev: "node ./scripts/dev.mjs",
             build: "npm run export:epub && astro build",
             preview: "astro preview",
         },
         dependencies: {
             "narrarium": coreDependency,
             astro: "^5.14.1",
+            chokidar: "^4.0.3",
             marked: "^16.3.0",
         },
         devDependencies: {
@@ -44,7 +46,7 @@ export async function scaffoldReaderSite(targetDir, options = {}) {
         },
     }, null, 2) + "\n", "utf8");
     await writeFile(path.join(targetRoot, "src", "lib", "book-config.ts"), `export const defaultBookRoot = ${JSON.stringify(toPosix(bookRoot))};\n`, "utf8");
-    await writeFile(path.join(targetRoot, "scripts", "export-epub.mjs"), buildExportEpubScript(bookRoot), "utf8");
+    await writeFile(path.join(targetRoot, "scripts", "book-config.mjs"), buildBookConfigScript(bookRoot), "utf8");
     await writeFile(path.join(targetRoot, ".github", "workflows", "deploy-pages.yml"), buildPagesWorkflow(pagesDomain), "utf8");
     if (pagesDomain) {
         await writeFile(path.join(targetRoot, "public", "CNAME"), `${pagesDomain}\n`, "utf8");
@@ -80,6 +82,7 @@ npm run dev
 \`\`\`
 
 The dev server exports a fresh EPUB to \`public/downloads/book.epub\` before Astro starts.
+It also watches the linked book repository, regenerates the EPUB when canon files change, and triggers a full browser reload.
 
 ## Build
 
@@ -95,19 +98,8 @@ A starter workflow already exists in \`.github/workflows/deploy-pages.yml\`.
 By default it deploys to standard GitHub Pages using the repository name as the base path.
 `;
 }
-function buildExportEpubScript(bookRoot) {
-    return `import { mkdir } from "node:fs/promises";
-import path from "node:path";
-import { exportEpub } from "narrarium";
-
-const configured = process.env.NARRARIUM_BOOK_ROOT ?? process.env.GHOSTWRITER_BOOK_ROOT;
-const root = path.resolve(process.cwd(), configured ?? ${JSON.stringify(toPosix(bookRoot))});
-const outputPath = path.resolve(process.cwd(), "public", "downloads", "book.epub");
-
-await mkdir(path.dirname(outputPath), { recursive: true });
-const result = await exportEpub(root, { outputPath });
-console.log(\`Exported EPUB with \${result.chapterCount} chapters to \${result.outputPath}\`);
-`;
+function buildBookConfigScript(bookRoot) {
+    return `export const defaultBookRoot = ${JSON.stringify(toPosix(bookRoot))};\n`;
 }
 function buildPagesWorkflow(pagesDomain) {
     const envBlock = pagesDomain

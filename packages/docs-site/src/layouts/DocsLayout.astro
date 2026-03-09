@@ -19,16 +19,53 @@ const groups = await getDocGroups();
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title} | Narrarium Docs</title>
     <meta name="description" content={description} />
+    <meta name="color-scheme" content="light dark" />
+    <script is:inline>
+      (() => {
+        const storageKey = "narrarium-docs-theme";
+        try {
+          const saved = localStorage.getItem(storageKey);
+          const theme = saved || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+          document.documentElement.dataset.theme = theme;
+        } catch {
+          document.documentElement.dataset.theme = "light";
+        }
+      })();
+    </script>
     <style>
       :root {
         --bg: #f2ede3;
         --panel: rgba(255, 252, 247, 0.88);
+        --card: rgba(255, 255, 255, 0.56);
         --text: #1f1f1a;
         --muted: #5f665e;
         --line: rgba(40, 54, 46, 0.12);
         --accent: #0f6c63;
         --accent-soft: rgba(15, 108, 99, 0.1);
+        --inline-code-bg: rgba(15, 108, 99, 0.08);
+        --code-bg: #1d2a28;
+        --code-text: #eaf2ef;
         --shadow: 0 18px 40px rgba(50, 44, 31, 0.08);
+      }
+
+      html {
+        color-scheme: light;
+      }
+
+      html[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #101617;
+        --panel: rgba(19, 27, 28, 0.86);
+        --card: rgba(24, 34, 35, 0.76);
+        --text: #edf3ef;
+        --muted: #a9bbb5;
+        --line: rgba(216, 229, 224, 0.14);
+        --accent: #86d6ca;
+        --accent-soft: rgba(134, 214, 202, 0.14);
+        --inline-code-bg: rgba(134, 214, 202, 0.12);
+        --code-bg: #081112;
+        --code-text: #eaf8f5;
+        --shadow: 0 24px 48px rgba(0, 0, 0, 0.32);
       }
 
       * { box-sizing: border-box; }
@@ -40,9 +77,14 @@ const groups = await getDocGroups();
           radial-gradient(circle at top left, rgba(15, 108, 99, 0.14), transparent 34%),
           radial-gradient(circle at right 15%, rgba(176, 118, 55, 0.12), transparent 24%),
           var(--bg);
+        transition: background 180ms ease, color 180ms ease;
       }
 
       a { color: inherit; }
+
+      button {
+        font: inherit;
+      }
 
       .shell {
         width: min(1400px, calc(100% - 2rem));
@@ -92,6 +134,27 @@ const groups = await getDocGroups();
       .nav-group p,
       .meta {
         color: var(--muted);
+      }
+
+      .sidebar-tools {
+        display: flex;
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+      }
+
+      .theme-toggle {
+        width: 100%;
+        padding: 0.6rem 0.75rem;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: var(--accent-soft);
+        color: var(--text);
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .theme-toggle:hover {
+        border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
       }
 
       .nav-group {
@@ -160,7 +223,7 @@ const groups = await getDocGroups();
         padding: 1rem;
         border-radius: 18px;
         border: 1px solid var(--line);
-        background: rgba(255, 255, 255, 0.56);
+        background: var(--card);
       }
 
       .content :global(.card h3) {
@@ -186,8 +249,8 @@ const groups = await getDocGroups();
         overflow-x: auto;
         padding: 1rem;
         border-radius: 18px;
-        background: #1d2a28;
-        color: #eaf2ef;
+        background: var(--code-bg);
+        color: var(--code-text);
       }
 
       .content :global(.doc-prose code) {
@@ -198,7 +261,7 @@ const groups = await getDocGroups();
       .content :global(.doc-prose :not(pre) > code) {
         padding: 0.12rem 0.3rem;
         border-radius: 6px;
-        background: rgba(15, 108, 99, 0.08);
+        background: var(--inline-code-bg);
       }
 
       .content :global(.doc-prose a) {
@@ -232,6 +295,10 @@ const groups = await getDocGroups();
         .sidebar {
           position: static;
         }
+
+        .sidebar-tools {
+          margin-top: 0.25rem;
+        }
       }
     </style>
   </head>
@@ -243,6 +310,10 @@ const groups = await getDocGroups();
           <h1>Documentation</h1>
           <p>GitHub Pages reference site generated from the repository itself.</p>
         </a>
+
+        <div class="sidebar-tools">
+          <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to dark mode">Dark mode</button>
+        </div>
 
         <div class="nav-group">
           <h2>Start</h2>
@@ -269,5 +340,28 @@ const groups = await getDocGroups();
         <slot />
       </main>
     </div>
+    <script is:inline>
+      (() => {
+        const storageKey = "narrarium-docs-theme";
+        const root = document.documentElement;
+        const toggle = document.querySelector("[data-theme-toggle]");
+        if (!toggle) return;
+
+        const applyTheme = (theme, persist) => {
+          root.dataset.theme = theme;
+          toggle.textContent = theme === "dark" ? "Light mode" : "Dark mode";
+          toggle.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+          if (persist) {
+            localStorage.setItem(storageKey, theme);
+          }
+        };
+
+        applyTheme(root.dataset.theme === "dark" ? "dark" : "light", false);
+
+        toggle.addEventListener("click", () => {
+          applyTheme(root.dataset.theme === "dark" ? "light" : "dark", true);
+        });
+      })();
+    </script>
   </body>
 </html>
