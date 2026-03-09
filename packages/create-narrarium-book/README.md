@@ -28,7 +28,7 @@ If you already know the GitHub Pages custom domain, pass `--pages-domain your-do
 
 - canonical book folders such as `characters/`, `locations/`, `factions/`, `chapters/`, `secrets/`
 - `guidelines/`, `resumes/`, `evaluations/`, and `research/wikipedia/`
-- `opencode.jsonc` plus bundled Narrarium skills for OpenCode and Claude
+- `opencode.jsonc` plus bundled Narrarium skills for OpenCode and Claude, with book-writing defaults for deeper reasoning and more detailed answers
 - optional sample content
 - standalone Astro reader scaffold with theme toggle, live reload while writing, EPUB export, and GitHub Pages workflow
 - root-level convenience scripts that proxy to the generated reader app

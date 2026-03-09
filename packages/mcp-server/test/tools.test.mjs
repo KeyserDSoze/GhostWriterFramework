@@ -40,16 +40,45 @@ test("mcp server tools support guided creation and structural updates", async ()
     await callToolText(client, "create_character", {
       rootPath,
       name: "Lyra Vale",
+      currentIdentity: "Lyra Vale",
+      formerNames: ["Livia Sarne"],
+      identityShifts: ["Uses a false registry surname in the harbor."],
+      identityArc: "Moves from disguise into acknowledged lineage.",
       roleTier: "main",
       speakingStyle: "Measured and guarded.",
       backgroundSummary: "Raised in covert trade circles.",
       functionInBook: "Primary viewpoint anchor.",
+      secretRefs: ["secret:lyra-true-name"],
+      privateNotes: "She is quietly feeding false data to the harbor registry.",
+      knownFrom: "chapter:003-the-signal",
+      revealIn: "chapter:008-the-unmasking",
     });
 
     await callToolText(client, "create_chapter", {
       rootPath,
       number: 1,
       title: "Opening Move",
+      frontmatter: {
+        timeline_ref: "timeline-event:harbor-lockdown",
+      },
+    });
+
+    await callToolText(client, "create_timeline_event", {
+      rootPath,
+      title: "Harbor Lockdown",
+      date: "2214-06-12",
+      significance: "The city moves into emergency posture before dawn.",
+    });
+
+    await callToolText(client, "create_secret", {
+      rootPath,
+      title: "Lyra forged the harbor arrival ledger",
+      functionInBook: "Turns the opening mystery into direct personal risk.",
+      stakes: "If exposed, Lyra loses her leverage and her cover.",
+      holders: ["character:lyra-vale"],
+      revealStrategy: "A customs seal fails during inspection in front of witnesses.",
+      revealIn: "chapter:001-opening-move",
+      knownFrom: "chapter:001-opening-move",
     });
 
     await callToolText(client, "create_paragraph", {
@@ -57,6 +86,45 @@ test("mcp server tools support guided creation and structural updates", async ()
       chapter: "chapter:001-opening-move",
       number: 1,
       title: "First Scene",
+    });
+
+    const chapterDraftText = await callToolText(client, "create_chapter_draft", {
+      rootPath,
+      number: 1,
+      title: "Opening Move",
+      body: "# Rough Intent\n\nEscalate pressure before the finished prose.",
+    });
+
+    const paragraphDraftText = await callToolText(client, "create_paragraph_draft", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+      number: 1,
+      title: "First Scene",
+      body: "# Rough Scene\n\nLyra sees the changed watch pattern before she speaks.",
+    });
+
+    const chapterContextText = await callToolText(client, "chapter_writing_context", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+    });
+
+    const paragraphContextText = await callToolText(client, "paragraph_writing_context", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+      paragraph: "001-first-scene",
+    });
+
+    const chapterFromDraftText = await callToolText(client, "create_chapter_from_draft", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+      body: "# Purpose\n\nOpen with pressure, suspicion, and the feeling that the registry has already been touched.",
+    });
+
+    const paragraphFromDraftText = await callToolText(client, "create_paragraph_from_draft", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+      paragraph: "001-first-scene",
+      body: "# Scene\n\nLyra paused at the gate when she saw the registry seal had been pressed at the wrong angle.",
     });
 
     const assetText = await callToolText(client, "create_asset_prompt", {
@@ -101,6 +169,16 @@ test("mcp server tools support guided creation and structural updates", async ()
       body: "# Scene\n\nThe walls watch first.",
     });
 
+    await callToolText(client, "update_entity", {
+      rootPath,
+      kind: "character",
+      slugOrId: "lyra-vale",
+      frontmatterPatch: {
+        secret_refs: ["secret:lyra-true-name", "secret:harbor-registry-fraud"],
+        private_notes: "She forged one of the arrival ledgers herself.",
+      },
+    });
+
     const renameEntityText = await callToolText(client, "rename_entity", {
       rootPath,
       kind: "character",
@@ -130,11 +208,22 @@ test("mcp server tools support guided creation and structural updates", async ()
     const resumeText = await callToolText(client, "sync_all_resumes", { rootPath });
     const evaluationText = await callToolText(client, "evaluate_book", { rootPath });
     const validationText = await callToolText(client, "validate_book", { rootPath });
+    const plotSyncText = await callToolText(client, "sync_plot", { rootPath });
     const movedAssetPrompt = await readFile(path.join(rootPath, "assets", "characters", "lyra-voss", "primary.md"), "utf8");
+    const renamedCharacter = await readFile(path.join(rootPath, "characters", "lyra-voss.md"), "utf8");
+    const chapterDraft = await readFile(path.join(rootPath, "drafts", "001-opening-move", "chapter.md"), "utf8");
+    const paragraphDraft = await readFile(path.join(rootPath, "drafts", "001-opening-move", "001-first-scene.md"), "utf8");
+    const plotFile = await readFile(path.join(rootPath, "plot.md"), "utf8");
 
     assert.match(setupText, /npx create-narrarium-book/);
     assert.match(specText, /Narrarium repository structure/);
     assert.match(assetText, /Created asset prompt/);
+    assert.match(chapterDraftText, /Created chapter draft/);
+    assert.match(paragraphDraftText, /Created paragraph draft/);
+    assert.match(chapterContextText, /Always-read prose guide/);
+    assert.match(paragraphContextText, /Target paragraph draft/);
+    assert.match(chapterFromDraftText, /Created or updated chapter from draft/);
+    assert.match(paragraphFromDraftText, /Created or updated paragraph from draft/);
     assert.match(finalizeText, /Created chapter/);
     assert.match(searchText, /The Signal/i);
     assert.match(renameEntityText, /Renamed character/);
@@ -143,7 +232,20 @@ test("mcp server tools support guided creation and structural updates", async ()
     assert.match(resumeText, /Synced 2 chapter resumes/);
     assert.match(evaluationText, /Synced book evaluation/);
     assert.match(validationText, /Validation passed/);
+    assert.match(plotSyncText, /Synced plot at/);
     assert.match(movedAssetPrompt, /subject: character:lyra-voss/);
+    assert.match(renamedCharacter, /secret_refs:/);
+    assert.match(renamedCharacter, /secret:harbor-registry-fraud/);
+    assert.match(renamedCharacter, /private_notes: She forged one of the arrival ledgers herself\./);
+    assert.match(renamedCharacter, /known_from: chapter:003-the-signal/);
+    assert.match(renamedCharacter, /reveal_in: chapter:008-the-unmasking/);
+    assert.match(renamedCharacter, /former_names:/);
+    assert.match(renamedCharacter, /Lyra Vale/);
+    assert.match(chapterDraft, /type: chapter-draft/);
+    assert.match(paragraphDraft, /type: paragraph-draft/);
+    assert.match(plotFile, /# Plot Overview/);
+    assert.match(plotFile, /Lyra forged the harbor arrival ledger/);
+    assert.match(plotFile, /2214-06-12/);
   } finally {
     await transport.close();
     await rm(rootPath, { recursive: true, force: true });

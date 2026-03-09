@@ -4,11 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import {
+  buildParagraphWritingContext,
   createAssetPrompt,
   createChapter,
+  createChapterDraft,
+  createChapterFromDraft,
   createCharacterProfile,
   createLocationProfile,
   createParagraph,
+  createParagraphDraft,
+  createParagraphFromDraft,
+  createSecretProfile,
   createTimelineEventProfile,
   evaluateBook,
   initializeBookRepo,
@@ -20,8 +26,10 @@ import {
   readChapter,
   readEntity,
   readTimelineMain,
+  syncPlot,
   syncAllResumes,
   updateChapter,
+  updateEntity,
   updateParagraph,
   validateBook,
 } from "../dist/index.js";
@@ -38,10 +46,27 @@ test("core book workflow supports canon indexes and structural updates", async (
 
     await createCharacterProfile(rootPath, {
       name: "Lyra Vale",
+      currentIdentity: "Lyra Vale",
+      formerNames: ["Livia Sarne"],
+      identityShifts: ["Travels under a false customs registry name in the opening act."],
+      identityArc: "Moves from concealment into acknowledged inheritance.",
       roleTier: "main",
       speakingStyle: "Controlled and observant.",
       backgroundSummary: "Raised around covert trade.",
       functionInBook: "Primary viewpoint anchor.",
+      secretRefs: ["secret:lyra-true-name"],
+      privateNotes: "Knows the harbor council covered up the archive fire.",
+      knownFrom: "chapter:003-signal-in-fog",
+      revealIn: "chapter:007-mask-off",
+    });
+
+    await updateEntity(rootPath, {
+      kind: "character",
+      slugOrId: "lyra-vale",
+      frontmatterPatch: {
+        secret_refs: ["secret:lyra-true-name", "secret:harbor-fire-cover-up"],
+        private_notes: "Her missing brother is alive and tied to the cover-up.",
+      },
     });
 
     await createLocationProfile(rootPath, {
@@ -56,6 +81,16 @@ test("core book workflow supports canon indexes and structural updates", async (
       participants: ["character:lyra-vale"],
       significance: "The city shifts into an emergency posture.",
       functionInBook: "Establishes external pressure before the first confrontation.",
+    });
+
+    await createSecretProfile(rootPath, {
+      title: "Lyra knows the harbor ledgers were forged",
+      functionInBook: "Turns suspicion into a direct threat to the ruling archive.",
+      stakes: "If exposed, the harbor council loses control of the succession narrative.",
+      holders: ["character:lyra-vale"],
+      revealStrategy: "The forged seal is discovered in front of the customs tribunal.",
+      revealIn: "chapter:001-the-arrival",
+      knownFrom: "chapter:001-the-arrival",
     });
 
     await createChapter(rootPath, {
@@ -74,6 +109,7 @@ test("core book workflow supports canon indexes and structural updates", async (
       frontmatterPatch: {
         summary: "Lyra returns to Gray Harbor and notices the guard routine has changed.",
         pov: ["character:lyra-vale"],
+        timeline_ref: "timeline-event:harbor-lockdown",
       },
       appendBody: "## Revision Note\n\nTighten the harbor tension immediately.",
     });
@@ -93,6 +129,8 @@ test("core book workflow supports canon indexes and structural updates", async (
     const events = await listEntities(rootPath, "timeline-event");
     const character = await readEntity(rootPath, "character", "lyra-vale");
     const timelineMain = await readTimelineMain(rootPath);
+    const plot = await syncPlot(rootPath);
+    const opencodeConfig = await readFile(path.join(rootPath, "opencode.jsonc"), "utf8");
     const resumes = await syncAllResumes(rootPath);
     const evaluation = await evaluateBook(rootPath);
     const validation = await validateBook(rootPath);
@@ -101,7 +139,21 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.equal(locations.length, 1);
     assert.equal(events.length, 1);
     assert.equal(character.metadata.name, "Lyra Vale");
+    assert.equal(character.metadata.current_identity, "Lyra Vale");
+    assert.deepEqual(character.metadata.former_names, ["Livia Sarne"]);
+    assert.deepEqual(character.metadata.identity_shifts, ["Travels under a false customs registry name in the opening act."]);
+    assert.equal(character.metadata.identity_arc, "Moves from concealment into acknowledged inheritance.");
+    assert.deepEqual(character.metadata.secret_refs, ["secret:lyra-true-name", "secret:harbor-fire-cover-up"]);
+    assert.equal(character.metadata.private_notes, "Her missing brother is alive and tied to the cover-up.");
+    assert.equal(character.metadata.known_from, "chapter:003-signal-in-fog");
+    assert.equal(character.metadata.reveal_in, "chapter:007-mask-off");
     assert.ok(timelineMain);
+    assert.match(plot.content, /# Chapter Map/);
+    assert.match(plot.content, /Lyra knows the harbor ledgers were forged/);
+    assert.match(plot.content, /2214-06-12/);
+    assert.match(opencodeConfig, /"default_agent": "build"/);
+    assert.match(opencodeConfig, /"reasoningEffort": "high"/);
+    assert.match(opencodeConfig, /"textVerbosity": "high"/);
     assert.equal(resumes.chapterCount, 1);
     assert.equal(evaluation.chapterCount, 1);
     assert.equal(validation.valid, true);
@@ -193,12 +245,69 @@ test("asset prompts and renames keep asset folders aligned", async () => {
     const validation = await validateBook(rootPath);
 
     assert.equal(character.metadata.name, "Lyra Voss");
+    assert.deepEqual(character.metadata.former_names, ["Lyra Vale"]);
+    assert.match(character.metadata.aliases.join(", "), /Lyra Vale/);
     assert.equal(chapter.metadata.id, "chapter:001-the-crossing");
     assert.equal(chapter.paragraphs[0].metadata.id, "paragraph:001-the-crossing:001-at-the-bridge");
     assert.match(characterAssetPrompt, /subject: character:lyra-voss/);
     assert.match(paragraphAssetPrompt, /subject: paragraph:001-the-crossing:001-at-the-bridge/);
     assert.equal(coverImage, "fake-image");
     assert.equal(validation.valid, true);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("draft workflow can assemble writing context and promote drafts into final prose", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-drafts-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Draft Test Book",
+      language: "it",
+    });
+
+    await createChapterDraft(rootPath, {
+      number: 1,
+      title: "La Soglia",
+      frontmatter: {
+        summary: "Brutta del capitolo di apertura.",
+        pov: ["character:livia-sarne"],
+      },
+      body: "# Rough Intent\n\nAprire con sospetto e controllo.\n\n# Rough Beats\n\n- Livia arriva al varco.\n- Nota un cambio nei registri.",
+    });
+
+    await createParagraphDraft(rootPath, {
+      chapter: "chapter:001-la-soglia",
+      number: 1,
+      title: "Il Varco",
+      frontmatter: {
+        summary: "Brutta della prima scena.",
+        viewpoint: "character:livia-sarne",
+      },
+      body: "# Rough Scene\n\nLivia vede il sigillo sbagliato e capisce che qualcuno ha toccato il registro.",
+    });
+
+    const context = await buildParagraphWritingContext(rootPath, "chapter:001-la-soglia", "001-il-varco");
+    const chapterResult = await createChapterFromDraft(rootPath, {
+      chapter: "chapter:001-la-soglia",
+      body: "# Purpose\n\nAprire il romanzo con pressione e sospetto.",
+    });
+    const paragraphResult = await createParagraphFromDraft(rootPath, {
+      chapter: "chapter:001-la-soglia",
+      paragraph: "001-il-varco",
+      body: "# Scene\n\nLivia poso la mano sul registro e capi dal taglio della ceralacca che qualcuno era arrivato prima di lei.",
+    });
+
+    const chapter = await readChapter(rootPath, "chapter:001-la-soglia");
+
+    assert.match(context.text, /guidelines\/prose\.md/);
+    assert.match(context.text, /plot\.md/);
+    assert.match(context.text, /Rough Scene/);
+    assert.equal(chapterResult.frontmatter.summary, "Brutta del capitolo di apertura.");
+    assert.equal(paragraphResult.frontmatter.summary, "Brutta della prima scena.");
+    assert.equal(chapter.paragraphs[0].metadata.viewpoint, "character:livia-sarne");
+    assert.match(chapter.paragraphs[0].body, /ceralacca/);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }

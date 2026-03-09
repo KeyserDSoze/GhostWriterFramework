@@ -12,6 +12,7 @@ import {
   ENTITY_TYPE_TO_DIRECTORY,
   ENTITY_TYPES,
   GUIDELINE_FILES,
+  PLOT_FILE,
   SKILL_NAME,
   TIMELINE_MAIN_FILE,
   TOTAL_EVALUATION_FILE,
@@ -22,23 +23,29 @@ import {
   bookSchema,
   characterSchema,
   chapterSchema,
+  chapterDraftSchema,
   entitySchemaMap,
   factionSchema,
   guidelineSchema,
   itemSchema,
   locationSchema,
   paragraphSchema,
+  paragraphDraftSchema,
+  plotSchema,
   researchNoteSchema,
   secretSchema,
   type BookFrontmatter,
   type AssetFrontmatter,
   type CharacterFrontmatter,
   type ChapterFrontmatter,
+  type ChapterDraftFrontmatter,
   type EntityType,
   type FactionFrontmatter,
   type ItemFrontmatter,
   type LocationFrontmatter,
   type ParagraphFrontmatter,
+  type ParagraphDraftFrontmatter,
+  type PlotFrontmatter,
   type SecretFrontmatter,
   type TimelineEventFrontmatter,
 } from "./schemas.js";
@@ -101,11 +108,22 @@ type RegisterAssetInput = CreateAssetPromptInput & {
   sourceFilePath: string;
 };
 
-type CreateCharacterProfileInput = {
+type HiddenCanonInput = {
+  secretRefs?: string[];
+  privateNotes?: string;
+  revealIn?: string;
+  knownFrom?: string;
+};
+
+type CreateCharacterProfileInput = HiddenCanonInput & {
   slug?: string;
   overwrite?: boolean;
   name: string;
   aliases?: string[];
+  formerNames?: string[];
+  currentIdentity?: string;
+  identityShifts?: string[];
+  identityArc?: string;
   roleTier: CharacterFrontmatter["role_tier"];
   storyRole?: CharacterFrontmatter["story_role"];
   speakingStyle: string;
@@ -133,7 +151,7 @@ type CreateCharacterProfileInput = {
   frontmatter?: Record<string, unknown>;
 };
 
-type CreateItemProfileInput = {
+type CreateItemProfileInput = HiddenCanonInput & {
   slug?: string;
   overwrite?: boolean;
   name: string;
@@ -153,7 +171,7 @@ type CreateItemProfileInput = {
   frontmatter?: Record<string, unknown>;
 };
 
-type CreateLocationProfileInput = {
+type CreateLocationProfileInput = HiddenCanonInput & {
   slug?: string;
   overwrite?: boolean;
   name: string;
@@ -172,7 +190,7 @@ type CreateLocationProfileInput = {
   frontmatter?: Record<string, unknown>;
 };
 
-type CreateFactionProfileInput = {
+type CreateFactionProfileInput = HiddenCanonInput & {
   slug?: string;
   overwrite?: boolean;
   name: string;
@@ -193,7 +211,7 @@ type CreateFactionProfileInput = {
   frontmatter?: Record<string, unknown>;
 };
 
-type CreateSecretProfileInput = {
+type CreateSecretProfileInput = HiddenCanonInput & {
   slug?: string;
   overwrite?: boolean;
   title: string;
@@ -213,7 +231,7 @@ type CreateSecretProfileInput = {
   frontmatter?: Record<string, unknown>;
 };
 
-type CreateTimelineEventProfileInput = {
+type CreateTimelineEventProfileInput = HiddenCanonInput & {
   slug?: string;
   overwrite?: boolean;
   title: string;
@@ -226,6 +244,23 @@ type CreateTimelineEventProfileInput = {
   sources?: string[];
   body?: string;
   frontmatter?: Record<string, unknown>;
+};
+
+type CreateChapterDraftInput = {
+  number: number;
+  title: string;
+  body?: string;
+  frontmatter?: Record<string, unknown>;
+  overwrite?: boolean;
+};
+
+type CreateParagraphDraftInput = {
+  chapter: string;
+  number: number;
+  title: string;
+  body?: string;
+  frontmatter?: Record<string, unknown>;
+  overwrite?: boolean;
 };
 
 type RelatedCanonHit = {
@@ -280,6 +315,52 @@ export async function initializeBookRepo(
         canon: DEFAULT_CANON,
       }),
       defaultBodyForType("book"),
+    ),
+    created,
+  );
+
+  await ensureFile(
+    root,
+    GUIDELINE_FILES.prose,
+    renderMarkdown(
+      guidelineSchema.parse({
+        type: "guideline",
+        id: "guideline:prose",
+        title: "Prose Defaults",
+        scope: "prose",
+      }),
+      [
+        "# Writing Mode",
+        "",
+        "- Default mode: novel prose.",
+        "- Prioritize scene-based writing over summary whenever the moment matters emotionally or narratively.",
+        "- Before drafting a chapter or paragraph, read this file, the relevant chapter files, matching drafts/, and the latest resumes/ for continuity.",
+        "",
+        "# Show, Don't Tell",
+        "",
+        "- Prefer action, concrete sensory detail, subtext, and consequence over explanatory narration.",
+        "- State emotion directly only when restraint would make the moment less clear or less powerful.",
+        "- Let readers infer motive from gesture, choice, rhythm, and contradiction.",
+        "",
+        "Example tell:",
+        "She was angry.",
+        "",
+        "Example show:",
+        "She folded the letter once, twice, and only stopped when the paper split under her thumbs.",
+        "",
+        "# Dialogue",
+        "",
+        "- In Italian-language projects, use guillemets like « ... » as the default dialogue marks unless the book says otherwise.",
+        "- Keep dialogue anchored with gesture, interruption, and point-of-view awareness.",
+        "- Avoid over-explaining what a line already implies.",
+        "- Keep each speaker distinct in vocabulary, rhythm, and silence.",
+        "",
+        "# Scene Discipline",
+        "",
+        "- Every paragraph or scene should advance tension, revelation, choice, or consequence.",
+        "- Re-read previous scenes in the chapter before adding new prose so voice, time, and causality stay aligned.",
+        "- If a matching draft exists in drafts/, use it as scaffolding, not as a constraint against stronger prose.",
+      ].join("\n"),
     ),
     created,
   );
@@ -417,6 +498,28 @@ export async function initializeBookRepo(
 
   await ensureFile(
     root,
+    PLOT_FILE,
+    renderMarkdown(
+      plotSchema.parse({
+        type: "plot",
+        id: "plot:main",
+        title: "Story Plot",
+      }),
+      [
+        "# Plot Overview",
+        "",
+        "No chapters yet. Keep this file in sync as the book grows.",
+        "",
+        "# Chapter Map",
+        "",
+        "Add chapters, then refresh this file so it tracks the book's progression, reveals, and timeline anchors.",
+      ].join("\n"),
+    ),
+    created,
+  );
+
+  await ensureFile(
+    root,
     TOTAL_RESUME_FILE,
     renderMarkdown(
       {
@@ -464,6 +567,31 @@ export async function initializeBookRepo(
     [
       "{",
       '  "$schema": "https://opencode.ai/config.json",',
+      '  "default_agent": "build",',
+      '  "agent": {',
+      '    "build": {',
+      '      "temperature": 0.45,',
+      '      "top_p": 1,',
+      '      "options": {',
+      '        "reasoningEffort": "high",',
+      '        "reasoningSummary": "detailed",',
+      '        "textVerbosity": "high",',
+      '        "include": ["reasoning.encrypted_content", "usage"],',
+      '        "store": true',
+      '      }',
+      '    },',
+      '    "plan": {',
+      '      "temperature": 0.2,',
+      '      "top_p": 1,',
+      '      "options": {',
+      '        "reasoningEffort": "high",',
+      '        "reasoningSummary": "detailed",',
+      '        "textVerbosity": "high",',
+      '        "include": ["reasoning.encrypted_content", "usage"],',
+      '        "store": true',
+      '      }',
+      '    }',
+      '  },',
       '  "mcp": {',
       '    "narrarium": {',
       '      "type": "local",',
@@ -535,7 +663,12 @@ export async function createCharacterProfile(
     body: input.body ?? buildCharacterBody(input),
     frontmatter: {
       name: input.name,
+      ...buildHiddenCanonFrontmatter(input),
       aliases: input.aliases ?? [],
+      former_names: input.formerNames ?? [],
+      current_identity: input.currentIdentity,
+      identity_shifts: input.identityShifts ?? [],
+      identity_arc: input.identityArc,
       role_tier: input.roleTier,
       story_role: input.storyRole ?? "other",
       speaking_style: input.speakingStyle,
@@ -580,6 +713,7 @@ export async function createItemProfile(
     body: input.body ?? buildItemBody(input),
     frontmatter: {
       name: input.name,
+      ...buildHiddenCanonFrontmatter(input),
       item_kind: input.itemKind,
       appearance: input.appearance,
       purpose: input.purpose,
@@ -613,6 +747,7 @@ export async function createLocationProfile(
     body: input.body ?? buildLocationBody(input),
     frontmatter: {
       name: input.name,
+      ...buildHiddenCanonFrontmatter(input),
       location_kind: input.locationKind,
       region: input.region,
       atmosphere: input.atmosphere,
@@ -645,6 +780,7 @@ export async function createFactionProfile(
     body: input.body ?? buildFactionBody(input),
     frontmatter: {
       name: input.name,
+      ...buildHiddenCanonFrontmatter(input),
       faction_kind: input.factionKind,
       mission: input.mission,
       ideology: input.ideology,
@@ -679,6 +815,7 @@ export async function createSecretProfile(
     body: input.body ?? buildSecretBody(input),
     frontmatter: {
       title: input.title,
+      ...buildHiddenCanonFrontmatter(input),
       secret_kind: input.secretKind,
       function_in_book: input.functionInBook,
       stakes: input.stakes,
@@ -686,8 +823,6 @@ export async function createSecretProfile(
       false_beliefs: input.falseBeliefs ?? [],
       reveal_strategy: input.revealStrategy,
       holders: input.holders ?? [],
-      reveal_in: input.revealIn,
-      known_from: input.knownFrom,
       timeline_ref: input.timelineRef,
       historical: input.historical ?? false,
       sources,
@@ -712,6 +847,7 @@ export async function createTimelineEventProfile(
     body: input.body ?? buildTimelineEventBody(input),
     frontmatter: {
       title: input.title,
+      ...buildHiddenCanonFrontmatter(input),
       date: input.date,
       participants: input.participants ?? [],
       significance: input.significance,
@@ -802,6 +938,45 @@ export async function createChapter(
   };
 }
 
+export async function createChapterDraft(
+  rootPath: string,
+  options: CreateChapterDraftInput,
+): Promise<{ folderPath: string; draftFilePath: string; draftId: string; chapterId: string }> {
+  const root = path.resolve(rootPath);
+  const slug = chapterSlug(options.number, options.title);
+  const folderPath = path.join(root, "drafts", slug);
+  const draftFilePath = path.join(folderPath, "chapter.md");
+
+  if (!options.overwrite && (await pathExists(draftFilePath))) {
+    throw new Error(`Chapter draft already exists: ${draftFilePath}`);
+  }
+
+  await mkdir(folderPath, { recursive: true });
+
+  const frontmatter = chapterDraftSchema.parse({
+    type: "chapter-draft",
+    id: `draft:chapter:${slug}`,
+    chapter: `chapter:${slug}`,
+    number: options.number,
+    title: options.title,
+    canon: DEFAULT_CANON,
+    ...options.frontmatter,
+  });
+
+  await writeFile(
+    draftFilePath,
+    renderMarkdown(frontmatter, options.body ?? defaultBodyForType("chapter-draft")),
+    "utf8",
+  );
+
+  return {
+    folderPath,
+    draftFilePath,
+    draftId: `draft:chapter:${slug}`,
+    chapterId: `chapter:${slug}`,
+  };
+}
+
 export async function createParagraph(
   rootPath: string,
   options: {
@@ -846,6 +1021,48 @@ export async function createParagraph(
   );
 
   return { filePath, paragraphId: `paragraph:${chapter}:${slug}` };
+}
+
+export async function createParagraphDraft(
+  rootPath: string,
+  options: CreateParagraphDraftInput,
+): Promise<{ filePath: string; draftId: string; paragraphId: string }> {
+  const root = path.resolve(rootPath);
+  const chapter = normalizeChapterReference(options.chapter);
+  const folderPath = path.join(root, "drafts", chapter);
+
+  await mkdir(folderPath, { recursive: true });
+
+  const fileName = paragraphFilename(options.number, options.title);
+  const filePath = path.join(folderPath, fileName);
+
+  if (!options.overwrite && (await pathExists(filePath))) {
+    throw new Error(`Paragraph draft already exists: ${filePath}`);
+  }
+
+  const slug = fileName.replace(/\.md$/i, "");
+  const frontmatter = paragraphDraftSchema.parse({
+    type: "paragraph-draft",
+    id: `draft:paragraph:${chapter}:${slug}`,
+    paragraph: `paragraph:${chapter}:${slug}`,
+    chapter: `chapter:${chapter}`,
+    number: options.number,
+    title: options.title,
+    canon: DEFAULT_CANON,
+    ...options.frontmatter,
+  });
+
+  await writeFile(
+    filePath,
+    renderMarkdown(frontmatter, options.body ?? defaultBodyForType("paragraph-draft")),
+    "utf8",
+  );
+
+  return {
+    filePath,
+    draftId: `draft:paragraph:${chapter}:${slug}`,
+    paragraphId: `paragraph:${chapter}:${slug}`,
+  };
 }
 
 export async function createAssetPrompt(
@@ -990,15 +1207,29 @@ export async function renameEntity(
   const labelKey = getEntityLabelKey(options.kind);
   const oldId = `${options.kind}:${oldSlug}`;
   const newId = `${options.kind}:${nextSlug}`;
+  const currentData = parsed.data as Record<string, unknown>;
+  const oldLabel = typeof currentData[labelKey] === "string" ? currentData[labelKey] : undefined;
 
   if (oldFilePath !== newFilePath && (await pathExists(newFilePath))) {
     throw new Error(`Entity already exists at destination: ${newFilePath}`);
   }
 
   const validated = entitySchemaMap[options.kind].parse({
-    ...(parsed.data as Record<string, unknown>),
+    ...currentData,
     id: newId,
     [labelKey]: options.newNameOrTitle,
+    ...(options.kind === "character"
+      ? {
+          aliases: uniqueValues([
+            ...(Array.isArray(currentData.aliases) ? currentData.aliases.filter((value): value is string => typeof value === "string") : []),
+            ...(oldLabel && oldLabel !== options.newNameOrTitle ? [oldLabel] : []),
+          ]),
+          former_names: uniqueValues([
+            ...(Array.isArray(currentData.former_names) ? currentData.former_names.filter((value): value is string => typeof value === "string") : []),
+            ...(oldLabel && oldLabel !== options.newNameOrTitle ? [oldLabel] : []),
+          ]),
+        }
+      : {}),
   });
 
   if (oldFilePath !== newFilePath) {
@@ -1202,6 +1433,14 @@ export async function readBook(
   return readMarkdownFile(bookPath, bookSchema);
 }
 
+export async function readPlot(
+  rootPath: string,
+): Promise<MarkdownDocument<PlotFrontmatter> | null> {
+  const plotPath = path.join(path.resolve(rootPath), PLOT_FILE);
+  if (!(await pathExists(plotPath))) return null;
+  return readMarkdownFile(plotPath, plotSchema);
+}
+
 export async function listChapters(
   rootPath: string,
 ): Promise<Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>> {
@@ -1261,6 +1500,293 @@ export async function readChapter(
     metadata: chapterDocument.frontmatter,
     body: chapterDocument.body,
     paragraphs,
+  };
+}
+
+export async function readChapterDraft(
+  rootPath: string,
+  chapter: string,
+): Promise<{
+  metadata: ChapterDraftFrontmatter;
+  body: string;
+  paragraphs: Array<{ path: string; metadata: ParagraphDraftFrontmatter; body: string }>;
+}> {
+  const root = path.resolve(rootPath);
+  const chapterSlug = normalizeChapterReference(chapter);
+  const folder = path.join(root, "drafts", chapterSlug);
+  const chapterFile = path.join(folder, "chapter.md");
+
+  if (!(await pathExists(chapterFile))) {
+    throw new Error(`Missing chapter draft metadata file: ${chapterFile}`);
+  }
+
+  const chapterDocument = await readMarkdownFile(chapterFile, chapterDraftSchema);
+  const files = await fg("*.md", { cwd: folder, absolute: true, onlyFiles: true });
+  const paragraphFiles = files.filter((filePath) => path.basename(filePath) !== "chapter.md");
+  const paragraphs: Array<{ path: string; metadata: ParagraphDraftFrontmatter; body: string }> = [];
+
+  for (const filePath of paragraphFiles) {
+    const paragraphDocument = await readMarkdownFile(filePath, paragraphDraftSchema);
+    paragraphs.push({
+      path: filePath,
+      metadata: paragraphDocument.frontmatter,
+      body: paragraphDocument.body,
+    });
+  }
+
+  paragraphs.sort((left, right) => left.metadata.number - right.metadata.number);
+
+  return {
+    metadata: chapterDocument.frontmatter,
+    body: chapterDocument.body,
+    paragraphs,
+  };
+}
+
+export async function readParagraphDraft(
+  rootPath: string,
+  chapter: string,
+  paragraph: string,
+): Promise<{ path: string; metadata: ParagraphDraftFrontmatter; body: string }> {
+  const root = path.resolve(rootPath);
+  const filePath = await resolveParagraphDraftFilePath(root, chapter, paragraph);
+
+  if (!(await pathExists(filePath))) {
+    throw new Error(`Paragraph draft does not exist: ${filePath}`);
+  }
+
+  const document = await readMarkdownFile(filePath, paragraphDraftSchema);
+  return {
+    path: filePath,
+    metadata: document.frontmatter,
+    body: document.body,
+  };
+}
+
+export async function buildChapterWritingContext(
+  rootPath: string,
+  chapter: string,
+): Promise<{ text: string; files: string[] }> {
+  const root = path.resolve(rootPath);
+  const chapterSlugValue = normalizeChapterReference(chapter);
+  const files = new Set<string>();
+  const sections: string[] = [];
+
+  const prose = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.prose));
+  addContextSection(sections, files, root, prose, "Always-read prose guide", 1600);
+
+  const plot = await readPlot(root);
+  if (plot) {
+    addContextSection(sections, files, root, plot, "Rolling plot map", 1400);
+  }
+
+  const totalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE));
+  addContextSection(sections, files, root, totalResume, "Book summary so far", 1200);
+
+  const chapterResume = await readLooseMarkdownIfExists(path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`));
+  addContextSection(sections, files, root, chapterResume, "Current chapter resume", 900);
+
+  const chapters = await listChapters(root);
+  const chapterIndex = chapters.findIndex((entry) => entry.slug === chapterSlugValue);
+  const previousChapter = chapterIndex > 0 ? chapters[chapterIndex - 1] : null;
+  if (previousChapter) {
+    sections.push(
+      [
+        "## Previous chapter anchor",
+        "",
+        `Source: ${toPosixPath(path.join("chapters", previousChapter.slug, "chapter.md"))}`,
+        `- Chapter ${formatOrdinal(previousChapter.metadata.number)} ${previousChapter.metadata.title}`,
+        `- Summary: ${previousChapter.metadata.summary ?? "No summary yet."}`,
+      ].join("\n"),
+    );
+    files.add(toPosixPath(path.join("chapters", previousChapter.slug, "chapter.md")));
+  }
+
+  const chapterData = await readChapter(root, chapterSlugValue).catch(() => null);
+  if (chapterData) {
+    files.add(toPosixPath(path.join("chapters", chapterSlugValue, "chapter.md")));
+    sections.push(
+      [
+        "## Existing final chapter",
+        "",
+        `Source: ${toPosixPath(path.join("chapters", chapterSlugValue, "chapter.md"))}`,
+        `- Title: ${chapterData.metadata.title}`,
+        `- Summary: ${(chapterData.metadata.summary ?? summarizeText(chapterData.body, 240)) || "No summary yet."}`,
+        `- POV: ${(chapterData.metadata.pov ?? []).join(", ") || "not set"}`,
+        `- Timeline: ${chapterData.metadata.timeline_ref ?? "not set"}`,
+        `- Existing scenes: ${chapterData.paragraphs.map((paragraph) => `${formatOrdinal(paragraph.metadata.number)} ${paragraph.metadata.title}`).join("; ") || "none"}`,
+      ].join("\n"),
+    );
+  }
+
+  const draft = await readChapterDraft(root, chapterSlugValue).catch(() => null);
+  if (draft) {
+    files.add(toPosixPath(path.join("drafts", chapterSlugValue, "chapter.md")));
+    sections.push(
+      [
+        "## Matching chapter draft",
+        "",
+        `Source: ${toPosixPath(path.join("drafts", chapterSlugValue, "chapter.md"))}`,
+        `- Summary: ${draft.metadata.summary ?? "No summary yet."}`,
+        `- POV: ${(draft.metadata.pov ?? []).join(", ") || "not set"}`,
+        `- Timeline: ${draft.metadata.timeline_ref ?? "not set"}`,
+        `- Draft scenes: ${draft.paragraphs.map((paragraph) => `${formatOrdinal(paragraph.metadata.number)} ${paragraph.metadata.title}`).join("; ") || "none"}`,
+        "",
+        summarizeText(draft.body, 1200) || "No chapter draft body yet.",
+      ].join("\n"),
+    );
+  }
+
+  return {
+    text: [
+      `# Chapter Writing Context for ${chapterSlugValue}`,
+      "",
+      "Read these before drafting or polishing the chapter prose.",
+      "",
+      ...sections,
+      "## Source files consulted",
+      "",
+      ...Array.from(files).sort().map((filePath) => `- ${filePath}`),
+    ].join("\n"),
+    files: Array.from(files).sort(),
+  };
+}
+
+export async function buildParagraphWritingContext(
+  rootPath: string,
+  chapter: string,
+  paragraph: string,
+): Promise<{ text: string; files: string[] }> {
+  const root = path.resolve(rootPath);
+  const chapterSlugValue = normalizeChapterReference(chapter);
+  const paragraphDraft = await readParagraphDraft(root, chapterSlugValue, paragraph);
+  const chapterContext = await buildChapterWritingContext(root, chapterSlugValue);
+  const files = new Set(chapterContext.files);
+  files.add(toPosixPath(path.relative(root, paragraphDraft.path)));
+
+  const finalChapter = await readChapter(root, chapterSlugValue).catch(() => null);
+  const priorScenes = finalChapter
+    ? finalChapter.paragraphs.filter((entry) => entry.metadata.number < paragraphDraft.metadata.number)
+    : [];
+
+  return {
+    text: [
+      chapterContext.text,
+      "",
+      "## Target paragraph draft",
+      "",
+      `Source: ${toPosixPath(path.relative(root, paragraphDraft.path))}`,
+      `- Title: ${paragraphDraft.metadata.title}`,
+      `- Summary: ${paragraphDraft.metadata.summary ?? "No summary yet."}`,
+      `- Viewpoint: ${paragraphDraft.metadata.viewpoint ?? "not set"}`,
+      "",
+      summarizeText(paragraphDraft.body, 1400) || "No paragraph draft body yet.",
+      "",
+      "## Prior scenes in this chapter",
+      "",
+      bulletLines(
+        priorScenes.length > 0
+          ? priorScenes.map(
+              (entry) => `${formatOrdinal(entry.metadata.number)} ${entry.metadata.title}: ${(entry.metadata.summary ?? summarizeText(entry.body, 160)) || "No summary yet."}`,
+            )
+          : ["No earlier final scenes in this chapter yet."],
+      ),
+    ].join("\n"),
+    files: Array.from(files).sort(),
+  };
+}
+
+export async function createChapterFromDraft(
+  rootPath: string,
+  options: {
+    chapter: string;
+    body?: string;
+    overwrite?: boolean;
+    frontmatterPatch?: Record<string, unknown>;
+  },
+): Promise<{ filePath: string; draftPath: string; frontmatter: ChapterFrontmatter }> {
+  const root = path.resolve(rootPath);
+  const chapterSlugValue = normalizeChapterReference(options.chapter);
+  const draft = await readChapterDraft(root, chapterSlugValue);
+  const finalFrontmatter = compactFrontmatterPatch({
+    summary: draft.metadata.summary,
+    pov: draft.metadata.pov,
+    timeline_ref: draft.metadata.timeline_ref,
+    tags: draft.metadata.tags,
+    ...(options.frontmatterPatch ?? {}),
+  });
+  const targetPath = resolveChapterMetadataFilePath(root, chapterSlugValue);
+  const body = options.body ?? draft.body;
+
+  const result = await pathExists(targetPath)
+    ? await updateChapter(root, {
+        chapter: chapterSlugValue,
+        frontmatterPatch: finalFrontmatter,
+        body,
+      })
+    : await createChapter(root, {
+        number: draft.metadata.number,
+        title: draft.metadata.title,
+        body,
+        overwrite: options.overwrite,
+        frontmatter: finalFrontmatter,
+      }).then(async (created) => ({
+        filePath: created.chapterFilePath,
+        frontmatter: (await readChapter(root, chapterSlugValue)).metadata,
+      }));
+
+  return {
+    filePath: result.filePath,
+    draftPath: path.join(root, "drafts", chapterSlugValue, "chapter.md"),
+    frontmatter: result.frontmatter,
+  };
+}
+
+export async function createParagraphFromDraft(
+  rootPath: string,
+  options: {
+    chapter: string;
+    paragraph: string;
+    body?: string;
+    overwrite?: boolean;
+    frontmatterPatch?: Record<string, unknown>;
+  },
+): Promise<{ filePath: string; draftPath: string; frontmatter: ParagraphFrontmatter }> {
+  const root = path.resolve(rootPath);
+  const chapterSlugValue = normalizeChapterReference(options.chapter);
+  const draft = await readParagraphDraft(root, chapterSlugValue, options.paragraph);
+  const finalFrontmatter = compactFrontmatterPatch({
+    summary: draft.metadata.summary,
+    viewpoint: draft.metadata.viewpoint,
+    tags: draft.metadata.tags,
+    ...(options.frontmatterPatch ?? {}),
+  });
+  const targetPath = await resolveParagraphFilePath(root, chapterSlugValue, String(draft.metadata.paragraph ?? options.paragraph));
+  const body = options.body ?? draft.body;
+
+  const result = await pathExists(targetPath)
+    ? await updateParagraph(root, {
+        chapter: chapterSlugValue,
+        paragraph: String(draft.metadata.paragraph ?? options.paragraph),
+        frontmatterPatch: finalFrontmatter,
+        body,
+      })
+    : await createParagraph(root, {
+        chapter: chapterSlugValue,
+        number: draft.metadata.number,
+        title: draft.metadata.title,
+        body,
+        overwrite: options.overwrite,
+        frontmatter: finalFrontmatter,
+      }).then(async (created) => ({
+        filePath: created.filePath,
+        frontmatter: (await readMarkdownFile(created.filePath, paragraphSchema)).frontmatter,
+      }));
+
+  return {
+    filePath: result.filePath,
+    draftPath: draft.path,
+    frontmatter: result.frontmatter,
   };
 }
 
@@ -1462,6 +1988,42 @@ export async function updateChapter(
   return { filePath, frontmatter: validated };
 }
 
+export async function updateChapterDraft(
+  rootPath: string,
+  options: {
+    chapter: string;
+    frontmatterPatch?: Record<string, unknown>;
+    body?: string;
+    appendBody?: string;
+  },
+): Promise<{ filePath: string; frontmatter: ChapterDraftFrontmatter }> {
+  const root = path.resolve(rootPath);
+  const filePath = resolveChapterDraftMetadataFilePath(root, options.chapter);
+
+  if (!(await pathExists(filePath))) {
+    throw new Error(`Chapter draft does not exist: ${filePath}`);
+  }
+
+  assertNoForbiddenPatchKeys(options.frontmatterPatch, ["type", "id", "chapter", "number", "title"]);
+
+  const raw = await readFile(filePath, "utf8");
+  const parsed = matter(raw);
+  const mergedFrontmatter = {
+    ...(parsed.data as Record<string, unknown>),
+    ...(options.frontmatterPatch ?? {}),
+  };
+  const validated = chapterDraftSchema.parse(mergedFrontmatter);
+  const nextBody =
+    options.body !== undefined
+      ? options.body
+      : options.appendBody
+        ? appendMarkdownSection(String(parsed.content ?? "").trim(), options.appendBody)
+        : String(parsed.content ?? "").trim();
+
+  await writeFile(filePath, renderMarkdown(validated, nextBody), "utf8");
+  return { filePath, frontmatter: validated };
+}
+
 export async function updateParagraph(
   rootPath: string,
   options: {
@@ -1488,6 +2050,43 @@ export async function updateParagraph(
     ...(options.frontmatterPatch ?? {}),
   };
   const validated = paragraphSchema.parse(mergedFrontmatter);
+  const nextBody =
+    options.body !== undefined
+      ? options.body
+      : options.appendBody
+        ? appendMarkdownSection(String(parsed.content ?? "").trim(), options.appendBody)
+        : String(parsed.content ?? "").trim();
+
+  await writeFile(filePath, renderMarkdown(validated, nextBody), "utf8");
+  return { filePath, frontmatter: validated };
+}
+
+export async function updateParagraphDraft(
+  rootPath: string,
+  options: {
+    chapter: string;
+    paragraph: string;
+    frontmatterPatch?: Record<string, unknown>;
+    body?: string;
+    appendBody?: string;
+  },
+): Promise<{ filePath: string; frontmatter: ParagraphDraftFrontmatter }> {
+  const root = path.resolve(rootPath);
+  const filePath = await resolveParagraphDraftFilePath(root, options.chapter, options.paragraph);
+
+  if (!(await pathExists(filePath))) {
+    throw new Error(`Paragraph draft does not exist: ${filePath}`);
+  }
+
+  assertNoForbiddenPatchKeys(options.frontmatterPatch, ["type", "id", "paragraph", "chapter", "number", "title"]);
+
+  const raw = await readFile(filePath, "utf8");
+  const parsed = matter(raw);
+  const mergedFrontmatter = {
+    ...(parsed.data as Record<string, unknown>),
+    ...(options.frontmatterPatch ?? {}),
+  };
+  const validated = paragraphDraftSchema.parse(mergedFrontmatter);
   const nextBody =
     options.body !== undefined
       ? options.body
@@ -1626,6 +2225,96 @@ export async function syncTotalResume(
         chapter.metadata.summary ?? "Add chapter summary here.",
         "",
       ]),
+    ].join("\n"),
+  );
+
+  await writeFile(filePath, content, "utf8");
+  return { filePath, content, chapterCount: chapters.length };
+}
+
+export async function syncPlot(
+  rootPath: string,
+): Promise<{ filePath: string; content: string; chapterCount: number }> {
+  const root = path.resolve(rootPath);
+  const book = await readBook(root);
+  const chapters = await listChapters(root);
+  const secrets = await listEntities(root, "secret");
+  const timelineEvents = await listEntities(root, "timeline-event");
+  const filePath = path.join(root, PLOT_FILE);
+
+  const chapterSections: string[] = [];
+  for (const chapter of chapters) {
+    const chapterData = await readChapter(root, chapter.slug);
+    const chapterSummary = (chapter.metadata.summary ?? summarizeText(chapterData.body, 320)) || "Add chapter summary here.";
+    const sceneLines = chapterData.paragraphs
+      .map((paragraph) => paragraph.metadata.summary ?? summarizeText(paragraph.body, 190))
+      .filter((value): value is string => Boolean(value && value.trim()))
+      .slice(0, 4);
+    const revealedSecrets = secrets.filter((secret) => matchesChapterReference(secret.metadata.reveal_in, chapter.slug));
+    const datedEvents = collectChapterTimelineEvents(chapter, timelineEvents);
+
+    chapterSections.push(
+      [
+        `## Chapter ${formatOrdinal(chapter.metadata.number)} ${chapter.metadata.title}`,
+        "",
+        chapterSummary,
+        "",
+        "### What Happens",
+        "",
+        bulletLines(sceneLines.length > 0 ? sceneLines : ["Add paragraph summaries or chapter summary details here."]),
+        "",
+        "### Secrets Revealed",
+        "",
+        bulletLines(
+          revealedSecrets.length > 0
+            ? revealedSecrets.map((secret) => formatPlotSecretLine(secret.metadata))
+            : ["No secret reveal is explicitly tied to this chapter yet."],
+        ),
+        "",
+        "### Dates And Timeline",
+        "",
+        bulletLines(
+          datedEvents.length > 0
+            ? datedEvents
+            : [
+                chapter.metadata.timeline_ref
+                  ? `Timeline reference: ${chapter.metadata.timeline_ref}`
+                  : "No chapter-level timeline anchor is set yet.",
+              ],
+        ),
+        "",
+      ].join("\n"),
+    );
+  }
+
+  const unrevealedSecrets = secrets
+    .filter((secret) => !secret.metadata.reveal_in || !matchesAnyChapter(secret.metadata.reveal_in, chapters.map((chapter) => chapter.slug)))
+    .map((secret) => formatPlotSecretParkingLine(secret.metadata));
+
+  const content = renderMarkdown(
+    plotSchema.parse({
+      type: "plot",
+      id: "plot:main",
+      title: `${book?.frontmatter.title ?? "Book"} Plot`,
+    }),
+    [
+      "# Plot Overview",
+      "",
+      `- Book: ${book?.frontmatter.title ?? "Untitled book"}`,
+      `- Chapters tracked: ${chapters.length}`,
+      `- Secrets tracked: ${secrets.length}`,
+      `- Timeline events tracked: ${timelineEvents.length}`,
+      "",
+      "# Chapter Map",
+      "",
+      ...(chapterSections.length > 0 ? chapterSections : ["No chapters yet. Add chapters and scenes, then sync this file again.", ""]),
+      "# Pending Or Unplaced Reveals",
+      "",
+      bulletLines(
+        unrevealedSecrets.length > 0
+          ? unrevealedSecrets
+          : ["All current secrets are tied to a chapter reveal, or no secrets exist yet."],
+      ),
     ].join("\n"),
   );
 
@@ -1989,6 +2678,20 @@ async function readMarkdownFile<T>(
   };
 }
 
+async function readLooseMarkdownIfExists(filePath: string): Promise<MarkdownDocument<Record<string, unknown>> | null> {
+  if (!(await pathExists(filePath))) {
+    return null;
+  }
+
+  const raw = await readFile(filePath, "utf8");
+  const parsed = matter(raw);
+  return {
+    frontmatter: parsed.data as Record<string, unknown>,
+    body: String(parsed.content ?? "").trim(),
+    path: filePath,
+  };
+}
+
 async function validateFile(root: string, filePath: string): Promise<void> {
   const raw = await readFile(filePath, "utf8");
   const parsed = matter(raw);
@@ -1997,6 +2700,11 @@ async function validateFile(root: string, filePath: string): Promise<void> {
 
   if (relativePath === BOOK_FILE) {
     bookSchema.parse(data);
+    return;
+  }
+
+  if (relativePath === PLOT_FILE) {
+    plotSchema.parse(data);
     return;
   }
 
@@ -2022,6 +2730,16 @@ async function validateFile(root: string, filePath: string): Promise<void> {
 
   if (relativePath.startsWith("chapters/")) {
     paragraphSchema.parse(data);
+    return;
+  }
+
+  if (relativePath.startsWith("drafts/") && path.basename(filePath) === "chapter.md") {
+    chapterDraftSchema.parse(data);
+    return;
+  }
+
+  if (relativePath.startsWith("drafts/")) {
+    paragraphDraftSchema.parse(data);
     return;
   }
 
@@ -2231,11 +2949,39 @@ function resolveChapterMetadataFilePath(root: string, chapter: string): string {
   return path.join(root, "chapters", chapterSlug, "chapter.md");
 }
 
+function resolveChapterDraftMetadataFilePath(root: string, chapter: string): string {
+  const chapterSlug = normalizeChapterReference(chapter);
+  return path.join(root, "drafts", chapterSlug, "chapter.md");
+}
+
 async function resolveParagraphFilePath(root: string, chapter: string, paragraph: string): Promise<string> {
   const chapterSlug = normalizeChapterReference(chapter);
   const chapterFolder = path.join(root, "chapters", chapterSlug);
   const normalized = paragraph
     .replace(/^paragraph:[^:]+:/, "")
+    .replace(/\.md$/i, "")
+    .trim();
+
+  const directPath = path.join(chapterFolder, `${normalized}.md`);
+  if (await pathExists(directPath)) {
+    return directPath;
+  }
+
+  const files = await fg("*.md", { cwd: chapterFolder, absolute: true, onlyFiles: true });
+  const filePath = files.find((candidate) => path.basename(candidate, ".md") === normalized);
+  if (filePath) {
+    return filePath;
+  }
+
+  return directPath;
+}
+
+async function resolveParagraphDraftFilePath(root: string, chapter: string, paragraph: string): Promise<string> {
+  const chapterSlug = normalizeChapterReference(chapter);
+  const chapterFolder = path.join(root, "drafts", chapterSlug);
+  const normalized = paragraph
+    .replace(/^paragraph:[^:]+:/, "")
+    .replace(/^draft:paragraph:[^:]+:/, "")
     .replace(/\.md$/i, "")
     .trim();
 
@@ -2308,6 +3054,15 @@ function buildCharacterBody(input: CreateCharacterProfileInput): string {
     "",
     bulletLines(input.relationships),
     "",
+    "# Identity And Change",
+    "",
+    bulletLines([
+      input.currentIdentity ? `Current identity: ${input.currentIdentity}` : undefined,
+      ...toPrefixedList("Former name", input.formerNames),
+      ...toPrefixedList("Identity shift", input.identityShifts),
+      input.identityArc ? `Identity arc: ${input.identityArc}` : undefined,
+    ]),
+    "",
     "# Public Knowledge",
     "",
     bulletLines([
@@ -2329,6 +3084,15 @@ function buildCharacterBody(input: CreateCharacterProfileInput): string {
     "- What could destabilize this character?",
     "- Which chapter should deepen their voice or backstory?",
   ].join("\n");
+}
+
+function buildHiddenCanonFrontmatter(input: HiddenCanonInput) {
+  return {
+    secret_refs: uniqueValues(input.secretRefs ?? []),
+    private_notes: input.privateNotes,
+    reveal_in: input.revealIn,
+    known_from: input.knownFrom,
+  };
 }
 
 function buildItemBody(input: CreateItemProfileInput): string {
@@ -2507,6 +3271,105 @@ function buildTimelineEventBody(input: CreateTimelineEventProfileInput): string 
       input.date ? `Date: ${input.date}` : undefined,
     ]),
   ].join("\n");
+}
+
+function addContextSection(
+  sections: string[],
+  files: Set<string>,
+  root: string,
+  document: MarkdownDocument<Record<string, unknown>> | MarkdownDocument<PlotFrontmatter> | null,
+  heading: string,
+  maxLength: number,
+): void {
+  if (!document) {
+    return;
+  }
+
+  const relativePath = toPosixPath(path.relative(root, document.path));
+  files.add(relativePath);
+  sections.push(
+    [
+      `## ${heading}`,
+      "",
+      `Source: ${relativePath}`,
+      "",
+      summarizeText(document.body, maxLength) || "No body content yet.",
+    ].join("\n"),
+  );
+}
+
+function compactFrontmatterPatch(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => {
+      if (value === undefined || value === null) return false;
+      if (typeof value === "string") return value.trim().length > 0;
+      if (Array.isArray(value)) return value.length > 0;
+      return true;
+    }),
+  );
+}
+
+function collectChapterTimelineEvents(
+  chapter: { slug: string; metadata: ChapterFrontmatter },
+  timelineEvents: CanonEntityDocument[],
+): string[] {
+  const chapterRef = typeof chapter.metadata.timeline_ref === "string" ? chapter.metadata.timeline_ref.trim() : "";
+  const chapterId = `chapter:${chapter.slug}`;
+  const matchingEvents = timelineEvents.filter((event) => {
+    const eventId = String(event.metadata.id ?? "");
+    const eventTitle = String(event.metadata.title ?? "");
+    const participants = Array.isArray(event.metadata.participants) ? event.metadata.participants.map((value) => String(value)) : [];
+    return [eventId, eventTitle, ...participants].some((value) => value === chapterRef || value === chapterId || value === chapter.slug);
+  });
+
+  if (matchingEvents.length === 0) {
+    return chapterRef ? [`Timeline reference: ${chapterRef}`] : [];
+  }
+
+  return matchingEvents.map((event) => {
+    const title = String(event.metadata.title ?? event.metadata.id ?? event.slug);
+    const date = typeof event.metadata.date === "string" ? event.metadata.date : undefined;
+    const significance = typeof event.metadata.significance === "string" ? event.metadata.significance : undefined;
+    return [
+      title,
+      date ? `date ${date}` : undefined,
+      significance ? summarizeText(significance, 120) : undefined,
+    ]
+      .filter(Boolean)
+      .join(" - ");
+  });
+}
+
+function formatPlotSecretLine(metadata: Record<string, unknown>): string {
+  const title = String(metadata.title ?? metadata.id ?? "Unnamed secret");
+  const revealStrategy = typeof metadata.reveal_strategy === "string" ? summarizeText(metadata.reveal_strategy, 130) : "reveal method not set";
+  const holders = Array.isArray(metadata.holders) ? metadata.holders.map((value) => String(value)).filter(Boolean) : [];
+  const knownFrom = typeof metadata.known_from === "string" ? metadata.known_from : undefined;
+  return [
+    `${title}`,
+    `how: ${revealStrategy}`,
+    `by: ${holders.join(", ") || "not set"}`,
+    knownFrom ? `safe from: ${knownFrom}` : undefined,
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
+function formatPlotSecretParkingLine(metadata: Record<string, unknown>): string {
+  const title = String(metadata.title ?? metadata.id ?? "Unnamed secret");
+  const revealIn = typeof metadata.reveal_in === "string" ? metadata.reveal_in : "not assigned";
+  return `${title} - reveal_in: ${revealIn}`;
+}
+
+function matchesAnyChapter(reference: unknown, chapterSlugs: string[]): boolean {
+  return chapterSlugs.some((chapterSlugValue) => matchesChapterReference(reference, chapterSlugValue));
+}
+
+function matchesChapterReference(reference: unknown, chapterSlugValue: string): boolean {
+  if (typeof reference !== "string") return false;
+  const normalized = reference.trim();
+  if (!normalized) return false;
+  return [normalized, normalized.replace(/^chapter:/, ""), normalized.replace(/^chapters\//, "").replace(/\/chapter\.md$/, "")].includes(chapterSlugValue);
 }
 
 function appendMarkdownSection(existingBody: string, appended: string): string {

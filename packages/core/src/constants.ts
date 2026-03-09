@@ -10,6 +10,7 @@ export const BOOK_DIRECTORIES = [
   "timelines/events",
   "secrets",
   "chapters",
+  "drafts",
   "resumes",
   "resumes/chapters",
   "evaluations",
@@ -48,8 +49,10 @@ export const ENTITY_TYPES = Object.keys(ENTITY_TYPE_TO_DIRECTORY) as Array<
 export const DEFAULT_CANON = "draft";
 
 export const BOOK_FILE = "book.md";
+export const PLOT_FILE = "plot.md";
 
 export const GUIDELINE_FILES = {
+  prose: "guidelines/prose.md",
   style: "guidelines/style.md",
   chapterRules: "guidelines/chapter-rules.md",
   voices: "guidelines/voices.md",
@@ -63,6 +66,7 @@ export const TOTAL_EVALUATION_FILE = "evaluations/total.md";
 
 export const CONTENT_GLOB = [
   "book.md",
+  "plot.md",
   "guidelines/**/*.md",
   "characters/**/*.md",
   "items/**/*.md",
@@ -71,6 +75,7 @@ export const CONTENT_GLOB = [
   "timelines/**/*.md",
   "secrets/**/*.md",
   "chapters/**/*.md",
+  "drafts/**/*.md",
   "resumes/**/*.md",
   "evaluations/**/*.md",
   "research/**/*.md",

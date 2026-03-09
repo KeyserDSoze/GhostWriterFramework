@@ -171,6 +171,31 @@ If you later rename canon with `rename_entity`, `rename_chapter`, or `rename_par
 
 ```json
 {
+  "default_agent": "build",
+  "agent": {
+    "build": {
+      "temperature": 0.45,
+      "top_p": 1,
+      "options": {
+        "reasoningEffort": "high",
+        "reasoningSummary": "detailed",
+        "textVerbosity": "high",
+        "include": ["reasoning.encrypted_content", "usage"],
+        "store": true
+      }
+    },
+    "plan": {
+      "temperature": 0.2,
+      "top_p": 1,
+      "options": {
+        "reasoningEffort": "high",
+        "reasoningSummary": "detailed",
+        "textVerbosity": "high",
+        "include": ["reasoning.encrypted_content", "usage"],
+        "store": true
+      }
+    }
+  },
   "mcp": {
     "narrarium": {
       "type": "local",

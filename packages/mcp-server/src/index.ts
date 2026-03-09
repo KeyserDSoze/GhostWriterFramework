@@ -7,16 +7,22 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
   assetSchema,
+  buildChapterWritingContext,
+  buildParagraphWritingContext,
   characterRoleTierSchema,
   characterStoryRoleSchema,
   createAssetPrompt,
   createChapter,
+  createChapterDraft,
+  createChapterFromDraft,
   createCharacterProfile,
   createEntity,
   createFactionProfile,
   createItemProfile,
   createLocationProfile,
   createParagraph,
+  createParagraphDraft,
+  createParagraphFromDraft,
   createSecretProfile,
   createTimelineEventProfile,
   evaluateBook,
@@ -33,10 +39,13 @@ import {
   syncAllResumes,
   syncChapterEvaluation,
   syncChapterResume,
+  syncPlot,
   syncTotalResume,
   updateChapter,
+  updateChapterDraft,
   updateEntity,
   updateParagraph,
+  updateParagraphDraft,
   validateBook,
   writeWikipediaResearchSnapshot,
 } from "narrarium";
@@ -63,6 +72,18 @@ const entityTypeSchema = z.enum([
 
 const imageOrientationSchema = z.enum(["portrait", "landscape", "square"]);
 const imageProviderSchema = z.enum(["openai"]);
+const hiddenCanonToolFields = {
+  secretRefs: z.array(z.string()).default([]),
+  privateNotes: z.string().optional(),
+  revealIn: z.string().optional(),
+  knownFrom: z.string().optional(),
+};
+const hiddenCanonWizardSteps: WizardStep[] = [
+  { key: "secretRefs", prompt: "List linked secret ids for this entry, if any.", type: "stringArray" },
+  { key: "privateNotes", prompt: "Add private notes or hidden canon for this entry.", type: "string" },
+  { key: "knownFrom", prompt: "From which chapter can the reader safely know this hidden information?", type: "string" },
+  { key: "revealIn", prompt: "In which chapter should this hidden information be fully revealed?", type: "string" },
+];
 
 const wizardKindSchema = z.enum([
   "character",
@@ -111,6 +132,10 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "occupation", prompt: "What is their occupation, role, or public identity?", type: "string" },
     { key: "origin", prompt: "Where do they come from?", type: "string" },
     { key: "firstImpression", prompt: "What first impression should the reader get?", type: "string" },
+    { key: "currentIdentity", prompt: "What identity or name are they currently presenting to the world?", type: "string" },
+    { key: "formerNames", prompt: "List former names or identities tied to this character.", type: "stringArray" },
+    { key: "identityShifts", prompt: "List major identity changes, disguises, or transformations.", type: "stringArray" },
+    { key: "identityArc", prompt: "How does this character's identity evolve across the book?", type: "string" },
     { key: "traits", prompt: "List important traits, comma separated if needed.", type: "stringArray" },
     { key: "mannerisms", prompt: "List notable mannerisms or repeated behaviors.", type: "stringArray" },
     { key: "desires", prompt: "What does the character want?", type: "stringArray" },
@@ -122,6 +147,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "factions", prompt: "List faction ids or names tied to this character.", type: "stringArray" },
     { key: "homeLocation", prompt: "What is the character's home location id or name?", type: "string" },
     { key: "introducedIn", prompt: "In which chapter is the character introduced?", type: "string" },
+    ...hiddenCanonWizardSteps,
     { key: "historical", prompt: "Is this character historical or fact-checked? yes or no.", type: "bool" },
     { key: "wikipediaTitle", prompt: "If historical, what Wikipedia page should be used for verification?", type: "string", condition: (data) => Boolean(data.historical) },
   ],
@@ -136,6 +162,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "factionsPresent", prompt: "Which factions are active here?", type: "stringArray" },
     { key: "basedOnRealPlace", prompt: "Is it based on a real place or historical site? yes or no.", type: "bool" },
     { key: "timelineRef", prompt: "What timeline reference anchors this location, if any?", type: "string" },
+    ...hiddenCanonWizardSteps,
     { key: "historical", prompt: "Should this location be fact-checked as historical or factual? yes or no.", type: "bool" },
     { key: "wikipediaTitle", prompt: "If fact-checked, what Wikipedia page should be used?", type: "string", condition: (data) => Boolean(data.historical) || Boolean(data.basedOnRealPlace) },
   ],
@@ -152,6 +179,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "enemies", prompt: "Who are its enemies?", type: "stringArray" },
     { key: "methods", prompt: "What methods does it use to get results?", type: "stringArray" },
     { key: "baseLocation", prompt: "What is the faction's base location?", type: "string" },
+    ...hiddenCanonWizardSteps,
     { key: "historical", prompt: "Should this faction be checked against history or factual research? yes or no.", type: "bool" },
     { key: "wikipediaTitle", prompt: "If factual, what Wikipedia page should be used?", type: "string", condition: (data) => Boolean(data.historical) },
   ],
@@ -167,6 +195,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "limitations", prompt: "List limits, risks, or costs.", type: "stringArray" },
     { key: "owner", prompt: "Who currently owns or carries the item?", type: "string" },
     { key: "introducedIn", prompt: "Where is the item introduced?", type: "string" },
+    ...hiddenCanonWizardSteps,
     { key: "historical", prompt: "Is this item historical or fact-checked? yes or no.", type: "bool" },
     { key: "wikipediaTitle", prompt: "If factual, what Wikipedia page should be used?", type: "string", condition: (data) => Boolean(data.historical) },
   ],
@@ -179,6 +208,8 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "falseBeliefs", prompt: "What false beliefs does this secret create or preserve?", type: "stringArray" },
     { key: "revealStrategy", prompt: "How should the reveal be staged?", type: "string" },
     { key: "holders", prompt: "Who knows the truth?", type: "stringArray" },
+    { key: "secretRefs", prompt: "List related secret ids for cross-reference, if any.", type: "stringArray" },
+    { key: "privateNotes", prompt: "Add private notes that should stay off the main canon surface.", type: "string" },
     { key: "revealIn", prompt: "In which chapter should it be revealed?", type: "string" },
     { key: "knownFrom", prompt: "From which chapter can the reader safely know it?", type: "string" },
     { key: "timelineRef", prompt: "What timeline reference anchors the secret?", type: "string" },
@@ -192,6 +223,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "significance", prompt: "Why is this event important?", type: "string" },
     { key: "functionInBook", prompt: "What is this event used for in the book?", type: "string" },
     { key: "consequences", prompt: "List the consequences of the event.", type: "stringArray" },
+    ...hiddenCanonWizardSteps,
     { key: "historical", prompt: "Should this event be checked against history or factual research? yes or no.", type: "bool" },
     { key: "wikipediaTitle", prompt: "If factual, what Wikipedia page should be used?", type: "string", condition: (data) => Boolean(data.historical) },
   ],
@@ -232,12 +264,14 @@ server.tool(
       language,
       createSkills,
     });
+    const plot = await syncPlot(rootPath);
 
     return textResponse(
       [
         `Initialized Narrarium book repo at ${result.rootPath}.`,
         `Created ${result.created.length} seed files and directories.`,
         result.created.length > 0 ? `Created files: ${result.created.join(", ")}` : "All seed files already existed.",
+        `Synced plot at ${plot.filePath}.`,
       ].join("\n"),
     );
   },
@@ -389,12 +423,14 @@ server.tool(
         "Strong optional fields:",
         "- Story role: protagonist, antagonist, mentor, ally, foil, love-interest, comic-relief, other",
         "- Age, occupation, origin, first impression",
+        "- Current identity, former names, and identity shifts",
         "- Traits and mannerisms",
         "- Desires and fears",
         "- Internal and external conflict",
         "- Arc",
         "- Relationships",
         "- Factions, home location, first chapter",
+        "- Hidden canon: linked secret ids, private notes, known-from, reveal chapter",
         "- Historical flag and Wikipedia title if factual verification is needed",
       ].join("\n"),
     );
@@ -418,6 +454,10 @@ server.tool(
     occupation: z.string().optional(),
     origin: z.string().optional(),
     firstImpression: z.string().optional(),
+    currentIdentity: z.string().optional(),
+    formerNames: z.array(z.string()).default([]),
+    identityShifts: z.array(z.string()).default([]),
+    identityArc: z.string().optional(),
     arc: z.string().optional(),
     internalConflict: z.string().optional(),
     externalConflict: z.string().optional(),
@@ -429,6 +469,7 @@ server.tool(
     factions: z.array(z.string()).default([]),
     homeLocation: z.string().optional(),
     introducedIn: z.string().optional(),
+    ...hiddenCanonToolFields,
     timelineAges: z.record(z.string(), z.number().int().nonnegative()).default({}),
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
@@ -451,6 +492,10 @@ server.tool(
     occupation,
     origin,
     firstImpression,
+    currentIdentity,
+    formerNames,
+    identityShifts,
+    identityArc,
     arc,
     internalConflict,
     externalConflict,
@@ -462,6 +507,10 @@ server.tool(
     factions,
     homeLocation,
     introducedIn,
+    secretRefs,
+    privateNotes,
+    revealIn,
+    knownFrom,
     timelineAges,
     overwrite,
     historical,
@@ -492,6 +541,10 @@ server.tool(
       occupation,
       origin,
       firstImpression,
+      currentIdentity,
+      formerNames,
+      identityShifts,
+      identityArc,
       arc,
       internalConflict,
       externalConflict,
@@ -503,6 +556,10 @@ server.tool(
       factions,
       homeLocation,
       introducedIn,
+      secretRefs,
+      privateNotes,
+      revealIn,
+      knownFrom,
       timelineAges,
       overwrite,
       historical,
@@ -535,6 +592,7 @@ server.tool(
           "Location kind, region, timeline reference",
           "Landmarks and risks",
           "Factions present",
+          "Hidden canon: linked secret ids, private notes, known-from, reveal chapter",
           "Whether it is based on a real place or historical site",
           "Historical flag and Wikipedia title if factual verification is needed",
         ],
@@ -558,6 +616,7 @@ server.tool(
     factionsPresent: z.array(z.string()).default([]),
     basedOnRealPlace: z.boolean().default(false),
     timelineRef: z.string().optional(),
+    ...hiddenCanonToolFields,
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
@@ -578,6 +637,10 @@ server.tool(
     factionsPresent,
     basedOnRealPlace,
     timelineRef,
+    secretRefs,
+    privateNotes,
+    revealIn,
+    knownFrom,
     overwrite,
     historical,
     wikipediaTitle,
@@ -606,6 +669,10 @@ server.tool(
       factionsPresent,
       basedOnRealPlace,
       timelineRef,
+      secretRefs,
+      privateNotes,
+      revealIn,
+      knownFrom,
       overwrite,
       historical,
       sources,
@@ -638,6 +705,7 @@ server.tool(
           "Faction kind, public image, hidden agenda",
           "Leaders, allies, enemies, methods",
           "Base location",
+          "Hidden canon: linked secret ids, private notes, known-from, reveal chapter",
           "Historical flag and Wikipedia title if factual verification is needed",
         ],
       }),
@@ -662,6 +730,7 @@ server.tool(
     enemies: z.array(z.string()).default([]),
     methods: z.array(z.string()).default([]),
     baseLocation: z.string().optional(),
+    ...hiddenCanonToolFields,
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
@@ -684,6 +753,10 @@ server.tool(
     enemies,
     methods,
     baseLocation,
+    secretRefs,
+    privateNotes,
+    revealIn,
+    knownFrom,
     overwrite,
     historical,
     wikipediaTitle,
@@ -714,6 +787,10 @@ server.tool(
       enemies,
       methods,
       baseLocation,
+      secretRefs,
+      privateNotes,
+      revealIn,
+      knownFrom,
       overwrite,
       historical,
       sources,
@@ -746,6 +823,7 @@ server.tool(
           "Item kind, significance, origin story",
           "Owner and chapter of introduction",
           "Powers and limitations",
+          "Hidden canon: linked secret ids, private notes, known-from, reveal chapter",
           "Historical flag and Wikipedia title if factual verification is needed",
         ],
       }),
@@ -769,6 +847,7 @@ server.tool(
     limitations: z.array(z.string()).default([]),
     owner: z.string().optional(),
     introducedIn: z.string().optional(),
+    ...hiddenCanonToolFields,
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
@@ -790,6 +869,10 @@ server.tool(
     limitations,
     owner,
     introducedIn,
+    secretRefs,
+    privateNotes,
+    revealIn,
+    knownFrom,
     overwrite,
     historical,
     wikipediaTitle,
@@ -819,6 +902,10 @@ server.tool(
       limitations,
       owner,
       introducedIn,
+      secretRefs,
+      privateNotes,
+      revealIn,
+      knownFrom,
       overwrite,
       historical,
       sources,
@@ -851,6 +938,7 @@ server.tool(
           "Who holds it and who protects it",
           "False beliefs created by the secret",
           "Reveal strategy, reveal chapter, known-from chapter, timeline reference",
+          "Private notes and linked secret ids",
           "Historical flag and Wikipedia title if factual verification is needed",
         ],
       }),
@@ -871,6 +959,8 @@ server.tool(
     falseBeliefs: z.array(z.string()).default([]),
     revealStrategy: z.string().optional(),
     holders: z.array(z.string()).default([]),
+    secretRefs: z.array(z.string()).default([]),
+    privateNotes: z.string().optional(),
     revealIn: z.string().optional(),
     knownFrom: z.string().optional(),
     timelineRef: z.string().optional(),
@@ -892,6 +982,8 @@ server.tool(
     falseBeliefs,
     revealStrategy,
     holders,
+    secretRefs,
+    privateNotes,
     revealIn,
     knownFrom,
     timelineRef,
@@ -921,6 +1013,8 @@ server.tool(
       falseBeliefs,
       revealStrategy,
       holders,
+      secretRefs,
+      privateNotes,
       revealIn,
       knownFrom,
       timelineRef,
@@ -930,7 +1024,7 @@ server.tool(
       frontmatter,
     });
 
-    return textResponse(`Created secret at ${result.filePath}.${note}`);
+    return textResponse(await appendPlotSyncNote(rootPath, `Created secret at ${result.filePath}.${note}`));
   },
 );
 
@@ -955,6 +1049,7 @@ server.tool(
         optional: [
           "Function in book",
           "Consequences",
+          "Hidden canon: linked secret ids, private notes, known-from, reveal chapter",
           "Historical flag and Wikipedia title if factual verification is needed",
           "Use start_wizard with kind timeline-event for a true guided session",
         ],
@@ -974,6 +1069,7 @@ server.tool(
     significance: z.string().optional(),
     functionInBook: z.string().optional(),
     consequences: z.array(z.string()).default([]),
+    ...hiddenCanonToolFields,
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
@@ -990,6 +1086,10 @@ server.tool(
     significance,
     functionInBook,
     consequences,
+    secretRefs,
+    privateNotes,
+    revealIn,
+    knownFrom,
     overwrite,
     historical,
     wikipediaTitle,
@@ -1014,13 +1114,17 @@ server.tool(
       significance,
       functionInBook,
       consequences,
+      secretRefs,
+      privateNotes,
+      revealIn,
+      knownFrom,
       overwrite,
       historical,
       sources,
       frontmatter,
     });
 
-    return textResponse(`Created timeline event at ${result.filePath}.${note}`);
+    return textResponse(await appendPlotSyncNote(rootPath, `Created timeline event at ${result.filePath}.${note}`));
   },
 );
 
@@ -1046,6 +1150,7 @@ server.tool(
           "Timeline reference",
           "Tags",
           "Notes body or beat scaffold",
+          "If the prose is not ready yet, create a matching chapter draft first",
           "Use start_wizard with kind chapter for a true guided session",
         ],
       }),
@@ -1074,10 +1179,38 @@ server.tool(
           "Viewpoint",
           "Tags",
           "Optional body text",
+          "If the prose is not ready yet, create a matching paragraph draft first",
           "Use start_wizard with kind paragraph for a true guided session",
         ],
       }),
     ),
+);
+
+server.tool(
+  "chapter_writing_context",
+  "Assemble the context that should be read before writing or polishing a chapter: prose defaults, plot map, resumes, prior chapter state, and matching chapter draft.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+  },
+  async ({ rootPath, chapter }) => {
+    const result = await buildChapterWritingContext(rootPath, chapter);
+    return textResponse(result.text);
+  },
+);
+
+server.tool(
+  "paragraph_writing_context",
+  "Assemble the context that should be read before writing or polishing a paragraph: prose defaults, plot map, resumes, prior scenes, and the matching paragraph draft.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+  },
+  async ({ rootPath, chapter, paragraph }) => {
+    const result = await buildParagraphWritingContext(rootPath, chapter, paragraph);
+    return textResponse(result.text);
+  },
 );
 
 server.tool(
@@ -1137,7 +1270,7 @@ server.tool(
     });
 
     return textResponse(
-      `Created ${kind} at ${result.filePath}.${wikipediaNote}`,
+      await maybeAppendPlotSyncNote(rootPath, kind, `Created ${kind} at ${result.filePath}.${wikipediaNote}`),
     );
   },
 );
@@ -1163,7 +1296,7 @@ server.tool(
     });
 
     return textResponse(
-      `Created chapter ${result.chapterId} at ${result.chapterFilePath}.`,
+      await appendPlotSyncNote(rootPath, `Created chapter ${result.chapterId} at ${result.chapterFilePath}.`),
     );
   },
 );
@@ -1191,8 +1324,150 @@ server.tool(
     });
 
     return textResponse(
-      `Created paragraph ${result.paragraphId} at ${result.filePath}.`,
+      await appendPlotSyncNote(rootPath, `Created paragraph ${result.paragraphId} at ${result.filePath}.`),
     );
+  },
+);
+
+server.tool(
+  "create_chapter_draft",
+  "Create a rough chapter draft inside drafts/ using the same chapter slug structure as the final chapter tree.",
+  {
+    rootPath: z.string().min(1),
+    number: z.number().int().positive(),
+    title: z.string().min(1),
+    body: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({ rootPath, number, title, body, overwrite, frontmatter }) => {
+    const result = await createChapterDraft(rootPath, {
+      number,
+      title,
+      body,
+      overwrite,
+      frontmatter,
+    });
+
+    return textResponse(`Created chapter draft ${result.draftId} at ${result.draftFilePath}.`);
+  },
+);
+
+server.tool(
+  "update_chapter_draft",
+  "Update an existing chapter draft by patching its frontmatter and replacing or appending rough draft body content.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+    body: z.string().optional(),
+    appendBody: z.string().optional(),
+  },
+  async ({ rootPath, chapter, frontmatterPatch, body, appendBody }) => {
+    const result = await updateChapterDraft(rootPath, {
+      chapter,
+      frontmatterPatch,
+      body,
+      appendBody,
+    });
+
+    return textResponse(`Updated chapter draft at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "create_paragraph_draft",
+  "Create a rough paragraph or scene draft inside drafts/ using the same chapter tree as the final chapter.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    number: z.number().int().positive(),
+    title: z.string().min(1),
+    body: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({ rootPath, chapter, number, title, body, overwrite, frontmatter }) => {
+    const result = await createParagraphDraft(rootPath, {
+      chapter,
+      number,
+      title,
+      body,
+      overwrite,
+      frontmatter,
+    });
+
+    return textResponse(`Created paragraph draft ${result.draftId} at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "update_paragraph_draft",
+  "Update an existing paragraph draft by patching its frontmatter and replacing or appending rough scene content.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+    body: z.string().optional(),
+    appendBody: z.string().optional(),
+  },
+  async ({ rootPath, chapter, paragraph, frontmatterPatch, body, appendBody }) => {
+    const result = await updateParagraphDraft(rootPath, {
+      chapter,
+      paragraph,
+      frontmatterPatch,
+      body,
+      appendBody,
+    });
+
+    return textResponse(`Updated paragraph draft at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "create_chapter_from_draft",
+  "Promote a chapter draft into the final chapters/ tree. It copies structural frontmatter from drafts/, accepts polished body text if provided, and syncs plot.md after writing.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    body: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({ rootPath, chapter, body, overwrite, frontmatterPatch }) => {
+    const result = await createChapterFromDraft(rootPath, {
+      chapter,
+      body,
+      overwrite,
+      frontmatterPatch,
+    });
+
+    return textResponse(await appendPlotSyncNote(rootPath, `Created or updated chapter from draft at ${result.filePath} using ${result.draftPath}. `));
+  },
+);
+
+server.tool(
+  "create_paragraph_from_draft",
+  "Promote a paragraph draft into the final chapters/ tree. It copies structural frontmatter from drafts/, accepts polished body text if provided, and syncs plot.md after writing.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+    body: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({ rootPath, chapter, paragraph, body, overwrite, frontmatterPatch }) => {
+    const result = await createParagraphFromDraft(rootPath, {
+      chapter,
+      paragraph,
+      body,
+      overwrite,
+      frontmatterPatch,
+    });
+
+    return textResponse(await appendPlotSyncNote(rootPath, `Created or updated paragraph from draft at ${result.filePath} using ${result.draftPath}. `));
   },
 );
 
@@ -1368,7 +1643,7 @@ server.tool(
       appendBody,
     });
 
-    return textResponse(`Updated chapter at ${result.filePath}.`);
+    return textResponse(await appendPlotSyncNote(rootPath, `Updated chapter at ${result.filePath}.`));
   },
 );
 
@@ -1392,7 +1667,7 @@ server.tool(
       appendBody,
     });
 
-    return textResponse(`Updated paragraph at ${result.filePath}.`);
+    return textResponse(await appendPlotSyncNote(rootPath, `Updated paragraph at ${result.filePath}.`));
   },
 );
 
@@ -1461,7 +1736,7 @@ server.tool(
       appendBody,
     });
 
-    return textResponse(`Updated ${kind} at ${result.filePath}.`);
+    return textResponse(await maybeAppendPlotSyncNote(rootPath, kind, `Updated ${kind} at ${result.filePath}.`));
   },
 );
 
@@ -1483,7 +1758,7 @@ server.tool(
       newSlug,
     });
 
-    return textResponse(`Renamed ${kind} from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`);
+    return textResponse(await maybeAppendPlotSyncNote(rootPath, kind, `Renamed ${kind} from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`));
   },
 );
 
@@ -1503,7 +1778,7 @@ server.tool(
       newNumber,
     });
 
-    return textResponse(`Renamed chapter from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`);
+    return textResponse(await appendPlotSyncNote(rootPath, `Renamed chapter from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`));
   },
 );
 
@@ -1525,7 +1800,7 @@ server.tool(
       newNumber,
     });
 
-    return textResponse(`Renamed paragraph from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`);
+    return textResponse(await appendPlotSyncNote(rootPath, `Renamed paragraph from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`));
   },
 );
 
@@ -1586,6 +1861,18 @@ server.tool(
     return textResponse(
       `Synced ${result.chapterCount} chapter resumes and total resume at ${result.totalFilePath}.`,
     );
+  },
+);
+
+server.tool(
+  "sync_plot",
+  "Refresh the root plot.md file so it tracks chapter progression, revealed secrets, and timeline dates from current canon.",
+  {
+    rootPath: z.string().min(1),
+  },
+  async ({ rootPath }) => {
+    const result = await syncPlot(rootPath);
+    return textResponse(`Synced plot at ${result.filePath} using ${result.chapterCount} chapters.`);
   },
 );
 
@@ -1713,6 +2000,19 @@ function textResponse(text: string) {
   return {
     content: [{ type: "text" as const, text }],
   };
+}
+
+async function appendPlotSyncNote(rootPath: string, baseText: string): Promise<string> {
+  const result = await syncPlot(rootPath);
+  return `${baseText} Plot synced at ${result.filePath}.`;
+}
+
+async function maybeAppendPlotSyncNote(rootPath: string, kind: z.infer<typeof entityTypeSchema>, baseText: string): Promise<string> {
+  if (kind !== "secret" && kind !== "timeline-event") {
+    return baseText;
+  }
+
+  return appendPlotSyncNote(rootPath, baseText);
 }
 
 function extractPromptSection(body: string): string {
@@ -1976,6 +2276,10 @@ async function finalizeWizardSession(
         occupation: stringOrUndefined(data.occupation),
         origin: stringOrUndefined(data.origin),
         firstImpression: stringOrUndefined(data.firstImpression),
+        currentIdentity: stringOrUndefined(data.currentIdentity),
+        formerNames: stringArrayOrEmpty(data.formerNames),
+        identityShifts: stringArrayOrEmpty(data.identityShifts),
+        identityArc: stringOrUndefined(data.identityArc),
         arc: stringOrUndefined(data.arc),
         internalConflict: stringOrUndefined(data.internalConflict),
         externalConflict: stringOrUndefined(data.externalConflict),
@@ -1987,12 +2291,13 @@ async function finalizeWizardSession(
         factions: stringArrayOrEmpty(data.factions),
         homeLocation: stringOrUndefined(data.homeLocation),
         introducedIn: stringOrUndefined(data.introducedIn),
+        ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
         body: options.body,
         frontmatter: options.frontmatter,
       });
-      return `Created ${session.kind} at ${result.filePath}.${research.note}`;
+      return appendPlotSyncNote(session.rootPath, `Created ${session.kind} at ${result.filePath}.${research.note}`);
     }
     case "location": {
       const result = await createLocationProfile(session.rootPath, {
@@ -2008,12 +2313,13 @@ async function finalizeWizardSession(
         factionsPresent: stringArrayOrEmpty(data.factionsPresent),
         basedOnRealPlace: Boolean(data.basedOnRealPlace),
         timelineRef: stringOrUndefined(data.timelineRef),
+        ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
         body: options.body,
         frontmatter: options.frontmatter,
       });
-      return `Created ${session.kind} at ${result.filePath}.${research.note}`;
+      return appendPlotSyncNote(session.rootPath, `Created ${session.kind} at ${result.filePath}.${research.note}`);
     }
     case "faction": {
       const result = await createFactionProfile(session.rootPath, {
@@ -2031,6 +2337,7 @@ async function finalizeWizardSession(
         enemies: stringArrayOrEmpty(data.enemies),
         methods: stringArrayOrEmpty(data.methods),
         baseLocation: stringOrUndefined(data.baseLocation),
+        ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
         body: options.body,
@@ -2053,6 +2360,7 @@ async function finalizeWizardSession(
         limitations: stringArrayOrEmpty(data.limitations),
         owner: stringOrUndefined(data.owner),
         introducedIn: stringOrUndefined(data.introducedIn),
+        ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
         body: options.body,
@@ -2072,8 +2380,7 @@ async function finalizeWizardSession(
         falseBeliefs: stringArrayOrEmpty(data.falseBeliefs),
         revealStrategy: stringOrUndefined(data.revealStrategy),
         holders: stringArrayOrEmpty(data.holders),
-        revealIn: stringOrUndefined(data.revealIn),
-        knownFrom: stringOrUndefined(data.knownFrom),
+        ...hiddenCanonInputFromData(data),
         timelineRef: stringOrUndefined(data.timelineRef),
         historical,
         sources: research.sources,
@@ -2092,6 +2399,7 @@ async function finalizeWizardSession(
         significance: stringOrUndefined(data.significance),
         functionInBook: stringOrUndefined(data.functionInBook),
         consequences: stringArrayOrEmpty(data.consequences),
+        ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
         body: options.body,
@@ -2113,7 +2421,7 @@ async function finalizeWizardSession(
           ...options.frontmatter,
         },
       });
-      return `Created ${session.kind} at ${result.chapterFilePath}.`;
+      return appendPlotSyncNote(session.rootPath, `Created ${session.kind} at ${result.chapterFilePath}.`);
     }
     case "paragraph": {
       const result = await createParagraph(session.rootPath, {
@@ -2129,7 +2437,7 @@ async function finalizeWizardSession(
           ...options.frontmatter,
         },
       });
-      return `Created ${session.kind} at ${result.filePath}.`;
+      return appendPlotSyncNote(session.rootPath, `Created ${session.kind} at ${result.filePath}.`);
     }
     default:
       throw new Error(`Unsupported wizard kind: ${session.kind}`);
@@ -2247,6 +2555,15 @@ function stringOrUndefined(value: unknown): string | undefined {
 
 function numberOrUndefined(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function hiddenCanonInputFromData(data: Record<string, unknown>) {
+  return {
+    secretRefs: stringArrayOrEmpty(data.secretRefs),
+    privateNotes: stringOrUndefined(data.privateNotes),
+    revealIn: stringOrUndefined(data.revealIn),
+    knownFrom: stringOrUndefined(data.knownFrom),
+  };
 }
 
 function stringArrayOrEmpty(value: unknown): string[] {

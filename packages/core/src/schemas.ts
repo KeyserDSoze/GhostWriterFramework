@@ -8,6 +8,13 @@ const yamlDateStringSchema = z.union([z.string(), z.date()]).transform((value) =
   typeof value === "string" ? value : value.toISOString(),
 );
 
+const hiddenCanonFields = {
+  secret_refs: z.array(z.string()).default([]),
+  private_notes: z.string().optional(),
+  reveal_in: z.string().optional(),
+  known_from: z.string().optional(),
+};
+
 export const characterRoleTierSchema = z.enum([
   "main",
   "supporting",
@@ -54,6 +61,14 @@ export const bookSchema = z
   })
   .passthrough();
 
+export const plotSchema = z
+  .object({
+    type: z.literal("plot"),
+    id: z.literal("plot:main"),
+    title: z.string().min(1),
+  })
+  .passthrough();
+
 export const guidelineSchema = z
   .object({
     type: z.literal("guideline"),
@@ -66,8 +81,13 @@ export const guidelineSchema = z
 export const characterSchema = baseSchema
   .extend({
     type: z.literal("character"),
+    ...hiddenCanonFields,
     name: z.string().min(1),
     aliases: z.array(z.string()).default([]),
+    former_names: z.array(z.string()).default([]),
+    current_identity: z.string().optional(),
+    identity_shifts: z.array(z.string()).default([]),
+    identity_arc: z.string().optional(),
     role_tier: characterRoleTierSchema.default("supporting"),
     story_role: characterStoryRoleSchema.default("other"),
     speaking_style: z.string().optional(),
@@ -95,6 +115,7 @@ export const characterSchema = baseSchema
 export const itemSchema = baseSchema
   .extend({
     type: z.literal("item"),
+    ...hiddenCanonFields,
     name: z.string().min(1),
     item_kind: z.string().optional(),
     appearance: z.string().optional(),
@@ -112,6 +133,7 @@ export const itemSchema = baseSchema
 export const locationSchema = baseSchema
   .extend({
     type: z.literal("location"),
+    ...hiddenCanonFields,
     name: z.string().min(1),
     location_kind: z.string().optional(),
     region: z.string().optional(),
@@ -128,6 +150,7 @@ export const locationSchema = baseSchema
 export const factionSchema = baseSchema
   .extend({
     type: z.literal("faction"),
+    ...hiddenCanonFields,
     name: z.string().min(1),
     faction_kind: z.string().optional(),
     mission: z.string().optional(),
@@ -146,6 +169,7 @@ export const factionSchema = baseSchema
 export const secretSchema = baseSchema
   .extend({
     type: z.literal("secret"),
+    ...hiddenCanonFields,
     title: z.string().min(1),
     secret_kind: z.string().optional(),
     function_in_book: z.string().optional(),
@@ -154,8 +178,6 @@ export const secretSchema = baseSchema
     false_beliefs: z.array(z.string()).default([]),
     reveal_strategy: z.string().optional(),
     holders: z.array(z.string()).default([]),
-    reveal_in: z.string().optional(),
-    known_from: z.string().optional(),
     timeline_ref: z.string().optional(),
   })
   .passthrough();
@@ -163,6 +185,7 @@ export const secretSchema = baseSchema
 export const timelineEventSchema = baseSchema
   .extend({
     type: z.literal("timeline-event"),
+    ...hiddenCanonFields,
     title: z.string().min(1),
     date: yamlDateStringSchema.optional(),
     participants: z.array(z.string()).default([]),
@@ -201,10 +224,41 @@ export const chapterSchema = z
   })
   .passthrough();
 
+export const chapterDraftSchema = z
+  .object({
+    type: z.literal("chapter-draft"),
+    id: z.string().min(1),
+    chapter: z.string().min(1),
+    number: z.number().int().positive(),
+    title: z.string().min(1),
+    summary: z.string().optional(),
+    pov: z.array(z.string()).default([]),
+    timeline_ref: z.string().optional(),
+    status: z.string().optional(),
+    canon: canonSchema.default("draft"),
+    tags: z.array(z.string()).default([]),
+  })
+  .passthrough();
+
 export const paragraphSchema = z
   .object({
     type: z.literal("paragraph"),
     id: z.string().min(1),
+    chapter: z.string().min(1),
+    number: z.number().int().positive(),
+    title: z.string().min(1),
+    summary: z.string().optional(),
+    viewpoint: z.string().optional(),
+    tags: z.array(z.string()).default([]),
+    canon: canonSchema.default("draft"),
+  })
+  .passthrough();
+
+export const paragraphDraftSchema = z
+  .object({
+    type: z.literal("paragraph-draft"),
+    id: z.string().min(1),
+    paragraph: z.string().min(1),
     chapter: z.string().min(1),
     number: z.number().int().positive(),
     title: z.string().min(1),
@@ -239,6 +293,7 @@ export const entityTypeSchema = z.enum(ENTITY_TYPES);
 
 export const anyKnownSchema = z.discriminatedUnion("type", [
   bookSchema,
+  plotSchema,
   guidelineSchema,
   characterSchema,
   itemSchema,
@@ -248,11 +303,14 @@ export const anyKnownSchema = z.discriminatedUnion("type", [
   timelineEventSchema,
   assetSchema,
   chapterSchema,
+  chapterDraftSchema,
   paragraphSchema,
+  paragraphDraftSchema,
   researchNoteSchema,
 ]);
 
 export type BookFrontmatter = z.infer<typeof bookSchema>;
+export type PlotFrontmatter = z.infer<typeof plotSchema>;
 export type GuidelineFrontmatter = z.infer<typeof guidelineSchema>;
 export type CharacterFrontmatter = z.infer<typeof characterSchema>;
 export type ItemFrontmatter = z.infer<typeof itemSchema>;
@@ -262,6 +320,8 @@ export type SecretFrontmatter = z.infer<typeof secretSchema>;
 export type TimelineEventFrontmatter = z.infer<typeof timelineEventSchema>;
 export type AssetFrontmatter = z.infer<typeof assetSchema>;
 export type ChapterFrontmatter = z.infer<typeof chapterSchema>;
+export type ChapterDraftFrontmatter = z.infer<typeof chapterDraftSchema>;
 export type ParagraphFrontmatter = z.infer<typeof paragraphSchema>;
+export type ParagraphDraftFrontmatter = z.infer<typeof paragraphDraftSchema>;
 export type ResearchNoteFrontmatter = z.infer<typeof researchNoteSchema>;
 export type EntityType = z.infer<typeof entityTypeSchema>;

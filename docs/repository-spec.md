@@ -6,7 +6,9 @@ Narrarium treats a repository as the source of truth for a book project.
 
 ```text
 book.md
+plot.md
 guidelines/
+  prose.md
   style.md
   chapter-rules.md
   voices.md
@@ -21,6 +23,11 @@ timelines/
   events/
 secrets/
 chapters/
+  001-chapter-title/
+    chapter.md
+    001-paragraph-title.md
+    002-paragraph-title.md
+drafts/
   001-chapter-title/
     chapter.md
     001-paragraph-title.md
@@ -68,6 +75,10 @@ All content files should start with YAML frontmatter.
 - `canon`: usually `draft`, `canon`, or `deprecated`
 - `tags`: optional tag list
 - `refs`: optional ids related to this file
+- `secret_refs`: optional linked secret ids for hidden canon tied to the entity
+- `private_notes`: optional author-facing hidden canon note
+- `known_from`: optional threshold for when the reader can safely know the hidden canon
+- `reveal_in`: optional chapter or milestone where hidden canon should fully surface
 - `sources`: optional research sources
 - `historical`: marks content that should be checked against external sources
 
@@ -115,6 +126,11 @@ tags:
   - diplomat
 timeline_ages:
   chapter:001-the-arrival: 29
+secret_refs:
+  - secret:lyra-is-the-heir
+private_notes: Lyra already suspects the missing archive was hidden by her own bloodline.
+known_from: chapter:006-blood-in-ledgers
+reveal_in: chapter:008-crown-of-ashes
 ---
 ```
 
@@ -138,11 +154,17 @@ status: hidden
 - search the repository before inventing canon
 - use `start_wizard` for guided creation when the brief is incomplete and multiple fields still need collecting
 - use `character_wizard` before `create_character` when character information is incomplete
+- use `create_chapter_draft` and `create_paragraph_draft` when roughing a scene before writing final prose
+- use `chapter_writing_context` and `paragraph_writing_context` before drafting polished prose from rough material
+- use `create_chapter_from_draft` and `create_paragraph_from_draft` when promoting rough material into final story files
+- use `sync_plot` to refresh the root plot map after story progression, reveal timing, or timeline changes
 - use `location_wizard`, `faction_wizard`, `item_wizard`, and `secret_wizard` before creating rich canon files when briefs are incomplete
 - use `resumes/` to keep running summaries stable
 - use `evaluations/` for structural critique, continuity checks, and quality notes
 - if content is historical or factual, fetch research before writing canon
 - prefer updating existing canon files over duplicating similar facts elsewhere
+- before writing final chapter or paragraph prose, read `guidelines/prose.md`, relevant prior story files, and any matching files in `drafts/`
+- keep `plot.md` aligned with chapter summaries, reveals, and dated timeline anchors
 
 ## Asset conventions
 

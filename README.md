@@ -128,6 +128,7 @@ This serves:
 ## OpenCode config
 
 An example project config lives in `opencode.jsonc` and points OpenCode to the local MCP server build output.
+It also tunes the default `build` and `plan` agents for book work with higher reasoning effort, detailed summaries, and more verbose responses while keeping temperature moderate for canon consistency.
 
 ## Agent rules
 
