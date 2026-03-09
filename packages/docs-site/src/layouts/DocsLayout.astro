@@ -20,6 +20,7 @@ const groups = await getDocGroups();
     <title>{title} | Narrarium Docs</title>
     <meta name="description" content={description} />
     <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href={withBase("/favicon.svg")} />
     <script is:inline>
       (() => {
         const storageKey = "narrarium-docs-theme";
@@ -121,6 +122,25 @@ const groups = await getDocGroups();
         margin-bottom: 1rem;
       }
 
+      .brand-lockup {
+        display: flex;
+        align-items: center;
+        gap: 0.9rem;
+        margin-bottom: 0.85rem;
+      }
+
+      .brand-mark {
+        width: 3.35rem;
+        height: 3.35rem;
+        flex: 0 0 auto;
+        border-radius: 20px;
+        box-shadow: 0 14px 30px rgba(15, 108, 99, 0.18);
+      }
+
+      html[data-theme="dark"] .brand-mark {
+        box-shadow: 0 18px 34px rgba(0, 0, 0, 0.28);
+      }
+
       .eyebrow {
         margin: 0;
         text-transform: uppercase;
@@ -130,7 +150,7 @@ const groups = await getDocGroups();
       }
 
       .brand h1 {
-        margin: 0.35rem 0 0;
+        margin: 0.3rem 0 0;
         font-size: 1.55rem;
       }
 
@@ -310,8 +330,13 @@ const groups = await getDocGroups();
     <div class="shell">
       <aside class="sidebar">
         <a class="brand" href={withBase("/")}>
-          <p class="eyebrow">Narrarium</p>
-          <h1>Documentation</h1>
+          <div class="brand-lockup">
+            <img class="brand-mark" src={withBase("/favicon.svg")} alt="" width="64" height="64" />
+            <div>
+              <p class="eyebrow">Narrarium</p>
+              <h1>Documentation</h1>
+            </div>
+          </div>
           <p>GitHub Pages reference site generated from the repository itself.</p>
         </a>
 

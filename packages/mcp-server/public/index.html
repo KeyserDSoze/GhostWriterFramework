@@ -4,35 +4,131 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Narrarium Public MCP</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <style>
+      :root {
+        --bg: #f3eee4;
+        --panel: rgba(255, 252, 247, 0.9);
+        --text: #1f1f1a;
+        --muted: #5e6158;
+        --line: rgba(40, 54, 46, 0.12);
+        --accent: #0f6c63;
+        --accent-warm: #d08a41;
+        --code: rgba(15, 108, 99, 0.08);
+        --shadow: 0 24px 48px rgba(42, 38, 27, 0.1);
+      }
+
       body {
         margin: 0;
         font-family: Georgia, "Times New Roman", serif;
-        background: #f3eee4;
-        color: #1f1f1a;
+        background:
+          radial-gradient(circle at top left, rgba(15, 108, 99, 0.14), transparent 30%),
+          radial-gradient(circle at right, rgba(208, 138, 65, 0.16), transparent 24%),
+          var(--bg);
+        color: var(--text);
       }
 
       main {
         width: min(760px, calc(100% - 2rem));
         margin: 4rem auto;
         padding: 2rem;
-        background: rgba(255, 252, 247, 0.92);
-        border: 1px solid rgba(40, 54, 46, 0.12);
-        border-radius: 24px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(10px);
       }
 
       code {
-        background: rgba(15, 108, 99, 0.08);
+        background: var(--code);
         padding: 0.12rem 0.3rem;
         border-radius: 6px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+      }
+
+      .brand img {
+        width: 4.25rem;
+        height: 4.25rem;
+        border-radius: 24px;
+        box-shadow: 0 16px 34px rgba(15, 108, 99, 0.2);
+      }
+
+      .eyebrow {
+        margin: 0;
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        font-size: 0.76rem;
+      }
+
+      h1 {
+        margin: 0.3rem 0 0;
+        font-size: clamp(2rem, 4vw, 3rem);
+      }
+
+      .lede {
+        margin: 0 0 1.4rem;
+        color: var(--muted);
+        font-size: 1.05rem;
+        max-width: 58ch;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem;
+        margin: 1.1rem 0 1.5rem;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.45rem 0.7rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.48);
+        color: var(--muted);
+      }
+
+      .chip::before {
+        content: "";
+        width: 0.55rem;
+        height: 0.55rem;
+        border-radius: 999px;
+        background: linear-gradient(135deg, var(--accent), var(--accent-warm));
+      }
+
+      ul {
+        padding-left: 1.2rem;
+      }
+
+      li + li {
+        margin-top: 0.35rem;
       }
     </style>
   </head>
   <body>
     <main>
-      <p>Narrarium</p>
-      <h1>Public MCP endpoint</h1>
-      <p>This deployment exposes the public Narrarium MCP surface for setup guidance, repository spec help, and Wikipedia research.</p>
+      <div class="brand">
+        <img src="/favicon.svg" alt="" width="68" height="68" />
+        <div>
+          <p class="eyebrow">Narrarium Ghostwriter</p>
+          <h1>Public MCP endpoint</h1>
+        </div>
+      </div>
+      <p class="lede">This deployment exposes the public Narrarium MCP surface for setup guidance, repository spec help, and Wikipedia research.</p>
+      <div class="chips">
+        <span class="chip">Vercel public surface</span>
+        <span class="chip">Setup and research</span>
+        <span class="chip">Ghostwriter ghost mark</span>
+      </div>
       <p>Endpoints:</p>
       <ul>
         <li><code>/mcp</code></li>
