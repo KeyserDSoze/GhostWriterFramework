@@ -467,7 +467,7 @@ export async function initializeBookRepo(
       '  "mcp": {',
       '    "narrarium": {',
       '      "type": "local",',
-      '      "command": ["npx", "@narrarium/mcp-server"],',
+      '      "command": ["npx", "narrarium-mcp-server"],',
       '      "enabled": true,',
       '      "timeout": 15000',
       "    }",

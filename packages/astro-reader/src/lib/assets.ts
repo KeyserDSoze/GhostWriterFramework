@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { readAsset } from "@narrarium/core";
+import { readAsset } from "narrarium";
 import { getBookRoot } from "./book.js";
 
 export type ReaderFigure = {

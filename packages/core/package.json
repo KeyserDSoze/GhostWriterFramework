@@ -1,5 +1,5 @@
 {
-  "name": "@narrarium/core",
+  "name": "narrarium",
   "version": "0.1.0",
   "type": "module",
   "description": "Core schemas, repo scaffolding, search, validation, and export helpers for Narrarium book repositories.",

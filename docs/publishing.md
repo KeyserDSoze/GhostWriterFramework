@@ -4,10 +4,10 @@ Narrarium is prepared to publish as four public npm packages.
 
 ## Final package names
 
-- `@narrarium/core`
-- `@narrarium/mcp-server`
-- `@narrarium/create-book`
-- `@narrarium/astro-reader`
+- `narrarium`
+- `narrarium-mcp-server`
+- `create-narrarium-book`
+- `narrarium-astro-reader`
 
 ## Initial public version
 
@@ -17,10 +17,10 @@ Keep the four packages aligned on the same initial release unless there is a str
 
 ## Release order
 
-1. `@narrarium/core`
-2. `@narrarium/astro-reader`
-3. `@narrarium/mcp-server`
-4. `@narrarium/create-book`
+1. `narrarium`
+2. `narrarium-astro-reader`
+3. `narrarium-mcp-server`
+4. `create-narrarium-book`
 
 The starter and reader depend on the published package names, so publish the lower-level packages first.
 
@@ -49,7 +49,7 @@ The repository includes:
 To enable npm publishing from GitHub:
 
 1. Add the repository secret `NPM_TOKEN`
-2. Make sure `NPM_TOKEN` is an npm Automation token that can publish under `@narrarium`
+2. Make sure `NPM_TOKEN` is an npm Automation token for the account that will publish these package names
 3. Publish from GitHub by either:
    - creating a GitHub Release tagged `v0.1.0`, `v0.1.1`, and so on
    - running the `Publish npm packages` workflow manually
@@ -61,21 +61,21 @@ If GitHub Actions fails with `EOTP`, npm is rejecting the token for write operat
 - replace `NPM_TOKEN` with an npm Automation token
 - or configure npm Trusted Publishing for this GitHub repository instead of token-based publish auth
 
-If GitHub Actions fails with `E404` while publishing `@narrarium/*`, npm is usually telling you that the authenticated account does not control the `@narrarium` scope. In that case:
+If GitHub Actions fails with `E404` while publishing `narrarium` or the other unscoped packages, npm is usually telling you that the package name is not available to the authenticated account or the registry request is wrong. In that case:
 
-- make sure the npm org or user scope `@narrarium` actually exists
-- make sure the token belongs to an account with publish rights for that scope
-- if you do not control `@narrarium`, you must publish under a different scope
+- make sure the package names are still free or already owned by the publishing account
+- make sure the token belongs to the npm account you expect by checking `npm whoami`
+- make sure the workflow is publishing to the public npm registry
 
 ## Publish example
 
 Publish in release order from the workspace root:
 
 ```bash
-npm publish -w @narrarium/core --access public
-npm publish -w @narrarium/astro-reader --access public
-npm publish -w @narrarium/mcp-server --access public
-npm publish -w @narrarium/create-book --access public
+npm publish -w narrarium --access public
+npm publish -w narrarium-astro-reader --access public
+npm publish -w narrarium-mcp-server --access public
+npm publish -w create-narrarium-book --access public
 ```
 
 You can also use the root helper script locally:

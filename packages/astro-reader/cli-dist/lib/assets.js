@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { readAsset } from "@narrarium/core";
+import { readAsset } from "narrarium";
 import { getBookRoot } from "./book.js";
 export async function loadAssetFigure(subject, alt, assetKind) {
     const asset = await readAsset(getBookRoot(), subject, assetKind);

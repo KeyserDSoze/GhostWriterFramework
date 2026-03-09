@@ -16,7 +16,7 @@ import {
   syncChapterEvaluation,
   syncChapterResume,
   syncTotalResume,
-} from "@narrarium/core";
+} from "narrarium";
 
 type ParsedArgs = {
   targetDir?: string;
@@ -374,7 +374,7 @@ ${envLines.join("\n")}
 
 function resolveReaderCliPath(require: NodeRequire, packageRoot: string): string {
   try {
-    const scaffoldPath = require.resolve("@narrarium/astro-reader/scaffold");
+    const scaffoldPath = require.resolve("narrarium-astro-reader/scaffold");
     return path.resolve(path.dirname(scaffoldPath), "cli.js");
   } catch {
     return path.resolve(packageRoot, "../astro-reader/cli-dist/cli.js");

@@ -13,7 +13,7 @@ export function buildSetupInstructions(options: {
   const sample = options.sample ?? false;
   const readerDir = options.readerDir?.trim() || "reader";
   const createBookCommand = [
-    `npx @narrarium/create-book ${projectName}`,
+    `npx create-narrarium-book ${projectName}`,
     `--title ${quote(title)}`,
     `--language ${language}`,
     sample ? "--sample" : "",
@@ -22,7 +22,7 @@ export function buildSetupInstructions(options: {
     .filter(Boolean)
     .join(" ");
 
-  const readerCommand = `npx @narrarium/astro-reader ${readerDir} --book-root .. --package-name ${slugify(projectName)}-reader`;
+  const readerCommand = `npx narrarium-astro-reader ${readerDir} --book-root .. --package-name ${slugify(projectName)}-reader`;
 
   return [
     `Narrarium setup for ${projectName}`,
@@ -37,7 +37,7 @@ export function buildSetupInstructions(options: {
     readerCommand,
     "",
     "4. Run the local MCP server when you want repository-writing tools:",
-    "npx @narrarium/mcp-server",
+    "npx narrarium-mcp-server",
     "",
     "5. Recommended OpenCode flow:",
     "- enable the Narrarium MCP server locally",

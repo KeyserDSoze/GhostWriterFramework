@@ -1,17 +1,17 @@
-# @narrarium/mcp-server
+# narrarium-mcp-server
 
 Local MCP server for Narrarium book repositories.
 
 ## Install
 
 ```bash
-npm install @narrarium/mcp-server
+npm install narrarium-mcp-server
 ```
 
 ## Run
 
 ```bash
-npx @narrarium/mcp-server
+npx narrarium-mcp-server
 ```
 
 If the package is already installed in the project or globally, the binary is:
@@ -27,7 +27,7 @@ The server exposes `setup_framework`, which returns the exact `npx` commands to 
 Typical starter command:
 
 ```bash
-npx @narrarium/create-book my-book --title "My Book" --language en --with-reader
+npx create-narrarium-book my-book --title "My Book" --language en --with-reader
 ```
 
 ## Public HTTP mode
@@ -174,7 +174,7 @@ If you later rename canon with `rename_entity`, `rename_chapter`, or `rename_par
   "mcp": {
     "narrarium": {
       "type": "local",
-      "command": ["npx", "narrarium-mcp"]
+      "command": ["npx", "narrarium-mcp-server"]
     }
   }
 }

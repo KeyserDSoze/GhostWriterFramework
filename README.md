@@ -87,7 +87,7 @@ node packages/mcp-server/dist/index.js
 If you want the public HTTP version locally, for Vercel-style setup/research flows:
 
 ```bash
-npm run dev:http -w @narrarium/mcp-server
+npm run dev:http -w narrarium-mcp-server
 ```
 
 This serves:
@@ -250,10 +250,10 @@ The current repository convention is documented in `docs/repository-spec.md`.
 
 The final public package set is:
 
-- `@narrarium/core`
-- `@narrarium/mcp-server`
-- `@narrarium/create-book`
-- `@narrarium/astro-reader`
+- `narrarium`
+- `narrarium-mcp-server`
+- `create-narrarium-book`
+- `narrarium-astro-reader`
 
 The initial public version is `0.1.0`.
 
@@ -277,14 +277,14 @@ Current production domains:
 To enable npm publishing from GitHub:
 
 1. Add the repository secret `NPM_TOKEN` using an npm Automation token
-2. Ensure the npm account behind the token can publish under the `@narrarium` scope
+2. Ensure the npm account behind the token can publish the chosen unscoped package names
 3. Create a GitHub Release tagged as `v0.1.0`, `v0.1.1`, and so on when you are ready to publish
 
 The publish workflow runs `npm run release:check` first, then publishes in dependency order.
 
 If GitHub Actions fails with `EOTP`, the token is not suitable for CI publish with 2FA enabled. Replace it with an npm Automation token or move this repo to npm Trusted Publishing.
 
-If GitHub Actions fails with `E404` while publishing `@narrarium/*`, the authenticated npm account probably does not own or cannot publish to the `@narrarium` scope.
+If GitHub Actions fails with `E404` while publishing `narrarium` or the other public packages, double-check the package names, registry, and authenticated npm account.
 
 For the Vercel deploy workflow, add this repository secret:
 

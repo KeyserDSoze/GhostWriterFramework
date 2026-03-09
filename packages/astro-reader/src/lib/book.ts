@@ -7,7 +7,7 @@ import {
   readChapter,
   readEntity,
   readTimelineMain,
-} from "@narrarium/core";
+} from "narrarium";
 import { defaultBookRoot } from "./book-config.js";
 
 type ReaderEntityKind =

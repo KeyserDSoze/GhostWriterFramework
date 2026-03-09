@@ -6,10 +6,10 @@ import { fileURLToPath } from "node:url";
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const packages = [
-  { name: "@narrarium/core", dir: path.join(workspaceRoot, "packages", "core") },
-  { name: "@narrarium/astro-reader", dir: path.join(workspaceRoot, "packages", "astro-reader") },
-  { name: "@narrarium/mcp-server", dir: path.join(workspaceRoot, "packages", "mcp-server") },
-  { name: "@narrarium/create-book", dir: path.join(workspaceRoot, "packages", "create-narrarium-book") },
+  { name: "narrarium", dir: path.join(workspaceRoot, "packages", "core") },
+  { name: "narrarium-astro-reader", dir: path.join(workspaceRoot, "packages", "astro-reader") },
+  { name: "narrarium-mcp-server", dir: path.join(workspaceRoot, "packages", "mcp-server") },
+  { name: "create-narrarium-book", dir: path.join(workspaceRoot, "packages", "create-narrarium-book") },
 ];
 
 for (const pkg of packages) {
@@ -27,7 +27,7 @@ for (const pkg of packages) {
   } catch (error) {
     console.error(`Failed while publishing ${pkg.name}@${version}.`);
     console.error("If npm reports EOTP, the GitHub secret NPM_TOKEN must be an npm Automation token, or this repository must use npm Trusted Publishing.");
-    console.error("If npm reports E404 on a scoped package like @narrarium/core, the npm account or token does not have publish rights for that scope, or the scope does not exist in npm yet.");
+    console.error("If npm reports E404 on an unscoped package like narrarium, double-check the package name, registry, and authenticated npm account.");
     throw error;
   }
 }

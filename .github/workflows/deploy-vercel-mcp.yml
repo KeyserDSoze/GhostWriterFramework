@@ -40,7 +40,7 @@ jobs:
         run: npm ci
 
       - name: Validate Vercel MCP build inputs
-        run: npm run build -w @narrarium/core && npm run test -w @narrarium/mcp-server
+        run: npm run build -w narrarium && npm run test -w narrarium-mcp-server
 
       - name: Install Vercel CLI
         run: npm install --global vercel@latest

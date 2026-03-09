@@ -9,7 +9,7 @@ import AssetFigure from "../../components/AssetFigure.astro";
 import ChapterPager from "../../components/ChapterPager.astro";
 import { loadRelatedCanonLinks } from "../../lib/canon";
 import { loadAssetFigure } from "../../lib/assets";
-import { listChapters, pathExists } from "@narrarium/core";
+import { listChapters, pathExists } from "narrarium";
 import path from "node:path";
 
 export async function getStaticPaths() {

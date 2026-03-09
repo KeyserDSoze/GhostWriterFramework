@@ -1,5 +1,5 @@
 import path from "node:path";
-import { listChapters, listEntities, listRelatedCanon, readChapter, toPosixPath } from "@narrarium/core";
+import { listChapters, listEntities, listRelatedCanon, readChapter, toPosixPath } from "narrarium";
 import { getBookRoot } from "./book.js";
 
 type ReaderEntityKind =

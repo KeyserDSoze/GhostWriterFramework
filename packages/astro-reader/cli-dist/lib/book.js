@@ -1,5 +1,5 @@
 import path from "node:path";
-import { listChapters, listEntities, pathExists, readBook, readChapter, readEntity, readTimelineMain, } from "@narrarium/core";
+import { listChapters, listEntities, pathExists, readBook, readChapter, readEntity, readTimelineMain, } from "narrarium";
 import { defaultBookRoot } from "./book-config.js";
 export function getBookRoot() {
     const configured = process.env.NARRARIUM_BOOK_ROOT ?? process.env.GHOSTWRITER_BOOK_ROOT;

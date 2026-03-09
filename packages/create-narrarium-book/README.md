@@ -1,11 +1,11 @@
-# @narrarium/create-book
+# create-narrarium-book
 
 Starter CLI for scaffolding a Narrarium book repository.
 
 ## Install
 
 ```bash
-npm install -g @narrarium/create-book
+npm install -g create-narrarium-book
 ```
 
 ## Use
@@ -17,7 +17,7 @@ create-narrarium-book my-book --title "My Book" --language en
 You can also use the published package directly with `npx`:
 
 ```bash
-npx @narrarium/create-book my-book --title "My Book" --language en
+npx create-narrarium-book my-book --title "My Book" --language en
 ```
 
 By default the starter now scaffolds a reader app in `reader/` and installs its dependencies automatically.

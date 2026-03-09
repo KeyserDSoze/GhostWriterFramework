@@ -1,11 +1,11 @@
-# @narrarium/astro-reader
+# narrarium-astro-reader
 
 Astro reader and reader scaffolding CLI for Narrarium book repositories.
 
 ## Install
 
 ```bash
-npm install @narrarium/astro-reader
+npm install narrarium-astro-reader
 ```
 
 ## Scaffold a reader app
@@ -17,7 +17,7 @@ npx narrarium-reader-init reader --book-root ..
 Or directly from the published package:
 
 ```bash
-npx @narrarium/astro-reader reader --book-root .. --package-name my-book-reader
+npx narrarium-astro-reader reader --book-root .. --package-name my-book-reader
 ```
 
 ## What the reader includes

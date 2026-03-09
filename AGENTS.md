@@ -44,7 +44,7 @@ Use Narrarium as a book-writing framework where the repository is the source of 
 - Use `npm run create:book` to scaffold a new book repository.
 - Use `npm run reader:init` or `narrarium-reader-init` to scaffold a standalone reader app.
 - Keep package naming aligned with the public package set:
-  - `@narrarium/core`
-  - `@narrarium/mcp-server`
-  - `@narrarium/create-book`
-  - `@narrarium/astro-reader`
+  - `narrarium`
+  - `narrarium-mcp-server`
+  - `create-narrarium-book`
+  - `narrarium-astro-reader`

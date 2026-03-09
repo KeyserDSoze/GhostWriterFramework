@@ -1,5 +1,5 @@
 {
-  "name": "@narrarium/create-book",
+  "name": "create-narrarium-book",
   "version": "0.1.0",
   "type": "module",
   "description": "Starter CLI to scaffold a Narrarium book repository.",
@@ -28,8 +28,8 @@
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
-    "@narrarium/astro-reader": "^0.1.0",
-    "@narrarium/core": "^0.1.0"
+    "narrarium-astro-reader": "^0.1.0",
+    "narrarium": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",

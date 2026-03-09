@@ -1,4 +1,4 @@
-# @narrarium/core
+# narrarium
 
 Core Narrarium helpers for local-first book repositories.
 
@@ -13,7 +13,7 @@ Core Narrarium helpers for local-first book repositories.
 ## Install
 
 ```bash
-npm install @narrarium/core
+npm install narrarium
 ```
 
 ## What it does
@@ -33,7 +33,7 @@ import {
   createCharacterProfile,
   createChapter,
   createParagraph,
-} from "@narrarium/core";
+} from "narrarium";
 
 await initializeBookRepo("my-book", {
   title: "My Book",

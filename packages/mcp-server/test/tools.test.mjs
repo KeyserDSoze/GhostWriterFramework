@@ -132,7 +132,7 @@ test("mcp server tools support guided creation and structural updates", async ()
     const validationText = await callToolText(client, "validate_book", { rootPath });
     const movedAssetPrompt = await readFile(path.join(rootPath, "assets", "characters", "lyra-voss", "primary.md"), "utf8");
 
-    assert.match(setupText, /npx @narrarium\/create-book/);
+    assert.match(setupText, /npx create-narrarium-book/);
     assert.match(specText, /Narrarium repository structure/);
     assert.match(assetText, /Created asset prompt/);
     assert.match(finalizeText, /Created chapter/);

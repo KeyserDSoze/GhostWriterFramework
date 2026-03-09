@@ -30,7 +30,7 @@ test("reader scaffold includes canon index pages and configurable core dependenc
     const timelinePage = await readFile(path.join(rootPath, "src", "pages", "timeline", "index.astro"), "utf8");
 
     assert.equal(result.coreDependency, "file:../../packages/core");
-    assert.equal(packageJson.dependencies["@narrarium/core"], "file:../../packages/core");
+    assert.equal(packageJson.dependencies.narrarium, "file:../../packages/core");
     assert.equal(packageJson.scripts["export:epub"], "node ./scripts/export-epub.mjs");
     assert.match(bookConfig, /defaultBookRoot = "\.\."/);
     assert.match(bookHelper, /from "\.\/book-config\.js"/);

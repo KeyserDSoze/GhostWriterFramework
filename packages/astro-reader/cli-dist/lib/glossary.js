@@ -1,4 +1,4 @@
-import { listEntities, listRelatedCanon, readEntity, toPosixPath } from "@narrarium/core";
+import { listEntities, listRelatedCanon, readEntity, toPosixPath } from "narrarium";
 import { marked } from "marked";
 import { loadAssetFigure } from "./assets.js";
 import { getBookRoot } from "./book.js";

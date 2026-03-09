@@ -1,5 +1,5 @@
 import path from "node:path";
-import { listChapters, readChapter } from "@narrarium/core";
+import { listChapters, readChapter } from "narrarium";
 import { getBookRoot } from "./book.js";
 import { loadCanonGlossary } from "./glossary.js";
 let searchIndexPromise = null;

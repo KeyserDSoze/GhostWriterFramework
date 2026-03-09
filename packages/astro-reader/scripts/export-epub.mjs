@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { exportEpub } from "@narrarium/core";
+import { exportEpub } from "narrarium";
 
 const configuredBookRoot = process.env.NARRARIUM_BOOK_ROOT ?? process.env.GHOSTWRITER_BOOK_ROOT;
 const bookRoot = configuredBookRoot

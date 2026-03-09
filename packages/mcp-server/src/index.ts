@@ -39,7 +39,7 @@ import {
   updateParagraph,
   validateBook,
   writeWikipediaResearchSnapshot,
-} from "@narrarium/core";
+} from "narrarium";
 import {
   buildRepositorySpecSummary,
   buildSetupInstructions,

@@ -48,7 +48,7 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
           preview: "astro preview",
         },
         dependencies: {
-          "@narrarium/core": coreDependency,
+          "narrarium": coreDependency,
           astro: "^5.14.1",
           marked: "^16.3.0",
         },
@@ -99,7 +99,7 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
 function buildReaderReadme(bookRoot: string): string {
   return `# Narrarium Reader Site
 
-This site was scaffolded from \`@narrarium/astro-reader\`.
+This site was scaffolded from \`narrarium-astro-reader\`.
 
 ## Configure
 
@@ -136,7 +136,7 @@ By default it deploys to standard GitHub Pages using the repository name as the 
 function buildExportEpubScript(bookRoot: string): string {
   return `import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { exportEpub } from "@narrarium/core";
+import { exportEpub } from "narrarium";
 
 const configured = process.env.NARRARIUM_BOOK_ROOT ?? process.env.GHOSTWRITER_BOOK_ROOT;
 const root = path.resolve(process.cwd(), configured ?? ${JSON.stringify(toPosix(bookRoot))});

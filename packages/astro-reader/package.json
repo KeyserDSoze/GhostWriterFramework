@@ -1,5 +1,5 @@
 {
-  "name": "@narrarium/astro-reader",
+  "name": "narrarium-astro-reader",
   "version": "0.1.0",
   "type": "module",
   "description": "Astro reader and scaffolding CLI for Narrarium book repositories.",
@@ -42,7 +42,7 @@
     "test": "npm run build:cli && node --test test/**/*.test.mjs"
   },
   "dependencies": {
-    "@narrarium/core": "^0.1.0",
+    "narrarium": "^0.1.0",
     "astro": "^5.14.1",
     "marked": "^16.3.0"
   },
