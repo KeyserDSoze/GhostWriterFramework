@@ -4,6 +4,11 @@
   "type": "module",
   "description": "Local MCP server for Narrarium book repositories.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KeyserDSoze/GhostWriterFramework",
+    "directory": "packages/mcp-server"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {

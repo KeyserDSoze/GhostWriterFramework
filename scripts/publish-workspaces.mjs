@@ -28,6 +28,7 @@ for (const pkg of packages) {
     console.error(`Failed while publishing ${pkg.name}@${version}.`);
     console.error("If npm reports EOTP, the GitHub secret NPM_TOKEN must be an npm Automation token, or this repository must use npm Trusted Publishing.");
     console.error("If npm reports E404 on an unscoped package like narrarium, double-check the package name, registry, and authenticated npm account.");
+    console.error("If npm reports E422 while publishing with --provenance, make sure the package.json repository.url matches the current GitHub repository URL used by GitHub Actions.");
     throw error;
   }
 }

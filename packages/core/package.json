@@ -4,6 +4,11 @@
   "type": "module",
   "description": "Core schemas, repo scaffolding, search, validation, and export helpers for Narrarium book repositories.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KeyserDSoze/GhostWriterFramework",
+    "directory": "packages/core"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {

@@ -4,6 +4,11 @@
   "type": "module",
   "description": "Starter CLI to scaffold a Narrarium book repository.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KeyserDSoze/GhostWriterFramework",
+    "directory": "packages/create-narrarium-book"
+  },
   "bin": {
     "create-narrarium-book": "dist/index.js"
   },

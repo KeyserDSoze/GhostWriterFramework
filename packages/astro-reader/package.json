@@ -4,6 +4,11 @@
   "type": "module",
   "description": "Astro reader and scaffolding CLI for Narrarium book repositories.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KeyserDSoze/GhostWriterFramework",
+    "directory": "packages/astro-reader"
+  },
   "bin": {
     "narrarium-reader-init": "cli-dist/cli.js"
   },
