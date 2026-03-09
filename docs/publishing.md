@@ -50,11 +50,14 @@ To enable npm publishing from GitHub:
 
 1. Add the repository secret `NPM_TOKEN`
 2. Make sure `NPM_TOKEN` is an npm Automation token for the account that will publish these package names
-3. Publish from GitHub by either:
-   - creating a GitHub Release tagged `v0.1.0`, `v0.1.1`, and so on
-   - running the `Publish npm packages` workflow manually
+3. Merge version bumps to `main`
+4. Optionally use either fallback trigger when needed:
+   - create a GitHub Release tagged `v0.1.0`, `v0.1.1`, and so on
+   - run the `Publish npm packages` workflow manually
 
-The publish workflow verifies the release tag on GitHub Release events, runs the full release checks, and then publishes packages in dependency order.
+On pushes to `main`, the publish workflow checks npm first and only publishes workspace packages whose local version is not already present in the registry.
+When unpublished versions are detected, it runs the full release checks and then publishes packages in dependency order.
+On GitHub Release events it also verifies that the release tag matches the workspace version.
 
 If GitHub Actions fails with `EOTP`, npm is rejecting the token for write operations with 2FA enabled. In that case either:
 
@@ -86,5 +89,6 @@ npm run publish:all
 
 ## Notes
 
+- The default production flow is now: bump versions, merge to `main`, let GitHub Actions publish the packages that are not already on npm.
 - `narrarium-reader-init` supports published installs and can also be driven locally from the workspace.
 - `create-narrarium-book --with-reader` keeps using a local file dependency when run from this monorepo so the generated reader works immediately during development.

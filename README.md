@@ -264,7 +264,7 @@ Publishing notes and release order live in `docs/publishing.md`.
 Two workflows are included:
 
 - `.github/workflows/ci.yml`: runs build, validation, and tests on pushes and pull requests
-- `.github/workflows/publish-npm.yml`: publishes the npm packages on manual dispatch or GitHub Release publish
+- `.github/workflows/publish-npm.yml`: auto-publishes bumped package versions on `main`, with manual dispatch and GitHub Release as fallbacks
 - `.github/workflows/deploy-vercel-mcp.yml`: deploys the public HTTP MCP endpoint to Vercel
 - `.github/workflows/deploy-docs-pages.yml`: builds and publishes the documentation site to GitHub Pages
 
@@ -278,9 +278,10 @@ To enable npm publishing from GitHub:
 
 1. Add the repository secret `NPM_TOKEN` using an npm Automation token
 2. Ensure the npm account behind the token can publish the chosen unscoped package names
-3. Create a GitHub Release tagged as `v0.1.0`, `v0.1.1`, and so on when you are ready to publish
+3. Bump the package versions and merge that change to `main`
 
-The publish workflow runs `npm run release:check` first, then publishes in dependency order.
+On `main`, the publish workflow compares local package versions against npm and only publishes versions that are not already online.
+When it finds unpublished versions, it runs `npm run release:check` first, then publishes in dependency order.
 
 If GitHub Actions fails with `EOTP`, the token is not suitable for CI publish with 2FA enabled. Replace it with an npm Automation token or move this repo to npm Trusted Publishing.
 
