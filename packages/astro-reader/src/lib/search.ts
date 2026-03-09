@@ -1,5 +1,5 @@
 import path from "node:path";
-import { listChapters, readChapter } from "@ghostwriter/core";
+import { listChapters, readChapter } from "@narrarium/core";
 import { getBookRoot } from "./book.js";
 import { loadCanonGlossary } from "./glossary.js";
 

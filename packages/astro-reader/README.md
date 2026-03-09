@@ -1,23 +1,23 @@
-# @ghostwriter/astro-reader
+# @narrarium/astro-reader
 
-Astro reader and reader scaffolding CLI for GhostWriter book repositories.
+Astro reader and reader scaffolding CLI for Narrarium book repositories.
 
 ## Install
 
 ```bash
-npm install @ghostwriter/astro-reader
+npm install @narrarium/astro-reader
 ```
 
 ## Scaffold a reader app
 
 ```bash
-npx ghostwriter-reader-init reader --book-root ..
+npx narrarium-reader-init reader --book-root ..
 ```
 
 Or directly from the published package:
 
 ```bash
-npx @ghostwriter/astro-reader reader --book-root .. --package-name my-book-reader
+npx @narrarium/astro-reader reader --book-root .. --package-name my-book-reader
 ```
 
 ## What the reader includes
@@ -46,7 +46,7 @@ npm install
 npm run dev
 ```
 
-The generated reader expects `GHOSTWRITER_BOOK_ROOT` to point at a GhostWriter book repository.
+The generated reader expects `NARRARIUM_BOOK_ROOT` to point at a Narrarium book repository.
 Both `npm run dev` and `npm run build` refresh the EPUB automatically before Astro runs.
 
 You can also pass `--pages-domain example.com` when scaffolding to emit `public/CNAME` and a Pages workflow already pointed at that domain.

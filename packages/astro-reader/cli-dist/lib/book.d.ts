@@ -21,7 +21,7 @@ export declare function loadHomePageData(): Promise<{
     chapters: {
         slug: string;
         path: string;
-        metadata: import("@ghostwriter/core").ChapterFrontmatter;
+        metadata: import("@narrarium/core").ChapterFrontmatter;
     }[];
     characters: {
         slug: string;
@@ -61,11 +61,11 @@ export declare function loadHomePageData(): Promise<{
     }[];
 }>;
 export declare function loadChapterPageData(chapterSlug: string): Promise<{
-    metadata: import("@ghostwriter/core").ChapterFrontmatter;
+    metadata: import("@narrarium/core").ChapterFrontmatter;
     body: string;
     paragraphs: Array<{
         path: string;
-        metadata: import("@ghostwriter/core").ParagraphFrontmatter;
+        metadata: import("@narrarium/core").ParagraphFrontmatter;
         body: string;
     }>;
 }>;

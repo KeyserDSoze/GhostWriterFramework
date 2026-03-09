@@ -1,4 +1,4 @@
-export declare const SKILL_NAME = "ghostwriter-book";
+export declare const SKILL_NAME = "narrarium-book";
 export declare const BOOK_DIRECTORIES: readonly ["guidelines", "characters", "items", "locations", "factions", "timelines", "timelines/events", "secrets", "chapters", "resumes", "resumes/chapters", "evaluations", "evaluations/chapters", "research", "research/wikipedia", "research/wikipedia/en", "research/wikipedia/it", "assets", ".opencode/skills", ".claude/skills"];
 export declare const ENTITY_TYPE_TO_DIRECTORY: {
     readonly character: "characters";

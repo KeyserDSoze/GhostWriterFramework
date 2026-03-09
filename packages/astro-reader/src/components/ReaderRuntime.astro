@@ -45,7 +45,7 @@ const glossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
 <script type="application/json" id="canon-glossary-data" set:html={glossaryJson}></script>
 
 <script is:inline>
-  const themeStorageKey = "ghostwriter-reader-theme";
+  const themeStorageKey = "narrarium-reader-theme";
   const glossaryDataElement = document.getElementById("canon-glossary-data");
   const glossaryEntries = glossaryDataElement ? JSON.parse(glossaryDataElement.textContent || "[]") : [];
   const glossaryById = new Map(glossaryEntries.map((entry) => [entry.id, entry]));

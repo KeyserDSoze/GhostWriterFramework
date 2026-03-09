@@ -13,7 +13,7 @@ export function buildSetupInstructions(options: {
   const sample = options.sample ?? false;
   const readerDir = options.readerDir?.trim() || "reader";
   const createBookCommand = [
-    `npx @ghostwriter/create-book ${projectName}`,
+    `npx @narrarium/create-book ${projectName}`,
     `--title ${quote(title)}`,
     `--language ${language}`,
     sample ? "--sample" : "",
@@ -22,10 +22,10 @@ export function buildSetupInstructions(options: {
     .filter(Boolean)
     .join(" ");
 
-  const readerCommand = `npx @ghostwriter/astro-reader ${readerDir} --book-root .. --package-name ${slugify(projectName)}-reader`;
+  const readerCommand = `npx @narrarium/astro-reader ${readerDir} --book-root .. --package-name ${slugify(projectName)}-reader`;
 
   return [
-    `GhostWriter setup for ${projectName}`,
+    `Narrarium setup for ${projectName}`,
     "",
     "1. Scaffold the book repository:",
     createBookCommand,
@@ -37,20 +37,20 @@ export function buildSetupInstructions(options: {
     readerCommand,
     "",
     "4. Run the local MCP server when you want repository-writing tools:",
-    "npx @ghostwriter/mcp-server",
+    "npx @narrarium/mcp-server",
     "",
     "5. Recommended OpenCode flow:",
-    "- enable the GhostWriter MCP server locally",
+    "- enable the Narrarium MCP server locally",
     "- ask for book operations in natural language",
-    "- let the agent use GhostWriter tools to create canon, chapters, summaries, and evaluations",
+    "- let the agent use Narrarium tools to create canon, chapters, summaries, and evaluations",
     "",
-    "Note: a Vercel-deployed GhostWriter MCP is best for setup guidance, schema guidance, and Wikipedia research. Local filesystem writing still belongs to the local MCP server.",
+    "Note: a Vercel-deployed Narrarium MCP is best for setup guidance, schema guidance, and Wikipedia research. Local filesystem writing still belongs to the local MCP server.",
   ].join("\n");
 }
 
 export function buildRepositorySpecSummary(): string {
   return [
-    "GhostWriter repository structure",
+    "Narrarium repository structure",
     "",
     "- book.md",
     "- guidelines/",
@@ -87,7 +87,7 @@ export async function searchWikipedia(query: string, lang: "en" | "it", limit: n
 
   const response = await fetch(url, {
     headers: {
-      "user-agent": "GhostWriterFramework/0.1 (MCP server)",
+      "user-agent": "Narrarium-Framework/0.1 (MCP server)",
     },
   });
 
@@ -113,7 +113,7 @@ export async function fetchWikipediaPage(title: string, lang: "en" | "it") {
 
   const response = await fetch(url, {
     headers: {
-      "user-agent": "GhostWriterFramework/0.1 (MCP server)",
+      "user-agent": "Narrarium-Framework/0.1 (MCP server)",
     },
   });
 
@@ -150,5 +150,5 @@ function slugify(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "ghostwriter-book";
+    .replace(/^-+|-+$/g, "") || "narrarium-book";
 }

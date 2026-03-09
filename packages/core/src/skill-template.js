@@ -1,12 +1,12 @@
 import { SKILL_NAME } from "./constants.js";
 export const skillTemplate = String.raw `---
 name: ${SKILL_NAME}
-description: Manage a GhostWriter book repository. Use this when creating or updating books, characters, items, locations, factions, timelines, secrets, chapter files, summaries, evaluations, or when checking canon before drafting new prose.
+description: Manage a Narrarium book repository. Use this when creating or updating books, characters, items, locations, factions, timelines, secrets, chapter files, summaries, evaluations, or when checking canon before drafting new prose.
 compatibility: opencode
 license: MIT
 ---
 
-# GhostWriter Book Workflow
+# Narrarium Book Workflow
 
 ## Mission
 
@@ -32,7 +32,7 @@ Treat the repository as the canonical source of truth for the book.
 
 ## Tool usage
 
-- Use the GhostWriter MCP tools to scaffold repositories and create or update canonical files.
+- Use the Narrarium MCP tools to scaffold repositories and create or update canonical files.
 - Use repository search before drafting new chapters.
 - Use Wikipedia search and page tools for historical entities, places, timelines, or factual references.
 

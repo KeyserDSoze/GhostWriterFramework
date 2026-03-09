@@ -1,5 +1,5 @@
 {
-  "name": "ghostwriter-framework",
+  "name": "narrarium-framework",
   "private": true,
   "version": "0.1.0",
   "packageManager": "npm@11.3.0",
@@ -7,18 +7,18 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @ghostwriter/core && npm run build -w @ghostwriter/mcp-server && npm run build -w @ghostwriter/create-book && npm run build -w @ghostwriter/astro-reader",
-    "create:book": "node packages/create-ghostwriter-book/dist/index.js",
-    "docs:build": "npm run build -w @ghostwriter/docs-site",
-    "docs:dev": "npm run dev -w @ghostwriter/docs-site",
-    "pack:all": "npm pack --dry-run -w @ghostwriter/core && npm pack --dry-run -w @ghostwriter/mcp-server && npm pack --dry-run -w @ghostwriter/astro-reader && npm pack --dry-run -w @ghostwriter/create-book",
+    "build": "npm run build -w @narrarium/core && npm run build -w @narrarium/mcp-server && npm run build -w @narrarium/create-book && npm run build -w @narrarium/astro-reader",
+    "create:book": "node packages/create-narrarium-book/dist/index.js",
+    "docs:build": "npm run build -w @narrarium/docs-site",
+    "docs:dev": "npm run dev -w @narrarium/docs-site",
+    "pack:all": "npm pack --dry-run -w @narrarium/core && npm pack --dry-run -w @narrarium/mcp-server && npm pack --dry-run -w @narrarium/astro-reader && npm pack --dry-run -w @narrarium/create-book",
     "publish:all": "node scripts/publish-workspaces.mjs",
     "release:check": "npm run build && npm run validate && npm run test && npm run pack:all",
     "release:tag-check": "node scripts/check-release-tag.mjs",
     "reader:init": "node packages/astro-reader/cli-dist/cli.js",
-    "dev:mcp": "npm run dev -w @ghostwriter/mcp-server",
-    "dev:site": "npm run dev -w @ghostwriter/astro-reader",
-    "test": "npm run test -w @ghostwriter/core && npm run test -w @ghostwriter/mcp-server && npm run test -w @ghostwriter/astro-reader",
-    "validate": "npm run validate -w @ghostwriter/core --if-present"
+    "dev:mcp": "npm run dev -w @narrarium/mcp-server",
+    "dev:site": "npm run dev -w @narrarium/astro-reader",
+    "test": "npm run test -w @narrarium/core && npm run test -w @narrarium/mcp-server && npm run test -w @narrarium/astro-reader",
+    "validate": "npm run validate -w @narrarium/core --if-present"
   }
 }

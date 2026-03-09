@@ -1,23 +1,23 @@
-# @ghostwriter/create-book
+# @narrarium/create-book
 
-Starter CLI for scaffolding a GhostWriter book repository.
+Starter CLI for scaffolding a Narrarium book repository.
 
 ## Install
 
 ```bash
-npm install -g @ghostwriter/create-book
+npm install -g @narrarium/create-book
 ```
 
 ## Use
 
 ```bash
-create-ghostwriter-book my-book --title "My Book" --language en
+create-narrarium-book my-book --title "My Book" --language en
 ```
 
 You can also use the published package directly with `npx`:
 
 ```bash
-npx @ghostwriter/create-book my-book --title "My Book" --language en
+npx @narrarium/create-book my-book --title "My Book" --language en
 ```
 
 By default the starter now scaffolds a reader app in `reader/` and installs its dependencies automatically.
@@ -28,7 +28,7 @@ If you already know the GitHub Pages custom domain, pass `--pages-domain your-do
 
 - canonical book folders such as `characters/`, `locations/`, `factions/`, `chapters/`, `secrets/`
 - `guidelines/`, `resumes/`, `evaluations/`, and `research/wikipedia/`
-- `opencode.jsonc` plus bundled GhostWriter skills for OpenCode and Claude
+- `opencode.jsonc` plus bundled Narrarium skills for OpenCode and Claude
 - optional sample content
 - standalone Astro reader scaffold with theme toggle, EPUB export, and GitHub Pages workflow
 - root-level convenience scripts that proxy to the generated reader app
@@ -36,12 +36,12 @@ If you already know the GitHub Pages custom domain, pass `--pages-domain your-do
 ## Useful flags
 
 ```bash
-create-ghostwriter-book my-book --title "My Book" --language en --sample
-create-ghostwriter-book my-book --title "My Book" --language en --with-reader
-create-ghostwriter-book my-book --title "My Book" --language en --no-reader
-create-ghostwriter-book my-book --title "My Book" --language en --no-install
-create-ghostwriter-book my-book --title "My Book" --language en --pages-domain mybook.com
-create-ghostwriter-book my-book --title "My Book" --language en --with-reader --reader-dir reader
+create-narrarium-book my-book --title "My Book" --language en --sample
+create-narrarium-book my-book --title "My Book" --language en --with-reader
+create-narrarium-book my-book --title "My Book" --language en --no-reader
+create-narrarium-book my-book --title "My Book" --language en --no-install
+create-narrarium-book my-book --title "My Book" --language en --pages-domain mybook.com
+create-narrarium-book my-book --title "My Book" --language en --with-reader --reader-dir reader
 ```
 
 Run without arguments for the interactive prompt flow.

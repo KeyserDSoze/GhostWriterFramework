@@ -6,7 +6,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { scaffoldReaderSite } from "../cli-dist/scaffold.js";
 
 test("reader scaffold includes canon index pages and configurable core dependency", async () => {
-  const rootPath = await mkdtemp(path.join(os.tmpdir(), "ghostwriter-reader-"));
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-reader-"));
 
   try {
     const result = await scaffoldReaderSite(rootPath, {
@@ -30,7 +30,7 @@ test("reader scaffold includes canon index pages and configurable core dependenc
     const timelinePage = await readFile(path.join(rootPath, "src", "pages", "timeline", "index.astro"), "utf8");
 
     assert.equal(result.coreDependency, "file:../../packages/core");
-    assert.equal(packageJson.dependencies["@ghostwriter/core"], "file:../../packages/core");
+    assert.equal(packageJson.dependencies["@narrarium/core"], "file:../../packages/core");
     assert.equal(packageJson.scripts["export:epub"], "node ./scripts/export-epub.mjs");
     assert.match(bookConfig, /defaultBookRoot = "\.\."/);
     assert.match(bookHelper, /from "\.\/book-config\.js"/);

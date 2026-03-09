@@ -1,13 +1,13 @@
 {
-  "name": "@ghostwriter/mcp-server",
+  "name": "@narrarium/mcp-server",
   "version": "0.1.0",
   "type": "module",
-  "description": "Local MCP server for GhostWriter book repositories.",
+  "description": "Local MCP server for Narrarium book repositories.",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "ghostwriter-mcp": "dist/index.js"
+    "narrarium-mcp": "dist/index.js"
   },
   "exports": {
     ".": {
@@ -23,7 +23,7 @@
     "dist"
   ],
   "keywords": [
-    "ghostwriter",
+    "narrarium",
     "mcp",
     "model-context-protocol",
     "books",
@@ -42,7 +42,7 @@
     "test": "npm run build && node --test test/**/*.test.mjs"
   },
   "dependencies": {
-    "@ghostwriter/core": "^0.1.0",
+    "@narrarium/core": "^0.1.0",
     "@modelcontextprotocol/sdk": "^1.18.0",
     "zod": "^4.1.12"
   },

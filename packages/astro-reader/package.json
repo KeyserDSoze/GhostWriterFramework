@@ -1,11 +1,11 @@
 {
-  "name": "@ghostwriter/astro-reader",
+  "name": "@narrarium/astro-reader",
   "version": "0.1.0",
   "type": "module",
-  "description": "Astro reader and scaffolding CLI for GhostWriter book repositories.",
+  "description": "Astro reader and scaffolding CLI for Narrarium book repositories.",
   "license": "MIT",
   "bin": {
-    "ghostwriter-reader-init": "cli-dist/cli.js"
+    "narrarium-reader-init": "cli-dist/cli.js"
   },
   "exports": {
     "./scaffold": {
@@ -21,7 +21,7 @@
     "tsconfig.json"
   ],
   "keywords": [
-    "ghostwriter",
+    "narrarium",
     "astro",
     "books",
     "reader",
@@ -42,7 +42,7 @@
     "test": "npm run build:cli && node --test test/**/*.test.mjs"
   },
   "dependencies": {
-    "@ghostwriter/core": "^0.1.0",
+    "@narrarium/core": "^0.1.0",
     "astro": "^5.14.1",
     "marked": "^16.3.0"
   },

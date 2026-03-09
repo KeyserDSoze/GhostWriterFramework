@@ -1,33 +1,33 @@
-# @ghostwriter/mcp-server
+# @narrarium/mcp-server
 
-Local MCP server for GhostWriter book repositories.
+Local MCP server for Narrarium book repositories.
 
 ## Install
 
 ```bash
-npm install @ghostwriter/mcp-server
+npm install @narrarium/mcp-server
 ```
 
 ## Run
 
 ```bash
-npx @ghostwriter/mcp-server
+npx @narrarium/mcp-server
 ```
 
 If the package is already installed in the project or globally, the binary is:
 
 ```bash
-ghostwriter-mcp
+narrarium-mcp
 ```
 
 ## Bootstrap help
 
-The server exposes `setup_framework`, which returns the exact `npx` commands to start a new GhostWriter project from scratch.
+The server exposes `setup_framework`, which returns the exact `npx` commands to start a new Narrarium project from scratch.
 
 Typical starter command:
 
 ```bash
-npx @ghostwriter/create-book my-book --title "My Book" --language en --with-reader
+npx @narrarium/create-book my-book --title "My Book" --language en --with-reader
 ```
 
 ## Public HTTP mode
@@ -172,9 +172,9 @@ If you later rename canon with `rename_entity`, `rename_chapter`, or `rename_par
 ```json
 {
   "mcp": {
-    "ghostwriter": {
+    "narrarium": {
       "type": "local",
-      "command": ["npx", "ghostwriter-mcp"]
+      "command": ["npx", "narrarium-mcp"]
     }
   }
 }

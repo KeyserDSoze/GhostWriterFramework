@@ -6,10 +6,10 @@ import { fileURLToPath } from "node:url";
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const packages = [
-  { name: "@ghostwriter/core", dir: path.join(workspaceRoot, "packages", "core") },
-  { name: "@ghostwriter/astro-reader", dir: path.join(workspaceRoot, "packages", "astro-reader") },
-  { name: "@ghostwriter/mcp-server", dir: path.join(workspaceRoot, "packages", "mcp-server") },
-  { name: "@ghostwriter/create-book", dir: path.join(workspaceRoot, "packages", "create-ghostwriter-book") },
+  { name: "@narrarium/core", dir: path.join(workspaceRoot, "packages", "core") },
+  { name: "@narrarium/astro-reader", dir: path.join(workspaceRoot, "packages", "astro-reader") },
+  { name: "@narrarium/mcp-server", dir: path.join(workspaceRoot, "packages", "mcp-server") },
+  { name: "@narrarium/create-book", dir: path.join(workspaceRoot, "packages", "create-narrarium-book") },
 ];
 
 for (const pkg of packages) {
@@ -22,7 +22,14 @@ for (const pkg of packages) {
   }
 
   console.log(`Publishing ${pkg.name}@${version}...`);
-  runNpm(["publish", "-w", pkg.name, "--access", "public", "--provenance"], workspaceRoot);
+  try {
+    runNpm(["publish", "-w", pkg.name, "--access", "public", "--provenance"], workspaceRoot);
+  } catch (error) {
+    console.error(`Failed while publishing ${pkg.name}@${version}.`);
+    console.error("If npm reports EOTP, the GitHub secret NPM_TOKEN must be an npm Automation token, or this repository must use npm Trusted Publishing.");
+    console.error("If npm reports E404 on a scoped package like @narrarium/core, the npm account or token does not have publish rights for that scope, or the scope does not exist in npm yet.");
+    throw error;
+  }
 }
 
 async function isPublished(name, version) {

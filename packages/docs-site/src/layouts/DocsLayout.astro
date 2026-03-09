@@ -8,7 +8,7 @@ interface Props {
   activeHref?: string;
 }
 
-const { title, description = "GhostWriter documentation", activeHref = "/" } = Astro.props;
+const { title, description = "Narrarium documentation", activeHref = "/" } = Astro.props;
 const groups = await getDocGroups();
 ---
 
@@ -17,7 +17,7 @@ const groups = await getDocGroups();
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title} | GhostWriter Docs</title>
+    <title>{title} | Narrarium Docs</title>
     <meta name="description" content={description} />
     <style>
       :root {
@@ -239,7 +239,7 @@ const groups = await getDocGroups();
     <div class="shell">
       <aside class="sidebar">
         <a class="brand" href={withBase("/")}>
-          <p class="eyebrow">GhostWriter</p>
+          <p class="eyebrow">Narrarium</p>
           <h1>Documentation</h1>
           <p>GitHub Pages reference site generated from the repository itself.</p>
         </a>

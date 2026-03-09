@@ -11,12 +11,12 @@ const publicMcpUrl = process.env.MCP_PUBLIC_URL ?? "https://narrarium.space/mcp"
 const publicHealthUrl = process.env.MCP_HEALTH_URL ?? "https://narrarium.space/health";
 ---
 
-<DocsLayout title="MCP Integration" description="GhostWriter MCP setup and tool reference" activeHref="/mcp/">
+<DocsLayout title="MCP Integration" description="Narrarium MCP setup and tool reference" activeHref="/mcp/">
   <section class="hero">
     <p class="eyebrow">Integration</p>
     <h1>MCP server integration</h1>
     <p class="lede">
-      GhostWriter exposes a local stdio MCP server for repo mutations and a public HTTP MCP surface for setup and research. This page is generated from the actual MCP source files, so the tool list reflects the implementation.
+      Narrarium exposes a local stdio MCP server for repo mutations and a public HTTP MCP surface for setup and research. This page is generated from the actual MCP source files, so the tool list reflects the implementation.
     </p>
   </section>
 
@@ -24,7 +24,7 @@ const publicHealthUrl = process.env.MCP_HEALTH_URL ?? "https://narrarium.space/h
     <article class="card">
       <h3>Local stdio MCP</h3>
       <p>Use for canon creation, chapter and scene work, assets, renames, validation, resumes, evaluations, and EPUB export.</p>
-      <pre><code>npx @ghostwriter/mcp-server</code></pre>
+      <pre><code>npx @narrarium/mcp-server</code></pre>
     </article>
     <article class="card">
       <h3>Public HTTP MCP</h3>

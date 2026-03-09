@@ -11,14 +11,14 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const workspaceRoot = path.resolve(packageRoot, "..", "..");
 
 test("mcp server tools support guided creation and structural updates", async () => {
-  const rootPath = await mkdtemp(path.join(os.tmpdir(), "ghostwriter-mcp-"));
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-mcp-"));
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(packageRoot, "dist", "index.js")],
     cwd: workspaceRoot,
     stderr: "pipe",
   });
-  const client = new Client({ name: "ghostwriter-test", version: "0.1.0" });
+  const client = new Client({ name: "narrarium-test", version: "0.1.0" });
 
   try {
     await client.connect(transport);
@@ -132,8 +132,8 @@ test("mcp server tools support guided creation and structural updates", async ()
     const validationText = await callToolText(client, "validate_book", { rootPath });
     const movedAssetPrompt = await readFile(path.join(rootPath, "assets", "characters", "lyra-voss", "primary.md"), "utf8");
 
-    assert.match(setupText, /npx @ghostwriter\/create-book/);
-    assert.match(specText, /GhostWriter repository structure/);
+    assert.match(setupText, /npx @narrarium\/create-book/);
+    assert.match(specText, /Narrarium repository structure/);
     assert.match(assetText, /Created asset prompt/);
     assert.match(finalizeText, /Created chapter/);
     assert.match(searchText, /The Signal/i);

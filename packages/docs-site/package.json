@@ -1,9 +1,9 @@
 {
-  "name": "@ghostwriter/docs-site",
+  "name": "@narrarium/docs-site",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "GitHub Pages documentation site for GhostWriter Framework.",
+  "description": "GitHub Pages documentation site for Narrarium Framework.",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",

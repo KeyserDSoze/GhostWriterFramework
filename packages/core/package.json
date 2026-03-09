@@ -1,8 +1,8 @@
 {
-  "name": "@ghostwriter/core",
+  "name": "@narrarium/core",
   "version": "0.1.0",
   "type": "module",
-  "description": "Core schemas, repo scaffolding, search, validation, and export helpers for GhostWriter book repositories.",
+  "description": "Core schemas, repo scaffolding, search, validation, and export helpers for Narrarium book repositories.",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,7 +16,7 @@
     "dist"
   ],
   "keywords": [
-    "ghostwriter",
+    "narrarium",
     "books",
     "markdown",
     "mcp",

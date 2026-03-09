@@ -1,6 +1,6 @@
-# GhostWriter Framework
+# Narrarium Framework
 
-GhostWriter Framework is a local-first book writing framework built around three pieces:
+Narrarium Framework is a local-first book writing framework built around three pieces:
 
 - a strict but extensible repository convention where the repository *is* the book
 - a local MCP server that teaches OpenCode or Claude how to create, search, validate, and enrich that repository
@@ -10,16 +10,16 @@ GhostWriter Framework is a local-first book writing framework built around three
 
 - `packages/core`: schemas, templates, repo scaffolding, search, validation, and EPUB export helpers
 - `packages/mcp-server`: local stdio MCP server for OpenCode, Claude Desktop, and compatible clients
-- `packages/create-ghostwriter-book`: starter CLI to scaffold a new book repository from the terminal
+- `packages/create-narrarium-book`: starter CLI to scaffold a new book repository from the terminal
 - `packages/astro-reader`: Astro reader that renders the repository chapter by chapter
 
 ## Local MCP workflow
 
 The intended workflow is local-first:
 
-1. OpenCode runs with the local GhostWriter MCP server enabled.
+1. OpenCode runs with the local Narrarium MCP server enabled.
 2. You ask for book tasks in natural language.
-3. OpenCode calls GhostWriter MCP tools to scaffold the repository, create entities, create chapters, search canon, validate metadata, and optionally fetch Wikipedia research.
+3. OpenCode calls Narrarium MCP tools to scaffold the repository, create entities, create chapters, search canon, validate metadata, and optionally fetch Wikipedia research.
 4. The same repository can then be rendered as a website or exported to EPUB.
 
 This keeps the actual writing artifacts in your filesystem instead of hiding them inside a hosted app.
@@ -87,7 +87,7 @@ node packages/mcp-server/dist/index.js
 If you want the public HTTP version locally, for Vercel-style setup/research flows:
 
 ```bash
-npm run dev:http -w @ghostwriter/mcp-server
+npm run dev:http -w @narrarium/mcp-server
 ```
 
 This serves:
@@ -97,10 +97,10 @@ This serves:
 
 ## Run the Astro reader
 
-Set `GHOSTWRITER_BOOK_ROOT` to the path of a book repository created with GhostWriter.
+Set `NARRARIUM_BOOK_ROOT` to the path of a book repository created with Narrarium.
 
 ```bash
-set GHOSTWRITER_BOOK_ROOT=C:\path\to\my-book
+set NARRARIUM_BOOK_ROOT=C:\path\to\my-book
 npm run dev:site
 ```
 
@@ -125,7 +125,7 @@ Project-level OpenCode and agent rules live in `AGENTS.md`.
 ## Main MCP tools
 
 - `init_book_repo`: scaffold a book repository in a target folder
-- `setup_framework`: return the exact `npx` commands to bootstrap a new GhostWriter project
+- `setup_framework`: return the exact `npx` commands to bootstrap a new Narrarium project
 - `repository_spec`: return the repo model and canon rules
 - `character_wizard`: return the checklist of fields needed for a full character
 - `create_character`: create a rich character file with voice, role, backstory, and function in book
@@ -240,7 +240,7 @@ The Astro reader now auto-renders these canonical assets when present for:
 - entity detail pages such as characters, locations, factions, items, secrets, and timeline events
 - chapter pages and paragraph or scene sections
 
-If you later rename canon with `rename_entity`, `rename_chapter`, or `rename_paragraph`, GhostWriter also moves the matching asset folders.
+If you later rename canon with `rename_entity`, `rename_chapter`, or `rename_paragraph`, Narrarium also moves the matching asset folders.
 
 ## Repository spec
 
@@ -250,10 +250,10 @@ The current repository convention is documented in `docs/repository-spec.md`.
 
 The final public package set is:
 
-- `@ghostwriter/core`
-- `@ghostwriter/mcp-server`
-- `@ghostwriter/create-book`
-- `@ghostwriter/astro-reader`
+- `@narrarium/core`
+- `@narrarium/mcp-server`
+- `@narrarium/create-book`
+- `@narrarium/astro-reader`
 
 The initial public version is `0.1.0`.
 
@@ -276,11 +276,15 @@ Current production domains:
 
 To enable npm publishing from GitHub:
 
-1. Add the repository secret `NPM_TOKEN`
-2. Ensure the npm account behind the token can publish under the `@ghostwriter` scope
+1. Add the repository secret `NPM_TOKEN` using an npm Automation token
+2. Ensure the npm account behind the token can publish under the `@narrarium` scope
 3. Create a GitHub Release tagged as `v0.1.0`, `v0.1.1`, and so on when you are ready to publish
 
 The publish workflow runs `npm run release:check` first, then publishes in dependency order.
+
+If GitHub Actions fails with `EOTP`, the token is not suitable for CI publish with 2FA enabled. Replace it with an npm Automation token or move this repo to npm Trusted Publishing.
+
+If GitHub Actions fails with `E404` while publishing `@narrarium/*`, the authenticated npm account probably does not own or cannot publish to the `@narrarium` scope.
 
 For the Vercel deploy workflow, add this repository secret:
 

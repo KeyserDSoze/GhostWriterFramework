@@ -39,7 +39,7 @@ import {
   updateParagraph,
   validateBook,
   writeWikipediaResearchSnapshot,
-} from "@ghostwriter/core";
+} from "@narrarium/core";
 import {
   buildRepositorySpecSummary,
   buildSetupInstructions,
@@ -48,7 +48,7 @@ import {
 } from "./public-tools.js";
 
 const server = new McpServer({
-  name: "ghostwriter-local",
+  name: "narrarium-local",
   version: "0.1.0",
 });
 
@@ -217,7 +217,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
 
 server.tool(
   "init_book_repo",
-  "Create the local GhostWriter repository structure for a book project, including folders, guidelines, summaries, evaluations, and reusable skills.",
+  "Create the local Narrarium repository structure for a book project, including folders, guidelines, summaries, evaluations, and reusable skills.",
   {
     rootPath: z.string().min(1),
     title: z.string().min(1),
@@ -235,7 +235,7 @@ server.tool(
 
     return textResponse(
       [
-        `Initialized GhostWriter book repo at ${result.rootPath}.`,
+        `Initialized Narrarium book repo at ${result.rootPath}.`,
         `Created ${result.created.length} seed files and directories.`,
         result.created.length > 0 ? `Created files: ${result.created.join(", ")}` : "All seed files already existed.",
       ].join("\n"),
@@ -245,7 +245,7 @@ server.tool(
 
 server.tool(
   "setup_framework",
-  "Return the exact npx commands and setup steps to bootstrap a new GhostWriter project from scratch.",
+  "Return the exact npx commands and setup steps to bootstrap a new Narrarium project from scratch.",
   {
     projectName: z.string().optional(),
     title: z.string().optional(),
@@ -270,7 +270,7 @@ server.tool(
 
 server.tool(
   "repository_spec",
-  "Return the GhostWriter repository model and canon rules so clients can understand the book framework structure.",
+  "Return the Narrarium repository model and canon rules so clients can understand the book framework structure.",
   {},
   async () => textResponse(buildRepositorySpecSummary()),
 );
@@ -369,7 +369,7 @@ server.tool(
 
 server.tool(
   "character_wizard",
-  "Return the GhostWriter character creation checklist so the agent can gather the right information before creating a character file.",
+  "Return the Narrarium character creation checklist so the agent can gather the right information before creating a character file.",
   {
     name: z.string().optional(),
   },
@@ -403,7 +403,7 @@ server.tool(
 
 server.tool(
   "create_character",
-  "Create a rich character file using the GhostWriter character wizard fields. Use this instead of the generic entity tool when the user is adding a real story character.",
+  "Create a rich character file using the Narrarium character wizard fields. Use this instead of the generic entity tool when the user is adding a real story character.",
   {
     rootPath: z.string().min(1),
     name: z.string().min(1),
@@ -516,7 +516,7 @@ server.tool(
 
 server.tool(
   "location_wizard",
-  "Return the GhostWriter location creation checklist so the agent can gather the right details before creating a location file.",
+  "Return the Narrarium location creation checklist so the agent can gather the right details before creating a location file.",
   {
     name: z.string().optional(),
   },
@@ -618,7 +618,7 @@ server.tool(
 
 server.tool(
   "faction_wizard",
-  "Return the GhostWriter faction creation checklist so the agent can gather the right details before creating a faction file.",
+  "Return the Narrarium faction creation checklist so the agent can gather the right details before creating a faction file.",
   {
     name: z.string().optional(),
   },
@@ -726,7 +726,7 @@ server.tool(
 
 server.tool(
   "item_wizard",
-  "Return the GhostWriter item creation checklist so the agent can gather the right details before creating an item file.",
+  "Return the Narrarium item creation checklist so the agent can gather the right details before creating an item file.",
   {
     name: z.string().optional(),
   },
@@ -831,7 +831,7 @@ server.tool(
 
 server.tool(
   "secret_wizard",
-  "Return the GhostWriter secret creation checklist so the agent can gather the right details before creating a secret file.",
+  "Return the Narrarium secret creation checklist so the agent can gather the right details before creating a secret file.",
   {
     title: z.string().optional(),
   },
@@ -936,7 +936,7 @@ server.tool(
 
 server.tool(
   "timeline_event_wizard",
-  "Return the GhostWriter timeline event checklist so the agent can gather the right details before creating a timeline event file.",
+  "Return the Narrarium timeline event checklist so the agent can gather the right details before creating a timeline event file.",
   {
     title: z.string().optional(),
   },
@@ -1026,7 +1026,7 @@ server.tool(
 
 server.tool(
   "chapter_wizard",
-  "Return the GhostWriter chapter checklist so the agent can gather the right details before creating a chapter.",
+  "Return the Narrarium chapter checklist so the agent can gather the right details before creating a chapter.",
   {
     title: z.string().optional(),
   },
@@ -1054,7 +1054,7 @@ server.tool(
 
 server.tool(
   "paragraph_wizard",
-  "Return the GhostWriter paragraph or scene checklist so the agent can gather the right details before creating a paragraph file.",
+  "Return the Narrarium paragraph or scene checklist so the agent can gather the right details before creating a paragraph file.",
   {
     title: z.string().optional(),
   },
@@ -1423,7 +1423,7 @@ server.tool(
 
 server.tool(
   "validate_book",
-  "Validate GhostWriter frontmatter and file placement rules inside the local book repository.",
+  "Validate Narrarium frontmatter and file placement rules inside the local book repository.",
   {
     rootPath: z.string().min(1),
   },

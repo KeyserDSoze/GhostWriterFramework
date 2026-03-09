@@ -1,11 +1,11 @@
-# GhostWriter Agent Rules
+# Narrarium Agent Rules
 
-Use GhostWriter as a book-writing framework where the repository is the source of truth.
+Use Narrarium as a book-writing framework where the repository is the source of truth.
 
 ## Default workflow
 
 1. Search canon before inventing new facts.
-2. Prefer GhostWriter MCP tools over ad-hoc filesystem edits when creating or updating book structure.
+2. Prefer Narrarium MCP tools over ad-hoc filesystem edits when creating or updating book structure.
 3. Use rich creation tools for major canon files:
    - `create_character`
    - `create_location`
@@ -42,9 +42,9 @@ Use GhostWriter as a book-writing framework where the repository is the source o
 ## Reader and publishing
 
 - Use `npm run create:book` to scaffold a new book repository.
-- Use `npm run reader:init` or `ghostwriter-reader-init` to scaffold a standalone reader app.
+- Use `npm run reader:init` or `narrarium-reader-init` to scaffold a standalone reader app.
 - Keep package naming aligned with the public package set:
-  - `@ghostwriter/core`
-  - `@ghostwriter/mcp-server`
-  - `@ghostwriter/create-book`
-  - `@ghostwriter/astro-reader`
+  - `@narrarium/core`
+  - `@narrarium/mcp-server`
+  - `@narrarium/create-book`
+  - `@narrarium/astro-reader`

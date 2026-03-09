@@ -7,7 +7,7 @@ import {
   readChapter,
   readEntity,
   readTimelineMain,
-} from "@ghostwriter/core";
+} from "@narrarium/core";
 import { defaultBookRoot } from "./book-config.js";
 
 type ReaderEntityKind =
@@ -19,7 +19,7 @@ type ReaderEntityKind =
   | "timeline-event";
 
 export function getBookRoot(): string {
-  const configured = process.env.GHOSTWRITER_BOOK_ROOT;
+  const configured = process.env.NARRARIUM_BOOK_ROOT ?? process.env.GHOSTWRITER_BOOK_ROOT;
   if (configured) return path.resolve(configured);
   return path.resolve(process.cwd(), defaultBookRoot);
 }

@@ -27,12 +27,12 @@ import {
 } from "../dist/index.js";
 
 test("core book workflow supports canon indexes and structural updates", async () => {
-  const rootPath = await mkdtemp(path.join(os.tmpdir(), "ghostwriter-core-"));
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-core-"));
 
   try {
     await initializeBookRepo(rootPath, {
       title: "Core Test Book",
-      author: "GhostWriter",
+      author: "Narrarium",
       language: "en",
     });
 
@@ -111,7 +111,7 @@ test("core book workflow supports canon indexes and structural updates", async (
 });
 
 test("asset prompts and renames keep asset folders aligned", async () => {
-  const rootPath = await mkdtemp(path.join(os.tmpdir(), "ghostwriter-assets-"));
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-assets-"));
 
   try {
     await initializeBookRepo(rootPath, {

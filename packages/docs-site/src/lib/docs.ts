@@ -158,7 +158,7 @@ function packageTitle(value: string): string {
       return "Core Package";
     case "mcp-server":
       return "MCP Server Package";
-    case "create-ghostwriter-book":
+    case "create-narrarium-book":
       return "Create Book Package";
     case "astro-reader":
       return "Astro Reader Package";

@@ -5,7 +5,7 @@ import AssetFigure from "../components/AssetFigure.astro";
 import { loadAssetFigure } from "../lib/assets";
 
 const { ready, root, book, chapters, characters, locations, factions, items, secrets, timelineEvents } = await loadHomePageData();
-const title = book?.frontmatter.title ?? "GhostWriter Reader";
+const title = book?.frontmatter.title ?? "Narrarium Reader";
 const coverFigure = await loadAssetFigure("book", `${title} cover`);
 const chapterCards = await Promise.all(
   chapters.map(async (chapter) => ({
@@ -15,14 +15,14 @@ const chapterCards = await Promise.all(
 );
 ---
 
-<BaseLayout title={title} description="Read a GhostWriter repository chapter by chapter." activeSection="home">
+<BaseLayout title={title} description="Read a Narrarium repository chapter by chapter." activeSection="home">
   <section class="hero">
-    <p class="eyebrow">GhostWriter Reader</p>
+    <p class="eyebrow">Narrarium Reader</p>
     <h1>{title}</h1>
     <p class="lede">
       {ready
         ? "A local-first reading view over the canonical book repository. Chapters, scenes, and metadata stay in markdown; the site simply renders them."
-        : "Set GHOSTWRITER_BOOK_ROOT to a GhostWriter book repository and this reader will render its chapters automatically."}
+        : "Set NARRARIUM_BOOK_ROOT to a Narrarium book repository and this reader will render its chapters automatically."}
     </p>
 
     {ready && <div class="chip-row"><a class="chip" href="downloads/book.epub" download>Download EPUB</a></div>}
@@ -123,7 +123,7 @@ const chapterCards = await Promise.all(
     </>
   ) : (
     <div class="empty">
-      No book repository detected. Initialize one with the GhostWriter MCP server, then run this site again with the correct `GHOSTWRITER_BOOK_ROOT`.
+      No book repository detected. Initialize one with the Narrarium MCP server, then run this site again with the correct `NARRARIUM_BOOK_ROOT`.
     </div>
   )}
 </BaseLayout>

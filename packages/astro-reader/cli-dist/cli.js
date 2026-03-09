@@ -11,7 +11,7 @@ const result = await scaffoldReaderSite(resolved.targetDir, {
     pagesDomain: resolved.pagesDomain,
 });
 output.write([
-    `GhostWriter reader scaffolded at ${result.targetRoot}`,
+    `Narrarium reader scaffolded at ${result.targetRoot}`,
     `Book root default: ${result.bookRoot}`,
     `Core dependency: ${result.coreDependency}`,
     "",
@@ -32,7 +32,7 @@ async function resolveInputs(args) {
         };
     }
     if (!input.isTTY || !output.isTTY) {
-        throw new Error("Missing target directory. Use ghostwriter-reader-init <target-dir> [--book-root <path>] [--package-name <name>] [--pages-domain <domain>].");
+        throw new Error("Missing target directory. Use narrarium-reader-init <target-dir> [--book-root <path>] [--package-name <name>] [--pages-domain <domain>].");
     }
     const rl = createInterface({ input, output });
     try {

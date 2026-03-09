@@ -1,5 +1,5 @@
 import path from "node:path";
-import { listChapters, listEntities, listRelatedCanon, readChapter, toPosixPath } from "@ghostwriter/core";
+import { listChapters, listEntities, listRelatedCanon, readChapter, toPosixPath } from "@narrarium/core";
 import { getBookRoot } from "./book.js";
 const entityKinds = ["character", "location", "faction", "item", "secret", "timeline-event"];
 let referenceIndexPromise = null;

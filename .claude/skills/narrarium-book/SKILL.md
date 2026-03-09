@@ -1,11 +1,11 @@
 ---
-name: ghostwriter-book
-description: Manage a GhostWriter book repository. Use this when creating or updating books, characters, items, locations, factions, timelines, secrets, chapter files, summaries, evaluations, or when checking canon before drafting new prose.
+name: narrarium-book
+description: Manage a Narrarium book repository. Use this when creating or updating books, characters, items, locations, factions, timelines, secrets, chapter files, summaries, evaluations, or when checking canon before drafting new prose.
 compatibility: opencode
 license: MIT
 ---
 
-# GhostWriter Book Workflow
+# Narrarium Book Workflow
 
 ## Mission
 

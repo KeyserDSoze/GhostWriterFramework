@@ -16,7 +16,7 @@ import {
   syncChapterEvaluation,
   syncChapterResume,
   syncTotalResume,
-} from "@ghostwriter/core";
+} from "@narrarium/core";
 
 type ParsedArgs = {
   targetDir?: string;
@@ -111,13 +111,13 @@ if (resolved.sample) {
 
 output.write(
   [
-    `GhostWriter book created at ${targetPath}`,
+    `Narrarium book created at ${targetPath}`,
     "",
     "Next steps:",
     `- Open the repo in OpenCode and enable the local MCP server`,
-    `- Run \`npm run build\` in GhostWriterFramework if you changed the framework`,
+    `- Run \`npm run build\` in the Narrarium Framework repo if you changed the framework`,
     `- Use \`init_book_repo\` only for new repos; this repo is already initialized`,
-    `- Point the reader to this repo with GHOSTWRITER_BOOK_ROOT=${targetPath}`,
+    `- Point the reader to this repo with NARRARIUM_BOOK_ROOT=${targetPath}`,
     ...(readerPath ? [`- Reader scaffold created at ${readerPath}`] : []),
     ...(readerInstalled ? ["- Reader dependencies were installed automatically"] : []),
     ...(readerPath ? ["- From the book root you can now run `npm run dev`, `npm run build`, or `npm run export:epub`"] : []),
@@ -142,7 +142,7 @@ async function resolveInputs(args: ParsedArgs) {
   }
 
   if (!input.isTTY || !output.isTTY) {
-    throw new Error("Missing required arguments. Use create-ghostwriter-book <dir> --title <title> --language <lang> [--author <name>] [--sample] [--with-reader|--no-reader] [--reader-dir <name>] [--pages-domain <domain>].");
+    throw new Error("Missing required arguments. Use create-narrarium-book <dir> --title <title> --language <lang> [--author <name>] [--sample] [--with-reader|--no-reader] [--reader-dir <name>] [--pages-domain <domain>].");
   }
 
   const rl = createInterface({ input, output });
@@ -232,7 +232,7 @@ function slugifyForPackage(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "ghostwriter-book";
+    .replace(/^-+|-+$/g, "") || "narrarium-book";
 }
 
 async function runReaderScaffold(targetDir: string, bookRoot: string, packageName: string, pagesDomain?: string): Promise<string> {
@@ -309,8 +309,8 @@ async function writeRootPagesWorkflow(targetPath: string, readerDir: string, pag
 function buildRootPagesWorkflow(readerDir: string, pagesDomain?: string): string {
   const normalizedReaderDir = readerDir.split(path.sep).join("/");
   const envLines = pagesDomain
-    ? [`          GHOSTWRITER_BOOK_ROOT: .`, `          SITE_BASE: /`, `          SITE_URL: https://${pagesDomain}`]
-    : [`          GHOSTWRITER_BOOK_ROOT: .`, `          SITE_BASE: /\${{ github.event.repository.name }}/`];
+    ? [`          NARRARIUM_BOOK_ROOT: .`, `          SITE_BASE: /`, `          SITE_URL: https://${pagesDomain}`]
+    : [`          NARRARIUM_BOOK_ROOT: .`, `          SITE_BASE: /\${{ github.event.repository.name }}/`];
   return `name: Deploy Reader To GitHub Pages
 
 on:
@@ -374,7 +374,7 @@ ${envLines.join("\n")}
 
 function resolveReaderCliPath(require: NodeRequire, packageRoot: string): string {
   try {
-    const scaffoldPath = require.resolve("@ghostwriter/astro-reader/scaffold");
+    const scaffoldPath = require.resolve("@narrarium/astro-reader/scaffold");
     return path.resolve(path.dirname(scaffoldPath), "cli.js");
   } catch {
     return path.resolve(packageRoot, "../astro-reader/cli-dist/cli.js");

@@ -1,17 +1,17 @@
 {
-  "name": "@ghostwriter/create-book",
+  "name": "@narrarium/create-book",
   "version": "0.1.0",
   "type": "module",
-  "description": "Starter CLI to scaffold a GhostWriter book repository.",
+  "description": "Starter CLI to scaffold a Narrarium book repository.",
   "license": "MIT",
   "bin": {
-    "create-ghostwriter-book": "dist/index.js"
+    "create-narrarium-book": "dist/index.js"
   },
   "files": [
     "dist"
   ],
   "keywords": [
-    "ghostwriter",
+    "narrarium",
     "books",
     "starter",
     "astro",
@@ -28,8 +28,8 @@
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
-    "@ghostwriter/astro-reader": "^0.1.0",
-    "@ghostwriter/core": "^0.1.0"
+    "@narrarium/astro-reader": "^0.1.0",
+    "@narrarium/core": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",

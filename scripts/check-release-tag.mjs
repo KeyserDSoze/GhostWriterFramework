@@ -18,7 +18,7 @@ if (tag !== expectedTag) {
   throw new Error(`Release tag mismatch. Expected ${expectedTag} but received ${tag}.`);
 }
 
-const packageDirs = ["core", "astro-reader", "mcp-server", "create-ghostwriter-book"];
+const packageDirs = ["core", "astro-reader", "mcp-server", "create-narrarium-book"];
 
 for (const dir of packageDirs) {
   const packageJson = JSON.parse(

@@ -1,6 +1,6 @@
 # Repository Spec
 
-GhostWriter treats a repository as the source of truth for a book project.
+Narrarium treats a repository as the source of truth for a book project.
 
 ## Root structure
 
@@ -44,8 +44,8 @@ assets/
   timelines/events/
   secrets/
   chapters/
-.opencode/skills/ghostwriter-book/SKILL.md
-.claude/skills/ghostwriter-book/SKILL.md
+.opencode/skills/narrarium-book/SKILL.md
+.claude/skills/narrarium-book/SKILL.md
 ```
 
 ## Naming rules

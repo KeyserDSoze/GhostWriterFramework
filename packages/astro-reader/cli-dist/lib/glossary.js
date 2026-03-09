@@ -1,4 +1,4 @@
-import { listEntities, listRelatedCanon, readEntity, toPosixPath } from "@ghostwriter/core";
+import { listEntities, listRelatedCanon, readEntity, toPosixPath } from "@narrarium/core";
 import { marked } from "marked";
 import { loadAssetFigure } from "./assets.js";
 import { getBookRoot } from "./book.js";

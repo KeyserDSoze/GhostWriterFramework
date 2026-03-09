@@ -1,4 +1,4 @@
-export const SKILL_NAME = "ghostwriter-book";
+export const SKILL_NAME = "narrarium-book";
 
 export const BOOK_DIRECTORIES = [
   "guidelines",

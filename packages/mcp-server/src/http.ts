@@ -24,6 +24,6 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`GhostWriter public MCP listening on http://localhost:${port}/mcp`);
+  console.log(`Narrarium public MCP listening on http://localhost:${port}/mcp`);
   console.log(`Health check available on http://localhost:${port}/health`);
 });

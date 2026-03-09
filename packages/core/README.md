@@ -1,6 +1,6 @@
-# @ghostwriter/core
+# @narrarium/core
 
-Core GhostWriter helpers for local-first book repositories.
+Core Narrarium helpers for local-first book repositories.
 
 ## Includes
 
@@ -13,7 +13,7 @@ Core GhostWriter helpers for local-first book repositories.
 ## Install
 
 ```bash
-npm install @ghostwriter/core
+npm install @narrarium/core
 ```
 
 ## What it does
@@ -33,7 +33,7 @@ import {
   createCharacterProfile,
   createChapter,
   createParagraph,
-} from "@ghostwriter/core";
+} from "@narrarium/core";
 
 await initializeBookRepo("my-book", {
   title: "My Book",

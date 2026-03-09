@@ -40,7 +40,7 @@ jobs:
         run: npm ci
 
       - name: Validate Vercel MCP build inputs
-        run: npm run build -w @ghostwriter/core && npm run test -w @ghostwriter/mcp-server
+        run: npm run build -w @narrarium/core && npm run test -w @narrarium/mcp-server
 
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
@@ -48,9 +48,9 @@ jobs:
       - name: Pull Vercel environment
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: vercel pull --cwd packages/mcp-server --yes --environment=production --token="$VERCEL_TOKEN"
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
 
       - name: Deploy to Vercel
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: vercel deploy --cwd packages/mcp-server --prod --token="$VERCEL_TOKEN"
+        run: vercel deploy --prod --token="$VERCEL_TOKEN"

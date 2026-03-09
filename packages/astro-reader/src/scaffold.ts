@@ -48,7 +48,7 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
           preview: "astro preview",
         },
         dependencies: {
-          "@ghostwriter/core": coreDependency,
+          "@narrarium/core": coreDependency,
           astro: "^5.14.1",
           marked: "^16.3.0",
         },
@@ -80,7 +80,7 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
     await writeFile(path.join(targetRoot, "public", "CNAME"), `${pagesDomain}\n`, "utf8");
   }
 
-  await writeFile(path.join(targetRoot, ".env.example"), `GHOSTWRITER_BOOK_ROOT=${toPosix(bookRoot)}\n`, "utf8");
+  await writeFile(path.join(targetRoot, ".env.example"), `NARRARIUM_BOOK_ROOT=${toPosix(bookRoot)}\n`, "utf8");
   await writeFile(path.join(targetRoot, ".gitignore"), "node_modules/\ndist/\n.astro/\n.env\npublic/downloads/\n", "utf8");
   await writeFile(
     path.join(targetRoot, "README.md"),
@@ -97,16 +97,16 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
 }
 
 function buildReaderReadme(bookRoot: string): string {
-  return `# GhostWriter Reader Site
+  return `# Narrarium Reader Site
 
-This site was scaffolded from \`@ghostwriter/astro-reader\`.
+This site was scaffolded from \`@narrarium/astro-reader\`.
 
 ## Configure
 
 Set the book root in a local environment file:
 
 \`\`\`bash
-GHOSTWRITER_BOOK_ROOT=${toPosix(bookRoot)}
+NARRARIUM_BOOK_ROOT=${toPosix(bookRoot)}
 \`\`\`
 
 ## Run
@@ -136,9 +136,9 @@ By default it deploys to standard GitHub Pages using the repository name as the 
 function buildExportEpubScript(bookRoot: string): string {
   return `import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { exportEpub } from "@ghostwriter/core";
+import { exportEpub } from "@narrarium/core";
 
-const configured = process.env.GHOSTWRITER_BOOK_ROOT;
+const configured = process.env.NARRARIUM_BOOK_ROOT ?? process.env.GHOSTWRITER_BOOK_ROOT;
 const root = path.resolve(process.cwd(), configured ?? ${JSON.stringify(toPosix(bookRoot))});
 const outputPath = path.resolve(process.cwd(), "public", "downloads", "book.epub");
 
@@ -221,7 +221,7 @@ function inferPackageName(targetRoot: string): string {
   const base = path.basename(targetRoot)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "ghostwriter-reader-site";
+    .replace(/^-+|-+$/g, "") || "narrarium-reader-site";
   return base;
 }
 

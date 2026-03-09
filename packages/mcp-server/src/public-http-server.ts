@@ -54,13 +54,13 @@ export async function handlePublicMcpRequest(
 
 export function createPublicMcpServer() {
   const server = new McpServer({
-    name: "ghostwriter-public-http",
+    name: "narrarium-public-http",
     version: "0.1.0",
   });
 
   server.tool(
     "setup_framework",
-    "Return the exact npx commands and setup steps to bootstrap a new GhostWriter project from scratch.",
+    "Return the exact npx commands and setup steps to bootstrap a new Narrarium project from scratch.",
     {
       projectName: z.string().optional(),
       title: z.string().optional(),
@@ -84,7 +84,7 @@ export function createPublicMcpServer() {
 
   server.tool(
     "repository_spec",
-    "Return the GhostWriter repository model and canon rules so clients can understand the book framework structure.",
+    "Return the Narrarium repository model and canon rules so clients can understand the book framework structure.",
     {},
     async () => textResponse(buildRepositorySpecSummary()),
   );
