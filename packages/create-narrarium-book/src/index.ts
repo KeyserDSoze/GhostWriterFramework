@@ -267,15 +267,33 @@ async function runReaderScaffold(targetDir: string, bookRoot: string, packageNam
 }
 
 function installNodeDependencies(targetDir: string): void {
-  const command = process.platform === "win32" ? "npm.cmd" : "npm";
-  const result = spawnSync(command, ["install"], {
+  const { command, args } = getNpmInstallInvocation();
+  const result = spawnSync(command, args, {
     cwd: targetDir,
     stdio: "inherit",
   });
 
-  if (result.status !== 0) {
-    throw new Error(`Failed to install reader dependencies in ${targetDir}.`);
+  if (result.error) {
+    throw new Error(`Failed to start npm install in ${targetDir}: ${result.error.message}`);
   }
+
+  if (result.status !== 0) {
+    throw new Error(`Failed to install reader dependencies in ${targetDir}. You can rerun the starter with --no-install and then run npm install manually inside the reader folder.`);
+  }
+}
+
+function getNpmInstallInvocation(): { command: string; args: string[] } {
+  if (process.platform === "win32") {
+    return {
+      command: "cmd.exe",
+      args: ["/d", "/s", "/c", "npm install"],
+    };
+  }
+
+  return {
+    command: "npm",
+    args: ["install"],
+  };
 }
 
 async function writeRootPackageJson(targetPath: string, title: string, readerDir: string): Promise<void> {

@@ -1,0 +1,19 @@
+---
+import type { CanonLink } from "../lib/canon";
+
+interface Props {
+  links: CanonLink[];
+  heading?: string;
+}
+
+const { links, heading = "Related canon" } = Astro.props;
+---
+
+<div class="scene">
+  <h2>{heading}</h2>
+  <div class="chip-row">
+    {links.map((link) => (
+      <a class="chip" href={link.href}>{link.label}</a>
+    ))}
+  </div>
+</div>

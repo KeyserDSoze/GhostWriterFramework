@@ -1,0 +1,40 @@
+---
+interface ChapterItem {
+  slug: string;
+  metadata: {
+    number: number;
+    title: string;
+  };
+}
+
+interface Props {
+  currentSlug: string;
+  chapters: ChapterItem[];
+}
+
+const { currentSlug, chapters } = Astro.props;
+const currentIndex = chapters.findIndex((chapter) => chapter.slug === currentSlug);
+const previousChapter = currentIndex > 0 ? chapters[currentIndex - 1] : null;
+const nextChapter = currentIndex >= 0 && currentIndex < chapters.length - 1 ? chapters[currentIndex + 1] : null;
+---
+
+<nav class="chapter-pager" aria-label="Chapter navigation">
+  <a class:list={["pager-link", !previousChapter && "is-disabled"]} href={previousChapter ? `chapters/${previousChapter.slug}/` : undefined} aria-disabled={!previousChapter}>
+    {previousChapter ? `Previous: ${previousChapter.metadata.title}` : "Start of book"}
+  </a>
+
+  <label class="pager-jump">
+    <span class="label">Jump To</span>
+    <select onchange="if (this.value) window.location.href = this.value">
+      {chapters.map((chapter) => (
+        <option value={`chapters/${chapter.slug}/`} selected={chapter.slug === currentSlug}>
+          {`Chapter ${String(chapter.metadata.number).padStart(3, "0")} - ${chapter.metadata.title}`}
+        </option>
+      ))}
+    </select>
+  </label>
+
+  <a class:list={["pager-link", !nextChapter && "is-disabled"]} href={nextChapter ? `chapters/${nextChapter.slug}/` : undefined} aria-disabled={!nextChapter}>
+    {nextChapter ? `Next: ${nextChapter.metadata.title}` : "End of book"}
+  </a>
+</nav>

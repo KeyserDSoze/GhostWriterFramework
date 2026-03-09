@@ -1,0 +1,129 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { loadHomePageData } from "../lib/book";
+import AssetFigure from "../components/AssetFigure.astro";
+import { loadAssetFigure } from "../lib/assets";
+
+const { ready, root, book, chapters, characters, locations, factions, items, secrets, timelineEvents } = await loadHomePageData();
+const title = book?.frontmatter.title ?? "Narrarium Reader";
+const coverFigure = await loadAssetFigure("book", `${title} cover`);
+const chapterCards = await Promise.all(
+  chapters.map(async (chapter) => ({
+    ...chapter,
+    figure: await loadAssetFigure(String(chapter.metadata.id ?? `chapter:${chapter.slug}`), chapter.metadata.title),
+  })),
+);
+---
+
+<BaseLayout title={title} description="Read a Narrarium repository chapter by chapter." activeSection="home">
+  <section class="hero">
+    <p class="eyebrow">Narrarium Reader</p>
+    <h1>{title}</h1>
+    <p class="lede">
+      {ready
+        ? "A local-first reading view over the canonical book repository. Chapters, scenes, and metadata stay in markdown; the site simply renders them."
+        : "Set NARRARIUM_BOOK_ROOT to a Narrarium book repository and this reader will render its chapters automatically."}
+    </p>
+
+    {ready && <div class="chip-row"><a class="chip" href="downloads/book.epub" download>Download EPUB</a></div>}
+
+    {coverFigure && <AssetFigure figure={coverFigure} className="hero-media" />}
+
+    <div class="grid stats">
+      <div class="card">
+        <div class="label">Book Root</div>
+        <div class="value">{root}</div>
+      </div>
+      <div class="card">
+        <div class="label">Chapters</div>
+        <div class="value">{chapters.length}</div>
+      </div>
+      <div class="card">
+        <div class="label">Author</div>
+        <div class="value">{book?.frontmatter.author ?? "Unknown"}</div>
+      </div>
+      <div class="card">
+        <div class="label">Language</div>
+        <div class="value">{book?.frontmatter.language ?? "n/a"}</div>
+      </div>
+    </div>
+  </section>
+
+  {ready ? (
+    <>
+      <section class="section">
+        <h2>Canon Atlas</h2>
+        <div class="catalog-grid">
+          <article class="card catalog-card">
+            <a href="characters/">
+              <div class="chapter-number">Characters</div>
+              <h3 class="chapter-title">Cast Register</h3>
+              <div class="chapter-meta">Browse protagonists, supporting roles, and reference notes.</div>
+              <div class="chip-row"><span class="chip">{characters.length} entries</span></div>
+            </a>
+          </article>
+          <article class="card catalog-card">
+            <a href="locations/">
+              <div class="chapter-number">Locations</div>
+              <h3 class="chapter-title">World Map</h3>
+              <div class="chapter-meta">See atmosphere, narrative use, and key landmarks.</div>
+              <div class="chip-row"><span class="chip">{locations.length} entries</span></div>
+            </a>
+          </article>
+          <article class="card catalog-card">
+            <a href="factions/">
+              <div class="chapter-number">Factions</div>
+              <h3 class="chapter-title">Power Map</h3>
+              <div class="chapter-meta">Inspect factions, ideology, methods, and narrative pressure.</div>
+              <div class="chip-row"><span class="chip">{factions.length} entries</span></div>
+            </a>
+          </article>
+          <article class="card catalog-card">
+            <a href="items/">
+              <div class="chapter-number">Items</div>
+              <h3 class="chapter-title">Artifacts</h3>
+              <div class="chapter-meta">Track objects, symbols, tools, and plot-driving artifacts.</div>
+              <div class="chip-row"><span class="chip">{items.length} entries</span></div>
+            </a>
+          </article>
+          <article class="card catalog-card">
+            <a href="secrets/">
+              <div class="chapter-number">Secrets</div>
+              <h3 class="chapter-title">Spoiler Vault</h3>
+              <div class="chapter-meta">Review hidden truths, reveal strategy, and narrative stakes.</div>
+              <div class="chip-row"><span class="chip">{secrets.length} entries</span></div>
+            </a>
+          </article>
+          <article class="card catalog-card">
+            <a href="timeline/">
+              <div class="chapter-number">Timeline</div>
+              <h3 class="chapter-title">Chronology</h3>
+              <div class="chapter-meta">Follow major events and continuity anchors.</div>
+              <div class="chip-row"><span class="chip">{timelineEvents.length} events</span></div>
+            </a>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="chapters">
+      <h2>Chapters</h2>
+      <div class="chapter-list">
+        {chapterCards.map((chapter) => (
+          <article class="chapter-card">
+            <a href={`chapters/${chapter.slug}/`}>
+              {chapter.figure && <AssetFigure figure={chapter.figure} className="catalog-media" />}
+              <div class="chapter-number">Chapter {String(chapter.metadata.number).padStart(3, "0")}</div>
+              <h3 class="chapter-title">{chapter.metadata.title}</h3>
+              <div class="chapter-meta">{chapter.metadata.summary ?? "Open the chapter to read scenes and notes."}</div>
+            </a>
+          </article>
+        ))}
+      </div>
+      </section>
+    </>
+  ) : (
+    <div class="empty">
+      No book repository detected. Initialize one with the Narrarium MCP server, then run this site again with the correct `NARRARIUM_BOOK_ROOT`.
+    </div>
+  )}
+</BaseLayout>

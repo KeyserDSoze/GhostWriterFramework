@@ -1,0 +1,45 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { loadEntityIndexData } from "../../lib/book";
+import AssetFigure from "../../components/AssetFigure.astro";
+import { loadAssetFigure } from "../../lib/assets";
+
+const { ready, entities } = await loadEntityIndexData("item");
+const cards = await Promise.all(
+  entities.map(async (entity) => ({
+    ...entity,
+    figure: await loadAssetFigure(String(entity.metadata.id ?? `item:${entity.slug}`), String(entity.metadata.name ?? entity.slug)),
+  })),
+);
+---
+
+<BaseLayout title="Items" description="Browse the items and artifacts of the book." activeSection="items">
+  <section class="hero">
+    <p class="eyebrow">Canon Atlas</p>
+    <h1>Items</h1>
+    <p class="lede">Track weapons, documents, relics, tools, and symbolic objects driving the narrative.</p>
+  </section>
+
+  {ready ? (
+    <section class="section">
+      <div class="catalog-grid">
+        {cards.map((entity) => (
+          <article class="card catalog-card">
+            <a href={`items/${entity.slug}/`}>
+              {entity.figure && <AssetFigure figure={entity.figure} className="catalog-media" />}
+              <div class="chapter-number">{String(entity.metadata.item_kind ?? "item")}</div>
+              <h2 class="chapter-title">{String(entity.metadata.name ?? entity.slug)}</h2>
+              <div class="chapter-meta">{String(entity.metadata.function_in_book ?? entity.metadata.purpose ?? "Open the entry to inspect use, origin, and significance.")}</div>
+              <div class="chip-row">
+                {entity.metadata.owner && <span class="chip">{String(entity.metadata.owner)}</span>}
+                {entity.metadata.introduced_in && <span class="chip">{String(entity.metadata.introduced_in)}</span>}
+              </div>
+            </a>
+          </article>
+        ))}
+      </div>
+    </section>
+  ) : (
+    <div class="empty">No book repository detected for the reader.</div>
+  )}
+</BaseLayout>

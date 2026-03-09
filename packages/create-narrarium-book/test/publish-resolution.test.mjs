@@ -11,6 +11,8 @@ test("published starter build resolves the packaged reader CLI", async () => {
 
   assert.match(distSource, /narrarium-astro-reader\/scaffold/);
   assert.match(distSource, /\.\.\/narrarium-astro-reader\/cli-dist\/cli\.js/);
+  assert.match(distSource, /cmd\.exe/);
+  assert.match(distSource, /--no-install/);
   assert.equal(readerPackageJson.exports["./scaffold"].require, "./cli-dist/scaffold.js");
   assert.equal(readerPackageJson.exports["./scaffold"].default, "./cli-dist/scaffold.js");
   assert.equal(path.basename(new URL("../dist/index.js", packageRoot).pathname), "index.js");

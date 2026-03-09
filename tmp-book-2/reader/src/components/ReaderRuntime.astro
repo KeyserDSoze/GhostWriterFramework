@@ -1,0 +1,310 @@
+---
+import type { GlossaryEntry } from "../lib/glossary";
+
+interface Props {
+  glossary: GlossaryEntry[];
+}
+
+const { glossary } = Astro.props;
+const glossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
+---
+
+<div class="canon-overlay" data-canon-overlay hidden>
+  <button type="button" class="canon-overlay__backdrop" data-canon-close aria-label="Close canon popup"></button>
+  <aside class="canon-overlay__panel" aria-live="polite" aria-modal="true" role="dialog">
+    <button type="button" class="canon-overlay__close" data-canon-close aria-label="Close canon popup">x</button>
+    <p class="eyebrow" data-canon-kind></p>
+    <h2 data-canon-title></h2>
+    <div class="canon-tabs" data-canon-tabs>
+      <button type="button" class="canon-tab is-active" data-canon-tab="overview">Overview</button>
+      <button type="button" class="canon-tab" data-canon-tab="notes">Notes</button>
+      <button type="button" class="canon-tab" data-canon-tab="metadata">Metadata</button>
+      <button type="button" class="canon-tab" data-canon-tab="image">Image</button>
+    </div>
+    <section class="canon-panel is-active" data-canon-panel="overview">
+      <div class="chip-row" data-canon-meta></div>
+      <p class="chapter-meta" data-canon-summary></p>
+      <div class="canon-related" data-canon-mentions-wrap hidden>
+        <p class="label">Mentioned In</p>
+        <div class="chip-row" data-canon-mentions></div>
+      </div>
+    </section>
+    <section class="canon-panel" data-canon-panel="notes">
+      <div class="prose canon-overlay__body" data-canon-body></div>
+    </section>
+    <section class="canon-panel" data-canon-panel="metadata">
+      <div class="meta-list" data-canon-metadata></div>
+    </section>
+    <section class="canon-panel" data-canon-panel="image">
+      <div class="canon-overlay__image-panel" data-canon-image-panel></div>
+    </section>
+    <a class="chip" data-canon-link href="./">Open full entry</a>
+  </aside>
+</div>
+
+<script type="application/json" id="canon-glossary-data" set:html={glossaryJson}></script>
+
+<script is:inline>
+  const themeStorageKey = "narrarium-reader-theme";
+  const glossaryDataElement = document.getElementById("canon-glossary-data");
+  const glossaryEntries = glossaryDataElement ? JSON.parse(glossaryDataElement.textContent || "[]") : [];
+  const glossaryById = new Map(glossaryEntries.map((entry) => [entry.id, entry]));
+
+  initializeThemeToggle();
+  initializeCanonMentions();
+
+  function initializeThemeToggle() {
+    const root = document.documentElement;
+    const toggle = document.querySelector("[data-theme-toggle]");
+    if (!toggle) return;
+
+    const saved = localStorage.getItem(themeStorageKey);
+    const initialTheme = saved || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    applyTheme(initialTheme);
+
+    toggle.addEventListener("click", () => {
+      applyTheme(root.dataset.theme === "dark" ? "light" : "dark", true);
+    });
+  }
+
+  function applyTheme(theme, persist) {
+    document.documentElement.dataset.theme = theme;
+    const toggle = document.querySelector("[data-theme-toggle]");
+    if (toggle) {
+      toggle.textContent = theme === "dark" ? "Light mode" : "Dark mode";
+      toggle.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    }
+    if (persist) {
+      localStorage.setItem(themeStorageKey, theme);
+    }
+  }
+
+  function initializeCanonMentions() {
+    if (glossaryEntries.length === 0) return;
+
+    const termMap = new Map();
+    for (const entry of glossaryEntries) {
+      for (const term of entry.terms || []) {
+        const normalized = String(term || "").trim();
+        if (!normalized || normalized.length < 3) continue;
+        const key = normalized.toLowerCase();
+        if (!termMap.has(key)) {
+          termMap.set(key, entry.id);
+        }
+      }
+    }
+
+    const terms = [...termMap.keys()].sort((left, right) => right.length - left.length);
+    if (terms.length === 0) return;
+
+    const pattern = new RegExp(`(^|[^\\p{L}\\p{N}])(${terms.map(escapeRegex).join("|")})(?=$|[^\\p{L}\\p{N}])`, "giu");
+
+    enhanceCanonRoot(document, pattern, termMap);
+
+    initializeCanonOverlay(pattern, termMap);
+  }
+
+  function enhanceCanonRoot(root, pattern, termMap) {
+    const containers = root instanceof Document
+      ? root.querySelectorAll(".prose p, .prose li, .prose blockquote")
+      : root.matches?.(".prose")
+        ? root.querySelectorAll("p, li, blockquote")
+        : root.querySelectorAll(".prose p, .prose li, .prose blockquote");
+
+    containers.forEach((container) => {
+      if (container.dataset.canonEnhanced === "true") return;
+      container.dataset.canonEnhanced = "true";
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      const textNodes = [];
+      while (walker.nextNode()) {
+        textNodes.push(walker.currentNode);
+      }
+
+      for (const node of textNodes) {
+        enhanceTextNode(node, pattern, termMap);
+      }
+    });
+  }
+
+  function enhanceTextNode(textNode, pattern, termMap) {
+    const parent = textNode.parentElement;
+    if (!parent || parent.closest("a, button, code, pre, h1, h2, h3, h4, h5, h6, [data-no-canon]")) {
+      return;
+    }
+
+    const raw = textNode.textContent || "";
+    pattern.lastIndex = 0;
+    if (!pattern.test(raw)) {
+      return;
+    }
+    pattern.lastIndex = 0;
+
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    let match;
+
+    while ((match = pattern.exec(raw))) {
+      const boundary = match[1] || "";
+      const term = match[2] || "";
+      const entryId = termMap.get(term.toLowerCase());
+      const start = match.index;
+
+      if (start > cursor) {
+        fragment.append(raw.slice(cursor, start));
+      }
+
+      if (boundary) {
+        fragment.append(boundary);
+      }
+
+      if (entryId) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "canon-mention";
+        button.dataset.canonId = entryId;
+        button.textContent = term;
+        fragment.append(button);
+      } else {
+        fragment.append(term);
+      }
+
+      cursor = start + boundary.length + term.length;
+    }
+
+    if (cursor < raw.length) {
+      fragment.append(raw.slice(cursor));
+    }
+
+    textNode.replaceWith(fragment);
+  }
+
+  function initializeCanonOverlay(pattern, termMap) {
+    const overlay = document.querySelector("[data-canon-overlay]");
+    if (!overlay || overlay.dataset.bound === "true") return;
+    overlay.dataset.bound = "true";
+
+    const title = overlay.querySelector("[data-canon-title]");
+    const kind = overlay.querySelector("[data-canon-kind]");
+    const summary = overlay.querySelector("[data-canon-summary]");
+    const meta = overlay.querySelector("[data-canon-meta]");
+    const link = overlay.querySelector("[data-canon-link]");
+    const body = overlay.querySelector("[data-canon-body]");
+    const metadata = overlay.querySelector("[data-canon-metadata]");
+    const imagePanel = overlay.querySelector("[data-canon-image-panel]");
+    const mentions = overlay.querySelector("[data-canon-mentions]");
+    const mentionsWrap = overlay.querySelector("[data-canon-mentions-wrap]");
+
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+
+      const trigger = target.closest("[data-canon-id]");
+      if (trigger instanceof HTMLElement) {
+        const entry = glossaryById.get(trigger.dataset.canonId || "");
+        if (!entry) return;
+        event.preventDefault();
+        title.textContent = entry.label;
+        kind.textContent = entry.kindLabel;
+        summary.textContent = entry.summary;
+        link.href = entry.href;
+        body.innerHTML = entry.bodyHtml || "";
+        enhanceCanonRoot(body, pattern, termMap);
+        metadata.replaceChildren(...(entry.metadataEntries || []).map((item) => {
+          const row = document.createElement("div");
+          row.className = "meta-row";
+          const key = document.createElement("div");
+          key.className = "meta-key";
+          key.textContent = item.label;
+          const value = document.createElement("div");
+          value.className = "meta-value";
+          value.textContent = item.value;
+          row.append(key, value);
+          return row;
+        }));
+        meta.replaceChildren(...(entry.meta || []).map((value) => {
+          const span = document.createElement("span");
+          span.className = "chip";
+          span.textContent = value;
+          return span;
+        }));
+        mentions.replaceChildren(...(entry.mentions || []).map((item) => {
+          const anchor = document.createElement("a");
+          anchor.className = "chip";
+          anchor.href = item.href;
+          anchor.textContent = item.label;
+          return anchor;
+        }));
+        mentionsWrap.hidden = !(entry.mentions && entry.mentions.length > 0);
+
+        if (entry.imageSrc) {
+          const wrap = document.createElement("div");
+          wrap.className = "canon-overlay__media";
+          const img = document.createElement("img");
+          img.src = entry.imageSrc;
+          img.alt = entry.imageAlt || entry.label;
+          wrap.append(img);
+          imagePanel.replaceChildren(wrap);
+        } else {
+          imagePanel.replaceChildren();
+        }
+
+        syncCanonTabs(overlay, {
+          notes: Boolean(entry.bodyHtml),
+          metadata: Boolean(entry.metadataEntries?.length),
+          image: Boolean(entry.imageSrc),
+        });
+
+        overlay.hidden = false;
+        document.body.classList.add("has-overlay");
+        return;
+      }
+
+      const tabTrigger = target.closest("[data-canon-tab]");
+      if (tabTrigger instanceof HTMLElement) {
+        activateCanonTab(overlay, tabTrigger.dataset.canonTab || "overview");
+        return;
+      }
+
+      if (target.closest("[data-canon-close]")) {
+        closeCanonOverlay();
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeCanonOverlay();
+      }
+    });
+  }
+
+  function closeCanonOverlay() {
+    const overlay = document.querySelector("[data-canon-overlay]");
+    if (!overlay) return;
+    overlay.hidden = true;
+    document.body.classList.remove("has-overlay");
+  }
+
+  function syncCanonTabs(overlay, availability) {
+    overlay.querySelectorAll("[data-canon-tab]").forEach((button) => {
+      const key = button.dataset.canonTab;
+      const enabled = key === "overview" || availability[key];
+      button.hidden = !enabled;
+      button.disabled = !enabled;
+    });
+    activateCanonTab(overlay, "overview");
+  }
+
+  function activateCanonTab(overlay, key) {
+    const nextKey = overlay.querySelector(`[data-canon-tab="${key}"]`)?.hidden ? "overview" : key;
+    overlay.querySelectorAll("[data-canon-tab]").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.canonTab === nextKey);
+    });
+    overlay.querySelectorAll("[data-canon-panel]").forEach((panel) => {
+      panel.classList.toggle("is-active", panel.dataset.canonPanel === nextKey);
+    });
+  }
+
+  function escapeRegex(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+</script>

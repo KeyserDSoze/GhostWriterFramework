@@ -1,0 +1,21 @@
+{
+  "name": "tmp-book-2-reader",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "export:epub": "node ./scripts/export-epub.mjs",
+    "dev": "node ./scripts/dev.mjs",
+    "build": "npm run export:epub && astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "narrarium": "file:../../packages/core",
+    "astro": "^5.14.1",
+    "chokidar": "^4.0.3",
+    "marked": "^16.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.9.3"
+  }
+}

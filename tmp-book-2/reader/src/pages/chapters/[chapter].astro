@@ -1,0 +1,102 @@
+---
+import { marked } from "marked";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { getBookRoot, loadChapterPageData } from "../../lib/book";
+import LinkedValue from "../../components/LinkedValue.astro";
+import MetadataSection from "../../components/MetadataSection.astro";
+import RelatedLinks from "../../components/RelatedLinks.astro";
+import AssetFigure from "../../components/AssetFigure.astro";
+import ChapterPager from "../../components/ChapterPager.astro";
+import { loadRelatedCanonLinks } from "../../lib/canon";
+import { loadAssetFigure } from "../../lib/assets";
+import { listChapters, pathExists } from "narrarium";
+import path from "node:path";
+
+export async function getStaticPaths() {
+  const root = getBookRoot();
+  const ready = await pathExists(path.join(root, "book.md"));
+  if (!ready) return [];
+
+  const chapters = await listChapters(root);
+  return chapters.map((chapter) => ({
+    params: { chapter: chapter.slug },
+    props: { chapterSlug: chapter.slug },
+  }));
+}
+
+const { chapterSlug } = Astro.props;
+const chapter = await loadChapterPageData(chapterSlug);
+const allChapters = await listChapters(getBookRoot());
+const chapterHtml = await marked.parse(chapter.body);
+const chapterMetaEntries = [
+  ["Point of view", chapter.metadata.pov],
+  ["Timeline", chapter.metadata.timeline_ref],
+  ["Tags", chapter.metadata.tags],
+].filter(([, value]) => value !== undefined && value !== null && (!Array.isArray(value) || value.length > 0));
+const chapterRelatedLinks = await loadRelatedCanonLinks(String(chapter.metadata.id), [chapter.metadata.pov, chapter.metadata.timeline_ref]);
+const chapterFigure = await loadAssetFigure(String(chapter.metadata.id), chapter.metadata.title);
+const renderedParagraphs = await Promise.all(
+  chapter.paragraphs.map(async (paragraph) => ({
+    ...paragraph,
+    anchorId: `scene-${path.basename(paragraph.path, ".md")}`,
+    figure: await loadAssetFigure(String(paragraph.metadata.id), paragraph.metadata.title),
+    html: await marked.parse(paragraph.body),
+  })),
+);
+---
+
+<BaseLayout title={chapter.metadata.title} description={chapter.metadata.summary} activeSection="chapters">
+  <section class="hero">
+    <p class="eyebrow">Chapter {String(chapter.metadata.number).padStart(3, "0")}</p>
+    <h1>{chapter.metadata.title}</h1>
+    {chapter.metadata.summary && <p class="lede">{chapter.metadata.summary}</p>}
+    <div class="chapter-meta">
+      <a href="./">Back to contents</a>
+    </div>
+  </section>
+
+  <ChapterPager currentSlug={chapterSlug} chapters={allChapters} />
+
+  {chapter.body && (
+    <section class="section">
+      <article class="scene prose" set:html={chapterHtml} />
+      {chapterFigure && <AssetFigure figure={chapterFigure} className="scene-media" />}
+    </section>
+  )}
+
+  {chapterMetaEntries.length > 0 && (
+    <section class="section">
+      <MetadataSection entries={chapterMetaEntries} heading="Canon links" />
+    </section>
+  )}
+
+  {chapterRelatedLinks.length > 0 && (
+    <section class="section">
+      <RelatedLinks links={chapterRelatedLinks} />
+    </section>
+  )}
+
+  <section class="section">
+    <h2>Scenes</h2>
+    {renderedParagraphs.length > 0 ? (
+      renderedParagraphs.map((paragraph) => (
+        <article class="scene" id={paragraph.anchorId}>
+          <div class="chapter-number">Scene {String(paragraph.metadata.number).padStart(3, "0")}</div>
+          <h3>{paragraph.metadata.title}</h3>
+          {paragraph.metadata.summary && <p class="chapter-meta">{paragraph.metadata.summary}</p>}
+          {paragraph.metadata.viewpoint && (
+            <p class="chapter-meta">
+              Viewpoint: <LinkedValue value={paragraph.metadata.viewpoint} />
+            </p>
+          )}
+          <div class="prose" set:html={paragraph.html} />
+          {paragraph.figure && <AssetFigure figure={paragraph.figure} className="scene-media" />}
+        </article>
+      ))
+    ) : (
+      <div class="empty">No paragraph files exist for this chapter yet.</div>
+    )}
+  </section>
+
+  <ChapterPager currentSlug={chapterSlug} chapters={allChapters} />
+</BaseLayout>
