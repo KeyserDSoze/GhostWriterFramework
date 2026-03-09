@@ -43,7 +43,7 @@ const figure = await loadAssetFigure(String(entity.metadata.id ?? `item:${slug}`
     <p class="eyebrow">Item</p>
     <h1>{String(entity.metadata.name ?? slug)}</h1>
     <p class="lede">{String(entity.metadata.function_in_book ?? entity.metadata.purpose ?? "Canonical item entry.")}</p>
-    <div class="chapter-meta"><a href="/items/">Back to items</a></div>
+    <div class="chapter-meta"><a href="items/">Back to items</a></div>
     {figure && <AssetFigure figure={figure} className="hero-media" />}
   </section>
 

@@ -1,4 +1,9 @@
 ---
+import ReaderRuntime from "../components/ReaderRuntime.astro";
+import SiteSearch from "../components/SiteSearch.astro";
+import { loadCanonGlossary } from "../lib/glossary.js";
+import { loadSearchIndex } from "../lib/search.js";
+
 interface Props {
   title: string;
   description?: string;
@@ -14,6 +19,8 @@ interface Props {
 }
 
 const { title, description, activeSection = "home" } = Astro.props;
+const canonGlossary = await loadCanonGlossary();
+const searchIndex = await loadSearchIndex();
 ---
 
 <!doctype html>
@@ -23,6 +30,7 @@ const { title, description, activeSection = "home" } = Astro.props;
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     {description && <meta name="description" content={description} />}
+    <base href={import.meta.env.BASE_URL} />
     <style>
       :root {
         --paper: #f3ecdd;
@@ -33,6 +41,19 @@ const { title, description, activeSection = "home" } = Astro.props;
         --line: rgba(44, 32, 24, 0.12);
         --panel: rgba(255, 250, 240, 0.72);
         --shadow: 0 24px 60px rgba(44, 32, 24, 0.12);
+        --surface-strong: rgba(255, 251, 243, 0.78);
+      }
+
+      html[data-theme="dark"] {
+        --paper: #171514;
+        --paper-deep: #0f0f10;
+        --ink: #f4ede1;
+        --muted: #c4b29b;
+        --accent: #d8a86b;
+        --line: rgba(255, 244, 230, 0.12);
+        --panel: rgba(36, 30, 28, 0.82);
+        --shadow: 0 28px 60px rgba(0, 0, 0, 0.32);
+        --surface-strong: rgba(33, 28, 27, 0.86);
       }
 
       * {
@@ -41,11 +62,11 @@ const { title, description, activeSection = "home" } = Astro.props;
 
       html {
         background:
-          radial-gradient(circle at top, rgba(255, 255, 255, 0.55), transparent 35%),
+          radial-gradient(circle at top, rgba(255, 255, 255, 0.18), transparent 35%),
           repeating-linear-gradient(
             180deg,
-            rgba(255, 255, 255, 0.12) 0,
-            rgba(255, 255, 255, 0.12) 2px,
+            rgba(255, 255, 255, 0.08) 0,
+            rgba(255, 255, 255, 0.08) 2px,
             transparent 2px,
             transparent 6px
           ),
@@ -53,6 +74,7 @@ const { title, description, activeSection = "home" } = Astro.props;
         color: var(--ink);
         font-family: Baskerville, "Palatino Linotype", "Book Antiqua", "Iowan Old Style", serif;
         line-height: 1.65;
+        transition: background 180ms ease, color 180ms ease;
       }
 
       body {
@@ -79,9 +101,62 @@ const { title, description, activeSection = "home" } = Astro.props;
         padding: 0.9rem 1rem;
         border: 1px solid var(--line);
         border-radius: 999px;
-        background: rgba(255, 251, 243, 0.78);
+        background: var(--surface-strong);
         backdrop-filter: blur(8px);
         box-shadow: var(--shadow);
+      }
+
+      .masthead-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+
+      .site-search {
+        position: relative;
+        min-width: min(360px, 84vw);
+      }
+
+      .site-search__field {
+        display: grid;
+        gap: 0.3rem;
+      }
+
+      .site-search__field input {
+        width: 100%;
+        padding: 0.78rem 0.95rem;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.22);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      .site-search__results {
+        position: absolute;
+        top: calc(100% + 0.45rem);
+        left: 0;
+        right: 0;
+        padding: 0.5rem;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: var(--surface-strong);
+        box-shadow: var(--shadow);
+        z-index: 25;
+      }
+
+      .site-search__result {
+        display: grid;
+        gap: 0.35rem;
+        padding: 0.75rem;
+        border-radius: 14px;
+        text-decoration: none;
+      }
+
+      .site-search__result:hover {
+        background: rgba(255, 255, 255, 0.12);
       }
 
       .brand {
@@ -96,6 +171,16 @@ const { title, description, activeSection = "home" } = Astro.props;
         display: flex;
         flex-wrap: wrap;
         gap: 0.5rem;
+      }
+
+      .theme-toggle {
+        padding: 0.45rem 0.8rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.28);
+        color: var(--ink);
+        cursor: pointer;
+        font: inherit;
       }
 
       .nav-link {
@@ -118,6 +203,10 @@ const { title, description, activeSection = "home" } = Astro.props;
         border-radius: 28px;
         background: linear-gradient(135deg, rgba(255, 251, 243, 0.92), rgba(244, 233, 213, 0.8));
         box-shadow: var(--shadow);
+      }
+
+      html[data-theme="dark"] .hero {
+        background: linear-gradient(135deg, rgba(42, 36, 34, 0.96), rgba(24, 22, 23, 0.88));
       }
 
       .eyebrow {
@@ -169,6 +258,12 @@ const { title, description, activeSection = "home" } = Astro.props;
         background: var(--panel);
         backdrop-filter: blur(8px);
         box-shadow: var(--shadow);
+      }
+
+      .card a,
+      .chapter-card a,
+      .scene a {
+        color: inherit;
       }
 
       .card {
@@ -233,6 +328,122 @@ const { title, description, activeSection = "home" } = Astro.props;
         text-decoration: none;
       }
 
+      .canon-mention {
+        display: inline;
+        border: 0;
+        padding: 0;
+        margin: 0;
+        font: inherit;
+        color: var(--accent);
+        background: transparent;
+        cursor: pointer;
+        text-decoration: underline;
+        text-decoration-thickness: 1px;
+        text-underline-offset: 0.14em;
+      }
+
+      .chapter-pager {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        gap: 0.8rem;
+        align-items: center;
+        margin-top: 1rem;
+        padding: 1rem;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+
+      .pager-link {
+        display: inline-flex;
+        align-items: center;
+        min-height: 100%;
+        padding: 0.8rem 0.95rem;
+        border-radius: 16px;
+        border: 1px solid var(--line);
+        text-decoration: none;
+        background: rgba(255, 255, 255, 0.22);
+      }
+
+      .pager-link.is-disabled {
+        opacity: 0.55;
+        pointer-events: none;
+      }
+
+      .pager-jump {
+        display: grid;
+        gap: 0.35rem;
+      }
+
+      .pager-jump select {
+        min-width: min(420px, 70vw);
+        padding: 0.7rem 0.9rem;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.32);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      .canon-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+      }
+
+      .canon-overlay__backdrop {
+        position: absolute;
+        inset: 0;
+        border: 0;
+        background: rgba(10, 10, 12, 0.58);
+      }
+
+      .canon-overlay__panel {
+        position: relative;
+        width: min(560px, calc(100vw - 1.5rem));
+        max-height: calc(100vh - 2rem);
+        overflow: auto;
+        margin: 1rem auto;
+        padding: 1.1rem 1.1rem 1.2rem;
+        border-radius: 24px;
+        border: 1px solid var(--line);
+        background: var(--surface-strong);
+        box-shadow: var(--shadow);
+      }
+
+      .canon-overlay__close {
+        position: sticky;
+        top: 0;
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.25);
+        color: var(--ink);
+        cursor: pointer;
+      }
+
+      .canon-overlay__media {
+        margin-bottom: 1rem;
+      }
+
+      .canon-overlay__media img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 20px;
+        border: 1px solid var(--line);
+      }
+
+      body.has-overlay {
+        overflow: hidden;
+      }
+
       .chapter-card {
         padding: 1.15rem 1.2rem;
         transition: transform 140ms ease, box-shadow 140ms ease;
@@ -268,6 +479,64 @@ const { title, description, activeSection = "home" } = Astro.props;
 
       .scene-media {
         max-width: min(420px, 100%);
+      }
+
+      .catalog-media {
+        margin: 0 0 0.95rem;
+      }
+
+      .catalog-media img {
+        aspect-ratio: 2 / 3;
+        max-height: 340px;
+      }
+
+      .canon-overlay__body {
+        margin: 1rem 0 1.25rem;
+      }
+
+      .canon-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin: 1rem 0;
+      }
+
+      .canon-tab {
+        padding: 0.45rem 0.75rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.16);
+        color: var(--muted);
+        cursor: pointer;
+        font: inherit;
+      }
+
+      .canon-tab.is-active {
+        color: var(--ink);
+        background: rgba(151, 95, 45, 0.14);
+      }
+
+      .canon-panel {
+        display: none;
+      }
+
+      .canon-panel.is-active {
+        display: block;
+      }
+
+      .canon-overlay__image-panel {
+        min-height: 1px;
+      }
+
+      .canon-related {
+        margin-top: 1rem;
+      }
+
+      .canon-overlay__body h1,
+      .canon-overlay__body h2,
+      .canon-overlay__body h3 {
+        font-size: 1.15rem;
+        margin-top: 1rem;
       }
 
       .chapter-meta {
@@ -356,6 +625,24 @@ const { title, description, activeSection = "home" } = Astro.props;
           flex-direction: column;
         }
 
+        .masthead-actions {
+          width: 100%;
+          align-items: stretch;
+        }
+
+        .theme-toggle {
+          width: 100%;
+        }
+
+        .chapter-pager {
+          grid-template-columns: 1fr;
+        }
+
+        .pager-jump select {
+          min-width: 0;
+          width: 100%;
+        }
+
         .meta-row {
           grid-template-columns: 1fr;
           gap: 0.3rem;
@@ -366,19 +653,24 @@ const { title, description, activeSection = "home" } = Astro.props;
   <body>
     <main class="shell">
       <header class="masthead">
-        <a class="brand" href="/">GhostWriter Reader</a>
-        <nav class="site-nav">
-          <a class:list={["nav-link", activeSection === "home" && "is-active"]} href="/">Book</a>
-          <a class:list={["nav-link", activeSection === "chapters" && "is-active"]} href="/#chapters">Chapters</a>
-          <a class:list={["nav-link", activeSection === "characters" && "is-active"]} href="/characters/">Characters</a>
-          <a class:list={["nav-link", activeSection === "locations" && "is-active"]} href="/locations/">Locations</a>
-          <a class:list={["nav-link", activeSection === "factions" && "is-active"]} href="/factions/">Factions</a>
-          <a class:list={["nav-link", activeSection === "items" && "is-active"]} href="/items/">Items</a>
-          <a class:list={["nav-link", activeSection === "secrets" && "is-active"]} href="/secrets/">Secrets</a>
-          <a class:list={["nav-link", activeSection === "timeline" && "is-active"]} href="/timeline/">Timeline</a>
-        </nav>
+        <a class="brand" href="./">GhostWriter Reader</a>
+        <div class="masthead-actions">
+          <SiteSearch entries={searchIndex} />
+          <nav class="site-nav">
+            <a class:list={["nav-link", activeSection === "home" && "is-active"]} href="./">Book</a>
+            <a class:list={["nav-link", activeSection === "chapters" && "is-active"]} href="./#chapters">Chapters</a>
+            <a class:list={["nav-link", activeSection === "characters" && "is-active"]} href="characters/">Characters</a>
+            <a class:list={["nav-link", activeSection === "locations" && "is-active"]} href="locations/">Locations</a>
+            <a class:list={["nav-link", activeSection === "factions" && "is-active"]} href="factions/">Factions</a>
+            <a class:list={["nav-link", activeSection === "items" && "is-active"]} href="items/">Items</a>
+            <a class:list={["nav-link", activeSection === "secrets" && "is-active"]} href="secrets/">Secrets</a>
+            <a class:list={["nav-link", activeSection === "timeline" && "is-active"]} href="timeline/">Timeline</a>
+          </nav>
+          <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch theme">Dark mode</button>
+        </div>
       </header>
       <slot />
     </main>
+    <ReaderRuntime glossary={canonGlossary} />
   </body>
 </html>

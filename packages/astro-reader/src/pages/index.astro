@@ -7,6 +7,12 @@ import { loadAssetFigure } from "../lib/assets";
 const { ready, root, book, chapters, characters, locations, factions, items, secrets, timelineEvents } = await loadHomePageData();
 const title = book?.frontmatter.title ?? "GhostWriter Reader";
 const coverFigure = await loadAssetFigure("book", `${title} cover`);
+const chapterCards = await Promise.all(
+  chapters.map(async (chapter) => ({
+    ...chapter,
+    figure: await loadAssetFigure(String(chapter.metadata.id ?? `chapter:${chapter.slug}`), chapter.metadata.title),
+  })),
+);
 ---
 
 <BaseLayout title={title} description="Read a GhostWriter repository chapter by chapter." activeSection="home">
@@ -18,6 +24,8 @@ const coverFigure = await loadAssetFigure("book", `${title} cover`);
         ? "A local-first reading view over the canonical book repository. Chapters, scenes, and metadata stay in markdown; the site simply renders them."
         : "Set GHOSTWRITER_BOOK_ROOT to a GhostWriter book repository and this reader will render its chapters automatically."}
     </p>
+
+    {ready && <div class="chip-row"><a class="chip" href="downloads/book.epub" download>Download EPUB</a></div>}
 
     {coverFigure && <AssetFigure figure={coverFigure} className="hero-media" />}
 
@@ -47,7 +55,7 @@ const coverFigure = await loadAssetFigure("book", `${title} cover`);
         <h2>Canon Atlas</h2>
         <div class="catalog-grid">
           <article class="card catalog-card">
-            <a href="/characters/">
+            <a href="characters/">
               <div class="chapter-number">Characters</div>
               <h3 class="chapter-title">Cast Register</h3>
               <div class="chapter-meta">Browse protagonists, supporting roles, and reference notes.</div>
@@ -55,7 +63,7 @@ const coverFigure = await loadAssetFigure("book", `${title} cover`);
             </a>
           </article>
           <article class="card catalog-card">
-            <a href="/locations/">
+            <a href="locations/">
               <div class="chapter-number">Locations</div>
               <h3 class="chapter-title">World Map</h3>
               <div class="chapter-meta">See atmosphere, narrative use, and key landmarks.</div>
@@ -63,7 +71,7 @@ const coverFigure = await loadAssetFigure("book", `${title} cover`);
             </a>
           </article>
           <article class="card catalog-card">
-            <a href="/factions/">
+            <a href="factions/">
               <div class="chapter-number">Factions</div>
               <h3 class="chapter-title">Power Map</h3>
               <div class="chapter-meta">Inspect factions, ideology, methods, and narrative pressure.</div>
@@ -71,7 +79,7 @@ const coverFigure = await loadAssetFigure("book", `${title} cover`);
             </a>
           </article>
           <article class="card catalog-card">
-            <a href="/items/">
+            <a href="items/">
               <div class="chapter-number">Items</div>
               <h3 class="chapter-title">Artifacts</h3>
               <div class="chapter-meta">Track objects, symbols, tools, and plot-driving artifacts.</div>
@@ -79,7 +87,7 @@ const coverFigure = await loadAssetFigure("book", `${title} cover`);
             </a>
           </article>
           <article class="card catalog-card">
-            <a href="/secrets/">
+            <a href="secrets/">
               <div class="chapter-number">Secrets</div>
               <h3 class="chapter-title">Spoiler Vault</h3>
               <div class="chapter-meta">Review hidden truths, reveal strategy, and narrative stakes.</div>
@@ -87,7 +95,7 @@ const coverFigure = await loadAssetFigure("book", `${title} cover`);
             </a>
           </article>
           <article class="card catalog-card">
-            <a href="/timeline/">
+            <a href="timeline/">
               <div class="chapter-number">Timeline</div>
               <h3 class="chapter-title">Chronology</h3>
               <div class="chapter-meta">Follow major events and continuity anchors.</div>
@@ -100,9 +108,10 @@ const coverFigure = await loadAssetFigure("book", `${title} cover`);
       <section class="section" id="chapters">
       <h2>Chapters</h2>
       <div class="chapter-list">
-        {chapters.map((chapter) => (
+        {chapterCards.map((chapter) => (
           <article class="chapter-card">
-            <a href={`/chapters/${chapter.slug}/`}>
+            <a href={`chapters/${chapter.slug}/`}>
+              {chapter.figure && <AssetFigure figure={chapter.figure} className="catalog-media" />}
               <div class="chapter-number">Chapter {String(chapter.metadata.number).padStart(3, "0")}</div>
               <h3 class="chapter-title">{chapter.metadata.title}</h3>
               <div class="chapter-meta">{chapter.metadata.summary ?? "Open the chapter to read scenes and notes."}</div>

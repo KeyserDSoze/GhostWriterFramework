@@ -38,7 +38,7 @@ const figure = await loadAssetFigure(String(entity.metadata.id ?? `timeline-even
     <p class="eyebrow">Timeline Event</p>
     <h1>{String(entity.metadata.title ?? slug)}</h1>
     <p class="lede">{String(entity.metadata.significance ?? entity.metadata.function_in_book ?? "Canonical timeline event.")}</p>
-    <div class="chapter-meta"><a href="/timeline/">Back to timeline</a></div>
+    <div class="chapter-meta"><a href="timeline/">Back to timeline</a></div>
     {figure && <AssetFigure figure={figure} className="hero-media" />}
   </section>
 

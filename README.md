@@ -57,10 +57,13 @@ Build the framework once, then scaffold a new local-first book repo:
 npm run create:book -- my-book --title "My Book" --language en --sample
 ```
 
-You can scaffold the reader at the same time:
+The starter now scaffolds a reader in `reader/` by default, installs its dependencies, prepares OpenCode config, includes a GitHub Pages workflow for the generated site, and writes root `npm run dev` / `npm run build` / `npm run export:epub` scripts for convenience.
+You can also preconfigure the generated reader for a custom domain with `--pages-domain your-domain.com`.
+
+If you want a book repo without the reader scaffold:
 
 ```bash
-npm run create:book -- my-book --title "My Book" --language en --sample --with-reader
+npm run create:book -- my-book --title "My Book" --language en --sample --no-reader
 ```
 
 The starter also has an interactive mode:

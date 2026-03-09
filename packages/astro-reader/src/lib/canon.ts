@@ -120,14 +120,14 @@ async function buildReferenceIndex(): Promise<ReferenceIndex> {
   const chapters = await listChapters(root);
   for (const chapter of chapters) {
     const chapterId = String(chapter.metadata.id ?? `chapter:${chapter.slug}`);
-    const chapterLink = { href: `/chapters/${chapter.slug}/`, label: chapter.metadata.title, kind: "chapter" };
+    const chapterLink = { href: `chapters/${chapter.slug}/`, label: chapter.metadata.title, kind: "chapter" };
     setReference(index, chapterId, chapterLink);
     setReference(index, `chapter:${chapter.slug}`, chapterLink);
 
     const chapterData = await readChapter(root, chapter.slug);
     for (const paragraph of chapterData.paragraphs) {
       const paragraphSlug = path.basename(paragraph.path, ".md");
-      const href = `/chapters/${chapter.slug}/#scene-${paragraphSlug}`;
+      const href = `chapters/${chapter.slug}/#scene-${paragraphSlug}`;
       const label = paragraph.metadata.title;
       setReference(index, String(paragraph.metadata.id), { href, label, kind: "paragraph" });
       setReference(index, `paragraph:${chapter.slug}:${paragraphSlug}`, { href, label, kind: "paragraph" });
@@ -144,9 +144,9 @@ function setReference(index: ReferenceIndex, key: string, link: CanonLink) {
 function entityHref(kind: ReaderEntityKind, slug: string): string {
   switch (kind) {
     case "timeline-event":
-      return `/timeline/${slug}/`;
+      return `timeline/${slug}/`;
     default:
-      return `/${kind}s/${slug}/`;
+      return `${kind}s/${slug}/`;
   }
 }
 
@@ -156,17 +156,17 @@ function resolveContentPathToHref(filePath: string): string | null {
   const entityMatch = normalized.match(/^(characters|locations|factions|items|secrets|timelines\/events)\/([^/]+)\.md$/);
   if (entityMatch) {
     const section = entityMatch[1] === "timelines/events" ? "timeline" : entityMatch[1];
-    return `/${section}/${entityMatch[2]}/`;
+    return `${section}/${entityMatch[2]}/`;
   }
 
   const chapterMatch = normalized.match(/^chapters\/([^/]+)\/chapter\.md$/);
   if (chapterMatch) {
-    return `/chapters/${chapterMatch[1]}/`;
+    return `chapters/${chapterMatch[1]}/`;
   }
 
   const paragraphMatch = normalized.match(/^chapters\/([^/]+)\/([^/]+)\.md$/);
   if (paragraphMatch) {
-    return `/chapters/${paragraphMatch[1]}/#scene-${paragraphMatch[2]}`;
+    return `chapters/${paragraphMatch[1]}/#scene-${paragraphMatch[2]}`;
   }
 
   return null;
@@ -175,14 +175,14 @@ function resolveContentPathToHref(filePath: string): string | null {
 function buildFallbackReference(value: string): CanonLink | null {
   if (value.startsWith("chapter:")) {
     const slug = value.slice("chapter:".length);
-    return { href: `/chapters/${slug}/`, label: humanizeSlug(slug), kind: "chapter" };
+    return { href: `chapters/${slug}/`, label: humanizeSlug(slug), kind: "chapter" };
   }
 
   if (value.startsWith("paragraph:")) {
     const [, chapterSlug, paragraphSlug] = value.split(":");
     if (!chapterSlug || !paragraphSlug) return null;
     return {
-      href: `/chapters/${chapterSlug}/#scene-${paragraphSlug}`,
+      href: `chapters/${chapterSlug}/#scene-${paragraphSlug}`,
       label: humanizeSlug(paragraphSlug),
       kind: "paragraph",
     };

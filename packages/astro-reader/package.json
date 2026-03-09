@@ -15,7 +15,7 @@
   },
   "files": [
     "cli-dist",
-    "dist",
+    "scripts",
     "src",
     "astro.config.mjs",
     "tsconfig.json"
@@ -35,8 +35,9 @@
   },
   "scripts": {
     "build:cli": "tsc -p tsconfig.cli.json",
-    "dev": "astro dev",
-    "build": "npm run build:cli && astro build",
+    "export:epub": "node ./scripts/export-epub.mjs",
+    "dev": "npm run export:epub && astro dev",
+    "build": "npm run build:cli && npm run export:epub && astro build",
     "preview": "astro preview",
     "test": "npm run build:cli && node --test test/**/*.test.mjs"
   },

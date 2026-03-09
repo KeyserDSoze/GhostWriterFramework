@@ -6,6 +6,7 @@ import LinkedValue from "../../components/LinkedValue.astro";
 import MetadataSection from "../../components/MetadataSection.astro";
 import RelatedLinks from "../../components/RelatedLinks.astro";
 import AssetFigure from "../../components/AssetFigure.astro";
+import ChapterPager from "../../components/ChapterPager.astro";
 import { loadRelatedCanonLinks } from "../../lib/canon";
 import { loadAssetFigure } from "../../lib/assets";
 import { listChapters, pathExists } from "@ghostwriter/core";
@@ -25,6 +26,7 @@ export async function getStaticPaths() {
 
 const { chapterSlug } = Astro.props;
 const chapter = await loadChapterPageData(chapterSlug);
+const allChapters = await listChapters(getBookRoot());
 const chapterHtml = await marked.parse(chapter.body);
 const chapterMetaEntries = [
   ["Point of view", chapter.metadata.pov],
@@ -49,14 +51,16 @@ const renderedParagraphs = await Promise.all(
     <h1>{chapter.metadata.title}</h1>
     {chapter.metadata.summary && <p class="lede">{chapter.metadata.summary}</p>}
     <div class="chapter-meta">
-      <a href="/">Back to contents</a>
+      <a href="./">Back to contents</a>
     </div>
-    {chapterFigure && <AssetFigure figure={chapterFigure} className="hero-media" />}
   </section>
+
+  <ChapterPager currentSlug={chapterSlug} chapters={allChapters} />
 
   {chapter.body && (
     <section class="section">
       <article class="scene prose" set:html={chapterHtml} />
+      {chapterFigure && <AssetFigure figure={chapterFigure} className="scene-media" />}
     </section>
   )}
 
@@ -85,12 +89,14 @@ const renderedParagraphs = await Promise.all(
               Viewpoint: <LinkedValue value={paragraph.metadata.viewpoint} />
             </p>
           )}
-          {paragraph.figure && <AssetFigure figure={paragraph.figure} className="scene-media" />}
           <div class="prose" set:html={paragraph.html} />
+          {paragraph.figure && <AssetFigure figure={paragraph.figure} className="scene-media" />}
         </article>
       ))
     ) : (
       <div class="empty">No paragraph files exist for this chapter yet.</div>
     )}
   </section>
+
+  <ChapterPager currentSlug={chapterSlug} chapters={allChapters} />
 </BaseLayout>

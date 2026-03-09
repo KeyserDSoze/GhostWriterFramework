@@ -2,6 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { stdin as input, stdout as output } from "node:process";
@@ -24,7 +25,10 @@ type ParsedArgs = {
   language?: string;
   sample?: boolean;
   withReader?: boolean;
+  noReader?: boolean;
   readerDir?: string;
+  skipInstall?: boolean;
+  pagesDomain?: string;
 };
 
 const args = parseArgs(process.argv.slice(2));
@@ -39,11 +43,18 @@ await initializeBookRepo(targetPath, {
 });
 
 let readerPath = "";
+let readerInstalled = false;
 
 if (resolved.withReader) {
   const readerDir = path.join(targetPath, resolved.readerDir);
   const readerBookRoot = path.relative(readerDir, targetPath) || ".";
-  readerPath = await runReaderScaffold(readerDir, readerBookRoot, `${slugifyForPackage(resolved.title)}-reader`);
+  readerPath = await runReaderScaffold(readerDir, readerBookRoot, `${slugifyForPackage(resolved.title)}-reader`, resolved.pagesDomain);
+  await writeRootPackageJson(targetPath, resolved.title, resolved.readerDir);
+  await writeRootPagesWorkflow(targetPath, resolved.readerDir, resolved.pagesDomain);
+  if (!resolved.skipInstall) {
+    installNodeDependencies(readerPath);
+    readerInstalled = true;
+  }
 }
 
 if (resolved.sample) {
@@ -108,6 +119,10 @@ output.write(
     `- Use \`init_book_repo\` only for new repos; this repo is already initialized`,
     `- Point the reader to this repo with GHOSTWRITER_BOOK_ROOT=${targetPath}`,
     ...(readerPath ? [`- Reader scaffold created at ${readerPath}`] : []),
+    ...(readerInstalled ? ["- Reader dependencies were installed automatically"] : []),
+    ...(readerPath ? ["- From the book root you can now run `npm run dev`, `npm run build`, or `npm run export:epub`"] : []),
+    ...(readerPath ? ["- The generated reader already includes auto-EPUB export and a GitHub Pages workflow"] : []),
+    ...(resolved.pagesDomain ? [`- GitHub Pages custom domain preset: https://${resolved.pagesDomain}`] : []),
   ].join("\n"),
 );
 
@@ -119,13 +134,15 @@ async function resolveInputs(args: ParsedArgs) {
       author: args.author ?? "",
       language: args.language,
       sample: Boolean(args.sample),
-      withReader: Boolean(args.withReader),
-      readerDir: args.readerDir ?? "reader",
-    };
+        withReader: args.noReader ? false : args.withReader ?? true,
+        readerDir: args.readerDir ?? "reader",
+        skipInstall: Boolean(args.skipInstall),
+        pagesDomain: args.pagesDomain,
+      };
   }
 
   if (!input.isTTY || !output.isTTY) {
-    throw new Error("Missing required arguments. Use create-ghostwriter-book <dir> --title <title> --language <lang> [--author <name>] [--sample] [--with-reader] [--reader-dir <name>].");
+    throw new Error("Missing required arguments. Use create-ghostwriter-book <dir> --title <title> --language <lang> [--author <name>] [--sample] [--with-reader|--no-reader] [--reader-dir <name>] [--pages-domain <domain>].");
   }
 
   const rl = createInterface({ input, output });
@@ -135,11 +152,17 @@ async function resolveInputs(args: ParsedArgs) {
     const author = args.author ?? (await rl.question("Author (optional): "));
     const language = args.language ?? ((await rl.question("Language [en]: ")) || "en");
     const sampleAnswer = await rl.question("Create sample content? [y/N]: ");
-    const readerAnswer = await rl.question("Scaffold Astro reader too? [y/N]: ");
-    const wantsReader = /^y(es)?$/i.test(readerAnswer.trim()) || Boolean(args.withReader);
+    const readerAnswer = await rl.question("Scaffold Astro reader too? [Y/n]: ");
+    const wantsReader = args.noReader
+      ? false
+      : readerAnswer.trim()
+        ? /^y(es)?$/i.test(readerAnswer.trim())
+        : args.withReader ?? true;
     const readerDir = wantsReader
       ? (await rl.question("Reader folder [reader]: ")) || args.readerDir || "reader"
       : args.readerDir ?? "reader";
+    const installAnswer = wantsReader ? await rl.question("Install reader dependencies now? [Y/n]: ") : "n";
+    const pagesDomain = wantsReader ? ((await rl.question("GitHub Pages custom domain (optional): ")) || args.pagesDomain || undefined) : undefined;
     return {
       targetDir,
       title,
@@ -148,6 +171,8 @@ async function resolveInputs(args: ParsedArgs) {
       sample: /^y(es)?$/i.test(sampleAnswer.trim()) || Boolean(args.sample),
       withReader: wantsReader,
       readerDir,
+      skipInstall: wantsReader ? /^n(o)?$/i.test(installAnswer.trim()) || Boolean(args.skipInstall) : true,
+      pagesDomain,
     };
   } finally {
     rl.close();
@@ -182,8 +207,18 @@ function parseArgs(argv: string[]): ParsedArgs {
       case "--with-reader":
         parsed.withReader = true;
         break;
+      case "--no-reader":
+        parsed.noReader = true;
+        break;
       case "--reader-dir":
         parsed.readerDir = argv[++index];
+        break;
+      case "--skip-install":
+      case "--no-install":
+        parsed.skipInstall = true;
+        break;
+      case "--pages-domain":
+        parsed.pagesDomain = argv[++index];
         break;
       default:
         break;
@@ -200,14 +235,24 @@ function slugifyForPackage(value: string): string {
     .replace(/^-+|-+$/g, "") || "ghostwriter-book";
 }
 
-async function runReaderScaffold(targetDir: string, bookRoot: string, packageName: string): Promise<string> {
+async function runReaderScaffold(targetDir: string, bookRoot: string, packageName: string, pagesDomain?: string): Promise<string> {
   const packageRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
   const require = createRequire(import.meta.url);
   const readerCliPath = resolveReaderCliPath(require, packageRoot);
   const coreDependency = resolveCoreDependency(targetDir, packageRoot);
   const result = spawnSync(
     process.execPath,
-    [readerCliPath, targetDir, "--book-root", bookRoot, "--package-name", packageName, "--core-dependency", coreDependency],
+    [
+      readerCliPath,
+      targetDir,
+      "--book-root",
+      bookRoot,
+      "--package-name",
+      packageName,
+      "--core-dependency",
+      coreDependency,
+      ...(pagesDomain ? ["--pages-domain", pagesDomain] : []),
+    ],
     {
       encoding: "utf8",
     },
@@ -218,6 +263,113 @@ async function runReaderScaffold(targetDir: string, bookRoot: string, packageNam
   }
 
   return path.resolve(targetDir);
+}
+
+function installNodeDependencies(targetDir: string): void {
+  const command = process.platform === "win32" ? "npm.cmd" : "npm";
+  const result = spawnSync(command, ["install"], {
+    cwd: targetDir,
+    stdio: "inherit",
+  });
+
+  if (result.status !== 0) {
+    throw new Error(`Failed to install reader dependencies in ${targetDir}.`);
+  }
+}
+
+async function writeRootPackageJson(targetPath: string, title: string, readerDir: string): Promise<void> {
+  const normalizedReaderDir = readerDir.split(path.sep).join("/");
+  await writeFile(
+    path.join(targetPath, "package.json"),
+    JSON.stringify(
+      {
+        name: slugifyForPackage(title),
+        private: true,
+        scripts: {
+          dev: `npm run dev --prefix ${normalizedReaderDir}`,
+          build: `npm run build --prefix ${normalizedReaderDir}`,
+          preview: `npm run preview --prefix ${normalizedReaderDir}`,
+          "export:epub": `npm run export:epub --prefix ${normalizedReaderDir}`,
+          install: `npm install --prefix ${normalizedReaderDir}`,
+        },
+      },
+      null,
+      2,
+    ) + "\n",
+    "utf8",
+  );
+}
+
+async function writeRootPagesWorkflow(targetPath: string, readerDir: string, pagesDomain?: string): Promise<void> {
+  const workflowDir = path.join(targetPath, ".github", "workflows");
+  await mkdir(workflowDir, { recursive: true });
+  await writeFile(path.join(workflowDir, "deploy-reader-pages.yml"), buildRootPagesWorkflow(readerDir, pagesDomain), "utf8");
+}
+
+function buildRootPagesWorkflow(readerDir: string, pagesDomain?: string): string {
+  const normalizedReaderDir = readerDir.split(path.sep).join("/");
+  const envLines = pagesDomain
+    ? [`          GHOSTWRITER_BOOK_ROOT: .`, `          SITE_BASE: /`, `          SITE_URL: https://${pagesDomain}`]
+    : [`          GHOSTWRITER_BOOK_ROOT: .`, `          SITE_BASE: /\${{ github.event.repository.name }}/`];
+  return `name: Deploy Reader To GitHub Pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${normalizedReaderDir}/package-lock.json
+
+      - name: Install project dependencies
+        run: npm install
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build reader site
+        env:
+${envLines.join("\n")}
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${normalizedReaderDir}/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: \${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+`;
 }
 
 function resolveReaderCliPath(require: NodeRequire, packageRoot: string): string {

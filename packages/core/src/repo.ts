@@ -1,5 +1,6 @@
 import { copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import fg from "fast-glob";
 import matter from "gray-matter";
 import { marked } from "marked";
@@ -456,6 +457,26 @@ export async function initializeBookRepo(
       created,
     );
   }
+
+  await ensureFile(
+    root,
+    "opencode.jsonc",
+    [
+      "{",
+      '  "$schema": "https://opencode.ai/config.json",',
+      '  "mcp": {',
+      '    "ghostwriter": {',
+      '      "type": "local",',
+      '      "command": ["npx", "@ghostwriter/mcp-server"],',
+      '      "enabled": true,',
+      '      "timeout": 15000',
+      "    }",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+    created,
+  );
 
   return { rootPath: root, created };
 }
@@ -1816,36 +1837,62 @@ export async function exportEpub(
   const root = path.resolve(rootPath);
   const book = await readBook(root);
   const chapters = await listChapters(root);
+  const coverAsset = await readAsset(root, "book", "cover");
 
   if (chapters.length === 0) {
     throw new Error("Cannot export EPUB: no chapters found.");
   }
 
   const epubModule = (await import("epub-gen-memory")) as unknown as {
-    default: (options: Record<string, unknown>, content: Array<{ title: string; data: string }>) => Promise<Buffer>;
+    default:
+      | ((options: Record<string, unknown>, content: Array<{ title: string; content: string }>) => Promise<Buffer>)
+      | {
+          default: (options: Record<string, unknown>, content: Array<{ title: string; content: string }>) => Promise<Buffer>;
+        };
   };
   const title = options?.title ?? book?.frontmatter.title ?? path.basename(root);
   const author = options?.author ?? book?.frontmatter.author ?? "Unknown Author";
   const language = options?.language ?? book?.frontmatter.language ?? "en";
   const outputPath = path.resolve(options?.outputPath ?? path.join(root, "dist", `${slugify(title)}.epub`));
 
-  const content = [] as Array<{ title: string; data: string }>;
+  const content = [] as Array<{ title: string; content: string }>;
 
   for (const chapter of chapters) {
     const chapterData = await readChapter(root, chapter.slug);
-    const paragraphsHtml = chapterData.paragraphs
-      .map((paragraph) => `<section><h2>${paragraph.metadata.title}</h2>${marked.parse(paragraph.body)}</section>`)
-      .join("\n");
-    const chapterHtml = `<article><h1>${chapterData.metadata.title}</h1>${marked.parse(chapterData.body)}${paragraphsHtml}</article>`;
-    content.push({ title: chapterData.metadata.title, data: chapterHtml });
+    const chapterImageHtml = renderEpubAssetFigure(
+      await readAsset(root, String(chapterData.metadata.id), "primary"),
+      `${chapterData.metadata.title} illustration`,
+    );
+    const paragraphsHtml = (
+      await Promise.all(
+        chapterData.paragraphs.map(async (paragraph) => {
+          const paragraphImageHtml = renderEpubAssetFigure(
+            await readAsset(root, String(paragraph.metadata.id), "primary"),
+            `${paragraph.metadata.title} illustration`,
+          );
+          return `<section><h2>${paragraph.metadata.title}</h2>${marked.parse(paragraph.body)}${paragraphImageHtml}</section>`;
+        }),
+      )
+    ).join("\n");
+    const chapterHtml = `<article><h1>${chapterData.metadata.title}</h1>${marked.parse(chapterData.body)}${chapterImageHtml}${paragraphsHtml}</article>`;
+    content.push({ title: chapterData.metadata.title, content: chapterHtml });
   }
 
-  const bytes = await epubModule.default(
+  const renderEpub = typeof epubModule.default === "function" ? epubModule.default : epubModule.default.default;
+
+  const bytes = await renderEpub(
     {
       title,
       author,
       lang: language,
-      css: "body { font-family: serif; line-height: 1.55; } h1, h2 { font-family: serif; }",
+      cover: coverAsset?.imageExists ? pathToFileURL(coverAsset.imagePath).href : undefined,
+      css: [
+        "body { font-family: serif; line-height: 1.55; }",
+        "h1, h2 { font-family: serif; }",
+        ".epub-figure { margin: 2.2rem 0 0; page-break-inside: avoid; text-align: center; }",
+        ".epub-figure.epub-figure-full { page-break-before: always; break-before: page; }",
+        ".epub-figure img { display: block; width: 100%; max-height: 100vh; height: auto; object-fit: contain; }",
+      ].join(" "),
     },
     content,
   );
@@ -1854,6 +1901,31 @@ export async function exportEpub(
   await writeFile(outputPath, Buffer.from(bytes));
 
   return { outputPath, chapterCount: chapters.length };
+}
+
+function renderEpubAssetFigure(
+  asset:
+    | {
+        imagePath: string;
+        imageExists: boolean;
+      }
+    | null,
+  alt: string,
+): string {
+  if (!asset?.imageExists) {
+    return "";
+  }
+
+  return `<section class="epub-figure epub-figure-full"><img src="${pathToFileURL(asset.imagePath).href}" alt="${escapeHtml(alt)}" /></section>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 export async function writeWikipediaResearchSnapshot(

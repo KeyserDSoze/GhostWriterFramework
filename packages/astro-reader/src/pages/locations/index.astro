@@ -1,8 +1,16 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import { loadEntityIndexData } from "../../lib/book";
+import AssetFigure from "../../components/AssetFigure.astro";
+import { loadAssetFigure } from "../../lib/assets";
 
 const { ready, entities } = await loadEntityIndexData("location");
+const cards = await Promise.all(
+  entities.map(async (entity) => ({
+    ...entity,
+    figure: await loadAssetFigure(String(entity.metadata.id ?? `location:${entity.slug}`), String(entity.metadata.name ?? entity.slug)),
+  })),
+);
 ---
 
 <BaseLayout title="Locations" description="Browse the book locations." activeSection="locations">
@@ -15,9 +23,10 @@ const { ready, entities } = await loadEntityIndexData("location");
   {ready ? (
     <section class="section">
       <div class="catalog-grid">
-        {entities.map((entity) => (
+        {cards.map((entity) => (
           <article class="card catalog-card">
-            <a href={`/locations/${entity.slug}/`}>
+            <a href={`locations/${entity.slug}/`}>
+              {entity.figure && <AssetFigure figure={entity.figure} className="catalog-media" />}
               <div class="chapter-number">{String(entity.metadata.location_kind ?? "location")}</div>
               <h2 class="chapter-title">{String(entity.metadata.name ?? entity.slug)}</h2>
               <div class="chapter-meta">{String(entity.metadata.atmosphere ?? entity.metadata.function_in_book ?? "Open the entry to inspect place notes.")}</div>

@@ -2,6 +2,7 @@ type ScaffoldOptions = {
     bookRoot?: string;
     packageName?: string;
     coreDependency?: string;
+    pagesDomain?: string;
 };
 export declare function scaffoldReaderSite(targetDir: string, options?: ScaffoldOptions): Promise<{
     targetRoot: string;
