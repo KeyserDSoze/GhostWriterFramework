@@ -24,7 +24,64 @@ The intended workflow is local-first:
 
 This keeps the actual writing artifacts in your filesystem instead of hiding them inside a hosted app.
 
-## Install
+## Quick start from npm
+
+If you just want to use Narrarium, start from the published packages:
+
+```bash
+npx create-narrarium-book my-book --title "My Book" --language en
+cd my-book
+npm run dev
+```
+
+This scaffolds a book repo, creates `reader/` by default, installs the reader dependencies, prepares OpenCode config, and gives you a live reading site plus EPUB export while you write.
+
+If you want sample content from the start:
+
+```bash
+npx create-narrarium-book my-book --title "My Book" --language en --sample
+```
+
+If you want a book repo without the reader scaffold:
+
+```bash
+npx create-narrarium-book my-book --title "My Book" --language en --no-reader
+```
+
+The starter also has an interactive mode:
+
+```bash
+npx create-narrarium-book
+```
+
+## Run the MCP server from npm
+
+```bash
+npx narrarium-mcp-server
+```
+
+If the package is already installed in the project or globally, the binary is:
+
+```bash
+narrarium-mcp
+```
+
+## Scaffold a standalone reader from npm
+
+Create a standalone Astro reader app inside or beside a book repo:
+
+```bash
+npx narrarium-astro-reader reader --book-root .. --package-name my-book-reader
+cd reader
+npm install
+npm run dev
+```
+
+The reader includes dedicated indexes for chapters, characters, locations, factions, items, secrets, and timeline events, and `npm run dev` watches the linked book repo for live reload plus EPUB refresh.
+
+## Develop this monorepo
+
+These commands are for working on the Narrarium framework repository itself:
 
 ```bash
 npm install
@@ -49,42 +106,15 @@ Build the GitHub Pages documentation site locally with:
 npm run docs:build
 ```
 
-## Create a new book repo
-
-Build the framework once, then scaffold a new local-first book repo:
+Repo-only helper commands:
 
 ```bash
 npm run create:book -- my-book --title "My Book" --language en --sample
-```
-
-The starter now scaffolds a reader in `reader/` by default, installs its dependencies, prepares OpenCode config, includes a GitHub Pages workflow for the generated site, writes root `npm run dev` / `npm run build` / `npm run export:epub` scripts for convenience, and wires `npm run dev` to watch your book files for live reload plus EPUB refresh while you write.
-You can also preconfigure the generated reader for a custom domain with `--pages-domain your-domain.com`.
-
-If you want a book repo without the reader scaffold:
-
-```bash
-npm run create:book -- my-book --title "My Book" --language en --sample --no-reader
-```
-
-The starter also has an interactive mode:
-
-```bash
-npm run create:book
-```
-
-## Run the MCP server locally
-
-```bash
 npm run dev:mcp
+npm run reader:init -- reader --book-root .. --package-name my-book-reader
 ```
 
-Or after building:
-
-```bash
-node packages/mcp-server/dist/index.js
-```
-
-If you want the public HTTP version locally, for Vercel-style setup/research flows:
+If you want the public HTTP version locally, for Vercel-style setup and research flows:
 
 ```bash
 npm run dev:http -w narrarium-mcp-server
@@ -94,25 +124,6 @@ This serves:
 
 - `http://localhost:3000/mcp`
 - `http://localhost:3000/health`
-
-## Run the Astro reader
-
-Set `NARRARIUM_BOOK_ROOT` to the path of a book repository created with Narrarium.
-
-```bash
-set NARRARIUM_BOOK_ROOT=C:\path\to\my-book
-npm run dev:site
-```
-
-## Scaffold an installable reader site
-
-Create a standalone Astro reader app inside or beside a book repo:
-
-```bash
-npm run reader:init -- reader --book-root .. --package-name my-book-reader
-```
-
-The reader now includes dedicated indexes for chapters, characters, locations, factions, items, secrets, and timeline events, plus live file watching during `npm run dev`.
 
 ## OpenCode config
 

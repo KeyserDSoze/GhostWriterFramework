@@ -109,6 +109,10 @@ const groups = await getDocGroups();
         top: 1rem;
         align-self: start;
         padding: 1.25rem;
+        max-height: calc(100vh - 2rem);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
       }
 
       .brand {

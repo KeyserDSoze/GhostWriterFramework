@@ -1,7 +1,7 @@
 {
   "name": "narrarium-framework",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "packageManager": "npm@11.3.0",
   "repository": {
     "type": "git",
@@ -22,7 +22,7 @@
     "reader:init": "node packages/astro-reader/cli-dist/cli.js",
     "dev:mcp": "npm run dev -w narrarium-mcp-server",
     "dev:site": "npm run dev -w narrarium-astro-reader",
-    "test": "npm run test -w narrarium && npm run test -w narrarium-mcp-server && npm run test -w narrarium-astro-reader",
+    "test": "npm run test -w narrarium && npm run test -w narrarium-mcp-server && npm run test -w create-narrarium-book && npm run test -w narrarium-astro-reader",
     "validate": "npm run validate -w narrarium --if-present"
   }
 }

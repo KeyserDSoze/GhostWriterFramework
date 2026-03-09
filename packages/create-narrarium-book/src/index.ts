@@ -378,6 +378,11 @@ function resolveReaderCliPath(require: NodeRequire, packageRoot: string): string
     const scaffoldPath = require.resolve("narrarium-astro-reader/scaffold");
     return path.resolve(path.dirname(scaffoldPath), "cli.js");
   } catch {
+    const publishedCliPath = path.resolve(packageRoot, "../narrarium-astro-reader/cli-dist/cli.js");
+    if (existsSync(publishedCliPath)) {
+      return publishedCliPath;
+    }
+
     return path.resolve(packageRoot, "../astro-reader/cli-dist/cli.js");
   }
 }
