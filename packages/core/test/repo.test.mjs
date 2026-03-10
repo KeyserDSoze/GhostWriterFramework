@@ -30,6 +30,7 @@ import {
   readTimelineMain,
   syncPlot,
   syncAllResumes,
+  syncStoryState,
   syncTotalResume,
   upgradeBookRepo,
   updateChapter,
@@ -142,9 +143,42 @@ test("core book workflow supports canon indexes and structural updates", async (
     const resumeCommand = await readFile(path.join(rootPath, ".opencode", "commands", "resume-book.md"), "utf8");
     const conversationPlugin = await readFile(path.join(rootPath, ".opencode", "plugins", "conversation-export.js"), "utf8");
     const resumes = await syncAllResumes(rootPath);
+    const chapterResumePath = path.join(rootPath, "resumes", "chapters", "001-the-arrival.md");
+    const chapterResume = await readFile(chapterResumePath, "utf8");
+    await writeFile(
+      chapterResumePath,
+      chapterResume.replace(
+        "chapter: chapter:001-the-arrival\n",
+        [
+          "chapter: chapter:001-the-arrival",
+          "state_changes:",
+          '  locations:',
+          '    "character:lyra-vale": "location:gray-harbor"',
+          '  knowledge_gain:',
+          '    "character:lyra-vale":',
+          '      - guard-routine-changed',
+          '  inventory_add:',
+          '    "character:lyra-vale":',
+          '      - item:brass-key',
+          '  relationship_updates:',
+          '    "character:lyra-vale":',
+          '      "character:harbor-guard": wary',
+          '  open_loops_add:',
+          '    - find-the-ledger',
+          "",
+        ].join("\n"),
+      ),
+      "utf8",
+    );
+    const refreshedResumes = await syncAllResumes(rootPath);
+    const storyState = await syncStoryState(rootPath);
     const evaluation = await evaluateBook(rootPath);
     const validation = await validateBook(rootPath);
     const doctor = await doctorBook(rootPath);
+    const syncedChapterResume = await readFile(chapterResumePath, "utf8");
+    const currentStoryState = await readFile(path.join(rootPath, "state", "current.md"), "utf8");
+    const storyStateStatus = await readFile(path.join(rootPath, "state", "status.md"), "utf8");
+    const doctorCodes = doctor.issues.map((issue) => issue.code);
 
     assert.equal(characters.length, 1);
     assert.equal(locations.length, 1);
@@ -171,9 +205,19 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.match(resumeCommand, /resume_book_context/);
     assert.match(conversationPlugin, /ConversationExportPlugin/);
     assert.equal(resumes.chapterCount, 1);
+    assert.equal(refreshedResumes.chapterCount, 1);
+    assert.equal(storyState.chapterCount, 1);
     assert.equal(evaluation.chapterCount, 1);
     assert.equal(validation.valid, true);
+    assert.match(syncedChapterResume, /state_changes:/);
+    assert.match(currentStoryState, /character:lyra-vale -> location:gray-harbor/);
+    assert.match(currentStoryState, /guard-routine-changed/);
+    assert.match(currentStoryState, /find-the-ledger/);
+    assert.match(storyStateStatus, /dirty: false/);
     assert.equal(doctor.errors, 0);
+    assert.ok(!doctorCodes.includes("stale-story-state"));
+    assert.ok(!doctorCodes.includes("stale-story-state-current"));
+    assert.ok(!doctorCodes.includes("stale-story-state-chapter"));
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }
@@ -234,6 +278,7 @@ test("doctorBook detects broken refs and stale maintenance files", async () => {
     assert.ok(codes.includes("broken-reference"));
     assert.ok(codes.includes("spoiler-order"));
     assert.ok(codes.includes("stale-plot"));
+    assert.ok(codes.includes("stale-story-state"));
     assert.ok(codes.includes("stale-total-resume"));
   } finally {
     await rm(rootPath, { recursive: true, force: true });

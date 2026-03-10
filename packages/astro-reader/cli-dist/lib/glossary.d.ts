@@ -4,6 +4,7 @@ export type GlossaryEntry = {
     kind: ReaderEntityKind;
     kindLabel: string;
     label: string;
+    spokenLabel: string;
     href: string;
     terms: string[];
     summary: string;

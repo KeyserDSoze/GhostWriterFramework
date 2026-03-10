@@ -59,6 +59,7 @@ const renderedParagraphs = await Promise.all(
     {chapter.metadata.summary && <p class="lede">{chapter.metadata.summary}</p>}
     <div class="chip-row">
       <button type="button" class="chip is-action" data-bookmark-toggle>Save bookmark</button>
+      <button type="button" class="chip is-action" data-tts-trigger="chapter" hidden>Read chapter aloud</button>
     </div>
     <div class="chapter-meta">
       <a href="./">Back to contents</a>
@@ -69,7 +70,7 @@ const renderedParagraphs = await Promise.all(
 
   {chapter.body && (
     <section class="section">
-      <article class="scene prose" set:html={chapterHtml} />
+      <article class="scene prose" data-tts-root="chapter-intro" data-tts-label="Chapter opening" set:html={chapterHtml} />
       {chapterFigure && <AssetFigure figure={chapterFigure} className="scene-media" />}
     </section>
   )}
@@ -114,13 +115,16 @@ const renderedParagraphs = await Promise.all(
         <article class="scene" id={paragraph.anchorId}>
           <div class="chapter-number">Scene {String(paragraph.metadata.number).padStart(3, "0")}</div>
           <h3>{paragraph.metadata.title}</h3>
+          <div class="chip-row">
+            <button type="button" class="chip is-action" data-tts-trigger={paragraph.anchorId} hidden>Read scene aloud</button>
+          </div>
           {paragraph.metadata.summary && <p class="chapter-meta">{paragraph.metadata.summary}</p>}
           {paragraph.metadata.viewpoint && (
             <p class="chapter-meta">
               Viewpoint: <LinkedValue value={paragraph.metadata.viewpoint} />
             </p>
           )}
-          <div class="prose" set:html={paragraph.html} />
+          <div class="prose" data-tts-root={paragraph.anchorId} data-tts-label={paragraph.metadata.title} set:html={paragraph.html} />
           {paragraph.figure && <AssetFigure figure={paragraph.figure} className="scene-media" />}
         </article>
       ))

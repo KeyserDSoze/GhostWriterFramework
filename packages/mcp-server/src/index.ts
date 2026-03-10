@@ -30,6 +30,7 @@ import {
   exportEpub,
   initializeBookRepo,
   listRelatedCanon,
+  readStoryStateStatus,
   readAsset,
   registerAsset,
   renameChapter,
@@ -41,6 +42,7 @@ import {
   syncChapterEvaluation,
   syncChapterResume,
   syncPlot,
+  syncStoryState,
   syncTotalResume,
   updateChapter,
   updateChapterDraft,
@@ -79,11 +81,21 @@ const hiddenCanonToolFields = {
   revealIn: z.string().optional(),
   knownFrom: z.string().optional(),
 };
+const pronunciationToolFields = {
+  pronunciation: z.string().optional(),
+  spokenName: z.string().optional(),
+  ttsLabel: z.string().optional(),
+};
 const hiddenCanonWizardSteps: WizardStep[] = [
   { key: "secretRefs", prompt: "List linked secret ids for this entry, if any.", type: "stringArray" },
   { key: "privateNotes", prompt: "Add private notes or hidden canon for this entry.", type: "string" },
   { key: "knownFrom", prompt: "From which chapter can the reader safely know this hidden information?", type: "string" },
   { key: "revealIn", prompt: "In which chapter should this hidden information be fully revealed?", type: "string" },
+];
+const pronunciationWizardSteps: WizardStep[] = [
+  { key: "pronunciation", prompt: "Optional pronunciation guide for humans, such as LYE-rah VAYL.", type: "string" },
+  { key: "spokenName", prompt: "Optional spoken name or simplified label the browser voice should read aloud.", type: "string" },
+  { key: "ttsLabel", prompt: "Optional full TTS replacement if the browser should speak a different phrase than the visible name.", type: "string" },
 ];
 
 const wizardKindSchema = z.enum([
@@ -129,6 +141,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "speakingStyle", prompt: "How does the character speak? Describe rhythm, vocabulary, tone, and verbal habits.", type: "string", required: true },
     { key: "backgroundSummary", prompt: "What shaped this character before the story begins?", type: "string", required: true },
     { key: "functionInBook", prompt: "What narrative function does this character serve in the book?", type: "string", required: true },
+    ...pronunciationWizardSteps,
     { key: "age", prompt: "How old is the character, if known?", type: "int" },
     { key: "occupation", prompt: "What is their occupation, role, or public identity?", type: "string" },
     { key: "origin", prompt: "Where do they come from?", type: "string" },
@@ -158,6 +171,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "region", prompt: "What larger region, nation, or zone contains it?", type: "string" },
     { key: "atmosphere", prompt: "What should the place feel like on the page?", type: "string", required: true },
     { key: "functionInBook", prompt: "Why does this location matter narratively?", type: "string", required: true },
+    ...pronunciationWizardSteps,
     { key: "landmarks", prompt: "List the key landmarks.", type: "stringArray" },
     { key: "risks", prompt: "List the dangers or pressures associated with this location.", type: "stringArray" },
     { key: "factionsPresent", prompt: "Which factions are active here?", type: "stringArray" },
@@ -173,6 +187,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "mission", prompt: "What does the faction want?", type: "string", required: true },
     { key: "ideology", prompt: "How does the faction justify itself?", type: "string", required: true },
     { key: "functionInBook", prompt: "What narrative pressure does this faction create?", type: "string", required: true },
+    ...pronunciationWizardSteps,
     { key: "publicImage", prompt: "How is the faction perceived publicly?", type: "string" },
     { key: "hiddenAgenda", prompt: "What hidden agenda or private motive does it have?", type: "string" },
     { key: "leaders", prompt: "Who leads the faction?", type: "stringArray" },
@@ -190,6 +205,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "appearance", prompt: "What does the item look like?", type: "string", required: true },
     { key: "purpose", prompt: "What does the item do or enable?", type: "string", required: true },
     { key: "functionInBook", prompt: "Why does the item matter to the story?", type: "string", required: true },
+    ...pronunciationWizardSteps,
     { key: "significance", prompt: "Why is the item especially valuable or symbolic?", type: "string" },
     { key: "originStory", prompt: "Where does the item come from?", type: "string" },
     { key: "powers", prompt: "List powers or capabilities.", type: "stringArray" },
@@ -205,6 +221,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "secretKind", prompt: "What kind of secret is it? identity, betrayal, crime, prophecy, origin, etc.", type: "string" },
     { key: "functionInBook", prompt: "Why does this secret exist in the story?", type: "string", required: true },
     { key: "stakes", prompt: "What changes if the secret is revealed or suppressed?", type: "string", required: true },
+    ...pronunciationWizardSteps,
     { key: "protectedBy", prompt: "Who or what protects the secret?", type: "stringArray" },
     { key: "falseBeliefs", prompt: "What false beliefs does this secret create or preserve?", type: "stringArray" },
     { key: "revealStrategy", prompt: "How should the reveal be staged?", type: "string" },
@@ -223,6 +240,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "participants", prompt: "Who participates in this event?", type: "stringArray" },
     { key: "significance", prompt: "Why is this event important?", type: "string" },
     { key: "functionInBook", prompt: "What is this event used for in the book?", type: "string" },
+    ...pronunciationWizardSteps,
     { key: "consequences", prompt: "List the consequences of the event.", type: "stringArray" },
     ...hiddenCanonWizardSteps,
     { key: "historical", prompt: "Should this event be checked against history or factual research? yes or no.", type: "bool" },
@@ -470,6 +488,7 @@ server.tool(
     factions: z.array(z.string()).default([]),
     homeLocation: z.string().optional(),
     introducedIn: z.string().optional(),
+    ...pronunciationToolFields,
     ...hiddenCanonToolFields,
     timelineAges: z.record(z.string(), z.number().int().nonnegative()).default({}),
     overwrite: z.boolean().default(false),
@@ -508,6 +527,9 @@ server.tool(
     factions,
     homeLocation,
     introducedIn,
+    pronunciation,
+    spokenName,
+    ttsLabel,
     secretRefs,
     privateNotes,
     revealIn,
@@ -557,6 +579,9 @@ server.tool(
       factions,
       homeLocation,
       introducedIn,
+      pronunciation,
+      spokenName,
+      ttsLabel,
       secretRefs,
       privateNotes,
       revealIn,
@@ -617,6 +642,7 @@ server.tool(
     factionsPresent: z.array(z.string()).default([]),
     basedOnRealPlace: z.boolean().default(false),
     timelineRef: z.string().optional(),
+    ...pronunciationToolFields,
     ...hiddenCanonToolFields,
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
@@ -638,6 +664,9 @@ server.tool(
     factionsPresent,
     basedOnRealPlace,
     timelineRef,
+    pronunciation,
+    spokenName,
+    ttsLabel,
     secretRefs,
     privateNotes,
     revealIn,
@@ -670,6 +699,9 @@ server.tool(
       factionsPresent,
       basedOnRealPlace,
       timelineRef,
+      pronunciation,
+      spokenName,
+      ttsLabel,
       secretRefs,
       privateNotes,
       revealIn,
@@ -731,6 +763,7 @@ server.tool(
     enemies: z.array(z.string()).default([]),
     methods: z.array(z.string()).default([]),
     baseLocation: z.string().optional(),
+    ...pronunciationToolFields,
     ...hiddenCanonToolFields,
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
@@ -754,6 +787,9 @@ server.tool(
     enemies,
     methods,
     baseLocation,
+    pronunciation,
+    spokenName,
+    ttsLabel,
     secretRefs,
     privateNotes,
     revealIn,
@@ -788,6 +824,9 @@ server.tool(
       enemies,
       methods,
       baseLocation,
+      pronunciation,
+      spokenName,
+      ttsLabel,
       secretRefs,
       privateNotes,
       revealIn,
@@ -848,6 +887,7 @@ server.tool(
     limitations: z.array(z.string()).default([]),
     owner: z.string().optional(),
     introducedIn: z.string().optional(),
+    ...pronunciationToolFields,
     ...hiddenCanonToolFields,
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
@@ -870,6 +910,9 @@ server.tool(
     limitations,
     owner,
     introducedIn,
+    pronunciation,
+    spokenName,
+    ttsLabel,
     secretRefs,
     privateNotes,
     revealIn,
@@ -903,6 +946,9 @@ server.tool(
       limitations,
       owner,
       introducedIn,
+      pronunciation,
+      spokenName,
+      ttsLabel,
       secretRefs,
       privateNotes,
       revealIn,
@@ -960,6 +1006,7 @@ server.tool(
     falseBeliefs: z.array(z.string()).default([]),
     revealStrategy: z.string().optional(),
     holders: z.array(z.string()).default([]),
+    ...pronunciationToolFields,
     secretRefs: z.array(z.string()).default([]),
     privateNotes: z.string().optional(),
     revealIn: z.string().optional(),
@@ -983,6 +1030,9 @@ server.tool(
     falseBeliefs,
     revealStrategy,
     holders,
+    pronunciation,
+    spokenName,
+    ttsLabel,
     secretRefs,
     privateNotes,
     revealIn,
@@ -1014,6 +1064,9 @@ server.tool(
       falseBeliefs,
       revealStrategy,
       holders,
+      pronunciation,
+      spokenName,
+      ttsLabel,
       secretRefs,
       privateNotes,
       revealIn,
@@ -1070,6 +1123,7 @@ server.tool(
     significance: z.string().optional(),
     functionInBook: z.string().optional(),
     consequences: z.array(z.string()).default([]),
+    ...pronunciationToolFields,
     ...hiddenCanonToolFields,
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
@@ -1087,6 +1141,9 @@ server.tool(
     significance,
     functionInBook,
     consequences,
+    pronunciation,
+    spokenName,
+    ttsLabel,
     secretRefs,
     privateNotes,
     revealIn,
@@ -1115,6 +1172,9 @@ server.tool(
       significance,
       functionInBook,
       consequences,
+      pronunciation,
+      spokenName,
+      ttsLabel,
       secretRefs,
       privateNotes,
       revealIn,
@@ -1878,6 +1938,20 @@ server.tool(
 );
 
 server.tool(
+  "sync_story_state",
+  "Refresh state/current.md and per-chapter state snapshots from chapter resume state_changes. This stays manual by design and clears the stale story-state flag.",
+  {
+    rootPath: z.string().min(1),
+  },
+  async ({ rootPath }) => {
+    const result = await syncStoryState(rootPath);
+    return textResponse(
+      `Synced story state at ${result.currentFilePath} and ${result.chapterFiles.length} chapter snapshot files. Status updated at ${result.statusFilePath}.`,
+    );
+  },
+);
+
+server.tool(
   "sync_plot",
   "Refresh the root plot.md file so it tracks chapter progression, revealed secrets, and timeline dates from current canon.",
   {
@@ -2026,13 +2100,17 @@ async function appendStoryMaintenanceNote(rootPath: string, chapter: string, bas
     syncChapterResume(rootPath, chapter),
     syncTotalResume(rootPath),
   ]);
+  const storyStateStatus = await readStoryStateStatus(rootPath);
 
   return [
     baseText,
     `Plot synced at ${plot.filePath}.`,
     `Chapter resume synced at ${chapterResume.filePath}.`,
     `Total resume synced at ${totalResume.filePath}.`,
-  ].join(" ");
+    formatStoryStateReminder(storyStateStatus),
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 async function appendChapterPathMaintenanceNote(rootPath: string, chapterFilePath: string, baseText: string): Promise<string> {
@@ -2051,6 +2129,14 @@ async function maybeAppendPlotSyncNote(rootPath: string, kind: z.infer<typeof en
   }
 
   return appendPlotSyncNote(rootPath, baseText);
+}
+
+function formatStoryStateReminder(status: Awaited<ReturnType<typeof readStoryStateStatus>>): string {
+  if (!status.dirty) {
+    return "";
+  }
+
+  return `Story state marked stale at ${status.filePath}. Run sync_story_state manually when you want refreshed state/current.md and state/chapters/.`;
 }
 
 function extractPromptSection(body: string): string {
@@ -2329,6 +2415,7 @@ async function finalizeWizardSession(
         factions: stringArrayOrEmpty(data.factions),
         homeLocation: stringOrUndefined(data.homeLocation),
         introducedIn: stringOrUndefined(data.introducedIn),
+        ...pronunciationInputFromData(data),
         ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
@@ -2351,6 +2438,7 @@ async function finalizeWizardSession(
         factionsPresent: stringArrayOrEmpty(data.factionsPresent),
         basedOnRealPlace: Boolean(data.basedOnRealPlace),
         timelineRef: stringOrUndefined(data.timelineRef),
+        ...pronunciationInputFromData(data),
         ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
@@ -2375,6 +2463,7 @@ async function finalizeWizardSession(
         enemies: stringArrayOrEmpty(data.enemies),
         methods: stringArrayOrEmpty(data.methods),
         baseLocation: stringOrUndefined(data.baseLocation),
+        ...pronunciationInputFromData(data),
         ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
@@ -2398,6 +2487,7 @@ async function finalizeWizardSession(
         limitations: stringArrayOrEmpty(data.limitations),
         owner: stringOrUndefined(data.owner),
         introducedIn: stringOrUndefined(data.introducedIn),
+        ...pronunciationInputFromData(data),
         ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
@@ -2418,6 +2508,7 @@ async function finalizeWizardSession(
         falseBeliefs: stringArrayOrEmpty(data.falseBeliefs),
         revealStrategy: stringOrUndefined(data.revealStrategy),
         holders: stringArrayOrEmpty(data.holders),
+        ...pronunciationInputFromData(data),
         ...hiddenCanonInputFromData(data),
         timelineRef: stringOrUndefined(data.timelineRef),
         historical,
@@ -2437,6 +2528,7 @@ async function finalizeWizardSession(
         significance: stringOrUndefined(data.significance),
         functionInBook: stringOrUndefined(data.functionInBook),
         consequences: stringArrayOrEmpty(data.consequences),
+        ...pronunciationInputFromData(data),
         ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
@@ -2601,6 +2693,14 @@ function hiddenCanonInputFromData(data: Record<string, unknown>) {
     privateNotes: stringOrUndefined(data.privateNotes),
     revealIn: stringOrUndefined(data.revealIn),
     knownFrom: stringOrUndefined(data.knownFrom),
+  };
+}
+
+function pronunciationInputFromData(data: Record<string, unknown>) {
+  return {
+    pronunciation: stringOrUndefined(data.pronunciation),
+    spokenName: stringOrUndefined(data.spokenName),
+    ttsLabel: stringOrUndefined(data.ttsLabel),
   };
 }
 

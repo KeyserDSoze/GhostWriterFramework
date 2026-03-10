@@ -15,6 +15,12 @@ const hiddenCanonFields = {
   known_from: z.string().optional(),
 };
 
+const pronunciationFields = {
+  pronunciation: z.string().optional(),
+  spoken_name: z.string().optional(),
+  tts_label: z.string().optional(),
+};
+
 export const characterRoleTierSchema = z.enum([
   "main",
   "supporting",
@@ -39,6 +45,7 @@ const baseSchema = z
   .object({
     id: z.string().min(1),
     type: z.string().min(1),
+    ...pronunciationFields,
     status: z.string().optional(),
     canon: canonSchema.default("draft"),
     tags: z.array(z.string()).default([]),
@@ -57,6 +64,7 @@ export const bookSchema = z
     language: z.string().default("en"),
     genre: z.string().optional(),
     audience: z.string().optional(),
+    ...pronunciationFields,
     canon: canonSchema.default("draft"),
   })
   .passthrough();
@@ -217,6 +225,7 @@ export const chapterSchema = z
     id: z.string().min(1),
     number: z.number().int().positive(),
     title: z.string().min(1),
+    ...pronunciationFields,
     summary: z.string().optional(),
     pov: z.array(z.string()).default([]),
     timeline_ref: z.string().optional(),
@@ -233,6 +242,7 @@ export const chapterDraftSchema = z
     chapter: z.string().min(1),
     number: z.number().int().positive(),
     title: z.string().min(1),
+    ...pronunciationFields,
     summary: z.string().optional(),
     pov: z.array(z.string()).default([]),
     timeline_ref: z.string().optional(),
@@ -249,6 +259,7 @@ export const paragraphSchema = z
     chapter: z.string().min(1),
     number: z.number().int().positive(),
     title: z.string().min(1),
+    ...pronunciationFields,
     summary: z.string().optional(),
     viewpoint: z.string().optional(),
     tags: z.array(z.string()).default([]),
@@ -264,6 +275,7 @@ export const paragraphDraftSchema = z
     chapter: z.string().min(1),
     number: z.number().int().positive(),
     title: z.string().min(1),
+    ...pronunciationFields,
     summary: z.string().optional(),
     viewpoint: z.string().optional(),
     tags: z.array(z.string()).default([]),

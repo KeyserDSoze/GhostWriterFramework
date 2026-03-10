@@ -79,7 +79,7 @@ async function buildSearchIndex(chapterNumber?: number): Promise<SearchEntry[]> 
       kind: entry.kindLabel,
       kindKey: entry.kind,
       summary: entry.summary,
-      keywords: [...entry.terms, ...entry.meta, ...entry.metadataEntries.map((item) => item.value)],
+      keywords: [entry.spokenLabel, ...entry.terms, ...entry.meta, ...entry.metadataEntries.map((item) => item.value)],
       chapterNumber: null,
       visibleFrom: entry.visibleFrom,
       revealedFrom: entry.revealedFrom,

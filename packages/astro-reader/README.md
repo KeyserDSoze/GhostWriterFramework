@@ -30,7 +30,7 @@ npx narrarium-astro-reader reader --book-root .. --package-name my-book-reader
 - canon mention popups, backlinks, and asset rendering for book, entity, chapter, and scene art
 - automatic EPUB export to `public/downloads/book.epub`
 - live watcher for book markdown, canon, and assets during `npm run dev`
-- `npm run doctor` for broken references, spoiler thresholds, asset metadata, and stale `plot.md` or `resumes/`
+- `npm run doctor` for broken references, spoiler thresholds, asset metadata, and stale `plot.md`, `resumes/`, or `state/`
 - optional EPUBCheck validation during export or build
 - starter GitHub Pages deployment workflow when scaffolded into a standalone app
 
@@ -83,6 +83,8 @@ npm run build
 ```
 
 If `EPUBCHECK_CMD` or `EPUBCHECK_JAR` is set, EPUB export and build also run EPUBCheck.
+
+`npm run doctor` also reports if the linked book repository has stale or missing structured story-state snapshots, so author-facing continuity drift shows up before deployment.
 
 ## GitHub Pages
 

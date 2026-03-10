@@ -163,7 +163,7 @@ An example project config lives in `opencode.jsonc` and points OpenCode to the l
 It also tunes the default `build` and `plan` agents for book work with higher reasoning effort, detailed summaries, and more verbose responses while keeping temperature moderate for canon consistency.
 Book repos also include `conversations/` as a portable place to keep exported writing chats.
 The generated `.opencode/plugins/conversation-export.js` plugin updates `conversations/RESUME.md`, `conversations/CONTINUATION.md`, and per-session exports automatically when OpenCode sessions go idle.
-The generated `/resume-book` command and MCP tool `resume_book_context` help you restart from repo state on a fresh machine or session.
+The generated `/resume-book` command and MCP tool `resume_book_context` help you restart from repo state on a fresh machine or session, including `plot.md`, `resumes/`, and `state/` snapshots when present.
 
 ## Agent rules
 
@@ -192,12 +192,45 @@ These are the main building blocks exposed by the local MCP server:
 - `list_related_canon`: find files that reference an id or concept
 - `sync_resume`: refresh chapter or total summaries from current files
 - `sync_all_resumes`: refresh all chapter resumes plus the total summary in one pass
+- `sync_story_state`: manually rebuild structured continuity snapshots from chapter resume deltas
 - `evaluate_chapter`: refresh a deterministic evaluation scaffold
 - `evaluate_book`: refresh the full-book evaluation scaffold and optionally all chapter evaluations
 - `wikipedia_search` and `wikipedia_page`: research factual or historical material
 - `export_epub`: turn the repository into an EPUB
 
-Final chapter and paragraph mutations through the MCP layer auto-refresh `plot.md`, the per-chapter resumes, and `resumes/total.md`. Evaluations stay manual so critique remains explicit.
+Final chapter and paragraph mutations through the MCP layer auto-refresh `plot.md`, the per-chapter resumes, and `resumes/total.md`. Structured story state stays manual on purpose: rewrites mark `state/status.md` as dirty, then you decide when to run `sync_story_state`. Evaluations stay manual so critique remains explicit.
+
+## Story state workflow
+
+Narrarium now separates two continuity layers:
+
+- `resumes/` stays human-readable and narrative-first
+- `state/` stores structured continuity snapshots for agents, checks, and continuity review
+
+The intended workflow is:
+
+1. Write or revise chapter and paragraph prose.
+2. Let Narrarium auto-refresh `plot.md` and the resume files.
+3. Record chapter-specific structured deltas in `resumes/chapters/<slug>.md` under `state_changes` frontmatter.
+4. Run `sync_story_state` manually when you want refreshed continuity snapshots.
+
+That produces:
+
+- `state/status.md`: whether story state is stale, when it was last mutated, and which files changed
+- `state/current.md`: the latest consolidated continuity snapshot
+- `state/chapters/*.md`: per-chapter structured snapshots after applying each chapter delta in order
+
+Recommended `state_changes` keys in chapter resumes:
+
+- `locations`
+- `knowledge_gain` and `knowledge_loss`
+- `inventory_add` and `inventory_remove`
+- `relationship_updates`
+- `conditions`
+- `wounds`
+- `open_loops_add` and `open_loops_resolved`
+
+`doctorBook()` and `npm run doctor` now warn if `state/` is missing or stale, and writing-context tools read `state/current.md` plus `state/status.md` when available.
 
 ## Practical image examples
 

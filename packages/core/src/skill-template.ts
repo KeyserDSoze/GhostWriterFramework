@@ -22,6 +22,7 @@ Treat the repository as the canonical source of truth for the book.
 - \`plot.md\` for the rolling book map: chapter progression, reveals, and timeline anchors
 - \`conversations/\` for exported writing chats, resume files, and continuation prompts
 - \`resumes/\` for running summaries
+- \`state/\` for structured continuity snapshots and sync status
 - \`evaluations/\` for critique and continuity checks
 - \`guidelines/\` for prose defaults, style, structure, and voices
 
@@ -53,6 +54,7 @@ Treat the repository as the canonical source of truth for the book.
 - Use \`update_entity\` when patching existing canon.
 - Use \`sync_plot\` after story-structure changes if it was not already refreshed automatically.
 - Use \`sync_resume\` and \`evaluate_chapter\` after structural changes.
+- Use \`sync_story_state\` manually after chapter or paragraph rewrites when continuity snapshots should be refreshed.
 - Use \`sync_all_resumes\` and \`evaluate_book\` after larger structural passes.
 - Use repository search before drafting new chapters.
 - Use Wikipedia search and page tools for historical entities, places, timelines, or factual references.
@@ -63,7 +65,7 @@ Treat the repository as the canonical source of truth for the book.
 - Respect chapter numbering and paragraph numbering.
 - Keep prose in body content and structured facts in frontmatter.
 - Always read \`guidelines/prose.md\` before drafting new chapter or paragraph prose.
-- Before writing a scene, review the relevant prior chapter content, the latest summaries in \`resumes/\`, and any matching files in \`drafts/\`.
+- Before writing a scene, review the relevant prior chapter content, the latest summaries in \`resumes/\`, the current snapshot in \`state/\` when available, and any matching files in \`drafts/\`.
 - Keep \`plot.md\` aligned with chapter summaries, secret reveals, and timeline references.
 - If stylistic guidance is missing, inspect the rest of \`guidelines/\` before choosing a default.
 `;

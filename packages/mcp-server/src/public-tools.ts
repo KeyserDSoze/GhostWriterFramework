@@ -63,6 +63,7 @@ export function buildRepositorySpecSummary(): string {
     "- secrets/",
     "- chapters/<nnn-slug>/chapter.md and numbered paragraph files",
     "- resumes/ and resumes/chapters/",
+    "- state/, state/current.md, state/status.md, and state/chapters/",
     "- evaluations/ and evaluations/chapters/",
     "- research/wikipedia/en and research/wikipedia/it",
     "- assets/ with mirrored image folders such as assets/characters/<slug>/primary.png and primary.md",
@@ -72,6 +73,7 @@ export function buildRepositorySpecSummary(): string {
     "- use stable ids like character:lyra-vale or chapter:001-the-arrival",
     "- search canon before inventing facts",
     "- use summaries and evaluations as first-class context",
+    "- keep state snapshots manual: update chapter resume state_changes and run sync_story_state when continuity changes",
     "- do not reveal secrets before known_from or reveal_in",
   ].join("\n");
 }

@@ -45,6 +45,10 @@ conversations/
 resumes/
   total.md
   chapters/
+state/
+  current.md
+  status.md
+  chapters/
 evaluations/
   total.md
   chapters/
@@ -93,6 +97,15 @@ All content files should start with YAML frontmatter.
 - `historical`: marks content that should be checked against external sources
 
 The generated reader uses `known_from` and `reveal_in` for spoiler-safe search, canon popups, public atlas pages, and backlink filtering.
+
+### Resume and state-specific keys
+
+- `state_changes`: optional structured continuity delta stored in chapter resume frontmatter
+- `dirty`: used in `state/status.md` to mark whether continuity snapshots are stale
+- `last_story_mutation_at`: when final story prose last changed
+- `last_story_state_sync_at`: when `sync_story_state` last rebuilt structured state
+- `changed_paths`: final story files that changed since the last story-state sync
+- `reason`: brief machine-readable reason such as `paragraph-updated` or `chapter-renamed`
 
 ### Character example
 
@@ -161,6 +174,96 @@ status: hidden
 ---
 ```
 
+### Chapter resume with state delta example
+
+```md
+---
+type: resume
+id: resume:chapter:001-the-arrival
+title: Resume 001-the-arrival
+chapter: chapter:001-the-arrival
+state_changes:
+  locations:
+    "character:lyra-vale": "location:gray-harbor"
+  knowledge_gain:
+    "character:lyra-vale":
+      - guards-are-on-a-new-rotation
+  inventory_add:
+    "character:lyra-vale":
+      - item:brass-key
+  relationship_updates:
+    "character:lyra-vale":
+      "character:taren-dane": wary-trust
+  open_loops_add:
+    - find-the-ledger
+---
+
+# Chapter Summary
+
+Lyra returns to Gray Harbor and realizes the city is already watching for her.
+```
+
+## Story state snapshots
+
+Narrarium now distinguishes between narrative summaries and structured continuity state.
+
+### Why both exist
+
+- `resumes/` is for humans and LLM prose context: what happened, what matters, what tone and movement the chapter has
+- `state/` is for structured continuity: where characters are, what they know, what they carry, who trusts whom, and what loops remain open
+
+This avoids forcing every continuity fact into a single prose summary while still keeping the repository readable.
+
+### Files in `state/`
+
+- `state/status.md`: persistent dirty flag and sync metadata
+- `state/current.md`: consolidated latest snapshot after all known chapter deltas
+- `state/chapters/<slug>.md`: snapshot after each chapter in reading order
+
+### Manual sync model
+
+Story-state sync is intentionally manual.
+
+After final chapter or paragraph mutations Narrarium does this automatically:
+
+- refreshes `plot.md`
+- refreshes `resumes/chapters/*.md`
+- refreshes `resumes/total.md`
+- marks `state/status.md` as dirty
+
+It does **not** automatically rebuild `state/current.md`. The author decides when continuity is stable enough.
+
+When ready, run:
+
+```text
+sync_story_state
+```
+
+That command reads `state_changes` from chapter resumes in order and rebuilds all structured story-state snapshots.
+
+### Recommended `state_changes` shape
+
+Use these keys when they help continuity:
+
+- `locations`
+- `knowledge_gain`
+- `knowledge_loss`
+- `inventory_add`
+- `inventory_remove`
+- `relationship_updates`
+- `conditions`
+- `wounds`
+- `open_loops_add`
+- `open_loops_resolved`
+
+Treat `state_changes` as the chapter delta, not as a full-world snapshot.
+
+### Context and diagnostics
+
+- `chapter_writing_context`, `paragraph_writing_context`, and `resume_book_context` read `state/current.md` when present
+- if `state/status.md` is dirty, those contexts also surface the stale-state warning
+- `doctorBook()` warns about missing or stale `state/` files so continuity drift is visible in CI and reader scaffolds
+
 ## Operational rules for the agent
 
 - search the repository before inventing canon
@@ -173,6 +276,7 @@ status: hidden
 - use `sync_plot` to refresh the root plot map after story progression, reveal timing, or timeline changes
 - use `location_wizard`, `faction_wizard`, `item_wizard`, and `secret_wizard` before creating rich canon files when briefs are incomplete
 - use `resumes/` to keep running summaries stable
+- use `state/` for structured continuity snapshots and refresh it manually with `sync_story_state` after stable rewrites
 - use `evaluations/` for structural critique, continuity checks, and quality notes
 - use `conversations/` for portable exported chat history, resume files, and continuation prompts; treat it as support material, not canon
 - use `npm run doctor` or `doctorBook()` to catch broken references, stale maintenance files, missing asset descriptions, and spoiler-threshold problems
@@ -180,7 +284,7 @@ status: hidden
 - prefer updating existing canon files over duplicating similar facts elsewhere
 - before writing final chapter or paragraph prose, read `guidelines/prose.md`, relevant prior story files, and any matching files in `drafts/`
 - keep `plot.md` aligned with chapter summaries, reveals, and dated timeline anchors
-- final chapter and paragraph mutations through Narrarium MCP auto-refresh `plot.md` plus the chapter and total resumes; evaluations remain explicit/manual
+- final chapter and paragraph mutations through Narrarium MCP auto-refresh `plot.md` plus the chapter and total resumes, but story-state sync stays manual; evaluations remain explicit/manual
 
 ## Reader behavior
 

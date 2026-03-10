@@ -14,6 +14,8 @@ import {
   GUIDELINE_FILES,
   PLOT_FILE,
   SKILL_NAME,
+  STORY_STATE_CURRENT_FILE,
+  STORY_STATE_STATUS_FILE,
   TIMELINE_MAIN_FILE,
   TOTAL_EVALUATION_FILE,
   TOTAL_RESUME_FILE,
@@ -119,7 +121,13 @@ type HiddenCanonInput = {
   knownFrom?: string;
 };
 
-type CreateCharacterProfileInput = HiddenCanonInput & {
+type PronunciationInput = {
+  pronunciation?: string;
+  spokenName?: string;
+  ttsLabel?: string;
+};
+
+type CreateCharacterProfileInput = HiddenCanonInput & PronunciationInput & {
   slug?: string;
   overwrite?: boolean;
   name: string;
@@ -155,7 +163,7 @@ type CreateCharacterProfileInput = HiddenCanonInput & {
   frontmatter?: Record<string, unknown>;
 };
 
-type CreateItemProfileInput = HiddenCanonInput & {
+type CreateItemProfileInput = HiddenCanonInput & PronunciationInput & {
   slug?: string;
   overwrite?: boolean;
   name: string;
@@ -175,7 +183,7 @@ type CreateItemProfileInput = HiddenCanonInput & {
   frontmatter?: Record<string, unknown>;
 };
 
-type CreateLocationProfileInput = HiddenCanonInput & {
+type CreateLocationProfileInput = HiddenCanonInput & PronunciationInput & {
   slug?: string;
   overwrite?: boolean;
   name: string;
@@ -194,7 +202,7 @@ type CreateLocationProfileInput = HiddenCanonInput & {
   frontmatter?: Record<string, unknown>;
 };
 
-type CreateFactionProfileInput = HiddenCanonInput & {
+type CreateFactionProfileInput = HiddenCanonInput & PronunciationInput & {
   slug?: string;
   overwrite?: boolean;
   name: string;
@@ -215,7 +223,7 @@ type CreateFactionProfileInput = HiddenCanonInput & {
   frontmatter?: Record<string, unknown>;
 };
 
-type CreateSecretProfileInput = HiddenCanonInput & {
+type CreateSecretProfileInput = HiddenCanonInput & PronunciationInput & {
   slug?: string;
   overwrite?: boolean;
   title: string;
@@ -235,7 +243,7 @@ type CreateSecretProfileInput = HiddenCanonInput & {
   frontmatter?: Record<string, unknown>;
 };
 
-type CreateTimelineEventProfileInput = HiddenCanonInput & {
+type CreateTimelineEventProfileInput = HiddenCanonInput & PronunciationInput & {
   slug?: string;
   overwrite?: boolean;
   title: string;
@@ -280,6 +288,37 @@ export type DoctorIssue = {
   code: string;
   path: string;
   message: string;
+};
+
+type StoryStateStatus = {
+  dirty: boolean;
+  lastStoryMutationAt?: string;
+  lastStoryStateSyncAt?: string;
+  changedPaths: string[];
+  reason?: string;
+};
+
+type StoryStateChanges = {
+  locations?: Record<string, string>;
+  knowledge_gain?: Record<string, string[]>;
+  knowledge_loss?: Record<string, string[]>;
+  inventory_add?: Record<string, string[]>;
+  inventory_remove?: Record<string, string[]>;
+  relationship_updates?: Record<string, Record<string, string>>;
+  conditions?: Record<string, string[]>;
+  wounds?: Record<string, string[]>;
+  open_loops_add?: string[];
+  open_loops_resolved?: string[];
+};
+
+type StoryStateSnapshot = {
+  locations: Record<string, string>;
+  knowledge: Record<string, string[]>;
+  inventory: Record<string, string[]>;
+  relationships: Record<string, Record<string, string>>;
+  conditions: Record<string, string[]>;
+  wounds: Record<string, string[]>;
+  openLoops: string[];
 };
 
 type RenameResult = {
@@ -545,6 +584,22 @@ export async function initializeBookRepo(
 
   await ensureFile(
     root,
+    STORY_STATE_STATUS_FILE,
+    buildStoryStateStatusMarkdown(defaultStoryStateStatus()),
+    created,
+  );
+
+  await ensureFile(
+    root,
+    STORY_STATE_CURRENT_FILE,
+    buildCurrentStoryStateMarkdown(createEmptyStoryStateSnapshot(), {
+      chapterCount: 0,
+    }),
+    created,
+  );
+
+  await ensureFile(
+    root,
     TOTAL_EVALUATION_FILE,
     renderMarkdown(
       {
@@ -684,6 +739,7 @@ export async function createCharacterProfile(
     frontmatter: {
       name: input.name,
       ...buildHiddenCanonFrontmatter(input),
+      ...buildPronunciationFrontmatter(input),
       aliases: input.aliases ?? [],
       former_names: input.formerNames ?? [],
       current_identity: input.currentIdentity,
@@ -734,6 +790,7 @@ export async function createItemProfile(
     frontmatter: {
       name: input.name,
       ...buildHiddenCanonFrontmatter(input),
+      ...buildPronunciationFrontmatter(input),
       item_kind: input.itemKind,
       appearance: input.appearance,
       purpose: input.purpose,
@@ -768,6 +825,7 @@ export async function createLocationProfile(
     frontmatter: {
       name: input.name,
       ...buildHiddenCanonFrontmatter(input),
+      ...buildPronunciationFrontmatter(input),
       location_kind: input.locationKind,
       region: input.region,
       atmosphere: input.atmosphere,
@@ -801,6 +859,7 @@ export async function createFactionProfile(
     frontmatter: {
       name: input.name,
       ...buildHiddenCanonFrontmatter(input),
+      ...buildPronunciationFrontmatter(input),
       faction_kind: input.factionKind,
       mission: input.mission,
       ideology: input.ideology,
@@ -836,6 +895,7 @@ export async function createSecretProfile(
     frontmatter: {
       title: input.title,
       ...buildHiddenCanonFrontmatter(input),
+      ...buildPronunciationFrontmatter(input),
       secret_kind: input.secretKind,
       function_in_book: input.functionInBook,
       stakes: input.stakes,
@@ -868,6 +928,7 @@ export async function createTimelineEventProfile(
     frontmatter: {
       title: input.title,
       ...buildHiddenCanonFrontmatter(input),
+      ...buildPronunciationFrontmatter(input),
       date: input.date,
       participants: input.participants ?? [],
       significance: input.significance,
@@ -950,6 +1011,11 @@ export async function createChapter(
     ),
     [],
   );
+
+  await markStoryStateDirty(root, {
+    changedPaths: [toPosixPath(path.relative(root, chapterFilePath))],
+    reason: "chapter-created",
+  });
 
   return {
     folderPath,
@@ -1039,6 +1105,11 @@ export async function createParagraph(
     renderMarkdown(frontmatter, options.body ?? defaultBodyForType("paragraph")),
     "utf8",
   );
+
+  await markStoryStateDirty(root, {
+    changedPaths: [toPosixPath(path.relative(root, filePath))],
+    reason: "paragraph-created",
+  });
 
   return { filePath, paragraphId: `paragraph:${chapter}:${slug}` };
 }
@@ -1383,6 +1454,11 @@ export async function renameChapter(
     [assetDirectoryPrefix(oldChapterId), assetDirectoryPrefix(newChapterId)],
   ]);
 
+  await markStoryStateDirty(root, {
+    changedPaths: [toPosixPath(path.relative(root, newFilePath))],
+    reason: "chapter-renamed",
+  });
+
   return {
     oldPath: oldFilePath,
     newPath: newFilePath,
@@ -1440,6 +1516,11 @@ export async function renameParagraph(
     [`asset:paragraph:${chapterSlugValue}:${oldParagraphSlug}:`, `asset:paragraph:${chapterSlugValue}:${newParagraphSlug}:`],
     [assetDirectoryPrefix(oldParagraphId), assetDirectoryPrefix(newParagraphId)],
   ]);
+
+  await markStoryStateDirty(root, {
+    changedPaths: [toPosixPath(path.relative(root, newFilePath))],
+    reason: "paragraph-renamed",
+  });
 
   return {
     oldPath: oldFilePath,
@@ -1607,6 +1688,22 @@ export async function buildChapterWritingContext(
   const totalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE));
   addContextSection(sections, files, root, totalResume, "Book summary so far", 1200);
 
+  const storyStateStatus = await readStoryStateStatus(root);
+  const storyStateCurrent = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_CURRENT_FILE));
+  addContextSection(
+    sections,
+    files,
+    root,
+    storyStateCurrent,
+    storyStateStatus.dirty ? "Structured story state (stale)" : "Structured story state",
+    1050,
+  );
+
+  if (storyStateStatus.dirty) {
+    const storyStateStatusDocument = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_STATUS_FILE));
+    addContextSection(sections, files, root, storyStateStatusDocument, "Story state sync status", 1000);
+  }
+
   const chapterResume = await readLooseMarkdownIfExists(path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`));
   addContextSection(sections, files, root, chapterResume, "Current chapter resume", 900);
 
@@ -1731,12 +1828,26 @@ export async function buildResumeBookContext(
   const prose = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.prose));
   const plot = await readPlot(root);
   const totalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE));
+  const storyStateCurrent = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_CURRENT_FILE));
+  const storyStateStatus = await readStoryStateStatus(root);
+  const storyStateStatusDocument = storyStateStatus.dirty
+    ? await readLooseMarkdownIfExists(path.join(root, STORY_STATE_STATUS_FILE))
+    : null;
   const continuation = await readLooseMarkdownIfExists(path.join(root, "conversations", "CONTINUATION.md"));
   const resume = await readLooseMarkdownIfExists(path.join(root, "conversations", "RESUME.md"));
 
   addContextSection(sections, files, root, prose, "Always-read prose guide", 1500);
   addContextSection(sections, files, root, plot, "Rolling plot map", 1400);
   addContextSection(sections, files, root, totalResume, "Book summary so far", 1100);
+  addContextSection(
+    sections,
+    files,
+    root,
+    storyStateCurrent,
+    storyStateStatus.dirty ? "Structured story state (stale)" : "Structured story state",
+    1080,
+  );
+  addContextSection(sections, files, root, storyStateStatusDocument, "Story state sync status", 1070);
   addContextSection(sections, files, root, resume, "Conversation resume", 1100);
   addContextSection(sections, files, root, continuation, "Conversation continuation", 1500);
 
@@ -2022,6 +2133,10 @@ export async function updateEntity(
         : String(parsed.content ?? "").trim();
 
   await writeFile(filePath, renderMarkdown(validated, nextBody), "utf8");
+  await markStoryStateDirty(root, {
+    changedPaths: [toPosixPath(path.relative(root, filePath))],
+    reason: "chapter-updated",
+  });
   return { filePath, frontmatter: validated };
 }
 
@@ -2058,6 +2173,10 @@ export async function updateChapter(
         : String(parsed.content ?? "").trim();
 
   await writeFile(filePath, renderMarkdown(validated, nextBody), "utf8");
+  await markStoryStateDirty(root, {
+    changedPaths: [toPosixPath(path.relative(root, filePath))],
+    reason: "paragraph-updated",
+  });
   return { filePath, frontmatter: validated };
 }
 
@@ -2240,16 +2359,19 @@ async function buildChapterResumeDocument(
   const chapterData = await readChapter(root, chapterSlug);
   const filePath = path.join(root, "resumes", "chapters", `${chapterSlug}.md`);
   const summary = chapterData.metadata.summary ?? summarizeText(chapterData.body, 220);
+  const existingResume = await readLooseMarkdownIfExists(filePath);
+  const stateChanges = normalizeStoryStateChanges(existingResume?.frontmatter.state_changes);
 
   return {
     filePath,
     content: renderMarkdown(
-      {
+      compactFrontmatterPatch({
         type: "resume",
         id: `resume:chapter:${chapterSlug}`,
         title: `Resume ${chapterSlug}`,
         chapter: `chapter:${chapterSlug}`,
-      },
+        ...(stateChanges ? { state_changes: stateChanges } : {}),
+      }),
       [
         "# Chapter Summary",
         "",
@@ -2268,6 +2390,14 @@ async function buildChapterResumeDocument(
         `- POV: ${(chapterData.metadata.pov ?? []).join(", ") || "not set"}`,
         `- Timeline: ${chapterData.metadata.timeline_ref ?? "not set"}`,
         `- Tags: ${(chapterData.metadata.tags ?? []).join(", ") || "none"}`,
+        "",
+        "# Story State Delta",
+        "",
+        "Keep continuity deltas in this file's `state_changes` frontmatter.",
+        "",
+        "- After rewriting chapter or paragraph prose, run `sync_story_state` manually to refresh `state/current.md` and `state/chapters/`.",
+        "- Store only the structured delta for this chapter here, not the whole-book state.",
+        "- Suggested keys: locations, knowledge_gain, knowledge_loss, inventory_add, inventory_remove, relationship_updates, conditions, wounds, open_loops_add, open_loops_resolved.",
       ].join("\n"),
     ),
   };
@@ -2279,6 +2409,12 @@ async function buildTotalResumeDocument(
   const chapters = await listChapters(root);
   const filePath = path.join(root, TOTAL_RESUME_FILE);
   const chapterSummaries: Array<{ number: number; title: string; summary: string }> = [];
+  const storyStateStatus = await readStoryStateStatus(root);
+  const currentStoryState = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_CURRENT_FILE));
+  const throughChapter =
+    typeof currentStoryState?.frontmatter.through_chapter === "string" && currentStoryState.frontmatter.through_chapter.trim()
+      ? currentStoryState.frontmatter.through_chapter.trim()
+      : undefined;
 
   for (const chapter of chapters) {
     const chapterData = await readChapter(root, chapter.slug);
@@ -2306,6 +2442,12 @@ async function buildTotalResumeDocument(
           chapter.summary,
           "",
         ]),
+        "# Story State Overview",
+        "",
+        `- Snapshot: ${STORY_STATE_CURRENT_FILE}`,
+        `- Status: ${storyStateStatus.dirty ? "stale - run sync_story_state manually" : "clean"}`,
+        `- Through chapter: ${throughChapter ?? (chapters.length > 0 ? "not synced yet" : "no chapters yet")}`,
+        `- Pending changed paths: ${storyStateStatus.changedPaths.join(", ") || "none"}`,
       ].join("\n"),
     ),
     chapterCount: chapters.length,
@@ -2402,6 +2544,71 @@ async function buildPlotDocument(
   };
 }
 
+export async function readStoryStateStatus(
+  rootPath: string,
+): Promise<StoryStateStatus & { filePath: string }> {
+  const root = path.resolve(rootPath);
+  const filePath = path.join(root, STORY_STATE_STATUS_FILE);
+  const document = await readLooseMarkdownIfExists(filePath);
+  return {
+    filePath,
+    ...normalizeStoryStateStatus(document?.frontmatter),
+  };
+}
+
+async function buildStoryStateDocuments(
+  root: string,
+): Promise<{
+  currentFilePath: string;
+  currentContent: string;
+  chapterFiles: Array<{ filePath: string; content: string }>;
+  chapterCount: number;
+}> {
+  const chapters = await listChapters(root);
+  const chapterFiles: Array<{ filePath: string; content: string }> = [];
+  let snapshot = createEmptyStoryStateSnapshot();
+
+  for (const [index, chapter] of chapters.entries()) {
+    const resume = await readLooseMarkdownIfExists(path.join(root, "resumes", "chapters", `${chapter.slug}.md`));
+    const stateChanges = normalizeStoryStateChanges(resume?.frontmatter.state_changes);
+    snapshot = applyStoryStateChanges(snapshot, stateChanges);
+    const filePath = path.join(root, "state", "chapters", `${chapter.slug}.md`);
+
+    chapterFiles.push({
+      filePath,
+      content: renderMarkdown(
+        compactFrontmatterPatch({
+          type: "story-state",
+          id: `story-state:chapter:${chapter.slug}`,
+          title: `Story State ${chapter.slug}`,
+          chapter: `chapter:${chapter.slug}`,
+          source_resume: `resume:chapter:${chapter.slug}`,
+          through_chapter: `chapter:${chapter.slug}`,
+          chapter_count: index + 1,
+        }),
+        buildStoryStateSnapshotBody(snapshot, {
+          heading: `Story State After Chapter ${formatOrdinal(chapter.metadata.number)} ${chapter.metadata.title}`,
+          throughChapter: `chapter:${chapter.slug}`,
+          chapterCount: index + 1,
+          changeLines: renderStoryStateChangeLines(stateChanges),
+        }),
+      ),
+    });
+  }
+
+  const lastChapter = chapters.at(-1);
+
+  return {
+    currentFilePath: path.join(root, STORY_STATE_CURRENT_FILE),
+    currentContent: buildCurrentStoryStateMarkdown(snapshot, {
+      throughChapter: lastChapter ? `chapter:${lastChapter.slug}` : undefined,
+      chapterCount: chapters.length,
+    }),
+    chapterFiles,
+    chapterCount: chapters.length,
+  };
+}
+
 export async function syncChapterResume(
   rootPath: string,
   chapter: string,
@@ -2449,6 +2656,40 @@ export async function syncAllResumes(
     chapterFiles,
     totalFilePath: total.filePath,
     chapterCount: chapters.length,
+  };
+}
+
+export async function syncStoryState(
+  rootPath: string,
+): Promise<{ statusFilePath: string; currentFilePath: string; chapterFiles: string[]; chapterCount: number }> {
+  const root = path.resolve(rootPath);
+  const { currentFilePath, currentContent, chapterFiles, chapterCount } = await buildStoryStateDocuments(root);
+  const syncedAt = new Date().toISOString();
+
+  for (const entry of chapterFiles) {
+    await mkdir(path.dirname(entry.filePath), { recursive: true });
+    await writeFile(entry.filePath, entry.content, "utf8");
+  }
+
+  await mkdir(path.dirname(currentFilePath), { recursive: true });
+  await writeFile(currentFilePath, currentContent, "utf8");
+
+  const existingStatus = await readStoryStateStatus(root);
+  const nextStatus: StoryStateStatus = {
+    dirty: false,
+    lastStoryMutationAt: existingStatus.lastStoryMutationAt,
+    lastStoryStateSyncAt: syncedAt,
+    changedPaths: [],
+  };
+
+  await writeFile(existingStatus.filePath, buildStoryStateStatusMarkdown(nextStatus), "utf8");
+  await syncTotalResume(root);
+
+  return {
+    statusFilePath: existingStatus.filePath,
+    currentFilePath,
+    chapterFiles: chapterFiles.map((entry) => entry.filePath),
+    chapterCount,
   };
 }
 
@@ -2819,6 +3060,80 @@ export async function doctorBook(rootPath: string): Promise<{
     }
   }
 
+  const currentStoryState = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_CURRENT_FILE));
+  const storyStateStatusDocument = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_STATUS_FILE));
+  const storyStateStatus = await readStoryStateStatus(root);
+
+  if (!storyStateStatusDocument) {
+    addDoctorIssue(issues, seen, {
+      severity: "warning",
+      code: "missing-story-state-status",
+      path: STORY_STATE_STATUS_FILE,
+      message: "state/status.md is missing. Run sync_story_state to regenerate it.",
+    });
+  }
+
+  if (!currentStoryState) {
+    addDoctorIssue(issues, seen, {
+      severity: "warning",
+      code: "missing-story-state-current",
+      path: STORY_STATE_CURRENT_FILE,
+      message: "state/current.md is missing. Run sync_story_state to regenerate it.",
+    });
+  }
+
+  if (storyStateStatus.dirty) {
+    addDoctorIssue(issues, seen, {
+      severity: "warning",
+      code: "stale-story-state",
+      path: STORY_STATE_STATUS_FILE,
+      message: "Story state is marked stale after story changes. Run sync_story_state manually.",
+    });
+  } else {
+    const expectedStoryState = await buildStoryStateDocuments(root).catch(() => null);
+
+    if (
+      expectedStoryState &&
+      currentStoryState &&
+      normalizeComparableMarkdown(await readFile(path.join(root, STORY_STATE_CURRENT_FILE), "utf8")) !==
+        normalizeComparableMarkdown(expectedStoryState.currentContent)
+    ) {
+      addDoctorIssue(issues, seen, {
+        severity: "warning",
+        code: "stale-story-state-current",
+        path: STORY_STATE_CURRENT_FILE,
+        message: "state/current.md is out of sync with chapter resume state_changes. Run sync_story_state.",
+      });
+    }
+
+    for (const chapterSnapshot of expectedStoryState?.chapterFiles ?? []) {
+      const relativePath = toPosixPath(path.relative(root, chapterSnapshot.filePath));
+      const currentChapterState = await readLooseMarkdownIfExists(chapterSnapshot.filePath);
+
+      if (!currentChapterState) {
+        addDoctorIssue(issues, seen, {
+          severity: "warning",
+          code: "missing-story-state-chapter",
+          path: relativePath,
+          message: `Story state snapshot is missing for ${path.basename(relativePath, ".md")}. Run sync_story_state.`,
+        });
+        continue;
+      }
+
+      if (
+        normalizeComparableMarkdown(await readFile(chapterSnapshot.filePath, "utf8")) !==
+        normalizeComparableMarkdown(chapterSnapshot.content)
+      ) {
+        addDoctorIssue(issues, seen, {
+          severity: "warning",
+          code: "stale-story-state-chapter",
+          path: relativePath,
+          message: `Story state snapshot is out of sync for ${path.basename(relativePath, ".md")}. Run sync_story_state.`,
+        });
+      }
+    }
+  }
+
   const errors = issues.filter((issue) => issue.severity === "error").length;
   const warnings = issues.length - errors;
 
@@ -2938,6 +3253,374 @@ export async function exportEpub(
   await writeFile(outputPath, Buffer.from(bytes));
 
   return { outputPath, chapterCount: chapters.length };
+}
+
+function defaultStoryStateStatus(): StoryStateStatus {
+  return {
+    dirty: false,
+    changedPaths: [],
+  };
+}
+
+function createEmptyStoryStateSnapshot(): StoryStateSnapshot {
+  return {
+    locations: {},
+    knowledge: {},
+    inventory: {},
+    relationships: {},
+    conditions: {},
+    wounds: {},
+    openLoops: [],
+  };
+}
+
+function normalizeStoryStateStatus(frontmatter: Record<string, unknown> | undefined): StoryStateStatus {
+  return {
+    dirty: Boolean(frontmatter?.dirty),
+    lastStoryMutationAt: normalizeOptionalString(frontmatter?.last_story_mutation_at),
+    lastStoryStateSyncAt: normalizeOptionalString(frontmatter?.last_story_state_sync_at),
+    changedPaths: uniqueValues(
+      Array.isArray(frontmatter?.changed_paths)
+        ? frontmatter.changed_paths.filter((value): value is string => typeof value === "string")
+        : [],
+    ).sort((left, right) => left.localeCompare(right)),
+    reason: normalizeOptionalString(frontmatter?.reason),
+  };
+}
+
+function buildStoryStateStatusMarkdown(status: StoryStateStatus): string {
+  return renderMarkdown(
+    compactFrontmatterPatch({
+      type: "story-state-status",
+      id: "story-state:status",
+      title: "Story State Status",
+      dirty: status.dirty,
+      last_story_mutation_at: status.lastStoryMutationAt,
+      last_story_state_sync_at: status.lastStoryStateSyncAt,
+      changed_paths: status.changedPaths,
+      reason: status.reason,
+    }),
+    [
+      "# Story State Status",
+      "",
+      `- Dirty: ${status.dirty ? "yes" : "no"}`,
+      `- Last story mutation: ${status.lastStoryMutationAt ?? "not recorded"}`,
+      `- Last story state sync: ${status.lastStoryStateSyncAt ?? "not recorded"}`,
+      `- Pending changed paths: ${status.changedPaths.join(", ") || "none"}`,
+      `- Reason: ${status.reason ?? "not recorded"}`,
+      "",
+      "## Next Action",
+      "",
+      "Run `sync_story_state` manually after chapter or paragraph rewrites when you want refreshed state snapshots.",
+    ].join("\n"),
+  );
+}
+
+function buildCurrentStoryStateMarkdown(
+  snapshot: StoryStateSnapshot,
+  options: { throughChapter?: string; chapterCount: number },
+): string {
+  return renderMarkdown(
+    compactFrontmatterPatch({
+      type: "story-state",
+      id: "story-state:current",
+      title: "Current Story State",
+      through_chapter: options.throughChapter,
+      chapter_count: options.chapterCount,
+    }),
+    buildStoryStateSnapshotBody(snapshot, {
+      heading: "Current Story State",
+      throughChapter: options.throughChapter,
+      chapterCount: options.chapterCount,
+    }),
+  );
+}
+
+function buildStoryStateSnapshotBody(
+  snapshot: StoryStateSnapshot,
+  options: {
+    heading: string;
+    throughChapter?: string;
+    chapterCount: number;
+    changeLines?: string[];
+  },
+): string {
+  return [
+    `# ${options.heading}`,
+    "",
+    `- Through chapter: ${options.throughChapter ?? "not synced yet"}`,
+    `- Chapters covered: ${options.chapterCount}`,
+    "",
+    ...(options.changeLines
+      ? [
+          "## Chapter Delta",
+          "",
+          ...(options.changeLines.length > 0
+            ? options.changeLines.map((line) => `- ${line}`)
+            : ["- No `state_changes` recorded for this chapter yet."]),
+          "",
+        ]
+      : []),
+    ...renderStoryStateSection("Locations", renderStringRecordLines(snapshot.locations, " -> "), "No tracked locations."),
+    ...renderStoryStateSection("Knowledge", renderStringArrayRecordLines(snapshot.knowledge), "No tracked knowledge."),
+    ...renderStoryStateSection("Inventory", renderStringArrayRecordLines(snapshot.inventory), "No tracked inventory."),
+    ...renderStoryStateSection("Relationships", renderRelationshipLines(snapshot.relationships), "No tracked relationship updates."),
+    ...renderStoryStateSection("Conditions", renderStringArrayRecordLines(snapshot.conditions), "No tracked conditions."),
+    ...renderStoryStateSection("Wounds", renderStringArrayRecordLines(snapshot.wounds), "No tracked wounds."),
+    ...renderStoryStateSection("Open Loops", snapshot.openLoops, "No open loops tracked."),
+  ].join("\n");
+}
+
+function renderStoryStateSection(title: string, lines: string[], emptyLabel: string): string[] {
+  return [
+    `## ${title}`,
+    "",
+    ...(lines.length > 0 ? lines.map((line) => `- ${line}`) : [`- ${emptyLabel}`]),
+    "",
+  ];
+}
+
+function renderStoryStateChangeLines(changes: StoryStateChanges | undefined): string[] {
+  if (!changes) {
+    return [];
+  }
+
+  return [
+    ...renderStringRecordLines(changes.locations, " -> ").map((line) => `Locations: ${line}`),
+    ...renderStringArrayRecordLines(changes.knowledge_gain).map((line) => `Knowledge gained: ${line}`),
+    ...renderStringArrayRecordLines(changes.knowledge_loss).map((line) => `Knowledge removed: ${line}`),
+    ...renderStringArrayRecordLines(changes.inventory_add).map((line) => `Inventory added: ${line}`),
+    ...renderStringArrayRecordLines(changes.inventory_remove).map((line) => `Inventory removed: ${line}`),
+    ...renderRelationshipLines(changes.relationship_updates).map((line) => `Relationships: ${line}`),
+    ...renderStringArrayRecordLines(changes.conditions).map((line) => `Conditions: ${line}`),
+    ...renderStringArrayRecordLines(changes.wounds).map((line) => `Wounds: ${line}`),
+    ...(changes.open_loops_add ?? []).map((value) => `Open loop added: ${value}`),
+    ...(changes.open_loops_resolved ?? []).map((value) => `Open loop resolved: ${value}`),
+  ];
+}
+
+function renderStringRecordLines(record: Record<string, string> | undefined, joiner: string): string[] {
+  return Object.entries(record ?? {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}${joiner}${value}`);
+}
+
+function renderStringArrayRecordLines(record: Record<string, string[]> | undefined): string[] {
+  return Object.entries(record ?? {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, values]) => `${key}: ${values.join(", ")}`);
+}
+
+function renderRelationshipLines(record: Record<string, Record<string, string>> | undefined): string[] {
+  const lines: string[] = [];
+
+  for (const [source, relationships] of Object.entries(record ?? {}).sort(([left], [right]) => left.localeCompare(right))) {
+    for (const [target, value] of Object.entries(relationships).sort(([left], [right]) => left.localeCompare(right))) {
+      lines.push(`${source}: ${target} = ${value}`);
+    }
+  }
+
+  return lines;
+}
+
+function normalizeStoryStateChanges(value: unknown): StoryStateChanges | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const input = value as Record<string, unknown>;
+  const normalized: StoryStateChanges = compactFrontmatterPatch({
+    locations: normalizeStringRecord(input.locations),
+    knowledge_gain: normalizeStringArrayRecord(input.knowledge_gain),
+    knowledge_loss: normalizeStringArrayRecord(input.knowledge_loss),
+    inventory_add: normalizeStringArrayRecord(input.inventory_add),
+    inventory_remove: normalizeStringArrayRecord(input.inventory_remove),
+    relationship_updates: normalizeNestedStringRecord(input.relationship_updates),
+    conditions: normalizeStringArrayRecord(input.conditions),
+    wounds: normalizeStringArrayRecord(input.wounds),
+    open_loops_add: normalizeStringArray(input.open_loops_add),
+    open_loops_resolved: normalizeStringArray(input.open_loops_resolved),
+  }) as StoryStateChanges;
+
+  return hasStoryStateChanges(normalized) ? normalized : undefined;
+}
+
+function hasStoryStateChanges(changes: StoryStateChanges): boolean {
+  return Object.keys(changes).length > 0;
+}
+
+function normalizeStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value)
+    .flatMap(([key, entryValue]) => {
+      const normalizedKey = key.trim();
+      const normalizedValue = normalizeOptionalString(entryValue);
+      return normalizedKey && normalizedValue ? [[normalizedKey, normalizedValue] as const] : [];
+    })
+    .sort(([left], [right]) => left.localeCompare(right));
+
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function normalizeStringArrayRecord(value: unknown): Record<string, string[]> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value)
+    .flatMap(([key, entryValue]) => {
+      const normalizedKey = key.trim();
+      const normalizedValue = normalizeStringArray(entryValue);
+      return normalizedKey && normalizedValue ? [[normalizedKey, normalizedValue] as const] : [];
+    })
+    .sort(([left], [right]) => left.localeCompare(right));
+
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function normalizeNestedStringRecord(value: unknown): Record<string, Record<string, string>> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value)
+    .flatMap(([key, entryValue]) => {
+      const normalizedKey = key.trim();
+      const normalizedValue = normalizeStringRecord(entryValue);
+      return normalizedKey && normalizedValue ? [[normalizedKey, normalizedValue] as const] : [];
+    })
+    .sort(([left], [right]) => left.localeCompare(right));
+
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function normalizeStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalized = uniqueValues(
+    value
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  ).sort((left, right) => left.localeCompare(right));
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function applyStoryStateChanges(snapshot: StoryStateSnapshot, changes: StoryStateChanges | undefined): StoryStateSnapshot {
+  const next: StoryStateSnapshot = {
+    locations: { ...snapshot.locations },
+    knowledge: Object.fromEntries(
+      Object.entries(snapshot.knowledge).map(([key, values]) => [key, [...values]]),
+    ),
+    inventory: Object.fromEntries(
+      Object.entries(snapshot.inventory).map(([key, values]) => [key, [...values]]),
+    ),
+    relationships: Object.fromEntries(
+      Object.entries(snapshot.relationships).map(([key, value]) => [key, { ...value }]),
+    ),
+    conditions: Object.fromEntries(
+      Object.entries(snapshot.conditions).map(([key, values]) => [key, [...values]]),
+    ),
+    wounds: Object.fromEntries(
+      Object.entries(snapshot.wounds).map(([key, values]) => [key, [...values]]),
+    ),
+    openLoops: [...snapshot.openLoops],
+  };
+
+  if (!changes) {
+    return next;
+  }
+
+  for (const [key, value] of Object.entries(changes.locations ?? {})) {
+    next.locations[key] = value;
+  }
+
+  applyArrayRecordChanges(next.knowledge, changes.knowledge_gain, "add");
+  applyArrayRecordChanges(next.knowledge, changes.knowledge_loss, "remove");
+  applyArrayRecordChanges(next.inventory, changes.inventory_add, "add");
+  applyArrayRecordChanges(next.inventory, changes.inventory_remove, "remove");
+  applyArrayRecordChanges(next.conditions, changes.conditions, "set");
+  applyArrayRecordChanges(next.wounds, changes.wounds, "set");
+
+  for (const [source, relationships] of Object.entries(changes.relationship_updates ?? {})) {
+    next.relationships[source] = {
+      ...(next.relationships[source] ?? {}),
+      ...relationships,
+    };
+  }
+
+  const openLoops = new Set(next.openLoops);
+  for (const value of changes.open_loops_add ?? []) {
+    openLoops.add(value);
+  }
+  for (const value of changes.open_loops_resolved ?? []) {
+    openLoops.delete(value);
+  }
+  next.openLoops = [...openLoops].sort((left, right) => left.localeCompare(right));
+
+  return next;
+}
+
+function applyArrayRecordChanges(
+  target: Record<string, string[]>,
+  changes: Record<string, string[]> | undefined,
+  mode: "add" | "remove" | "set",
+): void {
+  for (const [key, values] of Object.entries(changes ?? {})) {
+    if (mode === "set") {
+      target[key] = [...values].sort((left, right) => left.localeCompare(right));
+      continue;
+    }
+
+    const nextValues = new Set(target[key] ?? []);
+    for (const value of values) {
+      if (mode === "add") {
+        nextValues.add(value);
+      } else {
+        nextValues.delete(value);
+      }
+    }
+
+    const normalized = [...nextValues].sort((left, right) => left.localeCompare(right));
+    if (normalized.length > 0) {
+      target[key] = normalized;
+    } else {
+      delete target[key];
+    }
+  }
+}
+
+async function markStoryStateDirty(
+  rootPath: string,
+  options: { changedPaths: string[]; reason: string },
+): Promise<void> {
+  const root = path.resolve(rootPath);
+  const current = await readStoryStateStatus(root);
+  const nextStatus: StoryStateStatus = {
+    dirty: true,
+    lastStoryMutationAt: new Date().toISOString(),
+    lastStoryStateSyncAt: current.lastStoryStateSyncAt,
+    changedPaths: uniqueValues([...current.changedPaths, ...options.changedPaths]).sort((left, right) => left.localeCompare(right)),
+    reason: options.reason,
+  };
+
+  await mkdir(path.dirname(current.filePath), { recursive: true });
+  await writeFile(current.filePath, buildStoryStateStatusMarkdown(nextStatus), "utf8");
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized ? normalized : undefined;
 }
 
 function renderEpubAssetFigure(
@@ -3169,7 +3852,12 @@ async function validateFile(root: string, filePath: string): Promise<void> {
     return;
   }
 
-  if (relativePath.startsWith("resumes/") || relativePath.startsWith("evaluations/") || relativePath.startsWith("timelines/")) {
+  if (
+    relativePath.startsWith("resumes/") ||
+    relativePath.startsWith("state/") ||
+    relativePath.startsWith("evaluations/") ||
+    relativePath.startsWith("timelines/")
+  ) {
     if (typeof data.type !== "string") {
       throw new Error(`Missing type in frontmatter for ${relativePath}`);
     }
@@ -3511,6 +4199,14 @@ function buildHiddenCanonFrontmatter(input: HiddenCanonInput) {
   };
 }
 
+function buildPronunciationFrontmatter(input: PronunciationInput) {
+  return {
+    pronunciation: input.pronunciation,
+    spoken_name: input.spokenName,
+    tts_label: input.ttsLabel,
+  };
+}
+
 function buildItemBody(input: CreateItemProfileInput): string {
   return [
     "# Overview",
@@ -3777,7 +4473,7 @@ function buildResumeBookCommand(): string {
     "",
     "Before doing anything else:",
     "1. Call the `resume_book_context` MCP tool.",
-    "2. Read the files it references, especially `guidelines/prose.md`, `plot.md`, `resumes/total.md`, and the latest files in `conversations/`.",
+    "2. Read the files it references, especially `guidelines/prose.md`, `plot.md`, `resumes/total.md`, `state/current.md`, `state/status.md` when present, and the latest files in `conversations/`.",
     "3. Briefly restate where the book stands, what the latest conversation was doing, and the next best actions.",
     "4. Then continue with this user request if one is present: $ARGUMENTS",
     "5. If no extra request is present, ask for the next book task only after giving the short status recap.",
@@ -3894,11 +4590,13 @@ function buildConversationExportPlugin(): string {
     '      "",',
     '      "## Read first",',
     '      "",',
-    '      "1. guidelines/prose.md",',
-    '      "2. plot.md",',
-    '      "3. resumes/total.md",',
-    '      "4. Any matching files in drafts/",',
-    '      `5. conversations/sessions/${baseName}.md`,',
+      '      "1. guidelines/prose.md",',
+      '      "2. plot.md",',
+      '      "3. resumes/total.md",',
+      '      "4. state/current.md",',
+      '      "5. state/status.md if it shows dirty: true",',
+      '      "6. Any matching files in drafts/",',
+      '      `7. conversations/sessions/${baseName}.md`,',
     '      "",',
     '      "## Current conversation snapshot",',
     '      "",',
@@ -3916,7 +4614,7 @@ function buildConversationExportPlugin(): string {
     '      "",',
     '      "## Resume prompt",',
     '      "",',
-    '      "Run `/resume-book` or ask OpenCode to resume work from repository state, exported conversations, plot, resumes, and drafts before continuing.",',
+      '      "Run `/resume-book` or ask OpenCode to resume work from repository state, exported conversations, plot, resumes, state snapshots, and drafts before continuing.",',
     '    ].join("\\n"),',
     '    "utf8",',
     '  );',

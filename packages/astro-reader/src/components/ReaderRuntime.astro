@@ -84,6 +84,32 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   </aside>
 </div>
 
+<aside class="tts-player" data-tts-player hidden>
+  <div class="tts-player__top">
+    <div>
+      <p class="eyebrow">Read Aloud</p>
+      <p class="tts-player__title" data-tts-title>Ready</p>
+    </div>
+    <span class="chip" data-tts-badge>Browser voice</span>
+  </div>
+  <p class="tts-player__label" data-tts-label>Choose a chapter or scene to start reading aloud.</p>
+  <div class="tts-player__controls">
+    <button type="button" class="tts-button is-primary" data-tts-play-toggle>Read chapter</button>
+    <button type="button" class="tts-button" data-tts-stop>Stop</button>
+  </div>
+  <div class="tts-player__settings">
+    <label>
+      <span class="label">Voice</span>
+      <select data-tts-voice></select>
+    </label>
+    <label>
+      <span class="label">Speed</span>
+      <input type="range" min="0.7" max="1.35" step="0.05" value="1" data-tts-rate />
+    </label>
+  </div>
+  <div class="tts-status" data-tts-status>Speech will resume from the saved sentence when available.</div>
+</aside>
+
 <script type="application/json" id="canon-glossary-data" set:html={glossaryJson}></script>
 <script type="application/json" id="reader-chapter-data" set:html={chaptersJson}></script>
 
@@ -93,6 +119,9 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   const bookmarkStorageKey = "narrarium-reader-bookmark";
   const preferencesStorageKey = "narrarium-reader-preferences";
   const spoilerLimitStorageKey = "narrarium-reader-spoiler-limit";
+  const ttsVoiceStorageKey = "narrarium-reader-tts-voice";
+  const ttsRateStorageKey = "narrarium-reader-tts-rate";
+  const ttsProgressStorageKey = "narrarium-reader-tts-progress";
   const glossaryDataElement = document.getElementById("canon-glossary-data");
   const chapterDataElement = document.getElementById("reader-chapter-data");
   const glossaryEntries = glossaryDataElement ? JSON.parse(glossaryDataElement.textContent || "[]") : [];
@@ -105,6 +134,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   initializeReaderSettings();
   initializeReadingProgress();
   initializeCanonMentions();
+  initializeReadAloud();
 
   function initializeThemeToggle() {
     const root = document.documentElement;
@@ -553,6 +583,566 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       localStorage.setItem(bookmarkStorageKey, JSON.stringify(bookmark));
     }
     syncBookmarkButton(button, bookmark);
+  }
+
+  function initializeReadAloud() {
+    if (!("speechSynthesis" in window) || typeof window.SpeechSynthesisUtterance === "undefined") {
+      return;
+    }
+
+    const player = document.querySelector("[data-tts-player]");
+    const roots = [...document.querySelectorAll("[data-tts-root]")];
+    const triggers = [...document.querySelectorAll("[data-tts-trigger]")];
+    if (!(player instanceof HTMLElement) || roots.length === 0) {
+      return;
+    }
+
+    document.body.classList.add("tts-enabled");
+    player.hidden = false;
+    triggers.forEach((trigger) => {
+      if (trigger instanceof HTMLElement) {
+        trigger.hidden = false;
+      }
+    });
+
+    const scopes = buildTtsScopes(roots);
+    if (!scopes.has("chapter")) {
+      return;
+    }
+
+    const titleElement = player.querySelector("[data-tts-title]");
+    const labelElement = player.querySelector("[data-tts-label]");
+    const badgeElement = player.querySelector("[data-tts-badge]");
+    const statusElement = player.querySelector("[data-tts-status]");
+    const playToggle = player.querySelector("[data-tts-play-toggle]");
+    const stopButton = player.querySelector("[data-tts-stop]");
+    const voiceSelect = player.querySelector("[data-tts-voice]");
+    const rateInput = player.querySelector("[data-tts-rate]");
+
+    if (
+      !(titleElement instanceof HTMLElement) ||
+      !(labelElement instanceof HTMLElement) ||
+      !(badgeElement instanceof HTMLElement) ||
+      !(statusElement instanceof HTMLElement) ||
+      !(playToggle instanceof HTMLButtonElement) ||
+      !(stopButton instanceof HTMLButtonElement) ||
+      !(voiceSelect instanceof HTMLSelectElement) ||
+      !(rateInput instanceof HTMLInputElement)
+    ) {
+      return;
+    }
+
+    const state = {
+      scopes,
+      speech: window.speechSynthesis,
+      glossaryRules: buildPronunciationRules(glossaryEntries),
+      triggers,
+      voices: [],
+      voiceUri: localStorage.getItem(ttsVoiceStorageKey) || "",
+      rate: clampNumber(Number(localStorage.getItem(ttsRateStorageKey) || "1"), 0.7, 1.35, 1),
+      scopeId: "chapter",
+      index: 0,
+      runId: 0,
+      speaking: false,
+      paused: false,
+      titleElement,
+      labelElement,
+      badgeElement,
+      statusElement,
+      playToggle,
+      stopButton,
+      voiceSelect,
+      rateInput,
+    };
+
+    const savedProgress = readJson(ttsProgressStorageKey);
+    if (savedProgress?.path === window.location.pathname && typeof savedProgress.scopeId === "string" && scopes.has(savedProgress.scopeId)) {
+      state.scopeId = savedProgress.scopeId;
+      state.index = clampIndex(savedProgress.index, scopes.get(savedProgress.scopeId).segments.length);
+    }
+
+    rateInput.value = String(state.rate);
+    bindTtsTriggerButtons(triggers, state);
+    bindTtsPlayerControls(state);
+    populateVoiceOptions(state);
+    updateTtsTriggerButtons(triggers, state);
+    updateTtsUi(state);
+
+    if (typeof window.speechSynthesis.addEventListener === "function") {
+      window.speechSynthesis.addEventListener("voiceschanged", () => populateVoiceOptions(state));
+    } else {
+      window.speechSynthesis.onvoiceschanged = () => populateVoiceOptions(state);
+    }
+
+    window.addEventListener("beforeunload", () => {
+      state.runId += 1;
+      state.speech.cancel();
+    });
+  }
+
+  function buildTtsScopes(roots) {
+    const scopes = new Map();
+    const chapterSegments = [];
+
+    roots.forEach((root) => {
+      if (!(root instanceof HTMLElement)) {
+        return;
+      }
+
+      const rootId = root.dataset.ttsRoot || "";
+      if (!rootId) {
+        return;
+      }
+
+      const segments = prepareTtsSegments(root);
+      if (segments.length === 0) {
+        return;
+      }
+
+      const label = root.dataset.ttsLabel || root.closest(".scene")?.querySelector("h3")?.textContent?.trim() || rootId;
+      scopes.set(rootId, { id: rootId, label, segments });
+      chapterSegments.push(...segments);
+    });
+
+    if (chapterSegments.length > 0) {
+      scopes.set("chapter", {
+        id: "chapter",
+        label: document.querySelector("h1")?.textContent?.trim() || "Current chapter",
+        segments: chapterSegments,
+      });
+    }
+
+    return scopes;
+  }
+
+  function prepareTtsSegments(root) {
+    if (root.dataset.ttsPrepared === "true") {
+      return [...root.querySelectorAll("[data-tts-segment]")];
+    }
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const parent = node.parentElement;
+      if (!parent || parent.closest("script, style, textarea, input, select, audio, video, [data-no-tts]")) {
+        continue;
+      }
+      if (!(node.textContent || "").trim()) {
+        continue;
+      }
+      textNodes.push(node);
+    }
+
+    textNodes.forEach((node) => wrapTextNodeForTts(node));
+    root.dataset.ttsPrepared = "true";
+    return [...root.querySelectorAll("[data-tts-segment]")].filter((segment) => (segment.dataset.ttsText || "").trim().length > 0);
+  }
+
+  function wrapTextNodeForTts(textNode) {
+    const raw = textNode.textContent || "";
+    const parts = splitSentenceParts(raw);
+    if (parts.length === 0) {
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    parts.forEach((part) => {
+      if (!part.text) {
+        return;
+      }
+
+      if (!part.speakable) {
+        fragment.append(document.createTextNode(part.text));
+        return;
+      }
+
+      const span = document.createElement("span");
+      span.className = "tts-segment";
+      span.dataset.ttsSegment = "true";
+      span.dataset.ttsText = normalizeWhitespace(part.text);
+      span.textContent = part.text;
+      fragment.append(span);
+    });
+
+    textNode.replaceWith(fragment);
+  }
+
+  function splitSentenceParts(text) {
+    if (!text) {
+      return [];
+    }
+
+    const boundaries = [];
+    if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+      const segmenter = new Intl.Segmenter(undefined, { granularity: "sentence" });
+      for (const segment of segmenter.segment(text)) {
+        boundaries.push({ start: segment.index, end: segment.index + segment.segment.length });
+      }
+    } else {
+      const fallback = /[^.!?]+(?:[.!?]+|$)/g;
+      let match;
+      while ((match = fallback.exec(text))) {
+        boundaries.push({ start: match.index, end: match.index + match[0].length });
+      }
+    }
+
+    if (boundaries.length === 0) {
+      return [{ text, speakable: Boolean(text.trim()) }];
+    }
+
+    const parts = [];
+    let cursor = 0;
+    boundaries.forEach((boundary) => {
+      if (boundary.start > cursor) {
+        parts.push({ text: text.slice(cursor, boundary.start), speakable: false });
+      }
+
+      const chunk = text.slice(boundary.start, boundary.end);
+      parts.push({ text: chunk, speakable: Boolean(chunk.trim()) });
+      cursor = boundary.end;
+    });
+
+    if (cursor < text.length) {
+      parts.push({ text: text.slice(cursor), speakable: false });
+    }
+
+    return parts;
+  }
+
+  function bindTtsTriggerButtons(triggers, state) {
+    triggers.forEach((trigger) => {
+      if (!(trigger instanceof HTMLButtonElement)) {
+        return;
+      }
+
+      trigger.dataset.defaultLabel = trigger.textContent || "Read aloud";
+      trigger.addEventListener("click", () => {
+        const scopeId = trigger.dataset.ttsTrigger || "chapter";
+        startTtsScope(state, scopeId);
+        updateTtsTriggerButtons(triggers, state);
+      });
+    });
+  }
+
+  function bindTtsPlayerControls(state) {
+    state.playToggle.addEventListener("click", () => {
+      if (state.speech.speaking && !state.speech.paused) {
+        state.speech.pause();
+        state.paused = true;
+        updateTtsUi(state);
+        return;
+      }
+
+      if (state.speech.paused) {
+        state.speech.resume();
+        state.paused = false;
+        updateTtsUi(state);
+        return;
+      }
+
+      startTtsScope(state, state.scopeId || "chapter");
+    });
+
+    state.stopButton.addEventListener("click", () => {
+      stopTts(state, true);
+      updateTtsUi(state);
+    });
+
+    state.voiceSelect.addEventListener("change", () => {
+      state.voiceUri = state.voiceSelect.value;
+      localStorage.setItem(ttsVoiceStorageKey, state.voiceUri);
+      updateTtsUi(state);
+      if (state.speech.speaking && !state.speech.paused) {
+        restartCurrentTtsSegment(state);
+      }
+    });
+
+    state.rateInput.addEventListener("input", () => {
+      state.rate = clampNumber(Number(state.rateInput.value || "1"), 0.7, 1.35, 1);
+      localStorage.setItem(ttsRateStorageKey, String(state.rate));
+      updateTtsUi(state);
+      if (state.speech.speaking && !state.speech.paused) {
+        restartCurrentTtsSegment(state);
+      }
+    });
+  }
+
+  function populateVoiceOptions(state) {
+    const voices = state.speech.getVoices().slice().sort((left, right) => left.name.localeCompare(right.name));
+    state.voices = voices;
+    state.voiceSelect.replaceChildren();
+
+    const fallbackOption = document.createElement("option");
+    fallbackOption.value = "";
+    fallbackOption.textContent = "Browser default";
+    state.voiceSelect.append(fallbackOption);
+
+    voices.forEach((voice) => {
+      const option = document.createElement("option");
+      option.value = voice.voiceURI;
+      option.textContent = `${voice.name}${voice.lang ? ` (${voice.lang})` : ""}`;
+      state.voiceSelect.append(option);
+    });
+
+    if (state.voiceUri && voices.some((voice) => voice.voiceURI === state.voiceUri)) {
+      state.voiceSelect.value = state.voiceUri;
+    } else {
+      state.voiceSelect.value = "";
+      state.voiceUri = "";
+    }
+
+    updateTtsUi(state);
+  }
+
+  function updateTtsTriggerButtons(triggers, state) {
+    const savedProgress = readJson(ttsProgressStorageKey);
+    triggers.forEach((trigger) => {
+      if (!(trigger instanceof HTMLButtonElement)) {
+        return;
+      }
+
+      const scopeId = trigger.dataset.ttsTrigger || "chapter";
+      const defaultLabel = trigger.dataset.defaultLabel || "Read aloud";
+      const shouldResume = savedProgress?.path === window.location.pathname && savedProgress.scopeId === scopeId && Number(savedProgress.index) > 0;
+      trigger.textContent = shouldResume ? defaultLabel.replace(/^Read/, "Resume") : defaultLabel;
+    });
+  }
+
+  function startTtsScope(state, scopeId) {
+    const scope = state.scopes.get(scopeId);
+    if (!scope || scope.segments.length === 0) {
+      return;
+    }
+
+    const savedProgress = readJson(ttsProgressStorageKey);
+    state.scopeId = scopeId;
+    state.index = savedProgress?.path === window.location.pathname && savedProgress.scopeId === scopeId
+      ? clampIndex(savedProgress.index, scope.segments.length)
+      : 0;
+
+    state.runId += 1;
+    state.speech.cancel();
+    state.speaking = false;
+    state.paused = false;
+    clearTtsHighlight();
+    speakCurrentTtsSegment(state);
+  }
+
+  function restartCurrentTtsSegment(state) {
+    const scope = state.scopes.get(state.scopeId || "");
+    if (!scope || scope.segments.length === 0) {
+      return;
+    }
+
+    state.runId += 1;
+    state.speech.cancel();
+    state.speaking = false;
+    state.paused = false;
+    speakCurrentTtsSegment(state);
+  }
+
+  function speakCurrentTtsSegment(state) {
+    const scope = state.scopes.get(state.scopeId || "chapter");
+    if (!scope || scope.segments.length === 0) {
+      return;
+    }
+
+    if (state.index >= scope.segments.length) {
+      finishTtsScope(state);
+      return;
+    }
+
+    const segment = scope.segments[state.index];
+    const rawText = normalizeWhitespace(segment.dataset.ttsText || segment.textContent || "");
+    if (!rawText) {
+      state.index += 1;
+      speakCurrentTtsSegment(state);
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(applyPronunciationRules(rawText, state.glossaryRules));
+    const selectedVoice = state.voices.find((voice) => voice.voiceURI === state.voiceUri);
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+    utterance.rate = state.rate;
+
+    const runId = state.runId;
+    utterance.onstart = () => {
+      if (runId !== state.runId) {
+        return;
+      }
+      state.speaking = true;
+      state.paused = false;
+      highlightTtsSegment(segment);
+      saveTtsProgress(state);
+      ensureTtsSegmentVisible(segment);
+      updateTtsUi(state);
+    };
+    utterance.onend = () => {
+      if (runId !== state.runId) {
+        return;
+      }
+      state.index += 1;
+      if (state.index >= scope.segments.length) {
+        finishTtsScope(state);
+        return;
+      }
+      saveTtsProgress(state);
+      speakCurrentTtsSegment(state);
+    };
+    utterance.onerror = () => {
+      if (runId !== state.runId) {
+        return;
+      }
+      state.index += 1;
+      if (state.index >= scope.segments.length) {
+        finishTtsScope(state);
+        return;
+      }
+      speakCurrentTtsSegment(state);
+    };
+
+    state.speech.speak(utterance);
+  }
+
+  function stopTts(state, keepProgress) {
+    state.runId += 1;
+    state.speech.cancel();
+    state.speaking = false;
+    state.paused = false;
+    clearTtsHighlight();
+    if (keepProgress) {
+      saveTtsProgress(state);
+    } else {
+      clearTtsProgress();
+      state.index = 0;
+    }
+  }
+
+  function finishTtsScope(state) {
+    state.runId += 1;
+    state.speech.cancel();
+    state.speaking = false;
+    state.paused = false;
+    state.index = 0;
+    clearTtsProgress();
+    clearTtsHighlight();
+    updateTtsUi(state);
+  }
+
+  function saveTtsProgress(state) {
+    const scope = state.scopes.get(state.scopeId || "chapter");
+    if (!scope) {
+      return;
+    }
+
+    localStorage.setItem(ttsProgressStorageKey, JSON.stringify({
+      path: window.location.pathname,
+      scopeId: state.scopeId,
+      scopeLabel: scope.label,
+      index: state.index,
+    }));
+  }
+
+  function clearTtsProgress() {
+    localStorage.removeItem(ttsProgressStorageKey);
+  }
+
+  function updateTtsUi(state) {
+    const scope = state.scopes.get(state.scopeId || "chapter") || state.scopes.get("chapter");
+    const savedProgress = readJson(ttsProgressStorageKey);
+    const hasResume = savedProgress?.path === window.location.pathname && scope && savedProgress.scopeId === scope.id && Number(savedProgress.index) > 0;
+    const voice = state.voices.find((entry) => entry.voiceURI === state.voiceUri);
+
+    state.titleElement.textContent = scope?.label || "Read aloud";
+    state.labelElement.textContent = state.speaking
+      ? `Reading ${scope?.label || "current scope"}`
+      : hasResume
+        ? `Resume from sentence ${Number(savedProgress.index) + 1} in ${scope?.label || "current scope"}.`
+        : "Choose a chapter or scene to start reading aloud.";
+    state.badgeElement.textContent = voice ? `${voice.name}${voice.lang ? ` - ${voice.lang}` : ""}` : "Browser default";
+    state.statusElement.textContent = state.speaking
+      ? state.paused
+        ? "Paused. Use Resume to continue from the current sentence."
+        : `Speaking at ${state.rate.toFixed(2)}x.`
+      : hasResume
+        ? "Saved reading position available for this page."
+        : "Speech will resume from the saved sentence when available.";
+    state.playToggle.textContent = state.speaking ? (state.paused ? "Resume" : "Pause") : hasResume ? "Resume" : "Read chapter";
+    updateTtsTriggerButtons(state.triggers, state);
+  }
+
+  function highlightTtsSegment(segment) {
+    clearTtsHighlight();
+    segment.classList.add("is-speaking");
+    const scene = segment.closest(".scene");
+    if (scene instanceof HTMLElement) {
+      scene.classList.add("is-speaking");
+    }
+  }
+
+  function clearTtsHighlight() {
+    document.querySelectorAll(".tts-segment.is-speaking").forEach((segment) => segment.classList.remove("is-speaking"));
+    document.querySelectorAll(".scene.is-speaking").forEach((scene) => scene.classList.remove("is-speaking"));
+  }
+
+  function ensureTtsSegmentVisible(segment) {
+    const rect = segment.getBoundingClientRect();
+    if (rect.top < 120 || rect.bottom > window.innerHeight - 180) {
+      segment.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }
+
+  function buildPronunciationRules(entries) {
+    const seen = new Set();
+    return entries
+      .flatMap((entry) => (entry.terms || []).map((term) => ({ term, spokenLabel: entry.spokenLabel || entry.label })))
+      .filter((entry) => {
+        const normalizedTerm = String(entry.term || "").trim();
+        const normalizedSpoken = String(entry.spokenLabel || "").trim();
+        if (!normalizedTerm || !normalizedSpoken || normalizedTerm.toLowerCase() === normalizedSpoken.toLowerCase()) {
+          return false;
+        }
+        const key = `${normalizedTerm.toLowerCase()}=>${normalizedSpoken.toLowerCase()}`;
+        if (seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      })
+      .sort((left, right) => String(right.term).length - String(left.term).length)
+      .map((entry) => ({
+        spokenLabel: String(entry.spokenLabel).trim(),
+        pattern: new RegExp(`(^|[^\\p{L}\\p{N}])(${escapeRegex(String(entry.term).trim())})(?=$|[^\\p{L}\\p{N}])`, "giu"),
+      }));
+  }
+
+  function applyPronunciationRules(text, rules) {
+    return rules.reduce(
+      (output, rule) => output.replace(rule.pattern, (match, boundary) => `${boundary || ""}${rule.spokenLabel}`),
+      text,
+    );
+  }
+
+  function normalizeWhitespace(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+
+  function clampIndex(value, size) {
+    const index = Number(value || 0);
+    if (!Number.isFinite(index)) {
+      return 0;
+    }
+    return Math.max(0, Math.min(Math.floor(index), Math.max(0, size - 1)));
+  }
+
+  function clampNumber(value, min, max, fallback) {
+    if (!Number.isFinite(value)) {
+      return fallback;
+    }
+    return Math.max(min, Math.min(max, value));
   }
 
   function readJson(key) {

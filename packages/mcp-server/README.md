@@ -98,7 +98,46 @@ Point OpenCode or another MCP client at the built server and use tools such as:
 - `rename_paragraph`
 - `start_wizard` / `wizard_answer` / `wizard_finalize`
 - `sync_all_resumes`
+- `sync_story_state`
 - `evaluate_book`
+
+## Continuity workflow
+
+Narrarium now keeps continuity in two layers:
+
+- `resumes/` for human-readable chapter and book summaries
+- `state/` for structured continuity snapshots used by context builders and diagnostics
+
+When you create, rename, promote, or rewrite final chapter or paragraph files through MCP:
+
+- `plot.md`, chapter resumes, and `resumes/total.md` are refreshed automatically
+- `state/status.md` is marked dirty
+- the tool response reminds you to run `sync_story_state` manually
+
+That manual sync regenerates:
+
+- `state/current.md`
+- `state/chapters/*.md`
+- `state/status.md`
+
+The structured input for that sync lives in chapter resume frontmatter under `state_changes`.
+
+Typical pattern:
+
+1. Use `update_paragraph`, `update_chapter`, `create_*_from_draft`, or rename tools.
+2. Review the refreshed resume files.
+3. Add or refine `state_changes` in the affected `resumes/chapters/<slug>.md` file.
+4. Run `sync_story_state` when the rewrite is stable.
+
+Recommended `state_changes` keys:
+
+- `locations`
+- `knowledge_gain` and `knowledge_loss`
+- `inventory_add` and `inventory_remove`
+- `relationship_updates`
+- `conditions`
+- `wounds`
+- `open_loops_add` and `open_loops_resolved`
 
 ## Practical asset examples
 

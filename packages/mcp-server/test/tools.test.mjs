@@ -54,7 +54,7 @@ test("mcp server tools support guided creation and structural updates", async ()
       revealIn: "chapter:008-the-unmasking",
     });
 
-    await callToolText(client, "create_chapter", {
+    const createChapterText = await callToolText(client, "create_chapter", {
       rootPath,
       number: 1,
       title: "Opening Move",
@@ -81,7 +81,7 @@ test("mcp server tools support guided creation and structural updates", async ()
       knownFrom: "chapter:001-opening-move",
     });
 
-    await callToolText(client, "create_paragraph", {
+    const createParagraphText = await callToolText(client, "create_paragraph", {
       rootPath,
       chapter: "chapter:001-opening-move",
       number: 1,
@@ -170,7 +170,7 @@ test("mcp server tools support guided creation and structural updates", async ()
     await callToolText(client, "wizard_answer", { sessionId, answer: "# Purpose\n\nEscalate pressure before sunrise." });
     const finalizeText = await callToolText(client, "wizard_finalize", { sessionId });
 
-    await callToolText(client, "update_chapter", {
+    const updateChapterText = await callToolText(client, "update_chapter", {
       rootPath,
       chapter: "chapter:001-opening-move",
       frontmatterPatch: {
@@ -179,7 +179,7 @@ test("mcp server tools support guided creation and structural updates", async ()
       },
     });
 
-    await callToolText(client, "update_paragraph", {
+    const updateParagraphText = await callToolText(client, "update_paragraph", {
       rootPath,
       chapter: "chapter:001-opening-move",
       paragraph: "001-first-scene",
@@ -226,6 +226,7 @@ test("mcp server tools support guided creation and structural updates", async ()
     });
 
     const resumeText = await callToolText(client, "sync_all_resumes", { rootPath });
+    const storyStateText = await callToolText(client, "sync_story_state", { rootPath });
     const evaluationText = await callToolText(client, "evaluate_book", { rootPath });
     const validationText = await callToolText(client, "validate_book", { rootPath });
     const plotSyncText = await callToolText(client, "sync_plot", { rootPath });
@@ -234,10 +235,14 @@ test("mcp server tools support guided creation and structural updates", async ()
     const chapterDraft = await readFile(path.join(rootPath, "drafts", "001-opening-move", "chapter.md"), "utf8");
     const paragraphDraft = await readFile(path.join(rootPath, "drafts", "001-opening-move", "001-first-scene.md"), "utf8");
     const plotFile = await readFile(path.join(rootPath, "plot.md"), "utf8");
+    const currentStoryState = await readFile(path.join(rootPath, "state", "current.md"), "utf8");
+    const storyStateStatus = await readFile(path.join(rootPath, "state", "status.md"), "utf8");
 
     assert.match(setupText, /npx create-narrarium-book/);
     assert.match(specText, /Narrarium repository structure/);
     assert.match(assetText, /Created asset prompt/);
+    assert.match(createChapterText, /sync_story_state/);
+    assert.match(createParagraphText, /sync_story_state/);
     assert.match(chapterDraftText, /Created chapter draft/);
     assert.match(paragraphDraftText, /Created paragraph draft/);
     assert.match(chapterContextText, /Always-read prose guide/);
@@ -248,17 +253,25 @@ test("mcp server tools support guided creation and structural updates", async ()
     assert.match(paragraphFromDraftText, /Created or updated paragraph from draft/);
     assert.match(chapterFromDraftText, /Chapter resume synced at/);
     assert.match(chapterFromDraftText, /Total resume synced at/);
+    assert.match(chapterFromDraftText, /sync_story_state/);
     assert.match(paragraphFromDraftText, /Chapter resume synced at/);
     assert.match(paragraphFromDraftText, /Total resume synced at/);
+    assert.match(paragraphFromDraftText, /sync_story_state/);
     assert.match(finalizeText, /Created chapter/);
     assert.match(finalizeText, /Chapter resume synced at/);
+    assert.match(finalizeText, /sync_story_state/);
     assert.match(searchText, /The Signal/i);
+    assert.match(updateChapterText, /sync_story_state/);
+    assert.match(updateParagraphText, /sync_story_state/);
     assert.match(renameEntityText, /Renamed character/);
     assert.match(renameChapterText, /Renamed chapter/);
     assert.match(renameParagraphText, /Renamed paragraph/);
     assert.match(renameChapterText, /Total resume synced at/);
     assert.match(renameParagraphText, /Total resume synced at/);
+    assert.match(renameChapterText, /sync_story_state/);
+    assert.match(renameParagraphText, /sync_story_state/);
     assert.match(resumeText, /Synced 2 chapter resumes/);
+    assert.match(storyStateText, /Synced story state at/);
     assert.match(evaluationText, /Synced book evaluation/);
     assert.match(validationText, /Validation passed/);
     assert.match(plotSyncText, /Synced plot at/);
@@ -275,6 +288,8 @@ test("mcp server tools support guided creation and structural updates", async ()
     assert.match(plotFile, /# Plot Overview/);
     assert.match(plotFile, /Lyra forged the harbor arrival ledger/);
     assert.match(plotFile, /2214-06-12/);
+    assert.match(currentStoryState, /Current Story State/);
+    assert.match(storyStateStatus, /dirty: false/);
   } finally {
     await transport.close();
     await rm(rootPath, { recursive: true, force: true });

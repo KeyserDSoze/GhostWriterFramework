@@ -15,6 +15,8 @@ export const BOOK_DIRECTORIES = [
   "conversations/sessions",
   "resumes",
   "resumes/chapters",
+  "state",
+  "state/chapters",
   "evaluations",
   "evaluations/chapters",
   "research",
@@ -67,6 +69,8 @@ export const GUIDELINE_FILES = {
 export const TIMELINE_MAIN_FILE = "timelines/main.md";
 export const TOTAL_RESUME_FILE = "resumes/total.md";
 export const TOTAL_EVALUATION_FILE = "evaluations/total.md";
+export const STORY_STATE_STATUS_FILE = "state/status.md";
+export const STORY_STATE_CURRENT_FILE = "state/current.md";
 
 export const CONTENT_GLOB = [
   "book.md",
@@ -81,6 +85,7 @@ export const CONTENT_GLOB = [
   "chapters/**/*.md",
   "drafts/**/*.md",
   "resumes/**/*.md",
+  "state/**/*.md",
   "evaluations/**/*.md",
   "research/**/*.md",
   "assets/**/*.md",

@@ -254,6 +254,7 @@ function teaserMetaEntries(
       return compactEntries([
         ["Role tier", metadata.role_tier],
         ["Story role", metadata.story_role],
+        ["Pronunciation", metadata.pronunciation],
         ["Occupation", metadata.occupation],
         ["Origin", metadata.origin],
         ["Introduced in", metadata.introduced_in],
@@ -264,12 +265,14 @@ function teaserMetaEntries(
       return compactEntries([
         ["Kind", metadata.location_kind],
         ["Region", metadata.region],
+        ["Pronunciation", metadata.pronunciation],
         ["Atmosphere", metadata.atmosphere],
         ["Full dossier", access.revealedFrom !== null ? formatChapterThreshold(access.revealedFrom) : undefined],
       ]);
     case "faction":
       return compactEntries([
         ["Kind", metadata.faction_kind],
+        ["Pronunciation", metadata.pronunciation],
         ["Public image", metadata.public_image],
         ["Base", metadata.base_location],
         ["Full dossier", access.revealedFrom !== null ? formatChapterThreshold(access.revealedFrom) : undefined],
@@ -277,6 +280,7 @@ function teaserMetaEntries(
     case "item":
       return compactEntries([
         ["Kind", metadata.item_kind],
+        ["Pronunciation", metadata.pronunciation],
         ["Appearance", metadata.appearance],
         ["Introduced in", metadata.introduced_in],
         ["Full dossier", access.revealedFrom !== null ? formatChapterThreshold(access.revealedFrom) : undefined],
@@ -284,6 +288,7 @@ function teaserMetaEntries(
     case "timeline-event":
       return compactEntries([
         ["Date", metadata.date],
+        ["Pronunciation", metadata.pronunciation],
         ["Participants", metadata.participants],
         ["Full dossier", access.revealedFrom !== null ? formatChapterThreshold(access.revealedFrom) : undefined],
       ]);
@@ -299,6 +304,9 @@ function fullMetaEntries(kind: EntityType, metadata: Record<string, unknown>): A
         ["Role tier", metadata.role_tier],
         ["Story role", metadata.story_role],
         ["Speaking style", metadata.speaking_style],
+        ["Pronunciation", metadata.pronunciation],
+        ["Spoken name", metadata.spoken_name],
+        ["TTS label", metadata.tts_label],
         ["Function in book", metadata.function_in_book],
         ["Occupation", metadata.occupation],
         ["Origin", metadata.origin],
@@ -313,6 +321,9 @@ function fullMetaEntries(kind: EntityType, metadata: Record<string, unknown>): A
       return compactEntries([
         ["Kind", metadata.location_kind],
         ["Region", metadata.region],
+        ["Pronunciation", metadata.pronunciation],
+        ["Spoken name", metadata.spoken_name],
+        ["TTS label", metadata.tts_label],
         ["Atmosphere", metadata.atmosphere],
         ["Function in book", metadata.function_in_book],
         ["Landmarks", metadata.landmarks],
@@ -325,6 +336,9 @@ function fullMetaEntries(kind: EntityType, metadata: Record<string, unknown>): A
         ["Kind", metadata.faction_kind],
         ["Mission", metadata.mission],
         ["Ideology", metadata.ideology],
+        ["Pronunciation", metadata.pronunciation],
+        ["Spoken name", metadata.spoken_name],
+        ["TTS label", metadata.tts_label],
         ["Function in book", metadata.function_in_book],
         ["Public image", metadata.public_image],
         ["Hidden agenda", metadata.hidden_agenda],
@@ -338,6 +352,9 @@ function fullMetaEntries(kind: EntityType, metadata: Record<string, unknown>): A
       return compactEntries([
         ["Kind", metadata.item_kind],
         ["Appearance", metadata.appearance],
+        ["Pronunciation", metadata.pronunciation],
+        ["Spoken name", metadata.spoken_name],
+        ["TTS label", metadata.tts_label],
         ["Purpose", metadata.purpose],
         ["Function in book", metadata.function_in_book],
         ["Significance", metadata.significance],
@@ -350,6 +367,9 @@ function fullMetaEntries(kind: EntityType, metadata: Record<string, unknown>): A
     case "timeline-event":
       return compactEntries([
         ["Date", metadata.date],
+        ["Pronunciation", metadata.pronunciation],
+        ["Spoken name", metadata.spoken_name],
+        ["TTS label", metadata.tts_label],
         ["Participants", metadata.participants],
         ["Significance", metadata.significance],
         ["Function in book", metadata.function_in_book],
@@ -360,6 +380,9 @@ function fullMetaEntries(kind: EntityType, metadata: Record<string, unknown>): A
         ["Kind", metadata.secret_kind],
         ["Function in book", metadata.function_in_book],
         ["Stakes", metadata.stakes],
+        ["Pronunciation", metadata.pronunciation],
+        ["Spoken name", metadata.spoken_name],
+        ["TTS label", metadata.tts_label],
         ["Holders", metadata.holders],
         ["Protected by", metadata.protected_by],
         ["False beliefs", metadata.false_beliefs],

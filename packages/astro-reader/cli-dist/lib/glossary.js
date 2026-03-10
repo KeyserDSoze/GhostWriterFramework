@@ -34,6 +34,7 @@ async function buildCanonGlossary(chapterNumber) {
             }
             const id = String(fullEntry.metadata.id ?? `${kind}:${entity.slug}`);
             const label = String(fullEntry.metadata.name ?? fullEntry.metadata.title ?? entity.slug);
+            const spokenLabel = spokenLabelFor(fullEntry.metadata, label);
             const related = await listRelatedCanon(root, id, { limit: 8 });
             const figure = fullMode || access.isRevealed ? await loadAssetFigure(id, label) : null;
             entries.push({
@@ -41,6 +42,7 @@ async function buildCanonGlossary(chapterNumber) {
                 kind,
                 kindLabel: kindLabel(kind),
                 label,
+                spokenLabel,
                 href: entityHref(kind, entity.slug),
                 terms: uniqueStrings(fullMode || access.isRevealed ? [label, ...readAliases(fullEntry.metadata.aliases)] : [label]),
                 summary: summaryFor(kind, fullEntry.metadata, access, fullMode),
@@ -146,17 +148,17 @@ function metaFor(kind, metadata, access, fullMode) {
     }
     switch (kind) {
         case "character":
-            return compactStrings([metadata.role_tier, metadata.story_role, metadata.home_location]);
+            return compactStrings([metadata.role_tier, metadata.story_role, metadata.home_location, metadata.pronunciation]);
         case "location":
-            return compactStrings([metadata.location_kind, metadata.region, metadata.timeline_ref]);
+            return compactStrings([metadata.location_kind, metadata.region, metadata.timeline_ref, metadata.pronunciation]);
         case "faction":
-            return compactStrings([metadata.faction_kind, metadata.base_location, metadata.public_image]);
+            return compactStrings([metadata.faction_kind, metadata.base_location, metadata.public_image, metadata.pronunciation]);
         case "item":
-            return compactStrings([metadata.item_kind, metadata.owner, metadata.introduced_in]);
+            return compactStrings([metadata.item_kind, metadata.owner, metadata.introduced_in, metadata.pronunciation]);
         case "secret":
-            return compactStrings([metadata.secret_kind, metadata.reveal_in, metadata.known_from]);
+            return compactStrings([metadata.secret_kind, metadata.reveal_in, metadata.known_from, metadata.pronunciation]);
         case "timeline-event":
-            return compactStrings([metadata.date, metadata.function_in_book]);
+            return compactStrings([metadata.date, metadata.function_in_book, metadata.pronunciation]);
     }
 }
 function metadataEntriesFor(kind, metadata, access, fullMode) {
@@ -174,6 +176,9 @@ function metadataEntriesFor(kind, metadata, access, fullMode) {
                 ["Occupation", metadata.occupation],
                 ["Origin", metadata.origin],
                 ["Home", metadata.home_location],
+                ["Pronunciation", metadata.pronunciation],
+                ["Spoken name", metadata.spoken_name],
+                ["TTS label", metadata.tts_label],
                 ["Introduced in", metadata.introduced_in],
             ]);
         case "location":
@@ -181,6 +186,9 @@ function metadataEntriesFor(kind, metadata, access, fullMode) {
                 ["Kind", metadata.location_kind],
                 ["Region", metadata.region],
                 ["Timeline", metadata.timeline_ref],
+                ["Pronunciation", metadata.pronunciation],
+                ["Spoken name", metadata.spoken_name],
+                ["TTS label", metadata.tts_label],
                 ["Real world basis", metadata.based_on_real_place],
             ]);
         case "faction":
@@ -188,18 +196,27 @@ function metadataEntriesFor(kind, metadata, access, fullMode) {
                 ["Kind", metadata.faction_kind],
                 ["Base", metadata.base_location],
                 ["Public image", metadata.public_image],
+                ["Pronunciation", metadata.pronunciation],
+                ["Spoken name", metadata.spoken_name],
+                ["TTS label", metadata.tts_label],
                 ["Historical", metadata.historical],
             ]);
         case "item":
             return compactEntries([
                 ["Kind", metadata.item_kind],
                 ["Owner", metadata.owner],
+                ["Pronunciation", metadata.pronunciation],
+                ["Spoken name", metadata.spoken_name],
+                ["TTS label", metadata.tts_label],
                 ["Introduced in", metadata.introduced_in],
                 ["Significance", metadata.significance],
             ]);
         case "secret":
             return compactEntries([
                 ["Kind", metadata.secret_kind],
+                ["Pronunciation", metadata.pronunciation],
+                ["Spoken name", metadata.spoken_name],
+                ["TTS label", metadata.tts_label],
                 ["Reveal in", metadata.reveal_in],
                 ["Known from", metadata.known_from],
                 ["Holders", metadata.holders],
@@ -207,11 +224,22 @@ function metadataEntriesFor(kind, metadata, access, fullMode) {
         case "timeline-event":
             return compactEntries([
                 ["Date", metadata.date],
+                ["Pronunciation", metadata.pronunciation],
+                ["Spoken name", metadata.spoken_name],
+                ["TTS label", metadata.tts_label],
                 ["Participants", metadata.participants],
                 ["Function", metadata.function_in_book],
                 ["Consequences", metadata.consequences],
             ]);
     }
+}
+function spokenLabelFor(metadata, label) {
+    for (const value of [metadata.tts_label, metadata.spoken_name, label]) {
+        if (typeof value === "string" && value.trim()) {
+            return value.trim();
+        }
+    }
+    return label;
 }
 function compactStrings(values) {
     return values

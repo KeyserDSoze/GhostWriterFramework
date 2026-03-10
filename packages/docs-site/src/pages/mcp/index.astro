@@ -41,6 +41,24 @@ const publicHealthUrl = process.env.MCP_HEALTH_URL ?? "https://narrarium.space/h
     </article>
   </section>
 
+  <section class="grid cards" style="margin-top: 1.5rem;">
+    <article class="card">
+      <h3>Continuity workflow</h3>
+      <p>
+        Final chapter and paragraph mutations refresh <code>plot.md</code> and <code>resumes/</code> automatically, but structured continuity state stays manual by design.
+      </p>
+      <p>
+        After stable rewrites, add or refine <code>state_changes</code> in the relevant chapter resume, then run <code>sync_story_state</code> to rebuild <code>state/current.md</code>, <code>state/chapters/</code>, and clear <code>state/status.md</code>.
+      </p>
+    </article>
+    <article class="card">
+      <h3>What doctor checks</h3>
+      <p>
+        <code>doctorBook()</code> and generated reader doctor scripts now flag missing or stale <code>state/</code> snapshots, alongside broken references, spoiler issues, asset metadata gaps, and stale plot or resume files.
+      </p>
+    </article>
+  </section>
+
   <section style="margin-top: 1.5rem;">
     <h2>Local MCP tools</h2>
     <div class="grid" style="gap: 1rem;">

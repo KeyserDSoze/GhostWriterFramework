@@ -6,11 +6,14 @@ export declare function loadHomePageData(): Promise<{
     book: {
         frontmatter: {
             [x: string]: unknown;
+            canon: "canon" | "draft" | "deprecated";
             type: "book";
             id: "book";
             title: string;
             language: string;
-            canon: "canon" | "draft" | "deprecated";
+            pronunciation?: string | undefined;
+            spoken_name?: string | undefined;
+            tts_label?: string | undefined;
             author?: string | undefined;
             genre?: string | undefined;
             audience?: string | undefined;

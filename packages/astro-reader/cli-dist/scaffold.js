@@ -102,7 +102,7 @@ By default the reader uses a spoiler-safe public mode. If you want a private ful
 npm run doctor
 \`\`\`
 
-This checks broken canon references, spoiler thresholds, missing asset metadata, and stale \`plot.md\` or \`resumes/\` files.
+This checks broken canon references, spoiler thresholds, missing asset metadata, and stale \`plot.md\`, \`resumes/\`, or \`state/\` files.
 
 ## Build
 
