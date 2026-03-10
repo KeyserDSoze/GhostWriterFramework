@@ -22,6 +22,8 @@ Use Narrarium as a book-writing framework where the repository is the source of 
    - `sync_resume` or `sync_all_resumes`
    - `evaluate_chapter` or `evaluate_book`
 
+Narrarium MCP already auto-refreshes `plot.md` and the resume files after final chapter or paragraph mutations. Evaluations remain manual unless explicitly requested.
+
 ## Canon discipline
 
 - Do not duplicate canon if the fact already exists in another markdown file.

@@ -1309,7 +1309,7 @@ server.tool(
     });
 
     return textResponse(
-      await appendPlotSyncNote(rootPath, `Created chapter ${result.chapterId} at ${result.chapterFilePath}.`),
+      await appendChapterPathMaintenanceNote(rootPath, result.chapterFilePath, `Created chapter ${result.chapterId} at ${result.chapterFilePath}.`),
     );
   },
 );
@@ -1337,7 +1337,7 @@ server.tool(
     });
 
     return textResponse(
-      await appendPlotSyncNote(rootPath, `Created paragraph ${result.paragraphId} at ${result.filePath}.`),
+      await appendParagraphPathMaintenanceNote(rootPath, result.filePath, `Created paragraph ${result.paragraphId} at ${result.filePath}.`),
     );
   },
 );
@@ -1456,7 +1456,7 @@ server.tool(
       frontmatterPatch,
     });
 
-    return textResponse(await appendPlotSyncNote(rootPath, `Created or updated chapter from draft at ${result.filePath} using ${result.draftPath}. `));
+    return textResponse(await appendChapterPathMaintenanceNote(rootPath, result.filePath, `Created or updated chapter from draft at ${result.filePath} using ${result.draftPath}.`));
   },
 );
 
@@ -1480,7 +1480,7 @@ server.tool(
       frontmatterPatch,
     });
 
-    return textResponse(await appendPlotSyncNote(rootPath, `Created or updated paragraph from draft at ${result.filePath} using ${result.draftPath}. `));
+    return textResponse(await appendParagraphPathMaintenanceNote(rootPath, result.filePath, `Created or updated paragraph from draft at ${result.filePath} using ${result.draftPath}.`));
   },
 );
 
@@ -1656,7 +1656,7 @@ server.tool(
       appendBody,
     });
 
-    return textResponse(await appendPlotSyncNote(rootPath, `Updated chapter at ${result.filePath}.`));
+    return textResponse(await appendChapterPathMaintenanceNote(rootPath, result.filePath, `Updated chapter at ${result.filePath}.`));
   },
 );
 
@@ -1680,7 +1680,7 @@ server.tool(
       appendBody,
     });
 
-    return textResponse(await appendPlotSyncNote(rootPath, `Updated paragraph at ${result.filePath}.`));
+    return textResponse(await appendParagraphPathMaintenanceNote(rootPath, result.filePath, `Updated paragraph at ${result.filePath}.`));
   },
 );
 
@@ -1791,7 +1791,7 @@ server.tool(
       newNumber,
     });
 
-    return textResponse(await appendPlotSyncNote(rootPath, `Renamed chapter from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`));
+    return textResponse(await appendChapterPathMaintenanceNote(rootPath, result.newPath, `Renamed chapter from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`));
   },
 );
 
@@ -1813,7 +1813,7 @@ server.tool(
       newNumber,
     });
 
-    return textResponse(await appendPlotSyncNote(rootPath, `Renamed paragraph from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`));
+    return textResponse(await appendParagraphPathMaintenanceNote(rootPath, result.newPath, `Renamed paragraph from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`));
   },
 );
 
@@ -2018,6 +2018,31 @@ function textResponse(text: string) {
 async function appendPlotSyncNote(rootPath: string, baseText: string): Promise<string> {
   const result = await syncPlot(rootPath);
   return `${baseText} Plot synced at ${result.filePath}.`;
+}
+
+async function appendStoryMaintenanceNote(rootPath: string, chapter: string, baseText: string): Promise<string> {
+  const [plot, chapterResume, totalResume] = await Promise.all([
+    syncPlot(rootPath),
+    syncChapterResume(rootPath, chapter),
+    syncTotalResume(rootPath),
+  ]);
+
+  return [
+    baseText,
+    `Plot synced at ${plot.filePath}.`,
+    `Chapter resume synced at ${chapterResume.filePath}.`,
+    `Total resume synced at ${totalResume.filePath}.`,
+  ].join(" ");
+}
+
+async function appendChapterPathMaintenanceNote(rootPath: string, chapterFilePath: string, baseText: string): Promise<string> {
+  const chapterSlug = path.basename(path.dirname(chapterFilePath));
+  return appendStoryMaintenanceNote(rootPath, chapterSlug, baseText);
+}
+
+async function appendParagraphPathMaintenanceNote(rootPath: string, paragraphFilePath: string, baseText: string): Promise<string> {
+  const chapterSlug = path.basename(path.dirname(paragraphFilePath));
+  return appendStoryMaintenanceNote(rootPath, chapterSlug, baseText);
 }
 
 async function maybeAppendPlotSyncNote(rootPath: string, kind: z.infer<typeof entityTypeSchema>, baseText: string): Promise<string> {
@@ -2434,7 +2459,7 @@ async function finalizeWizardSession(
           ...options.frontmatter,
         },
       });
-      return appendPlotSyncNote(session.rootPath, `Created ${session.kind} at ${result.chapterFilePath}.`);
+      return appendChapterPathMaintenanceNote(session.rootPath, result.chapterFilePath, `Created ${session.kind} at ${result.chapterFilePath}.`);
     }
     case "paragraph": {
       const result = await createParagraph(session.rootPath, {
@@ -2450,7 +2475,7 @@ async function finalizeWizardSession(
           ...options.frontmatter,
         },
       });
-      return appendPlotSyncNote(session.rootPath, `Created ${session.kind} at ${result.filePath}.`);
+      return appendParagraphPathMaintenanceNote(session.rootPath, result.filePath, `Created ${session.kind} at ${result.filePath}.`);
     }
     default:
       throw new Error(`Unsupported wizard kind: ${session.kind}`);

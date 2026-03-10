@@ -80,11 +80,17 @@ async function flushQueuedExport() {
 async function runExport(reason) {
   exportInFlight = true;
   try {
-    const { result } = await exportReaderEpub(defaultBookRoot);
+    const { result, validation } = await exportReaderEpub(defaultBookRoot);
     if (reason === "startup") {
       console.log(`[narrarium-reader] Exported EPUB with ${result.chapterCount} chapters to ${result.outputPath}`);
     } else {
       console.log(`[narrarium-reader] Updated EPUB after ${reason}`);
+    }
+
+    if (validation.status === "passed") {
+      console.log(`[narrarium-reader] ${validation.detail}`);
+    } else if (validation.status === "failed") {
+      console.error(`[narrarium-reader] ${validation.detail}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

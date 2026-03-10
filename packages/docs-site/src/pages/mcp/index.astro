@@ -16,19 +16,19 @@ const publicHealthUrl = process.env.MCP_HEALTH_URL ?? "https://narrarium.space/h
     <p class="eyebrow">Integration</p>
     <h1>MCP server integration</h1>
     <p class="lede">
-      Narrarium exposes a local stdio MCP server for repo mutations and a public HTTP MCP surface for setup and research. This page is generated from the actual MCP source files, so the tool list reflects the implementation.
+      Narrarium exposes a local stdio MCP server for repository mutations and a public HTTP MCP surface for setup and research. This page is generated from the MCP source files, so the tool list reflects the implementation.
     </p>
   </section>
 
   <section class="grid cards">
     <article class="card">
       <h3>Local stdio MCP</h3>
-      <p>Use for canon creation, chapter and scene work, assets, renames, validation, resumes, evaluations, and EPUB export.</p>
+      <p>Use it for canon creation, chapter and scene work, assets, renames, validation, resumes, evaluations, and EPUB export.</p>
       <pre><code>npx narrarium-mcp-server</code></pre>
     </article>
     <article class="card">
       <h3>Public HTTP MCP</h3>
-      <p>Use for setup guidance, repository spec help, and Wikipedia research. Intended for `/mcp` and `/health` deployment on Vercel.</p>
+      <p>Use it for setup guidance, repository spec help, and Wikipedia research. It is intended for `/mcp` and `/health` deployment on Vercel.</p>
       <pre><code>{publicMcpUrl}</code></pre>
       <p><strong>Health:</strong> <code>{publicHealthUrl}</code></p>
     </article>

@@ -3,10 +3,18 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { loadHomePageData } from "../lib/book";
 import AssetFigure from "../components/AssetFigure.astro";
 import { loadAssetFigure } from "../lib/assets";
+import { countPublicCanonEntries } from "../lib/public-canon";
+import { isFullCanonMode } from "../lib/reader-mode";
 
 const { ready, root, book, chapters, characters, locations, factions, items, secrets, timelineEvents } = await loadHomePageData();
 const title = book?.frontmatter.title ?? "Narrarium Reader";
 const coverFigure = await loadAssetFigure("book", `${title} cover`);
+const fullCanonMode = isFullCanonMode();
+const visibleCharacterCount = await countPublicCanonEntries("character", characters);
+const visibleLocationCount = await countPublicCanonEntries("location", locations);
+const visibleFactionCount = await countPublicCanonEntries("faction", factions);
+const visibleItemCount = await countPublicCanonEntries("item", items);
+const visibleTimelineCount = await countPublicCanonEntries("timeline-event", timelineEvents);
 const chapterCards = await Promise.all(
   chapters.map(async (chapter) => ({
     ...chapter,
@@ -59,7 +67,7 @@ const chapterCards = await Promise.all(
               <div class="chapter-number">Characters</div>
               <h3 class="chapter-title">Cast Register</h3>
               <div class="chapter-meta">Browse protagonists, supporting roles, and reference notes.</div>
-              <div class="chip-row"><span class="chip">{characters.length} entries</span></div>
+              <div class="chip-row"><span class="chip">{visibleCharacterCount} visible</span></div>
             </a>
           </article>
           <article class="card catalog-card">
@@ -67,7 +75,7 @@ const chapterCards = await Promise.all(
               <div class="chapter-number">Locations</div>
               <h3 class="chapter-title">World Map</h3>
               <div class="chapter-meta">See atmosphere, narrative use, and key landmarks.</div>
-              <div class="chip-row"><span class="chip">{locations.length} entries</span></div>
+              <div class="chip-row"><span class="chip">{visibleLocationCount} visible</span></div>
             </a>
           </article>
           <article class="card catalog-card">
@@ -75,7 +83,7 @@ const chapterCards = await Promise.all(
               <div class="chapter-number">Factions</div>
               <h3 class="chapter-title">Power Map</h3>
               <div class="chapter-meta">Inspect factions, ideology, methods, and narrative pressure.</div>
-              <div class="chip-row"><span class="chip">{factions.length} entries</span></div>
+              <div class="chip-row"><span class="chip">{visibleFactionCount} visible</span></div>
             </a>
           </article>
           <article class="card catalog-card">
@@ -83,23 +91,25 @@ const chapterCards = await Promise.all(
               <div class="chapter-number">Items</div>
               <h3 class="chapter-title">Artifacts</h3>
               <div class="chapter-meta">Track objects, symbols, tools, and plot-driving artifacts.</div>
-              <div class="chip-row"><span class="chip">{items.length} entries</span></div>
+              <div class="chip-row"><span class="chip">{visibleItemCount} visible</span></div>
             </a>
           </article>
-          <article class="card catalog-card">
-            <a href="secrets/">
-              <div class="chapter-number">Secrets</div>
-              <h3 class="chapter-title">Spoiler Vault</h3>
-              <div class="chapter-meta">Review hidden truths, reveal strategy, and narrative stakes.</div>
-              <div class="chip-row"><span class="chip">{secrets.length} entries</span></div>
-            </a>
-          </article>
+          {fullCanonMode && (
+            <article class="card catalog-card">
+              <a href="secrets/">
+                <div class="chapter-number">Secrets</div>
+                <h3 class="chapter-title">Spoiler Vault</h3>
+                <div class="chapter-meta">Review hidden truths, reveal strategy, and narrative stakes.</div>
+                <div class="chip-row"><span class="chip">{secrets.length} entries</span></div>
+              </a>
+            </article>
+          )}
           <article class="card catalog-card">
             <a href="timeline/">
               <div class="chapter-number">Timeline</div>
               <h3 class="chapter-title">Chronology</h3>
               <div class="chapter-meta">Follow major events and continuity anchors.</div>
-              <div class="chip-row"><span class="chip">{timelineEvents.length} events</span></div>
+              <div class="chip-row"><span class="chip">{visibleTimelineCount} visible</span></div>
             </a>
           </article>
         </div>

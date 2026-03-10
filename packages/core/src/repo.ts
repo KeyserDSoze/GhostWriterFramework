@@ -68,6 +68,8 @@ type MarkdownDocument<T = Record<string, unknown>> = {
   path: string;
 };
 
+const SUPPORTED_REFERENCE_PATTERN = /\b(?:chapter:[a-z0-9-]+|paragraph:[a-z0-9-]+:[a-z0-9-]+|character:[a-z0-9-]+|location:[a-z0-9-]+|faction:[a-z0-9-]+|item:[a-z0-9-]+|secret:[a-z0-9-]+|timeline-event:[a-z0-9-]+)\b/gi;
+
 type SearchHit = {
   path: string;
   score: number;
@@ -95,6 +97,8 @@ type CreateAssetPromptInput = {
   assetKind?: string;
   extension?: string;
   overwrite?: boolean;
+  altText?: string;
+  caption?: string;
   promptStyleRef?: string;
   orientation?: AssetFrontmatter["orientation"];
   aspectRatio?: string;
@@ -269,6 +273,13 @@ type RelatedCanonHit = {
   type: string;
   reason: string;
   score: number;
+};
+
+export type DoctorIssue = {
+  severity: "error" | "warning";
+  code: string;
+  path: string;
+  message: string;
 };
 
 type RenameResult = {
@@ -1093,6 +1104,8 @@ export async function createAssetPrompt(
     subject: prepared.parsedSubject.subject,
     asset_kind: prepared.assetKind,
     path: prepared.imageRelativePath,
+    alt_text: options.altText,
+    caption: options.caption,
     prompt_style_ref: options.promptStyleRef ?? "guideline:images",
     orientation: options.orientation ?? "portrait",
     aspect_ratio: options.aspectRatio ?? "2:3",
@@ -1170,6 +1183,8 @@ export async function registerAsset(
     subject: prepared.parsedSubject.subject,
     asset_kind: prepared.assetKind,
     path: prepared.imageRelativePath,
+    alt_text: options.altText,
+    caption: options.caption,
     prompt_style_ref: options.promptStyleRef ?? "guideline:images",
     orientation: options.orientation ?? "portrait",
     aspect_ratio: options.aspectRatio ?? "2:3",
@@ -2218,82 +2233,88 @@ export async function listRelatedCanon(
   return hits.sort((left, right) => right.score - left.score).slice(0, options?.limit ?? 12);
 }
 
-export async function syncChapterResume(
-  rootPath: string,
-  chapter: string,
+async function buildChapterResumeDocument(
+  root: string,
+  chapterSlug: string,
 ): Promise<{ filePath: string; content: string }> {
-  const root = path.resolve(rootPath);
-  const chapterSlug = normalizeChapterReference(chapter);
   const chapterData = await readChapter(root, chapterSlug);
   const filePath = path.join(root, "resumes", "chapters", `${chapterSlug}.md`);
   const summary = chapterData.metadata.summary ?? summarizeText(chapterData.body, 220);
 
-  const content = renderMarkdown(
-    {
-      type: "resume",
-      id: `resume:chapter:${chapterSlug}`,
-      title: `Resume ${chapterSlug}`,
-      chapter: `chapter:${chapterSlug}`,
-    },
-    [
-      "# Chapter Summary",
-      "",
-      summary || "Add a chapter-level summary here.",
-      "",
-      "# Scene Trail",
-      "",
-      ...chapterData.paragraphs.flatMap((paragraph) => [
-        `## ${formatOrdinal(paragraph.metadata.number)} ${paragraph.metadata.title}`,
+  return {
+    filePath,
+    content: renderMarkdown(
+      {
+        type: "resume",
+        id: `resume:chapter:${chapterSlug}`,
+        title: `Resume ${chapterSlug}`,
+        chapter: `chapter:${chapterSlug}`,
+      },
+      [
+        "# Chapter Summary",
         "",
-        (paragraph.metadata.summary ?? summarizeText(paragraph.body, 180)) || "Add a scene summary here.",
+        summary || "Add a chapter-level summary here.",
         "",
-      ]),
-      "# Canon Hooks",
-      "",
-      `- POV: ${(chapterData.metadata.pov ?? []).join(", ") || "not set"}`,
-      `- Timeline: ${chapterData.metadata.timeline_ref ?? "not set"}`,
-      `- Tags: ${(chapterData.metadata.tags ?? []).join(", ") || "none"}`,
-    ].join("\n"),
-  );
-
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, content, "utf8");
-  return { filePath, content };
+        "# Scene Trail",
+        "",
+        ...chapterData.paragraphs.flatMap((paragraph) => [
+          `## ${formatOrdinal(paragraph.metadata.number)} ${paragraph.metadata.title}`,
+          "",
+          (paragraph.metadata.summary ?? summarizeText(paragraph.body, 180)) || "Add a scene summary here.",
+          "",
+        ]),
+        "# Canon Hooks",
+        "",
+        `- POV: ${(chapterData.metadata.pov ?? []).join(", ") || "not set"}`,
+        `- Timeline: ${chapterData.metadata.timeline_ref ?? "not set"}`,
+        `- Tags: ${(chapterData.metadata.tags ?? []).join(", ") || "none"}`,
+      ].join("\n"),
+    ),
+  };
 }
 
-export async function syncTotalResume(
-  rootPath: string,
+async function buildTotalResumeDocument(
+  root: string,
 ): Promise<{ filePath: string; content: string; chapterCount: number }> {
-  const root = path.resolve(rootPath);
   const chapters = await listChapters(root);
   const filePath = path.join(root, TOTAL_RESUME_FILE);
+  const chapterSummaries: Array<{ number: number; title: string; summary: string }> = [];
 
-  const content = renderMarkdown(
-    {
-      type: "resume",
-      id: "resume:total",
-      title: "Total Resume",
-    },
-    [
-      "# Book So Far",
-      "",
-      ...chapters.flatMap((chapter) => [
-        `## Chapter ${formatOrdinal(chapter.metadata.number)} ${chapter.metadata.title}`,
-        "",
-        chapter.metadata.summary ?? "Add chapter summary here.",
-        "",
-      ]),
-    ].join("\n"),
-  );
+  for (const chapter of chapters) {
+    const chapterData = await readChapter(root, chapter.slug);
+    chapterSummaries.push({
+      number: chapter.metadata.number,
+      title: chapter.metadata.title,
+      summary: buildChapterOverviewSummary(chapterData),
+    });
+  }
 
-  await writeFile(filePath, content, "utf8");
-  return { filePath, content, chapterCount: chapters.length };
+  return {
+    filePath,
+    content: renderMarkdown(
+      {
+        type: "resume",
+        id: "resume:total",
+        title: "Total Resume",
+      },
+      [
+        "# Book So Far",
+        "",
+        ...chapterSummaries.flatMap((chapter) => [
+          `## Chapter ${formatOrdinal(chapter.number)} ${chapter.title}`,
+          "",
+          chapter.summary,
+          "",
+        ]),
+      ].join("\n"),
+    ),
+    chapterCount: chapters.length,
+  };
 }
 
-export async function syncPlot(
-  rootPath: string,
+async function buildPlotDocument(
+  root: string,
 ): Promise<{ filePath: string; content: string; chapterCount: number }> {
-  const root = path.resolve(rootPath);
   const book = await readBook(root);
   const chapters = await listChapters(root);
   const secrets = await listEntities(root, "secret");
@@ -2349,35 +2370,66 @@ export async function syncPlot(
     .filter((secret) => !secret.metadata.reveal_in || !matchesAnyChapter(secret.metadata.reveal_in, chapters.map((chapter) => chapter.slug)))
     .map((secret) => formatPlotSecretParkingLine(secret.metadata));
 
-  const content = renderMarkdown(
-    plotSchema.parse({
-      type: "plot",
-      id: "plot:main",
-      title: `${book?.frontmatter.title ?? "Book"} Plot`,
-    }),
-    [
-      "# Plot Overview",
-      "",
-      `- Book: ${book?.frontmatter.title ?? "Untitled book"}`,
-      `- Chapters tracked: ${chapters.length}`,
-      `- Secrets tracked: ${secrets.length}`,
-      `- Timeline events tracked: ${timelineEvents.length}`,
-      "",
-      "# Chapter Map",
-      "",
-      ...(chapterSections.length > 0 ? chapterSections : ["No chapters yet. Add chapters and scenes, then sync this file again.", ""]),
-      "# Pending Or Unplaced Reveals",
-      "",
-      bulletLines(
-        unrevealedSecrets.length > 0
-          ? unrevealedSecrets
-          : ["All current secrets are tied to a chapter reveal, or no secrets exist yet."],
-      ),
-    ].join("\n"),
-  );
+  return {
+    filePath,
+    content: renderMarkdown(
+      plotSchema.parse({
+        type: "plot",
+        id: "plot:main",
+        title: `${book?.frontmatter.title ?? "Book"} Plot`,
+      }),
+      [
+        "# Plot Overview",
+        "",
+        `- Book: ${book?.frontmatter.title ?? "Untitled book"}`,
+        `- Chapters tracked: ${chapters.length}`,
+        `- Secrets tracked: ${secrets.length}`,
+        `- Timeline events tracked: ${timelineEvents.length}`,
+        "",
+        "# Chapter Map",
+        "",
+        ...(chapterSections.length > 0 ? chapterSections : ["No chapters yet. Add chapters and scenes, then sync this file again.", ""]),
+        "# Pending Or Unplaced Reveals",
+        "",
+        bulletLines(
+          unrevealedSecrets.length > 0
+            ? unrevealedSecrets
+            : ["All current secrets are tied to a chapter reveal, or no secrets exist yet."],
+        ),
+      ].join("\n"),
+    ),
+    chapterCount: chapters.length,
+  };
+}
 
+export async function syncChapterResume(
+  rootPath: string,
+  chapter: string,
+): Promise<{ filePath: string; content: string }> {
+  const root = path.resolve(rootPath);
+  const chapterSlug = normalizeChapterReference(chapter);
+  const { filePath, content } = await buildChapterResumeDocument(root, chapterSlug);
+  await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, content, "utf8");
-  return { filePath, content, chapterCount: chapters.length };
+  return { filePath, content };
+}
+
+export async function syncTotalResume(
+  rootPath: string,
+): Promise<{ filePath: string; content: string; chapterCount: number }> {
+  const root = path.resolve(rootPath);
+  const { filePath, content, chapterCount } = await buildTotalResumeDocument(root);
+  await writeFile(filePath, content, "utf8");
+  return { filePath, content, chapterCount };
+}
+
+export async function syncPlot(
+  rootPath: string,
+): Promise<{ filePath: string; content: string; chapterCount: number }> {
+  const root = path.resolve(rootPath);
+  const { filePath, content, chapterCount } = await buildPlotDocument(root);
+  await writeFile(filePath, content, "utf8");
+  return { filePath, content, chapterCount };
 }
 
 export async function syncAllResumes(
@@ -2572,6 +2624,213 @@ export async function validateBook(rootPath: string): Promise<{
   };
 }
 
+export async function doctorBook(rootPath: string): Promise<{
+  ok: boolean;
+  checked: number;
+  errors: number;
+  warnings: number;
+  issues: DoctorIssue[];
+}> {
+  const root = path.resolve(rootPath);
+  const issues: DoctorIssue[] = [];
+  const seen = new Set<string>();
+  const validation = await validateBook(root);
+
+  for (const error of validation.errors) {
+    addDoctorIssue(issues, seen, {
+      severity: "error",
+      code: "schema-invalid",
+      path: error.path,
+      message: error.message,
+    });
+  }
+
+  const contentFiles = await fg(CONTENT_GLOB, {
+    cwd: root,
+    absolute: true,
+    onlyFiles: true,
+    ignore: ["**/node_modules/**", "**/dist/**", "**/.astro/**"],
+  });
+  const chapters = await listChapters(root);
+  const chapterOrder = new Map(chapters.map((chapter) => [chapter.slug, chapter.metadata.number]));
+  const validReferences = await buildReferenceLookup(root, chapters);
+  const secretReferences = await buildEntityReferenceLookup(root, "secret");
+
+  for (const filePath of contentFiles) {
+    const relativePath = toPosixPath(path.relative(root, filePath));
+    const raw = await readFile(filePath, "utf8");
+    const parsed = matter(raw);
+    const frontmatter = parsed.data as Record<string, unknown>;
+    const body = String(parsed.content ?? "");
+
+    for (const reference of collectSupportedReferences(frontmatter, body)) {
+      if (validReferences.has(reference.toLowerCase())) continue;
+      addDoctorIssue(issues, seen, {
+        severity: "warning",
+        code: "broken-reference",
+        path: relativePath,
+        message: `Reference points to missing canon: ${reference}`,
+      });
+    }
+
+    const knownFrom = resolveChapterNumberFromReference(frontmatter.known_from, chapterOrder);
+    const revealIn = resolveChapterNumberFromReference(frontmatter.reveal_in, chapterOrder);
+
+    if (frontmatter.known_from !== undefined && knownFrom === null) {
+      addDoctorIssue(issues, seen, {
+        severity: "warning",
+        code: "invalid-known-from",
+        path: relativePath,
+        message: `known_from does not match an existing chapter: ${String(frontmatter.known_from)}`,
+      });
+    }
+
+    if (frontmatter.reveal_in !== undefined && revealIn === null) {
+      addDoctorIssue(issues, seen, {
+        severity: "warning",
+        code: "invalid-reveal-in",
+        path: relativePath,
+        message: `reveal_in does not match an existing chapter: ${String(frontmatter.reveal_in)}`,
+      });
+    }
+
+    if (knownFrom !== null && revealIn !== null && knownFrom > revealIn) {
+      addDoctorIssue(issues, seen, {
+        severity: "error",
+        code: "spoiler-order",
+        path: relativePath,
+        message: `known_from resolves after reveal_in (${String(frontmatter.known_from)} > ${String(frontmatter.reveal_in)})`,
+      });
+    }
+
+    const secretRefs = Array.isArray(frontmatter.secret_refs)
+      ? frontmatter.secret_refs.filter((value): value is string => typeof value === "string")
+      : [];
+    for (const secretRef of secretRefs) {
+      if (secretReferences.has(secretRef.toLowerCase())) continue;
+      addDoctorIssue(issues, seen, {
+        severity: "warning",
+        code: "missing-secret-ref",
+        path: relativePath,
+        message: `secret_refs references a missing secret: ${secretRef}`,
+      });
+    }
+  }
+
+  const assetFiles = await fg("assets/**/*.md", {
+    cwd: root,
+    absolute: true,
+    onlyFiles: true,
+    ignore: ["**/node_modules/**", "**/dist/**", "**/.astro/**"],
+  });
+
+  for (const filePath of assetFiles) {
+    const relativePath = toPosixPath(path.relative(root, filePath));
+    const document = await readMarkdownFile(filePath, assetSchema);
+    const imagePath = path.join(root, document.frontmatter.path);
+    const imageExists = await pathExists(imagePath);
+
+    if (!imageExists) {
+      addDoctorIssue(issues, seen, {
+        severity: "warning",
+        code: "missing-asset-image",
+        path: relativePath,
+        message: `Asset image is missing at ${document.frontmatter.path}`,
+      });
+    }
+
+    if (imageExists && !String(document.frontmatter.alt_text ?? "").trim()) {
+      addDoctorIssue(issues, seen, {
+        severity: "warning",
+        code: "missing-alt-text",
+        path: relativePath,
+        message: "Asset has an image file but no alt_text frontmatter.",
+      });
+    }
+  }
+
+  const expectedPlot = await buildPlotDocument(root).catch(() => null);
+  const currentPlot = await readPlot(root);
+  if (!currentPlot) {
+    addDoctorIssue(issues, seen, {
+      severity: "warning",
+      code: "missing-plot",
+      path: PLOT_FILE,
+      message: "plot.md is missing. Run sync_plot to regenerate it.",
+    });
+  } else if (
+    expectedPlot &&
+    normalizeComparableMarkdown(await readFile(path.join(root, PLOT_FILE), "utf8")) !== normalizeComparableMarkdown(expectedPlot.content)
+  ) {
+    addDoctorIssue(issues, seen, {
+      severity: "warning",
+      code: "stale-plot",
+      path: PLOT_FILE,
+      message: "plot.md does not match the current canon state. Run sync_plot.",
+    });
+  }
+
+  const expectedTotalResume = await buildTotalResumeDocument(root).catch(() => null);
+  const currentTotalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE));
+  if (!currentTotalResume) {
+    addDoctorIssue(issues, seen, {
+      severity: "warning",
+      code: "missing-total-resume",
+      path: TOTAL_RESUME_FILE,
+      message: "resumes/total.md is missing. Run sync_resume or sync_all_resumes.",
+    });
+  } else if (
+    expectedTotalResume &&
+    normalizeComparableMarkdown(await readFile(path.join(root, TOTAL_RESUME_FILE), "utf8")) !== normalizeComparableMarkdown(expectedTotalResume.content)
+  ) {
+    addDoctorIssue(issues, seen, {
+      severity: "warning",
+      code: "stale-total-resume",
+      path: TOTAL_RESUME_FILE,
+      message: "resumes/total.md is out of sync with current chapters. Run sync_resume or sync_all_resumes.",
+    });
+  }
+
+  for (const chapter of chapters) {
+    const relativePath = toPosixPath(path.join("resumes", "chapters", `${chapter.slug}.md`));
+    const expectedChapterResume = await buildChapterResumeDocument(root, chapter.slug).catch(() => null);
+    const currentChapterResume = await readLooseMarkdownIfExists(path.join(root, relativePath));
+
+    if (!currentChapterResume) {
+      addDoctorIssue(issues, seen, {
+        severity: "warning",
+        code: "missing-chapter-resume",
+        path: relativePath,
+        message: `Chapter resume is missing for ${chapter.metadata.title}. Run sync_resume for ${chapter.slug}.`,
+      });
+      continue;
+    }
+
+    if (
+      expectedChapterResume &&
+      normalizeComparableMarkdown(await readFile(path.join(root, relativePath), "utf8")) !== normalizeComparableMarkdown(expectedChapterResume.content)
+    ) {
+      addDoctorIssue(issues, seen, {
+        severity: "warning",
+        code: "stale-chapter-resume",
+        path: relativePath,
+        message: `Chapter resume is out of sync for ${chapter.metadata.title}. Run sync_resume for ${chapter.slug}.`,
+      });
+    }
+  }
+
+  const errors = issues.filter((issue) => issue.severity === "error").length;
+  const warnings = issues.length - errors;
+
+  return {
+    ok: errors === 0,
+    checked: validation.checked,
+    errors,
+    warnings,
+    issues,
+  };
+}
+
 export async function exportEpub(
   rootPath: string,
   options?: {
@@ -2579,12 +2838,14 @@ export async function exportEpub(
     title?: string;
     author?: string;
     language?: string;
+    includeCanonIndex?: boolean;
   },
 ): Promise<{ outputPath: string; chapterCount: number }> {
   const root = path.resolve(rootPath);
   const book = await readBook(root);
   const chapters = await listChapters(root);
   const coverAsset = await readAsset(root, "book", "cover");
+  const includeCanonIndex = options?.includeCanonIndex ?? true;
 
   if (chapters.length === 0) {
     throw new Error("Cannot export EPUB: no chapters found.");
@@ -2604,25 +2865,51 @@ export async function exportEpub(
 
   const content = [] as Array<{ title: string; content: string }>;
 
+  content.push({
+    title: "Opening",
+    content: renderEpubOpeningPage({
+      title,
+      author,
+      language,
+      coverAsset,
+      chapterCount: chapters.length,
+    }),
+  });
+
   for (const chapter of chapters) {
     const chapterData = await readChapter(root, chapter.slug);
-    const chapterImageHtml = renderEpubAssetFigure(
-      await readAsset(root, String(chapterData.metadata.id), "primary"),
-      `${chapterData.metadata.title} illustration`,
-    );
+    const chapterImageHtml = renderEpubAssetFigure(await readAsset(root, String(chapterData.metadata.id), "primary"), `${chapterData.metadata.title} illustration`);
+    const sceneIndexHtml = chapterData.paragraphs.length > 0
+      ? `<nav><h2>Scenes</h2><ol>${chapterData.paragraphs
+          .map((paragraph, index) => `<li><a href="#scene-${index + 1}">${escapeHtml(paragraph.metadata.title)}</a></li>`)
+          .join("")}</ol></nav>`
+      : "";
     const paragraphsHtml = (
       await Promise.all(
-        chapterData.paragraphs.map(async (paragraph) => {
+        chapterData.paragraphs.map(async (paragraph, index) => {
           const paragraphImageHtml = renderEpubAssetFigure(
             await readAsset(root, String(paragraph.metadata.id), "primary"),
             `${paragraph.metadata.title} illustration`,
           );
-          return `<section><h2>${paragraph.metadata.title}</h2>${marked.parse(paragraph.body)}${paragraphImageHtml}</section>`;
+          const paragraphSummary = typeof paragraph.metadata.summary === "string" && paragraph.metadata.summary.trim()
+            ? `<p><em>${escapeHtml(paragraph.metadata.summary)}</em></p>`
+            : "";
+          return `<section id="scene-${index + 1}"><h2>${escapeHtml(paragraph.metadata.title)}</h2>${paragraphSummary}${marked.parse(paragraph.body)}${paragraphImageHtml}</section>`;
         }),
       )
     ).join("\n");
-    const chapterHtml = `<article><h1>${chapterData.metadata.title}</h1>${marked.parse(chapterData.body)}${chapterImageHtml}${paragraphsHtml}</article>`;
+    const chapterSummary = typeof chapterData.metadata.summary === "string" && chapterData.metadata.summary.trim()
+      ? `<p><em>${escapeHtml(chapterData.metadata.summary)}</em></p>`
+      : "";
+    const chapterHtml = `<article><h1>${escapeHtml(chapterData.metadata.title)}</h1>${chapterSummary}${marked.parse(chapterData.body)}${chapterImageHtml}${sceneIndexHtml}${paragraphsHtml}</article>`;
     content.push({ title: chapterData.metadata.title, content: chapterHtml });
+  }
+
+  if (includeCanonIndex) {
+    const canonIndexHtml = await renderEpubCanonIndex(root);
+    if (canonIndexHtml) {
+      content.push({ title: "Canon Index", content: canonIndexHtml });
+    }
   }
 
   const renderEpub = typeof epubModule.default === "function" ? epubModule.default : epubModule.default.default;
@@ -2636,6 +2923,9 @@ export async function exportEpub(
       css: [
         "body { font-family: serif; line-height: 1.55; }",
         "h1, h2 { font-family: serif; }",
+        "nav ol { padding-left: 1.2rem; }",
+        "figure { margin: 1.8rem 0; text-align: center; }",
+        "figcaption { font-size: 0.9em; color: #555; }",
         ".epub-figure { margin: 2.2rem 0 0; page-break-inside: avoid; text-align: center; }",
         ".epub-figure.epub-figure-full { page-break-before: always; break-before: page; }",
         ".epub-figure img { display: block; width: 100%; max-height: 100vh; height: auto; object-fit: contain; }",
@@ -2653,6 +2943,7 @@ export async function exportEpub(
 function renderEpubAssetFigure(
   asset:
     | {
+        metadata: AssetFrontmatter;
         imagePath: string;
         imageExists: boolean;
       }
@@ -2663,7 +2954,74 @@ function renderEpubAssetFigure(
     return "";
   }
 
-  return `<section class="epub-figure epub-figure-full"><img src="${pathToFileURL(asset.imagePath).href}" alt="${escapeHtml(alt)}" /></section>`;
+  const caption = typeof asset.metadata.caption === "string" && asset.metadata.caption.trim()
+    ? `<figcaption>${escapeHtml(asset.metadata.caption)}</figcaption>`
+    : "";
+  const figureAlt = typeof asset.metadata.alt_text === "string" && asset.metadata.alt_text.trim() ? asset.metadata.alt_text : alt;
+
+  return `<figure class="epub-figure epub-figure-full"><img src="${pathToFileURL(asset.imagePath).href}" alt="${escapeHtml(figureAlt)}" />${caption}</figure>`;
+}
+
+function renderEpubOpeningPage(input: {
+  title: string;
+  author: string;
+  language: string;
+  chapterCount: number;
+  coverAsset:
+    | {
+        metadata: AssetFrontmatter;
+        imagePath: string;
+        imageExists: boolean;
+      }
+    | null;
+}): string {
+  return [
+    "<article>",
+    `<h1>${escapeHtml(input.title)}</h1>`,
+    `<p><strong>Author:</strong> ${escapeHtml(input.author)}</p>`,
+    `<p><strong>Language:</strong> ${escapeHtml(input.language)}</p>`,
+    `<p><strong>Chapters:</strong> ${input.chapterCount}</p>`,
+    renderEpubAssetFigure(input.coverAsset, `${input.title} cover`),
+    "</article>",
+  ].join("");
+}
+
+async function renderEpubCanonIndex(root: string): Promise<string> {
+  const groups = await Promise.all([
+    buildEpubCanonSection(root, "character", "Characters"),
+    buildEpubCanonSection(root, "location", "Locations"),
+    buildEpubCanonSection(root, "faction", "Factions"),
+    buildEpubCanonSection(root, "item", "Items"),
+    buildEpubCanonSection(root, "timeline-event", "Timeline"),
+  ]);
+  const sections = groups.filter(Boolean);
+  if (sections.length === 0) {
+    return "";
+  }
+
+  return `<article><h1>Canon Index</h1>${sections.join("")}</article>`;
+}
+
+async function buildEpubCanonSection(root: string, kind: EntityType, heading: string): Promise<string> {
+  const entities = await listEntities(root, kind);
+  if (entities.length === 0) {
+    return "";
+  }
+
+  const rows = entities.map((entity) => {
+    const label = String(entity.metadata.name ?? entity.metadata.title ?? entity.slug);
+    const summary = summarizeText(
+      typeof entity.metadata.function_in_book === "string"
+        ? entity.metadata.function_in_book
+        : typeof entity.metadata.significance === "string"
+          ? entity.metadata.significance
+          : entity.body,
+      180,
+    );
+    return `<li><strong>${escapeHtml(label)}</strong>${summary ? ` - ${escapeHtml(summary)}` : ""}</li>`;
+  });
+
+  return `<section><h2>${escapeHtml(heading)}</h2><ul>${rows.join("")}</ul></section>`;
 }
 
 function escapeHtml(value: string): string {
@@ -3702,6 +4060,27 @@ function addContextSection(
   );
 }
 
+function buildChapterOverviewSummary(chapterData: {
+  metadata: ChapterFrontmatter;
+  body: string;
+  paragraphs: Array<{ metadata: ParagraphFrontmatter; body: string }>;
+}): string {
+  if (chapterData.metadata.summary?.trim()) {
+    return chapterData.metadata.summary;
+  }
+
+  const sceneSummaries = chapterData.paragraphs
+    .map((paragraph) => paragraph.metadata.summary ?? summarizeText(paragraph.body, 140))
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .slice(0, 3);
+
+  if (sceneSummaries.length > 0) {
+    return sceneSummaries.join(" ");
+  }
+
+  return summarizeText(chapterData.body, 260) || "Add chapter summary here.";
+}
+
 function compactFrontmatterPatch(input: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(input).filter(([, value]) => {
@@ -3746,6 +4125,108 @@ async function listLatestConversationExports(
         path.basename(entry.filePath, ".md"),
       excerpt: summarizeText(entry.document.body, 700) || "No conversation content yet.",
     }));
+}
+
+async function buildReferenceLookup(root: string, chapters?: Array<{ slug: string; metadata: ChapterFrontmatter }>): Promise<Set<string>> {
+  const references = new Set<string>(["book", "plot:main"]);
+  const chapterList = chapters ?? (await listChapters(root));
+
+  for (const chapter of chapterList) {
+    references.add(String(chapter.metadata.id ?? `chapter:${chapter.slug}`).toLowerCase());
+    references.add(`chapter:${chapter.slug}`.toLowerCase());
+    references.add(chapter.slug.toLowerCase());
+
+    const chapterData = await readChapter(root, chapter.slug);
+    for (const paragraph of chapterData.paragraphs) {
+      const paragraphSlug = path.basename(paragraph.path, ".md");
+      references.add(String(paragraph.metadata.id).toLowerCase());
+      references.add(`paragraph:${chapter.slug}:${paragraphSlug}`.toLowerCase());
+    }
+  }
+
+  for (const kind of ENTITY_TYPES) {
+    const entities = await listEntities(root, kind);
+    for (const entity of entities) {
+      references.add(String(entity.metadata.id ?? `${kind}:${entity.slug}`).toLowerCase());
+      references.add(`${kind}:${entity.slug}`.toLowerCase());
+    }
+  }
+
+  return references;
+}
+
+async function buildEntityReferenceLookup(root: string, kind: EntityType): Promise<Set<string>> {
+  const references = new Set<string>();
+  const entities = await listEntities(root, kind);
+  for (const entity of entities) {
+    references.add(String(entity.metadata.id ?? `${kind}:${entity.slug}`).toLowerCase());
+    references.add(`${kind}:${entity.slug}`.toLowerCase());
+  }
+  return references;
+}
+
+function collectSupportedReferences(frontmatter: Record<string, unknown>, body: string): string[] {
+  const references = new Set<string>();
+  collectReferencesFromValue(frontmatter, references);
+
+  for (const match of body.matchAll(SUPPORTED_REFERENCE_PATTERN)) {
+    if (match[0]) {
+      references.add(match[0]);
+    }
+  }
+
+  return Array.from(references);
+}
+
+function collectReferencesFromValue(value: unknown, references: Set<string>): void {
+  if (typeof value === "string") {
+    for (const match of value.matchAll(SUPPORTED_REFERENCE_PATTERN)) {
+      if (match[0]) {
+        references.add(match[0]);
+      }
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectReferencesFromValue(entry, references);
+    }
+    return;
+  }
+
+  if (value && typeof value === "object") {
+    for (const entry of Object.values(value)) {
+      collectReferencesFromValue(entry, references);
+    }
+  }
+}
+
+function resolveChapterNumberFromReference(reference: unknown, chapterOrder: Map<string, number>): number | null {
+  if (typeof reference !== "string") {
+    return null;
+  }
+
+  for (const [slug, number] of chapterOrder.entries()) {
+    if (matchesChapterReference(reference, slug)) {
+      return number;
+    }
+  }
+
+  return null;
+}
+
+function normalizeComparableMarkdown(value: string): string {
+  return value.replace(/\r\n/g, "\n").trim();
+}
+
+function addDoctorIssue(issues: DoctorIssue[], seen: Set<string>, issue: DoctorIssue): void {
+  const key = `${issue.severity}:${issue.code}:${issue.path}:${issue.message}`;
+  if (seen.has(key)) {
+    return;
+  }
+  seen.add(key);
+  issues.push(issue);
 }
 
 function collectChapterTimelineEvents(

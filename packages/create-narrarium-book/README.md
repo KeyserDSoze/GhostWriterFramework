@@ -1,6 +1,6 @@
 # create-narrarium-book
 
-Starter CLI for scaffolding a Narrarium book repository.
+Starter CLI for scaffolding and upgrading Narrarium book repositories.
 
 ## Install
 
@@ -20,8 +20,15 @@ You can also use the published package directly with `npx`:
 npx create-narrarium-book my-book --title "My Book" --language en
 ```
 
-By default the starter now scaffolds a reader app in `reader/`, installs its dependencies automatically, and wires live book watching into `npm run dev`.
-It also writes a root `package.json` so you can run the reader from the book root with `npm run dev`, `npm run build`, and `npm run export:epub`.
+By default the starter:
+
+- scaffolds a reader app in `reader/`
+- installs the reader dependencies automatically
+- writes root convenience scripts for `npm run dev`, `npm run build`, `npm run export:epub`, and `npm run doctor`
+- prepares OpenCode config, portable conversation exports, `/resume-book`, and GitHub Pages wiring
+
+The generated reader starts in spoiler-safe public mode by default. For an author-only or spoiler-friendly atlas, set `NARRARIUM_READER_CANON_MODE=full` in the reader environment before `dev` or `build`.
+
 If you already know the GitHub Pages custom domain, pass `--pages-domain your-domain.com` to preconfigure the generated reader and Pages workflow.
 
 ## Upgrade an existing book repo
@@ -38,16 +45,16 @@ If the repo has a generated reader and you also want to refresh it:
 npx create-narrarium-book --upgrade . --with-reader
 ```
 
-The upgrade command creates missing folders, updates managed OpenCode and skill files, and backs up overwritten scaffold files into `.narrarium-upgrade-backups/`.
+The upgrade command creates missing folders, refreshes managed OpenCode and skill files, updates root convenience scripts, and backs up overwritten scaffold files into `.narrarium-upgrade-backups/`.
 
 ## What it creates
 
-- canonical book folders such as `characters/`, `locations/`, `factions/`, `chapters/`, `secrets/`
-- `guidelines/`, `conversations/`, `resumes/`, `evaluations/`, and `research/wikipedia/`
+- canonical book folders such as `characters/`, `locations/`, `factions/`, `chapters/`, `drafts/`, and `secrets/`
+- `plot.md`, `guidelines/`, `conversations/`, `resumes/`, `evaluations/`, and `research/wikipedia/`
 - `opencode.jsonc` plus bundled Narrarium skills for OpenCode and Claude, with book-writing defaults for deeper reasoning and more detailed answers
 - `conversations/README.md` plus automatic OpenCode exports, `RESUME.md`, `CONTINUATION.md`, and a `/resume-book` command for restarting from repo state
 - optional sample content
-- standalone Astro reader scaffold with theme toggle, live reload while writing, EPUB export, and GitHub Pages workflow
+- standalone Astro reader scaffold with spoiler-safe public mode, live reload while writing, EPUB export, doctor checks, and GitHub Pages workflow
 - root-level convenience scripts that proxy to the generated reader app
 
 ## Useful flags

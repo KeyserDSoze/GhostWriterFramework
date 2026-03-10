@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { exportEpub } from "narrarium";
@@ -43,12 +44,56 @@ export async function exportReaderEpub(defaultBookRoot, cwd = process.cwd()) {
 
   await mkdir(path.dirname(outputPath), { recursive: true });
   const result = await exportEpub(bookRoot, { outputPath });
+  const validation = await runOptionalEpubCheck(result.outputPath);
 
   return {
     bookRoot,
     outputPath,
     result,
+    validation,
   };
+}
+
+export async function runOptionalEpubCheck(outputPath) {
+  const jarPath = process.env.EPUBCHECK_JAR;
+  const explicitCommand = process.env.EPUBCHECK_CMD;
+
+  if (jarPath) {
+    return runCommand("java", ["-jar", jarPath, outputPath]);
+  }
+
+  if (explicitCommand) {
+    return runCommand(explicitCommand, [outputPath]);
+  }
+
+  return {
+    status: "skipped",
+    detail: "EPUBCheck not configured. Set EPUBCHECK_JAR or EPUBCHECK_CMD to validate EPUB output.",
+  };
+}
+
+function runCommand(command, args) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = [];
+    const stderr = [];
+
+    child.stdout.on("data", (chunk) => stdout.push(String(chunk)));
+    child.stderr.on("data", (chunk) => stderr.push(String(chunk)));
+    child.on("error", (error) => {
+      resolve({
+        status: "skipped",
+        detail: `EPUBCheck could not start: ${error.message}`,
+      });
+    });
+    child.on("close", (code) => {
+      const detail = `${stdout.join("")}${stderr.join("")}`.trim();
+      resolve({
+        status: code === 0 ? "passed" : "failed",
+        detail: detail || (code === 0 ? "EPUBCheck passed." : `EPUBCheck failed with exit code ${code}.`),
+      });
+    });
+  });
 }
 
 function toPosix(value) {

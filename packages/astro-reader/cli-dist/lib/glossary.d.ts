@@ -19,7 +19,9 @@ export type GlossaryEntry = {
     bodyHtml?: string;
     imageSrc?: string;
     imageAlt?: string;
+    visibleFrom: number | null;
+    revealedFrom: number | null;
 };
-export declare function loadCanonGlossary(): Promise<GlossaryEntry[]>;
+export declare function loadCanonGlossary(chapterNumber?: number): Promise<GlossaryEntry[]>;
 export {};
 //# sourceMappingURL=glossary.d.ts.map

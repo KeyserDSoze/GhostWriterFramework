@@ -92,6 +92,8 @@ All content files should start with YAML frontmatter.
 - `sources`: optional research sources
 - `historical`: marks content that should be checked against external sources
 
+The generated reader uses `known_from` and `reveal_in` for spoiler-safe search, canon popups, public atlas pages, and backlink filtering.
+
 ### Character example
 
 ```md
@@ -173,16 +175,29 @@ status: hidden
 - use `resumes/` to keep running summaries stable
 - use `evaluations/` for structural critique, continuity checks, and quality notes
 - use `conversations/` for portable exported chat history, resume files, and continuation prompts; treat it as support material, not canon
+- use `npm run doctor` or `doctorBook()` to catch broken references, stale maintenance files, missing asset descriptions, and spoiler-threshold problems
 - if content is historical or factual, fetch research before writing canon
 - prefer updating existing canon files over duplicating similar facts elsewhere
 - before writing final chapter or paragraph prose, read `guidelines/prose.md`, relevant prior story files, and any matching files in `drafts/`
 - keep `plot.md` aligned with chapter summaries, reveals, and dated timeline anchors
+- final chapter and paragraph mutations through Narrarium MCP auto-refresh `plot.md` plus the chapter and total resumes; evaluations remain explicit/manual
+
+## Reader behavior
+
+Generated readers default to a spoiler-safe public mode.
+
+- secret pages stay hidden from the public atlas and nav
+- direct canon pages may render as teaser or locked views instead of full dossiers
+- search, canon popups, and story backlinks only surface lore that is safe for the current chapter threshold
+
+For author-only or spoiler-friendly deployments, enable full canon mode with `NARRARIUM_READER_CANON_MODE=full` or `NARRARIUM_READER_ALLOW_FULL_CANON=true` before running the reader build.
 
 ## Asset conventions
 
 - keep binary images under `assets/`, not beside canon markdown files
 - mirror canon structure inside `assets/`, for example `assets/characters/lyra-vale/primary.png`
 - keep asset metadata and prompt history in sibling markdown files such as `assets/characters/lyra-vale/primary.md`
+- asset markdown may include `alt_text` and `caption` so reader and EPUB output can reuse consistent descriptions
 - default image orientation is portrait and default aspect ratio is `2:3`
 - chapter scene assets live under `assets/chapters/<chapter-slug>/paragraphs/<paragraph-slug>/`
 - store the book-level visual language in `guidelines/images.md`

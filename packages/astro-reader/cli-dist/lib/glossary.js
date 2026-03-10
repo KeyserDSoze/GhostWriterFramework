@@ -2,51 +2,87 @@ import { listEntities, listRelatedCanon, readEntity, toPosixPath } from "narrari
 import { marked } from "marked";
 import { loadAssetFigure } from "./assets.js";
 import { getBookRoot } from "./book.js";
+import { isFullCanonMode } from "./reader-mode.js";
+import { formatChapterThreshold, getSpoilerAccess, loadChapterOrder } from "./spoilers.js";
 const entityKinds = ["character", "location", "faction", "item", "secret", "timeline-event"];
-let glossaryPromise = null;
-export async function loadCanonGlossary() {
-    glossaryPromise ??= buildCanonGlossary();
+const glossaryPromises = new Map();
+export async function loadCanonGlossary(chapterNumber) {
+    const cacheKey = String(chapterNumber ?? "public");
+    let glossaryPromise = glossaryPromises.get(cacheKey);
+    if (!glossaryPromise) {
+        glossaryPromise = buildCanonGlossary(chapterNumber);
+        glossaryPromises.set(cacheKey, glossaryPromise);
+    }
     return glossaryPromise;
 }
-async function buildCanonGlossary() {
+async function buildCanonGlossary(chapterNumber) {
     const root = getBookRoot();
+    const chapterOrder = await loadChapterOrder();
+    const fullMode = isFullCanonMode();
     const groups = await Promise.all(entityKinds.map((kind) => listEntities(root, kind)));
-    const entries = await Promise.all(groups.flatMap((entities, offset) => entities.map(async (entity) => {
+    const entries = [];
+    for (const [offset, entities] of groups.entries()) {
         const kind = entityKinds[offset];
-        const id = String(entity.metadata.id ?? `${kind}:${entity.slug}`);
-        const label = String(entity.metadata.name ?? entity.metadata.title ?? entity.slug);
-        const fullEntry = await readEntity(root, kind, entity.slug);
-        const related = await listRelatedCanon(root, id, { limit: 8 });
-        const figure = await loadAssetFigure(id, label);
-        return {
-            id,
-            kind,
-            kindLabel: kindLabel(kind),
-            label,
-            href: entityHref(kind, entity.slug),
-            terms: uniqueStrings([label, ...readAliases(entity.metadata.aliases)]),
-            summary: summaryFor(kind, entity.metadata),
-            meta: metaFor(kind, entity.metadata),
-            metadataEntries: metadataEntriesFor(kind, entity.metadata),
-            mentions: mentionLinksFor(related),
-            bodyHtml: fullEntry.body ? await marked.parse(fullEntry.body) : undefined,
-            imageSrc: figure?.src,
-            imageAlt: figure?.alt,
-        };
-    })));
+        for (const entity of entities) {
+            const fullEntry = await readEntity(root, kind, entity.slug);
+            const access = getSpoilerAccess(fullEntry.metadata, chapterOrder, chapterNumber);
+            if (!fullMode && !access.isVisible) {
+                continue;
+            }
+            if (!fullMode && kind === "secret" && (chapterNumber === undefined || !access.isRevealed)) {
+                continue;
+            }
+            const id = String(fullEntry.metadata.id ?? `${kind}:${entity.slug}`);
+            const label = String(fullEntry.metadata.name ?? fullEntry.metadata.title ?? entity.slug);
+            const related = await listRelatedCanon(root, id, { limit: 8 });
+            const figure = fullMode || access.isRevealed ? await loadAssetFigure(id, label) : null;
+            entries.push({
+                id,
+                kind,
+                kindLabel: kindLabel(kind),
+                label,
+                href: entityHref(kind, entity.slug),
+                terms: uniqueStrings(fullMode || access.isRevealed ? [label, ...readAliases(fullEntry.metadata.aliases)] : [label]),
+                summary: summaryFor(kind, fullEntry.metadata, access, fullMode),
+                meta: metaFor(kind, fullEntry.metadata, access, fullMode),
+                metadataEntries: metadataEntriesFor(kind, fullEntry.metadata, access, fullMode),
+                mentions: mentionLinksFor(related, chapterOrder, chapterNumber, fullMode),
+                bodyHtml: fullMode || access.isRevealed ? (fullEntry.body ? await marked.parse(fullEntry.body) : undefined) : undefined,
+                imageSrc: fullMode || access.isRevealed ? figure?.src : undefined,
+                imageAlt: fullMode || access.isRevealed ? figure?.alt : undefined,
+                visibleFrom: access.visibleFrom,
+                revealedFrom: access.revealedFrom,
+            });
+        }
+    }
     return entries.sort((left, right) => left.label.localeCompare(right.label));
 }
-function mentionLinksFor(hits) {
+function mentionLinksFor(hits, chapterOrder, chapterNumber, allowFuture = false) {
     const seen = new Set();
     const links = [];
     for (const hit of hits) {
         const href = readerHrefFromPath(hit.path);
         if (!href || seen.has(href))
             continue;
+        const hitChapterNumber = chapterNumberForPath(hit.path, chapterOrder);
+        if (!allowFuture && typeof chapterNumber === "number" && hitChapterNumber !== null && hitChapterNumber > chapterNumber) {
+            continue;
+        }
+        if (!allowFuture && chapterNumber === undefined && hitChapterNumber !== null) {
+            continue;
+        }
         seen.add(href);
         links.push({ label: hit.title, href });
     }
     return links;
+}
+function chapterNumberForPath(filePath, chapterOrder) {
+    const normalized = toPosixPath(filePath);
+    const chapterMatch = normalized.match(/^chapters\/([^/]+)\//);
+    if (!chapterMatch?.[1]) {
+        return null;
+    }
+    return chapterOrder.get(chapterMatch[1]) ?? null;
 }
 function readerHrefFromPath(filePath) {
     const normalized = toPosixPath(filePath);
@@ -76,7 +112,16 @@ function kindLabel(kind) {
             return kind.charAt(0).toUpperCase() + kind.slice(1);
     }
 }
-function summaryFor(kind, metadata) {
+function summaryFor(kind, metadata, access, fullMode) {
+    if (!fullMode && !access.isRevealed) {
+        if (kind === "secret") {
+            return `Hidden dossier. Full details unlock in ${formatChapterThreshold(access.revealedFrom)}.`;
+        }
+        if (access.revealedFrom !== null) {
+            return `Known in the story, but deeper canon notes stay locked until ${formatChapterThreshold(access.revealedFrom)}.`;
+        }
+        return `Canonical ${kindLabel(kind).toLowerCase()} entry.`;
+    }
     switch (kind) {
         case "character":
             return String(metadata.function_in_book ?? metadata.story_role ?? metadata.background_summary ?? "Canonical character entry.");
@@ -92,7 +137,13 @@ function summaryFor(kind, metadata) {
             return String(metadata.significance ?? metadata.function_in_book ?? "Canonical timeline event.");
     }
 }
-function metaFor(kind, metadata) {
+function metaFor(kind, metadata, access, fullMode) {
+    if (!fullMode && !access.isRevealed) {
+        return compactStrings([
+            access.visibleFrom !== null ? `Known from ${formatChapterThreshold(access.visibleFrom)}` : undefined,
+            access.revealedFrom !== null ? `Revealed in ${formatChapterThreshold(access.revealedFrom)}` : undefined,
+        ]);
+    }
     switch (kind) {
         case "character":
             return compactStrings([metadata.role_tier, metadata.story_role, metadata.home_location]);
@@ -108,7 +159,13 @@ function metaFor(kind, metadata) {
             return compactStrings([metadata.date, metadata.function_in_book]);
     }
 }
-function metadataEntriesFor(kind, metadata) {
+function metadataEntriesFor(kind, metadata, access, fullMode) {
+    if (!fullMode && !access.isRevealed) {
+        return compactEntries([
+            ["Known from", access.visibleFrom !== null ? formatChapterThreshold(access.visibleFrom) : undefined],
+            ["Revealed in", access.revealedFrom !== null ? formatChapterThreshold(access.revealedFrom) : undefined],
+        ]);
+    }
     switch (kind) {
         case "character":
             return compactEntries([

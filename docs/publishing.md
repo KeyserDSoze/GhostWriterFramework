@@ -9,11 +9,11 @@ Narrarium is prepared to publish as four public npm packages.
 - `create-narrarium-book`
 - `narrarium-astro-reader`
 
-## Initial public version
+## Versioning note
 
-- `0.1.0`
+- The public package line started at `0.1.0`.
 
-Keep the four packages aligned on the same initial release unless there is a strong reason to split versions later.
+Keep the four packages aligned unless there is a strong reason to split versions later.
 
 ## Release order
 
@@ -89,6 +89,6 @@ npm run publish:all
 
 ## Notes
 
-- The default production flow is now: bump versions, merge to `main`, let GitHub Actions publish the packages that are not already on npm.
+- The default production flow is: bump versions, merge to `main`, and let GitHub Actions publish the packages that are not already on npm.
 - `narrarium-reader-init` supports published installs and can also be driven locally from the workspace.
 - `create-narrarium-book --with-reader` keeps using a local file dependency when run from this monorepo so the generated reader works immediately during development.

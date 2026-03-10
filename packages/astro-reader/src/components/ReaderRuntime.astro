@@ -3,10 +3,13 @@ import type { GlossaryEntry } from "../lib/glossary";
 
 interface Props {
   glossary: GlossaryEntry[];
+  chapters: Array<{ slug: string; metadata: { number: number; title: string } }>;
+  currentChapterNumber?: number;
 }
 
-const { glossary } = Astro.props;
+const { glossary, chapters } = Astro.props;
 const glossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
+const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
 ---
 
 <div class="canon-overlay" data-canon-overlay hidden>
@@ -42,15 +45,65 @@ const glossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
   </aside>
 </div>
 
+<div class="reader-overlay" data-reader-overlay hidden>
+  <button type="button" class="reader-overlay__backdrop" data-reader-close aria-label="Close reading settings"></button>
+  <aside class="reader-overlay__panel" aria-live="polite" aria-modal="true" role="dialog">
+    <button type="button" class="reader-overlay__close" data-reader-close aria-label="Close reading settings">x</button>
+    <p class="eyebrow">Reading Settings</p>
+    <h2>Reader</h2>
+    <div class="reader-control-grid">
+      <label class="reader-control">
+        <span class="label">Font Size</span>
+        <input type="range" min="0.92" max="1.22" step="0.02" value="1" data-reader-font-scale />
+      </label>
+      <label class="reader-control">
+        <span class="label">Line Height</span>
+        <input type="range" min="1.45" max="1.95" step="0.05" value="1.72" data-reader-line-height />
+      </label>
+      <label class="reader-control">
+        <span class="label">Measure</span>
+        <select data-reader-measure>
+          <option value="60ch">Compact</option>
+          <option value="72ch">Classic</option>
+          <option value="84ch">Wide</option>
+        </select>
+      </label>
+      <label class="reader-control">
+        <span class="label">Body Font</span>
+        <select data-reader-font-family>
+          <option value="classic">Classic Serif</option>
+          <option value="modern">Modern Serif</option>
+          <option value="sans">Quiet Sans</option>
+        </select>
+      </label>
+      <label class="reader-control" data-reader-spoiler-wrap hidden>
+        <span class="label">Spoiler Limit</span>
+        <select data-reader-spoiler-limit></select>
+      </label>
+    </div>
+  </aside>
+</div>
+
 <script type="application/json" id="canon-glossary-data" set:html={glossaryJson}></script>
+<script type="application/json" id="reader-chapter-data" set:html={chaptersJson}></script>
 
 <script is:inline>
   const themeStorageKey = "narrarium-reader-theme";
+  const progressStorageKey = "narrarium-reader-progress";
+  const bookmarkStorageKey = "narrarium-reader-bookmark";
+  const preferencesStorageKey = "narrarium-reader-preferences";
+  const spoilerLimitStorageKey = "narrarium-reader-spoiler-limit";
   const glossaryDataElement = document.getElementById("canon-glossary-data");
+  const chapterDataElement = document.getElementById("reader-chapter-data");
   const glossaryEntries = glossaryDataElement ? JSON.parse(glossaryDataElement.textContent || "[]") : [];
-  const glossaryById = new Map(glossaryEntries.map((entry) => [entry.id, entry]));
+  const chapterEntries = chapterDataElement ? JSON.parse(chapterDataElement.textContent || "[]") : [];
+  const currentPageChapterRaw = document.body.dataset.readerChapterNumber;
+  const currentPageChapterNumber = currentPageChapterRaw ? Number(currentPageChapterRaw) : Number.NaN;
 
   initializeThemeToggle();
+  initializeReaderPreferences();
+  initializeReaderSettings();
+  initializeReadingProgress();
   initializeCanonMentions();
 
   function initializeThemeToggle() {
@@ -79,11 +132,165 @@ const glossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
     }
   }
 
+  function initializeReaderPreferences() {
+    const defaults = {
+      fontScale: 1,
+      lineHeight: 1.72,
+      measure: "72ch",
+      fontFamily: "classic",
+    };
+    const saved = readJson(preferencesStorageKey) || {};
+    const preferences = {
+      ...defaults,
+      ...saved,
+    };
+
+    applyReaderPreferences(preferences);
+  }
+
+  function applyReaderPreferences(preferences) {
+    const root = document.documentElement;
+    root.style.setProperty("--reader-font-scale", String(preferences.fontScale || 1));
+    root.style.setProperty("--reader-leading", String(preferences.lineHeight || 1.72));
+    root.style.setProperty("--reader-measure", preferences.measure || "72ch");
+    root.style.setProperty("--reader-copy-family", fontFamilyValue(preferences.fontFamily));
+    localStorage.setItem(preferencesStorageKey, JSON.stringify(preferences));
+  }
+
+  function initializeReaderSettings() {
+    const overlay = document.querySelector("[data-reader-overlay]");
+    const toggle = document.querySelector("[data-reader-settings-toggle]");
+    if (!overlay || !toggle) return;
+
+    const preferences = readJson(preferencesStorageKey) || {
+      fontScale: 1,
+      lineHeight: 1.72,
+      measure: "72ch",
+      fontFamily: "classic",
+    };
+
+    const fontScaleInput = overlay.querySelector("[data-reader-font-scale]");
+    const lineHeightInput = overlay.querySelector("[data-reader-line-height]");
+    const measureInput = overlay.querySelector("[data-reader-measure]");
+    const fontFamilyInput = overlay.querySelector("[data-reader-font-family]");
+    const spoilerWrap = overlay.querySelector("[data-reader-spoiler-wrap]");
+    const spoilerLimitInput = overlay.querySelector("[data-reader-spoiler-limit]");
+
+    if (fontScaleInput) fontScaleInput.value = String(preferences.fontScale || 1);
+    if (lineHeightInput) lineHeightInput.value = String(preferences.lineHeight || 1.72);
+    if (measureInput) measureInput.value = preferences.measure || "72ch";
+    if (fontFamilyInput) fontFamilyInput.value = preferences.fontFamily || "classic";
+
+    if (Number.isFinite(currentPageChapterNumber) && spoilerWrap && spoilerLimitInput) {
+      spoilerWrap.hidden = false;
+      const options = [{ label: "Current chapter", value: String(currentPageChapterNumber) }].concat(
+        chapterEntries
+          .filter((chapter) => chapter.metadata.number <= currentPageChapterNumber)
+          .map((chapter) => ({
+            label: `Up to Chapter ${String(chapter.metadata.number).padStart(3, "0")} - ${chapter.metadata.title}`,
+            value: String(chapter.metadata.number),
+          }))
+          .reverse(),
+      );
+      const rendered = new Set();
+      spoilerLimitInput.replaceChildren(
+        ...options.flatMap((option) => {
+          if (rendered.has(option.value)) return [];
+          rendered.add(option.value);
+          const node = document.createElement("option");
+          node.value = option.value;
+          node.textContent = option.label;
+          return [node];
+        }),
+      );
+      spoilerLimitInput.value = String(getSelectedSpoilerLimit() || currentPageChapterNumber);
+      spoilerLimitInput.addEventListener("change", () => {
+        localStorage.setItem(spoilerLimitStorageKey, spoilerLimitInput.value);
+        window.location.reload();
+      });
+    }
+
+    const updatePreferences = () => {
+      applyReaderPreferences({
+        fontScale: Number(fontScaleInput?.value || 1),
+        lineHeight: Number(lineHeightInput?.value || 1.72),
+        measure: measureInput?.value || "72ch",
+        fontFamily: fontFamilyInput?.value || "classic",
+      });
+    };
+
+    fontScaleInput?.addEventListener("input", updatePreferences);
+    lineHeightInput?.addEventListener("input", updatePreferences);
+    measureInput?.addEventListener("change", updatePreferences);
+    fontFamilyInput?.addEventListener("change", updatePreferences);
+
+    toggle.addEventListener("click", () => {
+      overlay.hidden = false;
+      document.body.classList.add("has-overlay");
+    });
+
+    overlay.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("[data-reader-close]")) {
+        closeReaderOverlay();
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeReaderOverlay();
+      }
+    });
+  }
+
+  function closeReaderOverlay() {
+    const overlay = document.querySelector("[data-reader-overlay]");
+    if (!overlay) return;
+    overlay.hidden = true;
+    document.body.classList.remove("has-overlay");
+  }
+
+  function initializeReadingProgress() {
+    const continueLink = document.querySelector("[data-continue-link]");
+    const progress = readJson(progressStorageKey) || {};
+
+    if (Number.isFinite(currentPageChapterNumber)) {
+      const title = document.querySelector("h1")?.textContent?.trim() || `Chapter ${String(currentPageChapterNumber).padStart(3, "0")}`;
+      const nextProgress = {
+        chapterNumber: currentPageChapterNumber,
+        href: window.location.pathname,
+        title,
+      };
+
+      if (!progress.chapterNumber || currentPageChapterNumber >= progress.chapterNumber) {
+        localStorage.setItem(progressStorageKey, JSON.stringify(nextProgress));
+      }
+
+      const bookmarkButton = document.querySelector("[data-bookmark-toggle]");
+      if (bookmarkButton) {
+        syncBookmarkButton(bookmarkButton, nextProgress);
+        bookmarkButton.addEventListener("click", () => toggleBookmark(bookmarkButton, nextProgress));
+      }
+    }
+
+    const latestProgress = readJson(progressStorageKey);
+    if (continueLink && latestProgress?.href) {
+      continueLink.hidden = false;
+      continueLink.href = latestProgress.href;
+      continueLink.textContent = `Continue: ${latestProgress.title}`;
+    }
+  }
+
   function initializeCanonMentions() {
     if (glossaryEntries.length === 0) return;
 
+    const limit = getSelectedSpoilerLimit();
+    const visibleEntries = glossaryEntries.filter((entry) => isEntryVisible(entry, limit));
+    const glossaryById = new Map(visibleEntries.map((entry) => [entry.id, entry]));
     const termMap = new Map();
-    for (const entry of glossaryEntries) {
+
+    for (const entry of visibleEntries) {
       for (const term of entry.terms || []) {
         const normalized = String(term || "").trim();
         if (!normalized || normalized.length < 3) continue;
@@ -100,8 +307,7 @@ const glossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
     const pattern = new RegExp(`(^|[^\\p{L}\\p{N}])(${terms.map(escapeRegex).join("|")})(?=$|[^\\p{L}\\p{N}])`, "giu");
 
     enhanceCanonRoot(document, pattern, termMap);
-
-    initializeCanonOverlay(pattern, termMap);
+    initializeCanonOverlay(pattern, termMap, glossaryById, limit);
   }
 
   function enhanceCanonRoot(root, pattern, termMap) {
@@ -178,7 +384,7 @@ const glossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
     textNode.replaceWith(fragment);
   }
 
-  function initializeCanonOverlay(pattern, termMap) {
+  function initializeCanonOverlay(pattern, termMap, glossaryById, limit) {
     const overlay = document.querySelector("[data-canon-overlay]");
     if (!overlay || overlay.dataset.bound === "true") return;
     overlay.dataset.bound = "true";
@@ -203,11 +409,13 @@ const glossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
         const entry = glossaryById.get(trigger.dataset.canonId || "");
         if (!entry) return;
         event.preventDefault();
+        const revealed = isEntryRevealed(entry, limit);
         title.textContent = entry.label;
         kind.textContent = entry.kindLabel;
         summary.textContent = entry.summary;
         link.href = entry.href;
-        body.innerHTML = entry.bodyHtml || "";
+        link.hidden = !revealed;
+        body.innerHTML = revealed ? entry.bodyHtml || "" : "";
         enhanceCanonRoot(body, pattern, termMap);
         metadata.replaceChildren(...(entry.metadataEntries || []).map((item) => {
           const row = document.createElement("div");
@@ -236,7 +444,7 @@ const glossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
         }));
         mentionsWrap.hidden = !(entry.mentions && entry.mentions.length > 0);
 
-        if (entry.imageSrc) {
+        if (revealed && entry.imageSrc) {
           const wrap = document.createElement("div");
           wrap.className = "canon-overlay__media";
           const img = document.createElement("img");
@@ -249,9 +457,9 @@ const glossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
         }
 
         syncCanonTabs(overlay, {
-          notes: Boolean(entry.bodyHtml),
+          notes: Boolean(revealed && entry.bodyHtml),
           metadata: Boolean(entry.metadataEntries?.length),
-          image: Boolean(entry.imageSrc),
+          image: Boolean(revealed && entry.imageSrc),
         });
 
         overlay.hidden = false;
@@ -302,6 +510,68 @@ const glossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
     overlay.querySelectorAll("[data-canon-panel]").forEach((panel) => {
       panel.classList.toggle("is-active", panel.dataset.canonPanel === nextKey);
     });
+  }
+
+  function getSelectedSpoilerLimit() {
+    if (!Number.isFinite(currentPageChapterNumber)) {
+      return null;
+    }
+
+    const saved = Number(localStorage.getItem(spoilerLimitStorageKey) || "");
+    if (Number.isFinite(saved)) {
+      return Math.min(saved, currentPageChapterNumber);
+    }
+
+    const progress = readJson(progressStorageKey);
+    if (progress?.chapterNumber) {
+      return Math.min(progress.chapterNumber, currentPageChapterNumber);
+    }
+
+    return currentPageChapterNumber;
+  }
+
+  function isEntryVisible(entry, limit) {
+    return entry.visibleFrom == null || (typeof limit === "number" && limit >= entry.visibleFrom);
+  }
+
+  function isEntryRevealed(entry, limit) {
+    return entry.revealedFrom == null || (typeof limit === "number" && limit >= entry.revealedFrom);
+  }
+
+  function syncBookmarkButton(button, bookmark) {
+    const current = readJson(bookmarkStorageKey);
+    const isCurrent = current?.href === bookmark.href;
+    button.textContent = isCurrent ? "Bookmarked" : "Save bookmark";
+    button.classList.toggle("is-active", isCurrent);
+  }
+
+  function toggleBookmark(button, bookmark) {
+    const current = readJson(bookmarkStorageKey);
+    if (current?.href === bookmark.href) {
+      localStorage.removeItem(bookmarkStorageKey);
+    } else {
+      localStorage.setItem(bookmarkStorageKey, JSON.stringify(bookmark));
+    }
+    syncBookmarkButton(button, bookmark);
+  }
+
+  function readJson(key) {
+    try {
+      return JSON.parse(localStorage.getItem(key) || "null");
+    } catch {
+      return null;
+    }
+  }
+
+  function fontFamilyValue(key) {
+    switch (key) {
+      case "modern":
+        return '"Cormorant Garamond", "Times New Roman", serif';
+      case "sans":
+        return '"Avenir Next", "Segoe UI", sans-serif';
+      default:
+        return 'Baskerville, "Palatino Linotype", "Book Antiqua", "Iowan Old Style", serif';
+    }
   }
 
   function escapeRegex(value) {

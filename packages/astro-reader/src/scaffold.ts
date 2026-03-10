@@ -44,6 +44,7 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
         type: "module",
         scripts: {
           "export:epub": "node ./scripts/export-epub.mjs",
+          doctor: "node ./scripts/doctor.mjs",
           dev: "node ./scripts/dev.mjs",
           build: "npm run export:epub && astro build",
           preview: "astro preview",
@@ -82,7 +83,17 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
     await writeFile(path.join(targetRoot, "public", "CNAME"), `${pagesDomain}\n`, "utf8");
   }
 
-  await writeFile(path.join(targetRoot, ".env.example"), `NARRARIUM_BOOK_ROOT=${toPosix(bookRoot)}\n`, "utf8");
+  await writeFile(
+    path.join(targetRoot, ".env.example"),
+    [
+      `NARRARIUM_BOOK_ROOT=${toPosix(bookRoot)}`,
+      "# NARRARIUM_READER_CANON_MODE=full",
+      "# EPUBCHECK_CMD=epubcheck",
+      "# EPUBCHECK_JAR=/absolute/path/to/epubcheck.jar",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
   await writeFile(path.join(targetRoot, ".gitignore"), "node_modules/\ndist/\n.astro/\n.env\npublic/downloads/\n", "utf8");
   await writeFile(
     path.join(targetRoot, "README.md"),
@@ -109,6 +120,9 @@ Set the book root in a local environment file:
 
 \`\`\`bash
 NARRARIUM_BOOK_ROOT=${toPosix(bookRoot)}
+# NARRARIUM_READER_CANON_MODE=full
+# EPUBCHECK_CMD=epubcheck
+# EPUBCHECK_JAR=/absolute/path/to/epubcheck.jar
 \`\`\`
 
 ## Run
@@ -121,6 +135,16 @@ npm run dev
 The dev server exports a fresh EPUB to \`public/downloads/book.epub\` before Astro starts.
 It also watches the linked book repository, regenerates the EPUB when canon files change, and triggers a full browser reload.
 
+By default the reader uses a spoiler-safe public mode. If you want a private full-canon deployment, enable \`NARRARIUM_READER_CANON_MODE=full\` before running dev or build.
+
+## Doctor
+
+\`\`\`bash
+npm run doctor
+\`\`\`
+
+This checks broken canon references, spoiler thresholds, missing asset metadata, and stale \`plot.md\` or \`resumes/\` files.
+
 ## Build
 
 \`\`\`bash
@@ -128,6 +152,8 @@ npm run build
 \`\`\`
 
 The build also refreshes the EPUB automatically and ships a ready-to-deploy static site.
+
+If you want EPUBCheck validation too, set \`EPUBCHECK_JAR=/absolute/path/to/epubcheck.jar\` or \`EPUBCHECK_CMD=epubcheck\` before running export or build.
 
 ## GitHub Pages
 

@@ -424,6 +424,7 @@ function buildRootPackageJson(title: string, readerDir: string): string {
         build: `npm run build --prefix ${normalizedReaderDir}`,
         preview: `npm run preview --prefix ${normalizedReaderDir}`,
         "export:epub": `npm run export:epub --prefix ${normalizedReaderDir}`,
+        doctor: `npm run doctor --prefix ${normalizedReaderDir}`,
         install: `npm install --prefix ${normalizedReaderDir}`,
       },
     },

@@ -246,11 +246,18 @@ test("mcp server tools support guided creation and structural updates", async ()
     assert.match(resumeBookContextText, /Conversation Resume/);
     assert.match(chapterFromDraftText, /Created or updated chapter from draft/);
     assert.match(paragraphFromDraftText, /Created or updated paragraph from draft/);
+    assert.match(chapterFromDraftText, /Chapter resume synced at/);
+    assert.match(chapterFromDraftText, /Total resume synced at/);
+    assert.match(paragraphFromDraftText, /Chapter resume synced at/);
+    assert.match(paragraphFromDraftText, /Total resume synced at/);
     assert.match(finalizeText, /Created chapter/);
+    assert.match(finalizeText, /Chapter resume synced at/);
     assert.match(searchText, /The Signal/i);
     assert.match(renameEntityText, /Renamed character/);
     assert.match(renameChapterText, /Renamed chapter/);
     assert.match(renameParagraphText, /Renamed paragraph/);
+    assert.match(renameChapterText, /Total resume synced at/);
+    assert.match(renameParagraphText, /Total resume synced at/);
     assert.match(resumeText, /Synced 2 chapter resumes/);
     assert.match(evaluationText, /Synced book evaluation/);
     assert.match(validationText, /Validation passed/);

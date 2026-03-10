@@ -1,7 +1,10 @@
 ---
 import ReaderRuntime from "../components/ReaderRuntime.astro";
 import SiteSearch from "../components/SiteSearch.astro";
+import { listChapters } from "narrarium";
+import { getBookRoot } from "../lib/book.js";
 import { loadCanonGlossary } from "../lib/glossary.js";
+import { isFullCanonMode } from "../lib/reader-mode.js";
 import { loadSearchIndex } from "../lib/search.js";
 
 interface Props {
@@ -16,11 +19,14 @@ interface Props {
     | "items"
     | "secrets"
     | "timeline";
+  currentChapterNumber?: number;
 }
 
-const { title, description, activeSection = "home" } = Astro.props;
-const canonGlossary = await loadCanonGlossary();
-const searchIndex = await loadSearchIndex();
+const { title, description, activeSection = "home", currentChapterNumber } = Astro.props;
+const canonGlossary = await loadCanonGlossary(currentChapterNumber);
+const searchIndex = await loadSearchIndex(currentChapterNumber);
+const readerChapters = await listChapters(getBookRoot()).catch(() => []);
+const fullCanonMode = isFullCanonMode();
 ---
 
 <!doctype html>
@@ -42,6 +48,10 @@ const searchIndex = await loadSearchIndex();
         --panel: rgba(255, 250, 240, 0.72);
         --shadow: 0 24px 60px rgba(44, 32, 24, 0.12);
         --surface-strong: rgba(255, 251, 243, 0.78);
+        --reader-font-scale: 1;
+        --reader-leading: 1.72;
+        --reader-measure: 72ch;
+        --reader-copy-family: Baskerville, "Palatino Linotype", "Book Antiqua", "Iowan Old Style", serif;
       }
 
       html[data-theme="dark"] {
@@ -145,6 +155,29 @@ const searchIndex = await loadSearchIndex();
         background: var(--surface-strong);
         box-shadow: var(--shadow);
         z-index: 25;
+      }
+
+      .site-search__filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        margin-top: 0.45rem;
+      }
+
+      .site-search__filter {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.18);
+        color: var(--muted);
+        border-radius: 999px;
+        padding: 0.2rem 0.55rem;
+        font: inherit;
+        font-size: 0.78rem;
+        cursor: pointer;
+      }
+
+      .site-search__filter.is-active {
+        color: var(--ink);
+        background: rgba(151, 95, 45, 0.12);
       }
 
       .site-search__result {
@@ -326,6 +359,20 @@ const searchIndex = await loadSearchIndex();
         color: var(--muted);
         background: rgba(255, 255, 255, 0.38);
         text-decoration: none;
+      }
+
+      .chip.is-action {
+        cursor: pointer;
+        color: var(--ink);
+      }
+
+      .chip.is-action.is-active {
+        background: rgba(151, 95, 45, 0.14);
+      }
+
+      mark {
+        background: rgba(216, 168, 107, 0.28);
+        color: inherit;
       }
 
       .canon-mention {
@@ -573,6 +620,13 @@ const searchIndex = await loadSearchIndex();
         margin-top: 0;
       }
 
+      .prose {
+        max-width: min(100%, var(--reader-measure));
+        font-size: calc(1rem * var(--reader-font-scale));
+        line-height: var(--reader-leading);
+        font-family: var(--reader-copy-family);
+      }
+
       .meta-list {
         display: grid;
         gap: 0.65rem;
@@ -604,6 +658,78 @@ const searchIndex = await loadSearchIndex();
         border: 1px dashed var(--line);
         background: rgba(255, 255, 255, 0.34);
         color: var(--muted);
+      }
+
+      .reader-status {
+        display: inline-flex;
+        align-items: center;
+      }
+
+      .reader-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 55;
+      }
+
+      .reader-overlay__backdrop {
+        position: absolute;
+        inset: 0;
+        border: 0;
+        background: rgba(10, 10, 12, 0.58);
+      }
+
+      .reader-overlay__panel {
+        position: relative;
+        width: min(520px, calc(100vw - 1.5rem));
+        max-height: calc(100vh - 2rem);
+        overflow: auto;
+        margin: 1rem auto;
+        padding: 1.1rem 1.1rem 1.2rem;
+        border-radius: 24px;
+        border: 1px solid var(--line);
+        background: var(--surface-strong);
+        box-shadow: var(--shadow);
+      }
+
+      .reader-control-grid {
+        display: grid;
+        gap: 0.9rem;
+      }
+
+      .reader-control {
+        display: grid;
+        gap: 0.35rem;
+      }
+
+      .reader-control input,
+      .reader-control select {
+        width: 100%;
+        padding: 0.68rem 0.82rem;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.24);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      .reader-control input[type="range"] {
+        padding-inline: 0;
+      }
+
+      .reader-overlay__close {
+        position: sticky;
+        top: 0;
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.25);
+        color: var(--ink);
+        cursor: pointer;
       }
 
       @media (max-width: 720px) {
@@ -650,7 +776,7 @@ const searchIndex = await loadSearchIndex();
       }
     </style>
   </head>
-  <body>
+  <body data-reader-chapter-number={currentChapterNumber}>
     <main class="shell">
       <header class="masthead">
         <a class="brand" href="./">Narrarium Reader</a>
@@ -663,14 +789,16 @@ const searchIndex = await loadSearchIndex();
             <a class:list={["nav-link", activeSection === "locations" && "is-active"]} href="locations/">Locations</a>
             <a class:list={["nav-link", activeSection === "factions" && "is-active"]} href="factions/">Factions</a>
             <a class:list={["nav-link", activeSection === "items" && "is-active"]} href="items/">Items</a>
-            <a class:list={["nav-link", activeSection === "secrets" && "is-active"]} href="secrets/">Secrets</a>
-            <a class:list={["nav-link", activeSection === "timeline" && "is-active"]} href="timeline/">Timeline</a>
-          </nav>
+             {fullCanonMode && <a class:list={["nav-link", activeSection === "secrets" && "is-active"]} href="secrets/">Secrets</a>}
+             <a class:list={["nav-link", activeSection === "timeline" && "is-active"]} href="timeline/">Timeline</a>
+           </nav>
+          <a class="chip reader-status" data-continue-link href="./" hidden>Continue reading</a>
+          <button type="button" class="theme-toggle" data-reader-settings-toggle aria-label="Open reading settings">Reading</button>
           <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch theme">Dark mode</button>
         </div>
       </header>
       <slot />
     </main>
-    <ReaderRuntime glossary={canonGlossary} />
+    <ReaderRuntime glossary={canonGlossary} chapters={readerChapters} currentChapterNumber={currentChapterNumber} />
   </body>
 </html>

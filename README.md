@@ -1,17 +1,17 @@
 # Narrarium Framework
 
-Narrarium Framework is a local-first book writing framework built around three pieces:
+Narrarium Framework is a local-first writing stack built around three pieces:
 
 - a strict but extensible repository convention where the repository *is* the book
 - a local MCP server that teaches OpenCode or Claude how to create, search, validate, and enrich that repository
-- an Astro-based reader package that turns the repository into a browsable website
+- an Astro-based reader that turns the repository into a browsable site and EPUB pipeline
 
 ## Packages
 
 - `packages/core`: schemas, templates, repo scaffolding, search, validation, and EPUB export helpers
 - `packages/mcp-server`: local stdio MCP server for OpenCode, Claude Desktop, and compatible clients
 - `packages/create-narrarium-book`: starter CLI to scaffold a new book repository from the terminal
-- `packages/astro-reader`: Astro reader that renders the repository chapter by chapter
+- `packages/astro-reader`: Astro reader with spoiler-safe public mode, full canon opt-in, EPUB export, and doctor tooling
 
 ## Local MCP workflow
 
@@ -32,9 +32,11 @@ If you just want to use Narrarium, start from the published packages:
 npx create-narrarium-book my-book --title "My Book" --language en
 cd my-book
 npm run dev
+npm run doctor
 ```
 
 This scaffolds a book repo, creates `reader/` by default, installs the reader dependencies, prepares OpenCode config, and gives you a live reading site plus EPUB export while you write.
+The generated root scripts include `npm run dev`, `npm run build`, `npm run export:epub`, and `npm run doctor`.
 
 If you want sample content from the start:
 
@@ -85,7 +87,29 @@ npm install
 npm run dev
 ```
 
-The reader includes dedicated indexes for chapters, characters, locations, factions, items, secrets, and timeline events, and `npm run dev` watches the linked book repo for live reload plus EPUB refresh.
+The reader includes dedicated indexes for chapters, characters, locations, factions, items, secrets, and timeline events. `npm run dev` watches the linked book repo, refreshes the EPUB, and triggers a full browser reload when canon changes.
+
+By default the generated reader runs in a spoiler-safe public mode:
+
+- secret pages stay out of the public atlas and nav
+- direct canon pages fall back to teaser or locked views when `known_from` or `reveal_in` say the lore is not safe yet
+- search, popups, and canon backlinks respect the same thresholds
+
+For author-only or spoiler-friendly deployments, set one of these before building or running the reader:
+
+```bash
+NARRARIUM_READER_CANON_MODE=full
+# or
+NARRARIUM_READER_ALLOW_FULL_CANON=true
+```
+
+If you want EPUBCheck validation during export or build, also set one of these:
+
+```bash
+EPUBCHECK_CMD=epubcheck
+# or
+EPUBCHECK_JAR=/absolute/path/to/epubcheck.jar
+```
 
 ## Develop this monorepo
 
@@ -147,6 +171,8 @@ Project-level OpenCode and agent rules live in `AGENTS.md`.
 
 ## Main MCP tools
 
+These are the main building blocks exposed by the local MCP server:
+
 - `init_book_repo`: scaffold a book repository in a target folder
 - `setup_framework`: return the exact `npx` commands to bootstrap a new Narrarium project
 - `repository_spec`: return the repo model and canon rules
@@ -170,6 +196,8 @@ Project-level OpenCode and agent rules live in `AGENTS.md`.
 - `evaluate_book`: refresh the full-book evaluation scaffold and optionally all chapter evaluations
 - `wikipedia_search` and `wikipedia_page`: research factual or historical material
 - `export_epub`: turn the repository into an EPUB
+
+Final chapter and paragraph mutations through the MCP layer auto-refresh `plot.md`, the per-chapter resumes, and `resumes/total.md`. Evaluations stay manual so critique remains explicit.
 
 ## Practical image examples
 
@@ -258,11 +286,15 @@ Generate chapter art into `assets/chapters/001-the-arrival/primary.png`:
 
 The recommended place for reusable style rules and prompt templates is `guidelines/images.md`.
 
+When you store asset metadata, prefer adding `alt_text` and `caption` in the asset markdown frontmatter so the web reader and EPUB can render accessible descriptions and captions consistently.
+
 The Astro reader now auto-renders these canonical assets when present for:
 
 - `book` cover on the home page
 - entity detail pages such as characters, locations, factions, items, secrets, and timeline events
 - chapter pages and paragraph or scene sections
+
+In public reader mode, those canon surfaces still respect `known_from` and `reveal_in` before exposing full details.
 
 If you later rename canon with `rename_entity`, `rename_chapter`, or `rename_paragraph`, Narrarium also moves the matching asset folders.
 
@@ -279,7 +311,7 @@ The final public package set is:
 - `create-narrarium-book`
 - `narrarium-astro-reader`
 
-The initial public version is `0.1.0`.
+The public package line started at `0.1.0`; current workspace versions may be newer.
 
 Publishing notes and release order live in `docs/publishing.md`.
 

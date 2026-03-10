@@ -7,7 +7,7 @@ import MetadataSection from "../../components/MetadataSection.astro";
 import RelatedLinks from "../../components/RelatedLinks.astro";
 import AssetFigure from "../../components/AssetFigure.astro";
 import ChapterPager from "../../components/ChapterPager.astro";
-import { loadRelatedCanonLinks } from "../../lib/canon";
+import { loadRelatedCanonLinks, loadStoryMentionLinks } from "../../lib/canon";
 import { loadAssetFigure } from "../../lib/assets";
 import { listChapters, pathExists } from "narrarium";
 import path from "node:path";
@@ -33,7 +33,9 @@ const chapterMetaEntries = [
   ["Timeline", chapter.metadata.timeline_ref],
   ["Tags", chapter.metadata.tags],
 ].filter(([, value]) => value !== undefined && value !== null && (!Array.isArray(value) || value.length > 0));
-const chapterRelatedLinks = await loadRelatedCanonLinks(String(chapter.metadata.id), [chapter.metadata.pov, chapter.metadata.timeline_ref]);
+const chapterId = String(chapter.metadata.id);
+const chapterRelatedLinks = await loadRelatedCanonLinks(chapterId, [chapter.metadata.pov, chapter.metadata.timeline_ref]);
+const chapterStoryLinks = await loadStoryMentionLinks(chapterId, chapter.metadata.number);
 const chapterFigure = await loadAssetFigure(String(chapter.metadata.id), chapter.metadata.title);
 const renderedParagraphs = await Promise.all(
   chapter.paragraphs.map(async (paragraph) => ({
@@ -45,11 +47,19 @@ const renderedParagraphs = await Promise.all(
 );
 ---
 
-<BaseLayout title={chapter.metadata.title} description={chapter.metadata.summary} activeSection="chapters">
+<BaseLayout
+  title={chapter.metadata.title}
+  description={chapter.metadata.summary}
+  activeSection="chapters"
+  currentChapterNumber={chapter.metadata.number}
+>
   <section class="hero">
     <p class="eyebrow">Chapter {String(chapter.metadata.number).padStart(3, "0")}</p>
     <h1>{chapter.metadata.title}</h1>
     {chapter.metadata.summary && <p class="lede">{chapter.metadata.summary}</p>}
+    <div class="chip-row">
+      <button type="button" class="chip is-action" data-bookmark-toggle>Save bookmark</button>
+    </div>
     <div class="chapter-meta">
       <a href="./">Back to contents</a>
     </div>
@@ -73,6 +83,27 @@ const renderedParagraphs = await Promise.all(
   {chapterRelatedLinks.length > 0 && (
     <section class="section">
       <RelatedLinks links={chapterRelatedLinks} />
+    </section>
+  )}
+
+  {chapterStoryLinks.length > 0 && (
+    <section class="section">
+      <RelatedLinks links={chapterStoryLinks} heading="Echoes in later scenes" />
+    </section>
+  )}
+
+  {renderedParagraphs.length > 0 && (
+    <section class="section">
+      <div class="scene">
+        <h2>Scene Index</h2>
+        <div class="chip-row">
+          {renderedParagraphs.map((paragraph) => (
+            <a class="chip" href={`#${paragraph.anchorId}`}>
+              {String(paragraph.metadata.number).padStart(3, "0")} {paragraph.metadata.title}
+            </a>
+          ))}
+        </div>
+      </div>
     </section>
   )}
 

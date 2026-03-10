@@ -4,11 +4,12 @@ Core Narrarium helpers for local-first book repositories.
 
 ## Includes
 
-- repository scaffolding
-- markdown frontmatter schemas
-- canon search and validation
-- resume and evaluation sync helpers
-- EPUB export helpers
+- repository scaffolding and managed book structure
+- markdown frontmatter schemas and rich canon templates
+- canon search, related-link discovery, and validation
+- draft promotion, plot sync, and resume or evaluation helpers
+- `doctorBook()` checks for broken references, spoiler thresholds, asset metadata, and stale maintenance files
+- EPUB export helpers with opening matter, scene navigation, and optional canon index generation
 
 ## Install
 
@@ -21,9 +22,10 @@ npm install narrarium
 - scaffold the canonical book repository structure
 - validate markdown frontmatter and file placement
 - create rich canon files for characters, locations, factions, items, secrets, and timeline events
-- create and update chapters and scene files
-- sync summaries and evaluation files
+- create and update chapters, scenes, chapter drafts, and paragraph drafts
+- sync `plot.md`, chapter resumes, and total resume files
 - export the book to EPUB
+- diagnose repository drift with `doctorBook()`
 
 ## Quick example
 
@@ -33,6 +35,7 @@ import {
   createCharacterProfile,
   createChapter,
   createParagraph,
+  doctorBook,
 } from "narrarium";
 
 await initializeBookRepo("my-book", {
@@ -59,6 +62,15 @@ await createParagraph("my-book", {
   number: 1,
   title: "At The Gate",
 });
+
+const report = await doctorBook("my-book");
+console.log(report.ok, report.issues);
 ```
+
+## Hidden canon and assets
+
+- use `known_from` and `reveal_in` to mark when canon is safe for public reader views
+- use `secret_refs` and `private_notes` for author-facing hidden canon
+- store asset metadata in markdown beside images and prefer `alt_text` plus `caption` so web and EPUB output stay accessible
 
 See the root `README.md` and `docs/repository-spec.md` for the full repo model.

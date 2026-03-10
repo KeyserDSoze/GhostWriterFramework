@@ -17,6 +17,7 @@ import {
   createParagraphFromDraft,
   createSecretProfile,
   createTimelineEventProfile,
+  doctorBook,
   evaluateBook,
   initializeBookRepo,
   listEntities,
@@ -29,6 +30,7 @@ import {
   readTimelineMain,
   syncPlot,
   syncAllResumes,
+  syncTotalResume,
   upgradeBookRepo,
   updateChapter,
   updateEntity,
@@ -104,7 +106,10 @@ test("core book workflow supports canon indexes and structural updates", async (
       chapter: "chapter:001-the-arrival",
       number: 1,
       title: "At The Gate",
+      body: "# Scene\n\nThe harbor watches before it welcomes.",
     });
+
+    const earlyTotalResume = await syncTotalResume(rootPath);
 
     await updateChapter(rootPath, {
       chapter: "chapter:001-the-arrival",
@@ -139,6 +144,7 @@ test("core book workflow supports canon indexes and structural updates", async (
     const resumes = await syncAllResumes(rootPath);
     const evaluation = await evaluateBook(rootPath);
     const validation = await validateBook(rootPath);
+    const doctor = await doctorBook(rootPath);
 
     assert.equal(characters.length, 1);
     assert.equal(locations.length, 1);
@@ -156,6 +162,7 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.match(plot.content, /# Chapter Map/);
     assert.match(plot.content, /Lyra knows the harbor ledgers were forged/);
     assert.match(plot.content, /2214-06-12/);
+    assert.match(earlyTotalResume.content, /The harbor watches before it welcomes/);
     assert.match(opencodeConfig, /"default_agent": "build"/);
     assert.match(opencodeConfig, /"reasoningEffort": "high"/);
     assert.match(opencodeConfig, /"textVerbosity": "high"/);
@@ -166,6 +173,68 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.equal(resumes.chapterCount, 1);
     assert.equal(evaluation.chapterCount, 1);
     assert.equal(validation.valid, true);
+    assert.equal(doctor.errors, 0);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("doctorBook detects broken refs and stale maintenance files", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-doctor-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Doctor Test Book",
+      language: "en",
+    });
+
+    await createCharacterProfile(rootPath, {
+      name: "Maris Vale",
+      roleTier: "main",
+      speakingStyle: "Quiet and exact.",
+      backgroundSummary: "Raised in the archive quarter.",
+      functionInBook: "Perspective anchor for the opening chapter.",
+    });
+
+    await createChapter(rootPath, {
+      number: 1,
+      title: "Opening Bell",
+    });
+
+    await createChapter(rootPath, {
+      number: 2,
+      title: "Second Bell",
+    });
+
+    await updateEntity(rootPath, {
+      kind: "character",
+      slugOrId: "maris-vale",
+      frontmatterPatch: {
+        refs: ["location:missing-hall"],
+        reveal_in: "chapter:001-opening-bell",
+        known_from: "chapter:002-second-bell",
+      },
+    });
+
+    await createParagraph(rootPath, {
+      chapter: "chapter:001-opening-bell",
+      number: 1,
+      title: "At Dawn",
+      body: "The bells reached the harbor before the sun.",
+    });
+
+    await writeFile(path.join(rootPath, "plot.md"), "---\ntype: plot\nid: plot:main\ntitle: Broken Plot\n---\n\n# Drift\n", "utf8");
+    await writeFile(path.join(rootPath, "resumes", "total.md"), "---\ntype: resume\nid: resume:total\ntitle: Total Resume\n---\n\n# Drift\n", "utf8");
+
+    const doctor = await doctorBook(rootPath);
+    const codes = doctor.issues.map((issue) => issue.code);
+
+    assert.ok(doctor.errors >= 1);
+    assert.ok(doctor.warnings >= 2);
+    assert.ok(codes.includes("broken-reference"));
+    assert.ok(codes.includes("spoiler-order"));
+    assert.ok(codes.includes("stale-plot"));
+    assert.ok(codes.includes("stale-total-resume"));
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }

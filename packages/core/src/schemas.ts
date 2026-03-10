@@ -201,6 +201,8 @@ export const assetSchema = baseSchema
     subject: z.string().min(1),
     asset_kind: z.string().min(1).default("primary"),
     path: z.string().min(1),
+    alt_text: z.string().optional(),
+    caption: z.string().optional(),
     prompt_style_ref: z.string().optional(),
     orientation: imageOrientationSchema.default("portrait"),
     aspect_ratio: z.string().min(1).default("2:3"),
