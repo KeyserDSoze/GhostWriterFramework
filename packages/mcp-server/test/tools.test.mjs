@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -226,7 +226,82 @@ test("mcp server tools support guided creation and structural updates", async ()
     });
 
     const resumeText = await callToolText(client, "sync_all_resumes", { rootPath });
+    const chapterResumeDirectory = path.join(rootPath, "resumes", "chapters");
+    const chapterResumeFile = (await readdir(chapterResumeDirectory)).find((entry) => entry.startsWith("001-"));
+    const chapterTwoResumeFile = (await readdir(chapterResumeDirectory)).find((entry) => entry.startsWith("002-"));
+    assert.ok(chapterResumeFile, "expected a chapter 1 resume file after sync_all_resumes");
+    assert.ok(chapterTwoResumeFile, "expected a chapter 2 resume file after sync_all_resumes");
+    const chapterResumePath = path.join(chapterResumeDirectory, chapterResumeFile);
+    const chapterResumeSlug = chapterResumeFile.replace(/\.md$/i, "");
+    const chapterResume = await readFile(chapterResumePath, "utf8");
+    await writeFile(
+      chapterResumePath,
+      chapterResume.replace(
+        `chapter: chapter:${chapterResumeSlug}\n`,
+        [
+          `chapter: chapter:${chapterResumeSlug}`,
+          "state_changes:",
+          '  locations:',
+          '    "character:lyra-voss": "location:gray-harbor"',
+          '  knowledge_gain:',
+          '    "character:lyra-voss":',
+          '      - registry-seal-is-false',
+          '  conditions:',
+          '    "character:lyra-voss":',
+          '      - cornered',
+          '  open_loops_add:',
+          '    - prove-the-ledger-was-forged',
+          "",
+        ].join("\n"),
+      ),
+      "utf8",
+    );
+    const chapterTwoResumePath = path.join(chapterResumeDirectory, chapterTwoResumeFile);
+    const chapterTwoResumeSlug = chapterTwoResumeFile.replace(/\.md$/i, "");
+    const chapterTwoResume = await readFile(chapterTwoResumePath, "utf8");
+    await writeFile(
+      chapterTwoResumePath,
+      chapterTwoResume.replace(
+        `chapter: chapter:${chapterTwoResumeSlug}\n`,
+        [
+          `chapter: chapter:${chapterTwoResumeSlug}`,
+          "state_changes:",
+          '  conditions:',
+          '    "character:lyra-voss":',
+          '      - steady',
+          '  relationship_updates:',
+          '    "character:lyra-voss":',
+          '      "character:harbor-lockdown": strategic-focus',
+          '  open_loops_add:',
+          '    - warn-the-watch-captain',
+          '  open_loops_resolved:',
+          '    - prove-the-ledger-was-forged',
+          "",
+        ].join("\n"),
+      ),
+      "utf8",
+    );
     const storyStateText = await callToolText(client, "sync_story_state", { rootPath });
+    const queryCanonText = await callToolText(client, "query_canon", {
+      rootPath,
+      question: "Where is Lyra Voss?",
+    });
+    const queryConditionText = await callToolText(client, "query_canon", {
+      rootPath,
+      question: "What condition is Lyra Voss in?",
+    });
+    const queryConditionArcText = await callToolText(client, "query_canon", {
+      rootPath,
+      question: "How does Lyra Voss's condition change between chapter 1 and chapter 2?",
+    });
+    const queryOpenLoopsText = await callToolText(client, "query_canon", {
+      rootPath,
+      question: "What open loops are there?",
+    });
+    const queryOpenLoopsArcText = await callToolText(client, "query_canon", {
+      rootPath,
+      question: "What open loops change between chapter 1 and chapter 2?",
+    });
     const evaluationText = await callToolText(client, "evaluate_book", { rootPath });
     const validationText = await callToolText(client, "validate_book", { rootPath });
     const plotSyncText = await callToolText(client, "sync_plot", { rootPath });
@@ -272,6 +347,20 @@ test("mcp server tools support guided creation and structural updates", async ()
     assert.match(renameParagraphText, /sync_story_state/);
     assert.match(resumeText, /Synced 2 chapter resumes/);
     assert.match(storyStateText, /Synced story state at/);
+    assert.match(queryCanonText, /Answer: Lyra Voss is in gray harbor/i);
+    assert.match(queryCanonText, /Matched target: character:lyra-voss/);
+    assert.match(queryCanonText, /Intent: state-location/);
+    assert.match(queryConditionText, /Intent: state-condition/);
+    assert.match(queryConditionText, /steady/i);
+    assert.match(queryConditionArcText, /Intent: state-condition-arc/);
+    assert.match(queryConditionArcText, /cornered/i);
+    assert.match(queryConditionArcText, /steady/i);
+    assert.match(queryOpenLoopsText, /Intent: state-open-loops/);
+    assert.match(queryOpenLoopsText, /warn the watch captain/i);
+    assert.match(queryOpenLoopsArcText, /Intent: state-open-loops-arc/);
+    assert.match(queryOpenLoopsArcText, /prove the ledger was forged/i);
+    assert.match(queryOpenLoopsArcText, /warn the watch captain/i);
+    assert.match(queryOpenLoopsArcText, /resolved/i);
     assert.match(evaluationText, /Synced book evaluation/);
     assert.match(validationText, /Validation passed/);
     assert.match(plotSyncText, /Synced plot at/);

@@ -30,6 +30,7 @@ import {
   exportEpub,
   initializeBookRepo,
   listRelatedCanon,
+  queryCanon,
   readStoryStateStatus,
   readAsset,
   registerAsset,
@@ -1764,6 +1765,37 @@ server.tool(
       (hit, index) =>
         `${index + 1}. [${hit.type}] ${hit.title} :: ${hit.path}\n   ${hit.excerpt}`,
     );
+
+    return textResponse(lines.join("\n"));
+  },
+);
+
+server.tool(
+  "query_canon",
+  "Answer a natural-language canon question by combining structured state, summaries, chapters, and repository search. Use this for questions like where a character is, what they know, who holds a secret, when something first appears, or how a relationship/condition/open loop changes across a chapter range.",
+  {
+    rootPath: z.string().min(1),
+    question: z.string().min(1),
+    throughChapter: z.string().optional(),
+    fromChapter: z.string().optional(),
+    toChapter: z.string().optional(),
+    limit: z.number().int().positive().max(12).default(6),
+  },
+  async ({ rootPath, question, throughChapter, fromChapter, toChapter, limit }) => {
+    const result = await queryCanon(rootPath, question, { throughChapter, fromChapter, toChapter, limit });
+    const lines = [
+      `Answer: ${result.answer}`,
+      `Confidence: ${result.confidence}`,
+      `Intent: ${result.intent}`,
+      ...(result.matchedTarget ? [`Matched target: ${result.matchedTarget}`] : []),
+      ...(result.fromChapter ? [`From chapter: ${result.fromChapter}`] : []),
+      ...(result.toChapter ? [`To chapter: ${result.toChapter}`] : []),
+      ...(result.throughChapter ? [`Through chapter: ${result.throughChapter}`] : []),
+      ...(result.notes.length > 0 ? ["Notes:", ...result.notes.map((note) => `- ${note}`)] : []),
+      ...(result.sources.length > 0
+        ? ["Sources:", ...result.sources.map((source, index) => `${index + 1}. [${source.type}] ${source.title} :: ${source.path} (${source.reason})`)]
+        : []),
+    ];
 
     return textResponse(lines.join("\n"));
   },

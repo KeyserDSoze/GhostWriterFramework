@@ -189,6 +189,7 @@ These are the main building blocks exposed by the local MCP server:
 - `create_asset_prompt`, `register_asset`, `generate_asset_image`: manage canonical art prompts and image files
 - `rename_entity`, `rename_chapter`, `rename_paragraph`: rename canon safely and move matching asset folders too
 - `search_book`: search the repository before inventing canon
+- `query_canon`: answer natural-language canon questions using state, resumes, chapters, and fallback search, including locations, knowledge, inventory, relationships, conditions, open loops, secret holders, first appearances, and chapter-range evolution queries
 - `list_related_canon`: find files that reference an id or concept
 - `sync_resume`: refresh chapter or total summaries from current files
 - `sync_all_resumes`: refresh all chapter resumes plus the total summary in one pass
@@ -231,6 +232,8 @@ Recommended `state_changes` keys in chapter resumes:
 - `open_loops_add` and `open_loops_resolved`
 
 `doctorBook()` and `npm run doctor` now warn if `state/` is missing or stale, and writing-context tools read `state/current.md` plus `state/status.md` when available.
+
+For continuity questions and range-based canon queries, see `docs/query-canon.md`.
 
 ## Practical image examples
 

@@ -93,6 +93,7 @@ Point OpenCode or another MCP client at the built server and use tools such as:
 - `generate_asset_image`
 - `update_chapter`
 - `update_paragraph`
+- `query_canon`
 - `rename_entity`
 - `rename_chapter`
 - `rename_paragraph`
@@ -138,6 +139,23 @@ Recommended `state_changes` keys:
 - `conditions`
 - `wounds`
 - `open_loops_add` and `open_loops_resolved`
+
+`query_canon` sits on top of this stack and answers natural-language questions such as:
+
+- `Where is Lyra right now?`
+- `What does Lyra know after chapter 4?`
+- `What is Lyra's relationship with Taren?`
+- `What condition is Lyra in?`
+- `What open loops are still active?`
+- `How does Lyra's relationship with Taren change between chapter 3 and chapter 8?`
+- `How does Lyra's condition change between chapter 3 and chapter 8?`
+- `What open loops change between chapter 3 and chapter 8?`
+- `Who knows this secret?`
+- `When does the brass key first appear?`
+
+You can also pass `fromChapter`, `toChapter`, or `throughChapter` directly when you need exact scope control instead of relying on question parsing.
+
+See `docs/query-canon.md` for a fuller guide with use cases, scope rules, output fields, and limitations.
 
 ## Practical asset examples
 

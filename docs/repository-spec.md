@@ -275,6 +275,8 @@ Treat `state_changes` as the chapter delta, not as a full-world snapshot.
 - use `create_chapter_from_draft` and `create_paragraph_from_draft` when promoting rough material into final story files
 - use `sync_plot` to refresh the root plot map after story progression, reveal timing, or timeline changes
 - use `location_wizard`, `faction_wizard`, `item_wizard`, and `secret_wizard` before creating rich canon files when briefs are incomplete
+- use `query_canon` when the agent needs an answer like where someone is, what they know, who holds a secret, when something first appears, or how a relationship/condition/open loop changes across a chapter range
+- see `docs/query-canon.md` for a dedicated guide with examples, scope controls, and limits
 - use `resumes/` to keep running summaries stable
 - use `state/` for structured continuity snapshots and refresh it manually with `sync_story_state` after stable rewrites
 - use `evaluations/` for structural critique, continuity checks, and quality notes

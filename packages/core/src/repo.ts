@@ -80,6 +80,42 @@ type SearchHit = {
   excerpt: string;
 };
 
+export type QueryCanonConfidence = "high" | "medium" | "low";
+
+export type QueryCanonIntent =
+  | "state-location"
+  | "state-knowledge"
+  | "state-inventory"
+  | "state-relationship"
+  | "state-relationship-arc"
+  | "state-condition"
+  | "state-condition-arc"
+  | "state-open-loops"
+  | "state-open-loops-arc"
+  | "secret-holders"
+  | "first-appearance"
+  | "general";
+
+export type QueryCanonSource = {
+  path: string;
+  title: string;
+  type: string;
+  reason: string;
+};
+
+export type QueryCanonResult = {
+  question: string;
+  answer: string;
+  confidence: QueryCanonConfidence;
+  intent: QueryCanonIntent;
+  sources: QueryCanonSource[];
+  notes: string[];
+  matchedTarget?: string;
+  throughChapter?: string;
+  fromChapter?: string;
+  toChapter?: string;
+};
+
 type CanonEntityDocument = {
   slug: string;
   path: string;
@@ -319,6 +355,45 @@ type StoryStateSnapshot = {
   conditions: Record<string, string[]>;
   wounds: Record<string, string[]>;
   openLoops: string[];
+};
+
+type StoryStateTimelineEntry = {
+  chapterSlug: string;
+  chapterNumber: number;
+  chapterTitle: string;
+  resumePath: string;
+  chapterPath: string;
+  snapshot: StoryStateSnapshot;
+  stateChanges?: StoryStateChanges;
+};
+
+type QueryCanonTarget = {
+  kind: EntityType | "chapter";
+  id: string;
+  title: string;
+  aliases: string[];
+  path: string;
+  metadata: Record<string, unknown>;
+  body: string;
+};
+
+type QueryCanonAnswerDraft = {
+  answer: string;
+  confidence: QueryCanonConfidence;
+  intent: QueryCanonIntent;
+  sources: QueryCanonSource[];
+  notes: string[];
+};
+
+type QueryCanonLookup = {
+  targetsById: Map<string, QueryCanonTarget>;
+  chaptersByRef: Map<string, { slug: string; number: number; title: string }>;
+};
+
+type QueryCanonChapterRange = {
+  startReference: string;
+  endReference: string;
+  note?: string;
 };
 
 type RenameResult = {
@@ -2100,6 +2175,99 @@ export async function searchBook(
   return hits.sort((left, right) => right.score - left.score).slice(0, limit);
 }
 
+export async function queryCanon(
+  rootPath: string,
+  question: string,
+  options?: { throughChapter?: string; fromChapter?: string; toChapter?: string; limit?: number },
+): Promise<QueryCanonResult> {
+  const root = path.resolve(rootPath);
+  const normalizedQuestion = question.trim();
+
+  if (!normalizedQuestion) {
+    throw new Error("Question cannot be empty.");
+  }
+
+  const limit = options?.limit ?? 6;
+  const chapters = await listChapters(root);
+  const storyStateTimeline = await buildStoryStateTimeline(root);
+  const storyStateStatus = await readStoryStateStatus(root);
+  const chapterRange = resolveQueryCanonChapterRange(chapters, normalizedQuestion, options?.fromChapter, options?.toChapter);
+  const chapterScope = resolveQueryCanonChapterScope(
+    chapters,
+    normalizedQuestion,
+    chapterRange?.endReference ?? options?.throughChapter,
+  );
+  const intent = detectQueryCanonIntent(normalizedQuestion, Boolean(chapterRange));
+  const targets = await buildQueryCanonTargets(root, chapters);
+  const subjectHint = formatQueryCanonSubject(normalizedQuestion);
+  const targetResolution = resolveQueryCanonTarget(filterQueryCanonTargetsForIntent(targets, intent), normalizedQuestion, subjectHint);
+  const lookup = buildQueryCanonLookup(targets, chapters);
+  const effectiveThroughChapter = chapterRange?.endReference ?? chapterScope.reference;
+  const baseNotes = uniqueValues(
+    [
+      ...(storyStateStatus.dirty
+        ? ["Structured story state is marked stale; answers use the latest chapter resume deltas rather than synced state/current.md."]
+        : []),
+      ...(chapterRange?.note ? [chapterRange.note] : []),
+      ...(chapterScope.note ? [chapterScope.note] : []),
+      ...(targetResolution.note ? [targetResolution.note] : []),
+    ].filter(Boolean),
+  );
+
+  const structuredResult =
+    (intent === "state-location"
+      ? answerLocationQuery(root, targetResolution.target, effectiveThroughChapter, storyStateTimeline.entries, lookup)
+      : intent === "state-knowledge"
+        ? answerKnowledgeQuery(root, targetResolution.target, effectiveThroughChapter, storyStateTimeline.entries, lookup)
+      : intent === "state-inventory"
+          ? answerInventoryQuery(root, targetResolution.target, effectiveThroughChapter, storyStateTimeline.entries, lookup)
+          : intent === "state-relationship"
+            ? answerRelationshipQuery(
+                root,
+                targetResolution.target,
+                resolveSecondaryQueryCanonTarget(filterQueryCanonTargetsForIntent(targets, intent), normalizedQuestion, targetResolution.target),
+                effectiveThroughChapter,
+                storyStateTimeline.entries,
+                lookup,
+              )
+            : intent === "state-relationship-arc"
+              ? answerRelationshipArcQuery(
+                  root,
+                  targetResolution.target,
+                  resolveSecondaryQueryCanonTarget(filterQueryCanonTargetsForIntent(targets, intent), normalizedQuestion, targetResolution.target),
+                  chapterRange,
+                  storyStateTimeline.entries,
+                  lookup,
+                )
+            : intent === "state-condition"
+              ? answerConditionQuery(root, targetResolution.target, effectiveThroughChapter, storyStateTimeline.entries, lookup)
+              : intent === "state-condition-arc"
+                ? answerConditionArcQuery(root, targetResolution.target, chapterRange, storyStateTimeline.entries, lookup)
+              : intent === "state-open-loops"
+                ? answerOpenLoopsQuery(root, targetResolution.target, effectiveThroughChapter, storyStateTimeline.entries, lookup)
+                : intent === "state-open-loops-arc"
+                  ? answerOpenLoopsArcQuery(root, targetResolution.target, chapterRange, storyStateTimeline.entries, lookup)
+          : intent === "secret-holders"
+              ? answerSecretHoldersQuery(root, targetResolution.target, lookup)
+              : intent === "first-appearance"
+                ? await answerFirstAppearanceQuery(root, normalizedQuestion, targetResolution.target, effectiveThroughChapter, chapters, lookup)
+                : answerGeneralTargetQuery(root, targetResolution.target, lookup)) ??
+    (await answerFallbackCanonQuery(root, normalizedQuestion, targetResolution.target, limit));
+
+  return {
+    question: normalizedQuestion,
+    answer: structuredResult.answer,
+    confidence: structuredResult.confidence,
+    intent: structuredResult.intent,
+    sources: structuredResult.sources.slice(0, limit),
+    notes: uniqueValues([...baseNotes, ...structuredResult.notes]),
+    matchedTarget: targetResolution.target?.id,
+    throughChapter: effectiveThroughChapter,
+    fromChapter: chapterRange?.startReference,
+    toChapter: chapterRange?.endReference,
+  };
+}
+
 export async function updateEntity(
   rootPath: string,
   options: {
@@ -2556,6 +2724,37 @@ export async function readStoryStateStatus(
   };
 }
 
+async function buildStoryStateTimeline(
+  root: string,
+): Promise<{ entries: StoryStateTimelineEntry[]; current: StoryStateSnapshot; chapterCount: number }> {
+  const chapters = await listChapters(root);
+  const entries: StoryStateTimelineEntry[] = [];
+  let snapshot = createEmptyStoryStateSnapshot();
+
+  for (const chapter of chapters) {
+    const resumePath = path.join(root, "resumes", "chapters", `${chapter.slug}.md`);
+    const resume = await readLooseMarkdownIfExists(resumePath);
+    const stateChanges = normalizeStoryStateChanges(resume?.frontmatter.state_changes);
+    snapshot = applyStoryStateChanges(snapshot, stateChanges);
+
+    entries.push({
+      chapterSlug: chapter.slug,
+      chapterNumber: chapter.metadata.number,
+      chapterTitle: chapter.metadata.title,
+      resumePath,
+      chapterPath: path.join(root, "chapters", chapter.slug, "chapter.md"),
+      snapshot,
+      stateChanges,
+    });
+  }
+
+  return {
+    entries,
+    current: entries.at(-1)?.snapshot ?? createEmptyStoryStateSnapshot(),
+    chapterCount: chapters.length,
+  };
+}
+
 async function buildStoryStateDocuments(
   root: string,
 ): Promise<{
@@ -2564,48 +2763,41 @@ async function buildStoryStateDocuments(
   chapterFiles: Array<{ filePath: string; content: string }>;
   chapterCount: number;
 }> {
-  const chapters = await listChapters(root);
+  const { entries, current, chapterCount } = await buildStoryStateTimeline(root);
   const chapterFiles: Array<{ filePath: string; content: string }> = [];
-  let snapshot = createEmptyStoryStateSnapshot();
-
-  for (const [index, chapter] of chapters.entries()) {
-    const resume = await readLooseMarkdownIfExists(path.join(root, "resumes", "chapters", `${chapter.slug}.md`));
-    const stateChanges = normalizeStoryStateChanges(resume?.frontmatter.state_changes);
-    snapshot = applyStoryStateChanges(snapshot, stateChanges);
-    const filePath = path.join(root, "state", "chapters", `${chapter.slug}.md`);
+  for (const [index, entry] of entries.entries()) {
+    const filePath = path.join(root, "state", "chapters", `${entry.chapterSlug}.md`);
 
     chapterFiles.push({
       filePath,
       content: renderMarkdown(
         compactFrontmatterPatch({
           type: "story-state",
-          id: `story-state:chapter:${chapter.slug}`,
-          title: `Story State ${chapter.slug}`,
-          chapter: `chapter:${chapter.slug}`,
-          source_resume: `resume:chapter:${chapter.slug}`,
-          through_chapter: `chapter:${chapter.slug}`,
+          id: `story-state:chapter:${entry.chapterSlug}`,
+          title: `Story State ${entry.chapterSlug}`,
+          chapter: `chapter:${entry.chapterSlug}`,
+          source_resume: `resume:chapter:${entry.chapterSlug}`,
+          through_chapter: `chapter:${entry.chapterSlug}`,
           chapter_count: index + 1,
         }),
-        buildStoryStateSnapshotBody(snapshot, {
-          heading: `Story State After Chapter ${formatOrdinal(chapter.metadata.number)} ${chapter.metadata.title}`,
-          throughChapter: `chapter:${chapter.slug}`,
+        buildStoryStateSnapshotBody(entry.snapshot, {
+          heading: `Story State After Chapter ${formatOrdinal(entry.chapterNumber)} ${entry.chapterTitle}`,
+          throughChapter: `chapter:${entry.chapterSlug}`,
           chapterCount: index + 1,
-          changeLines: renderStoryStateChangeLines(stateChanges),
+          changeLines: renderStoryStateChangeLines(entry.stateChanges),
         }),
       ),
     });
   }
 
-  const lastChapter = chapters.at(-1);
-
   return {
     currentFilePath: path.join(root, STORY_STATE_CURRENT_FILE),
-    currentContent: buildCurrentStoryStateMarkdown(snapshot, {
-      throughChapter: lastChapter ? `chapter:${lastChapter.slug}` : undefined,
-      chapterCount: chapters.length,
+    currentContent: buildCurrentStoryStateMarkdown(current, {
+      throughChapter: entries.at(-1) ? `chapter:${entries.at(-1)?.chapterSlug}` : undefined,
+      chapterCount,
     }),
     chapterFiles,
-    chapterCount: chapters.length,
+    chapterCount,
   };
 }
 
@@ -3612,6 +3804,1283 @@ async function markStoryStateDirty(
 
   await mkdir(path.dirname(current.filePath), { recursive: true });
   await writeFile(current.filePath, buildStoryStateStatusMarkdown(nextStatus), "utf8");
+}
+
+async function buildQueryCanonTargets(
+  root: string,
+  chapters: Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>,
+): Promise<QueryCanonTarget[]> {
+  const entityGroups = await Promise.all(ENTITY_TYPES.map((kind) => listEntities(root, kind)));
+  const entityTargets = entityGroups.flatMap((documents, index) => {
+    const kind = ENTITY_TYPES[index];
+    return documents.map((document) => ({
+      kind,
+      id: String(document.metadata.id ?? `${kind}:${document.slug}`),
+      title:
+        typeof document.metadata.name === "string"
+          ? document.metadata.name
+          : typeof document.metadata.title === "string"
+            ? document.metadata.title
+            : document.slug,
+      aliases: extractQueryCanonAliases(kind, document.metadata),
+      path: document.path,
+      metadata: document.metadata,
+      body: document.body,
+    }));
+  });
+
+  const chapterTargets = await Promise.all(
+    chapters.map(async (chapter) => {
+      const chapterData = await readChapter(root, chapter.slug);
+      return {
+        kind: "chapter" as const,
+        id: String(chapter.metadata.id ?? `chapter:${chapter.slug}`),
+        title: chapter.metadata.title,
+        aliases: extractQueryCanonAliases("chapter", chapter.metadata, chapter.metadata.number),
+        path: chapter.path,
+        metadata: chapter.metadata,
+        body: chapterData.body,
+      };
+    }),
+  );
+
+  return [...entityTargets, ...chapterTargets];
+}
+
+function buildQueryCanonLookup(
+  targets: QueryCanonTarget[],
+  chapters: Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>,
+): QueryCanonLookup {
+  return {
+    targetsById: new Map(targets.map((target) => [target.id, target])),
+    chaptersByRef: new Map(
+      chapters.flatMap((chapter) => [
+        [
+          `chapter:${chapter.slug}`,
+          { slug: chapter.slug, number: chapter.metadata.number, title: chapter.metadata.title },
+        ] as const,
+        [chapter.slug, { slug: chapter.slug, number: chapter.metadata.number, title: chapter.metadata.title }] as const,
+      ]),
+    ),
+  };
+}
+
+function extractQueryCanonAliases(
+  kind: EntityType | "chapter",
+  metadata: Record<string, unknown>,
+  chapterNumber?: number,
+): string[] {
+  const values = uniqueValues(
+    [
+      typeof metadata.name === "string" ? metadata.name : undefined,
+      typeof metadata.title === "string" ? metadata.title : undefined,
+      typeof metadata.id === "string" ? metadata.id : undefined,
+      typeof metadata.current_identity === "string" ? metadata.current_identity : undefined,
+      typeof metadata.spoken_name === "string" ? metadata.spoken_name : undefined,
+      typeof metadata.tts_label === "string" ? metadata.tts_label : undefined,
+      ...(Array.isArray(metadata.aliases) ? metadata.aliases.filter((value): value is string => typeof value === "string") : []),
+      ...(Array.isArray(metadata.former_names)
+        ? metadata.former_names.filter((value): value is string => typeof value === "string")
+        : []),
+      ...(kind === "chapter" && typeof metadata.id === "string"
+        ? [
+            metadata.id,
+            typeof chapterNumber === "number" ? `chapter ${chapterNumber}` : undefined,
+            typeof chapterNumber === "number" ? `capitolo ${chapterNumber}` : undefined,
+            humanizeQueryCanonToken(String(metadata.id).replace(/^chapter:/, "")),
+          ]
+        : []),
+    ].filter((value): value is string => Boolean(value && value.trim())),
+  );
+
+  return values.filter((value) => normalizeQueryCanonSearch(value).length > 0);
+}
+
+function detectQueryCanonIntent(question: string, hasRange: boolean): QueryCanonIntent {
+  const lower = question.toLowerCase();
+
+  if (/(first appear|first appears|first show|first mention|prima apparizione|compare per la prima volta|quando compare|quando appare)/.test(lower)) {
+    return "first-appearance";
+  }
+
+  if (/(who knows|chi sa|chi conosce|who is aware)/.test(lower)) {
+    return "secret-holders";
+  }
+
+  if (/(relationship|relation to|rapport|rapporto|trust|fid|ally|enemy|friend|feels about|relationship with)/.test(lower)) {
+    return hasRange ? "state-relationship-arc" : "state-relationship";
+  }
+
+  if (/(condition|status|wound|wounds|injured|injury|hurt|ferit|condizion|come sta)/.test(lower)) {
+    return hasRange ? "state-condition-arc" : "state-condition";
+  }
+
+  if (/(open loop|open loops|unresolved|unresolved thread|pending thread|questioni aperte|fili aperti|irrisolt)/.test(lower)) {
+    return hasRange ? "state-open-loops-arc" : "state-open-loops";
+  }
+
+  if (/\bwhere\b|\bdove\b|si trova|located/.test(lower)) {
+    return "state-location";
+  }
+
+  if (/cosa sa|what does .* know|what .* knows|knows after|sa dopo|sa di/.test(lower)) {
+    return "state-knowledge";
+  }
+
+  if (/cosa ha|what does .* have|what .* carries|inventory|porta con|possiede|is carrying/.test(lower)) {
+    return "state-inventory";
+  }
+
+  return "general";
+}
+
+function resolveQueryCanonChapterRange(
+  chapters: Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>,
+  question: string,
+  explicitFromChapter?: string,
+  explicitToChapter?: string,
+): QueryCanonChapterRange | undefined {
+  const explicitStart = explicitFromChapter ? resolveQueryCanonChapterReference(chapters, explicitFromChapter) : {};
+  const explicitEnd = explicitToChapter ? resolveQueryCanonChapterReference(chapters, explicitToChapter) : {};
+  const explicitNote = [explicitStart.note, explicitEnd.note].filter((value): value is string => Boolean(value)).join(" ");
+
+  if (explicitStart.reference && explicitEnd.reference) {
+    return normalizeQueryCanonChapterRange(chapters, explicitStart.reference, explicitEnd.reference, explicitNote || undefined);
+  }
+
+  const explicitRefs = [...question.matchAll(/\bchapter:[a-z0-9-]+\b/gi)].map((match) => match[0]);
+  if (explicitRefs.length >= 2) {
+    return normalizeQueryCanonChapterRange(chapters, explicitRefs[0], explicitRefs[1]);
+  }
+
+  const betweenNumberedMatch = question.match(
+    /\b(?:between|tra|fra)\s+(?:chapter|chap(?:ter)?|capitolo|cap\.?)?\s*(\d{1,3})\s+(?:and|e)\s+(?:chapter|chap(?:ter)?|capitolo|cap\.?)?\s*(\d{1,3})\b/i,
+  );
+  if (betweenNumberedMatch) {
+    return normalizeQueryCanonChapterRange(chapters, betweenNumberedMatch[1], betweenNumberedMatch[2]);
+  }
+
+  const fromToNumberedMatch = question.match(
+    /\b(?:from|da|dal)\s+(?:chapter|chap(?:ter)?|capitolo|cap\.?)?\s*(\d{1,3})\s+(?:to|through|a|al|fino al)\s+(?:chapter|chap(?:ter)?|capitolo|cap\.?)?\s*(\d{1,3})\b/i,
+  );
+  if (fromToNumberedMatch) {
+    return normalizeQueryCanonChapterRange(chapters, fromToNumberedMatch[1], fromToNumberedMatch[2]);
+  }
+
+  return undefined;
+}
+
+function normalizeQueryCanonChapterRange(
+  chapters: Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>,
+  startValue: string,
+  endValue: string,
+  note?: string,
+): QueryCanonChapterRange | undefined {
+  const start = resolveQueryCanonChapterReference(chapters, startValue);
+  const end = resolveQueryCanonChapterReference(chapters, endValue);
+  const issues = [note, start.note, end.note].filter((value): value is string => Boolean(value));
+
+  if (!start.reference || !end.reference) {
+    return undefined;
+  }
+
+  const chapterNumbers = new Map(chapters.map((chapter) => [`chapter:${chapter.slug}`, chapter.metadata.number]));
+  const startNumber = chapterNumbers.get(start.reference) ?? 0;
+  const endNumber = chapterNumbers.get(end.reference) ?? 0;
+
+  if (startNumber <= endNumber) {
+    return {
+      startReference: start.reference,
+      endReference: end.reference,
+      note: issues.join(" ") || undefined,
+    };
+  }
+
+  return {
+    startReference: end.reference,
+    endReference: start.reference,
+    note: uniqueValues([...issues, "Chapter range was reversed in the question, so the answer uses chronological order."]).join(" "),
+  };
+}
+
+function resolveQueryCanonChapterScope(
+  chapters: Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>,
+  question: string,
+  explicitThroughChapter?: string,
+): { reference?: string; note?: string } {
+  if (explicitThroughChapter) {
+    return resolveQueryCanonChapterReference(chapters, explicitThroughChapter);
+  }
+
+  const explicitId = question.match(/\bchapter:[a-z0-9-]+\b/i)?.[0];
+  if (explicitId) {
+    return resolveQueryCanonChapterReference(chapters, explicitId);
+  }
+
+  const numberedMatch = question.match(/\b(?:chapter|chap(?:ter)?|capitolo|cap\.?)\s*(\d{1,3})\b/i);
+  if (numberedMatch) {
+    return resolveQueryCanonChapterReference(chapters, numberedMatch[0]);
+  }
+
+  return {};
+}
+
+function resolveQueryCanonChapterReference(
+  chapters: Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>,
+  value: string,
+): { reference?: string; note?: string } {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  const explicitId = trimmed.match(/\bchapter:[a-z0-9-]+\b/i)?.[0];
+  if (explicitId) {
+    const slug = normalizeChapterReference(explicitId);
+    const chapter = chapters.find((entry) => entry.slug === slug);
+    return chapter
+      ? { reference: `chapter:${chapter.slug}` }
+      : { note: `No chapter found matching ${explicitId}.` };
+  }
+
+  const numberedMatch = trimmed.match(/\b(?:chapter|chap(?:ter)?|capitolo|cap\.?)\s*(\d{1,3})\b/i) ??
+    trimmed.match(/^(\d{1,3})$/);
+  if (numberedMatch) {
+    const chapterNumber = Number(numberedMatch[1]);
+    const chapter = chapters.find((entry) => entry.metadata.number === chapterNumber);
+    return chapter
+      ? { reference: `chapter:${chapter.slug}` }
+      : { note: `No chapter found matching chapter ${chapterNumber}.` };
+  }
+
+  if (/^[a-z0-9-]+$/i.test(trimmed)) {
+    const slug = normalizeChapterReference(trimmed);
+    const chapter = chapters.find((entry) => entry.slug === slug);
+    return chapter
+      ? { reference: `chapter:${chapter.slug}` }
+      : { note: `No chapter found matching ${trimmed}.` };
+  }
+
+  return {};
+}
+
+function resolveQueryCanonTarget(
+  targets: QueryCanonTarget[],
+  question: string,
+  subjectHint?: string,
+): { target?: QueryCanonTarget; note?: string } {
+  const ranked = rankQueryCanonTargets(targets, question, subjectHint);
+
+  if (ranked.length === 0) {
+    return {};
+  }
+
+  const best = ranked[0];
+  const second = ranked[1];
+  return {
+    target: best.target,
+    note:
+      second && second.score >= best.score - 10
+        ? `Query target may be ambiguous between ${best.target.id} and ${second.target.id}. Using ${best.target.id}.`
+        : undefined,
+  };
+}
+
+function resolveSecondaryQueryCanonTarget(
+  targets: QueryCanonTarget[],
+  question: string,
+  primaryTarget: QueryCanonTarget | undefined,
+  subjectHint?: string,
+): QueryCanonTarget | undefined {
+  if (!primaryTarget) {
+    return undefined;
+  }
+
+  return rankQueryCanonTargets(targets, question, subjectHint)
+    .map((entry) => entry.target)
+    .find((target) => target.id !== primaryTarget.id);
+}
+
+function rankQueryCanonTargets(
+  targets: QueryCanonTarget[],
+  question: string,
+  subjectHint?: string,
+): Array<{ target: QueryCanonTarget; score: number }> {
+  const lowerQuestion = question.toLowerCase();
+  const normalizedQuestion = normalizeQueryCanonSearch(question);
+  const lowerSubject = subjectHint?.toLowerCase() ?? "";
+  const normalizedSubject = subjectHint ? normalizeQueryCanonSearch(subjectHint) : "";
+
+  return targets
+    .map((target) => ({
+      target,
+      score: Math.max(
+        scoreQueryCanonTarget(target, lowerQuestion, normalizedQuestion),
+        normalizedSubject ? scoreQueryCanonTarget(target, lowerSubject, normalizedSubject) + 20 : 0,
+      ),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score);
+}
+
+function filterQueryCanonTargetsForIntent(
+  targets: QueryCanonTarget[],
+  intent: QueryCanonIntent,
+): QueryCanonTarget[] {
+  switch (intent) {
+    case "state-location":
+    case "state-knowledge":
+    case "state-inventory":
+    case "state-relationship":
+    case "state-relationship-arc":
+    case "state-condition":
+    case "state-condition-arc":
+      return targets.filter((target) => target.kind !== "chapter");
+    case "state-open-loops":
+    case "state-open-loops-arc":
+      return targets;
+    case "secret-holders":
+      return targets.filter((target) => target.kind === "secret");
+    default:
+      return targets;
+  }
+}
+
+function scoreQueryCanonTarget(target: QueryCanonTarget, lowerQuestion: string, normalizedQuestion: string): number {
+  let score = 0;
+  const directId = target.id.toLowerCase();
+  if (lowerQuestion.includes(directId)) {
+    score = Math.max(score, 180);
+  }
+
+  for (const candidate of uniqueValues([target.title, ...target.aliases])) {
+    const normalizedCandidate = normalizeQueryCanonSearch(candidate);
+    if (!normalizedCandidate) continue;
+
+    if (normalizedQuestion === normalizedCandidate) {
+      score = Math.max(score, 160);
+    }
+
+    if (normalizedQuestion.includes(normalizedCandidate)) {
+      score = Math.max(score, 140);
+    }
+
+    const tokens = normalizedCandidate.split(" ").filter((token) => token.length >= 4);
+    const matchedTokens = tokens.filter((token) => normalizedQuestion.includes(token));
+    if (matchedTokens.length === tokens.length && tokens.length > 0) {
+      score = Math.max(score, 120 + matchedTokens.length * 5);
+    } else if (matchedTokens.length > 0) {
+      score = Math.max(score, 70 + matchedTokens.length * 12);
+    }
+  }
+
+  return score;
+}
+
+function answerLocationQuery(
+  root: string,
+  target: QueryCanonTarget | undefined,
+  throughChapter: string | undefined,
+  entries: StoryStateTimelineEntry[],
+  lookup: QueryCanonLookup,
+): QueryCanonAnswerDraft | null {
+  if (!target) {
+    return null;
+  }
+
+  const snapshotEntry = selectStoryStateEntry(entries, throughChapter);
+  const location = snapshotEntry?.snapshot.locations[target.id];
+  if (!snapshotEntry || !location) {
+    return null;
+  }
+
+  const sourceEntry = [...storyStateEntriesUpTo(entries, throughChapter)]
+    .reverse()
+    .find((entry) => Boolean(entry.stateChanges?.locations?.[target.id]));
+
+  return {
+    answer: `${target.title} is in ${formatQueryCanonValue(location, lookup)}${
+      throughChapter ? ` through ${formatQueryCanonChapterLabel(throughChapter, lookup)}` : ""
+    }.`,
+    confidence: "high",
+    intent: "state-location",
+    sources: uniqueQueryCanonSources(
+      [
+        sourceEntry ? buildQueryCanonSource(root, sourceEntry.resumePath, sourceEntry.chapterTitle, "resume", "story state location change") : null,
+        sourceEntry ? buildQueryCanonSource(root, sourceEntry.chapterPath, sourceEntry.chapterTitle, "chapter", "chapter anchor") : null,
+      ].filter((value): value is QueryCanonSource => Boolean(value)),
+    ),
+    notes: [],
+  };
+}
+
+function answerKnowledgeQuery(
+  root: string,
+  target: QueryCanonTarget | undefined,
+  throughChapter: string | undefined,
+  entries: StoryStateTimelineEntry[],
+  lookup: QueryCanonLookup,
+): QueryCanonAnswerDraft | null {
+  if (!target) {
+    return null;
+  }
+
+  const snapshotEntry = selectStoryStateEntry(entries, throughChapter);
+  const knowledge = snapshotEntry?.snapshot.knowledge[target.id] ?? [];
+  if (knowledge.length === 0) {
+    return null;
+  }
+
+  const sourceEntries = storyStateEntriesUpTo(entries, throughChapter)
+    .filter((entry) => Boolean(entry.stateChanges?.knowledge_gain?.[target.id] || entry.stateChanges?.knowledge_loss?.[target.id]))
+    .slice(-3);
+
+  return {
+    answer: `${target.title} knows ${joinQueryCanonList(knowledge.map((value) => formatQueryCanonValue(value, lookup)))}${
+      throughChapter ? ` by ${formatQueryCanonChapterLabel(throughChapter, lookup)}` : ""
+    }.`,
+    confidence: "high",
+    intent: "state-knowledge",
+    sources: uniqueQueryCanonSources(
+      sourceEntries.map((entry) => buildQueryCanonSource(root, entry.resumePath, entry.chapterTitle, "resume", "story state knowledge delta")),
+    ),
+    notes: [],
+  };
+}
+
+function answerInventoryQuery(
+  root: string,
+  target: QueryCanonTarget | undefined,
+  throughChapter: string | undefined,
+  entries: StoryStateTimelineEntry[],
+  lookup: QueryCanonLookup,
+): QueryCanonAnswerDraft | null {
+  if (!target) {
+    return null;
+  }
+
+  const snapshotEntry = selectStoryStateEntry(entries, throughChapter);
+  const inventory = snapshotEntry?.snapshot.inventory[target.id] ?? [];
+  if (inventory.length === 0) {
+    return null;
+  }
+
+  const sourceEntries = storyStateEntriesUpTo(entries, throughChapter)
+    .filter((entry) => Boolean(entry.stateChanges?.inventory_add?.[target.id] || entry.stateChanges?.inventory_remove?.[target.id]))
+    .slice(-3);
+
+  return {
+    answer: `${target.title} has ${joinQueryCanonList(inventory.map((value) => formatQueryCanonValue(value, lookup)))}${
+      throughChapter ? ` by ${formatQueryCanonChapterLabel(throughChapter, lookup)}` : ""
+    }.`,
+    confidence: "high",
+    intent: "state-inventory",
+    sources: uniqueQueryCanonSources(
+      sourceEntries.map((entry) => buildQueryCanonSource(root, entry.resumePath, entry.chapterTitle, "resume", "story state inventory delta")),
+    ),
+    notes: [],
+  };
+}
+
+function answerRelationshipQuery(
+  root: string,
+  target: QueryCanonTarget | undefined,
+  secondaryTarget: QueryCanonTarget | undefined,
+  throughChapter: string | undefined,
+  entries: StoryStateTimelineEntry[],
+  lookup: QueryCanonLookup,
+): QueryCanonAnswerDraft | null {
+  if (!target) {
+    return null;
+  }
+
+  const snapshotEntry = selectStoryStateEntry(entries, throughChapter);
+  const allRelationships = snapshotEntry?.snapshot.relationships[target.id] ?? {};
+
+  if (secondaryTarget) {
+    const direct = allRelationships[secondaryTarget.id];
+    const reverse = snapshotEntry?.snapshot.relationships[secondaryTarget.id]?.[target.id];
+    const relation = direct ?? reverse;
+    if (!relation) {
+      return null;
+    }
+
+    const sourceEntries = storyStateEntriesUpTo(entries, throughChapter)
+      .filter(
+        (entry) =>
+          Boolean(entry.stateChanges?.relationship_updates?.[target.id]?.[secondaryTarget.id]) ||
+          Boolean(entry.stateChanges?.relationship_updates?.[secondaryTarget.id]?.[target.id]),
+      )
+      .slice(-3);
+
+    const sentence = direct
+      ? `${target.title}'s relationship with ${secondaryTarget.title} is ${humanizeQueryCanonToken(direct)}.`
+      : `${secondaryTarget.title}'s relationship with ${target.title} is ${humanizeQueryCanonToken(reverse ?? relation)}.`;
+
+    return {
+      answer: `${sentence}${throughChapter ? ` ${formatQueryCanonChapterLabel(throughChapter, lookup)}.` : ""}`,
+      confidence: "high",
+      intent: "state-relationship",
+      sources: uniqueQueryCanonSources(
+        sourceEntries.map((entry) => buildQueryCanonSource(root, entry.resumePath, entry.chapterTitle, "resume", "story state relationship delta")),
+      ),
+      notes: [],
+    };
+  }
+
+  const relationshipEntries = Object.entries(allRelationships);
+  if (relationshipEntries.length === 0) {
+    return null;
+  }
+
+  const sourceEntries = storyStateEntriesUpTo(entries, throughChapter)
+    .filter((entry) => Boolean(entry.stateChanges?.relationship_updates?.[target.id]))
+    .slice(-3);
+
+  return {
+    answer: `${target.title}'s current relationships: ${joinQueryCanonList(
+      relationshipEntries.map(([relatedId, value]) => `${formatQueryCanonValue(relatedId, lookup)} = ${humanizeQueryCanonToken(value)}`),
+    )}.`,
+    confidence: "high",
+    intent: "state-relationship",
+    sources: uniqueQueryCanonSources(
+      sourceEntries.map((entry) => buildQueryCanonSource(root, entry.resumePath, entry.chapterTitle, "resume", "story state relationship delta")),
+    ),
+    notes: [],
+  };
+}
+
+function answerConditionQuery(
+  root: string,
+  target: QueryCanonTarget | undefined,
+  throughChapter: string | undefined,
+  entries: StoryStateTimelineEntry[],
+  lookup: QueryCanonLookup,
+): QueryCanonAnswerDraft | null {
+  if (!target) {
+    return null;
+  }
+
+  const snapshotEntry = selectStoryStateEntry(entries, throughChapter);
+  const conditions = snapshotEntry?.snapshot.conditions[target.id] ?? [];
+  const wounds = snapshotEntry?.snapshot.wounds[target.id] ?? [];
+  if (conditions.length === 0 && wounds.length === 0) {
+    return null;
+  }
+
+  const sourceEntries = storyStateEntriesUpTo(entries, throughChapter)
+    .filter((entry) => Boolean(entry.stateChanges?.conditions?.[target.id] || entry.stateChanges?.wounds?.[target.id]))
+    .slice(-3);
+
+  const parts = [
+    conditions.length > 0 ? `conditions ${joinQueryCanonList(conditions.map((value) => humanizeQueryCanonToken(value)))}` : undefined,
+    wounds.length > 0 ? `wounds ${joinQueryCanonList(wounds.map((value) => humanizeQueryCanonToken(value)))}` : undefined,
+  ].filter((value): value is string => Boolean(value));
+
+  return {
+    answer: `${target.title} currently has ${parts.join(" and ")}${
+      throughChapter ? ` by ${formatQueryCanonChapterLabel(throughChapter, lookup)}` : ""
+    }.`,
+    confidence: "high",
+    intent: "state-condition",
+    sources: uniqueQueryCanonSources(
+      sourceEntries.map((entry) => buildQueryCanonSource(root, entry.resumePath, entry.chapterTitle, "resume", "story state condition delta")),
+    ),
+    notes: [],
+  };
+}
+
+function answerOpenLoopsQuery(
+  root: string,
+  target: QueryCanonTarget | undefined,
+  throughChapter: string | undefined,
+  entries: StoryStateTimelineEntry[],
+  lookup: QueryCanonLookup,
+): QueryCanonAnswerDraft | null {
+  const snapshotEntry = selectStoryStateEntry(entries, throughChapter);
+  const openLoops = snapshotEntry?.snapshot.openLoops ?? [];
+  if (openLoops.length === 0) {
+    return null;
+  }
+
+  const filteredLoops = target
+    ? filterOpenLoopsForTarget(openLoops, target)
+    : openLoops;
+  const effectiveLoops = filteredLoops.length > 0 ? filteredLoops : openLoops;
+
+  const sourceEntries = storyStateEntriesUpTo(entries, throughChapter)
+    .filter((entry) => Boolean(entry.stateChanges?.open_loops_add?.length || entry.stateChanges?.open_loops_resolved?.length))
+    .slice(-3);
+
+  return {
+    answer: target && filteredLoops.length > 0
+      ? `Open loops tied to ${target.title}: ${joinQueryCanonList(effectiveLoops.map((value) => humanizeQueryCanonToken(value)))}.`
+      : `Current open loops${throughChapter ? ` by ${formatQueryCanonChapterLabel(throughChapter, lookup)}` : ""}: ${joinQueryCanonList(
+          effectiveLoops.map((value) => humanizeQueryCanonToken(value)),
+        )}.`,
+    confidence: "high",
+    intent: "state-open-loops",
+    sources: uniqueQueryCanonSources(
+      sourceEntries.map((entry) => buildQueryCanonSource(root, entry.resumePath, entry.chapterTitle, "resume", "story state open loops delta")),
+    ),
+    notes: target
+      ? filteredLoops.length > 0
+        ? ["Open loops are global state; this answer filters loops that mention the matched target."]
+        : ["Open loops are global state; no target-specific loop matched cleanly, so this answer returns the global open-loop list."]
+      : [],
+  };
+}
+
+function answerRelationshipArcQuery(
+  root: string,
+  target: QueryCanonTarget | undefined,
+  secondaryTarget: QueryCanonTarget | undefined,
+  range: QueryCanonChapterRange | undefined,
+  entries: StoryStateTimelineEntry[],
+  lookup: QueryCanonLookup,
+): QueryCanonAnswerDraft | null {
+  if (!target || !range) {
+    return null;
+  }
+
+  const selected = selectStoryStateRange(entries, range);
+  if (!selected) {
+    return null;
+  }
+
+  const rangeLabel = `${formatQueryCanonChapterLabel(range.startReference, lookup)} and ${formatQueryCanonChapterLabel(range.endReference, lookup)}`;
+
+  if (secondaryTarget) {
+    const startRelation = readRelationshipValue(selected.startEntry.snapshot, target.id, secondaryTarget.id);
+    const endRelation = readRelationshipValue(selected.endEntry.snapshot, target.id, secondaryTarget.id);
+    const changeEntries = selected.entries
+      .filter(
+        (entry) =>
+          Boolean(entry.stateChanges?.relationship_updates?.[target.id]?.[secondaryTarget.id]) ||
+          Boolean(entry.stateChanges?.relationship_updates?.[secondaryTarget.id]?.[target.id]),
+      )
+      .map((entry) => `${formatQueryCanonChapterLabel(`chapter:${entry.chapterSlug}`, lookup)}: ${formatRelationshipCheckpoint(entry.snapshot, target.id, secondaryTarget.id, lookup)}`)
+      .filter(Boolean);
+
+    if (!startRelation.value && !endRelation.value && changeEntries.length === 0) {
+      return null;
+    }
+
+    const answer = startRelation.value === endRelation.value
+      ? `Between ${rangeLabel}, the tracked relationship between ${target.title} and ${secondaryTarget.title} stays ${humanizeQueryCanonToken(endRelation.value ?? "untracked")}.`
+      : !startRelation.value
+        ? `Between ${rangeLabel}, a tracked relationship between ${target.title} and ${secondaryTarget.title} emerges as ${humanizeQueryCanonToken(endRelation.value ?? "untracked")}.`
+        : !endRelation.value
+          ? `Between ${rangeLabel}, the tracked relationship between ${target.title} and ${secondaryTarget.title} drops from ${humanizeQueryCanonToken(startRelation.value)} to no tracked state.`
+          : `Between ${rangeLabel}, the tracked relationship between ${target.title} and ${secondaryTarget.title} shifts from ${humanizeQueryCanonToken(startRelation.value)} to ${humanizeQueryCanonToken(endRelation.value)}.`;
+
+    return {
+      answer: `${answer}${changeEntries.length > 0 ? ` Notable updates: ${changeEntries.join("; ")}.` : ""}`,
+      confidence: "high",
+      intent: "state-relationship-arc",
+      sources: uniqueQueryCanonSources(
+        selected.entries
+          .filter(
+            (entry) =>
+              Boolean(entry.stateChanges?.relationship_updates?.[target.id]?.[secondaryTarget.id]) ||
+              Boolean(entry.stateChanges?.relationship_updates?.[secondaryTarget.id]?.[target.id]),
+          )
+          .map((entry) => buildQueryCanonSource(root, entry.resumePath, entry.chapterTitle, "resume", "story state relationship delta")),
+      ),
+      notes: [],
+    };
+  }
+
+  const startRelationships = selected.startEntry.snapshot.relationships[target.id] ?? {};
+  const endRelationships = selected.endEntry.snapshot.relationships[target.id] ?? {};
+  if (Object.keys(startRelationships).length === 0 && Object.keys(endRelationships).length === 0) {
+    return null;
+  }
+
+  return {
+    answer: `Between ${rangeLabel}, ${target.title}'s tracked relationships move from ${formatRelationshipMap(startRelationships, lookup)} to ${formatRelationshipMap(endRelationships, lookup)}.`,
+    confidence: "high",
+    intent: "state-relationship-arc",
+    sources: uniqueQueryCanonSources(
+      selected.entries
+        .filter((entry) => Boolean(entry.stateChanges?.relationship_updates?.[target.id]))
+        .map((entry) => buildQueryCanonSource(root, entry.resumePath, entry.chapterTitle, "resume", "story state relationship delta")),
+    ),
+    notes: [],
+  };
+}
+
+function answerConditionArcQuery(
+  root: string,
+  target: QueryCanonTarget | undefined,
+  range: QueryCanonChapterRange | undefined,
+  entries: StoryStateTimelineEntry[],
+  lookup: QueryCanonLookup,
+): QueryCanonAnswerDraft | null {
+  if (!target || !range) {
+    return null;
+  }
+
+  const selected = selectStoryStateRange(entries, range);
+  if (!selected) {
+    return null;
+  }
+
+  const startState = formatConditionCheckpoint(selected.startEntry.snapshot, target.id);
+  const endState = formatConditionCheckpoint(selected.endEntry.snapshot, target.id);
+  const changeEntries = selected.entries
+    .filter((entry) => Boolean(entry.stateChanges?.conditions?.[target.id] || entry.stateChanges?.wounds?.[target.id]))
+    .map((entry) => `${formatQueryCanonChapterLabel(`chapter:${entry.chapterSlug}`, lookup)}: ${formatConditionCheckpoint(entry.snapshot, target.id)}`)
+    .filter((value) => !value.endsWith(": no tracked conditions or wounds"));
+
+  if (startState === "no tracked conditions or wounds" && endState === "no tracked conditions or wounds" && changeEntries.length === 0) {
+    return null;
+  }
+
+  const rangeLabel = `${formatQueryCanonChapterLabel(range.startReference, lookup)} and ${formatQueryCanonChapterLabel(range.endReference, lookup)}`;
+  const answer = startState === endState
+    ? `Between ${rangeLabel}, ${target.title}'s tracked condition state stays ${endState}.`
+    : `Between ${rangeLabel}, ${target.title}'s tracked condition state moves from ${startState} to ${endState}.`;
+
+  return {
+    answer: `${answer}${changeEntries.length > 0 ? ` Notable updates: ${changeEntries.join("; ")}.` : ""}`,
+    confidence: "high",
+    intent: "state-condition-arc",
+    sources: uniqueQueryCanonSources(
+      selected.entries
+        .filter((entry) => Boolean(entry.stateChanges?.conditions?.[target.id] || entry.stateChanges?.wounds?.[target.id]))
+        .map((entry) => buildQueryCanonSource(root, entry.resumePath, entry.chapterTitle, "resume", "story state condition delta")),
+    ),
+    notes: [],
+  };
+}
+
+function answerOpenLoopsArcQuery(
+  root: string,
+  target: QueryCanonTarget | undefined,
+  range: QueryCanonChapterRange | undefined,
+  entries: StoryStateTimelineEntry[],
+  lookup: QueryCanonLookup,
+): QueryCanonAnswerDraft | null {
+  if (!range) {
+    return null;
+  }
+
+  const selected = selectStoryStateRange(entries, range);
+  if (!selected) {
+    return null;
+  }
+
+  const startLoops = target
+    ? filterOpenLoopsForTarget(selected.startEntry.snapshot.openLoops, target)
+    : selected.startEntry.snapshot.openLoops;
+  const endLoops = target
+    ? filterOpenLoopsForTarget(selected.endEntry.snapshot.openLoops, target)
+    : selected.endEntry.snapshot.openLoops;
+  const opened = uniqueValues(
+    selected.entries.flatMap((entry) => {
+      const values = entry.stateChanges?.open_loops_add ?? [];
+      return target ? filterOpenLoopsForTarget(values, target) : values;
+    }),
+  );
+  const resolved = uniqueValues(
+    selected.entries.flatMap((entry) => {
+      const values = entry.stateChanges?.open_loops_resolved ?? [];
+      return target ? filterOpenLoopsForTarget(values, target) : values;
+    }),
+  );
+
+  const effectiveStartLoops = startLoops.length > 0 || !target ? startLoops : selected.startEntry.snapshot.openLoops;
+  const effectiveEndLoops = endLoops.length > 0 || !target ? endLoops : selected.endEntry.snapshot.openLoops;
+  const effectiveOpened = opened.length > 0 || !target
+    ? opened
+    : uniqueValues(selected.entries.flatMap((entry) => entry.stateChanges?.open_loops_add ?? []));
+  const effectiveResolved = resolved.length > 0 || !target
+    ? resolved
+    : uniqueValues(selected.entries.flatMap((entry) => entry.stateChanges?.open_loops_resolved ?? []));
+
+  if (effectiveStartLoops.length === 0 && effectiveEndLoops.length === 0 && effectiveOpened.length === 0 && effectiveResolved.length === 0) {
+    return null;
+  }
+
+  const rangeLabel = `${formatQueryCanonChapterLabel(range.startReference, lookup)} and ${formatQueryCanonChapterLabel(range.endReference, lookup)}`;
+  const usedTargetFilter = Boolean(target && (startLoops.length > 0 || endLoops.length > 0 || opened.length > 0 || resolved.length > 0));
+  const scopeLabel = usedTargetFilter ? `open loops tied to ${target?.title}` : "global open loops";
+
+  return {
+    answer: `Between ${rangeLabel}, ${scopeLabel} move from ${joinQueryCanonList(effectiveStartLoops.map((value) => humanizeQueryCanonToken(value)))} to ${joinQueryCanonList(effectiveEndLoops.map((value) => humanizeQueryCanonToken(value)))}.${effectiveOpened.length > 0 ? ` Opened: ${joinQueryCanonList(effectiveOpened.map((value) => humanizeQueryCanonToken(value)))}.` : ""}${effectiveResolved.length > 0 ? ` Resolved: ${joinQueryCanonList(effectiveResolved.map((value) => humanizeQueryCanonToken(value)))}.` : ""}`,
+    confidence: "high",
+    intent: "state-open-loops-arc",
+    sources: uniqueQueryCanonSources(
+      selected.entries
+        .filter((entry) => Boolean(entry.stateChanges?.open_loops_add?.length || entry.stateChanges?.open_loops_resolved?.length))
+        .map((entry) => buildQueryCanonSource(root, entry.resumePath, entry.chapterTitle, "resume", "story state open loops delta")),
+    ),
+    notes: target
+      ? usedTargetFilter
+        ? ["Open loops are global state; this answer filters loops that mention the matched target."]
+        : ["Open loops are global state; no target-specific loop matched cleanly, so this answer returns the global open-loop changes for the chapter range."]
+      : [],
+  };
+}
+
+function answerSecretHoldersQuery(
+  root: string,
+  target: QueryCanonTarget | undefined,
+  lookup: QueryCanonLookup,
+): QueryCanonAnswerDraft | null {
+  if (!target || target.kind !== "secret") {
+    return null;
+  }
+
+  const holders = normalizeStringArray(target.metadata.holders) ?? [];
+  if (holders.length === 0) {
+    return null;
+  }
+
+  const knownFrom = normalizeOptionalString(target.metadata.known_from);
+  const revealIn = normalizeOptionalString(target.metadata.reveal_in);
+  const timingNote = [
+    knownFrom ? `Known from ${formatQueryCanonChapterLabel(knownFrom, lookup)}` : undefined,
+    revealIn ? `revealed in ${formatQueryCanonChapterLabel(revealIn, lookup)}` : undefined,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join("; ");
+
+  return {
+    answer: `Known holders for ${target.title}: ${joinQueryCanonList(
+      holders.map((value) => formatQueryCanonValue(value, lookup)),
+    )}.${timingNote ? ` ${timingNote}.` : ""}`,
+    confidence: "high",
+    intent: "secret-holders",
+    sources: [buildQueryCanonSource(root, target.path, target.title, target.kind, "secret metadata")],
+    notes: [],
+  };
+}
+
+async function answerFirstAppearanceQuery(
+  root: string,
+  question: string,
+  target: QueryCanonTarget | undefined,
+  throughChapter: string | undefined,
+  chapters: Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>,
+  lookup: QueryCanonLookup,
+): Promise<QueryCanonAnswerDraft | null> {
+  if (target) {
+    const introducedIn = normalizeOptionalString(target.metadata.introduced_in);
+    if (introducedIn) {
+      return {
+        answer: `${target.title} first appears in ${formatQueryCanonChapterLabel(introducedIn, lookup)}.`,
+        confidence: "high",
+        intent: "first-appearance",
+        sources: [buildQueryCanonSource(root, target.path, target.title, target.kind, "introduced_in metadata")],
+        notes: [],
+      };
+    }
+  }
+
+  const terms = buildQueryCanonSearchTerms(question, target);
+  const mention = await findFirstCanonMention(root, chapters, terms, throughChapter);
+  if (!mention) {
+    return target
+      ? {
+          answer: `I could not find a first appearance for ${target.title}${
+            throughChapter ? ` up to ${formatQueryCanonChapterLabel(throughChapter, lookup)}` : ""
+          }.`,
+          confidence: "low",
+          intent: "first-appearance",
+          sources: [buildQueryCanonSource(root, target.path, target.title, target.kind, "target file")],
+          notes: ["Search fell back to text and resume matching."],
+        }
+      : null;
+  }
+
+  return {
+    answer: `${target?.title ?? formatQueryCanonSubject(question)} first appears in Chapter ${formatOrdinal(
+      mention.chapterNumber,
+    )} ${mention.chapterTitle}.`,
+    confidence: target ? "high" : "medium",
+    intent: "first-appearance",
+    sources: [mention.source],
+    notes: [],
+  };
+}
+
+function answerGeneralTargetQuery(
+  root: string,
+  target: QueryCanonTarget | undefined,
+  lookup: QueryCanonLookup,
+): QueryCanonAnswerDraft | null {
+  if (!target) {
+    return null;
+  }
+
+  if (target.kind === "chapter") {
+    const summary =
+      normalizeOptionalString(target.metadata.summary) ?? summarizeText(target.body, 240) ?? "No summary is recorded yet.";
+    return {
+      answer: `${target.title} is ${formatQueryCanonChapterLabel(target.id, lookup)}. ${summary}`,
+      confidence: "medium",
+      intent: "general",
+      sources: [buildQueryCanonSource(root, target.path, target.title, "chapter", "chapter metadata and body")],
+      notes: [],
+    };
+  }
+
+  const details = [
+    typeof target.metadata.current_identity === "string" ? `Current identity: ${target.metadata.current_identity}` : undefined,
+    typeof target.metadata.background_summary === "string" ? `Background: ${target.metadata.background_summary}` : undefined,
+    typeof target.metadata.function_in_book === "string" ? `Function in book: ${target.metadata.function_in_book}` : undefined,
+    typeof target.metadata.speaking_style === "string" ? `Voice: ${target.metadata.speaking_style}` : undefined,
+    typeof target.metadata.appearance === "string" ? `Appearance: ${target.metadata.appearance}` : undefined,
+    typeof target.metadata.purpose === "string" ? `Purpose: ${target.metadata.purpose}` : undefined,
+    typeof target.metadata.atmosphere === "string" ? `Atmosphere: ${target.metadata.atmosphere}` : undefined,
+    typeof target.metadata.mission === "string" ? `Mission: ${target.metadata.mission}` : undefined,
+    typeof target.metadata.ideology === "string" ? `Ideology: ${target.metadata.ideology}` : undefined,
+    typeof target.metadata.stakes === "string" ? `Stakes: ${target.metadata.stakes}` : undefined,
+    typeof target.metadata.significance === "string" ? `Significance: ${target.metadata.significance}` : undefined,
+  ].filter((value): value is string => Boolean(value));
+
+  return {
+    answer: `${target.title} is a ${target.kind}. ${details.slice(0, 3).join(" ") || summarizeText(target.body, 260) || "No concise canon summary is available yet."}`,
+    confidence: details.length > 0 ? "medium" : "low",
+    intent: "general",
+    sources: [buildQueryCanonSource(root, target.path, target.title, target.kind, "canon metadata")],
+    notes: [],
+  };
+}
+
+async function answerFallbackCanonQuery(
+  root: string,
+  question: string,
+  target: QueryCanonTarget | undefined,
+  limit: number,
+): Promise<QueryCanonAnswerDraft> {
+  const subject = (target?.title ?? formatQueryCanonSubject(question)) || question;
+  const hits = await searchBook(root, subject, { limit });
+
+  if (hits.length === 0) {
+    return {
+      answer: `I could not answer that from the current canon for "${subject}".`,
+      confidence: "low",
+      intent: "general",
+      sources: [],
+      notes: [target ? `No direct structured or metadata answer was found for ${target.id}.` : "No direct target matched in current canon."],
+    };
+  }
+
+  return {
+    answer: `Closest canon matches for "${subject}": ${hits
+      .slice(0, 3)
+      .map((hit) => `${hit.title} (${hit.type})`)
+      .join("; ")}.`,
+    confidence: target ? "medium" : "low",
+    intent: "general",
+    sources: uniqueQueryCanonSources(
+      hits.map((hit) => ({
+        path: hit.path,
+        title: hit.title,
+        type: hit.type,
+        reason: "search hit",
+      })),
+    ),
+    notes: [target ? `No direct structured answer was found for ${target.id}; falling back to repository search.` : "Falling back to repository search."],
+  };
+}
+
+function selectStoryStateEntry(
+  entries: StoryStateTimelineEntry[],
+  throughChapter: string | undefined,
+): StoryStateTimelineEntry | undefined {
+  if (!throughChapter) {
+    return entries.at(-1);
+  }
+
+  const chapterSlug = normalizeChapterReference(throughChapter);
+  return entries.find((entry) => entry.chapterSlug === chapterSlug);
+}
+
+function storyStateEntriesUpTo(
+  entries: StoryStateTimelineEntry[],
+  throughChapter: string | undefined,
+): StoryStateTimelineEntry[] {
+  if (!throughChapter) {
+    return entries;
+  }
+
+  const chapterSlug = normalizeChapterReference(throughChapter);
+  const index = entries.findIndex((entry) => entry.chapterSlug === chapterSlug);
+  return index === -1 ? entries : entries.slice(0, index + 1);
+}
+
+function selectStoryStateRange(
+  entries: StoryStateTimelineEntry[],
+  range: QueryCanonChapterRange,
+): { startEntry: StoryStateTimelineEntry; endEntry: StoryStateTimelineEntry; entries: StoryStateTimelineEntry[] } | null {
+  const startSlug = normalizeChapterReference(range.startReference);
+  const endSlug = normalizeChapterReference(range.endReference);
+  const startIndex = entries.findIndex((entry) => entry.chapterSlug === startSlug);
+  const endIndex = entries.findIndex((entry) => entry.chapterSlug === endSlug);
+
+  if (startIndex === -1 || endIndex === -1) {
+    return null;
+  }
+
+  return {
+    startEntry: entries[startIndex],
+    endEntry: entries[endIndex],
+    entries: entries.slice(startIndex, endIndex + 1),
+  };
+}
+
+function readRelationshipValue(
+  snapshot: StoryStateSnapshot,
+  primaryId: string,
+  secondaryId: string,
+): { value?: string; direction: "direct" | "reverse" | null } {
+  const direct = snapshot.relationships[primaryId]?.[secondaryId];
+  if (direct) {
+    return { value: direct, direction: "direct" };
+  }
+
+  const reverse = snapshot.relationships[secondaryId]?.[primaryId];
+  if (reverse) {
+    return { value: reverse, direction: "reverse" };
+  }
+
+  return { direction: null };
+}
+
+function formatRelationshipCheckpoint(
+  snapshot: StoryStateSnapshot,
+  primaryId: string,
+  secondaryId: string,
+  lookup: QueryCanonLookup,
+): string {
+  const relation = readRelationshipValue(snapshot, primaryId, secondaryId);
+  if (!relation.value) {
+    return "no tracked relationship";
+  }
+
+  return relation.direction === "direct"
+    ? `${formatQueryCanonValue(primaryId, lookup)} -> ${formatQueryCanonValue(secondaryId, lookup)} = ${humanizeQueryCanonToken(relation.value)}`
+    : `${formatQueryCanonValue(secondaryId, lookup)} -> ${formatQueryCanonValue(primaryId, lookup)} = ${humanizeQueryCanonToken(relation.value)}`;
+}
+
+function formatRelationshipMap(
+  relationships: Record<string, string>,
+  lookup: QueryCanonLookup,
+): string {
+  const entries = Object.entries(relationships).map(
+    ([relatedId, value]) => `${formatQueryCanonValue(relatedId, lookup)} = ${humanizeQueryCanonToken(value)}`,
+  );
+  return joinQueryCanonList(entries);
+}
+
+function formatConditionCheckpoint(snapshot: StoryStateSnapshot, targetId: string): string {
+  const conditions = snapshot.conditions[targetId] ?? [];
+  const wounds = snapshot.wounds[targetId] ?? [];
+  const parts = [
+    conditions.length > 0 ? `conditions ${joinQueryCanonList(conditions.map((value) => humanizeQueryCanonToken(value)))}` : undefined,
+    wounds.length > 0 ? `wounds ${joinQueryCanonList(wounds.map((value) => humanizeQueryCanonToken(value)))}` : undefined,
+  ].filter((value): value is string => Boolean(value));
+
+  return parts.length > 0 ? parts.join(" and ") : "no tracked conditions or wounds";
+}
+
+async function findFirstCanonMention(
+  root: string,
+  chapters: Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>,
+  terms: string[],
+  throughChapter: string | undefined,
+): Promise<{ chapterNumber: number; chapterTitle: string; source: QueryCanonSource } | null> {
+  const relevantChapters = storyStateEntriesUpTo(
+    chapters.map((chapter) => ({
+      chapterSlug: chapter.slug,
+      chapterNumber: chapter.metadata.number,
+      chapterTitle: chapter.metadata.title,
+      resumePath: path.join(root, "resumes", "chapters", `${chapter.slug}.md`),
+      chapterPath: chapter.path,
+      snapshot: createEmptyStoryStateSnapshot(),
+    })),
+    throughChapter,
+  );
+
+  for (const chapter of relevantChapters) {
+    const chapterData = await readChapter(root, chapter.chapterSlug);
+    if (documentMatchesQueryCanonTerms(JSON.stringify(chapterData.metadata), chapterData.body, terms)) {
+      return {
+        chapterNumber: chapter.chapterNumber,
+        chapterTitle: chapter.chapterTitle,
+        source: buildQueryCanonSource(root, chapter.chapterPath, chapter.chapterTitle, "chapter", "chapter mention"),
+      };
+    }
+
+    for (const paragraph of chapterData.paragraphs) {
+      if (documentMatchesQueryCanonTerms(JSON.stringify(paragraph.metadata), paragraph.body, terms)) {
+        return {
+          chapterNumber: chapter.chapterNumber,
+          chapterTitle: chapter.chapterTitle,
+          source: buildQueryCanonSource(
+            root,
+            paragraph.path,
+            paragraph.metadata.title,
+            "paragraph",
+            "paragraph mention",
+          ),
+        };
+      }
+    }
+
+    const resume = await readLooseMarkdownIfExists(chapter.resumePath);
+    if (resume && documentMatchesQueryCanonTerms(JSON.stringify(resume.frontmatter), resume.body, terms)) {
+      return {
+        chapterNumber: chapter.chapterNumber,
+        chapterTitle: chapter.chapterTitle,
+        source: buildQueryCanonSource(root, chapter.resumePath, chapter.chapterTitle, "resume", "chapter resume mention"),
+      };
+    }
+  }
+
+  return null;
+}
+
+function documentMatchesQueryCanonTerms(frontmatterText: string, body: string, terms: string[]): boolean {
+  const combinedNormalized = normalizeQueryCanonSearch(`${frontmatterText}\n${body}`);
+  const combinedLower = `${frontmatterText}\n${body}`.toLowerCase();
+  return terms.some((term) => {
+    const normalizedTerm = normalizeQueryCanonSearch(term);
+    if (!normalizedTerm) {
+      return false;
+    }
+
+    return term.includes(":") ? combinedLower.includes(term.toLowerCase()) : combinedNormalized.includes(normalizedTerm);
+  });
+}
+
+function buildQueryCanonSearchTerms(question: string, target: QueryCanonTarget | undefined): string[] {
+  if (target) {
+    return uniqueValues(
+      [
+        target.id,
+        target.title,
+        ...target.aliases,
+        target.id.includes(":") ? humanizeQueryCanonToken(target.id.split(":").at(-1) ?? target.id) : undefined,
+      ].filter((value): value is string => Boolean(value && value.trim())),
+    );
+  }
+
+  const subject = formatQueryCanonSubject(question);
+  return subject ? [subject] : [question];
+}
+
+function filterOpenLoopsForTarget(openLoops: string[], target: QueryCanonTarget): string[] {
+  const terms = buildQueryCanonSearchTerms(target.title, target).map((value) => normalizeQueryCanonSearch(value));
+
+  return openLoops.filter((loop) => {
+    const normalizedLoop = normalizeQueryCanonSearch(loop);
+    return terms.some((term) => term && normalizedLoop.includes(term));
+  });
+}
+
+function formatQueryCanonSubject(question: string): string {
+  const quoted = question.match(/["'“”](.+?)["'“”]/)?.[1];
+  if (quoted) {
+    return quoted.trim();
+  }
+
+  return question
+    .replace(/\b(?:who|what|when|where|does|did|is|are|the|a|an|after|before|know|knows|have|has|first|appear|appears|show|shows|up)\b/gi, " ")
+    .replace(/\b(?:chi|cosa|quando|dove|il|lo|la|gli|le|un|una|sa|sanno|ha|hanno|compare|appaiono|apparizione|prima|volta|al|nel|si|trova)\b/gi, " ")
+    .replace(/\b(?:chapter|chap(?:ter)?|capitolo|cap\.?)\s*\d{1,3}\b/gi, " ")
+    .replace(/[?!.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatQueryCanonValue(value: string, lookup: QueryCanonLookup): string {
+  if (lookup.targetsById.has(value)) {
+    return lookup.targetsById.get(value)?.title ?? value;
+  }
+
+  if (lookup.chaptersByRef.has(value)) {
+    return formatQueryCanonChapterLabel(value, lookup);
+  }
+
+  return humanizeQueryCanonToken(value);
+}
+
+function formatQueryCanonChapterLabel(reference: string, lookup: QueryCanonLookup): string {
+  const direct = lookup.chaptersByRef.get(reference);
+  if (direct) {
+    return `Chapter ${formatOrdinal(direct.number)} ${direct.title}`;
+  }
+
+  const normalized = reference.startsWith("chapter:") ? reference : `chapter:${normalizeChapterReference(reference)}`;
+  const resolved = lookup.chaptersByRef.get(normalized);
+  if (resolved) {
+    return `Chapter ${formatOrdinal(resolved.number)} ${resolved.title}`;
+  }
+
+  return humanizeQueryCanonToken(reference);
+}
+
+function humanizeQueryCanonToken(value: string): string {
+  const bare = value.includes(":") ? value.slice(value.lastIndexOf(":") + 1) : value;
+  return bare.replace(/[_-]+/g, " ").trim() || value;
+}
+
+function joinQueryCanonList(values: string[]): string {
+  if (values.length === 0) {
+    return "nothing tracked yet";
+  }
+
+  if (values.length === 1) {
+    return values[0];
+  }
+
+  if (values.length === 2) {
+    return `${values[0]} and ${values[1]}`;
+  }
+
+  return `${values.slice(0, -1).join(", ")}, and ${values.at(-1)}`;
+}
+
+function buildQueryCanonSource(
+  root: string,
+  filePath: string,
+  title: string,
+  type: string,
+  reason: string,
+): QueryCanonSource {
+  return {
+    path: toPosixPath(path.relative(root, filePath)),
+    title,
+    type,
+    reason,
+  };
+}
+
+function uniqueQueryCanonSources(sources: QueryCanonSource[]): QueryCanonSource[] {
+  const seen = new Set<string>();
+  const results: QueryCanonSource[] = [];
+
+  for (const source of sources) {
+    const key = `${source.path}::${source.reason}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push(source);
+  }
+
+  return results;
+}
+
+function normalizeQueryCanonSearch(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {

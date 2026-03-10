@@ -24,6 +24,7 @@ npm install narrarium
 - validate markdown frontmatter and file placement
 - create rich canon files for characters, locations, factions, items, secrets, and timeline events
 - create and update chapters, scenes, chapter drafts, and paragraph drafts
+- answer natural-language canon questions with `queryCanon()`
 - sync `plot.md`, chapter resumes, and total resume files
 - sync `state/current.md`, `state/status.md`, and `state/chapters/` from `state_changes`
 - export the book to EPUB
@@ -104,6 +105,33 @@ await updateParagraph("my-book", {
 await syncAllResumes("my-book");
 await syncStoryState("my-book");
 ```
+
+You can also query the repository semantically:
+
+```js
+import { queryCanon } from "narrarium";
+
+const result = await queryCanon("my-book", "What does Lyra know after chapter 4?");
+console.log(result.answer);
+console.log(result.sources);
+```
+
+Typical `queryCanon()` prompts:
+
+- `Where is Lyra right now?`
+- `What does Lyra know after chapter 4?`
+- `What is Lyra's relationship with Taren?`
+- `What condition is Lyra in?`
+- `What open loops are still active?`
+- `How does Lyra's relationship with Taren change between chapter 3 and chapter 8?`
+- `How does Lyra's condition change between chapter 3 and chapter 8?`
+- `What open loops change between chapter 3 and chapter 8?`
+- `Who knows this secret?`
+- `When does the brass key first appear?`
+
+For exact control, `queryCanon()` also accepts `fromChapter`, `toChapter`, and `throughChapter` options.
+
+See `docs/query-canon.md` for a fuller guide with use cases, scope rules, output fields, and limitations.
 
 Recommended `state_changes` keys inside chapter resumes:
 

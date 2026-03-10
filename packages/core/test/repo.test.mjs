@@ -11,6 +11,7 @@ import {
   createChapterDraft,
   createChapterFromDraft,
   createCharacterProfile,
+  createItemProfile,
   createLocationProfile,
   createParagraph,
   createParagraphDraft,
@@ -25,6 +26,7 @@ import {
   renameChapter,
   renameEntity,
   renameParagraph,
+  queryCanon,
   readChapter,
   readEntity,
   readTimelineMain,
@@ -65,6 +67,14 @@ test("core book workflow supports canon indexes and structural updates", async (
       revealIn: "chapter:007-mask-off",
     });
 
+    await createCharacterProfile(rootPath, {
+      name: "Taren Dane",
+      roleTier: "supporting",
+      speakingStyle: "Dry and skeptical.",
+      backgroundSummary: "Harbor operative with long memory.",
+      functionInBook: "Pressure point and reluctant ally for Lyra.",
+    });
+
     await updateEntity(rootPath, {
       kind: "character",
       slugOrId: "lyra-vale",
@@ -78,6 +88,13 @@ test("core book workflow supports canon indexes and structural updates", async (
       name: "Gray Harbor",
       atmosphere: "Cold fog and careful silence.",
       functionInBook: "Pressure-cooker port city for the opening movement.",
+    });
+
+    await createItemProfile(rootPath, {
+      name: "Brass Key",
+      appearance: "A worn brass key with salt-darkened grooves.",
+      purpose: "Opens the ledger archive gate.",
+      functionInBook: "Turns the harbor mystery into a solvable physical trail.",
     });
 
     await createTimelineEventProfile(rootPath, {
@@ -160,11 +177,19 @@ test("core book workflow supports canon indexes and structural updates", async (
           '  inventory_add:',
           '    "character:lyra-vale":',
           '      - item:brass-key',
+          '  conditions:',
+          '    "character:lyra-vale":',
+          '      - alert',
+          '      - exhausted',
+          '  wounds:',
+          '    "character:lyra-vale":',
+          '      - cut-palm',
           '  relationship_updates:',
           '    "character:lyra-vale":',
-          '      "character:harbor-guard": wary',
+          '      "character:taren-dane": wary-trust',
           '  open_loops_add:',
           '    - find-the-ledger',
+          '    - warn-taren-about-the-forgery',
           "",
         ].join("\n"),
       ),
@@ -175,12 +200,20 @@ test("core book workflow supports canon indexes and structural updates", async (
     const evaluation = await evaluateBook(rootPath);
     const validation = await validateBook(rootPath);
     const doctor = await doctorBook(rootPath);
+    const locationQuery = await queryCanon(rootPath, "Where is Lyra Vale?");
+    const knowledgeQuery = await queryCanon(rootPath, "What does Lyra know after chapter 1?");
+    const inventoryQuery = await queryCanon(rootPath, "What does Lyra have?");
+    const relationshipQuery = await queryCanon(rootPath, "What is Lyra Vale's relationship with Taren Dane?");
+    const conditionQuery = await queryCanon(rootPath, "What condition is Lyra Vale in?");
+    const openLoopsQuery = await queryCanon(rootPath, "What open loops are there?");
+    const firstAppearanceQuery = await queryCanon(rootPath, "When does the Brass Key first appear?");
+    const secretHolderQuery = await queryCanon(rootPath, "Who knows Lyra knows the harbor ledgers were forged?");
     const syncedChapterResume = await readFile(chapterResumePath, "utf8");
     const currentStoryState = await readFile(path.join(rootPath, "state", "current.md"), "utf8");
     const storyStateStatus = await readFile(path.join(rootPath, "state", "status.md"), "utf8");
     const doctorCodes = doctor.issues.map((issue) => issue.code);
 
-    assert.equal(characters.length, 1);
+    assert.equal(characters.length, 2);
     assert.equal(locations.length, 1);
     assert.equal(events.length, 1);
     assert.equal(character.metadata.name, "Lyra Vale");
@@ -214,6 +247,23 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.match(currentStoryState, /guard-routine-changed/);
     assert.match(currentStoryState, /find-the-ledger/);
     assert.match(storyStateStatus, /dirty: false/);
+    assert.match(locationQuery.answer, /Gray Harbor/);
+    assert.equal(locationQuery.intent, "state-location");
+    assert.match(knowledgeQuery.answer, /guard routine changed/);
+    assert.equal(knowledgeQuery.intent, "state-knowledge");
+    assert.match(inventoryQuery.answer, /Brass Key/);
+    assert.equal(inventoryQuery.intent, "state-inventory");
+    assert.match(relationshipQuery.answer, /wary trust/i);
+    assert.equal(relationshipQuery.intent, "state-relationship");
+    assert.match(conditionQuery.answer, /alert/i);
+    assert.match(conditionQuery.answer, /cut palm/i);
+    assert.equal(conditionQuery.intent, "state-condition");
+    assert.match(openLoopsQuery.answer, /find the ledger/i);
+    assert.equal(openLoopsQuery.intent, "state-open-loops");
+    assert.match(firstAppearanceQuery.answer, /Chapter 001 The Arrival/);
+    assert.equal(firstAppearanceQuery.intent, "first-appearance");
+    assert.match(secretHolderQuery.answer, /Lyra Vale/);
+    assert.equal(secretHolderQuery.intent, "secret-holders");
     assert.equal(doctor.errors, 0);
     assert.ok(!doctorCodes.includes("stale-story-state"));
     assert.ok(!doctorCodes.includes("stale-story-state-current"));
@@ -280,6 +330,138 @@ test("doctorBook detects broken refs and stale maintenance files", async () => {
     assert.ok(codes.includes("stale-plot"));
     assert.ok(codes.includes("stale-story-state"));
     assert.ok(codes.includes("stale-total-resume"));
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("queryCanon can describe arcs across chapter ranges", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-query-arc-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Arc Query Book",
+      language: "en",
+    });
+
+    await createCharacterProfile(rootPath, {
+      name: "Lyra Vale",
+      roleTier: "main",
+      speakingStyle: "Measured and alert.",
+      backgroundSummary: "Moves carefully through pressure.",
+      functionInBook: "Primary viewpoint anchor.",
+    });
+
+    await createCharacterProfile(rootPath, {
+      name: "Taren Dane",
+      roleTier: "supporting",
+      speakingStyle: "Dry and skeptical.",
+      backgroundSummary: "Keeps score longer than he admits.",
+      functionInBook: "Ally under tension.",
+    });
+
+    await createChapter(rootPath, {
+      number: 1,
+      title: "Harbor Return",
+      frontmatter: {
+        summary: "Lyra returns under pressure.",
+      },
+    });
+
+    await createParagraph(rootPath, {
+      chapter: "chapter:001-harbor-return",
+      number: 1,
+      title: "At The Gate",
+      body: "Lyra reaches the gate with the harbor already watching.",
+    });
+
+    await createChapter(rootPath, {
+      number: 2,
+      title: "Ledger Fire",
+      frontmatter: {
+        summary: "Tension becomes alliance.",
+      },
+    });
+
+    await createParagraph(rootPath, {
+      chapter: "chapter:002-ledger-fire",
+      number: 1,
+      title: "Ash Mark",
+      body: "Lyra and Taren compare what the false ledger means.",
+    });
+
+    await syncAllResumes(rootPath);
+
+    const chapterOneResumePath = path.join(rootPath, "resumes", "chapters", "001-harbor-return.md");
+    const chapterOneResume = await readFile(chapterOneResumePath, "utf8");
+    await writeFile(
+      chapterOneResumePath,
+      chapterOneResume.replace(
+        "chapter: chapter:001-harbor-return\n",
+        [
+          "chapter: chapter:001-harbor-return",
+          "state_changes:",
+          '  conditions:',
+          '    "character:lyra-vale":',
+          '      - alert',
+          '      - exhausted',
+          '  relationship_updates:',
+          '    "character:lyra-vale":',
+          '      "character:taren-dane": wary-trust',
+          '  open_loops_add:',
+          '    - find-the-ledger',
+          '    - warn-taren-about-the-forgery',
+          "",
+        ].join("\n"),
+      ),
+      "utf8",
+    );
+
+    const chapterTwoResumePath = path.join(rootPath, "resumes", "chapters", "002-ledger-fire.md");
+    const chapterTwoResume = await readFile(chapterTwoResumePath, "utf8");
+    await writeFile(
+      chapterTwoResumePath,
+      chapterTwoResume.replace(
+        "chapter: chapter:002-ledger-fire\n",
+        [
+          "chapter: chapter:002-ledger-fire",
+          "state_changes:",
+          '  conditions:',
+          '    "character:lyra-vale":',
+          '      - focused',
+          '  relationship_updates:',
+          '    "character:lyra-vale":',
+          '      "character:taren-dane": guarded-loyalty',
+          '  open_loops_add:',
+          '    - expose-the-council-ledger',
+          '  open_loops_resolved:',
+          '    - find-the-ledger',
+          "",
+        ].join("\n"),
+      ),
+      "utf8",
+    );
+
+    await syncStoryState(rootPath);
+
+    const relationshipArc = await queryCanon(rootPath, "How does Lyra Vale's relationship with Taren Dane change between chapter 1 and chapter 2?");
+    const conditionArc = await queryCanon(rootPath, "How does Lyra Vale's condition change between chapter 1 and chapter 2?");
+    const openLoopsArc = await queryCanon(rootPath, "What open loops change between chapter 1 and chapter 2?");
+
+    assert.equal(relationshipArc.intent, "state-relationship-arc");
+    assert.match(relationshipArc.answer, /wary trust/i);
+    assert.match(relationshipArc.answer, /guarded loyalty/i);
+    assert.equal(relationshipArc.fromChapter, "chapter:001-harbor-return");
+    assert.equal(relationshipArc.toChapter, "chapter:002-ledger-fire");
+
+    assert.equal(conditionArc.intent, "state-condition-arc");
+    assert.match(conditionArc.answer, /alert/i);
+    assert.match(conditionArc.answer, /focused/i);
+
+    assert.equal(openLoopsArc.intent, "state-open-loops-arc");
+    assert.match(openLoopsArc.answer, /find the ledger/i);
+    assert.match(openLoopsArc.answer, /expose the council ledger/i);
+    assert.match(openLoopsArc.answer, /resolved/i);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }
