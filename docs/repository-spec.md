@@ -324,7 +324,7 @@ Treat `state_changes` as the chapter delta, not as a full-world snapshot.
 - use `conversations/` for portable exported chat history, resume files, and continuation prompts; treat it as support material, not canon
 - use `npm run doctor` or `doctorBook()` to catch broken references, stale maintenance files, missing asset descriptions, and spoiler-threshold problems
 - if content is historical or factual, fetch research before writing canon
-- before fetching Wikipedia again, reuse a matching snapshot from `research/wikipedia/` when one already exists
+- before fetching Wikipedia again, reuse a matching snapshot from `research/wikipedia/` when one already exists; use explicit refresh controls when the snapshot is stale or should be bypassed
 - prefer updating existing canon files over duplicating similar facts elsewhere
 - before writing final chapter or paragraph prose, read `guidelines/prose.md`, relevant prior story files, and any matching files in `drafts/`
 - keep `plot.md` aligned with chapter summaries, reveals, and dated timeline anchors

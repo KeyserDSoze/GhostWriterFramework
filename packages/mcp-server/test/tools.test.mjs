@@ -148,6 +148,15 @@ test("mcp server tools support guided creation and structural updates", async ()
       ].join("\n"),
       "utf8",
     );
+    const reusedHistoricalLocationText = await callToolText(client, "create_location", {
+      rootPath,
+      name: "Venice",
+      atmosphere: "Water, stone, and pressure.",
+      functionInBook: "Anchors the real-world reference point.",
+      historical: true,
+      wikipediaTitle: "Venice",
+      maxWikipediaSnapshotAgeDays: 365,
+    });
 
     const resumeBookContextText = await callToolText(client, "resume_book_context", {
       rootPath,
@@ -157,6 +166,7 @@ test("mcp server tools support guided creation and structural updates", async ()
       lang: "en",
       rootPath,
       saveToResearch: true,
+      maxWikipediaSnapshotAgeDays: 365,
     });
 
     const chapterFromDraftText = await callToolText(client, "create_chapter_from_draft", {
@@ -368,6 +378,7 @@ test("mcp server tools support guided creation and structural updates", async ()
     assert.match(paragraphContextText, /Target paragraph draft/);
     assert.match(resumeBookContextText, /Resume Book Context/);
     assert.match(resumeBookContextText, /Conversation Resume/);
+    assert.match(reusedHistoricalLocationText, /Reused existing research snapshot/);
     assert.match(reusedWikipediaText, /Reused saved research snapshot/);
     assert.match(reusedWikipediaText, /research\/wikipedia\/en\/venice\.md/);
     assert.match(chapterFromDraftText, /Created or updated chapter from draft/);

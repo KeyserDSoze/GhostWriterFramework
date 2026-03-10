@@ -81,6 +81,10 @@ const imageOrientationSchema = z.enum(["portrait", "landscape", "square"]);
 const imageProviderSchema = z.enum(["openai"]);
 const revisionModeSchema = z.enum(["clarity", "pacing", "dialogue", "voice", "tension", "show-dont-tell", "redundancy"]);
 const revisionIntensitySchema = z.enum(["light", "medium", "strong"]);
+const wikipediaRefreshToolFields = {
+  forceWikipediaRefresh: z.boolean().default(false),
+  maxWikipediaSnapshotAgeDays: z.number().int().positive().optional(),
+};
 const hiddenCanonToolFields = {
   secretRefs: z.array(z.string()).default([]),
   privateNotes: z.string().optional(),
@@ -398,8 +402,9 @@ server.tool(
     body: z.string().optional(),
     saveWikipediaResearch: z.boolean().default(true),
     wikipediaLang: z.enum(["en", "it"]).default("en"),
+    ...wikipediaRefreshToolFields,
   },
-  async ({ sessionId, slug, overwrite, frontmatter, body, saveWikipediaResearch, wikipediaLang }) => {
+  async ({ sessionId, slug, overwrite, frontmatter, body, saveWikipediaResearch, wikipediaLang, forceWikipediaRefresh, maxWikipediaSnapshotAgeDays }) => {
     const session = wizardSessions.get(sessionId);
     if (!session) {
       throw new Error(`Unknown wizard session: ${sessionId}`);
@@ -412,6 +417,8 @@ server.tool(
       body,
       saveWikipediaResearch,
       wikipediaLang,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
     wizardSessions.delete(sessionId);
     return textResponse(result);
@@ -506,6 +513,7 @@ server.tool(
     wikipediaTitle: z.string().optional(),
     wikipediaLang: z.enum(["en", "it"]).default("en"),
     saveWikipediaResearch: z.boolean().default(true),
+    ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
   async ({
@@ -550,6 +558,8 @@ server.tool(
     wikipediaTitle,
     wikipediaLang,
     saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
     const { sources, note: wikipediaNote } = await collectHistoricalResearchSupport({
@@ -559,6 +569,8 @@ server.tool(
       rootPath,
       slug,
       saveWikipediaResearch,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
 
     const result = await createCharacterProfile(rootPath, {
@@ -659,6 +671,7 @@ server.tool(
     wikipediaTitle: z.string().optional(),
     wikipediaLang: z.enum(["en", "it"]).default("en"),
     saveWikipediaResearch: z.boolean().default(true),
+    ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
   async ({
@@ -686,6 +699,8 @@ server.tool(
     wikipediaTitle,
     wikipediaLang,
     saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
     const { sources, note } = await collectHistoricalResearchSupport({
@@ -695,6 +710,8 @@ server.tool(
       rootPath,
       slug,
       saveWikipediaResearch,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
 
     const result = await createLocationProfile(rootPath, {
@@ -780,6 +797,7 @@ server.tool(
     wikipediaTitle: z.string().optional(),
     wikipediaLang: z.enum(["en", "it"]).default("en"),
     saveWikipediaResearch: z.boolean().default(true),
+    ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
   async ({
@@ -809,6 +827,8 @@ server.tool(
     wikipediaTitle,
     wikipediaLang,
     saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
     const { sources, note } = await collectHistoricalResearchSupport({
@@ -818,6 +838,8 @@ server.tool(
       rootPath,
       slug,
       saveWikipediaResearch,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
 
     const result = await createFactionProfile(rootPath, {
@@ -904,6 +926,7 @@ server.tool(
     wikipediaTitle: z.string().optional(),
     wikipediaLang: z.enum(["en", "it"]).default("en"),
     saveWikipediaResearch: z.boolean().default(true),
+    ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
   async ({
@@ -932,6 +955,8 @@ server.tool(
     wikipediaTitle,
     wikipediaLang,
     saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
     const { sources, note } = await collectHistoricalResearchSupport({
@@ -941,6 +966,8 @@ server.tool(
       rootPath,
       slug,
       saveWikipediaResearch,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
 
     const result = await createItemProfile(rootPath, {
@@ -1027,6 +1054,7 @@ server.tool(
     wikipediaTitle: z.string().optional(),
     wikipediaLang: z.enum(["en", "it"]).default("en"),
     saveWikipediaResearch: z.boolean().default(true),
+    ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
   async ({
@@ -1053,6 +1081,8 @@ server.tool(
     wikipediaTitle,
     wikipediaLang,
     saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
     const { sources, note } = await collectHistoricalResearchSupport({
@@ -1062,6 +1092,8 @@ server.tool(
       rootPath,
       slug,
       saveWikipediaResearch,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
 
     const result = await createSecretProfile(rootPath, {
@@ -1140,6 +1172,7 @@ server.tool(
     wikipediaTitle: z.string().optional(),
     wikipediaLang: z.enum(["en", "it"]).default("en"),
     saveWikipediaResearch: z.boolean().default(true),
+    ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
   async ({
@@ -1163,6 +1196,8 @@ server.tool(
     wikipediaTitle,
     wikipediaLang,
     saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
     const { sources, note } = await collectHistoricalResearchSupport({
@@ -1172,6 +1207,8 @@ server.tool(
       rootPath,
       slug,
       saveWikipediaResearch,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
 
     const result = await createTimelineEventProfile(rootPath, {
@@ -1404,6 +1441,7 @@ server.tool(
     wikipediaTitle: z.string().optional(),
     wikipediaLang: z.enum(["en", "it"]).default("en"),
     saveWikipediaResearch: z.boolean().default(true),
+    ...wikipediaRefreshToolFields,
   },
   async ({
     rootPath,
@@ -1416,6 +1454,8 @@ server.tool(
     wikipediaTitle,
     wikipediaLang,
     saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
   }) => {
     let wikipediaNote = "";
     let mergedFrontmatter: Record<string, unknown> = { ...frontmatter, historical };
@@ -1428,6 +1468,8 @@ server.tool(
         rootPath,
         slug,
         saveWikipediaResearch,
+        forceWikipediaRefresh,
+        maxWikipediaSnapshotAgeDays,
       });
       mergedFrontmatter = {
         ...mergedFrontmatter,
@@ -2201,11 +2243,12 @@ server.tool(
     rootPath: z.string().optional(),
     saveToResearch: z.boolean().default(false),
     slug: z.string().optional(),
+    ...wikipediaRefreshToolFields,
   },
-  async ({ title, lang, rootPath, saveToResearch, slug }) => {
+  async ({ title, lang, rootPath, saveToResearch, slug, forceWikipediaRefresh, maxWikipediaSnapshotAgeDays }) => {
     if (rootPath) {
       const existing = await findWikipediaResearchSnapshot(rootPath, { lang, title, slug });
-      if (existing) {
+      if (existing && shouldReuseWikipediaSnapshot(existing, { forceWikipediaRefresh, maxWikipediaSnapshotAgeDays })) {
         return textResponse(
           `${existing.title}\n\nReused saved research snapshot from ${existing.relativePath}.\n\n${existing.body}\n\n${existing.sourceUrl}`,
         );
@@ -2450,6 +2493,8 @@ async function collectHistoricalResearchSupport(options: {
   rootPath: string;
   slug?: string;
   saveWikipediaResearch: boolean;
+  forceWikipediaRefresh?: boolean;
+  maxWikipediaSnapshotAgeDays?: number;
 }): Promise<{ sources: string[]; note: string }> {
   if (!options.historical || !options.wikipediaTitle) {
     return { sources: [], note: "" };
@@ -2460,7 +2505,7 @@ async function collectHistoricalResearchSupport(options: {
     title: options.wikipediaTitle,
     slug: options.slug,
   });
-  if (existing) {
+  if (existing && shouldReuseWikipediaSnapshot(existing, options)) {
     return {
       sources: [existing.sourceUrl],
       note: ` Reused existing research snapshot at ${existing.relativePath}.`,
@@ -2483,6 +2528,27 @@ async function collectHistoricalResearchSupport(options: {
   }
 
   return { sources: [page.url], note };
+}
+
+function shouldReuseWikipediaSnapshot(
+  snapshot: { retrievedAt: string },
+  options: { forceWikipediaRefresh?: boolean; maxWikipediaSnapshotAgeDays?: number },
+): boolean {
+  if (options.forceWikipediaRefresh) {
+    return false;
+  }
+
+  if (!options.maxWikipediaSnapshotAgeDays) {
+    return true;
+  }
+
+  const retrievedAt = Date.parse(snapshot.retrievedAt);
+  if (Number.isNaN(retrievedAt)) {
+    return false;
+  }
+
+  const maxAgeMs = options.maxWikipediaSnapshotAgeDays * 24 * 60 * 60 * 1000;
+  return Date.now() - retrievedAt <= maxAgeMs;
 }
 
 function createWizardSession(kind: WizardKind, rootPath: string, seed: Record<string, unknown>): WizardSession {
@@ -2558,6 +2624,8 @@ async function finalizeWizardSession(
     body?: string;
     saveWikipediaResearch: boolean;
     wikipediaLang: "en" | "it";
+    forceWikipediaRefresh?: boolean;
+    maxWikipediaSnapshotAgeDays?: number;
   },
 ): Promise<string> {
   const pending = getNextWizardStep(session);
@@ -2575,6 +2643,8 @@ async function finalizeWizardSession(
     rootPath: session.rootPath,
     slug: options.slug,
     saveWikipediaResearch: options.saveWikipediaResearch,
+    forceWikipediaRefresh: options.forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays: options.maxWikipediaSnapshotAgeDays,
   });
 
   switch (session.kind) {

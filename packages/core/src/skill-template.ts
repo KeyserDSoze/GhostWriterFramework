@@ -59,7 +59,7 @@ Treat the repository as the canonical source of truth for the book.
 - Use \`sync_story_state\` manually after chapter or paragraph rewrites when continuity snapshots should be refreshed.
 - Use \`sync_all_resumes\` and \`evaluate_book\` after larger structural passes.
 - Use repository search before drafting new chapters.
-- Before fetching Wikipedia again, check whether \`research/wikipedia/\` already has the needed snapshot and reuse it when possible.
+- Before fetching Wikipedia again, check whether \`research/wikipedia/\` already has the needed snapshot and reuse it when possible; use explicit refresh controls when the snapshot should be bypassed.
 - Use Wikipedia search and page tools for historical entities, places, timelines, or factual references.
 
 ## Writing discipline

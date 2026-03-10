@@ -58,7 +58,7 @@ Use the Vercel deployment for:
 
 Use the local stdio server for actual filesystem writing and repo mutations.
 
-When a matching `research/wikipedia/` snapshot already exists, Narrarium now reuses it before fetching Wikipedia again.
+When a matching `research/wikipedia/` snapshot already exists, Narrarium now reuses it before fetching Wikipedia again. Use `forceWikipediaRefresh` to bypass reuse, or `maxWikipediaSnapshotAgeDays` to refresh old snapshots automatically.
 
 ## GitHub Actions and Vercel
 

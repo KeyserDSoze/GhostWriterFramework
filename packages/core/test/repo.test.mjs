@@ -830,6 +830,7 @@ test("findWikipediaResearchSnapshot reuses saved research before a fresh fetch i
     assert.equal(snapshot?.filePath, savedPath);
     assert.match(snapshot?.relativePath ?? "", /research\/wikipedia\/en\/venice\.md/);
     assert.equal(snapshot?.sourceUrl, "https://en.wikipedia.org/wiki/Venice");
+    assert.match(snapshot?.retrievedAt ?? "", /^2026-03-10T/);
     assert.match(snapshot?.body ?? "", /Existing research snapshot/);
   } finally {
     await rm(rootPath, { recursive: true, force: true });

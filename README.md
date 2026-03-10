@@ -203,7 +203,7 @@ These are the main building blocks exposed by the local MCP server:
 
 Final chapter and paragraph mutations through the MCP layer auto-refresh `plot.md`, the per-chapter resumes, and `resumes/total.md`. Structured story state stays manual on purpose: rewrites mark `state/status.md` as dirty, then you decide when to run `sync_story_state`. Evaluations stay manual so critique remains explicit.
 
-For factual or historical work, Narrarium now checks existing `research/wikipedia/` snapshots first and reuses them before fetching Wikipedia again when it can.
+For factual or historical work, Narrarium now checks existing `research/wikipedia/` snapshots first and reuses them before fetching Wikipedia again when it can. If you need a refresh, use `forceWikipediaRefresh` or limit reuse with `maxWikipediaSnapshotAgeDays`.
 
 ## Story state workflow
 

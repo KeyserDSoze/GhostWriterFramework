@@ -45,6 +45,9 @@ test("reader scaffold includes canon index pages and configurable core dependenc
     assert.match(exportScript, /exportReaderEpub/);
     assert.match(doctorScript, /doctorBook/);
     assert.match(devScript, /Watching book files/);
+    assert.doesNotMatch(devScript, /astro\/astro\.js/);
+    assert.match(devScript, /astro\/package\.json/);
+    assert.match(devScript, /astroPackageJson\.bin/);
     assert.match(pagesWorkflow, /Deploy Reader To GitHub Pages/);
     assert.match(pagesWorkflow, /SITE_URL: https:\/\/example.com/);
     assert.equal(cname.trim(), "example.com");

@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import path from "node:path";
 import process from "node:process";
 import chokidar from "chokidar";
 import { defaultBookRoot } from "./book-config.mjs";
 import { exportReaderEpub, formatWatchedPath, resolveBookRoot, resolveBookWatchTargets } from "./book-dev-utils.mjs";
 
 const require = createRequire(import.meta.url);
-const astroCliPath = require.resolve("astro/astro.js");
+const astroCliPath = resolveAstroCliPath();
 const bookRoot = resolveBookRoot(defaultBookRoot);
 const watchTargets = resolveBookWatchTargets(bookRoot);
 
@@ -119,4 +120,16 @@ function describeEvent(eventName) {
     default:
       return eventName;
   }
+}
+
+function resolveAstroCliPath() {
+  const astroPackageJsonPath = require.resolve("astro/package.json");
+  const astroPackageJson = require(astroPackageJsonPath);
+  const astroBin = typeof astroPackageJson.bin === "string" ? astroPackageJson.bin : astroPackageJson.bin?.astro;
+
+  if (!astroBin) {
+    throw new Error("Could not resolve Astro CLI entry from astro/package.json");
+  }
+
+  return path.join(path.dirname(astroPackageJsonPath), astroBin);
 }

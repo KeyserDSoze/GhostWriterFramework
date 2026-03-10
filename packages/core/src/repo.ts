@@ -182,6 +182,7 @@ export type WikipediaResearchSnapshot = {
   relativePath: string;
   title: string;
   sourceUrl: string;
+  retrievedAt: string;
   summary: string;
   body: string;
 };
@@ -6443,6 +6444,7 @@ export async function findWikipediaResearchSnapshot(
         relativePath: toPosixPath(path.relative(root, candidatePath)),
         title: document.frontmatter.title,
         sourceUrl: document.frontmatter.source_url,
+        retrievedAt: document.frontmatter.retrieved_at,
         summary: summarizeText(document.body, 280) || document.frontmatter.title,
         body: document.body,
       };
@@ -6462,6 +6464,7 @@ export async function findWikipediaResearchSnapshot(
         relativePath: toPosixPath(path.relative(root, filePath)),
         title: document.frontmatter.title,
         sourceUrl: document.frontmatter.source_url,
+        retrievedAt: document.frontmatter.retrieved_at,
         summary: summarizeText(document.body, 280) || document.frontmatter.title,
         body: document.body,
       };
