@@ -9,6 +9,7 @@ import {
   readTimelineMain,
 } from "narrarium";
 import { defaultBookRoot } from "./book-config.js";
+import { readReaderBookRootEnv } from "./env.js";
 
 type ReaderEntityKind =
   | "character"
@@ -19,7 +20,7 @@ type ReaderEntityKind =
   | "timeline-event";
 
 export function getBookRoot(): string {
-  const configured = process.env.NARRARIUM_BOOK_ROOT ?? process.env.GHOSTWRITER_BOOK_ROOT;
+  const configured = readReaderBookRootEnv();
   if (configured) return path.resolve(configured);
   return path.resolve(process.cwd(), defaultBookRoot);
 }

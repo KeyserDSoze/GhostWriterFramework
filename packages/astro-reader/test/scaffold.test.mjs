@@ -19,6 +19,8 @@ test("reader scaffold includes canon index pages and configurable core dependenc
     const packageJson = JSON.parse(await readFile(path.join(rootPath, "package.json"), "utf8"));
     const bookConfig = await readFile(path.join(rootPath, "src", "lib", "book-config.ts"), "utf8");
     const bookConfigScript = await readFile(path.join(rootPath, "scripts", "book-config.mjs"), "utf8");
+    const envFile = await readFile(path.join(rootPath, ".env"), "utf8");
+    const envExample = await readFile(path.join(rootPath, ".env.example"), "utf8");
     const bookHelper = await readFile(path.join(rootPath, "src", "lib", "book.ts"), "utf8");
     const exportScript = await readFile(path.join(rootPath, "scripts", "export-epub.mjs"), "utf8");
     const doctorScript = await readFile(path.join(rootPath, "scripts", "doctor.mjs"), "utf8");
@@ -41,6 +43,8 @@ test("reader scaffold includes canon index pages and configurable core dependenc
     assert.equal(packageJson.scripts.doctor, "node ./scripts/doctor.mjs");
     assert.match(bookConfig, /defaultBookRoot = "\.\."/);
     assert.match(bookConfigScript, /defaultBookRoot = "\.\."/);
+    assert.match(envFile, /NARRARIUM_BOOK_ROOT=\.\./);
+    assert.equal(envFile, envExample);
     assert.match(bookHelper, /from "\.\/book-config\.js"/);
     assert.match(exportScript, /exportReaderEpub/);
     assert.match(doctorScript, /doctorBook/);

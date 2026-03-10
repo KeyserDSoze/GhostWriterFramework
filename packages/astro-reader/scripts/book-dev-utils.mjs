@@ -2,6 +2,9 @@ import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { exportEpub } from "narrarium";
+import { loadReaderEnvFiles } from "./env-loader.mjs";
+
+loadReaderEnvFiles();
 
 const watchPatterns = [
   "book.md",
@@ -24,7 +27,7 @@ const watchPatterns = [
 ];
 
 export function resolveBookRoot(defaultBookRoot, cwd = process.cwd()) {
-  const configured = process.env.NARRARIUM_BOOK_ROOT ?? process.env.GHOSTWRITER_BOOK_ROOT;
+  const configured = readBookRootEnv();
   return path.resolve(cwd, configured ?? defaultBookRoot);
 }
 
@@ -98,4 +101,36 @@ function runCommand(command, args) {
 
 function toPosix(value) {
   return value.split(path.sep).join("/");
+}
+
+function readBookRootEnv() {
+  for (const key of ["NARRARIUM_BOOK_ROOT", "GHOSTWRITER_BOOK_ROOT"]) {
+    const value = normalizeEnvValue(process.env[key]);
+    if (value && !isClearlyInvalidBookRootValue(value)) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeEnvValue(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1).trim() || undefined;
+  }
+
+  return trimmed;
+}
+
+function isClearlyInvalidBookRootValue(value) {
+  return value === "/" || value === "\\" || /^[a-zA-Z]:(?:[\\/])?$/.test(value);
 }

@@ -54,10 +54,9 @@ NARRARIUM_READER_ALLOW_FULL_CANON=true
 
 ## Local development
 
-Create `.env` from the example and point it at your book repo:
+The scaffold creates `.env` with the computed book root already filled in. Update it if the reader should point somewhere else:
 
 ```bash
-cp .env.example .env
 npm install
 npm run dev
 ```

@@ -141,8 +141,8 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     const toggle = document.querySelector("[data-theme-toggle]");
     if (!toggle) return;
 
-    const saved = localStorage.getItem(themeStorageKey);
-    const initialTheme = saved || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const saved = readStorage(themeStorageKey);
+    const initialTheme = saved || (prefersDarkTheme() ? "dark" : "light");
     applyTheme(initialTheme);
 
     toggle.addEventListener("click", () => {
@@ -158,7 +158,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       toggle.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
     }
     if (persist) {
-      localStorage.setItem(themeStorageKey, theme);
+      writeStorage(themeStorageKey, theme);
     }
   }
 
@@ -184,7 +184,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     root.style.setProperty("--reader-leading", String(preferences.lineHeight || 1.72));
     root.style.setProperty("--reader-measure", preferences.measure || "72ch");
     root.style.setProperty("--reader-copy-family", fontFamilyValue(preferences.fontFamily));
-    localStorage.setItem(preferencesStorageKey, JSON.stringify(preferences));
+    writeStorage(preferencesStorageKey, JSON.stringify(preferences));
   }
 
   function initializeReaderSettings() {
@@ -235,7 +235,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       );
       spoilerLimitInput.value = String(getSelectedSpoilerLimit() || currentPageChapterNumber);
       spoilerLimitInput.addEventListener("change", () => {
-        localStorage.setItem(spoilerLimitStorageKey, spoilerLimitInput.value);
+        writeStorage(spoilerLimitStorageKey, spoilerLimitInput.value);
         window.location.reload();
       });
     }
@@ -294,7 +294,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       };
 
       if (!progress.chapterNumber || currentPageChapterNumber >= progress.chapterNumber) {
-        localStorage.setItem(progressStorageKey, JSON.stringify(nextProgress));
+        writeStorage(progressStorageKey, JSON.stringify(nextProgress));
       }
 
       const bookmarkButton = document.querySelector("[data-bookmark-toggle]");
@@ -547,7 +547,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       return null;
     }
 
-    const saved = Number(localStorage.getItem(spoilerLimitStorageKey) || "");
+    const saved = Number(readStorage(spoilerLimitStorageKey) || "");
     if (Number.isFinite(saved)) {
       return Math.min(saved, currentPageChapterNumber);
     }
@@ -578,9 +578,9 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   function toggleBookmark(button, bookmark) {
     const current = readJson(bookmarkStorageKey);
     if (current?.href === bookmark.href) {
-      localStorage.removeItem(bookmarkStorageKey);
+      removeStorage(bookmarkStorageKey);
     } else {
-      localStorage.setItem(bookmarkStorageKey, JSON.stringify(bookmark));
+      writeStorage(bookmarkStorageKey, JSON.stringify(bookmark));
     }
     syncBookmarkButton(button, bookmark);
   }
@@ -638,8 +638,8 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       glossaryRules: buildPronunciationRules(glossaryEntries),
       triggers,
       voices: [],
-      voiceUri: localStorage.getItem(ttsVoiceStorageKey) || "",
-      rate: clampNumber(Number(localStorage.getItem(ttsRateStorageKey) || "1"), 0.7, 1.35, 1),
+      voiceUri: readStorage(ttsVoiceStorageKey) || "",
+      rate: clampNumber(Number(readStorage(ttsRateStorageKey) || "1"), 0.7, 1.35, 1),
       scopeId: "chapter",
       index: 0,
       runId: 0,
@@ -851,7 +851,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
 
     state.voiceSelect.addEventListener("change", () => {
       state.voiceUri = state.voiceSelect.value;
-      localStorage.setItem(ttsVoiceStorageKey, state.voiceUri);
+      writeStorage(ttsVoiceStorageKey, state.voiceUri);
       updateTtsUi(state);
       if (state.speech.speaking && !state.speech.paused) {
         restartCurrentTtsSegment(state);
@@ -860,7 +860,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
 
     state.rateInput.addEventListener("input", () => {
       state.rate = clampNumber(Number(state.rateInput.value || "1"), 0.7, 1.35, 1);
-      localStorage.setItem(ttsRateStorageKey, String(state.rate));
+      writeStorage(ttsRateStorageKey, String(state.rate));
       updateTtsUi(state);
       if (state.speech.speaking && !state.speech.paused) {
         restartCurrentTtsSegment(state);
@@ -1038,7 +1038,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       return;
     }
 
-    localStorage.setItem(ttsProgressStorageKey, JSON.stringify({
+    writeStorage(ttsProgressStorageKey, JSON.stringify({
       path: window.location.pathname,
       scopeId: state.scopeId,
       scopeLabel: scope.label,
@@ -1047,7 +1047,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   }
 
   function clearTtsProgress() {
-    localStorage.removeItem(ttsProgressStorageKey);
+    removeStorage(ttsProgressStorageKey);
   }
 
   function updateTtsUi(state) {
@@ -1145,9 +1145,37 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     return Math.max(min, Math.min(max, value));
   }
 
+  function prefersDarkTheme() {
+    return typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+
+  function readStorage(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function writeStorage(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // Ignore storage failures so reader controls still work in restricted contexts.
+    }
+  }
+
+  function removeStorage(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Ignore storage failures so reader controls still work in restricted contexts.
+    }
+  }
+
   function readJson(key) {
     try {
-      return JSON.parse(localStorage.getItem(key) || "null");
+      return JSON.parse(readStorage(key) || "null");
     } catch {
       return null;
     }

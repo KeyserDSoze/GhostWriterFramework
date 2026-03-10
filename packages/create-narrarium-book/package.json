@@ -1,6 +1,6 @@
 {
   "name": "create-narrarium-book",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "description": "Starter CLI to scaffold a Narrarium book repository.",
   "license": "MIT",
@@ -34,8 +34,8 @@
     "test": "npm run build && node --test test/**/*.test.mjs"
   },
   "dependencies": {
-    "narrarium-astro-reader": "^0.1.5",
-    "narrarium": "^0.1.5"
+    "narrarium-astro-reader": "^0.1.6",
+    "narrarium": "^0.1.6"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",

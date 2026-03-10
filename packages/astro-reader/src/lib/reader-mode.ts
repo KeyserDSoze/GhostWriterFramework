@@ -1,7 +1,7 @@
+import { readReaderEnv } from "./env.js";
+
 export function isFullCanonMode(): boolean {
-  const raw = String(
-    process.env.NARRARIUM_READER_CANON_MODE ?? process.env.NARRARIUM_READER_ALLOW_FULL_CANON ?? "",
-  )
+  const raw = String(readReaderEnv(["NARRARIUM_READER_CANON_MODE", "NARRARIUM_READER_ALLOW_FULL_CANON"]) ?? "")
     .trim()
     .toLowerCase();
 

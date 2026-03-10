@@ -513,10 +513,11 @@ async function backupEntry(sourcePath: string, destinationPath: string): Promise
 }
 
 function inferReaderBookRoot(readerDir: string, targetPath: string): string {
+  const readerRoot = path.resolve(readerDir);
   const bookConfigCandidates = [
-    path.join(readerDir, "scripts", "book-config.mjs"),
-    path.join(readerDir, "src", "lib", "book-config.ts"),
-  ].map((filePath) => path.join(targetPath, filePath));
+    path.join(readerRoot, "scripts", "book-config.mjs"),
+    path.join(readerRoot, "src", "lib", "book-config.ts"),
+  ];
 
   for (const candidate of bookConfigCandidates) {
     if (!existsSync(candidate)) continue;
@@ -527,7 +528,7 @@ function inferReaderBookRoot(readerDir: string, targetPath: string): string {
     }
   }
 
-  return path.relative(path.join(targetPath, readerDir), targetPath) || ".";
+  return path.relative(readerRoot, targetPath) || ".";
 }
 
 function inferReaderPackageName(targetPath: string, readerDir: string, fallbackTitle: string): string {

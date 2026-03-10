@@ -1,6 +1,7 @@
 import { cp, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isClearlyInvalidBookRootValue, normalizeReaderEnvValue } from "./lib/env.js";
 
 type ScaffoldOptions = {
   bookRoot?: string;
@@ -85,15 +86,15 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
 
   await writeFile(
     path.join(targetRoot, ".env.example"),
-    [
-      `NARRARIUM_BOOK_ROOT=${toPosix(bookRoot)}`,
-      "# NARRARIUM_READER_CANON_MODE=full",
-      "# EPUBCHECK_CMD=epubcheck",
-      "# EPUBCHECK_JAR=/absolute/path/to/epubcheck.jar",
-      "",
-    ].join("\n"),
+    buildReaderEnvFile(bookRoot),
     "utf8",
   );
+  const envPath = path.join(targetRoot, ".env");
+  const existingEnv = await readFile(envPath, "utf8").catch(() => null);
+  const nextEnv = mergeReaderEnvFile(existingEnv, bookRoot);
+  if (nextEnv !== existingEnv) {
+    await writeFile(envPath, nextEnv, "utf8");
+  }
   await writeFile(path.join(targetRoot, ".gitignore"), "node_modules/\ndist/\n.astro/\n.env\npublic/downloads/\n", "utf8");
   await writeFile(
     path.join(targetRoot, "README.md"),
@@ -116,7 +117,7 @@ This site was scaffolded from \`narrarium-astro-reader\`.
 
 ## Configure
 
-Set the book root in a local environment file:
+The scaffold creates a local \`.env\` with the book root already filled in. Adjust it if this reader should point somewhere else:
 
 \`\`\`bash
 NARRARIUM_BOOK_ROOT=${toPosix(bookRoot)}
@@ -164,6 +165,47 @@ By default it deploys to standard GitHub Pages using the repository name as the 
 
 function buildBookConfigScript(bookRoot: string): string {
   return `export const defaultBookRoot = ${JSON.stringify(toPosix(bookRoot))};\n`;
+}
+
+function buildReaderEnvFile(bookRoot: string): string {
+  return [
+    `NARRARIUM_BOOK_ROOT=${toPosix(bookRoot)}`,
+    "# NARRARIUM_READER_CANON_MODE=full",
+    "# EPUBCHECK_CMD=epubcheck",
+    "# EPUBCHECK_JAR=/absolute/path/to/epubcheck.jar",
+    "",
+  ].join("\n");
+}
+
+function mergeReaderEnvFile(existingContent: string | null, bookRoot: string): string {
+  const desiredRoot = toPosix(bookRoot);
+  if (existingContent === null) {
+    return buildReaderEnvFile(bookRoot);
+  }
+
+  const lines = existingContent.split(/\r?\n/);
+  let handled = false;
+
+  const nextLines = lines.map((line) => {
+    const match = line.match(/^(\s*NARRARIUM_BOOK_ROOT\s*=\s*)(.*)$/);
+    if (!match) {
+      return line;
+    }
+
+    handled = true;
+    const currentValue = normalizeReaderEnvValue(match[2]);
+    if (currentValue && !isClearlyInvalidBookRootValue(currentValue)) {
+      return line;
+    }
+
+    return `${match[1]}${desiredRoot}`;
+  });
+
+  if (handled) {
+    return nextLines.join("\n");
+  }
+
+  return `${buildReaderEnvFile(bookRoot).trimEnd()}\n${existingContent}`;
 }
 
 function buildPagesWorkflow(pagesDomain?: string): string {

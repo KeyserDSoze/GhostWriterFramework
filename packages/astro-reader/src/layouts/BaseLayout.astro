@@ -37,6 +37,21 @@ const fullCanonMode = isFullCanonMode();
     <title>{title}</title>
     {description && <meta name="description" content={description} />}
     <base href={import.meta.env.BASE_URL} />
+    <script is:inline>
+      (() => {
+        const themeStorageKey = "narrarium-reader-theme";
+        const root = document.documentElement;
+        const prefersDark =
+          typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches;
+
+        try {
+          const saved = localStorage.getItem(themeStorageKey);
+          root.dataset.theme = saved || (prefersDark ? "dark" : "light");
+        } catch {
+          root.dataset.theme = prefersDark ? "dark" : "light";
+        }
+      })();
+    </script>
     <style>
       :root {
         --paper: #f3ecdd;
@@ -317,6 +332,13 @@ const fullCanonMode = isFullCanonMode();
       .value {
         margin-top: 0.35rem;
         font-size: 1.15rem;
+      }
+
+      .value-path {
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.98rem;
       }
 
       .chapter-list {
