@@ -54,6 +54,14 @@ The starter also has an interactive mode:
 npx create-narrarium-book
 ```
 
+To refresh the managed Narrarium scaffolding inside an existing repo:
+
+```bash
+npx create-narrarium-book --upgrade .
+```
+
+Add `--with-reader` if you also want to refresh the generated reader scaffold and root convenience files.
+
 ## Run the MCP server from npm
 
 ```bash
@@ -129,6 +137,9 @@ This serves:
 
 An example project config lives in `opencode.jsonc` and points OpenCode to the local MCP server build output.
 It also tunes the default `build` and `plan` agents for book work with higher reasoning effort, detailed summaries, and more verbose responses while keeping temperature moderate for canon consistency.
+Book repos also include `conversations/` as a portable place to keep exported writing chats.
+The generated `.opencode/plugins/conversation-export.js` plugin updates `conversations/RESUME.md`, `conversations/CONTINUATION.md`, and per-session exports automatically when OpenCode sessions go idle.
+The generated `/resume-book` command and MCP tool `resume_book_context` help you restart from repo state on a fresh machine or session.
 
 ## Agent rules
 
@@ -143,6 +154,7 @@ Project-level OpenCode and agent rules live in `AGENTS.md`.
 - `create_character`: create a rich character file with voice, role, backstory, and function in book
 - `location_wizard`, `faction_wizard`, `item_wizard`, `secret_wizard`: return the checklist for each canon type
 - `timeline_event_wizard`, `chapter_wizard`, `paragraph_wizard`: return the checklist for those creation flows
+- `chapter_writing_context`, `paragraph_writing_context`, `resume_book_context`: assemble the context to resume or write book prose safely
 - `create_location`, `create_faction`, `create_item`, `create_secret`, `create_timeline_event`: create rich canonical files for those types
 - `start_wizard`, `wizard_answer`, `wizard_status`, `wizard_finalize`, `wizard_cancel`: run a true multi-step guided creation session
 - `create_entity`: create faster stubs for other canon files

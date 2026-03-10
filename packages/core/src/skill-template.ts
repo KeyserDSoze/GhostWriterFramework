@@ -20,6 +20,7 @@ Treat the repository as the canonical source of truth for the book.
 - \`chapters/<nnn-slug>/<nnn-slug>.md\` for paragraph or scene files
 - \`drafts/<nnn-slug>/chapter.md\` and matching files for rough chapter and scene drafts
 - \`plot.md\` for the rolling book map: chapter progression, reveals, and timeline anchors
+- \`conversations/\` for exported writing chats, resume files, and continuation prompts
 - \`resumes/\` for running summaries
 - \`evaluations/\` for critique and continuity checks
 - \`guidelines/\` for prose defaults, style, structure, and voices
@@ -44,6 +45,7 @@ Treat the repository as the canonical source of truth for the book.
 - Use \`create_location\`, \`create_faction\`, \`create_item\`, \`create_secret\`, and \`create_timeline_event\` for rich canon files.
 - Use \`create_chapter_draft\` and \`create_paragraph_draft\` when roughing scenes before final prose.
 - Use \`chapter_writing_context\` and \`paragraph_writing_context\` before drafting polished prose from rough material.
+- Use \`resume_book_context\` or the \`/resume-book\` command when restarting work from exported conversation history.
 - Use \`update_chapter\` and \`update_paragraph\` for existing story structure files.
 - Use \`update_chapter_draft\` and \`update_paragraph_draft\` when iterating on rough drafts.
 - Use \`create_chapter_from_draft\` and \`create_paragraph_from_draft\` to promote drafts into final story files.

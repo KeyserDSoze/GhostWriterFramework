@@ -5,6 +5,7 @@ import path from "node:path";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import {
   buildParagraphWritingContext,
+  buildResumeBookContext,
   createAssetPrompt,
   createChapter,
   createChapterDraft,
@@ -28,6 +29,7 @@ import {
   readTimelineMain,
   syncPlot,
   syncAllResumes,
+  upgradeBookRepo,
   updateChapter,
   updateEntity,
   updateParagraph,
@@ -131,6 +133,9 @@ test("core book workflow supports canon indexes and structural updates", async (
     const timelineMain = await readTimelineMain(rootPath);
     const plot = await syncPlot(rootPath);
     const opencodeConfig = await readFile(path.join(rootPath, "opencode.jsonc"), "utf8");
+    const conversationsReadme = await readFile(path.join(rootPath, "conversations", "README.md"), "utf8");
+    const resumeCommand = await readFile(path.join(rootPath, ".opencode", "commands", "resume-book.md"), "utf8");
+    const conversationPlugin = await readFile(path.join(rootPath, ".opencode", "plugins", "conversation-export.js"), "utf8");
     const resumes = await syncAllResumes(rootPath);
     const evaluation = await evaluateBook(rootPath);
     const validation = await validateBook(rootPath);
@@ -154,6 +159,10 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.match(opencodeConfig, /"default_agent": "build"/);
     assert.match(opencodeConfig, /"reasoningEffort": "high"/);
     assert.match(opencodeConfig, /"textVerbosity": "high"/);
+    assert.match(opencodeConfig, /"watcher"/);
+    assert.match(conversationsReadme, /portable exports of OpenCode/);
+    assert.match(resumeCommand, /resume_book_context/);
+    assert.match(conversationPlugin, /ConversationExportPlugin/);
     assert.equal(resumes.chapterCount, 1);
     assert.equal(evaluation.chapterCount, 1);
     assert.equal(validation.valid, true);
@@ -258,6 +267,35 @@ test("asset prompts and renames keep asset folders aligned", async () => {
   }
 });
 
+test("upgradeBookRepo refreshes managed scaffolding and preserves author files", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-upgrade-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Upgrade Test Book",
+      language: "it",
+    });
+
+    await writeFile(path.join(rootPath, "opencode.jsonc"), '{"legacy":true}\n', "utf8");
+    await writeFile(path.join(rootPath, ".opencode", "commands", "resume-book.md"), "old command\n", "utf8");
+    await writeFile(path.join(rootPath, "guidelines", "prose.md"), "# Custom Prose\n\nKeep this intact.\n", "utf8");
+
+    const result = await upgradeBookRepo(rootPath);
+    const opencodeConfig = await readFile(path.join(rootPath, "opencode.jsonc"), "utf8");
+    const resumeCommand = await readFile(path.join(rootPath, ".opencode", "commands", "resume-book.md"), "utf8");
+    const proseGuide = await readFile(path.join(rootPath, "guidelines", "prose.md"), "utf8");
+
+    assert.match(opencodeConfig, /"default_agent": "build"/);
+    assert.match(resumeCommand, /resume_book_context/);
+    assert.equal(proseGuide, "# Custom Prose\n\nKeep this intact.\n");
+    assert.match(result.updated.join("\n"), /opencode\.jsonc/);
+    assert.ok(result.backedUp.length >= 2);
+    assert.ok(result.backupRoot);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
 test("draft workflow can assemble writing context and promote drafts into final prose", async () => {
   const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-drafts-"));
 
@@ -299,11 +337,31 @@ test("draft workflow can assemble writing context and promote drafts into final 
       body: "# Scene\n\nLivia poso la mano sul registro e capi dal taglio della ceralacca che qualcuno era arrivato prima di lei.",
     });
 
+    await writeFile(
+      path.join(rootPath, "conversations", "RESUME.md"),
+      "# Conversation Resume\n\nUltimo focus: aprire il romanzo con sospetto e controllo.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(rootPath, "conversations", "CONTINUATION.md"),
+      "# Continuation\n\nRiparti da Livia, dal varco, e dal dubbio sui registri.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(rootPath, "conversations", "sessions", "20260310-0000--la-soglia--abc.md"),
+      "# Conversation Export\n\nLivia deve entrare in scena con tensione immediata.\n",
+      "utf8",
+    );
+
+    const resumeContext = await buildResumeBookContext(rootPath);
+
     const chapter = await readChapter(rootPath, "chapter:001-la-soglia");
 
     assert.match(context.text, /guidelines\/prose\.md/);
     assert.match(context.text, /plot\.md/);
     assert.match(context.text, /Rough Scene/);
+    assert.match(resumeContext.text, /Conversation Resume/);
+    assert.match(resumeContext.text, /Livia deve entrare in scena/);
     assert.equal(chapterResult.frontmatter.summary, "Brutta del capitolo di apertura.");
     assert.equal(paragraphResult.frontmatter.summary, "Brutta della prima scena.");
     assert.equal(chapter.paragraphs[0].metadata.viewpoint, "character:livia-sarne");

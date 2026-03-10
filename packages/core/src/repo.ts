@@ -546,67 +546,76 @@ export async function initializeBookRepo(
     created,
   );
 
-  if (options.createSkills ?? true) {
-    await ensureFile(
-      root,
-      `.opencode/skills/${SKILL_NAME}/SKILL.md`,
-      skillTemplate,
-      created,
-    );
-    await ensureFile(
-      root,
-      `.claude/skills/${SKILL_NAME}/SKILL.md`,
-      skillTemplate,
-      created,
-    );
-  }
-
   await ensureFile(
     root,
-    "opencode.jsonc",
-    [
-      "{",
-      '  "$schema": "https://opencode.ai/config.json",',
-      '  "default_agent": "build",',
-      '  "agent": {',
-      '    "build": {',
-      '      "temperature": 0.45,',
-      '      "top_p": 1,',
-      '      "options": {',
-      '        "reasoningEffort": "high",',
-      '        "reasoningSummary": "detailed",',
-      '        "textVerbosity": "high",',
-      '        "include": ["reasoning.encrypted_content", "usage"],',
-      '        "store": true',
-      '      }',
-      '    },',
-      '    "plan": {',
-      '      "temperature": 0.2,',
-      '      "top_p": 1,',
-      '      "options": {',
-      '        "reasoningEffort": "high",',
-      '        "reasoningSummary": "detailed",',
-      '        "textVerbosity": "high",',
-      '        "include": ["reasoning.encrypted_content", "usage"],',
-      '        "store": true',
-      '      }',
-      '    }',
-      '  },',
-      '  "mcp": {',
-      '    "narrarium": {',
-      '      "type": "local",',
-      '      "command": ["npx", "narrarium-mcp-server"],',
-      '      "enabled": true,',
-      '      "timeout": 15000',
-      "    }",
-      "  }",
-      "}",
-      "",
-    ].join("\n"),
+    "conversations/README.md",
+    buildConversationsReadme(),
     created,
   );
 
+  for (const file of getManagedBookScaffoldFiles(options.createSkills ?? true)) {
+    await ensureFile(root, file.relativePath, file.content, created);
+  }
+
   return { rootPath: root, created };
+}
+
+export async function upgradeBookRepo(
+  rootPath: string,
+  options?: { createSkills?: boolean },
+): Promise<{
+  rootPath: string;
+  created: string[];
+  updated: string[];
+  backedUp: string[];
+  backupRoot?: string;
+}> {
+  const root = path.resolve(rootPath);
+  const book = await readBook(root);
+
+  if (!book) {
+    throw new Error(`Missing ${BOOK_FILE} in ${root}. Use create-narrarium-book for a new repo, or run the upgrade inside an existing Narrarium book.`);
+  }
+
+  const created = (await initializeBookRepo(root, {
+    title: book.frontmatter.title,
+    author: book.frontmatter.author,
+    language: book.frontmatter.language,
+    createSkills: options?.createSkills ?? true,
+  })).created;
+
+  const updated: string[] = [];
+  const backedUp: string[] = [];
+  let backupRoot: string | undefined;
+
+  for (const file of getManagedBookScaffoldFiles(options?.createSkills ?? true)) {
+    const filePath = path.join(root, file.relativePath);
+    const existingContent = await readFile(filePath, "utf8").catch(() => null);
+
+    if (existingContent === file.content) {
+      continue;
+    }
+
+    if (existingContent !== null) {
+      backupRoot ??= path.join(root, ".narrarium-upgrade-backups", formatBackupStamp(new Date()));
+      const backupPath = path.join(backupRoot, file.relativePath);
+      await mkdir(path.dirname(backupPath), { recursive: true });
+      await writeFile(backupPath, existingContent, "utf8");
+      backedUp.push(toPosixPath(path.relative(root, backupPath)));
+    }
+
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, file.content, "utf8");
+    updated.push(toPosixPath(file.relativePath));
+  }
+
+  return {
+    rootPath: root,
+    created,
+    updated,
+    backedUp,
+    backupRoot: backupRoot ? toPosixPath(path.relative(root, backupRoot)) : undefined,
+  };
 }
 
 export async function createEntity(
@@ -1691,6 +1700,55 @@ export async function buildParagraphWritingContext(
             )
           : ["No earlier final scenes in this chapter yet."],
       ),
+    ].join("\n"),
+    files: Array.from(files).sort(),
+  };
+}
+
+export async function buildResumeBookContext(
+  rootPath: string,
+): Promise<{ text: string; files: string[] }> {
+  const root = path.resolve(rootPath);
+  const files = new Set<string>();
+  const sections: string[] = [];
+
+  const book = await readBook(root);
+  const prose = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.prose));
+  const plot = await readPlot(root);
+  const totalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE));
+  const continuation = await readLooseMarkdownIfExists(path.join(root, "conversations", "CONTINUATION.md"));
+  const resume = await readLooseMarkdownIfExists(path.join(root, "conversations", "RESUME.md"));
+
+  addContextSection(sections, files, root, prose, "Always-read prose guide", 1500);
+  addContextSection(sections, files, root, plot, "Rolling plot map", 1400);
+  addContextSection(sections, files, root, totalResume, "Book summary so far", 1100);
+  addContextSection(sections, files, root, resume, "Conversation resume", 1100);
+  addContextSection(sections, files, root, continuation, "Conversation continuation", 1500);
+
+  const latestConversationExports = await listLatestConversationExports(root, 3);
+  if (latestConversationExports.length > 0) {
+    sections.push(
+      [
+        "## Latest exported conversations",
+        "",
+        ...latestConversationExports.map((entry) => {
+          files.add(entry.relativePath);
+          return [`### ${entry.title}`, "", `Source: ${entry.relativePath}`, "", entry.excerpt].join("\n");
+        }),
+      ].join("\n"),
+    );
+  }
+
+  return {
+    text: [
+      `# Resume Book Context${book ? ` for ${book.frontmatter.title}` : ""}`,
+      "",
+      "Use this to restart book work from repository state, exported conversation history, and current canon.",
+      "",
+      ...sections,
+      "## Source files consulted",
+      "",
+      ...Array.from(files).sort().map((filePath) => `- ${filePath}`),
     ].join("\n"),
     files: Array.from(files).sort(),
   };
@@ -3273,6 +3331,352 @@ function buildTimelineEventBody(input: CreateTimelineEventProfileInput): string 
   ].join("\n");
 }
 
+function buildOpencodeProjectConfig(): string {
+  return [
+    "{",
+    '  "$schema": "https://opencode.ai/config.json",',
+    '  "default_agent": "build",',
+    '  "agent": {',
+    '    "build": {',
+    '      "temperature": 0.45,',
+    '      "top_p": 1,',
+    '      "options": {',
+    '        "reasoningEffort": "high",',
+    '        "reasoningSummary": "detailed",',
+    '        "textVerbosity": "high",',
+    '        "include": ["reasoning.encrypted_content", "usage"],',
+    '        "store": true',
+    '      }',
+    '    },',
+    '    "plan": {',
+    '      "temperature": 0.2,',
+    '      "top_p": 1,',
+    '      "options": {',
+    '        "reasoningEffort": "high",',
+    '        "reasoningSummary": "detailed",',
+    '        "textVerbosity": "high",',
+    '        "include": ["reasoning.encrypted_content", "usage"],',
+    '        "store": true',
+    '      }',
+    '    }',
+    '  },',
+    '  "watcher": {',
+    '    "ignore": ["conversations/sessions/**", "conversations/*.json"]',
+    '  },',
+    '  "mcp": {',
+    '    "narrarium": {',
+    '      "type": "local",',
+    '      "command": ["npx", "narrarium-mcp-server"],',
+    '      "enabled": true,',
+    '      "timeout": 15000',
+    '    }',
+    '  }',
+    '}',
+    '',
+  ].join("\n");
+}
+
+function buildConversationsReadme(): string {
+  return [
+    "---",
+    "type: note",
+    "id: conversations:index",
+    "title: Conversations",
+    "---",
+    "",
+    "# Conversations",
+    "",
+    "Use this folder for portable exports of OpenCode or other writing conversations tied to the book.",
+    "",
+    "- These files are working history, not canon.",
+    "- Keep the conversations that matter for continuity, intent, or major creative decisions.",
+    "- Do not treat a conversation as source of truth until the relevant canon is written into markdown files elsewhere in the repo.",
+  ].join("\n");
+}
+
+function getManagedBookScaffoldFiles(createSkills: boolean): Array<{ relativePath: string; content: string }> {
+  return [
+    ...(createSkills
+      ? [
+          { relativePath: `.opencode/skills/${SKILL_NAME}/SKILL.md`, content: skillTemplate },
+          { relativePath: `.claude/skills/${SKILL_NAME}/SKILL.md`, content: skillTemplate },
+        ]
+      : []),
+    { relativePath: "opencode.jsonc", content: buildOpencodeProjectConfig() },
+    { relativePath: ".opencode/commands/resume-book.md", content: buildResumeBookCommand() },
+    { relativePath: ".opencode/plugins/conversation-export.js", content: buildConversationExportPlugin() },
+    { relativePath: "conversations/README.md", content: buildConversationsReadme() },
+  ];
+}
+
+function buildResumeBookCommand(): string {
+  return [
+    "---",
+    "description: Resume book work from repo state, plot, and exported conversations",
+    "agent: build",
+    "---",
+    "Resume work on this Narrarium book.",
+    "",
+    "Before doing anything else:",
+    "1. Call the `resume_book_context` MCP tool.",
+    "2. Read the files it references, especially `guidelines/prose.md`, `plot.md`, `resumes/total.md`, and the latest files in `conversations/`.",
+    "3. Briefly restate where the book stands, what the latest conversation was doing, and the next best actions.",
+    "4. Then continue with this user request if one is present: $ARGUMENTS",
+    "5. If no extra request is present, ask for the next book task only after giving the short status recap.",
+    "",
+    "Prefer continuity over novelty. Respect `known_from`, `reveal_in`, and all prose/style guidelines.",
+  ].join("\n");
+}
+
+function buildConversationExportPlugin(): string {
+  return [
+    'import { mkdir, writeFile } from "node:fs/promises";',
+    'import path from "node:path";',
+    '',
+    'const MAX_RESUME_LENGTH = 900;',
+    'const MAX_CONTINUATION_LENGTH = 1400;',
+    'const pending = new Map();',
+    '',
+    'export const ConversationExportPlugin = async ({ client, worktree, directory }) => {',
+    '  const root = worktree || directory;',
+    '  const conversationsDir = path.join(root, "conversations");',
+    '  const sessionsDir = path.join(conversationsDir, "sessions");',
+    '',
+    '  return {',
+    '    event: async ({ event }) => {',
+    '      if (!event || (event.type !== "session.idle" && event.type !== "session.updated")) {',
+    '        return;',
+    '      }',
+    '',
+    '      const sessionId = extractSessionId(event);',
+    '      if (!sessionId) {',
+    '        return;',
+    '      }',
+    '',
+    '      if (pending.has(sessionId)) {',
+    '        clearTimeout(pending.get(sessionId));',
+    '      }',
+    '',
+    '      const timer = setTimeout(() => {',
+    '        void exportConversation(client, conversationsDir, sessionsDir, sessionId);',
+    '        pending.delete(sessionId);',
+    '      }, event.type === "session.updated" ? 1200 : 250);',
+    '',
+    '      pending.set(sessionId, timer);',
+    '    },',
+    '  };',
+    '};',
+    '',
+    'async function exportConversation(client, conversationsDir, sessionsDir, sessionId) {',
+    '  await mkdir(sessionsDir, { recursive: true });',
+    '',
+    '  const session = unwrap(await client.session.get({ path: { id: sessionId } }));',
+    '  const messages = unwrap(await client.session.messages({ path: { id: sessionId } }));',
+    '',
+    '  if (!session || !Array.isArray(messages)) {',
+    '    return;',
+    '  }',
+    '',
+    '  const title = session.title || `session-${sessionId}`;',
+    '  const stamp = formatDateForFile(session.updatedAt || session.createdAt || Date.now());',
+    '  const slug = slugify(title);',
+    '  const baseName = `${stamp}--${slug}--${sessionId}`;',
+    '  const markdownPath = path.join(sessionsDir, `${baseName}.md`);',
+    '  const jsonPath = path.join(sessionsDir, `${baseName}.json`);',
+    '',
+    '  const structuredMessages = messages.map((entry) => ({',
+    '    id: entry.info?.id || "",',
+    '    role: entry.info?.role || entry.info?.type || "assistant",',
+    '    createdAt: entry.info?.createdAt || null,',
+    '    parts: Array.isArray(entry.parts) ? entry.parts : [],',
+    '    text: messageText(Array.isArray(entry.parts) ? entry.parts : []),',
+    '  }));',
+    '',
+    '  const markdown = renderConversationMarkdown({',
+    '    sessionId,',
+    '    title,',
+    '    createdAt: session.createdAt || null,',
+    '    updatedAt: session.updatedAt || null,',
+    '    messages: structuredMessages,',
+    '  });',
+    '',
+    '  await writeFile(markdownPath, markdown, "utf8");',
+    '  await writeFile(jsonPath, JSON.stringify({ session, messages: structuredMessages }, null, 2) + "\\n", "utf8");',
+    '',
+    '  const latestUser = findLatestMessage(structuredMessages, "user");',
+    '  const latestAssistant = findLatestMessage(structuredMessages, "assistant");',
+    '  const latestExcerpt = summarizeText(latestAssistant?.text || latestUser?.text || "", MAX_RESUME_LENGTH);',
+    '  await writeFile(',
+    '    path.join(conversationsDir, "RESUME.md"),',
+    '    [',
+    '      "# Conversation Resume",',
+    '      "",',
+    '      `- Latest session: ${title}` ,',
+    '      `- Session id: ${sessionId}` ,',
+    '      `- Updated: ${formatDateForDisplay(session.updatedAt || session.createdAt || Date.now())}` ,',
+    '      `- Export: ${toPosix(path.relative(conversationsDir, markdownPath))}` ,',
+    '      "",',
+    '      "## Latest user intent",',
+    '      "",',
+    '      summarizeText(latestUser?.text || "No user message captured yet.", MAX_RESUME_LENGTH),',
+    '      "",',
+    '      "## Latest assistant state",',
+    '      "",',
+    '      latestExcerpt || "No assistant response captured yet.",',
+    '    ].join("\\n"),',
+    '    "utf8",',
+    '  );',
+    '',
+    '  await writeFile(',
+    '    path.join(conversationsDir, "CONTINUATION.md"),',
+    '    [',
+    '      "# Continuation",',
+    '      "",',
+    '      "Use this file when restarting work in a fresh OpenCode session.",',
+    '      "",',
+    '      "## Read first",',
+    '      "",',
+    '      "1. guidelines/prose.md",',
+    '      "2. plot.md",',
+    '      "3. resumes/total.md",',
+    '      "4. Any matching files in drafts/",',
+    '      `5. conversations/sessions/${baseName}.md`,',
+    '      "",',
+    '      "## Current conversation snapshot",',
+    '      "",',
+    '      `- Session: ${title}` ,',
+    '      `- Session id: ${sessionId}` ,',
+    '      `- Updated: ${formatDateForDisplay(session.updatedAt || session.createdAt || Date.now())}` ,',
+    '      "",',
+    '      "## Latest user request",',
+    '      "",',
+    '      summarizeText(latestUser?.text || "No user request captured yet.", MAX_CONTINUATION_LENGTH),',
+    '      "",',
+    '      "## Latest assistant response",',
+    '      "",',
+    '      summarizeText(latestAssistant?.text || "No assistant response captured yet.", MAX_CONTINUATION_LENGTH),',
+    '      "",',
+    '      "## Resume prompt",',
+    '      "",',
+    '      "Run `/resume-book` or ask OpenCode to resume work from repository state, exported conversations, plot, resumes, and drafts before continuing.",',
+    '    ].join("\\n"),',
+    '    "utf8",',
+    '  );',
+    '}',
+    '',
+    'function renderConversationMarkdown({ sessionId, title, createdAt, updatedAt, messages }) {',
+    '  return [',
+    '    "---",',
+    '    "type: conversation-export",',
+    '    `id: conversation:${sessionId}` ,',
+    '    `title: ${escapeYaml(title)}` ,',
+    '    `created_at: ${createdAt || ""}` ,',
+    '    `updated_at: ${updatedAt || ""}` ,',
+    '    "---",',
+    '    "",',
+    '    "# Conversation Export",',
+    '    "",',
+    '    ...messages.flatMap((message, index) => [',
+    '      `## ${index + 1}. ${capitalize(message.role)}` ,',
+    '      "",',
+    '      message.text || "No plain-text content.",',
+    '      "",',
+    '    ]),',
+    '  ].join("\\n");',
+    '}',
+    '',
+    'function findLatestMessage(messages, role) {',
+    '  for (let index = messages.length - 1; index >= 0; index -= 1) {',
+    '    if (messages[index].role === role) return messages[index];',
+    '  }',
+    '  return null;',
+    '}',
+    '',
+    'function extractSessionId(event) {',
+    '  const props = event.properties || {};',
+    '  return props.id || props.sessionID || props.sessionId || props.session?.id || props.info?.id || null;',
+    '}',
+    '',
+    'function unwrap(result) {',
+    '  return result && typeof result === "object" && "data" in result ? result.data : result;',
+    '}',
+    '',
+    'function formatDateForFile(value) {',
+    '  const date = new Date(value);',
+    '  const safe = Number.isNaN(date.getTime()) ? new Date() : date;',
+    '  return [',
+    '    safe.getUTCFullYear(),',
+    '    String(safe.getUTCMonth() + 1).padStart(2, "0"),',
+    '    String(safe.getUTCDate()).padStart(2, "0"),',
+    '    "-",',
+    '    String(safe.getUTCHours()).padStart(2, "0"),',
+    '    String(safe.getUTCMinutes()).padStart(2, "0"),',
+    '  ].join("");',
+    '}',
+    '',
+    'function formatDateForDisplay(value) {',
+    '  const date = new Date(value);',
+    '  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();',
+    '}',
+    '',
+    'function slugify(value) {',
+    '  return String(value || "conversation")',
+    '    .toLowerCase()',
+    '    .replace(/[^a-z0-9]+/g, "-")',
+    '    .replace(/^-+|-+$/g, "") || "conversation";',
+    '}',
+    '',
+    'function summarizeText(value, maxLength) {',
+    '  const text = String(value || "").replace(/\s+/g, " ").trim();',
+    '  if (!text) return "";',
+    '  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 3).trim()}...`;',
+    '}',
+    '',
+    'function messageText(parts) {',
+    '  if (!Array.isArray(parts)) return "";',
+    '  return parts',
+    '    .map((part) => {',
+    '      if (!part || typeof part !== "object") return "";',
+    '      if (part.type === "text") return part.text || "";',
+    '      if (typeof part.text === "string") return part.text;',
+    '      try {',
+    '        return JSON.stringify(part, null, 2);',
+    '      } catch {',
+    '        return String(part.type || "part");',
+    '      }',
+    '    })',
+    '    .filter(Boolean)',
+    '    .join("\\n\\n");',
+    '}',
+    '',
+    'function toPosix(value) {',
+    '  return value.split(path.sep).join("/");',
+    '}',
+    '',
+    'function escapeYaml(value) {',
+    '  return JSON.stringify(String(value || ""));',
+    '}',
+    '',
+    'function capitalize(value) {',
+    '  const text = String(value || "message");',
+    '  return text.charAt(0).toUpperCase() + text.slice(1);',
+    '}',
+    '',
+  ].join("\n");
+}
+
+function formatBackupStamp(date: Date): string {
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0"),
+    "-",
+    String(date.getUTCHours()).padStart(2, "0"),
+    String(date.getUTCMinutes()).padStart(2, "0"),
+    String(date.getUTCSeconds()).padStart(2, "0"),
+  ].join("");
+}
+
 function addContextSection(
   sections: string[],
   files: Set<string>,
@@ -3307,6 +3711,41 @@ function compactFrontmatterPatch(input: Record<string, unknown>): Record<string,
       return true;
     }),
   );
+}
+
+async function listLatestConversationExports(
+  root: string,
+  limit: number,
+): Promise<Array<{ relativePath: string; title: string; excerpt: string }>> {
+  const files = await fg("conversations/sessions/*.md", {
+    cwd: root,
+    absolute: true,
+    onlyFiles: true,
+  });
+
+  const ranked = await Promise.all(
+    files.map(async (filePath) => {
+      const info = await stat(filePath);
+      const document = await readLooseMarkdownIfExists(filePath);
+      return {
+        filePath,
+        mtimeMs: info.mtimeMs,
+        document,
+      };
+    }),
+  );
+
+  return ranked
+    .filter((entry): entry is { filePath: string; mtimeMs: number; document: MarkdownDocument<Record<string, unknown>> } => Boolean(entry.document))
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .slice(0, limit)
+    .map((entry) => ({
+      relativePath: toPosixPath(path.relative(root, entry.filePath)),
+      title:
+        (typeof entry.document.frontmatter.title === "string" && entry.document.frontmatter.title) ||
+        path.basename(entry.filePath, ".md"),
+      excerpt: summarizeText(entry.document.body, 700) || "No conversation content yet.",
+    }));
 }
 
 function collectChapterTimelineEvents(

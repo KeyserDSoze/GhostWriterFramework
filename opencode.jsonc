@@ -25,6 +25,9 @@
       }
     }
   },
+  "watcher": {
+    "ignore": ["conversations/sessions/**", "conversations/*.json"]
+  },
   "mcp": {
     "narrarium": {
       "type": "local",

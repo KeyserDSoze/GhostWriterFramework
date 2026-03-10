@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { stdin as input, stdout as output } from "node:process";
@@ -13,9 +13,11 @@ import {
   createCharacterProfile,
   createParagraph,
   initializeBookRepo,
+  readBook,
   syncChapterEvaluation,
   syncChapterResume,
   syncTotalResume,
+  upgradeBookRepo,
 } from "narrarium";
 
 type ParsedArgs = {
@@ -29,103 +31,161 @@ type ParsedArgs = {
   readerDir?: string;
   skipInstall?: boolean;
   pagesDomain?: string;
+  upgrade?: boolean;
 };
 
 const args = parseArgs(process.argv.slice(2));
-const resolved = await resolveInputs(args);
-const targetPath = path.resolve(process.cwd(), resolved.targetDir);
+await main(args);
 
-await initializeBookRepo(targetPath, {
-  title: resolved.title,
-  author: resolved.author || undefined,
-  language: resolved.language,
-  createSkills: true,
-});
-
-let readerPath = "";
-let readerInstalled = false;
-
-if (resolved.withReader) {
-  const readerDir = path.join(targetPath, resolved.readerDir);
-  const readerBookRoot = path.relative(readerDir, targetPath) || ".";
-  readerPath = await runReaderScaffold(readerDir, readerBookRoot, `${slugifyForPackage(resolved.title)}-reader`, resolved.pagesDomain);
-  await writeRootPackageJson(targetPath, resolved.title, resolved.readerDir);
-  await writeRootPagesWorkflow(targetPath, resolved.readerDir, resolved.pagesDomain);
-  if (!resolved.skipInstall) {
-    installNodeDependencies(readerPath);
-    readerInstalled = true;
+async function main(args: ParsedArgs) {
+  if (args.upgrade) {
+    await runUpgrade(args);
+    return;
   }
+
+  await runCreate(args);
 }
 
-if (resolved.sample) {
-  await createCharacterProfile(targetPath, {
-    name: "Lyra Vale",
-    roleTier: "main",
-    storyRole: "protagonist",
-    speakingStyle: "Measured, observant, and precise. She rarely wastes words and often hides emotion behind controlled language.",
-    backgroundSummary: "Raised around trade routes and political intrigue, Lyra learned early how to read rooms, hide motives, and survive by listening harder than everyone else.",
-    functionInBook: "Primary viewpoint anchor for the opening movement and the reader's first sustained window into the world.",
-    age: 29,
-    occupation: "Broker of information",
-    origin: "Gray Harbor",
-    firstImpression: "Competent, composed, and hard to read.",
-    traits: ["observant", "guarded", "adaptable"],
-    desires: ["protect her leverage", "learn the truth behind the missing archive"],
-    fears: ["becoming predictable", "failing the few people she trusts"],
-    relationships: ["Has unfinished history with the Night Syndicate.", "Treats alliances as temporary until proven otherwise."],
-    arc: "Moves from strategic distance toward costly emotional commitment.",
-    internalConflict: "She wants intimacy but trusts control more than honesty.",
-    externalConflict: "Several factions want the same information she is trying to bury and decode.",
+async function runCreate(args: ParsedArgs) {
+  const resolved = await resolveInputs(args);
+  const targetPath = path.resolve(process.cwd(), resolved.targetDir);
+
+  await initializeBookRepo(targetPath, {
+    title: resolved.title,
+    author: resolved.author || undefined,
+    language: resolved.language,
+    createSkills: true,
   });
 
-  await createChapter(targetPath, {
-    number: 1,
-    title: "The Arrival",
-    frontmatter: {
-      summary: "Lyra returns to Gray Harbor and realizes the city is already waiting for her.",
-      pov: ["character:lyra-vale"],
-    },
-  });
+  let readerPath = "";
+  let readerInstalled = false;
 
-  await createParagraph(targetPath, {
-    chapter: "chapter:001-the-arrival",
-    number: 1,
-    title: "At The Gate",
-    frontmatter: {
-      summary: "Lyra arrives at the city gate and notices the altered guard routine.",
-      viewpoint: "character:lyra-vale",
-    },
-    body: [
-      "Gray Harbor had changed its posture.",
+  if (resolved.withReader) {
+    const readerDir = path.join(targetPath, resolved.readerDir);
+    const readerBookRoot = path.relative(readerDir, targetPath) || ".";
+    readerPath = await runReaderScaffold(readerDir, readerBookRoot, `${slugifyForPackage(resolved.title)}-reader`, resolved.pagesDomain);
+    await writeRootPackageJson(targetPath, resolved.title, resolved.readerDir);
+    await writeRootPagesWorkflow(targetPath, resolved.readerDir, resolved.pagesDomain);
+    if (!resolved.skipInstall) {
+      installNodeDependencies(readerPath);
+      readerInstalled = true;
+    }
+  }
+
+  if (resolved.sample) {
+    await createCharacterProfile(targetPath, {
+      name: "Lyra Vale",
+      roleTier: "main",
+      storyRole: "protagonist",
+      speakingStyle: "Measured, observant, and precise. She rarely wastes words and often hides emotion behind controlled language.",
+      backgroundSummary: "Raised around trade routes and political intrigue, Lyra learned early how to read rooms, hide motives, and survive by listening harder than everyone else.",
+      functionInBook: "Primary viewpoint anchor for the opening movement and the reader's first sustained window into the world.",
+      age: 29,
+      occupation: "Broker of information",
+      origin: "Gray Harbor",
+      firstImpression: "Competent, composed, and hard to read.",
+      traits: ["observant", "guarded", "adaptable"],
+      desires: ["protect her leverage", "learn the truth behind the missing archive"],
+      fears: ["becoming predictable", "failing the few people she trusts"],
+      relationships: ["Has unfinished history with the Night Syndicate.", "Treats alliances as temporary until proven otherwise."],
+      arc: "Moves from strategic distance toward costly emotional commitment.",
+      internalConflict: "She wants intimacy but trusts control more than honesty.",
+      externalConflict: "Several factions want the same information she is trying to bury and decode.",
+    });
+
+    await createChapter(targetPath, {
+      number: 1,
+      title: "The Arrival",
+      frontmatter: {
+        summary: "Lyra returns to Gray Harbor and realizes the city is already waiting for her.",
+        pov: ["character:lyra-vale"],
+      },
+    });
+
+    await createParagraph(targetPath, {
+      chapter: "chapter:001-the-arrival",
+      number: 1,
+      title: "At The Gate",
+      frontmatter: {
+        summary: "Lyra arrives at the city gate and notices the altered guard routine.",
+        viewpoint: "character:lyra-vale",
+      },
+      body: [
+        "Gray Harbor had changed its posture.",
+        "",
+        "The walls were the same color as memory, but the men on the gate no longer looked bored. They watched the road like they expected a confession to come walking out of the fog.",
+        "",
+        "Lyra slowed before the archway and let the city study her first.",
+      ].join("\n"),
+    });
+
+    await syncChapterResume(targetPath, "chapter:001-the-arrival");
+    await syncChapterEvaluation(targetPath, "chapter:001-the-arrival");
+    await syncTotalResume(targetPath);
+  }
+
+  output.write(
+    [
+      `Narrarium book created at ${targetPath}`,
       "",
-      "The walls were the same color as memory, but the men on the gate no longer looked bored. They watched the road like they expected a confession to come walking out of the fog.",
-      "",
-      "Lyra slowed before the archway and let the city study her first.",
+      "Next steps:",
+      `- Open the repo in OpenCode and enable the local MCP server`,
+      `- Run \`npm run build\` in the Narrarium Framework repo if you changed the framework`,
+      `- Use \`init_book_repo\` only for new repos; this repo is already initialized`,
+      `- Point the reader to this repo with NARRARIUM_BOOK_ROOT=${targetPath}`,
+      ...(readerPath ? [`- Reader scaffold created at ${readerPath}`] : []),
+      ...(readerInstalled ? ["- Reader dependencies were installed automatically"] : []),
+      ...(readerPath ? ["- From the book root you can now run `npm run dev`, `npm run build`, or `npm run export:epub`"] : []),
+      ...(readerPath ? ["- `npm run dev` watches the book files, refreshes the EPUB, and reloads the site while you write"] : []),
+      ...(readerPath ? ["- The generated reader already includes auto-EPUB export and a GitHub Pages workflow"] : []),
+      ...(resolved.pagesDomain ? [`- GitHub Pages custom domain preset: https://${resolved.pagesDomain}`] : []),
     ].join("\n"),
-  });
-
-  await syncChapterResume(targetPath, "chapter:001-the-arrival");
-  await syncChapterEvaluation(targetPath, "chapter:001-the-arrival");
-  await syncTotalResume(targetPath);
+  );
 }
 
-output.write(
-  [
-    `Narrarium book created at ${targetPath}`,
-    "",
-    "Next steps:",
-    `- Open the repo in OpenCode and enable the local MCP server`,
-    `- Run \`npm run build\` in the Narrarium Framework repo if you changed the framework`,
-    `- Use \`init_book_repo\` only for new repos; this repo is already initialized`,
-    `- Point the reader to this repo with NARRARIUM_BOOK_ROOT=${targetPath}`,
-    ...(readerPath ? [`- Reader scaffold created at ${readerPath}`] : []),
-    ...(readerInstalled ? ["- Reader dependencies were installed automatically"] : []),
-    ...(readerPath ? ["- From the book root you can now run `npm run dev`, `npm run build`, or `npm run export:epub`"] : []),
-    ...(readerPath ? ["- `npm run dev` watches the book files, refreshes the EPUB, and reloads the site while you write"] : []),
-    ...(readerPath ? ["- The generated reader already includes auto-EPUB export and a GitHub Pages workflow"] : []),
-    ...(resolved.pagesDomain ? [`- GitHub Pages custom domain preset: https://${resolved.pagesDomain}`] : []),
-  ].join("\n"),
-);
+async function runUpgrade(args: ParsedArgs) {
+  const resolved = await resolveUpgradeInputs(args);
+  const targetPath = path.resolve(process.cwd(), resolved.targetDir);
+  const upgrade = await upgradeBookRepo(targetPath, { createSkills: true });
+  const book = await readBook(targetPath);
+
+  let readerPath = "";
+  let readerInstalled = false;
+  let readerBackupRoot = "";
+
+  if (resolved.withReader) {
+    const readerDir = path.join(targetPath, resolved.readerDir);
+    const backupRoot = path.join(targetPath, ".narrarium-upgrade-backups", formatUpgradeStamp(new Date()));
+    readerBackupRoot = await backupReaderScaffold(targetPath, resolved.readerDir, backupRoot);
+    const readerBookRoot = inferReaderBookRoot(readerDir, targetPath);
+    const readerPackageName = inferReaderPackageName(targetPath, resolved.readerDir, book?.frontmatter.title ?? path.basename(targetPath));
+    const pagesDomain = resolved.pagesDomain ?? inferReaderPagesDomain(targetPath, resolved.readerDir);
+    readerPath = await runReaderScaffold(readerDir, readerBookRoot, readerPackageName, pagesDomain);
+    await writeManagedRootPackageJson(targetPath, book?.frontmatter.title ?? path.basename(targetPath), resolved.readerDir, backupRoot);
+    await writeManagedRootPagesWorkflow(targetPath, resolved.readerDir, pagesDomain, backupRoot);
+    if (!resolved.skipInstall) {
+      installNodeDependencies(readerPath);
+      readerInstalled = true;
+    }
+  }
+
+  output.write(
+    [
+      `Narrarium book upgraded at ${targetPath}`,
+      upgrade.created.length > 0 ? `- Created missing scaffold files: ${upgrade.created.join(", ")}` : "- No scaffold files were missing.",
+      upgrade.updated.length > 0 ? `- Updated managed files: ${upgrade.updated.join(", ")}` : "- Managed repo files were already up to date.",
+      upgrade.backedUp.length > 0 && upgrade.backupRoot ? `- Backed up replaced files under ${upgrade.backupRoot}` : "- No repo file backups were needed.",
+      ...(readerPath ? [`- Reader scaffold upgraded at ${readerPath}`] : ["- Reader scaffold not touched. Pass `--with-reader` to refresh it too."]),
+      ...(readerBackupRoot ? [`- Reader backups saved under ${readerBackupRoot}`] : []),
+      ...(readerInstalled ? ["- Reader dependencies were reinstalled automatically"] : []),
+      "",
+      "Next steps:",
+      "- Reopen OpenCode in this repo so the updated commands and plugins load",
+      "- Run `/resume-book` in a fresh session if you want to restart from repo state",
+      ...(resolved.withReader ? ["- Run `npm run dev` from the book root to verify the reader still behaves as expected"] : []),
+    ].join("\n"),
+  );
+}
 
 async function resolveInputs(args: ParsedArgs) {
   if (args.targetDir && args.title && args.language) {
@@ -143,7 +203,7 @@ async function resolveInputs(args: ParsedArgs) {
   }
 
   if (!input.isTTY || !output.isTTY) {
-    throw new Error("Missing required arguments. Use create-narrarium-book <dir> --title <title> --language <lang> [--author <name>] [--sample] [--with-reader|--no-reader] [--reader-dir <name>] [--pages-domain <domain>].");
+    throw new Error("Missing required arguments. Use create-narrarium-book <dir> --title <title> --language <lang> [--author <name>] [--sample] [--with-reader|--no-reader] [--reader-dir <name>] [--pages-domain <domain>], or create-narrarium-book --upgrade <dir>.");
   }
 
   const rl = createInterface({ input, output });
@@ -170,6 +230,50 @@ async function resolveInputs(args: ParsedArgs) {
       author,
       language,
       sample: /^y(es)?$/i.test(sampleAnswer.trim()) || Boolean(args.sample),
+      withReader: wantsReader,
+      readerDir,
+      skipInstall: wantsReader ? /^n(o)?$/i.test(installAnswer.trim()) || Boolean(args.skipInstall) : true,
+      pagesDomain,
+    };
+  } finally {
+    rl.close();
+  }
+}
+
+async function resolveUpgradeInputs(args: ParsedArgs) {
+  if (args.targetDir) {
+    const targetPath = path.resolve(process.cwd(), args.targetDir);
+    const readerDir = args.readerDir ?? "reader";
+    return {
+      targetDir: args.targetDir,
+      withReader: args.noReader ? false : args.withReader ?? existsSync(path.join(targetPath, readerDir)),
+      readerDir,
+      skipInstall: Boolean(args.skipInstall),
+      pagesDomain: args.pagesDomain,
+    };
+  }
+
+  if (!input.isTTY || !output.isTTY) {
+    throw new Error("Missing target directory. Use create-narrarium-book --upgrade <dir> [--with-reader|--no-reader] [--reader-dir <name>] [--no-install] [--pages-domain <domain>].");
+  }
+
+  const rl = createInterface({ input, output });
+  try {
+    const targetDir = (await rl.question("Repo folder to upgrade [.]: ")) || ".";
+    const targetPath = path.resolve(process.cwd(), targetDir);
+    const defaultReaderDir = args.readerDir ?? "reader";
+    const hasReader = existsSync(path.join(targetPath, defaultReaderDir));
+    const readerAnswer = await rl.question(`Upgrade Astro reader too? [${hasReader ? "Y/n" : "y/N"}]: `);
+    const wantsReader = args.noReader
+      ? false
+      : readerAnswer.trim()
+        ? /^y(es)?$/i.test(readerAnswer.trim())
+        : args.withReader ?? hasReader;
+    const readerDir = wantsReader ? ((await rl.question(`Reader folder [${defaultReaderDir}]: `)) || defaultReaderDir) : defaultReaderDir;
+    const installAnswer = wantsReader ? await rl.question("Install reader dependencies after upgrade? [Y/n]: ") : "n";
+    const pagesDomain = wantsReader ? ((await rl.question("GitHub Pages custom domain (optional, blank keeps current): ")) || args.pagesDomain || undefined) : undefined;
+    return {
+      targetDir,
       withReader: wantsReader,
       readerDir,
       skipInstall: wantsReader ? /^n(o)?$/i.test(installAnswer.trim()) || Boolean(args.skipInstall) : true,
@@ -220,6 +324,9 @@ function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--pages-domain":
         parsed.pagesDomain = argv[++index];
+        break;
+      case "--upgrade":
+        parsed.upgrade = true;
         break;
       default:
         break;
@@ -297,32 +404,167 @@ function getNpmInstallInvocation(): { command: string; args: string[] } {
 }
 
 async function writeRootPackageJson(targetPath: string, title: string, readerDir: string): Promise<void> {
-  const normalizedReaderDir = readerDir.split(path.sep).join("/");
-  await writeFile(
-    path.join(targetPath, "package.json"),
-    JSON.stringify(
-      {
-        name: slugifyForPackage(title),
-        private: true,
-        scripts: {
-          dev: `npm run dev --prefix ${normalizedReaderDir}`,
-          build: `npm run build --prefix ${normalizedReaderDir}`,
-          preview: `npm run preview --prefix ${normalizedReaderDir}`,
-          "export:epub": `npm run export:epub --prefix ${normalizedReaderDir}`,
-          install: `npm install --prefix ${normalizedReaderDir}`,
-        },
-      },
-      null,
-      2,
-    ) + "\n",
-    "utf8",
-  );
+  await writeFile(path.join(targetPath, "package.json"), buildRootPackageJson(title, readerDir), "utf8");
 }
 
 async function writeRootPagesWorkflow(targetPath: string, readerDir: string, pagesDomain?: string): Promise<void> {
   const workflowDir = path.join(targetPath, ".github", "workflows");
   await mkdir(workflowDir, { recursive: true });
   await writeFile(path.join(workflowDir, "deploy-reader-pages.yml"), buildRootPagesWorkflow(readerDir, pagesDomain), "utf8");
+}
+
+function buildRootPackageJson(title: string, readerDir: string): string {
+  const normalizedReaderDir = readerDir.split(path.sep).join("/");
+  return JSON.stringify(
+    {
+      name: slugifyForPackage(title),
+      private: true,
+      scripts: {
+        dev: `npm run dev --prefix ${normalizedReaderDir}`,
+        build: `npm run build --prefix ${normalizedReaderDir}`,
+        preview: `npm run preview --prefix ${normalizedReaderDir}`,
+        "export:epub": `npm run export:epub --prefix ${normalizedReaderDir}`,
+        install: `npm install --prefix ${normalizedReaderDir}`,
+      },
+    },
+    null,
+    2,
+  ) + "\n";
+}
+
+async function writeManagedRootPackageJson(targetPath: string, title: string, readerDir: string, backupRoot: string): Promise<void> {
+  await writeManagedFileWithBackup(targetPath, "package.json", buildRootPackageJson(title, readerDir), backupRoot);
+}
+
+async function writeManagedRootPagesWorkflow(targetPath: string, readerDir: string, pagesDomain: string | undefined, backupRoot: string): Promise<void> {
+  await writeManagedFileWithBackup(targetPath, path.join(".github", "workflows", "deploy-reader-pages.yml"), buildRootPagesWorkflow(readerDir, pagesDomain), backupRoot);
+}
+
+async function writeManagedFileWithBackup(targetRoot: string, relativePath: string, content: string, backupRoot: string): Promise<void> {
+  const targetFilePath = path.join(targetRoot, relativePath);
+  const existing = await readFile(targetFilePath, "utf8").catch(() => null);
+  if (existing === content) {
+    return;
+  }
+
+  if (existing !== null) {
+    const backupPath = path.join(backupRoot, relativePath);
+    await mkdir(path.dirname(backupPath), { recursive: true });
+    await writeFile(backupPath, existing, "utf8");
+  }
+
+  await mkdir(path.dirname(targetFilePath), { recursive: true });
+  await writeFile(targetFilePath, content, "utf8");
+}
+
+async function backupReaderScaffold(targetPath: string, readerDir: string, backupRoot: string): Promise<string> {
+  const readerRoot = path.join(targetPath, readerDir);
+  const relativePaths = [
+    "astro.config.mjs",
+    "tsconfig.json",
+    "package.json",
+    "scripts",
+    path.join("src", "components"),
+    path.join("src", "lib"),
+    path.join("src", "layouts"),
+    path.join("src", "pages"),
+    path.join(".github", "workflows", "deploy-pages.yml"),
+    path.join("public", "CNAME"),
+    ".env.example",
+    ".gitignore",
+    "README.md",
+  ];
+
+  const rootRelativePaths = [
+    "package.json",
+    path.join(".github", "workflows", "deploy-reader-pages.yml"),
+  ];
+
+  const backupTargets: string[] = [];
+  for (const relativePath of relativePaths) {
+    const sourcePath = path.join(readerRoot, relativePath);
+    if (!existsSync(sourcePath)) continue;
+    const destinationPath = path.join(backupRoot, readerDir, relativePath);
+    await backupEntry(sourcePath, destinationPath);
+    backupTargets.push(destinationPath);
+  }
+
+  for (const relativePath of rootRelativePaths) {
+    const sourcePath = path.join(targetPath, relativePath);
+    if (!existsSync(sourcePath)) continue;
+    const destinationPath = path.join(backupRoot, relativePath);
+    await backupEntry(sourcePath, destinationPath);
+    backupTargets.push(destinationPath);
+  }
+
+  return backupTargets.length > 0 ? path.relative(targetPath, backupRoot).split(path.sep).join("/") : "";
+}
+
+async function backupEntry(sourcePath: string, destinationPath: string): Promise<void> {
+  const sourceStats = await stat(sourcePath);
+  await mkdir(path.dirname(destinationPath), { recursive: true });
+  if (sourceStats.isDirectory()) {
+    await cp(sourcePath, destinationPath, { recursive: true });
+    return;
+  }
+
+  await writeFile(destinationPath, await readFile(sourcePath));
+}
+
+function inferReaderBookRoot(readerDir: string, targetPath: string): string {
+  const bookConfigCandidates = [
+    path.join(readerDir, "scripts", "book-config.mjs"),
+    path.join(readerDir, "src", "lib", "book-config.ts"),
+  ].map((filePath) => path.join(targetPath, filePath));
+
+  for (const candidate of bookConfigCandidates) {
+    if (!existsSync(candidate)) continue;
+    const raw = readFileSync(candidate, "utf8");
+    const match = raw.match(/defaultBookRoot\s*=\s*["'`](.+?)["'`]/);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  return path.relative(path.join(targetPath, readerDir), targetPath) || ".";
+}
+
+function inferReaderPackageName(targetPath: string, readerDir: string, fallbackTitle: string): string {
+  const packageJsonPath = path.join(targetPath, readerDir, "package.json");
+  if (existsSync(packageJsonPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { name?: string };
+      if (parsed.name?.trim()) {
+        return parsed.name;
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  return `${slugifyForPackage(fallbackTitle)}-reader`;
+}
+
+function inferReaderPagesDomain(targetPath: string, readerDir: string): string | undefined {
+  const cnamePath = path.join(targetPath, readerDir, "public", "CNAME");
+  if (!existsSync(cnamePath)) {
+    return undefined;
+  }
+
+  const value = readFileSync(cnamePath, "utf8").trim();
+  return value || undefined;
+}
+
+function formatUpgradeStamp(date: Date): string {
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0"),
+    "-",
+    String(date.getUTCHours()).padStart(2, "0"),
+    String(date.getUTCMinutes()).padStart(2, "0"),
+    String(date.getUTCSeconds()).padStart(2, "0"),
+  ].join("");
 }
 
 function buildRootPagesWorkflow(readerDir: string, pagesDomain?: string): string {

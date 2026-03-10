@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -114,6 +114,26 @@ test("mcp server tools support guided creation and structural updates", async ()
       paragraph: "001-first-scene",
     });
 
+    await writeFile(
+      path.join(rootPath, "conversations", "RESUME.md"),
+      "# Conversation Resume\n\nLatest focus: open with surveillance, pressure, and the altered registry.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(rootPath, "conversations", "CONTINUATION.md"),
+      "# Continuation\n\nResume from the changed watch pattern and the forged records.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(rootPath, "conversations", "sessions", "20260310-0000--opening-move--abc.md"),
+      "# Conversation Export\n\nThe latest session focused on pressure at the gate and the registry seal.\n",
+      "utf8",
+    );
+
+    const resumeBookContextText = await callToolText(client, "resume_book_context", {
+      rootPath,
+    });
+
     const chapterFromDraftText = await callToolText(client, "create_chapter_from_draft", {
       rootPath,
       chapter: "chapter:001-opening-move",
@@ -222,6 +242,8 @@ test("mcp server tools support guided creation and structural updates", async ()
     assert.match(paragraphDraftText, /Created paragraph draft/);
     assert.match(chapterContextText, /Always-read prose guide/);
     assert.match(paragraphContextText, /Target paragraph draft/);
+    assert.match(resumeBookContextText, /Resume Book Context/);
+    assert.match(resumeBookContextText, /Conversation Resume/);
     assert.match(chapterFromDraftText, /Created or updated chapter from draft/);
     assert.match(paragraphFromDraftText, /Created or updated paragraph from draft/);
     assert.match(finalizeText, /Created chapter/);

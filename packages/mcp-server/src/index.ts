@@ -9,6 +9,7 @@ import {
   assetSchema,
   buildChapterWritingContext,
   buildParagraphWritingContext,
+  buildResumeBookContext,
   characterRoleTierSchema,
   characterStoryRoleSchema,
   createAssetPrompt,
@@ -1209,6 +1210,18 @@ server.tool(
   },
   async ({ rootPath, chapter, paragraph }) => {
     const result = await buildParagraphWritingContext(rootPath, chapter, paragraph);
+    return textResponse(result.text);
+  },
+);
+
+server.tool(
+  "resume_book_context",
+  "Assemble restart context for a book project using prose rules, plot, summaries, and exported conversations from the repo-local conversations folder.",
+  {
+    rootPath: z.string().min(1),
+  },
+  async ({ rootPath }) => {
+    const result = await buildResumeBookContext(rootPath);
     return textResponse(result.text);
   },
 );

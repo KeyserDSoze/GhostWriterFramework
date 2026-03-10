@@ -32,6 +32,16 @@ drafts/
     chapter.md
     001-paragraph-title.md
     002-paragraph-title.md
+conversations/
+  README.md
+  RESUME.md
+  CONTINUATION.md
+  sessions/
+.opencode/
+  commands/
+    resume-book.md
+  plugins/
+    conversation-export.js
 resumes/
   total.md
   chapters/
@@ -156,11 +166,13 @@ status: hidden
 - use `character_wizard` before `create_character` when character information is incomplete
 - use `create_chapter_draft` and `create_paragraph_draft` when roughing a scene before writing final prose
 - use `chapter_writing_context` and `paragraph_writing_context` before drafting polished prose from rough material
+- use `resume_book_context` or `/resume-book` when restarting from exported conversation history
 - use `create_chapter_from_draft` and `create_paragraph_from_draft` when promoting rough material into final story files
 - use `sync_plot` to refresh the root plot map after story progression, reveal timing, or timeline changes
 - use `location_wizard`, `faction_wizard`, `item_wizard`, and `secret_wizard` before creating rich canon files when briefs are incomplete
 - use `resumes/` to keep running summaries stable
 - use `evaluations/` for structural critique, continuity checks, and quality notes
+- use `conversations/` for portable exported chat history, resume files, and continuation prompts; treat it as support material, not canon
 - if content is historical or factual, fetch research before writing canon
 - prefer updating existing canon files over duplicating similar facts elsewhere
 - before writing final chapter or paragraph prose, read `guidelines/prose.md`, relevant prior story files, and any matching files in `drafts/`

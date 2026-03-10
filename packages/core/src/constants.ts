@@ -11,6 +11,8 @@ export const BOOK_DIRECTORIES = [
   "secrets",
   "chapters",
   "drafts",
+  "conversations",
+  "conversations/sessions",
   "resumes",
   "resumes/chapters",
   "evaluations",
@@ -30,6 +32,8 @@ export const BOOK_DIRECTORIES = [
   "assets/secrets",
   "assets/chapters",
   ".opencode/skills",
+  ".opencode/commands",
+  ".opencode/plugins",
   ".claude/skills",
 ] as const;
 

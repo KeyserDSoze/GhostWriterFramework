@@ -27,7 +27,7 @@ Use Narrarium as a book-writing framework where the repository is the source of 
 - Do not duplicate canon if the fact already exists in another markdown file.
 - Keep structured facts in frontmatter and prose in markdown body.
 - Do not reveal a secret before its `known_from` or `reveal_in` threshold.
-- Treat `guidelines/`, `drafts/`, `plot.md`, `resumes/`, `evaluations/`, and `secrets/` as first-class context, not optional notes.
+- Treat `guidelines/`, `drafts/`, `plot.md`, `conversations/`, `resumes/`, `evaluations/`, and `secrets/` as first-class context, not optional notes.
 
 ## Historical or factual content
 
@@ -39,6 +39,7 @@ Use Narrarium as a book-writing framework where the repository is the source of 
 - Use `create_chapter` and `create_paragraph` for new structure.
 - Use `create_chapter_draft` and `create_paragraph_draft` for rough scaffolding before final prose.
 - Use `chapter_writing_context` and `paragraph_writing_context` before drafting polished prose from rough material.
+- Use `resume_book_context` when restarting work from exported conversation history or a fresh session.
 - Use `update_chapter` and `update_paragraph` for existing files.
 - Use `update_chapter_draft` and `update_paragraph_draft` when refining rough material.
 - Use `create_chapter_from_draft` and `create_paragraph_from_draft` when turning rough drafts into final story files.
