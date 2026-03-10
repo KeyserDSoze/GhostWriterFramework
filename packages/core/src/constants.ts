@@ -2,6 +2,7 @@ export const SKILL_NAME = "narrarium-book";
 
 export const BOOK_DIRECTORIES = [
   "guidelines",
+  "guidelines/styles",
   "characters",
   "items",
   "locations",

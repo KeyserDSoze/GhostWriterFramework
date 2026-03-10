@@ -55,6 +55,7 @@ export function buildRepositorySpecSummary(): string {
     "- book.md",
     "- guidelines/",
     "- guidelines/images.md for the shared visual style",
+    "- guidelines/styles/ for explicit per-chapter prose profiles",
     "- characters/",
     "- items/",
     "- locations/",
@@ -73,6 +74,7 @@ export function buildRepositorySpecSummary(): string {
     "- use stable ids like character:lyra-vale or chapter:001-the-arrival",
     "- search canon before inventing facts",
     "- use summaries and evaluations as first-class context",
+    "- use book-level prose defaults unless a chapter explicitly declares style_refs, narration_person, narration_tense, or prose_mode",
     "- keep state snapshots manual: update chapter resume state_changes and run sync_story_state when continuity changes",
     "- do not reveal secrets before known_from or reveal_in",
   ].join("\n");

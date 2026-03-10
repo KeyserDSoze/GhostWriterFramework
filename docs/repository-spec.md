@@ -14,6 +14,10 @@ guidelines/
   voices.md
   structure.md
   images.md
+  styles/
+    README.md
+    first-person-show.md
+    third-person-descriptive.md
 characters/
 items/
 locations/
@@ -96,7 +100,16 @@ All content files should start with YAML frontmatter.
 - `sources`: optional research sources
 - `historical`: marks content that should be checked against external sources
 
+### Chapter and draft style keys
+
+- `style_refs`: explicit chapter-level style profile ids such as `style:first-person-show`
+- `narration_person`: explicit narration person for the chapter, such as `first` or `third`
+- `narration_tense`: explicit narration tense for the chapter, such as `past` or `present`
+- `prose_mode`: chapter-specific prose behaviors such as `show-dont-tell`, `tight-interiority`, or `descriptive-wide-lens`
+
 The generated reader uses `known_from` and `reveal_in` for spoiler-safe search, canon popups, public atlas pages, and backlink filtering.
+
+If these chapter-level style keys are absent, Narrarium falls back to the book-level prose, style, and voice guides.
 
 ### Resume and state-specific keys
 
@@ -203,6 +216,30 @@ state_changes:
 Lyra returns to Gray Harbor and realizes the city is already watching for her.
 ```
 
+### Chapter style override example
+
+```md
+---
+type: chapter
+id: chapter:012-blood-ledger
+number: 12
+title: Blood Ledger
+pov:
+  - character:lyra-vale
+style_refs:
+  - style:first-person-show
+narration_person: first
+narration_tense: past
+prose_mode:
+  - show-dont-tell
+  - tight-interiority
+---
+
+# Purpose
+
+Confessional chapter with close interior pressure.
+```
+
 ## Story state snapshots
 
 Narrarium now distinguishes between narrative summaries and structured continuity state.
@@ -277,12 +314,17 @@ Treat `state_changes` as the chapter delta, not as a full-world snapshot.
 - use `location_wizard`, `faction_wizard`, `item_wizard`, and `secret_wizard` before creating rich canon files when briefs are incomplete
 - use `query_canon` when the agent needs an answer like where someone is, what they know, who holds a secret, when something first appears, or how a relationship/condition/open loop changes across a chapter range
 - see `docs/query-canon.md` for a dedicated guide with examples, scope controls, and limits
+- use `revise_paragraph` for proposal-only editorial passes on final scene files when you want a rewrite suggestion without mutating the repo yet
+- see `docs/revise-paragraph.md` for revision modes, continuity review behavior, and the manual apply flow
+- use `revise_chapter` for proposal-only chapter diagnosis and scene-by-scene revision plans before deciding what to apply manually
+- see `docs/revise-chapter.md` for the chapter-level workflow and output model
 - use `resumes/` to keep running summaries stable
 - use `state/` for structured continuity snapshots and refresh it manually with `sync_story_state` after stable rewrites
 - use `evaluations/` for structural critique, continuity checks, and quality notes
 - use `conversations/` for portable exported chat history, resume files, and continuation prompts; treat it as support material, not canon
 - use `npm run doctor` or `doctorBook()` to catch broken references, stale maintenance files, missing asset descriptions, and spoiler-threshold problems
 - if content is historical or factual, fetch research before writing canon
+- before fetching Wikipedia again, reuse a matching snapshot from `research/wikipedia/` when one already exists
 - prefer updating existing canon files over duplicating similar facts elsewhere
 - before writing final chapter or paragraph prose, read `guidelines/prose.md`, relevant prior story files, and any matching files in `drafts/`
 - keep `plot.md` aligned with chapter summaries, reveals, and dated timeline anchors

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import {
+  buildChapterWritingContext,
   buildParagraphWritingContext,
   buildResumeBookContext,
   createAssetPrompt,
@@ -20,6 +21,7 @@ import {
   createTimelineEventProfile,
   doctorBook,
   evaluateBook,
+  findWikipediaResearchSnapshot,
   initializeBookRepo,
   listEntities,
   registerAsset,
@@ -30,6 +32,8 @@ import {
   readChapter,
   readEntity,
   readTimelineMain,
+  reviseChapter,
+  reviseParagraph,
   syncPlot,
   syncAllResumes,
   syncStoryState,
@@ -39,6 +43,7 @@ import {
   updateEntity,
   updateParagraph,
   validateBook,
+  writeWikipediaResearchSnapshot,
 } from "../dist/index.js";
 
 test("core book workflow supports canon indexes and structural updates", async () => {
@@ -467,6 +472,162 @@ test("queryCanon can describe arcs across chapter ranges", async () => {
   }
 });
 
+test("reviseParagraph proposes edits without writing files and suggests continuity review when needed", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-revise-paragraph-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Revision Test Book",
+      language: "en",
+    });
+
+    await createCharacterProfile(rootPath, {
+      name: "Lyra Vale",
+      roleTier: "main",
+      speakingStyle: "Measured and controlled.",
+      backgroundSummary: "Returns to the harbor under pressure.",
+      functionInBook: "Primary viewpoint anchor.",
+    });
+
+    await createCharacterProfile(rootPath, {
+      name: "Taren Dane",
+      roleTier: "supporting",
+      speakingStyle: "Dry and skeptical.",
+      backgroundSummary: "Harbor ally with a long memory.",
+      functionInBook: "Pressure point for Lyra's choices.",
+    });
+
+    await createLocationProfile(rootPath, {
+      name: "Gray Harbor",
+      atmosphere: "Salt fog, cold brick, and watchful silence.",
+      functionInBook: "Makes every movement feel observed.",
+    });
+
+    await createChapter(rootPath, {
+      number: 1,
+      title: "Pressure At The Gate",
+      frontmatter: {
+        pov: ["character:lyra-vale"],
+      },
+    });
+
+    const paragraph = await createParagraph(rootPath, {
+      chapter: "chapter:001-pressure-at-the-gate",
+      number: 1,
+      title: "Watching Walls",
+      frontmatter: {
+        viewpoint: "character:lyra-vale",
+      },
+      body: "# Scene\n\nLyra was very tired, and she felt cornered in Gray Harbor. She needed to warn Taren before the watch sealed the gate, and she realized that the registry seal had been pressed at the wrong angle.",
+    });
+
+    const result = await reviseParagraph(rootPath, {
+      chapter: "chapter:001-pressure-at-the-gate",
+      paragraph: "001-watching-walls",
+      mode: "tension",
+      intensity: "medium",
+    });
+    const currentParagraph = await readFile(paragraph.filePath, "utf8");
+
+    assert.notEqual(result.proposedBody, result.originalBody);
+    assert.match(result.proposedBody, /exhausted/i);
+    assert.equal(result.continuityImpact, "clear");
+    assert.equal(result.shouldReviewStateChanges, true);
+    assert.equal(result.mode, "tension");
+    assert.equal(result.intensity, "medium");
+    assert.match(JSON.stringify(result.suggestedStateChanges), /character:lyra-vale/);
+    assert.match(JSON.stringify(result.suggestedStateChanges), /location:gray-harbor/);
+    assert.match(JSON.stringify(result.suggestedStateChanges), /warn-taren/);
+    assert.match(JSON.stringify(result.suggestedStateChanges), /registry-seal/);
+    assert.ok(result.editorialNotes.length > 0);
+    assert.match(currentParagraph, /very tired/);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("reviseChapter proposes a chapter-level plan without writing files", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-revise-chapter-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Revision Chapter Test Book",
+      language: "en",
+    });
+
+    await createCharacterProfile(rootPath, {
+      name: "Lyra Vale",
+      roleTier: "main",
+      speakingStyle: "Measured and controlled.",
+      backgroundSummary: "Moves under surveillance.",
+      functionInBook: "Primary viewpoint anchor.",
+    });
+
+    await createCharacterProfile(rootPath, {
+      name: "Taren Dane",
+      roleTier: "supporting",
+      speakingStyle: "Dry and skeptical.",
+      backgroundSummary: "Knows the harbor's fault lines.",
+      functionInBook: "Pressure point and ally.",
+    });
+
+    await createLocationProfile(rootPath, {
+      name: "Gray Harbor",
+      atmosphere: "Salt fog and watchful stone.",
+      functionInBook: "Turns arrival into scrutiny.",
+    });
+
+    await createChapter(rootPath, {
+      number: 1,
+      title: "Pressure At The Gate",
+      frontmatter: {
+        pov: ["character:lyra-vale"],
+      },
+    });
+
+    await createParagraph(rootPath, {
+      chapter: "chapter:001-pressure-at-the-gate",
+      number: 1,
+      title: "Watching Walls",
+      frontmatter: {
+        viewpoint: "character:lyra-vale",
+      },
+      body: "# Scene\n\nLyra was very tired, and she felt cornered in Gray Harbor. She needed to warn Taren before the watch sealed the gate, and she realized that the registry seal had been pressed at the wrong angle.",
+    });
+
+    await createParagraph(rootPath, {
+      chapter: "chapter:001-pressure-at-the-gate",
+      number: 2,
+      title: "Low Voices",
+      frontmatter: {
+        viewpoint: "character:lyra-vale",
+      },
+      body: "# Scene\n\nTaren kept his voice very low, and Lyra noticed that the fear in his face did not match the calm in his words. She was very alert, and she knew they had to move before the next bell.",
+    });
+
+    const result = await reviseChapter(rootPath, {
+      chapter: "chapter:001-pressure-at-the-gate",
+      mode: "pacing",
+      intensity: "medium",
+    });
+    const firstParagraph = await readFile(path.join(rootPath, "chapters", "001-pressure-at-the-gate", "001-watching-walls.md"), "utf8");
+
+    assert.equal(result.mode, "pacing");
+    assert.equal(result.sceneCount, 2);
+    assert.ok(result.changedSceneCount >= 1);
+    assert.equal(result.overallContinuityImpact, "clear");
+    assert.ok(result.chapterDiagnosis.length > 0);
+    assert.ok(result.revisionPlan.length > 0);
+    assert.ok(result.proposedParagraphs.length >= 1);
+    assert.match(JSON.stringify(result.suggestedStateChanges), /warn-taren/i);
+    assert.match(JSON.stringify(result.suggestedStateChanges), /character:lyra-vale/);
+    assert.match(result.revisionPlan.join("\n"), /Watching Walls|Low Voices/);
+    assert.match(firstParagraph, /very tired/);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
 test("asset prompts and renames keep asset folders aligned", async () => {
   const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-assets-"));
 
@@ -587,6 +748,89 @@ test("upgradeBookRepo refreshes managed scaffolding and preserves author files",
     assert.match(result.updated.join("\n"), /opencode\.jsonc/);
     assert.ok(result.backedUp.length >= 2);
     assert.ok(result.backupRoot);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("chapter writing contexts fall back to global style rules unless a chapter declares an explicit style profile", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-style-profiles-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Style Profile Test Book",
+      language: "en",
+    });
+
+    await createChapter(rootPath, {
+      number: 1,
+      title: "Default Voice Chapter",
+    });
+
+    const defaultContext = await buildChapterWritingContext(rootPath, "chapter:001-default-voice-chapter");
+
+    await createChapterDraft(rootPath, {
+      number: 2,
+      title: "Glass Confession",
+      frontmatter: {
+        style_refs: ["style:first-person-show"],
+        narration_person: "first",
+        narration_tense: "past",
+        prose_mode: ["show-dont-tell", "tight-interiority"],
+      },
+      body: "# Rough Intent\n\nMake the confession intimate and immediate.",
+    });
+
+    const styledContext = await buildChapterWritingContext(rootPath, "chapter:002-glass-confession");
+    const promoted = await createChapterFromDraft(rootPath, {
+      chapter: "chapter:002-glass-confession",
+      body: "# Purpose\n\nKeep the narration close and confessional.",
+    });
+    const styledChapter = await readChapter(rootPath, "chapter:002-glass-confession");
+
+    assert.match(defaultContext.text, /Explicit chapter override: no/);
+    assert.match(defaultContext.text, /guidelines\/style\.md/);
+    assert.match(defaultContext.text, /guidelines\/voices\.md/);
+    assert.match(styledContext.text, /Explicit chapter override: yes/);
+    assert.match(styledContext.text, /style:first-person-show/);
+    assert.match(styledContext.text, /Narration person: first/);
+    assert.match(styledContext.text, /guidelines\/styles\/first-person-show\.md/);
+    assert.deepEqual(styledChapter.metadata.style_refs, ["style:first-person-show"]);
+    assert.equal(styledChapter.metadata.narration_person, "first");
+    assert.equal(styledChapter.metadata.narration_tense, "past");
+    assert.deepEqual(styledChapter.metadata.prose_mode, ["show-dont-tell", "tight-interiority"]);
+    assert.match(promoted.filePath, /chapter\.md$/);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("findWikipediaResearchSnapshot reuses saved research before a fresh fetch is needed", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-research-reuse-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Research Reuse Book",
+      language: "en",
+    });
+
+    const savedPath = await writeWikipediaResearchSnapshot(rootPath, {
+      lang: "en",
+      title: "Venice",
+      pageUrl: "https://en.wikipedia.org/wiki/Venice",
+      summary: "Venice is built across a lagoon.",
+      body: "Description: Existing research snapshot.",
+    });
+
+    const snapshot = await findWikipediaResearchSnapshot(rootPath, {
+      lang: "en",
+      title: "Venice",
+    });
+
+    assert.equal(snapshot?.filePath, savedPath);
+    assert.match(snapshot?.relativePath ?? "", /research\/wikipedia\/en\/venice\.md/);
+    assert.equal(snapshot?.sourceUrl, "https://en.wikipedia.org/wiki/Venice");
+    assert.match(snapshot?.body ?? "", /Existing research snapshot/);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }

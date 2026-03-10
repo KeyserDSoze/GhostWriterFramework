@@ -28,6 +28,7 @@ import {
   createTimelineEventProfile,
   evaluateBook,
   exportEpub,
+  findWikipediaResearchSnapshot,
   initializeBookRepo,
   listRelatedCanon,
   queryCanon,
@@ -37,6 +38,8 @@ import {
   renameChapter,
   renameEntity,
   renameParagraph,
+  reviseChapter,
+  reviseParagraph,
   renderMarkdown,
   searchBook,
   syncAllResumes,
@@ -76,6 +79,8 @@ const entityTypeSchema = z.enum([
 
 const imageOrientationSchema = z.enum(["portrait", "landscape", "square"]);
 const imageProviderSchema = z.enum(["openai"]);
+const revisionModeSchema = z.enum(["clarity", "pacing", "dialogue", "voice", "tension", "show-dont-tell", "redundancy"]);
+const revisionIntensitySchema = z.enum(["light", "medium", "strong"]);
 const hiddenCanonToolFields = {
   secretRefs: z.array(z.string()).default([]),
   privateNotes: z.string().optional(),
@@ -252,6 +257,10 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "title", prompt: "What is the chapter title?", type: "string", required: true },
     { key: "summary", prompt: "What is the chapter summary?", type: "string" },
     { key: "pov", prompt: "Which POV ids or names drive this chapter?", type: "stringArray" },
+    { key: "styleRefs", prompt: "List explicit style profile ids for this chapter only, if it should diverge from the book default.", type: "stringArray" },
+    { key: "narrationPerson", prompt: "If this chapter needs an explicit narration person, what is it? first, second, third, etc.", type: "string" },
+    { key: "narrationTense", prompt: "If this chapter needs an explicit narration tense, what is it? past, present, etc.", type: "string" },
+    { key: "proseMode", prompt: "List explicit prose modes for this chapter, such as show-dont-tell, tight-interiority, or descriptive-wide-lens.", type: "stringArray" },
     { key: "timelineRef", prompt: "What timeline reference should this chapter carry?", type: "string" },
     { key: "tags", prompt: "List chapter tags.", type: "stringArray" },
     { key: "body", prompt: "Optional chapter notes body or beat scaffold.", type: "string" },
@@ -1209,6 +1218,7 @@ server.tool(
         optional: [
           "Summary",
           "POV ids",
+          "Explicit style refs or narration mode if this chapter should differ from the book default",
           "Timeline reference",
           "Tags",
           "Notes body or beat scaffold",
@@ -1272,6 +1282,99 @@ server.tool(
   async ({ rootPath, chapter, paragraph }) => {
     const result = await buildParagraphWritingContext(rootPath, chapter, paragraph);
     return textResponse(result.text);
+  },
+);
+
+server.tool(
+  "revise_chapter",
+  "Propose a chapter-level editorial pass without writing files. Use this when you want diagnosis plus scene-by-scene rewrite proposals for an existing final chapter. The result can also suggest merged state_changes review if multiple scenes touch continuity-sensitive beats.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    mode: revisionModeSchema,
+    intensity: revisionIntensitySchema.default("medium"),
+    preserveFacts: z.boolean().default(true),
+  },
+  async ({ rootPath, chapter, mode, intensity, preserveFacts }) => {
+    const result = await reviseChapter(rootPath, {
+      chapter,
+      mode,
+      intensity,
+      preserveFacts,
+    });
+    const lines = [
+      `Proposed chapter revision for ${result.chapter} at ${result.filePath}.`,
+      `Mode: ${result.mode}`,
+      `Intensity: ${result.intensity}`,
+      `Preserve facts: ${result.preserveFacts ? "yes" : "no"}`,
+      `Scene count: ${result.sceneCount}`,
+      `Changed scene count: ${result.changedSceneCount}`,
+      `Overall continuity impact: ${result.overallContinuityImpact}`,
+      "Files written: no",
+      ...(result.chapterDiagnosis.length > 0 ? ["Diagnosis:", ...result.chapterDiagnosis.map((note) => `- ${note}`)] : []),
+      ...(result.revisionPlan.length > 0 ? ["Revision plan:", ...result.revisionPlan.map((note) => `- ${note}`)] : []),
+      ...(result.suggestedStateChanges
+        ? ["Suggested merged state_changes:", JSON.stringify(result.suggestedStateChanges, null, 2)]
+        : []),
+      "Scene proposals:",
+      ...result.proposedParagraphs.flatMap((proposal) => [
+        `- ${proposal.paragraph} :: ${proposal.title}`,
+        `  Continuity impact: ${proposal.continuityImpact}`,
+        `  Proposed body: ${proposal.proposedBody}`,
+      ]),
+      "Follow-up:",
+      "- Apply any scene proposal manually with update_paragraph if you want to keep it.",
+      ...(result.shouldReviewStateChanges
+        ? ["- If you apply continuity-sensitive changes, review the suggested state_changes and run sync_story_state manually when ready."]
+        : []),
+      ...(result.sources.length > 0 ? ["Sources:", ...result.sources.map((source) => `- ${source}`)] : []),
+    ];
+
+    return textResponse(lines.join("\n"));
+  },
+);
+
+server.tool(
+  "revise_paragraph",
+  "Propose a revision for an existing final paragraph without writing files. Use this for targeted editorial passes like clarity, pacing, tension, dialogue, voice, show-dont-tell, or redundancy cleanup. The result can also suggest state_changes to review if the paragraph carries continuity-sensitive beats.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+    mode: revisionModeSchema,
+    intensity: revisionIntensitySchema.default("medium"),
+    preserveFacts: z.boolean().default(true),
+  },
+  async ({ rootPath, chapter, paragraph, mode, intensity, preserveFacts }) => {
+    const result = await reviseParagraph(rootPath, {
+      chapter,
+      paragraph,
+      mode,
+      intensity,
+      preserveFacts,
+    });
+    const lines = [
+      `Proposed revision for ${result.paragraph} at ${result.filePath}.`,
+      `Mode: ${result.mode}`,
+      `Intensity: ${result.intensity}`,
+      `Preserve facts: ${result.preserveFacts ? "yes" : "no"}`,
+      `Continuity impact: ${result.continuityImpact}`,
+      "Files written: no",
+      ...(result.editorialNotes.length > 0 ? ["Notes:", ...result.editorialNotes.map((note) => `- ${note}`)] : []),
+      ...(result.suggestedStateChanges
+        ? ["Suggested state_changes:", JSON.stringify(result.suggestedStateChanges, null, 2)]
+        : []),
+      "Proposed body:",
+      result.proposedBody,
+      "Follow-up:",
+      "- Apply the proposal manually with update_paragraph if you want to keep it.",
+      ...(result.shouldReviewStateChanges
+        ? ["- If you apply the revision and keep the story beats, review the suggested state_changes and run sync_story_state manually when ready."]
+        : []),
+      ...(result.sources.length > 0 ? ["Sources:", ...result.sources.map((source) => `- ${source}`)] : []),
+    ];
+
+    return textResponse(lines.join("\n"));
   },
 );
 
@@ -1356,17 +1459,35 @@ server.tool(
     rootPath: z.string().min(1),
     number: z.number().int().positive(),
     title: z.string().min(1),
+    summary: z.string().optional(),
+    pov: z.array(z.string()).default([]),
+    styleRefs: z.array(z.string()).default([]),
+    narrationPerson: z.string().optional(),
+    narrationTense: z.string().optional(),
+    proseMode: z.array(z.string()).default([]),
+    timelineRef: z.string().optional(),
+    tags: z.array(z.string()).default([]),
     body: z.string().optional(),
     overwrite: z.boolean().default(false),
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
-  async ({ rootPath, number, title, body, overwrite, frontmatter }) => {
+  async ({ rootPath, number, title, summary, pov, styleRefs, narrationPerson, narrationTense, proseMode, timelineRef, tags, body, overwrite, frontmatter }) => {
     const result = await createChapter(rootPath, {
       number,
       title,
       body,
       overwrite,
-      frontmatter,
+      frontmatter: {
+        summary,
+        pov,
+        style_refs: styleRefs,
+        narration_person: narrationPerson,
+        narration_tense: narrationTense,
+        prose_mode: proseMode,
+        timeline_ref: timelineRef,
+        tags,
+        ...frontmatter,
+      },
     });
 
     return textResponse(
@@ -1410,17 +1531,35 @@ server.tool(
     rootPath: z.string().min(1),
     number: z.number().int().positive(),
     title: z.string().min(1),
+    summary: z.string().optional(),
+    pov: z.array(z.string()).default([]),
+    styleRefs: z.array(z.string()).default([]),
+    narrationPerson: z.string().optional(),
+    narrationTense: z.string().optional(),
+    proseMode: z.array(z.string()).default([]),
+    timelineRef: z.string().optional(),
+    tags: z.array(z.string()).default([]),
     body: z.string().optional(),
     overwrite: z.boolean().default(false),
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
-  async ({ rootPath, number, title, body, overwrite, frontmatter }) => {
+  async ({ rootPath, number, title, summary, pov, styleRefs, narrationPerson, narrationTense, proseMode, timelineRef, tags, body, overwrite, frontmatter }) => {
     const result = await createChapterDraft(rootPath, {
       number,
       title,
       body,
       overwrite,
-      frontmatter,
+      frontmatter: {
+        summary,
+        pov,
+        style_refs: styleRefs,
+        narration_person: narrationPerson,
+        narration_tense: narrationTense,
+        prose_mode: proseMode,
+        timeline_ref: timelineRef,
+        tags,
+        ...frontmatter,
+      },
     });
 
     return textResponse(`Created chapter draft ${result.draftId} at ${result.draftFilePath}.`);
@@ -2064,6 +2203,15 @@ server.tool(
     slug: z.string().optional(),
   },
   async ({ title, lang, rootPath, saveToResearch, slug }) => {
+    if (rootPath) {
+      const existing = await findWikipediaResearchSnapshot(rootPath, { lang, title, slug });
+      if (existing) {
+        return textResponse(
+          `${existing.title}\n\nReused saved research snapshot from ${existing.relativePath}.\n\n${existing.body}\n\n${existing.sourceUrl}`,
+        );
+      }
+    }
+
     const page = await fetchWikipediaPage(title, lang);
     let researchPath = "";
 
@@ -2305,6 +2453,18 @@ async function collectHistoricalResearchSupport(options: {
 }): Promise<{ sources: string[]; note: string }> {
   if (!options.historical || !options.wikipediaTitle) {
     return { sources: [], note: "" };
+  }
+
+  const existing = await findWikipediaResearchSnapshot(options.rootPath, {
+    lang: options.wikipediaLang,
+    title: options.wikipediaTitle,
+    slug: options.slug,
+  });
+  if (existing) {
+    return {
+      sources: [existing.sourceUrl],
+      note: ` Reused existing research snapshot at ${existing.relativePath}.`,
+    };
   }
 
   const page = await fetchWikipediaPage(options.wikipediaTitle, options.wikipediaLang);
@@ -2578,6 +2738,10 @@ async function finalizeWizardSession(
         frontmatter: {
           summary: stringOrUndefined(data.summary),
           pov: stringArrayOrEmpty(data.pov),
+          style_refs: stringArrayOrEmpty(data.styleRefs),
+          narration_person: stringOrUndefined(data.narrationPerson),
+          narration_tense: stringOrUndefined(data.narrationTense),
+          prose_mode: stringArrayOrEmpty(data.proseMode),
           timeline_ref: stringOrUndefined(data.timelineRef),
           tags: stringArrayOrEmpty(data.tags),
           ...options.frontmatter,

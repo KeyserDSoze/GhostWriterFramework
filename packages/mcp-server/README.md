@@ -58,6 +58,8 @@ Use the Vercel deployment for:
 
 Use the local stdio server for actual filesystem writing and repo mutations.
 
+When a matching `research/wikipedia/` snapshot already exists, Narrarium now reuses it before fetching Wikipedia again.
+
 ## GitHub Actions and Vercel
 
 The repository includes `.github/workflows/deploy-vercel-mcp.yml`.
@@ -94,6 +96,8 @@ Point OpenCode or another MCP client at the built server and use tools such as:
 - `update_chapter`
 - `update_paragraph`
 - `query_canon`
+- `revise_chapter`
+- `revise_paragraph`
 - `rename_entity`
 - `rename_chapter`
 - `rename_paragraph`
@@ -156,6 +160,18 @@ Recommended `state_changes` keys:
 You can also pass `fromChapter`, `toChapter`, or `throughChapter` directly when you need exact scope control instead of relying on question parsing.
 
 See `docs/query-canon.md` for a fuller guide with use cases, scope rules, output fields, and limitations.
+
+`revise_paragraph` is the editorial counterpart to `update_paragraph`: it proposes a revision for a final scene, does not write files, and can suggest `state_changes` review if the scene touches continuity-sensitive beats.
+
+See `docs/revise-paragraph.md` for modes, examples, and the manual apply workflow.
+
+`revise_chapter` is the broader version: it proposes a diagnosis, a revision plan, and scene-by-scene suggestions for a final chapter without mutating repository files.
+
+See `docs/revise-chapter.md` for the chapter-level workflow and output structure.
+
+Chapter style overrides are also supported explicitly through chapter frontmatter and style profiles in `guidelines/styles/`. If a chapter does not declare an override, writing context falls back to the book-level default prose and voice guides.
+
+See `docs/style-profiles.md` for the chapter style workflow.
 
 ## Practical asset examples
 

@@ -43,6 +43,7 @@ import {
   type ChapterDraftFrontmatter,
   type EntityType,
   type FactionFrontmatter,
+  type GuidelineFrontmatter,
   type ItemFrontmatter,
   type LocationFrontmatter,
   type ParagraphFrontmatter,
@@ -70,7 +71,7 @@ type MarkdownDocument<T = Record<string, unknown>> = {
   path: string;
 };
 
-const SUPPORTED_REFERENCE_PATTERN = /\b(?:chapter:[a-z0-9-]+|paragraph:[a-z0-9-]+:[a-z0-9-]+|character:[a-z0-9-]+|location:[a-z0-9-]+|faction:[a-z0-9-]+|item:[a-z0-9-]+|secret:[a-z0-9-]+|timeline-event:[a-z0-9-]+)\b/gi;
+const SUPPORTED_REFERENCE_PATTERN = /\b(?:chapter:[a-z0-9-]+|paragraph:[a-z0-9-]+:[a-z0-9-]+|character:[a-z0-9-]+|location:[a-z0-9-]+|faction:[a-z0-9-]+|item:[a-z0-9-]+|secret:[a-z0-9-]+|timeline-event:[a-z0-9-]+|guideline:[a-z0-9-]+|style:[a-z0-9-]+)\b/gi;
 
 type SearchHit = {
   path: string;
@@ -114,6 +115,75 @@ export type QueryCanonResult = {
   throughChapter?: string;
   fromChapter?: string;
   toChapter?: string;
+};
+
+export type RevisionMode =
+  | "clarity"
+  | "pacing"
+  | "dialogue"
+  | "voice"
+  | "tension"
+  | "show-dont-tell"
+  | "redundancy";
+
+export type RevisionIntensity = "light" | "medium" | "strong";
+
+export type RevisionContinuityImpact = "none" | "possible" | "clear";
+
+export type ReviseParagraphResult = {
+  filePath: string;
+  chapter: string;
+  paragraph: string;
+  mode: RevisionMode;
+  intensity: RevisionIntensity;
+  preserveFacts: boolean;
+  originalBody: string;
+  proposedBody: string;
+  editorialNotes: string[];
+  continuityImpact: RevisionContinuityImpact;
+  suggestedStateChanges?: StoryStateChanges;
+  shouldReviewStateChanges: boolean;
+  sources: string[];
+};
+
+export type ReviseChapterSceneProposal = {
+  filePath: string;
+  paragraph: string;
+  title: string;
+  originalBody: string;
+  proposedBody: string;
+  editorialNotes: string[];
+  continuityImpact: RevisionContinuityImpact;
+  suggestedStateChanges?: StoryStateChanges;
+  shouldReviewStateChanges: boolean;
+  changed: boolean;
+};
+
+export type ReviseChapterResult = {
+  filePath: string;
+  chapter: string;
+  chapterTitle: string;
+  mode: RevisionMode;
+  intensity: RevisionIntensity;
+  preserveFacts: boolean;
+  sceneCount: number;
+  changedSceneCount: number;
+  chapterDiagnosis: string[];
+  revisionPlan: string[];
+  proposedParagraphs: ReviseChapterSceneProposal[];
+  overallContinuityImpact: RevisionContinuityImpact;
+  suggestedStateChanges?: StoryStateChanges;
+  shouldReviewStateChanges: boolean;
+  sources: string[];
+};
+
+export type WikipediaResearchSnapshot = {
+  filePath: string;
+  relativePath: string;
+  title: string;
+  sourceUrl: string;
+  summary: string;
+  body: string;
 };
 
 type CanonEntityDocument = {
@@ -334,7 +404,7 @@ type StoryStateStatus = {
   reason?: string;
 };
 
-type StoryStateChanges = {
+export type StoryStateChanges = {
   locations?: Record<string, string>;
   knowledge_gain?: Record<string, string[]>;
   knowledge_loss?: Record<string, string[]>;
@@ -394,6 +464,11 @@ type QueryCanonChapterRange = {
   startReference: string;
   endReference: string;
   note?: string;
+};
+
+type ParagraphRevisionProposal = {
+  body: string;
+  notes: string[];
 };
 
 type RenameResult = {
@@ -460,6 +535,8 @@ export async function initializeBookRepo(
         "- Default mode: novel prose.",
         "- Prioritize scene-based writing over summary whenever the moment matters emotionally or narratively.",
         "- Before drafting a chapter or paragraph, read this file, the relevant chapter files, matching drafts/, and the latest resumes/ for continuity.",
+        "- This file defines the book-level prose default. If a chapter does not declare its own style profile, use this default together with guidelines/style.md and guidelines/voices.md.",
+        "- Chapter-level style changes must be explicit in chapter frontmatter, not inferred.",
         "",
         "# Show, Don't Tell",
         "",
@@ -500,7 +577,21 @@ export async function initializeBookRepo(
         title: "Style Guide",
         scope: "global",
       }),
-      "# Rules\n\n- Define sentence rhythm, tone, and taboo patterns.\n\n# Examples\n",
+      [
+        "# Book-Level Default Style",
+        "",
+        "- Define the default sentence rhythm, descriptive density, and tonal ceiling for the whole book.",
+        "- If a chapter does not declare `style_refs`, `narration_person`, `narration_tense`, or `prose_mode`, this guide stays in force.",
+        "- Chapter-specific style changes must be declared explicitly in chapter frontmatter.",
+        "",
+        "# Taboo Patterns",
+        "",
+        "- List habits the book should avoid globally.",
+        "",
+        "# Examples",
+        "",
+        "- Add default sentence and paragraph examples here.",
+      ].join("\n"),
     ),
     created,
   );
@@ -530,7 +621,16 @@ export async function initializeBookRepo(
         title: "Voices",
         scope: "voice",
       }),
-      "# Narration\n\nDefine default narrator rules and any alternate voices.\n",
+      [
+        "# Default Narration",
+        "",
+        "- Define the default narrator distance, internality, and diction for the book.",
+        "- Record how first-person, close-third, or omniscient moments should behave if they appear.",
+        "",
+        "# Alternate Voice Notes",
+        "",
+        "- If a chapter needs a distinct narrator or diction set, create a style profile in guidelines/styles/ and reference it explicitly from that chapter.",
+      ].join("\n"),
     ),
     created,
   );
@@ -545,7 +645,7 @@ export async function initializeBookRepo(
         title: "Structure",
         scope: "structure",
       }),
-      "# Blueprint\n\nDescribe act structure, pacing, and recurring motifs.\n",
+      "# Blueprint\n\nDescribe act structure, pacing, recurring motifs, and where deliberately different chapter styles belong in the book.\n",
     ),
     created,
   );
@@ -601,6 +701,105 @@ export async function initializeBookRepo(
         "# Notes",
         "",
         "Document palette, medium, lighting, costume rules, and camera language here.",
+      ].join("\n"),
+    ),
+    created,
+  );
+
+  await ensureFile(
+    root,
+    "guidelines/styles/README.md",
+    renderMarkdown(
+      guidelineSchema.parse({
+        type: "guideline",
+        id: "guideline:style-profiles",
+        title: "Style Profiles",
+        scope: "style-profiles",
+      }),
+      [
+        "# Chapter Style Profiles",
+        "",
+        "Use files in this folder when a chapter should deliberately diverge from the book-level default style.",
+        "",
+        "## Rule",
+        "",
+        "- If a chapter does not declare a style override, the default book-level prose/style/voice guides apply.",
+        "- If a chapter needs a different style, declare it explicitly in chapter frontmatter with `style_refs`, `narration_person`, `narration_tense`, and/or `prose_mode`.",
+        "- Do not rely on the agent to infer a style change automatically.",
+        "",
+        "## Example chapter frontmatter",
+        "",
+        "```yaml",
+        "style_refs:",
+        "  - style:first-person-show",
+        "narration_person: first",
+        "narration_tense: past",
+        "prose_mode:",
+        "  - show-dont-tell",
+        "  - tight-interiority",
+        "```",
+      ].join("\n"),
+    ),
+    created,
+  );
+
+  await ensureFile(
+    root,
+    "guidelines/styles/first-person-show.md",
+    renderMarkdown(
+      guidelineSchema.parse({
+        type: "guideline",
+        id: "style:first-person-show",
+        title: "First Person Show",
+        scope: "style-profile",
+      }),
+      [
+        "# Use When",
+        "",
+        "- The chapter should feel intimate, immediate, and filtered through one character's lived experience.",
+        "",
+        "# Rules",
+        "",
+        "- Use first-person narration explicitly.",
+        "- Prefer concrete action, sensory evidence, and subtext over explanation.",
+        "- Let the narrator's bias and omissions shape what the reader sees.",
+        "- Keep exposition compressed and emotional inference active.",
+        "",
+        "# Avoid",
+        "",
+        "- Detached summary paragraphs that break immediacy.",
+        "- Over-explaining emotions the scene already demonstrates.",
+      ].join("\n"),
+    ),
+    created,
+  );
+
+  await ensureFile(
+    root,
+    "guidelines/styles/third-person-descriptive.md",
+    renderMarkdown(
+      guidelineSchema.parse({
+        type: "guideline",
+        id: "style:third-person-descriptive",
+        title: "Third Person Descriptive",
+        scope: "style-profile",
+      }),
+      [
+        "# Use When",
+        "",
+        "- The chapter should widen its lens and give more room to atmosphere, setting, and spatial clarity.",
+        "",
+        "# Rules",
+        "",
+        "- Use third-person narration explicitly.",
+        "- Allow fuller scene description, but keep every descriptive block tied to mood, threat, or meaning.",
+        "- Balance external detail with selective internal access.",
+        "- Let setting and texture do structural work, not just ornament.",
+        "",
+        "# Avoid",
+        "",
+        "- Decorative description with no narrative pressure.",
+        "- Sudden slips into first-person interior monologue unless the chapter rules allow it.",
       ].join("\n"),
     ),
     created,
@@ -1751,9 +1950,39 @@ export async function buildChapterWritingContext(
   const chapterSlugValue = normalizeChapterReference(chapter);
   const files = new Set<string>();
   const sections: string[] = [];
+  const chapterData = await readChapter(root, chapterSlugValue).catch(() => null);
+  const draft = await readChapterDraft(root, chapterSlugValue).catch(() => null);
 
   const prose = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.prose));
   addContextSection(sections, files, root, prose, "Always-read prose guide", 1600);
+
+  const styleGuide = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.style));
+  addContextSection(sections, files, root, styleGuide, "Default style guide", 1100);
+
+  const voicesGuide = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.voices));
+  addContextSection(sections, files, root, voicesGuide, "Default voice guide", 1000);
+
+  const chapterRules = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.chapterRules));
+  addContextSection(sections, files, root, chapterRules, "Chapter rules", 900);
+
+  const structureGuide = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.structure));
+  addContextSection(sections, files, root, structureGuide, "Structure guide", 850);
+
+  const styleContext = await buildEffectiveChapterStyleContext(root, chapterData?.metadata, draft?.metadata);
+  sections.push(styleContext.summarySection);
+  for (const relativePath of styleContext.files) {
+    files.add(relativePath);
+  }
+  for (const profileDocument of styleContext.profileDocuments) {
+    addContextSection(
+      sections,
+      files,
+      root,
+      profileDocument,
+      `Explicit style profile ${String(profileDocument.frontmatter.id ?? path.basename(profileDocument.path, ".md"))}`,
+      1000,
+    );
+  }
 
   const plot = await readPlot(root);
   if (plot) {
@@ -1798,7 +2027,6 @@ export async function buildChapterWritingContext(
     files.add(toPosixPath(path.join("chapters", previousChapter.slug, "chapter.md")));
   }
 
-  const chapterData = await readChapter(root, chapterSlugValue).catch(() => null);
   if (chapterData) {
     files.add(toPosixPath(path.join("chapters", chapterSlugValue, "chapter.md")));
     sections.push(
@@ -1809,13 +2037,16 @@ export async function buildChapterWritingContext(
         `- Title: ${chapterData.metadata.title}`,
         `- Summary: ${(chapterData.metadata.summary ?? summarizeText(chapterData.body, 240)) || "No summary yet."}`,
         `- POV: ${(chapterData.metadata.pov ?? []).join(", ") || "not set"}`,
+        `- Narration person: ${chapterData.metadata.narration_person ?? "default book-level"}`,
+        `- Narration tense: ${chapterData.metadata.narration_tense ?? "default book-level"}`,
+        `- Prose modes: ${(chapterData.metadata.prose_mode ?? []).join(", ") || "default book-level"}`,
+        `- Style refs: ${(chapterData.metadata.style_refs ?? []).join(", ") || "none"}`,
         `- Timeline: ${chapterData.metadata.timeline_ref ?? "not set"}`,
         `- Existing scenes: ${chapterData.paragraphs.map((paragraph) => `${formatOrdinal(paragraph.metadata.number)} ${paragraph.metadata.title}`).join("; ") || "none"}`,
       ].join("\n"),
     );
   }
 
-  const draft = await readChapterDraft(root, chapterSlugValue).catch(() => null);
   if (draft) {
     files.add(toPosixPath(path.join("drafts", chapterSlugValue, "chapter.md")));
     sections.push(
@@ -1825,6 +2056,10 @@ export async function buildChapterWritingContext(
         `Source: ${toPosixPath(path.join("drafts", chapterSlugValue, "chapter.md"))}`,
         `- Summary: ${draft.metadata.summary ?? "No summary yet."}`,
         `- POV: ${(draft.metadata.pov ?? []).join(", ") || "not set"}`,
+        `- Narration person: ${draft.metadata.narration_person ?? "default book-level"}`,
+        `- Narration tense: ${draft.metadata.narration_tense ?? "default book-level"}`,
+        `- Prose modes: ${(draft.metadata.prose_mode ?? []).join(", ") || "default book-level"}`,
+        `- Style refs: ${(draft.metadata.style_refs ?? []).join(", ") || "none"}`,
         `- Timeline: ${draft.metadata.timeline_ref ?? "not set"}`,
         `- Draft scenes: ${draft.paragraphs.map((paragraph) => `${formatOrdinal(paragraph.metadata.number)} ${paragraph.metadata.title}`).join("; ") || "none"}`,
         "",
@@ -1955,6 +2190,56 @@ export async function buildResumeBookContext(
   };
 }
 
+async function buildEffectiveChapterStyleContext(
+  root: string,
+  chapterMetadata?: Pick<ChapterFrontmatter, "style_refs" | "narration_person" | "narration_tense" | "prose_mode"> | null,
+  draftMetadata?: Pick<ChapterDraftFrontmatter, "style_refs" | "narration_person" | "narration_tense" | "prose_mode"> | null,
+): Promise<{
+  summarySection: string;
+  profileDocuments: Array<MarkdownDocument<GuidelineFrontmatter>>;
+  files: string[];
+}> {
+  const styleRefs = (chapterMetadata?.style_refs?.length ? chapterMetadata.style_refs : draftMetadata?.style_refs) ?? [];
+  const proseMode = (chapterMetadata?.prose_mode?.length ? chapterMetadata.prose_mode : draftMetadata?.prose_mode) ?? [];
+  const narrationPerson = chapterMetadata?.narration_person ?? draftMetadata?.narration_person;
+  const narrationTense = chapterMetadata?.narration_tense ?? draftMetadata?.narration_tense;
+  const sourceLabel = chapterMetadata?.style_refs?.length || chapterMetadata?.narration_person || chapterMetadata?.narration_tense || chapterMetadata?.prose_mode?.length
+    ? "chapter frontmatter"
+    : draftMetadata?.style_refs?.length || draftMetadata?.narration_person || draftMetadata?.narration_tense || draftMetadata?.prose_mode?.length
+      ? "chapter draft frontmatter"
+      : "book-level defaults";
+  const explicitOverride = styleRefs.length > 0 || Boolean(narrationPerson || narrationTense || proseMode.length > 0);
+  const guidelineDocuments = styleRefs.length > 0 ? await listGuidelines(root) : [];
+  const guidelinesById = new Map(guidelineDocuments.map((document) => [String(document.frontmatter.id).toLowerCase(), document]));
+  const profileDocuments = styleRefs
+    .map((reference) => guidelinesById.get(reference.toLowerCase()))
+    .filter((document): document is MarkdownDocument<GuidelineFrontmatter> => Boolean(document));
+  const unresolvedStyleRefs = styleRefs.filter((reference) => !guidelinesById.has(reference.toLowerCase()));
+  const files = profileDocuments.map((document) => toPosixPath(path.relative(root, document.path)));
+  const summarySection = [
+    "## Effective chapter style",
+    "",
+    `- Explicit chapter override: ${explicitOverride ? "yes" : "no"}`,
+    `- Source of current style instructions: ${sourceLabel}`,
+    `- Narration person: ${narrationPerson ?? "default book-level"}`,
+    `- Narration tense: ${narrationTense ?? "default book-level"}`,
+    `- Prose modes: ${proseMode.join(", ") || "default book-level"}`,
+    `- Style refs: ${styleRefs.join(", ") || "none"}`,
+    ...(explicitOverride
+      ? ["- This chapter asked for a style difference explicitly. Do not infer additional style drift beyond these instructions."]
+      : ["- No explicit chapter style profile is set, so the default book-level prose, style, and voice guides apply."]),
+    ...(unresolvedStyleRefs.length > 0
+      ? [`- Missing style refs to review: ${unresolvedStyleRefs.join(", ")}`]
+      : []),
+  ].join("\n");
+
+  return {
+    summarySection,
+    profileDocuments,
+    files,
+  };
+}
+
 export async function createChapterFromDraft(
   rootPath: string,
   options: {
@@ -1970,6 +2255,10 @@ export async function createChapterFromDraft(
   const finalFrontmatter = compactFrontmatterPatch({
     summary: draft.metadata.summary,
     pov: draft.metadata.pov,
+    style_refs: draft.metadata.style_refs,
+    narration_person: draft.metadata.narration_person,
+    narration_tense: draft.metadata.narration_tense,
+    prose_mode: draft.metadata.prose_mode,
     timeline_ref: draft.metadata.timeline_ref,
     tags: draft.metadata.tags,
     ...(options.frontmatterPatch ?? {}),
@@ -2265,6 +2554,215 @@ export async function queryCanon(
     throughChapter: effectiveThroughChapter,
     fromChapter: chapterRange?.startReference,
     toChapter: chapterRange?.endReference,
+  };
+}
+
+export async function reviseParagraph(
+  rootPath: string,
+  options: {
+    chapter: string;
+    paragraph: string;
+    mode: RevisionMode;
+    intensity?: RevisionIntensity;
+    preserveFacts?: boolean;
+  },
+): Promise<ReviseParagraphResult> {
+  const root = path.resolve(rootPath);
+  const chapterSlugValue = normalizeChapterReference(options.chapter);
+  const filePath = await resolveParagraphFilePath(root, chapterSlugValue, options.paragraph);
+
+  if (!(await pathExists(filePath))) {
+    throw new Error(`Paragraph does not exist: ${filePath}`);
+  }
+
+  const paragraphDocument = await readMarkdownFile(filePath, paragraphSchema);
+  const chapterData = await readChapter(root, chapterSlugValue);
+  const normalizedFilePath = path.resolve(filePath).toLowerCase();
+  const paragraphIndex = chapterData.paragraphs.findIndex(
+    (entry) => path.resolve(entry.path).toLowerCase() === normalizedFilePath,
+  );
+  if (paragraphIndex === -1) {
+    throw new Error(`Paragraph is missing from chapter index: ${filePath}`);
+  }
+
+  const previousParagraph = paragraphIndex > 0 ? chapterData.paragraphs[paragraphIndex - 1] : null;
+  const nextParagraph = paragraphIndex < chapterData.paragraphs.length - 1 ? chapterData.paragraphs[paragraphIndex + 1] : null;
+  const intensity = options.intensity ?? "medium";
+  const preserveFacts = options.preserveFacts ?? true;
+  const chapters = await listChapters(root);
+  const targets = await buildQueryCanonTargets(root, chapters);
+  const primaryTarget = resolveRevisionPrimaryTarget(
+    targets,
+    paragraphDocument.frontmatter.viewpoint,
+    chapterData.metadata.pov,
+    paragraphDocument.body,
+  );
+  const proposal = reviseMarkdownBody(paragraphDocument.body, {
+    mode: options.mode,
+    intensity,
+    preserveFacts,
+    viewpointLabel: primaryTarget?.title ?? paragraphDocument.frontmatter.viewpoint,
+  });
+  const suggestedStateChanges = suggestParagraphStateChanges(paragraphDocument.body, {
+    primaryTarget,
+    targets,
+    paragraphTitle: paragraphDocument.frontmatter.title,
+    chapterTitle: chapterData.metadata.title,
+  });
+  const continuityImpact = classifyRevisionContinuityImpact(suggestedStateChanges);
+  const chapterResumePath = path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`);
+  const storyStateStatus = await readStoryStateStatus(root);
+  const sources = uniqueValues(
+    [
+      toPosixPath(path.relative(root, filePath)),
+      toPosixPath(path.join("chapters", chapterSlugValue, "chapter.md")),
+      ...(await pathExists(chapterResumePath) ? [toPosixPath(path.relative(root, chapterResumePath))] : []),
+      ...(await pathExists(path.join(root, GUIDELINE_FILES.prose)) ? [GUIDELINE_FILES.prose] : []),
+      ...(await pathExists(path.join(root, STORY_STATE_CURRENT_FILE)) ? [STORY_STATE_CURRENT_FILE] : []),
+      ...(storyStateStatus.dirty ? [STORY_STATE_STATUS_FILE] : []),
+      ...(previousParagraph ? [toPosixPath(path.relative(root, previousParagraph.path))] : []),
+      ...(nextParagraph ? [toPosixPath(path.relative(root, nextParagraph.path))] : []),
+    ],
+  ).sort();
+
+  return {
+    filePath,
+    chapter: `chapter:${chapterSlugValue}`,
+    paragraph: paragraphDocument.frontmatter.id,
+    mode: options.mode,
+    intensity,
+    preserveFacts,
+    originalBody: paragraphDocument.body,
+    proposedBody: proposal.body,
+    editorialNotes: buildRevisionEditorialNotes({
+      mode: options.mode,
+      intensity,
+      originalBody: paragraphDocument.body,
+      proposedBody: proposal.body,
+      proposalNotes: proposal.notes,
+      continuityImpact,
+      primaryTarget: primaryTarget?.title,
+      previousParagraphTitle: previousParagraph?.metadata.title,
+      nextParagraphTitle: nextParagraph?.metadata.title,
+      preserveFacts,
+    }),
+    continuityImpact,
+    suggestedStateChanges,
+    shouldReviewStateChanges: continuityImpact !== "none",
+    sources,
+  };
+}
+
+export async function reviseChapter(
+  rootPath: string,
+  options: {
+    chapter: string;
+    mode: RevisionMode;
+    intensity?: RevisionIntensity;
+    preserveFacts?: boolean;
+  },
+): Promise<ReviseChapterResult> {
+  const root = path.resolve(rootPath);
+  const chapterSlugValue = normalizeChapterReference(options.chapter);
+  const chapterData = await readChapter(root, chapterSlugValue);
+  const chapterFilePath = resolveChapterMetadataFilePath(root, chapterSlugValue);
+  const intensity = options.intensity ?? "medium";
+  const preserveFacts = options.preserveFacts ?? true;
+  const chapters = await listChapters(root);
+  const targets = await buildQueryCanonTargets(root, chapters);
+  const chapterResumePath = path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`);
+  const storyStateStatus = await readStoryStateStatus(root);
+
+  const proposedParagraphs = chapterData.paragraphs.map((paragraph, index) => {
+    const previousParagraph = index > 0 ? chapterData.paragraphs[index - 1] : null;
+    const nextParagraph = index < chapterData.paragraphs.length - 1 ? chapterData.paragraphs[index + 1] : null;
+    const primaryTarget = resolveRevisionPrimaryTarget(
+      targets,
+      paragraph.metadata.viewpoint,
+      chapterData.metadata.pov,
+      paragraph.body,
+    );
+    const proposal = reviseMarkdownBody(paragraph.body, {
+      mode: options.mode,
+      intensity,
+      preserveFacts,
+      viewpointLabel: primaryTarget?.title ?? paragraph.metadata.viewpoint,
+    });
+    const suggestedStateChanges = suggestParagraphStateChanges(paragraph.body, {
+      primaryTarget,
+      targets,
+      paragraphTitle: paragraph.metadata.title,
+      chapterTitle: chapterData.metadata.title,
+    });
+    const continuityImpact = classifyRevisionContinuityImpact(suggestedStateChanges);
+    const changed = proposal.body !== paragraph.body;
+
+    return {
+      filePath: paragraph.path,
+      paragraph: paragraph.metadata.id,
+      title: paragraph.metadata.title,
+      originalBody: paragraph.body,
+      proposedBody: proposal.body,
+      editorialNotes: buildRevisionEditorialNotes({
+        mode: options.mode,
+        intensity,
+        originalBody: paragraph.body,
+        proposedBody: proposal.body,
+        proposalNotes: proposal.notes,
+        continuityImpact,
+        primaryTarget: primaryTarget?.title,
+        previousParagraphTitle: previousParagraph?.metadata.title,
+        nextParagraphTitle: nextParagraph?.metadata.title,
+        preserveFacts,
+      }),
+      continuityImpact,
+      suggestedStateChanges,
+      shouldReviewStateChanges: continuityImpact !== "none",
+      changed,
+    } satisfies ReviseChapterSceneProposal;
+  });
+
+  const filteredParagraphs = proposedParagraphs.filter((proposal) => proposal.changed || proposal.shouldReviewStateChanges);
+  const mergedStateChanges = mergeSuggestedStoryStateChanges(
+    proposedParagraphs.map((proposal) => proposal.suggestedStateChanges),
+  );
+  const overallContinuityImpact = maxRevisionContinuityImpact(
+    proposedParagraphs.map((proposal) => proposal.continuityImpact),
+  );
+  const sources = uniqueValues(
+    [
+      toPosixPath(path.relative(root, chapterFilePath)),
+      ...chapterData.paragraphs.map((paragraph) => toPosixPath(path.relative(root, paragraph.path))),
+      ...(await pathExists(chapterResumePath) ? [toPosixPath(path.relative(root, chapterResumePath))] : []),
+      ...(await pathExists(path.join(root, GUIDELINE_FILES.prose)) ? [GUIDELINE_FILES.prose] : []),
+      ...(await pathExists(path.join(root, STORY_STATE_CURRENT_FILE)) ? [STORY_STATE_CURRENT_FILE] : []),
+      ...(storyStateStatus.dirty ? [STORY_STATE_STATUS_FILE] : []),
+    ],
+  ).sort();
+
+  return {
+    filePath: chapterFilePath,
+    chapter: `chapter:${chapterSlugValue}`,
+    chapterTitle: chapterData.metadata.title,
+    mode: options.mode,
+    intensity,
+    preserveFacts,
+    sceneCount: chapterData.paragraphs.length,
+    changedSceneCount: proposedParagraphs.filter((proposal) => proposal.changed).length,
+    chapterDiagnosis: buildChapterRevisionDiagnosis({
+      chapterTitle: chapterData.metadata.title,
+      mode: options.mode,
+      intensity,
+      preserveFacts,
+      chapterBody: chapterData.body,
+      paragraphs: proposedParagraphs,
+    }),
+    revisionPlan: buildChapterRevisionPlan(proposedParagraphs),
+    proposedParagraphs: filteredParagraphs.length > 0 ? filteredParagraphs : proposedParagraphs,
+    overallContinuityImpact,
+    suggestedStateChanges: mergedStateChanges,
+    shouldReviewStateChanges: overallContinuityImpact !== "none",
+    sources,
   };
 }
 
@@ -5083,6 +5581,702 @@ function normalizeQueryCanonSearch(value: string): string {
     .trim();
 }
 
+function resolveRevisionPrimaryTarget(
+  targets: QueryCanonTarget[],
+  viewpoint: string | undefined,
+  pov: string[] | undefined,
+  body: string,
+): QueryCanonTarget | undefined {
+  for (const candidate of [viewpoint, ...(pov ?? [])].filter((value): value is string => Boolean(value && value.trim()))) {
+    const direct = targets.find((target) => target.id === candidate);
+    if (direct) {
+      return direct;
+    }
+
+    const resolved = resolveQueryCanonTarget(targets.filter((target) => target.kind !== "chapter"), candidate, candidate);
+    if (resolved.target) {
+      return resolved.target;
+    }
+  }
+
+  return findMatchedTargetsInText(targets.filter((target) => target.kind === "character"), body)[0];
+}
+
+function findMatchedTargetsInText(targets: QueryCanonTarget[], text: string): QueryCanonTarget[] {
+  const normalizedText = normalizeQueryCanonSearch(text);
+  const lowerText = text.toLowerCase();
+
+  return targets
+    .map((target) => {
+      let score = lowerText.includes(target.id.toLowerCase()) ? 200 : 0;
+
+      for (const candidate of uniqueValues([target.title, ...target.aliases])) {
+        const normalizedCandidate = normalizeQueryCanonSearch(candidate);
+        if (!normalizedCandidate) continue;
+
+        if (normalizedText.includes(normalizedCandidate)) {
+          score = Math.max(score, 80 + normalizedCandidate.length);
+        }
+      }
+
+      return { target, score };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .map((entry) => entry.target);
+}
+
+function reviseMarkdownBody(
+  body: string,
+  options: {
+    mode: RevisionMode;
+    intensity: RevisionIntensity;
+    preserveFacts: boolean;
+    viewpointLabel?: string;
+  },
+): ParagraphRevisionProposal {
+  const blocks = body.trim().split(/\n\s*\n/);
+  const notes: string[] = [];
+
+  const revisedBlocks = blocks.map((block) => {
+    const trimmed = block.trim();
+    if (!trimmed || !isRevisionProseBlock(trimmed)) {
+      return trimmed;
+    }
+
+    const revised = reviseProseBlock(trimmed, options);
+    notes.push(...revised.notes);
+    return revised.body;
+  });
+
+  return {
+    body: revisedBlocks.join("\n\n").trim(),
+    notes: uniqueValues(notes),
+  };
+}
+
+function isRevisionProseBlock(block: string): boolean {
+  return !/^(?:#{1,6}\s|```|[-*+]\s|\d+\.\s|>\s|\||!\[)/.test(block.trim());
+}
+
+function reviseProseBlock(
+  text: string,
+  options: {
+    mode: RevisionMode;
+    intensity: RevisionIntensity;
+    preserveFacts: boolean;
+    viewpointLabel?: string;
+  },
+): ParagraphRevisionProposal {
+  let revised = normalizeRevisionSpacing(text);
+  const notes: string[] = [];
+
+  const apply = (transform: (value: string) => string, note: string): void => {
+    const next = normalizeRevisionSpacing(transform(revised));
+    if (next !== revised) {
+      revised = next;
+      notes.push(note);
+    }
+  };
+
+  switch (options.mode) {
+    case "clarity":
+      apply(tightenCommonPhrases, "Tightens common filler phrases and indirect constructions.");
+      apply((value) => removeRevisionFillerWords(value, options.intensity), "Cuts softeners so the beat reads more directly.");
+      apply((value) => breakLongRevisionSentences(value, options.intensity), "Breaks chained sentences earlier so the action stays readable.");
+      apply(dropRepeatedSentences, "Trims repeated emphasis that slows the beat down.");
+      break;
+    case "pacing":
+      apply((value) => removeRevisionFillerWords(value, options.intensity), "Cuts slow lead-ins to move faster into the turn of the scene.");
+      apply((value) => breakLongRevisionSentences(value, options.intensity === "light" ? "medium" : "strong"), "Shortens sentence rhythm so the scene lands faster.");
+      apply(dropRepeatedSentences, "Removes repeated beats that stall momentum.");
+      break;
+    case "dialogue":
+      apply(tightenDialogueFormatting, "Separates dialogue beats so each line lands more clearly.");
+      apply(tightenCommonPhrases, "Tightens narration around the spoken exchange.");
+      break;
+    case "voice":
+      apply(tightenFilterVerbs, "Pulls back filter verbs so the viewpoint feels more immediate.");
+      apply(tightenCommonPhrases, "Keeps the narration closer to the scene instead of summary distance.");
+      if (options.viewpointLabel) {
+        notes.push(`Keeps the phrasing anchored to ${options.viewpointLabel}.`);
+      }
+      break;
+    case "tension":
+      apply(strengthenSoftPhrases, "Sharpens soft emotional wording into cleaner pressure cues.");
+      apply((value) => removeRevisionFillerWords(value, options.intensity), "Removes cushioning words so the pressure hits sooner.");
+      apply((value) => breakLongRevisionSentences(value, options.intensity === "light" ? "medium" : "strong"), "Uses shorter sentence rhythm to keep tension tighter.");
+      break;
+    case "show-dont-tell":
+      apply(tightenFilterVerbs, "Reduces filter verbs that summarize the moment from a distance.");
+      apply(replaceShowDontTellPatterns, "Rephrases telling constructions into more immediate scene language.");
+      break;
+    case "redundancy":
+      apply(dropRepeatedSentences, "Removes duplicated emphasis and repeated beat language.");
+      apply(tightenCommonPhrases, "Compresses repeated support phrasing around the core beat.");
+      apply((value) => removeRevisionFillerWords(value, options.intensity), "Drops extra modifiers that restate what the sentence already implies.");
+      break;
+  }
+
+  revised = capitalizeRevisionSentenceStarts(revised);
+  return {
+    body: revised,
+    notes: uniqueValues(notes),
+  };
+}
+
+function buildRevisionEditorialNotes(input: {
+  mode: RevisionMode;
+  intensity: RevisionIntensity;
+  originalBody: string;
+  proposedBody: string;
+  proposalNotes: string[];
+  continuityImpact: RevisionContinuityImpact;
+  primaryTarget?: string;
+  previousParagraphTitle?: string;
+  nextParagraphTitle?: string;
+  preserveFacts: boolean;
+}): string[] {
+  const metrics = analyzeRevisionTextMetrics(input.originalBody);
+  const notes = [
+    `This ${input.mode} pass stays ${input.intensity} and ${input.preserveFacts ? "keeps story facts stable" : "allows broader surface reshaping"}.`,
+    ...input.proposalNotes,
+    ...(input.mode === "dialogue" && !metrics.hasDialogue
+      ? ["No direct dialogue appears in this paragraph, so the proposal tightens narration and beat spacing instead of reworking spoken exchange."]
+      : []),
+    ...(["clarity", "pacing", "tension"].includes(input.mode) && metrics.averageWordsPerSentence >= 18
+      ? ["The original paragraph leans on long sentence chains, so the proposal breaks the beat earlier for readability."]
+      : []),
+    ...(input.mode === "redundancy" && metrics.repeatedSentenceCount > 0
+      ? ["The original paragraph repeats emphasis, so the proposal trims duplicate sentence work."]
+      : []),
+    ...(input.primaryTarget ? [`The revision keeps the paragraph anchored to ${input.primaryTarget}.`] : []),
+    ...(input.previousParagraphTitle || input.nextParagraphTitle
+      ? [
+          `The handoff stays visible${
+            input.previousParagraphTitle || input.nextParagraphTitle
+              ? ` between ${input.previousParagraphTitle ?? "this beat"} and ${input.nextParagraphTitle ?? "the next beat"}`
+              : ""
+          }.`,
+        ]
+      : []),
+    ...(input.continuityImpact !== "none"
+      ? ["This paragraph touches continuity-sensitive beats, so review the suggested state_changes before applying the revision and syncing story state."]
+      : []),
+    ...(input.proposedBody === input.originalBody
+      ? ["The proposal stays close to the original because the paragraph is already fairly tight at the selected intensity."]
+      : []),
+  ];
+
+  return uniqueValues(notes).slice(0, 5);
+}
+
+function buildChapterRevisionDiagnosis(input: {
+  chapterTitle: string;
+  mode: RevisionMode;
+  intensity: RevisionIntensity;
+  preserveFacts: boolean;
+  chapterBody: string;
+  paragraphs: ReviseChapterSceneProposal[];
+}): string[] {
+  const changedParagraphs = input.paragraphs.filter((paragraph) => paragraph.changed);
+  const continuitySensitive = input.paragraphs.filter((paragraph) => paragraph.continuityImpact !== "none");
+  const combinedMetrics = analyzeRevisionTextMetrics(
+    [input.chapterBody, ...input.paragraphs.map((paragraph) => paragraph.originalBody)].join("\n\n"),
+  );
+  const notes = [
+    `${input.chapterTitle} has ${input.paragraphs.length} scene${input.paragraphs.length === 1 ? "" : "s"}; this ${input.mode} pass changes ${changedParagraphs.length || 0} of them at ${input.intensity} intensity.`,
+    ...(combinedMetrics.averageWordsPerSentence >= 18 && ["clarity", "pacing", "tension"].includes(input.mode)
+      ? ["Across the chapter, sentence chains run long enough that the pass concentrates on earlier turns and tighter beat breaks."]
+      : []),
+    ...(input.mode === "dialogue" && !combinedMetrics.hasDialogue
+      ? ["The chapter has little direct dialogue, so the pass mostly tightens narration and beat spacing rather than line delivery."]
+      : []),
+    ...(continuitySensitive.length > 0
+      ? ["At least one scene carries continuity-sensitive beats, so the revision suggests state_changes to review before any manual apply."]
+      : []),
+    ...(input.preserveFacts
+      ? ["The pass stays conservative on story facts and focuses on presentation, rhythm, and local scene pressure."]
+      : ["The pass allows broader surface reshaping, so continuity review matters even more before applying changes."]),
+  ];
+
+  return uniqueValues(notes).slice(0, 5);
+}
+
+function buildChapterRevisionPlan(paragraphs: ReviseChapterSceneProposal[]): string[] {
+  const changedParagraphs = paragraphs.filter((paragraph) => paragraph.changed || paragraph.shouldReviewStateChanges);
+  if (changedParagraphs.length === 0) {
+    return ["No major scene rewrite stands out at this intensity; if you still want a pass, try a stronger intensity or a different mode."];
+  }
+
+  return changedParagraphs.slice(0, 6).map((paragraph, index) => {
+    const leadNote = paragraph.editorialNotes.find((note) => !note.startsWith("This ")) ?? paragraph.editorialNotes[0] ?? "Refine the scene beat.";
+    return `${index + 1}. Revise ${paragraph.title}: ${leadNote}`;
+  });
+}
+
+function analyzeRevisionTextMetrics(text: string): {
+  hasDialogue: boolean;
+  averageWordsPerSentence: number;
+  repeatedSentenceCount: number;
+} {
+  const prose = text
+    .split(/\n\s*\n/)
+    .filter((block) => isRevisionProseBlock(block.trim()))
+    .join(" ");
+  const sentences = splitRevisionSentences(prose);
+  const repeated = new Set<string>();
+  const seen = new Set<string>();
+
+  for (const sentence of sentences) {
+    const normalized = normalizeQueryCanonSearch(sentence);
+    if (!normalized) continue;
+    if (seen.has(normalized)) {
+      repeated.add(normalized);
+    }
+    seen.add(normalized);
+  }
+
+  return {
+    hasDialogue: /["“”]/.test(text),
+    averageWordsPerSentence:
+      sentences.length > 0
+        ? Math.round(
+            sentences.reduce((sum, sentence) => sum + sentence.split(/\s+/).filter(Boolean).length, 0) /
+              sentences.length,
+          )
+        : 0,
+    repeatedSentenceCount: repeated.size,
+  };
+}
+
+function suggestParagraphStateChanges(
+  body: string,
+  options: {
+    primaryTarget?: QueryCanonTarget;
+    targets: QueryCanonTarget[];
+    paragraphTitle: string;
+    chapterTitle: string;
+  },
+): StoryStateChanges | undefined {
+  const lower = body.toLowerCase();
+  const matchedTargets = findMatchedTargetsInText(options.targets.filter((target) => target.kind !== "chapter"), body);
+  const matchedLocations = matchedTargets.filter((target) => target.kind === "location");
+  const matchedItems = matchedTargets.filter((target) => target.kind === "item");
+  const matchedRelations = matchedTargets.filter(
+    (target) =>
+      (target.kind === "character" || target.kind === "faction") &&
+      target.id !== options.primaryTarget?.id,
+  );
+
+  const suggestion: StoryStateChanges = {};
+
+  if (options.primaryTarget && matchedLocations.length > 0 && /(arrive|arrived|reach|reached|enter|entered|leave|left|return|returned|stand|stood|wait|paused|inside|into|through|toward|towards|at |in )/.test(lower)) {
+    suggestion.locations = {
+      [options.primaryTarget.id]: matchedLocations[0].id,
+    };
+  }
+
+  const knowledgeGains = extractRevisionKnowledgePhrases(body);
+  if (options.primaryTarget && knowledgeGains.length > 0) {
+    suggestion.knowledge_gain = {
+      [options.primaryTarget.id]: knowledgeGains,
+    };
+  }
+
+  const inventoryAdd = matchedItems
+    .filter((target) => isRevisionVerbNearTarget(body, target, /(grabbed|took|takes|held|carry|carried|kept|keeps|pocketed|received|caught)/i))
+    .map((target) => target.id);
+  if (options.primaryTarget && inventoryAdd.length > 0) {
+    suggestion.inventory_add = {
+      [options.primaryTarget.id]: uniqueValues(inventoryAdd),
+    };
+  }
+
+  const inventoryRemove = matchedItems
+    .filter((target) => isRevisionVerbNearTarget(body, target, /(dropped|drop|lost|lose|handed|gave|left|set down|surrendered)/i))
+    .map((target) => target.id);
+  if (options.primaryTarget && inventoryRemove.length > 0) {
+    suggestion.inventory_remove = {
+      [options.primaryTarget.id]: uniqueValues(inventoryRemove),
+    };
+  }
+
+  const relationshipValue = detectRevisionRelationshipValue(lower);
+  if (options.primaryTarget && matchedRelations.length > 0 && relationshipValue) {
+    suggestion.relationship_updates = {
+      [options.primaryTarget.id]: {
+        [matchedRelations[0].id]: relationshipValue,
+      },
+    };
+  }
+
+  const conditions = detectRevisionConditions(lower);
+  if (options.primaryTarget && conditions.length > 0) {
+    suggestion.conditions = {
+      [options.primaryTarget.id]: conditions,
+    };
+  }
+
+  const wounds = detectRevisionWounds(lower);
+  if (options.primaryTarget && wounds.length > 0) {
+    suggestion.wounds = {
+      [options.primaryTarget.id]: wounds,
+    };
+  }
+
+  const openLoopsAdd = extractRevisionOpenLoops(body, "add");
+  if (openLoopsAdd.length > 0) {
+    suggestion.open_loops_add = openLoopsAdd;
+  }
+
+  const openLoopsResolved = extractRevisionOpenLoops(body, "resolved");
+  if (openLoopsResolved.length > 0) {
+    suggestion.open_loops_resolved = openLoopsResolved;
+  }
+
+  return hasStoryStateChanges(suggestion)
+    ? (compactFrontmatterPatch(suggestion as Record<string, unknown>) as StoryStateChanges)
+    : undefined;
+}
+
+function classifyRevisionContinuityImpact(
+  suggestedStateChanges: StoryStateChanges | undefined,
+): RevisionContinuityImpact {
+  if (!suggestedStateChanges) {
+    return "none";
+  }
+
+  return suggestedStateChanges.locations || suggestedStateChanges.inventory_add || suggestedStateChanges.inventory_remove || suggestedStateChanges.relationship_updates || suggestedStateChanges.wounds || suggestedStateChanges.open_loops_add || suggestedStateChanges.open_loops_resolved
+    ? "clear"
+    : "possible";
+}
+
+function maxRevisionContinuityImpact(
+  values: RevisionContinuityImpact[],
+): RevisionContinuityImpact {
+  if (values.includes("clear")) {
+    return "clear";
+  }
+  if (values.includes("possible")) {
+    return "possible";
+  }
+  return "none";
+}
+
+function mergeSuggestedStoryStateChanges(
+  suggestions: Array<StoryStateChanges | undefined>,
+): StoryStateChanges | undefined {
+  const merged: StoryStateChanges = {};
+
+  for (const suggestion of suggestions) {
+    if (!suggestion) continue;
+
+    merged.locations = mergeStringRecords(merged.locations, suggestion.locations);
+    merged.knowledge_gain = mergeStringArrayRecords(merged.knowledge_gain, suggestion.knowledge_gain);
+    merged.knowledge_loss = mergeStringArrayRecords(merged.knowledge_loss, suggestion.knowledge_loss);
+    merged.inventory_add = mergeStringArrayRecords(merged.inventory_add, suggestion.inventory_add);
+    merged.inventory_remove = mergeStringArrayRecords(merged.inventory_remove, suggestion.inventory_remove);
+    merged.relationship_updates = mergeNestedStringRecords(merged.relationship_updates, suggestion.relationship_updates);
+    merged.conditions = mergeStringArrayRecords(merged.conditions, suggestion.conditions);
+    merged.wounds = mergeStringArrayRecords(merged.wounds, suggestion.wounds);
+    merged.open_loops_add = uniqueValues([...(merged.open_loops_add ?? []), ...(suggestion.open_loops_add ?? [])]).sort((left, right) => left.localeCompare(right));
+    merged.open_loops_resolved = uniqueValues([...(merged.open_loops_resolved ?? []), ...(suggestion.open_loops_resolved ?? [])]).sort((left, right) => left.localeCompare(right));
+  }
+
+  return hasStoryStateChanges(merged)
+    ? (compactFrontmatterPatch(merged as Record<string, unknown>) as StoryStateChanges)
+    : undefined;
+}
+
+function mergeStringRecords(
+  base: Record<string, string> | undefined,
+  addition: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!base && !addition) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    Object.entries({ ...(base ?? {}), ...(addition ?? {}) }).sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function mergeStringArrayRecords(
+  base: Record<string, string[]> | undefined,
+  addition: Record<string, string[]> | undefined,
+): Record<string, string[]> | undefined {
+  if (!base && !addition) {
+    return undefined;
+  }
+
+  const keys = uniqueValues([...Object.keys(base ?? {}), ...Object.keys(addition ?? {})]).sort((left, right) => left.localeCompare(right));
+  const merged = Object.fromEntries(
+    keys.map((key) => [
+      key,
+      uniqueValues([...(base?.[key] ?? []), ...(addition?.[key] ?? [])]).sort((left, right) => left.localeCompare(right)),
+    ]),
+  );
+
+  return merged;
+}
+
+function mergeNestedStringRecords(
+  base: Record<string, Record<string, string>> | undefined,
+  addition: Record<string, Record<string, string>> | undefined,
+): Record<string, Record<string, string>> | undefined {
+  if (!base && !addition) {
+    return undefined;
+  }
+
+  const keys = uniqueValues([...Object.keys(base ?? {}), ...Object.keys(addition ?? {})]).sort((left, right) => left.localeCompare(right));
+  const merged = Object.fromEntries(
+    keys.map((key) => [
+      key,
+      Object.fromEntries(
+        Object.entries({ ...(base?.[key] ?? {}), ...(addition?.[key] ?? {}) }).sort(([left], [right]) => left.localeCompare(right)),
+      ),
+    ]),
+  );
+
+  return merged;
+}
+
+function tightenCommonPhrases(text: string): string {
+  return text
+    .replace(/\bin order to\b/gi, "to")
+    .replace(/\bdue to the fact that\b/gi, "because")
+    .replace(/\bat that point\b/gi, "then")
+    .replace(/\bin the event that\b/gi, "if")
+    .replace(/\bwas able to\b/gi, "could")
+    .replace(/\bit seemed that\b/gi, "")
+    .replace(/\bit was clear that\b/gi, "");
+}
+
+function removeRevisionFillerWords(text: string, intensity: RevisionIntensity): string {
+  const fillers =
+    intensity === "light"
+      ? ["very", "really", "quite"]
+      : intensity === "medium"
+        ? ["very", "really", "quite", "rather", "somewhat"]
+        : ["very", "really", "quite", "rather", "somewhat", "just", "almost", "a little", "a bit", "suddenly"];
+
+  return fillers.reduce(
+    (current, filler) => current.replace(new RegExp(`\\b${escapeRegExp(filler)}\\b\\s*`, "gi"), ""),
+    text,
+  );
+}
+
+function breakLongRevisionSentences(text: string, intensity: RevisionIntensity): string {
+  const threshold = intensity === "light" ? 24 : intensity === "medium" ? 18 : 14;
+
+  return splitRevisionSentences(text)
+    .map((sentence) => {
+      const words = sentence.split(/\s+/).filter(Boolean);
+      if (words.length < threshold) {
+        return sentence.trim();
+      }
+
+      return sentence
+        .replace(/,\s+(and|but|so)\s+/i, ". ")
+        .replace(/;\s+/g, ". ")
+        .replace(/:\s+/g, ". ")
+        .trim();
+    })
+    .join(" ");
+}
+
+function dropRepeatedSentences(text: string): string {
+  const kept: string[] = [];
+  const seen = new Set<string>();
+
+  for (const sentence of splitRevisionSentences(text)) {
+    const trimmed = sentence.trim();
+    if (!trimmed) continue;
+    const normalized = normalizeQueryCanonSearch(trimmed);
+    const opening = normalized.split(" ").slice(0, 5).join(" ");
+    if (seen.has(normalized) || (opening && kept.some((entry) => normalizeQueryCanonSearch(entry).startsWith(opening)))) {
+      continue;
+    }
+    seen.add(normalized);
+    kept.push(trimmed);
+  }
+
+  return kept.join(" ");
+}
+
+function tightenDialogueFormatting(text: string): string {
+  return text.replace(/(["”][^"“”]+["”][^.!?]*[.!?])\s+(?=["“])/g, "$1\n\n");
+}
+
+function tightenFilterVerbs(text: string): string {
+  return text
+    .replace(/\bcould see\b/gi, "saw")
+    .replace(/\bcould hear\b/gi, "heard")
+    .replace(/\bcould feel\b/gi, "felt")
+    .replace(/(^|[.!?]\s+)(?:she|he|they|[A-Z][a-z]+)\s+(?:realized|noticed|understood|knew)\s+that\s+/g, "$1")
+    .replace(/(^|[.!?]\s+)(?:she|he|they|[A-Z][a-z]+)\s+saw\s+that\s+/g, "$1");
+}
+
+function replaceShowDontTellPatterns(text: string): string {
+  return text
+    .replace(/\b((?:she|he|they|[A-Z][a-z]+))\s+felt\s+(tired|exhausted|alert|cornered|afraid|angry|cold|weak)\b/gi, "$1 was $2")
+    .replace(/\b((?:she|he|they|[A-Z][a-z]+))\s+felt\s+like\s+/gi, "$1 ");
+}
+
+function strengthenSoftPhrases(text: string): string {
+  return text
+    .replace(/\bvery tired\b/gi, "exhausted")
+    .replace(/\bvery afraid\b/gi, "shaken")
+    .replace(/\bvery angry\b/gi, "furious")
+    .replace(/\ba little\b/gi, "")
+    .replace(/\ba bit\b/gi, "");
+}
+
+function splitRevisionSentences(text: string): string[] {
+  return text.match(/[^.!?]+[.!?]?/g)?.map((sentence) => sentence.trim()).filter(Boolean) ?? [text.trim()];
+}
+
+function normalizeRevisionSpacing(text: string): string {
+  return text
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+([,.;!?])/g, "$1")
+    .replace(/\s*\n\s*/g, " ")
+    .trim();
+}
+
+function capitalizeRevisionSentenceStarts(text: string): string {
+  return text.replace(/(^|[.!?]\s+)([a-z])/g, (_match, prefix: string, char: string) => `${prefix}${char.toUpperCase()}`);
+}
+
+function extractRevisionKnowledgePhrases(text: string): string[] {
+  const patterns = [
+    /\b(?:realized|noticed|learned|discovered|understood|knew)\s+that\s+([^.!?]+)/gi,
+    /\b(?:learned|discovered|understood)\s+([^.!?]+)/gi,
+  ];
+
+  const phrases: string[] = [];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const normalized = normalizeRevisionStatePhrase(match[1]);
+      if (normalized) {
+        phrases.push(normalized);
+      }
+    }
+  }
+
+  return uniqueValues(phrases).slice(0, 3);
+}
+
+function detectRevisionRelationshipValue(text: string): string | undefined {
+  if (/(wary|wariness|suspicious|distrust)/.test(text) && /(trust|trusted|trusting)/.test(text)) {
+    return "wary-trust";
+  }
+  if (/(guarded|careful)/.test(text) && /(loyal|loyalty)/.test(text)) {
+    return "guarded-loyalty";
+  }
+  if (/(trust|trusted|trusting)/.test(text)) {
+    return "trusting";
+  }
+  if (/(wary|wariness|suspicious|distrust)/.test(text)) {
+    return "wary";
+  }
+  if (/(ally|allied|side with)/.test(text)) {
+    return "allied";
+  }
+  if (/(hostile|resent|resented|angry at|betray)/.test(text)) {
+    return "hostile";
+  }
+
+  return undefined;
+}
+
+function detectRevisionConditions(text: string): string[] {
+  const conditions = [
+    ...(text.includes("alert") ? ["alert"] : []),
+    ...(text.includes("cornered") ? ["cornered"] : []),
+    ...(text.includes("focused") ? ["focused"] : []),
+    ...(text.includes("steady") ? ["steady"] : []),
+    ...(text.includes("shaken") || text.includes("afraid") ? ["shaken"] : []),
+    ...(text.includes("tired") || text.includes("exhausted") ? ["exhausted"] : []),
+  ];
+
+  return uniqueValues(conditions);
+}
+
+function detectRevisionWounds(text: string): string[] {
+  const wounds = [
+    ...(text.includes("cut palm") || text.includes("cut hand") ? ["cut-palm"] : []),
+    ...(text.includes("bleeding") ? ["bleeding"] : []),
+    ...(text.includes("bruised") ? ["bruised"] : []),
+    ...(text.includes("burned") || text.includes("burnt") ? ["burned"] : []),
+    ...(text.includes("limping") ? ["limping"] : []),
+    ...(text.includes("injured") || text.includes("wounded") ? ["injured"] : []),
+  ];
+
+  return uniqueValues(wounds);
+}
+
+function extractRevisionOpenLoops(text: string, mode: "add" | "resolved"): string[] {
+  const patterns =
+    mode === "add"
+      ? [
+          /\b(?:must|need to|needs to|needed to|has to|had to|promised to|swore to|vowed to|decided to|set out to)\s+([^.!?]+)/gi,
+        ]
+      : [
+          /\b(?:finally|at last|managed to|succeeded in|finished|completed)\s+([^.!?]+)/gi,
+        ];
+
+  const phrases: string[] = [];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const normalized = normalizeRevisionStatePhrase(match[1]);
+      if (normalized) {
+        phrases.push(normalized);
+      }
+    }
+  }
+
+  return uniqueValues(phrases).slice(0, 3);
+}
+
+function normalizeRevisionStatePhrase(value: string): string | undefined {
+  const cleaned = value
+    .replace(/\b(?:the|a|an|that|before|after|while|because|when|she|he|they)\b/gi, " ")
+    .replace(/[^a-z0-9\s-]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) {
+    return undefined;
+  }
+
+  const words = cleaned.split(" ").filter((word) => word.length >= 3).slice(0, 8);
+  if (words.length === 0) {
+    return undefined;
+  }
+
+  return slugify(words.join(" "));
+}
+
+function isRevisionVerbNearTarget(text: string, target: QueryCanonTarget, verbPattern: RegExp): boolean {
+  const lower = text.toLowerCase();
+  const verbSource = verbPattern.source;
+
+  return uniqueValues([target.title, ...target.aliases]).some((candidate) => {
+    const escaped = escapeRegExp(candidate.toLowerCase());
+    if (!escaped) {
+      return false;
+    }
+
+    const pattern = new RegExp(`(?:${verbSource})[^.!?]{0,60}\\b${escaped}\\b|\\b${escaped}\\b[^.!?]{0,60}(?:${verbSource})`, "i");
+    return pattern.test(lower);
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -5218,6 +6412,63 @@ export async function writeWikipediaResearchSnapshot(
   );
 
   return filePath;
+}
+
+export async function findWikipediaResearchSnapshot(
+  rootPath: string,
+  options: {
+    lang: "en" | "it";
+    title: string;
+    slug?: string;
+  },
+): Promise<WikipediaResearchSnapshot | null> {
+  const root = path.resolve(rootPath);
+  const researchRoot = path.join(root, "research", "wikipedia", options.lang);
+  if (!(await pathExists(researchRoot))) {
+    return null;
+  }
+
+  const candidateSlugs = uniqueValues(
+    [options.slug, slugify(options.title)]
+      .filter((value): value is string => Boolean(value && value.trim()))
+      .map((value) => value.trim().toLowerCase()),
+  );
+
+  for (const candidateSlug of candidateSlugs) {
+    const candidatePath = path.join(researchRoot, `${candidateSlug}.md`);
+    if (await pathExists(candidatePath)) {
+      const document = await readMarkdownFile(candidatePath, researchNoteSchema);
+      return {
+        filePath: candidatePath,
+        relativePath: toPosixPath(path.relative(root, candidatePath)),
+        title: document.frontmatter.title,
+        sourceUrl: document.frontmatter.source_url,
+        summary: summarizeText(document.body, 280) || document.frontmatter.title,
+        body: document.body,
+      };
+    }
+  }
+
+  const files = await fg("*.md", { cwd: researchRoot, absolute: true, onlyFiles: true });
+  const normalizedTitle = options.title.trim().toLowerCase();
+
+  for (const filePath of files) {
+    const document = await readMarkdownFile(filePath, researchNoteSchema).catch(() => null);
+    if (!document) continue;
+
+    if (document.frontmatter.title.trim().toLowerCase() === normalizedTitle) {
+      return {
+        filePath,
+        relativePath: toPosixPath(path.relative(root, filePath)),
+        title: document.frontmatter.title,
+        sourceUrl: document.frontmatter.source_url,
+        summary: summarizeText(document.body, 280) || document.frontmatter.title,
+        body: document.body,
+      };
+    }
+  }
+
+  return null;
 }
 
 async function ensureFile(
@@ -6319,6 +7570,11 @@ async function buildReferenceLookup(root: string, chapters?: Array<{ slug: strin
     }
   }
 
+  const guidelines = await listGuidelines(root);
+  for (const guideline of guidelines) {
+    references.add(String(guideline.frontmatter.id).toLowerCase());
+  }
+
   return references;
 }
 
@@ -6330,6 +7586,18 @@ async function buildEntityReferenceLookup(root: string, kind: EntityType): Promi
     references.add(`${kind}:${entity.slug}`.toLowerCase());
   }
   return references;
+}
+
+async function listGuidelines(rootPath: string): Promise<Array<MarkdownDocument<GuidelineFrontmatter>>> {
+  const root = path.resolve(rootPath);
+  const files = await fg("guidelines/**/*.md", {
+    cwd: root,
+    absolute: true,
+    onlyFiles: true,
+  });
+
+  const documents = await Promise.all(files.map((filePath) => readMarkdownFile(filePath, guidelineSchema)));
+  return documents.sort((left, right) => left.path.localeCompare(right.path));
 }
 
 function collectSupportedReferences(frontmatter: Record<string, unknown>, body: string): string[] {

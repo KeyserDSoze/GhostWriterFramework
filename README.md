@@ -190,6 +190,8 @@ These are the main building blocks exposed by the local MCP server:
 - `rename_entity`, `rename_chapter`, `rename_paragraph`: rename canon safely and move matching asset folders too
 - `search_book`: search the repository before inventing canon
 - `query_canon`: answer natural-language canon questions using state, resumes, chapters, and fallback search, including locations, knowledge, inventory, relationships, conditions, open loops, secret holders, first appearances, and chapter-range evolution queries
+- `revise_paragraph`: propose a targeted editorial pass for a final scene without writing files, and suggest `state_changes` review when continuity-sensitive beats are involved
+- `revise_chapter`: propose a chapter-level editorial pass with diagnosis and scene-by-scene suggestions, again without writing files automatically
 - `list_related_canon`: find files that reference an id or concept
 - `sync_resume`: refresh chapter or total summaries from current files
 - `sync_all_resumes`: refresh all chapter resumes plus the total summary in one pass
@@ -200,6 +202,8 @@ These are the main building blocks exposed by the local MCP server:
 - `export_epub`: turn the repository into an EPUB
 
 Final chapter and paragraph mutations through the MCP layer auto-refresh `plot.md`, the per-chapter resumes, and `resumes/total.md`. Structured story state stays manual on purpose: rewrites mark `state/status.md` as dirty, then you decide when to run `sync_story_state`. Evaluations stay manual so critique remains explicit.
+
+For factual or historical work, Narrarium now checks existing `research/wikipedia/` snapshots first and reuses them before fetching Wikipedia again when it can.
 
 ## Story state workflow
 
@@ -234,6 +238,12 @@ Recommended `state_changes` keys in chapter resumes:
 `doctorBook()` and `npm run doctor` now warn if `state/` is missing or stale, and writing-context tools read `state/current.md` plus `state/status.md` when available.
 
 For continuity questions and range-based canon queries, see `docs/query-canon.md`.
+
+For proposal-only editorial revision passes on final scene files, see `docs/revise-paragraph.md`.
+
+For chapter-level proposal-only editorial passes, see `docs/revise-chapter.md`.
+
+For explicit per-chapter style overrides with book-level fallback, see `docs/style-profiles.md`.
 
 ## Practical image examples
 

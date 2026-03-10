@@ -25,6 +25,8 @@ npm install narrarium
 - create rich canon files for characters, locations, factions, items, secrets, and timeline events
 - create and update chapters, scenes, chapter drafts, and paragraph drafts
 - answer natural-language canon questions with `queryCanon()`
+- propose targeted scene revisions with `reviseParagraph()` without writing files yet
+- propose chapter-level editorial plans with `reviseChapter()` without mutating files
 - sync `plot.md`, chapter resumes, and total resume files
 - sync `state/current.md`, `state/status.md`, and `state/chapters/` from `state_changes`
 - export the book to EPUB
@@ -132,6 +134,45 @@ Typical `queryCanon()` prompts:
 For exact control, `queryCanon()` also accepts `fromChapter`, `toChapter`, and `throughChapter` options.
 
 See `docs/query-canon.md` for a fuller guide with use cases, scope rules, output fields, and limitations.
+
+You can also run proposal-only editorial passes on a final paragraph:
+
+```js
+import { reviseParagraph } from "narrarium";
+
+const revision = await reviseParagraph("my-book", {
+  chapter: "chapter:001-the-arrival",
+  paragraph: "001-at-the-gate",
+  mode: "tension",
+  intensity: "medium",
+});
+
+console.log(revision.proposedBody);
+console.log(revision.editorialNotes);
+console.log(revision.suggestedStateChanges);
+```
+
+See `docs/revise-paragraph.md` for the modes, continuity behavior, and manual apply workflow.
+
+For broader chapter-level passes:
+
+```js
+import { reviseChapter } from "narrarium";
+
+const revision = await reviseChapter("my-book", {
+  chapter: "chapter:001-the-arrival",
+  mode: "pacing",
+  intensity: "medium",
+});
+
+console.log(revision.chapterDiagnosis);
+console.log(revision.revisionPlan);
+console.log(revision.proposedParagraphs);
+```
+
+See `docs/revise-chapter.md` for the chapter workflow and output model.
+
+Narrarium also supports explicit chapter-level style overrides with a global book fallback. See `docs/style-profiles.md`.
 
 Recommended `state_changes` keys inside chapter resumes:
 

@@ -58,9 +58,10 @@ test("mcp server tools support guided creation and structural updates", async ()
       rootPath,
       number: 1,
       title: "Opening Move",
-      frontmatter: {
-        timeline_ref: "timeline-event:harbor-lockdown",
-      },
+      styleRefs: ["style:first-person-show"],
+      narrationPerson: "first",
+      proseMode: ["show-dont-tell"],
+      timelineRef: "timeline-event:harbor-lockdown",
     });
 
     await callToolText(client, "create_timeline_event", {
@@ -129,9 +130,33 @@ test("mcp server tools support guided creation and structural updates", async ()
       "# Conversation Export\n\nThe latest session focused on pressure at the gate and the registry seal.\n",
       "utf8",
     );
+    await writeFile(
+      path.join(rootPath, "research", "wikipedia", "en", "venice.md"),
+      [
+        "---",
+        "type: research-note",
+        "id: research:wikipedia:en:venice",
+        "title: Venice",
+        "language: en",
+        "source_url: https://en.wikipedia.org/wiki/Venice",
+        "retrieved_at: 2026-03-10T00:00:00.000Z",
+        "---",
+        "",
+        "# Summary",
+        "",
+        "Venice existing snapshot.",
+      ].join("\n"),
+      "utf8",
+    );
 
     const resumeBookContextText = await callToolText(client, "resume_book_context", {
       rootPath,
+    });
+    const reusedWikipediaText = await callToolText(client, "wikipedia_page", {
+      title: "Venice",
+      lang: "en",
+      rootPath,
+      saveToResearch: true,
     });
 
     const chapterFromDraftText = await callToolText(client, "create_chapter_from_draft", {
@@ -166,6 +191,10 @@ test("mcp server tools support guided creation and structural updates", async ()
     await callToolText(client, "wizard_answer", { sessionId, answer: "A warning reaches Lyra before dawn." });
     await callToolText(client, "wizard_answer", { sessionId, answer: ["character:lyra-vale"] });
     await callToolText(client, "wizard_answer", { sessionId, skip: true });
+    await callToolText(client, "wizard_answer", { sessionId, skip: true });
+    await callToolText(client, "wizard_answer", { sessionId, skip: true });
+    await callToolText(client, "wizard_answer", { sessionId, skip: true });
+    await callToolText(client, "wizard_answer", { sessionId, skip: true });
     await callToolText(client, "wizard_answer", { sessionId, answer: ["warning", "setup"] });
     await callToolText(client, "wizard_answer", { sessionId, answer: "# Purpose\n\nEscalate pressure before sunrise." });
     const finalizeText = await callToolText(client, "wizard_finalize", { sessionId });
@@ -186,7 +215,20 @@ test("mcp server tools support guided creation and structural updates", async ()
       frontmatterPatch: {
         summary: "The opening establishes surveillance and threat.",
       },
-      body: "# Scene\n\nThe walls watch first.",
+      body: "# Scene\n\nLyra was very tired, and she felt cornered in Gray Harbor. She needed to warn Taren before the watch closed the gate, and she realized that the registry seal had been pressed at the wrong angle.",
+    });
+    const reviseParagraphText = await callToolText(client, "revise_paragraph", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+      paragraph: "001-first-scene",
+      mode: "tension",
+      intensity: "medium",
+    });
+    const reviseChapterText = await callToolText(client, "revise_chapter", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+      mode: "pacing",
+      intensity: "medium",
     });
 
     await callToolText(client, "update_entity", {
@@ -321,9 +363,13 @@ test("mcp server tools support guided creation and structural updates", async ()
     assert.match(chapterDraftText, /Created chapter draft/);
     assert.match(paragraphDraftText, /Created paragraph draft/);
     assert.match(chapterContextText, /Always-read prose guide/);
+    assert.match(chapterContextText, /Explicit chapter override: yes/);
+    assert.match(chapterContextText, /style:first-person-show/);
     assert.match(paragraphContextText, /Target paragraph draft/);
     assert.match(resumeBookContextText, /Resume Book Context/);
     assert.match(resumeBookContextText, /Conversation Resume/);
+    assert.match(reusedWikipediaText, /Reused saved research snapshot/);
+    assert.match(reusedWikipediaText, /research\/wikipedia\/en\/venice\.md/);
     assert.match(chapterFromDraftText, /Created or updated chapter from draft/);
     assert.match(paragraphFromDraftText, /Created or updated paragraph from draft/);
     assert.match(chapterFromDraftText, /Chapter resume synced at/);
@@ -338,6 +384,14 @@ test("mcp server tools support guided creation and structural updates", async ()
     assert.match(searchText, /The Signal/i);
     assert.match(updateChapterText, /sync_story_state/);
     assert.match(updateParagraphText, /sync_story_state/);
+    assert.match(reviseParagraphText, /Files written: no/);
+    assert.match(reviseParagraphText, /Continuity impact: clear/);
+    assert.match(reviseParagraphText, /Suggested state_changes:/);
+    assert.match(reviseParagraphText, /warn-taren/i);
+    assert.match(reviseChapterText, /Files written: no/);
+    assert.match(reviseChapterText, /Revision plan:/);
+    assert.match(reviseChapterText, /Overall continuity impact: clear/);
+    assert.match(reviseChapterText, /Scene proposals:/);
     assert.match(renameEntityText, /Renamed character/);
     assert.match(renameChapterText, /Renamed chapter/);
     assert.match(renameParagraphText, /Renamed paragraph/);
