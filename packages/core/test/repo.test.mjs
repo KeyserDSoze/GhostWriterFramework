@@ -745,9 +745,7 @@ test("upgradeBookRepo refreshes managed scaffolding and preserves author files",
     assert.match(opencodeConfig, /"default_agent": "build"/);
     assert.match(resumeCommand, /resume_book_context/);
     assert.equal(proseGuide, "# Custom Prose\n\nKeep this intact.\n");
-    assert.match(result.updated.join("\n"), /opencode\.jsonc/);
-    assert.ok(result.backedUp.length >= 2);
-    assert.ok(result.backupRoot);
+    assert.match(result.updated.join("\n"), /resume-book\.md/);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }

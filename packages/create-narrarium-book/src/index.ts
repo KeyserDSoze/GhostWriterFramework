@@ -171,7 +171,6 @@ async function runUpgrade(args: ParsedArgs) {
       `Narrarium book upgraded at ${targetPath}`,
       upgrade.created.length > 0 ? `- Created missing scaffold files: ${upgrade.created.join(", ")}` : "- No scaffold files were missing.",
       upgrade.updated.length > 0 ? `- Updated managed files: ${upgrade.updated.join(", ")}` : "- Managed repo files were already up to date.",
-      upgrade.backedUp.length > 0 && upgrade.backupRoot ? `- Backed up replaced files under ${upgrade.backupRoot}` : "- No repo file backups were needed.",
       ...(readerPath ? [`- Reader scaffold upgraded at ${readerPath}`] : ["- Reader scaffold not touched. Pass `--with-reader` to refresh it too."]),
       ...(readerInstalled ? ["- Reader dependencies were reinstalled automatically"] : []),
       "",

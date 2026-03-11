@@ -905,6 +905,10 @@ export async function initializeBookRepo(
     await ensureFile(root, file.relativePath, file.content, created);
   }
 
+  for (const file of getInitOnlyBookScaffoldFiles()) {
+    await ensureFile(root, file.relativePath, file.content, created);
+  }
+
   return { rootPath: root, created };
 }
 
@@ -915,8 +919,6 @@ export async function upgradeBookRepo(
   rootPath: string;
   created: string[];
   updated: string[];
-  backedUp: string[];
-  backupRoot?: string;
 }> {
   const root = path.resolve(rootPath);
   const book = await readBook(root);
@@ -933,8 +935,6 @@ export async function upgradeBookRepo(
   })).created;
 
   const updated: string[] = [];
-  const backedUp: string[] = [];
-  let backupRoot: string | undefined;
 
   for (const file of getManagedBookScaffoldFiles(options?.createSkills ?? true)) {
     const filePath = path.join(root, file.relativePath);
@@ -942,14 +942,6 @@ export async function upgradeBookRepo(
 
     if (existingContent === file.content) {
       continue;
-    }
-
-    if (existingContent !== null) {
-      backupRoot ??= path.join(root, ".narrarium-upgrade-backups", formatBackupStamp(new Date()));
-      const backupPath = path.join(backupRoot, file.relativePath);
-      await mkdir(path.dirname(backupPath), { recursive: true });
-      await writeFile(backupPath, existingContent, "utf8");
-      backedUp.push(toPosixPath(path.relative(root, backupPath)));
     }
 
     await mkdir(path.dirname(filePath), { recursive: true });
@@ -961,8 +953,6 @@ export async function upgradeBookRepo(
     rootPath: root,
     created,
     updated,
-    backedUp,
-    backupRoot: backupRoot ? toPosixPath(path.relative(root, backupRoot)) : undefined,
   };
 }
 
@@ -7299,6 +7289,8 @@ function buildGithubCopilotInstructions(): string {
   ].join("\n");
 }
 
+// Files synced on every upgrade: skill templates, commands, plugins, readmes.
+// Do NOT include user-editable config files here.
 function getManagedBookScaffoldFiles(createSkills: boolean): Array<{ relativePath: string; content: string }> {
   return [
     ...(createSkills
@@ -7308,10 +7300,17 @@ function getManagedBookScaffoldFiles(createSkills: boolean): Array<{ relativePat
           { relativePath: ".github/copilot-instructions.md", content: buildGithubCopilotInstructions() },
         ]
       : []),
-    { relativePath: "opencode.jsonc", content: buildOpencodeProjectConfig() },
     { relativePath: ".opencode/commands/resume-book.md", content: buildResumeBookCommand() },
     { relativePath: ".opencode/plugins/conversation-export.js", content: buildConversationExportPlugin() },
     { relativePath: "conversations/README.md", content: buildConversationsReadme() },
+  ];
+}
+
+// Files created once and never overwritten on upgrade.
+// These are user-editable config files (opencode, vscode MCP, etc.).
+function getInitOnlyBookScaffoldFiles(): Array<{ relativePath: string; content: string }> {
+  return [
+    { relativePath: "opencode.jsonc", content: buildOpencodeProjectConfig() },
     { relativePath: ".vscode/mcp.json", content: buildVscodeMcpConfig() },
   ];
 }
@@ -7593,18 +7592,6 @@ function buildConversationExportPlugin(): string {
     '}',
     '',
   ].join("\n");
-}
-
-function formatBackupStamp(date: Date): string {
-  return [
-    date.getUTCFullYear(),
-    String(date.getUTCMonth() + 1).padStart(2, "0"),
-    String(date.getUTCDate()).padStart(2, "0"),
-    "-",
-    String(date.getUTCHours()).padStart(2, "0"),
-    String(date.getUTCMinutes()).padStart(2, "0"),
-    String(date.getUTCSeconds()).padStart(2, "0"),
-  ].join("");
 }
 
 function addContextSection(
