@@ -894,6 +894,13 @@ export async function initializeBookRepo(
     created,
   );
 
+  await ensureFile(
+    root,
+    "conversations/config.json",
+    JSON.stringify({ saveSessionFiles: true }, null, 2) + "\n",
+    created,
+  );
+
   for (const file of getManagedBookScaffoldFiles(options.createSkills ?? true)) {
     await ensureFile(root, file.relativePath, file.content, created);
   }
@@ -6383,31 +6390,55 @@ function escapeHtml(value: string): string {
 export async function writeWikipediaResearchSnapshot(
   rootPath: string,
   options: {
-    lang: "en" | "it";
     title: string;
     pageUrl: string;
     slug?: string;
     summary: string;
+    secondarySummary?: string;
+    secondaryPageUrl?: string;
+    secondaryLang?: string;
     body?: string;
   },
 ): Promise<string> {
   const root = path.resolve(rootPath);
   const slug = options.slug ?? slugify(options.title);
-  const filePath = path.join(root, "research", "wikipedia", options.lang, `${slug}.md`);
+  const filePath = path.join(root, "research", "wikipedia", `${slug}.md`);
+  const secondaryLangLabel = options.secondaryLang ? options.secondaryLang.toUpperCase() : "IT";
+  const language = options.secondarySummary ? `en+${(options.secondaryLang ?? "it").toLowerCase()}` : "en";
 
   await mkdir(path.dirname(filePath), { recursive: true });
+
+  const existingRaw = await readFile(filePath, "utf8").catch(() => null);
+
+  let notesSection: string;
+  if (existingRaw && options.secondarySummary) {
+    // File exists: enrich with secondary language section if not already present
+    if (existingRaw.includes(`# Summary (${secondaryLangLabel})`) || existingRaw.includes("# Summary (English)")) {
+      return filePath; // already enriched — nothing to do
+    }
+    const enriched = existingRaw.trimEnd() + `\n\n# Summary (${secondaryLangLabel})\n\n${options.secondarySummary}${options.secondaryPageUrl ? `\n\nSource: ${options.secondaryPageUrl}` : ""}`;
+    await writeFile(filePath, enriched, "utf8");
+    return filePath;
+  }
+
+  let bodyContent = options.body ?? "Add extracted facts and relevance here.";
+  if (options.secondarySummary) {
+    bodyContent += `\n\n# Summary (${secondaryLangLabel})\n\n${options.secondarySummary}${options.secondaryPageUrl ? `\n\nSource: ${options.secondaryPageUrl}` : ""}`;
+  }
+  notesSection = bodyContent;
+
   await writeFile(
     filePath,
     renderMarkdown(
       researchNoteSchema.parse({
         type: "research-note",
-        id: `research:wikipedia:${options.lang}:${slug}`,
+        id: `research:wikipedia:${slug}`,
         title: options.title,
-        language: options.lang,
+        language,
         source_url: options.pageUrl,
         retrieved_at: new Date().toISOString(),
       }),
-      `# Summary\n\n${options.summary}\n\n# Notes\n\n${options.body ?? "Add extracted facts and relevance here."}`,
+      `# Summary\n\n${options.summary}\n\n# Notes\n\n${notesSection}`,
     ),
     "utf8",
   );
@@ -6418,16 +6449,12 @@ export async function writeWikipediaResearchSnapshot(
 export async function findWikipediaResearchSnapshot(
   rootPath: string,
   options: {
-    lang: "en" | "it";
     title: string;
     slug?: string;
   },
 ): Promise<WikipediaResearchSnapshot | null> {
   const root = path.resolve(rootPath);
-  const researchRoot = path.join(root, "research", "wikipedia", options.lang);
-  if (!(await pathExists(researchRoot))) {
-    return null;
-  }
+  const researchRoot = path.join(root, "research", "wikipedia");
 
   const candidateSlugs = uniqueValues(
     [options.slug, slugify(options.title)]
@@ -6435,39 +6462,42 @@ export async function findWikipediaResearchSnapshot(
       .map((value) => value.trim().toLowerCase()),
   );
 
-  for (const candidateSlug of candidateSlugs) {
-    const candidatePath = path.join(researchRoot, `${candidateSlug}.md`);
-    if (await pathExists(candidatePath)) {
-      const document = await readMarkdownFile(candidatePath, researchNoteSchema);
-      return {
-        filePath: candidatePath,
-        relativePath: toPosixPath(path.relative(root, candidatePath)),
-        title: document.frontmatter.title,
-        sourceUrl: document.frontmatter.source_url,
-        retrievedAt: document.frontmatter.retrieved_at,
-        summary: summarizeText(document.body, 280) || document.frontmatter.title,
-        body: document.body,
-      };
+  // Primary: flat research/wikipedia/{slug}.md
+  if (await pathExists(researchRoot)) {
+    for (const candidateSlug of candidateSlugs) {
+      const candidatePath = path.join(researchRoot, `${candidateSlug}.md`);
+      if (await pathExists(candidatePath)) {
+        const document = await readMarkdownFile(candidatePath, researchNoteSchema);
+        return {
+          filePath: candidatePath,
+          relativePath: toPosixPath(path.relative(root, candidatePath)),
+          title: document.frontmatter.title,
+          sourceUrl: document.frontmatter.source_url,
+          retrievedAt: document.frontmatter.retrieved_at,
+          summary: summarizeText(document.body, 280) || document.frontmatter.title,
+          body: document.body,
+        };
+      }
     }
-  }
 
-  const files = await fg("*.md", { cwd: researchRoot, absolute: true, onlyFiles: true });
-  const normalizedTitle = options.title.trim().toLowerCase();
+    const files = await fg("*.md", { cwd: researchRoot, absolute: true, onlyFiles: true });
+    const normalizedTitle = options.title.trim().toLowerCase();
 
-  for (const filePath of files) {
-    const document = await readMarkdownFile(filePath, researchNoteSchema).catch(() => null);
-    if (!document) continue;
+    for (const filePath of files) {
+      const document = await readMarkdownFile(filePath, researchNoteSchema).catch(() => null);
+      if (!document) continue;
 
-    if (document.frontmatter.title.trim().toLowerCase() === normalizedTitle) {
-      return {
-        filePath,
-        relativePath: toPosixPath(path.relative(root, filePath)),
-        title: document.frontmatter.title,
-        sourceUrl: document.frontmatter.source_url,
-        retrievedAt: document.frontmatter.retrieved_at,
-        summary: summarizeText(document.body, 280) || document.frontmatter.title,
-        body: document.body,
-      };
+      if (document.frontmatter.title.trim().toLowerCase() === normalizedTitle) {
+        return {
+          filePath,
+          relativePath: toPosixPath(path.relative(root, filePath)),
+          title: document.frontmatter.title,
+          sourceUrl: document.frontmatter.source_url,
+          retrievedAt: document.frontmatter.retrieved_at,
+          summary: summarizeText(document.body, 280) || document.frontmatter.title,
+          body: document.body,
+        };
+      }
     }
   }
 
@@ -7207,7 +7237,7 @@ function buildResumeBookCommand(): string {
 
 function buildConversationExportPlugin(): string {
   return [
-    'import { mkdir, writeFile } from "node:fs/promises";',
+    'import { mkdir, readFile, writeFile } from "node:fs/promises";',
     'import path from "node:path";',
     '',
     'const MAX_RESUME_LENGTH = 900;',
@@ -7245,7 +7275,8 @@ function buildConversationExportPlugin(): string {
     '};',
     '',
     'async function exportConversation(client, conversationsDir, sessionsDir, sessionId) {',
-    '  await mkdir(sessionsDir, { recursive: true });',
+    '  const config = await loadConversationsConfig(conversationsDir);',
+    '  const saveSessionFiles = config.saveSessionFiles !== false;',
     '',
     '  const session = unwrap(await client.session.get({ path: { id: sessionId } }));',
     '  const messages = unwrap(await client.session.messages({ path: { id: sessionId } }));',
@@ -7258,8 +7289,6 @@ function buildConversationExportPlugin(): string {
     '  const stamp = formatDateForFile(session.updatedAt || session.createdAt || Date.now());',
     '  const slug = slugify(title);',
     '  const baseName = `${stamp}--${slug}--${sessionId}`;',
-    '  const markdownPath = path.join(sessionsDir, `${baseName}.md`);',
-    '  const jsonPath = path.join(sessionsDir, `${baseName}.json`);',
     '',
     '  const structuredMessages = messages.map((entry) => ({',
     '    id: entry.info?.id || "",',
@@ -7269,20 +7298,30 @@ function buildConversationExportPlugin(): string {
     '    text: messageText(Array.isArray(entry.parts) ? entry.parts : []),',
     '  }));',
     '',
-    '  const markdown = renderConversationMarkdown({',
-    '    sessionId,',
-    '    title,',
-    '    createdAt: session.createdAt || null,',
-    '    updatedAt: session.updatedAt || null,',
-    '    messages: structuredMessages,',
-    '  });',
+    '  let sessionFilePath = null;',
     '',
-    '  await writeFile(markdownPath, markdown, "utf8");',
-    '  await writeFile(jsonPath, JSON.stringify({ session, messages: structuredMessages }, null, 2) + "\\n", "utf8");',
+    '  if (saveSessionFiles) {',
+    '    await mkdir(sessionsDir, { recursive: true });',
+    '    const markdownPath = path.join(sessionsDir, `${baseName}.md`);',
+    '    const jsonPath = path.join(sessionsDir, `${baseName}.json`);',
+    '    const markdown = renderConversationMarkdown({',
+    '      sessionId,',
+    '      title,',
+    '      createdAt: session.createdAt || null,',
+    '      updatedAt: session.updatedAt || null,',
+    '      messages: structuredMessages,',
+    '    });',
+    '    await writeFile(markdownPath, markdown, "utf8");',
+    '    await writeFile(jsonPath, JSON.stringify({ session, messages: structuredMessages }, null, 2) + "\\n", "utf8");',
+    '    sessionFilePath = markdownPath;',
+    '  }',
     '',
     '  const latestUser = findLatestMessage(structuredMessages, "user");',
     '  const latestAssistant = findLatestMessage(structuredMessages, "assistant");',
     '  const latestExcerpt = summarizeText(latestAssistant?.text || latestUser?.text || "", MAX_RESUME_LENGTH);',
+    '  const resumeExportLine = sessionFilePath',
+    '    ? `- Export: ${toPosix(path.relative(conversationsDir, sessionFilePath))}`',
+    '    : null;',
     '  await writeFile(',
     '    path.join(conversationsDir, "RESUME.md"),',
     '    [',
@@ -7291,7 +7330,7 @@ function buildConversationExportPlugin(): string {
     '      `- Latest session: ${title}` ,',
     '      `- Session id: ${sessionId}` ,',
     '      `- Updated: ${formatDateForDisplay(session.updatedAt || session.createdAt || Date.now())}` ,',
-    '      `- Export: ${toPosix(path.relative(conversationsDir, markdownPath))}` ,',
+    '      ...(resumeExportLine ? [resumeExportLine] : []),',
     '      "",',
     '      "## Latest user intent",',
     '      "",',
@@ -7304,6 +7343,9 @@ function buildConversationExportPlugin(): string {
     '    "utf8",',
     '  );',
     '',
+    '  const continuationSessionLine = sessionFilePath',
+    '    ? `7. conversations/sessions/${baseName}.md`',
+    '    : null;',
     '  await writeFile(',
     '    path.join(conversationsDir, "CONTINUATION.md"),',
     '    [',
@@ -7313,13 +7355,13 @@ function buildConversationExportPlugin(): string {
     '      "",',
     '      "## Read first",',
     '      "",',
-      '      "1. guidelines/prose.md",',
-      '      "2. plot.md",',
-      '      "3. resumes/total.md",',
-      '      "4. state/current.md",',
-      '      "5. state/status.md if it shows dirty: true",',
-      '      "6. Any matching files in drafts/",',
-      '      `7. conversations/sessions/${baseName}.md`,',
+    '      "1. guidelines/prose.md",',
+    '      "2. plot.md",',
+    '      "3. resumes/total.md",',
+    '      "4. state/current.md",',
+    '      "5. state/status.md if it shows dirty: true",',
+    '      "6. Any matching files in drafts/",',
+    '      ...(continuationSessionLine ? [continuationSessionLine] : []),',
     '      "",',
     '      "## Current conversation snapshot",',
     '      "",',
@@ -7337,10 +7379,19 @@ function buildConversationExportPlugin(): string {
     '      "",',
     '      "## Resume prompt",',
     '      "",',
-      '      "Run `/resume-book` or ask OpenCode to resume work from repository state, exported conversations, plot, resumes, state snapshots, and drafts before continuing.",',
+    '      "Run `/resume-book` or ask OpenCode to resume work from repository state, exported conversations, plot, resumes, state snapshots, and drafts before continuing.",',
     '    ].join("\\n"),',
     '    "utf8",',
     '  );',
+    '}',
+    '',
+    'async function loadConversationsConfig(conversationsDir) {',
+    '  try {',
+    '    const raw = await readFile(path.join(conversationsDir, "config.json"), "utf8");',
+    '    return JSON.parse(raw);',
+    '  } catch {',
+    '    return {};',
+    '  }',
     '}',
     '',
     'function renderConversationMarkdown({ sessionId, title, createdAt, updatedAt, messages }) {',

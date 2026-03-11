@@ -80,7 +80,7 @@ export function buildRepositorySpecSummary(): string {
   ].join("\n");
 }
 
-export async function searchWikipedia(query: string, lang: "en" | "it", limit: number) {
+export async function searchWikipedia(query: string, lang: string, limit: number) {
   const url = new URL(`https://${lang}.wikipedia.org/w/api.php`);
   url.searchParams.set("action", "query");
   url.searchParams.set("list", "search");
@@ -110,7 +110,7 @@ export async function searchWikipedia(query: string, lang: "en" | "it", limit: n
   }));
 }
 
-export async function fetchWikipediaPage(title: string, lang: "en" | "it") {
+export async function fetchWikipediaPage(title: string, lang: string) {
   const url = new URL(
     `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, "_"))}`,
   );

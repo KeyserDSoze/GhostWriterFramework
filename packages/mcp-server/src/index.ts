@@ -400,11 +400,10 @@ server.tool(
     overwrite: z.boolean().default(false),
     frontmatter: z.record(z.string(), z.unknown()).default({}),
     body: z.string().optional(),
-    saveWikipediaResearch: z.boolean().default(true),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
+    wikipediaLang: z.string().min(2).default("en"),
     ...wikipediaRefreshToolFields,
   },
-  async ({ sessionId, slug, overwrite, frontmatter, body, saveWikipediaResearch, wikipediaLang, forceWikipediaRefresh, maxWikipediaSnapshotAgeDays }) => {
+  async ({ sessionId, slug, overwrite, frontmatter, body, wikipediaLang, forceWikipediaRefresh, maxWikipediaSnapshotAgeDays }) => {
     const session = wizardSessions.get(sessionId);
     if (!session) {
       throw new Error(`Unknown wizard session: ${sessionId}`);
@@ -415,8 +414,7 @@ server.tool(
       overwrite,
       frontmatter,
       body,
-      saveWikipediaResearch,
-      wikipediaLang,
+      lang: wikipediaLang,
       forceWikipediaRefresh,
       maxWikipediaSnapshotAgeDays,
     });
@@ -511,8 +509,7 @@ server.tool(
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
     ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
@@ -557,7 +554,6 @@ server.tool(
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
     forceWikipediaRefresh,
     maxWikipediaSnapshotAgeDays,
     frontmatter,
@@ -565,10 +561,9 @@ server.tool(
     const { sources, note: wikipediaNote } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
-      wikipediaLang,
       rootPath,
       slug,
-      saveWikipediaResearch,
+      lang: wikipediaLang,
       forceWikipediaRefresh,
       maxWikipediaSnapshotAgeDays,
     });
@@ -669,8 +664,7 @@ server.tool(
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
     ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
@@ -698,7 +692,6 @@ server.tool(
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
     forceWikipediaRefresh,
     maxWikipediaSnapshotAgeDays,
     frontmatter,
@@ -706,10 +699,9 @@ server.tool(
     const { sources, note } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
-      wikipediaLang,
       rootPath,
       slug,
-      saveWikipediaResearch,
+      lang: wikipediaLang,
       forceWikipediaRefresh,
       maxWikipediaSnapshotAgeDays,
     });
@@ -795,8 +787,7 @@ server.tool(
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
     ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
@@ -826,7 +817,6 @@ server.tool(
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
     forceWikipediaRefresh,
     maxWikipediaSnapshotAgeDays,
     frontmatter,
@@ -834,10 +824,9 @@ server.tool(
     const { sources, note } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
-      wikipediaLang,
       rootPath,
       slug,
-      saveWikipediaResearch,
+      lang: wikipediaLang,
       forceWikipediaRefresh,
       maxWikipediaSnapshotAgeDays,
     });
@@ -924,8 +913,7 @@ server.tool(
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
     ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
@@ -954,7 +942,6 @@ server.tool(
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
     forceWikipediaRefresh,
     maxWikipediaSnapshotAgeDays,
     frontmatter,
@@ -962,10 +949,9 @@ server.tool(
     const { sources, note } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
-      wikipediaLang,
       rootPath,
       slug,
-      saveWikipediaResearch,
+      lang: wikipediaLang,
       forceWikipediaRefresh,
       maxWikipediaSnapshotAgeDays,
     });
@@ -1052,8 +1038,7 @@ server.tool(
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
     ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
@@ -1080,7 +1065,6 @@ server.tool(
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
     forceWikipediaRefresh,
     maxWikipediaSnapshotAgeDays,
     frontmatter,
@@ -1088,10 +1072,9 @@ server.tool(
     const { sources, note } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
-      wikipediaLang,
       rootPath,
       slug,
-      saveWikipediaResearch,
+      lang: wikipediaLang,
       forceWikipediaRefresh,
       maxWikipediaSnapshotAgeDays,
     });
@@ -1170,8 +1153,7 @@ server.tool(
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
     ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
@@ -1195,7 +1177,6 @@ server.tool(
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
     forceWikipediaRefresh,
     maxWikipediaSnapshotAgeDays,
     frontmatter,
@@ -1203,10 +1184,9 @@ server.tool(
     const { sources, note } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
-      wikipediaLang,
       rootPath,
       slug,
-      saveWikipediaResearch,
+      lang: wikipediaLang,
       forceWikipediaRefresh,
       maxWikipediaSnapshotAgeDays,
     });
@@ -1439,8 +1419,7 @@ server.tool(
     frontmatter: z.record(z.string(), z.unknown()).default({}),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
     ...wikipediaRefreshToolFields,
   },
   async ({
@@ -1453,7 +1432,6 @@ server.tool(
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
     forceWikipediaRefresh,
     maxWikipediaSnapshotAgeDays,
   }) => {
@@ -1464,10 +1442,9 @@ server.tool(
       const { sources, note } = await collectHistoricalResearchSupport({
         historical,
         wikipediaTitle,
-        wikipediaLang,
+        lang: wikipediaLang,
         rootPath,
         slug,
-        saveWikipediaResearch,
         forceWikipediaRefresh,
         maxWikipediaSnapshotAgeDays,
       });
@@ -2210,24 +2187,39 @@ server.tool(
 
 server.tool(
   "wikipedia_search",
-  "Search English or Italian Wikipedia for historical or factual research before adding canon to the book repository.",
+  "Search English and the user's request language Wikipedia for historical or factual research before adding canon to the book repository.",
   {
     query: z.string().min(1),
-    lang: z.enum(["en", "it"]).default("en"),
     limit: z.number().int().positive().max(10).default(5),
+    lang: z.string().min(2).default("en"),
   },
-  async ({ query, lang, limit }) => {
-    const results = await searchWikipedia(query, lang, limit);
+  async ({ query, limit, lang }) => {
+    const secondaryLang = lang !== "en" ? lang : null;
+    const langs = secondaryLang ? ["en", secondaryLang] : ["en"];
+    const results = await Promise.allSettled(langs.map((l) => searchWikipedia(query, l, limit)));
 
-    if (results.length === 0) {
-      return textResponse(`No Wikipedia matches found for "${query}" in ${lang}.`);
+    const seenTitles = new Set<string>();
+    const merged: Array<{ title: string; snippet: string; url: string; lang: string }> = [];
+    for (let i = 0; i < langs.length; i++) {
+      const result = results[i];
+      const entries = result.status === "fulfilled" ? result.value : [];
+      for (const entry of entries) {
+        if (!seenTitles.has(entry.title.toLowerCase())) {
+          seenTitles.add(entry.title.toLowerCase());
+          merged.push({ ...entry, lang: langs[i] });
+        }
+      }
+    }
+
+    if (merged.length === 0) {
+      return textResponse(`No Wikipedia matches found for "${query}".`);
     }
 
     return textResponse(
-      results
+      merged
         .map(
           (entry, index) =>
-            `${index + 1}. ${entry.title}\n   ${entry.snippet}\n   ${entry.url}`,
+            `${index + 1}. [${entry.lang}] ${entry.title}\n   ${entry.snippet}\n   ${entry.url}`,
         )
         .join("\n"),
     );
@@ -2236,18 +2228,18 @@ server.tool(
 
 server.tool(
   "wikipedia_page",
-  "Fetch a Wikipedia page summary and optionally save it into research/wikipedia inside the local book repository.",
+  "Fetch English and the user's request language Wikipedia page summaries and save them into research/wikipedia inside the local book repository.",
   {
     title: z.string().min(1),
-    lang: z.enum(["en", "it"]).default("en"),
     rootPath: z.string().optional(),
-    saveToResearch: z.boolean().default(false),
+    saveToResearch: z.boolean().default(true),
     slug: z.string().optional(),
+    lang: z.string().min(2).default("en"),
     ...wikipediaRefreshToolFields,
   },
   async ({ title, lang, rootPath, saveToResearch, slug, forceWikipediaRefresh, maxWikipediaSnapshotAgeDays }) => {
     if (rootPath) {
-      const existing = await findWikipediaResearchSnapshot(rootPath, { lang, title, slug });
+      const existing = await findWikipediaResearchSnapshot(rootPath, { title, slug });
       if (existing && shouldReuseWikipediaSnapshot(existing, { forceWikipediaRefresh, maxWikipediaSnapshotAgeDays })) {
         return textResponse(
           `${existing.title}\n\nReused saved research snapshot from ${existing.relativePath}.\n\n${existing.body}\n\n${existing.sourceUrl}`,
@@ -2255,7 +2247,23 @@ server.tool(
       }
     }
 
-    const page = await fetchWikipediaPage(title, lang);
+    const secondaryLang = lang !== "en" ? lang : null;
+
+    const [enResult, secondaryResult] = await Promise.allSettled([
+      fetchWikipediaPage(title, "en"),
+      secondaryLang
+        ? fetchWikipediaPage(title, secondaryLang)
+        : Promise.reject(new Error("no secondary lang")),
+    ]);
+    const enPage = enResult.status === "fulfilled" ? enResult.value : null;
+    const secondaryPage = secondaryLang && secondaryResult.status === "fulfilled" ? secondaryResult.value : null;
+
+    if (!enPage && !secondaryPage) {
+      throw new Error(`Wikipedia page not found for "${title}".`);
+    }
+
+    const primary = enPage ?? secondaryPage!;
+    const secondary = enPage && secondaryPage ? secondaryPage : null;
     let researchPath = "";
 
     if (saveToResearch) {
@@ -2264,18 +2272,26 @@ server.tool(
       }
 
       researchPath = await writeWikipediaResearchSnapshot(rootPath, {
-        lang,
-        title: page.title,
-        pageUrl: page.url,
+        title: primary.title,
+        pageUrl: primary.url,
         slug,
-        summary: page.extract,
-        body: page.description ? `Description: ${page.description}` : undefined,
+        summary: primary.extract,
+        body: primary.description ? `Description: ${primary.description}` : undefined,
+        secondarySummary: secondary?.extract,
+        secondaryPageUrl: secondary?.url,
+        secondaryLang: secondaryLang ?? undefined,
       });
     }
 
-    return textResponse(
-      `${page.title}\n${page.description ?? ""}\n\n${page.extract}\n\n${page.url}${researchPath ? `\nSaved to ${researchPath}` : ""}`,
-    );
+    const lines = [`${primary.title}\n${primary.description ?? ""}\n\n${primary.extract}\n\n${primary.url}`];
+    if (secondary) {
+      lines.push(`\n[${secondaryLang!.toUpperCase()}] ${secondary.title}\n${secondary.description ?? ""}\n\n${secondary.extract}\n\n${secondary.url}`);
+    }
+    if (researchPath) {
+      lines.push(`\nSaved to ${researchPath}`);
+    }
+
+    return textResponse(lines.join(""));
   },
 );
 
@@ -2489,10 +2505,9 @@ function wizardChecklist(options: {
 async function collectHistoricalResearchSupport(options: {
   historical: boolean;
   wikipediaTitle?: string;
-  wikipediaLang: "en" | "it";
+  lang?: string;
   rootPath: string;
   slug?: string;
-  saveWikipediaResearch: boolean;
   forceWikipediaRefresh?: boolean;
   maxWikipediaSnapshotAgeDays?: number;
 }): Promise<{ sources: string[]; note: string }> {
@@ -2501,7 +2516,6 @@ async function collectHistoricalResearchSupport(options: {
   }
 
   const existing = await findWikipediaResearchSnapshot(options.rootPath, {
-    lang: options.wikipediaLang,
     title: options.wikipediaTitle,
     slug: options.slug,
   });
@@ -2512,22 +2526,39 @@ async function collectHistoricalResearchSupport(options: {
     };
   }
 
-  const page = await fetchWikipediaPage(options.wikipediaTitle, options.wikipediaLang);
-  let note = "";
+  const secondaryLang = options.lang && options.lang !== "en" ? options.lang : null;
 
-  if (options.saveWikipediaResearch) {
-    const researchPath = await writeWikipediaResearchSnapshot(options.rootPath, {
-      lang: options.wikipediaLang,
-      title: page.title,
-      pageUrl: page.url,
-      slug: options.slug,
-      summary: page.extract,
-      body: page.description ? `Description: ${page.description}` : undefined,
-    });
-    note = ` Saved research snapshot to ${researchPath}.`;
+  const [enResult, secondaryResult] = await Promise.allSettled([
+    fetchWikipediaPage(options.wikipediaTitle, "en"),
+    secondaryLang
+      ? fetchWikipediaPage(options.wikipediaTitle, secondaryLang)
+      : Promise.reject(new Error("no secondary lang")),
+  ]);
+  const enPage = enResult.status === "fulfilled" ? enResult.value : null;
+  const secondaryPage = secondaryLang && secondaryResult.status === "fulfilled" ? secondaryResult.value : null;
+
+  if (!enPage && !secondaryPage) {
+    throw new Error(`Wikipedia page not found for "${options.wikipediaTitle}".`);
   }
 
-  return { sources: [page.url], note };
+  const primary = enPage ?? secondaryPage!;
+  const secondary = enPage && secondaryPage ? secondaryPage : null;
+
+  const researchPath = await writeWikipediaResearchSnapshot(options.rootPath, {
+    title: primary.title,
+    pageUrl: primary.url,
+    slug: options.slug,
+    summary: primary.extract,
+    body: primary.description ? `Description: ${primary.description}` : undefined,
+    secondarySummary: secondary?.extract,
+    secondaryPageUrl: secondary?.url,
+    secondaryLang: secondaryLang ?? undefined,
+  });
+
+  return {
+    sources: [primary.url, ...(secondary ? [secondary.url] : [])],
+    note: ` Saved research snapshot to ${researchPath}.`,
+  };
 }
 
 function shouldReuseWikipediaSnapshot(
@@ -2622,8 +2653,7 @@ async function finalizeWizardSession(
     overwrite: boolean;
     frontmatter: Record<string, unknown>;
     body?: string;
-    saveWikipediaResearch: boolean;
-    wikipediaLang: "en" | "it";
+    lang?: string;
     forceWikipediaRefresh?: boolean;
     maxWikipediaSnapshotAgeDays?: number;
   },
@@ -2639,10 +2669,9 @@ async function finalizeWizardSession(
   const research = await collectHistoricalResearchSupport({
     historical,
     wikipediaTitle,
-    wikipediaLang: options.wikipediaLang,
+    lang: options.lang,
     rootPath: session.rootPath,
     slug: options.slug,
-    saveWikipediaResearch: options.saveWikipediaResearch,
     forceWikipediaRefresh: options.forceWikipediaRefresh,
     maxWikipediaSnapshotAgeDays: options.maxWikipediaSnapshotAgeDays,
   });
