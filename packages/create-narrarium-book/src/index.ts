@@ -514,6 +514,7 @@ async function backupEntry(sourcePath: string, destinationPath: string): Promise
 
 function inferReaderBookRoot(readerDir: string, targetPath: string): string {
   const readerRoot = path.resolve(readerDir);
+  const fallback = path.relative(readerRoot, targetPath) || ".";
   const bookConfigCandidates = [
     path.join(readerRoot, "scripts", "book-config.mjs"),
     path.join(readerRoot, "src", "lib", "book-config.ts"),
@@ -524,11 +525,23 @@ function inferReaderBookRoot(readerDir: string, targetPath: string): string {
     const raw = readFileSync(candidate, "utf8");
     const match = raw.match(/defaultBookRoot\s*=\s*["'`](.+?)["'`]/);
     if (match?.[1]) {
-      return match[1];
+      const resolvedCandidate = path.resolve(readerRoot, match[1]);
+      if (samePath(resolvedCandidate, targetPath)) {
+        return match[1];
+      }
     }
   }
 
-  return path.relative(readerRoot, targetPath) || ".";
+  return fallback;
+}
+
+function samePath(left: string, right: string): boolean {
+  const normalize = (value: string) => {
+    const normalized = path.resolve(value).replace(/[\\/]+/g, "/");
+    return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+  };
+
+  return normalize(left) === normalize(right);
 }
 
 function inferReaderPackageName(targetPath: string, readerDir: string, fallbackTitle: string): string {

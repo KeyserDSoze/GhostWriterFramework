@@ -9,7 +9,7 @@ import {
   readTimelineMain,
 } from "narrarium";
 import { defaultBookRoot } from "./book-config.js";
-import { readReaderBookRootEnv } from "./env.js";
+import { readReaderBookRootEnv, resolveReaderBookRootCandidate } from "./env.js";
 
 type ReaderEntityKind =
   | "character"
@@ -21,7 +21,8 @@ type ReaderEntityKind =
 
 export function getBookRoot(): string {
   const configured = readReaderBookRootEnv();
-  if (configured) return path.resolve(configured);
+  const resolvedConfigured = resolveReaderBookRootCandidate(configured);
+  if (resolvedConfigured) return resolvedConfigured;
   return path.resolve(process.cwd(), defaultBookRoot);
 }
 

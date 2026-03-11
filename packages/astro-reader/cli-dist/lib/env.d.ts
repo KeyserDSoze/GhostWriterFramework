@@ -3,5 +3,6 @@ export declare function normalizeReaderEnvValue(value: string | null | undefined
 export declare function isClearlyInvalidBookRootValue(value: string | null | undefined): boolean;
 export declare function readReaderEnv(keys: string[], sources?: EnvSource[]): string | undefined;
 export declare function readReaderBookRootEnv(sources?: EnvSource[]): string | undefined;
+export declare function resolveReaderBookRootCandidate(value: string | null | undefined, cwd?: string): string | undefined;
 export {};
 //# sourceMappingURL=env.d.ts.map

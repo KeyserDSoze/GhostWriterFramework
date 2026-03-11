@@ -1,11 +1,12 @@
 import path from "node:path";
 import { listChapters, listEntities, pathExists, readBook, readChapter, readEntity, readTimelineMain, } from "narrarium";
 import { defaultBookRoot } from "./book-config.js";
-import { readReaderBookRootEnv } from "./env.js";
+import { readReaderBookRootEnv, resolveReaderBookRootCandidate } from "./env.js";
 export function getBookRoot() {
     const configured = readReaderBookRootEnv();
-    if (configured)
-        return path.resolve(configured);
+    const resolvedConfigured = resolveReaderBookRootCandidate(configured);
+    if (resolvedConfigured)
+        return resolvedConfigured;
     return path.resolve(process.cwd(), defaultBookRoot);
 }
 export async function loadHomePageData() {

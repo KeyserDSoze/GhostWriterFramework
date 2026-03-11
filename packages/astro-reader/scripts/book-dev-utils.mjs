@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { exportEpub } from "narrarium";
 import { loadReaderEnvFiles } from "./env-loader.mjs";
@@ -46,7 +47,33 @@ export async function exportReaderEpub(defaultBookRoot, cwd = process.cwd()) {
   const outputPath = path.resolve(cwd, "public", "downloads", "book.epub");
 
   await mkdir(path.dirname(outputPath), { recursive: true });
-  const result = await exportEpub(bookRoot, { outputPath });
+  let result;
+
+  try {
+    result = await exportEpub(bookRoot, { outputPath });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === "Cannot export EPUB: no chapters found.") {
+      await rm(outputPath, { force: true }).catch(() => undefined);
+      return {
+        bookRoot,
+        outputPath,
+        result: {
+          chapterCount: 0,
+          outputPath,
+          skipped: true,
+          reason: "no-chapters",
+        },
+        validation: {
+          status: "skipped",
+          detail: "EPUB export skipped because this book has no chapters yet.",
+        },
+      };
+    }
+
+    throw error;
+  }
+
   const validation = await runOptionalEpubCheck(result.outputPath);
 
   return {
@@ -107,7 +134,10 @@ function readBookRootEnv() {
   for (const key of ["NARRARIUM_BOOK_ROOT", "GHOSTWRITER_BOOK_ROOT"]) {
     const value = normalizeEnvValue(process.env[key]);
     if (value && !isClearlyInvalidBookRootValue(value)) {
-      return value;
+      const resolved = path.resolve(process.cwd(), value);
+      if (existsSync(path.join(resolved, "book.md"))) {
+        return value;
+      }
     }
   }
 

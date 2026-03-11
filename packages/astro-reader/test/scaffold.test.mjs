@@ -2,8 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { scaffoldReaderSite } from "../cli-dist/scaffold.js";
+import { exportReaderEpub } from "../scripts/book-dev-utils.mjs";
 
 test("reader scaffold includes canon index pages and configurable core dependency", async () => {
   const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-reader-"));
@@ -38,6 +39,7 @@ test("reader scaffold includes canon index pages and configurable core dependenc
     assert.equal(result.coreDependency, "file:../../packages/core");
     assert.equal(packageJson.dependencies.narrarium, "file:../../packages/core");
     assert.equal(packageJson.dependencies.chokidar, "^4.0.3");
+    assert.equal(packageJson.dependencies["js-yaml"], "^3.14.2");
     assert.equal(packageJson.scripts.dev, "node ./scripts/dev.mjs");
     assert.equal(packageJson.scripts["export:epub"], "node ./scripts/export-epub.mjs");
     assert.equal(packageJson.scripts.doctor, "node ./scripts/doctor.mjs");
@@ -64,5 +66,30 @@ test("reader scaffold includes canon index pages and configurable core dependenc
     assert.match(timelinePage, /Timeline/);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("reader EPUB export skips cleanly when a book has no chapters yet", async () => {
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "narrarium-reader-empty-"));
+  const readerRoot = path.join(workspaceRoot, "reader");
+  const bookRoot = path.join(workspaceRoot, "book");
+
+  try {
+    await scaffoldReaderSite(readerRoot, {
+      bookRoot: "../book",
+      packageName: "reader-empty-site",
+      coreDependency: "file:../../packages/core",
+    });
+
+    await mkdir(bookRoot, { recursive: true });
+    await writeFile(path.join(bookRoot, "book.md"), "---\ntype: book\nid: book\ntitle: Empty Book\nlanguage: en\n---\n", "utf8");
+
+    const exportState = await exportReaderEpub("../book", readerRoot);
+
+    assert.equal(exportState.result.skipped, true);
+    assert.equal(exportState.result.reason, "no-chapters");
+    assert.match(exportState.validation.detail, /no chapters yet/i);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
   }
 });

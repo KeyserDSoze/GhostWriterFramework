@@ -33,7 +33,7 @@ const chapterCards = await Promise.all(
         : "Set NARRARIUM_BOOK_ROOT to a Narrarium book repository and this reader will render its chapters automatically."}
     </p>
 
-    {ready && <div class="chip-row"><a class="chip" href="downloads/book.epub" download>Download EPUB</a></div>}
+    {ready && chapters.length > 0 && <div class="chip-row"><a class="chip" href="downloads/book.epub" download>Download EPUB</a></div>}
 
     {coverFigure && <AssetFigure figure={coverFigure} className="hero-media" />}
 
@@ -117,18 +117,24 @@ const chapterCards = await Promise.all(
 
       <section class="section" id="chapters">
       <h2>Chapters</h2>
-      <div class="chapter-list">
-        {chapterCards.map((chapter) => (
-          <article class="chapter-card">
-            <a href={`chapters/${chapter.slug}/`}>
-              {chapter.figure && <AssetFigure figure={chapter.figure} className="catalog-media" />}
-              <div class="chapter-number">Chapter {String(chapter.metadata.number).padStart(3, "0")}</div>
-              <h3 class="chapter-title">{chapter.metadata.title}</h3>
-              <div class="chapter-meta">{chapter.metadata.summary ?? "Open the chapter to read scenes and notes."}</div>
-            </a>
-          </article>
-        ))}
-      </div>
+      {chapterCards.length > 0 ? (
+        <div class="chapter-list">
+          {chapterCards.map((chapter) => (
+            <article class="chapter-card">
+              <a href={`chapters/${chapter.slug}/`}>
+                {chapter.figure && <AssetFigure figure={chapter.figure} className="catalog-media" />}
+                <div class="chapter-number">Chapter {String(chapter.metadata.number).padStart(3, "0")}</div>
+                <h3 class="chapter-title">{chapter.metadata.title}</h3>
+                <div class="chapter-meta">{chapter.metadata.summary ?? "Open the chapter to read scenes and notes."}</div>
+              </a>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div class="empty">
+          This book repository is connected, but there are no chapter files yet. Once the first chapter is added, the reader and EPUB export will light up automatically.
+        </div>
+      )}
       </section>
     </>
   ) : (

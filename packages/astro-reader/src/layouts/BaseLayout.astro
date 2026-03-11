@@ -27,6 +27,7 @@ const canonGlossary = await loadCanonGlossary(currentChapterNumber);
 const searchIndex = await loadSearchIndex(currentChapterNumber);
 const readerChapters = await listChapters(getBookRoot()).catch(() => []);
 const fullCanonMode = isFullCanonMode();
+const isChapterPage = Number.isFinite(currentChapterNumber);
 ---
 
 <!doctype html>
@@ -59,10 +60,13 @@ const fullCanonMode = isFullCanonMode();
         --ink: #2c2018;
         --muted: #705742;
         --accent: #975f2d;
+        --accent-strong: #b86f28;
         --line: rgba(44, 32, 24, 0.12);
         --panel: rgba(255, 250, 240, 0.72);
         --shadow: 0 24px 60px rgba(44, 32, 24, 0.12);
         --surface-strong: rgba(255, 251, 243, 0.78);
+        --display-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Baskerville, serif;
+        --ui-family: "Avenir Next", "Segoe UI", sans-serif;
         --reader-font-scale: 1;
         --reader-leading: 1.72;
         --reader-measure: 72ch;
@@ -75,6 +79,7 @@ const fullCanonMode = isFullCanonMode();
         --ink: #f4ede1;
         --muted: #c4b29b;
         --accent: #d8a86b;
+        --accent-strong: #f2bf7c;
         --line: rgba(255, 244, 230, 0.12);
         --panel: rgba(36, 30, 28, 0.82);
         --shadow: 0 28px 60px rgba(0, 0, 0, 0.32);
@@ -87,7 +92,9 @@ const fullCanonMode = isFullCanonMode();
 
       html {
         background:
-          radial-gradient(circle at top, rgba(255, 255, 255, 0.18), transparent 35%),
+          radial-gradient(circle at top, rgba(255, 250, 232, 0.3), transparent 34%),
+          radial-gradient(circle at 80% 12%, rgba(151, 95, 45, 0.16), transparent 24%),
+          radial-gradient(circle at 12% 18%, rgba(102, 59, 30, 0.14), transparent 18%),
           repeating-linear-gradient(
             180deg,
             rgba(255, 255, 255, 0.08) 0,
@@ -100,11 +107,41 @@ const fullCanonMode = isFullCanonMode();
         font-family: Baskerville, "Palatino Linotype", "Book Antiqua", "Iowan Old Style", serif;
         line-height: 1.65;
         transition: background 180ms ease, color 180ms ease;
+        scroll-behavior: smooth;
       }
 
       body {
         margin: 0;
         min-height: 100vh;
+        position: relative;
+        overflow-x: hidden;
+      }
+
+      body::before,
+      body::after {
+        content: "";
+        position: fixed;
+        pointer-events: none;
+        z-index: -1;
+        filter: blur(10px);
+      }
+
+      body::before {
+        top: 5rem;
+        left: -5rem;
+        width: 18rem;
+        height: 18rem;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(151, 95, 45, 0.18), transparent 70%);
+      }
+
+      body::after {
+        right: -6rem;
+        bottom: 8rem;
+        width: 20rem;
+        height: 20rem;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(94, 63, 38, 0.16), transparent 70%);
       }
 
       body.tts-enabled .shell {
@@ -116,9 +153,10 @@ const fullCanonMode = isFullCanonMode();
       }
 
       .shell {
-        width: min(1080px, calc(100vw - 2rem));
+        position: relative;
+        width: min(1120px, calc(100vw - 2rem));
         margin: 0 auto;
-        padding: 2rem 0 4rem;
+        padding: 2rem 0 4.5rem;
       }
 
       .masthead {
@@ -127,12 +165,16 @@ const fullCanonMode = isFullCanonMode();
         justify-content: space-between;
         gap: 1rem;
         margin-bottom: 1.25rem;
-        padding: 0.9rem 1rem;
+        padding: 1rem 1.1rem;
         border: 1px solid var(--line);
         border-radius: 999px;
-        background: var(--surface-strong);
-        backdrop-filter: blur(8px);
+        background: linear-gradient(135deg, rgba(255, 252, 245, 0.82), rgba(247, 236, 220, 0.72));
+        backdrop-filter: blur(14px);
         box-shadow: var(--shadow);
+      }
+
+      html[data-theme="dark"] .masthead {
+        background: linear-gradient(135deg, rgba(35, 30, 28, 0.92), rgba(23, 20, 21, 0.82));
       }
 
       .masthead-actions {
@@ -212,11 +254,13 @@ const fullCanonMode = isFullCanonMode();
       }
 
       .brand {
-        font-size: 0.92rem;
-        letter-spacing: 0.14em;
+        font-family: var(--ui-family);
+        font-size: 0.82rem;
+        letter-spacing: 0.2em;
         text-transform: uppercase;
         color: var(--muted);
         text-decoration: none;
+        white-space: nowrap;
       }
 
       .site-nav {
@@ -233,6 +277,8 @@ const fullCanonMode = isFullCanonMode();
         color: var(--ink);
         cursor: pointer;
         font: inherit;
+        font-family: var(--ui-family);
+        transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
       }
 
       .nav-link {
@@ -241,6 +287,8 @@ const fullCanonMode = isFullCanonMode();
         text-decoration: none;
         color: var(--muted);
         border: 1px solid transparent;
+        font-family: var(--ui-family);
+        transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
       }
 
       .nav-link.is-active {
@@ -253,7 +301,11 @@ const fullCanonMode = isFullCanonMode();
         padding: 3rem clamp(1.2rem, 2vw, 2rem);
         border: 1px solid var(--line);
         border-radius: 28px;
-        background: linear-gradient(135deg, rgba(255, 251, 243, 0.92), rgba(244, 233, 213, 0.8));
+        position: relative;
+        overflow: hidden;
+        background:
+          linear-gradient(135deg, rgba(255, 253, 247, 0.95), rgba(244, 233, 213, 0.82)),
+          radial-gradient(circle at top right, rgba(184, 111, 40, 0.14), transparent 35%);
         box-shadow: var(--shadow);
       }
 
@@ -272,8 +324,10 @@ const fullCanonMode = isFullCanonMode();
       h1,
       h2,
       h3 {
+        font-family: var(--display-family);
         font-weight: 600;
         line-height: 1.1;
+        letter-spacing: -0.02em;
       }
 
       h1 {
@@ -382,6 +436,7 @@ const fullCanonMode = isFullCanonMode();
         border-radius: 999px;
         border: 1px solid var(--line);
         font-size: 0.82rem;
+        font-family: var(--ui-family);
         color: var(--muted);
         background: rgba(255, 255, 255, 0.38);
         text-decoration: none;
@@ -394,6 +449,15 @@ const fullCanonMode = isFullCanonMode();
 
       .chip.is-action.is-active {
         background: rgba(151, 95, 45, 0.14);
+      }
+
+      .theme-toggle:hover,
+      .nav-link:hover,
+      .chip.is-action:hover,
+      .tts-button:hover,
+      .pager-link:hover {
+        transform: translateY(-1px);
+        border-color: rgba(151, 95, 45, 0.28);
       }
 
       mark {
@@ -638,6 +702,82 @@ const fullCanonMode = isFullCanonMode();
         margin-top: 1rem;
       }
 
+      .chapter-hero {
+        background:
+          linear-gradient(135deg, rgba(255, 252, 247, 0.98), rgba(242, 229, 209, 0.84)),
+          radial-gradient(circle at top right, rgba(184, 111, 40, 0.18), transparent 34%);
+      }
+
+      html[data-theme="dark"] .chapter-hero {
+        background:
+          linear-gradient(135deg, rgba(42, 36, 34, 0.98), rgba(25, 22, 22, 0.9)),
+          radial-gradient(circle at top right, rgba(216, 168, 107, 0.14), transparent 36%);
+      }
+
+      .chapter-reading-frame {
+        padding: 1.2rem;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: linear-gradient(180deg, rgba(255, 252, 245, 0.7), rgba(249, 241, 228, 0.5));
+        box-shadow: var(--shadow);
+      }
+
+      html[data-theme="dark"] .chapter-reading-frame {
+        background: linear-gradient(180deg, rgba(34, 28, 27, 0.78), rgba(22, 20, 20, 0.62));
+      }
+
+      .chapter-focus-banner {
+        display: none;
+        margin: 0 auto 1.25rem;
+        max-width: min(100%, calc(var(--reader-measure) + 8ch));
+        padding: 0.95rem 1.05rem;
+        border-radius: 22px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.44);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(12px);
+        text-align: center;
+      }
+
+      .scene-stack {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .scene-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .scene-tools {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+      }
+
+      .scene-marker.is-active,
+      .focus-rail__button.is-primary,
+      .focus-rail__link.is-primary {
+        background: rgba(151, 95, 45, 0.16);
+        color: var(--ink);
+        border-color: rgba(151, 95, 45, 0.28);
+      }
+
+      .scene.has-voice-marker {
+        border-color: rgba(151, 95, 45, 0.28);
+        box-shadow: 0 18px 48px rgba(151, 95, 45, 0.12);
+      }
+
+      .scene,
+      .focus-orbit__dot,
+      .focus-rail__progress-value {
+        transition: transform 180ms ease, opacity 180ms ease, box-shadow 180ms ease, border-color 180ms ease, background 180ms ease;
+      }
+
       .scene h3 {
         margin: 0 0 0.5rem;
       }
@@ -848,6 +988,293 @@ const fullCanonMode = isFullCanonMode();
         border-color: rgba(151, 95, 45, 0.28);
       }
 
+      .focus-rail {
+        display: none;
+        position: fixed;
+        left: 50%;
+        bottom: 1rem;
+        transform: translateX(-50%);
+        z-index: 52;
+        width: min(980px, calc(100vw - 1rem));
+        padding: 0.9rem 1rem;
+        border-radius: 24px;
+        border: 1px solid var(--line);
+        background: var(--surface-strong);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(14px);
+        gap: 0.75rem;
+      }
+
+      .focus-rail__meta {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+
+      .focus-rail__title {
+        margin: 0.2rem 0 0;
+        font-size: clamp(1.1rem, 2vw, 1.5rem);
+      }
+
+      .focus-rail__progress {
+        min-width: min(300px, 100%);
+        display: grid;
+        gap: 0.4rem;
+      }
+
+      .focus-rail__progress-track {
+        width: 100%;
+        height: 0.4rem;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.14);
+        border: 1px solid rgba(151, 95, 45, 0.12);
+      }
+
+      .focus-rail__progress-value {
+        display: block;
+        width: 0;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+        box-shadow: 0 0 22px rgba(151, 95, 45, 0.28);
+      }
+
+      .focus-rail__progress-copy {
+        color: var(--ink);
+        font-family: var(--ui-family);
+        font-size: 0.88rem;
+      }
+
+      .focus-rail__status {
+        color: var(--muted);
+        font-family: var(--ui-family);
+        font-size: 0.92rem;
+      }
+
+      .focus-rail__controls {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+      }
+
+      .focus-rail__button,
+      .focus-rail__link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.85rem;
+        padding: 0.6rem 0.95rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.2);
+        color: var(--ink);
+        font: inherit;
+        font-family: var(--ui-family);
+        text-decoration: none;
+        cursor: pointer;
+        transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+      }
+
+      .focus-rail__button.is-ghost {
+        color: var(--muted);
+      }
+
+      .focus-rail__button:disabled,
+      .focus-rail__link.is-disabled {
+        opacity: 0.5;
+        pointer-events: none;
+      }
+
+      .focus-orbit {
+        display: none;
+        position: fixed;
+        right: 1rem;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 51;
+        padding: 0.8rem 0.65rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 251, 243, 0.64);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(14px);
+      }
+
+      html[data-theme="dark"] .focus-orbit {
+        background: rgba(31, 27, 26, 0.78);
+      }
+
+      .focus-orbit__label {
+        margin: 0 0 0.5rem;
+        writing-mode: vertical-rl;
+        transform: rotate(180deg);
+        color: var(--muted);
+        font-family: var(--ui-family);
+        font-size: 0.72rem;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      .focus-orbit__track {
+        display: grid;
+        gap: 0.55rem;
+      }
+
+      .focus-orbit__dot {
+        display: inline-grid;
+        place-items: center;
+        width: 2.35rem;
+        height: 2.35rem;
+        padding: 0;
+        border-radius: 999px;
+        border: 1px solid rgba(151, 95, 45, 0.14);
+        background: rgba(255, 255, 255, 0.16);
+        color: var(--muted);
+        cursor: pointer;
+        position: relative;
+      }
+
+      .focus-orbit__dot-ring {
+        position: absolute;
+        inset: 0.28rem;
+        border-radius: 999px;
+        border: 1px solid rgba(151, 95, 45, 0.12);
+      }
+
+      .focus-orbit__dot-index {
+        position: relative;
+        font-family: var(--ui-family);
+        font-size: 0.68rem;
+        letter-spacing: 0.08em;
+      }
+
+      .focus-orbit__dot.is-current {
+        transform: scale(1.08);
+        color: var(--ink);
+        background: rgba(151, 95, 45, 0.18);
+        box-shadow: 0 0 0 4px rgba(151, 95, 45, 0.08);
+      }
+
+      .focus-orbit__dot.is-marker {
+        border-color: rgba(151, 95, 45, 0.35);
+        background: rgba(151, 95, 45, 0.24);
+        color: var(--ink);
+      }
+
+      .focus-orbit__dot.is-passed:not(.is-current):not(.is-marker) {
+        opacity: 0.74;
+      }
+
+      body.is-focus-mode {
+        background: transparent;
+      }
+
+      body.is-focus-mode::before {
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 18vh;
+        border-radius: 0;
+        filter: none;
+        background: linear-gradient(180deg, rgba(6, 6, 8, 0.94), rgba(6, 6, 8, 0));
+      }
+
+      body.is-focus-mode::after {
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        height: 28vh;
+        border-radius: 0;
+        filter: none;
+        background: linear-gradient(0deg, rgba(6, 6, 8, 0.96), rgba(6, 6, 8, 0));
+      }
+
+      body.is-focus-mode .masthead,
+      body.is-focus-mode .focus-hidden,
+      body.is-focus-mode .reader-overlay,
+      body.is-focus-mode .canon-overlay,
+      body.is-focus-mode .chapter-scene-read,
+      body.is-focus-mode .chapter-scene-summary,
+      body.is-focus-mode .scene-media {
+        display: none !important;
+      }
+
+      body.is-focus-mode .shell {
+        width: min(920px, calc(100vw - 1.5rem));
+        padding-top: 1.4rem;
+        padding-bottom: 8rem;
+      }
+
+      body.is-focus-mode .chapter-reading-frame {
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+      }
+
+      body.is-focus-mode .chapter-focus-banner {
+        display: block;
+        margin-bottom: 2.4rem;
+        padding: 1.2rem 1.35rem 1.15rem;
+        background: linear-gradient(180deg, rgba(255, 251, 243, 0.26), rgba(255, 251, 243, 0.08));
+        border-color: rgba(216, 168, 107, 0.16);
+      }
+
+      body.is-focus-mode .scene {
+        max-width: min(100%, calc(var(--reader-measure) + 8ch));
+        margin-inline: auto;
+        margin-top: 0;
+        padding: 1.55rem 0;
+        border-radius: 0;
+        border-inline: 0;
+        border-top: 0;
+        box-shadow: none;
+        background: transparent;
+        opacity: 0.48;
+        transform: translateY(14px);
+      }
+
+      body.is-focus-mode .scene:last-child {
+        border-bottom: 0;
+      }
+
+      body.is-focus-mode .scene-tools {
+        display: none;
+      }
+
+      body.is-focus-mode .scene.is-passed {
+        opacity: 0.72;
+      }
+
+      body.is-focus-mode .scene.is-current {
+        opacity: 1;
+        transform: translateY(0);
+        border-color: rgba(216, 168, 107, 0.24);
+        box-shadow: 0 0 0 1px rgba(216, 168, 107, 0.08);
+      }
+
+      body.is-focus-mode .scene.is-current .chapter-number,
+      body.is-focus-mode .scene.is-current h3 {
+        color: var(--accent-strong);
+      }
+
+      body.is-focus-mode .focus-rail {
+        display: grid;
+      }
+
+      body.is-focus-mode .focus-orbit {
+        display: grid;
+      }
+
+      body.is-focus-mode .tts-player {
+        display: none;
+      }
+
       @media (max-width: 720px) {
         .shell {
           width: min(100vw - 1rem, 1080px);
@@ -890,6 +1317,49 @@ const fullCanonMode = isFullCanonMode();
           gap: 0.3rem;
         }
 
+        .scene-header,
+        .focus-rail__meta,
+        .focus-rail__controls {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .focus-rail {
+          left: 0.5rem;
+          right: 0.5rem;
+          bottom: 0.5rem;
+          width: auto;
+          transform: none;
+        }
+
+        .focus-orbit {
+          top: auto;
+          left: 0.5rem;
+          right: 0.5rem;
+          bottom: 7.35rem;
+          transform: none;
+          border-radius: 24px;
+          padding: 0.75rem;
+        }
+
+        .focus-orbit__label {
+          writing-mode: initial;
+          transform: none;
+          margin-bottom: 0.45rem;
+        }
+
+        .focus-orbit__track {
+          grid-auto-flow: column;
+          grid-auto-columns: minmax(2.35rem, 1fr);
+          overflow-x: auto;
+          padding-bottom: 0.2rem;
+        }
+
+        body.is-focus-mode .shell {
+          width: min(100vw - 1rem, 920px);
+          padding-bottom: 14rem;
+        }
+
         .tts-player {
           right: 0.5rem;
           left: 0.5rem;
@@ -899,7 +1369,7 @@ const fullCanonMode = isFullCanonMode();
       }
     </style>
   </head>
-  <body data-reader-chapter-number={currentChapterNumber}>
+  <body class:list={[isChapterPage && "page-chapter"]} data-reader-chapter-number={currentChapterNumber}>
     <main class="shell">
       <header class="masthead">
         <a class="brand" href="./">Narrarium Reader</a>

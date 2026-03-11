@@ -1,7 +1,7 @@
 import { cp, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isClearlyInvalidBookRootValue, normalizeReaderEnvValue } from "./lib/env.js";
+import { isClearlyInvalidBookRootValue, normalizeReaderEnvValue, resolveReaderBookRootCandidate } from "./lib/env.js";
 export async function scaffoldReaderSite(targetDir, options = {}) {
     const targetRoot = path.resolve(targetDir);
     const packageRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
@@ -40,6 +40,7 @@ export async function scaffoldReaderSite(targetDir, options = {}) {
             "narrarium": coreDependency,
             astro: "^5.14.1",
             chokidar: "^4.0.3",
+            "js-yaml": "^3.14.2",
             marked: "^16.3.0",
         },
         devDependencies: {
@@ -56,7 +57,7 @@ export async function scaffoldReaderSite(targetDir, options = {}) {
     await writeFile(path.join(targetRoot, ".env.example"), buildReaderEnvFile(bookRoot), "utf8");
     const envPath = path.join(targetRoot, ".env");
     const existingEnv = await readFile(envPath, "utf8").catch(() => null);
-    const nextEnv = mergeReaderEnvFile(existingEnv, bookRoot);
+    const nextEnv = mergeReaderEnvFile(existingEnv, bookRoot, targetRoot);
     if (nextEnv !== existingEnv) {
         await writeFile(envPath, nextEnv, "utf8");
     }
@@ -133,7 +134,7 @@ function buildReaderEnvFile(bookRoot) {
         "",
     ].join("\n");
 }
-function mergeReaderEnvFile(existingContent, bookRoot) {
+function mergeReaderEnvFile(existingContent, bookRoot, targetRoot) {
     const desiredRoot = toPosix(bookRoot);
     if (existingContent === null) {
         return buildReaderEnvFile(bookRoot);
@@ -147,7 +148,7 @@ function mergeReaderEnvFile(existingContent, bookRoot) {
         }
         handled = true;
         const currentValue = normalizeReaderEnvValue(match[2]);
-        if (currentValue && !isClearlyInvalidBookRootValue(currentValue)) {
+        if (currentValue && !isClearlyInvalidBookRootValue(currentValue) && resolveReaderBookRootCandidate(currentValue, targetRoot)) {
             return line;
         }
         return `${match[1]}${desiredRoot}`;

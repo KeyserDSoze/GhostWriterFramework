@@ -37,6 +37,9 @@ const chapterId = String(chapter.metadata.id);
 const chapterRelatedLinks = await loadRelatedCanonLinks(chapterId, [chapter.metadata.pov, chapter.metadata.timeline_ref]);
 const chapterStoryLinks = await loadStoryMentionLinks(chapterId, chapter.metadata.number);
 const chapterFigure = await loadAssetFigure(String(chapter.metadata.id), chapter.metadata.title);
+const currentIndex = allChapters.findIndex((entry) => entry.slug === chapterSlug);
+const previousChapter = currentIndex > 0 ? allChapters[currentIndex - 1] : null;
+const nextChapter = currentIndex >= 0 && currentIndex < allChapters.length - 1 ? allChapters[currentIndex + 1] : null;
 const renderedParagraphs = await Promise.all(
   chapter.paragraphs.map(async (paragraph) => ({
     ...paragraph,
@@ -45,6 +48,14 @@ const renderedParagraphs = await Promise.all(
     html: await marked.parse(paragraph.body),
   })),
 );
+const focusStops = [
+  ...(chapter.body ? [{ scopeId: "chapter-intro", targetId: "chapter-opening", label: "Chapter opening" }] : []),
+  ...renderedParagraphs.map((paragraph) => ({
+    scopeId: paragraph.anchorId,
+    targetId: paragraph.anchorId,
+    label: `Scene ${String(paragraph.metadata.number).padStart(3, "0")} - ${paragraph.metadata.title}`,
+  })),
+];
 ---
 
 <BaseLayout
@@ -53,48 +64,48 @@ const renderedParagraphs = await Promise.all(
   activeSection="chapters"
   currentChapterNumber={chapter.metadata.number}
 >
-  <section class="hero">
+  <section class="hero chapter-hero focus-hidden">
     <p class="eyebrow">Chapter {String(chapter.metadata.number).padStart(3, "0")}</p>
     <h1>{chapter.metadata.title}</h1>
     {chapter.metadata.summary && <p class="lede">{chapter.metadata.summary}</p>}
     <div class="chip-row">
       <button type="button" class="chip is-action" data-bookmark-toggle>Save bookmark</button>
       <button type="button" class="chip is-action" data-tts-trigger="chapter" hidden>Read chapter aloud</button>
+      <button type="button" class="chip is-action" data-reader-focus-toggle>Full read</button>
     </div>
     <div class="chapter-meta">
       <a href="./">Back to contents</a>
     </div>
   </section>
 
-  <ChapterPager currentSlug={chapterSlug} chapters={allChapters} />
+  <div class="focus-hidden">
+    <ChapterPager currentSlug={chapterSlug} chapters={allChapters} />
+  </div>
 
-  {chapter.body && (
-    <section class="section">
-      <article class="scene prose" data-tts-root="chapter-intro" data-tts-label="Chapter opening" set:html={chapterHtml} />
-      {chapterFigure && <AssetFigure figure={chapterFigure} className="scene-media" />}
-    </section>
-  )}
+  <section class="section chapter-reading-frame">
+    <div class="chapter-focus-banner">
+      <p class="eyebrow">Full Read</p>
+      <h2>{chapter.metadata.title}</h2>
+      <p class="chapter-meta">Chapter {String(chapter.metadata.number).padStart(3, "0")} - only the text stays on stage.</p>
+    </div>
 
-  {chapterMetaEntries.length > 0 && (
-    <section class="section">
-      <MetadataSection entries={chapterMetaEntries} heading="Canon links" />
-    </section>
-  )}
+    {chapter.body && (
+      <article
+        class="scene prose"
+        id="chapter-opening"
+        data-reader-scene
+        data-reader-scene-order="0"
+        data-reader-scene-label="Chapter opening"
+        data-tts-root="chapter-intro"
+        data-tts-label="Chapter opening"
+        data-reader-marker-article
+        data-reader-marker-scope="chapter-intro"
+        set:html={chapterHtml}
+      />
+    )}
+    {chapterFigure && <AssetFigure figure={chapterFigure} className="scene-media" />}
 
-  {chapterRelatedLinks.length > 0 && (
-    <section class="section">
-      <RelatedLinks links={chapterRelatedLinks} />
-    </section>
-  )}
-
-  {chapterStoryLinks.length > 0 && (
-    <section class="section">
-      <RelatedLinks links={chapterStoryLinks} heading="Echoes in later scenes" />
-    </section>
-  )}
-
-  {renderedParagraphs.length > 0 && (
-    <section class="section">
+    <section class="section focus-hidden">
       <div class="scene">
         <h2>Scene Index</h2>
         <div class="chip-row">
@@ -106,32 +117,336 @@ const renderedParagraphs = await Promise.all(
         </div>
       </div>
     </section>
-  )}
 
-  <section class="section">
-    <h2>Scenes</h2>
-    {renderedParagraphs.length > 0 ? (
-      renderedParagraphs.map((paragraph) => (
-        <article class="scene" id={paragraph.anchorId}>
-          <div class="chapter-number">Scene {String(paragraph.metadata.number).padStart(3, "0")}</div>
-          <h3>{paragraph.metadata.title}</h3>
-          <div class="chip-row">
-            <button type="button" class="chip is-action" data-tts-trigger={paragraph.anchorId} hidden>Read scene aloud</button>
-          </div>
-          {paragraph.metadata.summary && <p class="chapter-meta">{paragraph.metadata.summary}</p>}
-          {paragraph.metadata.viewpoint && (
-            <p class="chapter-meta">
-              Viewpoint: <LinkedValue value={paragraph.metadata.viewpoint} />
-            </p>
-          )}
-          <div class="prose" data-tts-root={paragraph.anchorId} data-tts-label={paragraph.metadata.title} set:html={paragraph.html} />
-          {paragraph.figure && <AssetFigure figure={paragraph.figure} className="scene-media" />}
-        </article>
-      ))
-    ) : (
-      <div class="empty">No paragraph files exist for this chapter yet.</div>
-    )}
+    <section class="section">
+      <h2 class="focus-hidden">Scenes</h2>
+      <div class="scene-stack">
+        {renderedParagraphs.length > 0 ? (
+          renderedParagraphs.map((paragraph) => (
+            <article
+              class="scene"
+              id={paragraph.anchorId}
+              data-reader-scene
+              data-reader-scene-order={String(chapter.body ? paragraph.metadata.number : paragraph.metadata.number - 1)}
+              data-reader-scene-label={`Scene ${String(paragraph.metadata.number).padStart(3, "0")} - ${paragraph.metadata.title}`}
+              data-reader-marker-article
+              data-reader-marker-scope={paragraph.anchorId}
+            >
+              <div class="scene-header">
+                <div>
+                  <div class="chapter-number">Scene {String(paragraph.metadata.number).padStart(3, "0")}</div>
+                  <h3>{paragraph.metadata.title}</h3>
+                </div>
+                <div class="scene-tools">
+                  <button
+                    type="button"
+                    class="chip is-action scene-marker"
+                    data-reader-marker-set
+                    data-reader-marker-kind="scene"
+                    data-reader-marker-scope={paragraph.anchorId}
+                    data-reader-marker-label={`Scene ${String(paragraph.metadata.number).padStart(3, "0")} - ${paragraph.metadata.title}`}
+                  >
+                    Mark voice start
+                  </button>
+                  <button type="button" class="chip is-action chapter-scene-read" data-tts-trigger={paragraph.anchorId} hidden>Read scene aloud</button>
+                </div>
+              </div>
+              {paragraph.metadata.summary && <p class="chapter-meta chapter-scene-summary">{paragraph.metadata.summary}</p>}
+              {paragraph.metadata.viewpoint && (
+                <p class="chapter-meta focus-hidden">
+                  Viewpoint: <LinkedValue value={paragraph.metadata.viewpoint} />
+                </p>
+              )}
+              <div class="prose" data-tts-root={paragraph.anchorId} data-tts-label={paragraph.metadata.title} set:html={paragraph.html} />
+              {paragraph.figure && <AssetFigure figure={paragraph.figure} className="scene-media" />}
+            </article>
+          ))
+        ) : (
+          <div class="empty">No paragraph files exist for this chapter yet.</div>
+        )}
+      </div>
+    </section>
   </section>
 
-  <ChapterPager currentSlug={chapterSlug} chapters={allChapters} />
+  {chapterMetaEntries.length > 0 && (
+    <section class="section focus-hidden">
+      <MetadataSection entries={chapterMetaEntries} heading="Canon links" />
+    </section>
+  )}
+
+  {chapterRelatedLinks.length > 0 && (
+    <section class="section focus-hidden">
+      <RelatedLinks links={chapterRelatedLinks} />
+    </section>
+  )}
+
+  {chapterStoryLinks.length > 0 && (
+    <section class="section focus-hidden">
+      <RelatedLinks links={chapterStoryLinks} heading="Echoes in later scenes" />
+    </section>
+  )}
+
+  <div class="focus-hidden">
+    <ChapterPager currentSlug={chapterSlug} chapters={allChapters} />
+  </div>
+
+  <aside class="focus-rail" aria-label="Full read controls">
+    <div class="focus-rail__meta">
+      <div>
+        <p class="eyebrow">Full Read</p>
+        <h2 class="focus-rail__title">{chapter.metadata.title}</h2>
+      </div>
+      <div class="focus-rail__progress">
+        <div class="focus-rail__progress-track"><span class="focus-rail__progress-value" data-reader-scene-progress-bar></span></div>
+        <div class="focus-rail__progress-copy" data-reader-current-scene>Opening frame</div>
+      </div>
+      <div class="focus-rail__status" data-reader-marker-status>Choose a scene to mark where voice should begin.</div>
+    </div>
+    <div class="focus-rail__controls">
+      <a class:list={["focus-rail__link", !previousChapter && "is-disabled"]} href={previousChapter ? `chapters/${previousChapter.slug}/` : undefined} aria-disabled={!previousChapter}>Previous chapter</a>
+      <button type="button" class="focus-rail__button is-primary" data-reader-focus-tts="chapter">Voice from start</button>
+      <button type="button" class="focus-rail__button" data-reader-marker-play disabled>Voice from mark</button>
+      <button type="button" class="focus-rail__button is-ghost" data-reader-focus-stop>Stop voice</button>
+      <a class:list={["focus-rail__link", !nextChapter && "is-disabled"]} href={nextChapter ? `chapters/${nextChapter.slug}/` : undefined} aria-disabled={!nextChapter}>Next chapter</a>
+      <button type="button" class="focus-rail__button" data-reader-focus-toggle>Exit full read</button>
+    </div>
+  </aside>
+
+  <aside class="focus-orbit" aria-label="Scene guide">
+    <p class="focus-orbit__label">Scene orbit</p>
+    <div class="focus-orbit__track">
+      {focusStops.map((stop, index) => (
+        <button
+          type="button"
+          class="focus-orbit__dot"
+          data-reader-marker-set
+          data-reader-marker-kind="orbit"
+          data-reader-marker-scope={stop.scopeId}
+          data-reader-marker-label={stop.label}
+          data-reader-scene-target={`#${stop.targetId}`}
+          data-reader-scene-target-id={stop.targetId}
+          aria-label={stop.label}
+          title={stop.label}
+        >
+          <span class="focus-orbit__dot-ring"></span>
+          <span class="focus-orbit__dot-index">{String(index + 1).padStart(2, "0")}</span>
+        </button>
+      ))}
+    </div>
+  </aside>
+
+  <script is:inline>
+    (() => {
+      const focusModeKey = "narrarium-reader-focus-mode";
+      const voiceMarkerKey = "narrarium-reader-voice-marker";
+      const root = document.body;
+      const toggleButtons = [...document.querySelectorAll("[data-reader-focus-toggle]")];
+      const sceneMarkerButtons = [...document.querySelectorAll("[data-reader-marker-set][data-reader-marker-kind='scene']")];
+      const orbitButtons = [...document.querySelectorAll("[data-reader-marker-set][data-reader-marker-kind='orbit']")];
+      const markerStatus = document.querySelector("[data-reader-marker-status]");
+      const markerPlayButton = document.querySelector("[data-reader-marker-play]");
+      const chapterPlayButton = document.querySelector("[data-reader-focus-tts='chapter']");
+      const stopVoiceButton = document.querySelector("[data-reader-focus-stop]");
+      const currentSceneLabel = document.querySelector("[data-reader-current-scene]");
+      const currentSceneProgressBar = document.querySelector("[data-reader-scene-progress-bar]");
+      const sceneElements = [...document.querySelectorAll("[data-reader-scene]")];
+      const chapterPath = window.location.pathname;
+      let currentSceneTargetId = sceneElements[0]?.id || null;
+
+      applyFocusMode(readStorage(focusModeKey) === "true", false);
+      updateMarkerUi(readMarker());
+      updateActiveScene();
+      window.addEventListener("scroll", scheduleSceneRefresh, { passive: true });
+      window.addEventListener("resize", scheduleSceneRefresh);
+
+      toggleButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const nextEnabled = !root.classList.contains("is-focus-mode");
+          applyFocusMode(nextEnabled, true);
+        });
+      });
+
+      [...sceneMarkerButtons, ...orbitButtons].forEach((button) => {
+        button.addEventListener("click", () => {
+          const marker = {
+            path: chapterPath,
+            scopeId: button.dataset.readerMarkerScope || "chapter",
+            label: button.dataset.readerMarkerLabel || "Marked scene",
+          };
+          writeStorage(voiceMarkerKey, JSON.stringify(marker));
+          updateMarkerUi(marker);
+
+          const targetId = button.dataset.readerSceneTargetId;
+          if (targetId && root.classList.contains("is-focus-mode")) {
+            document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        });
+      });
+
+      chapterPlayButton?.addEventListener("click", () => {
+        startTtsFromScope("chapter");
+      });
+
+      markerPlayButton?.addEventListener("click", () => {
+        const marker = readMarker();
+        if (!marker || marker.path !== chapterPath || !marker.scopeId) {
+          return;
+        }
+        startTtsFromScope(marker.scopeId);
+      });
+
+      stopVoiceButton?.addEventListener("click", () => {
+        window.dispatchEvent(new CustomEvent("narrarium:tts-stop", { detail: { keepProgress: true } }));
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (isEditable(document.activeElement)) {
+          return;
+        }
+
+        if (event.key === "Escape" && root.classList.contains("is-focus-mode")) {
+          applyFocusMode(false, true);
+        }
+
+        if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "f") {
+          event.preventDefault();
+          applyFocusMode(!root.classList.contains("is-focus-mode"), true);
+        }
+      });
+
+      function applyFocusMode(enabled, persist) {
+        root.classList.toggle("is-focus-mode", enabled);
+        toggleButtons.forEach((button) => {
+          button.textContent = enabled ? "Exit full read" : "Full read";
+          button.setAttribute("aria-pressed", enabled ? "true" : "false");
+        });
+        scheduleSceneRefresh();
+
+        if (persist) {
+          writeStorage(focusModeKey, enabled ? "true" : "false");
+        }
+      }
+
+      function startTtsFromScope(scopeId) {
+        window.dispatchEvent(new CustomEvent("narrarium:tts-start", {
+          detail: {
+            scopeId,
+            fromStart: true,
+          },
+        }));
+      }
+
+      function updateMarkerUi(marker) {
+        const activeScopeId = marker?.path === chapterPath ? marker.scopeId : null;
+        sceneMarkerButtons.forEach((button) => {
+          const isActive = activeScopeId !== null && button.dataset.readerMarkerScope === activeScopeId;
+          button.classList.toggle("is-active", isActive);
+          button.setAttribute("aria-pressed", isActive ? "true" : "false");
+          button.textContent = isActive ? "Voice marker set" : "Mark voice start";
+        });
+
+        orbitButtons.forEach((button) => {
+          const isActive = activeScopeId !== null && button.dataset.readerMarkerScope === activeScopeId;
+          button.classList.toggle("is-marker", isActive);
+          button.setAttribute("aria-pressed", isActive ? "true" : "false");
+        });
+
+        document.querySelectorAll("[data-reader-marker-article]").forEach((article) => {
+          article.classList.toggle("has-voice-marker", activeScopeId !== null && article.dataset.readerMarkerScope === activeScopeId);
+        });
+
+        if (markerStatus instanceof HTMLElement) {
+          markerStatus.textContent = activeScopeId
+            ? `Voice marker: ${marker.label || "Marked scene"}`
+            : "Choose a scene to mark where voice should begin.";
+        }
+
+        if (markerPlayButton instanceof HTMLButtonElement) {
+          markerPlayButton.disabled = !activeScopeId;
+        }
+      }
+
+      let refreshScheduled = false;
+
+      function scheduleSceneRefresh() {
+        if (refreshScheduled) {
+          return;
+        }
+
+        refreshScheduled = true;
+        window.requestAnimationFrame(() => {
+          refreshScheduled = false;
+          updateActiveScene();
+        });
+      }
+
+      function updateActiveScene() {
+        if (sceneElements.length === 0) {
+          return;
+        }
+
+        const focusLine = Math.max(140, window.innerHeight * 0.34);
+        let activeScene = sceneElements[0];
+
+        sceneElements.forEach((scene) => {
+          const rect = scene.getBoundingClientRect();
+          if (rect.top <= focusLine) {
+            activeScene = scene;
+          }
+        });
+
+        currentSceneTargetId = activeScene?.id || currentSceneTargetId;
+        const totalScenes = sceneElements.length;
+        const currentIndex = Math.max(0, sceneElements.findIndex((scene) => scene.id === currentSceneTargetId));
+
+        sceneElements.forEach((scene, index) => {
+          scene.classList.toggle("is-current", scene.id === currentSceneTargetId);
+          scene.classList.toggle("is-passed", index < currentIndex);
+        });
+
+        orbitButtons.forEach((button, index) => {
+          const isCurrent = button.dataset.readerSceneTargetId === currentSceneTargetId;
+          button.classList.toggle("is-current", isCurrent);
+          button.classList.toggle("is-passed", index < currentIndex);
+        });
+
+        if (currentSceneLabel instanceof HTMLElement) {
+          currentSceneLabel.textContent = `${String(currentIndex + 1).padStart(2, "0")} / ${String(totalScenes).padStart(2, "0")} - ${activeScene?.dataset.readerSceneLabel || "Opening frame"}`;
+        }
+
+        if (currentSceneProgressBar instanceof HTMLElement) {
+          const percent = totalScenes > 1 ? ((currentIndex + 1) / totalScenes) * 100 : 100;
+          currentSceneProgressBar.style.width = `${percent}%`;
+        }
+      }
+
+      function readMarker() {
+        try {
+          return JSON.parse(localStorage.getItem(voiceMarkerKey) || "null");
+        } catch {
+          return null;
+        }
+      }
+
+      function readStorage(key) {
+        try {
+          return localStorage.getItem(key);
+        } catch {
+          return null;
+        }
+      }
+
+      function writeStorage(key, value) {
+        try {
+          localStorage.setItem(key, value);
+        } catch {
+          // Ignore storage failures in restricted browsers.
+        }
+      }
+
+      function isEditable(node) {
+        return node instanceof HTMLElement && (node.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName));
+      }
+    })();
+  </script>
 </BaseLayout>

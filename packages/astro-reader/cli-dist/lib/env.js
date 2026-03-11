@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 const astroEnv = (import.meta.env ?? {});
 export function normalizeReaderEnvValue(value) {
     if (typeof value !== "string") {
@@ -40,5 +42,13 @@ export function readReaderBookRootEnv(sources = [process.env, astroEnv]) {
         return undefined;
     }
     return value;
+}
+export function resolveReaderBookRootCandidate(value, cwd = process.cwd()) {
+    const normalized = normalizeReaderEnvValue(value);
+    if (!normalized || isClearlyInvalidBookRootValue(normalized)) {
+        return undefined;
+    }
+    const resolved = path.resolve(cwd, normalized);
+    return existsSync(path.join(resolved, "book.md")) ? resolved : undefined;
 }
 //# sourceMappingURL=env.js.map

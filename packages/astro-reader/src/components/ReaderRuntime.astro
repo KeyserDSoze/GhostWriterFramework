@@ -664,6 +664,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     rateInput.value = String(state.rate);
     bindTtsTriggerButtons(triggers, state);
     bindTtsPlayerControls(state);
+    bindRuntimeTtsEvents(state);
     populateVoiceOptions(state);
     updateTtsTriggerButtons(triggers, state);
     updateTtsUi(state);
@@ -868,6 +869,21 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     });
   }
 
+  function bindRuntimeTtsEvents(state) {
+    window.addEventListener("narrarium:tts-start", (event) => {
+      const detail = event instanceof CustomEvent ? event.detail || {} : {};
+      const scopeId = typeof detail.scopeId === "string" ? detail.scopeId : "chapter";
+      startTtsScope(state, scopeId, { fromStart: Boolean(detail.fromStart) });
+      updateTtsTriggerButtons(state.triggers, state);
+    });
+
+    window.addEventListener("narrarium:tts-stop", (event) => {
+      const detail = event instanceof CustomEvent ? event.detail || {} : {};
+      stopTts(state, detail.keepProgress !== false);
+      updateTtsUi(state);
+    });
+  }
+
   function populateVoiceOptions(state) {
     const voices = state.speech.getVoices().slice().sort((left, right) => left.name.localeCompare(right.name));
     state.voices = voices;
@@ -909,7 +925,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     });
   }
 
-  function startTtsScope(state, scopeId) {
+  function startTtsScope(state, scopeId, options) {
     const scope = state.scopes.get(scopeId);
     if (!scope || scope.segments.length === 0) {
       return;
@@ -917,9 +933,11 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
 
     const savedProgress = readJson(ttsProgressStorageKey);
     state.scopeId = scopeId;
-    state.index = savedProgress?.path === window.location.pathname && savedProgress.scopeId === scopeId
-      ? clampIndex(savedProgress.index, scope.segments.length)
-      : 0;
+    state.index = options?.fromStart
+      ? 0
+      : savedProgress?.path === window.location.pathname && savedProgress.scopeId === scopeId
+        ? clampIndex(savedProgress.index, scope.segments.length)
+        : 0;
 
     state.runId += 1;
     state.speech.cancel();

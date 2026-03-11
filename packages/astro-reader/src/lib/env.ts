@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+
 type EnvSource = Record<string, string | undefined> | null | undefined;
 
 const astroEnv = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {}) as Record<
@@ -58,4 +61,14 @@ export function readReaderBookRootEnv(sources: EnvSource[] = [process.env, astro
   }
 
   return value;
+}
+
+export function resolveReaderBookRootCandidate(value: string | null | undefined, cwd = process.cwd()): string | undefined {
+  const normalized = normalizeReaderEnvValue(value);
+  if (!normalized || isClearlyInvalidBookRootValue(normalized)) {
+    return undefined;
+  }
+
+  const resolved = path.resolve(cwd, normalized);
+  return existsSync(path.join(resolved, "book.md")) ? resolved : undefined;
 }

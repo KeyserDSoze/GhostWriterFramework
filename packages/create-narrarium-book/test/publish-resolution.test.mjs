@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const packageRoot = new URL("../", import.meta.url);
@@ -51,6 +51,7 @@ test("starter create and upgrade keep reader .env book roots usable for sibling 
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "create-narrarium-reader-root-"));
   const bookRoot = path.join(workspaceRoot, "book-repo");
   const readerRoot = path.join(workspaceRoot, "reader-site");
+  const customBookRoot = path.join(workspaceRoot, "custom-book");
   const cliPath = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 
   try {
@@ -77,6 +78,8 @@ test("starter create and upgrade keep reader .env book roots usable for sibling 
     const initialEnv = await readFile(path.join(readerRoot, ".env"), "utf8");
     assert.match(initialEnv, /NARRARIUM_BOOK_ROOT=\.\.\/book-repo/);
 
+    await mkdir(customBookRoot, { recursive: true });
+    await writeFile(path.join(customBookRoot, "book.md"), "---\ntitle: Custom\n---\n", "utf8");
     await writeFile(path.join(readerRoot, ".env"), "NARRARIUM_BOOK_ROOT=../custom-book\n", "utf8");
 
     result = spawnSync(
@@ -130,7 +133,9 @@ test("starter upgrade repairs clearly invalid reader book-root env values", asyn
     );
     assert.equal(result.status, 0, result.stderr || result.stdout);
 
-    await writeFile(path.join(readerRoot, ".env"), "NARRARIUM_BOOK_ROOT=C:\nOTHER_FLAG=1\n", "utf8");
+    await writeFile(path.join(readerRoot, ".env"), "NARRARIUM_BOOK_ROOT=../../../../../../..\nOTHER_FLAG=1\n", "utf8");
+    await writeFile(path.join(readerRoot, "scripts", "book-config.mjs"), 'export const defaultBookRoot = "../../../../../../..";\n', "utf8");
+    await writeFile(path.join(readerRoot, "src", "lib", "book-config.ts"), 'export const defaultBookRoot = "../../../../../../..";\n', "utf8");
 
     result = spawnSync(
       process.execPath,
@@ -150,8 +155,12 @@ test("starter upgrade repairs clearly invalid reader book-root env values", asyn
     assert.equal(result.status, 0, result.stderr || result.stdout);
 
     const upgradedEnv = await readFile(path.join(readerRoot, ".env"), "utf8");
+    const upgradedScriptConfig = await readFile(path.join(readerRoot, "scripts", "book-config.mjs"), "utf8");
+    const upgradedTsConfig = await readFile(path.join(readerRoot, "src", "lib", "book-config.ts"), "utf8");
     assert.match(upgradedEnv, /NARRARIUM_BOOK_ROOT=\.\.\/book-repo/);
     assert.match(upgradedEnv, /OTHER_FLAG=1/);
+    assert.match(upgradedScriptConfig, /defaultBookRoot = "\.\.\/book-repo"/);
+    assert.match(upgradedTsConfig, /defaultBookRoot = "\.\.\/book-repo"/);
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
   }
