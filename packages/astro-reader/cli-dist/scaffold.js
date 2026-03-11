@@ -7,7 +7,7 @@ export async function scaffoldReaderSite(targetDir, options = {}) {
     const packageRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
     const bookRoot = options.bookRoot ?? "..";
     const packageName = options.packageName ?? inferPackageName(targetRoot);
-    const coreDependency = options.coreDependency ?? `^${await readCurrentPackageVersion(packageRoot)}`;
+    const coreDependency = options.coreDependency ?? await readNarrariumCoreVersion(packageRoot);
     const pagesDomain = options.pagesDomain?.trim() || undefined;
     await mkdir(path.join(targetRoot, "src", "layouts"), { recursive: true });
     await mkdir(path.join(targetRoot, "src", "lib"), { recursive: true });
@@ -234,9 +234,9 @@ function inferPackageName(targetRoot) {
         .replace(/^-+|-+$/g, "") || "narrarium-reader-site";
     return base;
 }
-async function readCurrentPackageVersion(packageRoot) {
+async function readNarrariumCoreVersion(packageRoot) {
     const raw = await readFile(path.join(packageRoot, "package.json"), "utf8");
     const parsed = JSON.parse(raw);
-    return parsed.version ?? "0.1.0";
+    return parsed.dependencies?.["narrarium"] ?? "^0.1.7";
 }
 //# sourceMappingURL=scaffold.js.map
