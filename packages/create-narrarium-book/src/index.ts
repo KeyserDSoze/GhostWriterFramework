@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { cp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { stdin as input, stdout as output } from "node:process";
@@ -151,18 +151,15 @@ async function runUpgrade(args: ParsedArgs) {
 
   let readerPath = "";
   let readerInstalled = false;
-  let readerBackupRoot = "";
 
   if (resolved.withReader) {
     const readerDir = path.join(targetPath, resolved.readerDir);
-    const backupRoot = path.join(targetPath, ".narrarium-upgrade-backups", formatUpgradeStamp(new Date()));
-    readerBackupRoot = await backupReaderScaffold(targetPath, resolved.readerDir, backupRoot);
     const readerBookRoot = inferReaderBookRoot(readerDir, targetPath);
     const readerPackageName = inferReaderPackageName(targetPath, resolved.readerDir, book?.frontmatter.title ?? path.basename(targetPath));
     const pagesDomain = resolved.pagesDomain ?? inferReaderPagesDomain(targetPath, resolved.readerDir);
     readerPath = await runReaderScaffold(readerDir, readerBookRoot, readerPackageName, pagesDomain);
-    await writeManagedRootPackageJson(targetPath, book?.frontmatter.title ?? path.basename(targetPath), resolved.readerDir, backupRoot);
-    await writeManagedRootPagesWorkflow(targetPath, resolved.readerDir, pagesDomain, backupRoot);
+    await writeManagedRootPackageJson(targetPath, book?.frontmatter.title ?? path.basename(targetPath), resolved.readerDir);
+    await writeManagedRootPagesWorkflow(targetPath, resolved.readerDir, pagesDomain);
     if (!resolved.skipInstall) {
       installNodeDependencies(readerPath);
       readerInstalled = true;
@@ -176,7 +173,6 @@ async function runUpgrade(args: ParsedArgs) {
       upgrade.updated.length > 0 ? `- Updated managed files: ${upgrade.updated.join(", ")}` : "- Managed repo files were already up to date.",
       upgrade.backedUp.length > 0 && upgrade.backupRoot ? `- Backed up replaced files under ${upgrade.backupRoot}` : "- No repo file backups were needed.",
       ...(readerPath ? [`- Reader scaffold upgraded at ${readerPath}`] : ["- Reader scaffold not touched. Pass `--with-reader` to refresh it too."]),
-      ...(readerBackupRoot ? [`- Reader backups saved under ${readerBackupRoot}`] : []),
       ...(readerInstalled ? ["- Reader dependencies were reinstalled automatically"] : []),
       "",
       "Next steps:",
@@ -433,83 +429,23 @@ function buildRootPackageJson(title: string, readerDir: string): string {
   ) + "\n";
 }
 
-async function writeManagedRootPackageJson(targetPath: string, title: string, readerDir: string, backupRoot: string): Promise<void> {
-  await writeManagedFileWithBackup(targetPath, "package.json", buildRootPackageJson(title, readerDir), backupRoot);
+async function writeManagedRootPackageJson(targetPath: string, title: string, readerDir: string): Promise<void> {
+  await writeManagedFile(targetPath, "package.json", buildRootPackageJson(title, readerDir));
 }
 
-async function writeManagedRootPagesWorkflow(targetPath: string, readerDir: string, pagesDomain: string | undefined, backupRoot: string): Promise<void> {
-  await writeManagedFileWithBackup(targetPath, path.join(".github", "workflows", "deploy-reader-pages.yml"), buildRootPagesWorkflow(readerDir, pagesDomain), backupRoot);
+async function writeManagedRootPagesWorkflow(targetPath: string, readerDir: string, pagesDomain: string | undefined): Promise<void> {
+  await writeManagedFile(targetPath, path.join(".github", "workflows", "deploy-reader-pages.yml"), buildRootPagesWorkflow(readerDir, pagesDomain));
 }
 
-async function writeManagedFileWithBackup(targetRoot: string, relativePath: string, content: string, backupRoot: string): Promise<void> {
+async function writeManagedFile(targetRoot: string, relativePath: string, content: string): Promise<void> {
   const targetFilePath = path.join(targetRoot, relativePath);
   const existing = await readFile(targetFilePath, "utf8").catch(() => null);
   if (existing === content) {
     return;
   }
 
-  if (existing !== null) {
-    const backupPath = path.join(backupRoot, relativePath);
-    await mkdir(path.dirname(backupPath), { recursive: true });
-    await writeFile(backupPath, existing, "utf8");
-  }
-
   await mkdir(path.dirname(targetFilePath), { recursive: true });
   await writeFile(targetFilePath, content, "utf8");
-}
-
-async function backupReaderScaffold(targetPath: string, readerDir: string, backupRoot: string): Promise<string> {
-  const readerRoot = path.join(targetPath, readerDir);
-  const relativePaths = [
-    "astro.config.mjs",
-    "tsconfig.json",
-    "package.json",
-    "scripts",
-    path.join("src", "components"),
-    path.join("src", "lib"),
-    path.join("src", "layouts"),
-    path.join("src", "pages"),
-    path.join(".github", "workflows", "deploy-pages.yml"),
-    path.join("public", "CNAME"),
-    ".env.example",
-    ".gitignore",
-    "README.md",
-  ];
-
-  const rootRelativePaths = [
-    "package.json",
-    path.join(".github", "workflows", "deploy-reader-pages.yml"),
-  ];
-
-  const backupTargets: string[] = [];
-  for (const relativePath of relativePaths) {
-    const sourcePath = path.join(readerRoot, relativePath);
-    if (!existsSync(sourcePath)) continue;
-    const destinationPath = path.join(backupRoot, readerDir, relativePath);
-    await backupEntry(sourcePath, destinationPath);
-    backupTargets.push(destinationPath);
-  }
-
-  for (const relativePath of rootRelativePaths) {
-    const sourcePath = path.join(targetPath, relativePath);
-    if (!existsSync(sourcePath)) continue;
-    const destinationPath = path.join(backupRoot, relativePath);
-    await backupEntry(sourcePath, destinationPath);
-    backupTargets.push(destinationPath);
-  }
-
-  return backupTargets.length > 0 ? path.relative(targetPath, backupRoot).split(path.sep).join("/") : "";
-}
-
-async function backupEntry(sourcePath: string, destinationPath: string): Promise<void> {
-  const sourceStats = await stat(sourcePath);
-  await mkdir(path.dirname(destinationPath), { recursive: true });
-  if (sourceStats.isDirectory()) {
-    await cp(sourcePath, destinationPath, { recursive: true });
-    return;
-  }
-
-  await writeFile(destinationPath, await readFile(sourcePath));
 }
 
 function inferReaderBookRoot(readerDir: string, targetPath: string): string {
@@ -568,18 +504,6 @@ function inferReaderPagesDomain(targetPath: string, readerDir: string): string |
 
   const value = readFileSync(cnamePath, "utf8").trim();
   return value || undefined;
-}
-
-function formatUpgradeStamp(date: Date): string {
-  return [
-    date.getUTCFullYear(),
-    String(date.getUTCMonth() + 1).padStart(2, "0"),
-    String(date.getUTCDate()).padStart(2, "0"),
-    "-",
-    String(date.getUTCHours()).padStart(2, "0"),
-    String(date.getUTCMinutes()).padStart(2, "0"),
-    String(date.getUTCSeconds()).padStart(2, "0"),
-  ].join("");
 }
 
 function buildRootPagesWorkflow(readerDir: string, pagesDomain?: string): string {
