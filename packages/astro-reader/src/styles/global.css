@@ -249,50 +249,27 @@ body.tts-enabled .shell {
 }
 
 /* ─── Icon buttons (masthead controls) ──────────────────────── */
-.theme-toggle {
+.masthead-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.3rem;
+  width: 2.1rem;
   height: 2.1rem;
-  padding: 0 0.7rem;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: transparent;
   color: var(--text-muted);
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 500;
+  font-size: 1rem;
+  line-height: 1;
   cursor: pointer;
+  padding: 0;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
-  white-space: nowrap;
 }
 
-.theme-toggle:hover {
+.masthead-btn:hover {
   background: var(--surface-muted);
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 25%, var(--line));
-}
-
-/* Theme icon via CSS pseudo-element – JS still sets textContent */
-[data-theme-toggle]::before {
-  font-size: 0.95em;
-  line-height: 1;
-}
-
-html[data-theme="dark"] [data-theme-toggle]::before {
-  content: "☀ ";
-}
-
-:root:not([data-theme="dark"]) [data-theme-toggle]::before {
-  content: "🌙 ";
-}
-
-/* Settings button icon */
-[data-reader-settings-toggle]::before {
-  content: "⚙ ";
-  font-size: 0.9em;
-  line-height: 1;
 }
 
 /* Primary TTS play button */
@@ -1156,6 +1133,109 @@ mark {
   font-size: 1.1rem;
 }
 
+/* ─── Search overlay ─────────────────────────────────────────── */
+.search-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 5rem;
+}
+
+.search-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  cursor: default;
+}
+
+.search-overlay__panel {
+  position: relative;
+  z-index: 1;
+  width: min(640px, calc(100vw - 2rem));
+  max-height: calc(100vh - 7rem);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 1.25rem;
+}
+
+.search-overlay__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.search-overlay .site-search {
+  min-width: 0;
+  width: 100%;
+}
+
+.search-overlay .site-search__results {
+  position: static;
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0;
+  margin-top: 0.5rem;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.icon-btn:hover {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+/* ─── Reader settings sections ───────────────────────────────── */
+.reader-section {
+  margin-top: 1.25rem;
+}
+
+.reader-section__label {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  margin: 0 0 0.25rem;
+}
+
+.reader-section__note {
+  margin: 0.6rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.reader-section-divider {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1.25rem 0 0;
+}
+
 /* ─── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 900px) {
   .masthead {
@@ -1208,7 +1288,7 @@ mark {
     min-width: 0;
   }
 
-  .theme-toggle,
+  .masthead-btn,
   .focus-rail__button,
   .focus-rail__link {
     width: 100%;

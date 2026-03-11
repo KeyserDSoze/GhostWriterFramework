@@ -58,7 +58,7 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
       })();
     </script>
   </head>
-  <body class:list={[isChapterPage && "page-chapter"]} data-reader-chapter-number={currentChapterNumber}>
+  <body class:list={[isChapterPage && "page-chapter"]} data-reader-chapter-number={currentChapterNumber} data-full-canon={fullCanonMode ? "true" : "false"}>
     <main class="shell">
       <header class="masthead">
         <a class="brand" href="./">Narrarium</a>
@@ -73,14 +73,14 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
           <a class:list={["nav-link", activeSection === "timeline" && "is-active"]} href="timeline/">Timeline</a>
         </nav>
         <div class="masthead-actions">
-          <SiteSearch entries={searchIndex} />
           <a class="chip reader-status" data-continue-link href="./" hidden>Continue reading</a>
-          <button type="button" class="theme-toggle" data-reader-settings-toggle aria-label="Open reading settings">Settings</button>
-          <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch theme">Dark mode</button>
+          <button type="button" class="masthead-btn" data-search-toggle aria-label="Search">🔍</button>
+          <button type="button" class="masthead-btn" data-reader-settings-toggle aria-label="Open reading settings">⚙</button>
         </div>
       </header>
       <slot />
     </main>
     <ReaderRuntime glossary={canonGlossary} chapters={readerChapters} currentChapterNumber={currentChapterNumber} />
+    <SiteSearch entries={searchIndex} />
   </body>
 </html>

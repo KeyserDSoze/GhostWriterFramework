@@ -51,35 +51,66 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     <button type="button" class="reader-overlay__close" data-reader-close aria-label="Close reading settings">x</button>
     <p class="eyebrow">Reading Settings</p>
     <h2>Reader</h2>
-    <div class="reader-control-grid">
-      <label class="reader-control">
-        <span class="label">Font Size</span>
-        <input type="range" min="0.92" max="1.22" step="0.02" value="1" data-reader-font-scale />
-      </label>
-      <label class="reader-control">
-        <span class="label">Line Height</span>
-        <input type="range" min="1.45" max="1.95" step="0.05" value="1.72" data-reader-line-height />
-      </label>
-      <label class="reader-control">
-        <span class="label">Measure</span>
-        <select data-reader-measure>
-          <option value="60ch">Compact</option>
-          <option value="72ch">Classic</option>
-          <option value="84ch">Wide</option>
-        </select>
-      </label>
-      <label class="reader-control">
-        <span class="label">Body Font</span>
-        <select data-reader-font-family>
-          <option value="classic">Classic Serif</option>
-          <option value="modern">Modern Serif</option>
-          <option value="sans">Quiet Sans</option>
-        </select>
-      </label>
-      <label class="reader-control" data-reader-spoiler-wrap hidden>
-        <span class="label">Spoiler Limit</span>
-        <select data-reader-spoiler-limit></select>
-      </label>
+    <div class="reader-section">
+      <p class="reader-section__label">Appearance</p>
+      <div class="reader-control-grid">
+        <label class="reader-control">
+          <span class="label">Color theme</span>
+          <select data-reader-theme>
+            <option value="system">System default</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <hr class="reader-section-divider" />
+    <div class="reader-section">
+      <p class="reader-section__label">Typography</p>
+      <div class="reader-control-grid">
+        <label class="reader-control">
+          <span class="label">Font Size</span>
+          <input type="range" min="0.92" max="1.22" step="0.02" value="1" data-reader-font-scale />
+        </label>
+        <label class="reader-control">
+          <span class="label">Line Height</span>
+          <input type="range" min="1.45" max="1.95" step="0.05" value="1.72" data-reader-line-height />
+        </label>
+        <label class="reader-control">
+          <span class="label">Measure</span>
+          <select data-reader-measure>
+            <option value="60ch">Compact</option>
+            <option value="72ch">Classic</option>
+            <option value="84ch">Wide</option>
+          </select>
+        </label>
+        <label class="reader-control">
+          <span class="label">Body Font</span>
+          <select data-reader-font-family>
+            <option value="classic">Classic Serif</option>
+            <option value="modern">Modern Serif</option>
+            <option value="sans">Quiet Sans</option>
+          </select>
+        </label>
+        <label class="reader-control" data-reader-spoiler-wrap hidden>
+          <span class="label">Spoiler Limit</span>
+          <select data-reader-spoiler-limit></select>
+        </label>
+      </div>
+    </div>
+    <hr class="reader-section-divider" />
+    <div class="reader-section">
+      <p class="reader-section__label">Canon access</p>
+      <div class="reader-control-grid">
+        <label class="reader-control">
+          <span class="label">View mode</span>
+          <select data-reader-canon-mode>
+            <option value="public">Public reader</option>
+            <option value="full">Full canon (author)</option>
+          </select>
+        </label>
+      </div>
+      <p class="reader-section__note">Full canon shows all hidden character, faction, and item data. Reloads the page. Effective in dev server only; for production, set NARRARIUM_READER_CANON_MODE=full in .env.</p>
     </div>
   </aside>
 </div>
@@ -132,31 +163,20 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   initializeThemeToggle();
   initializeReaderPreferences();
   initializeReaderSettings();
+  initializeSearchOverlay();
+  initializeCanonModeToggle();
   initializeReadingProgress();
   initializeCanonMentions();
   initializeReadAloud();
 
   function initializeThemeToggle() {
-    const root = document.documentElement;
-    const toggle = document.querySelector("[data-theme-toggle]");
-    if (!toggle) return;
-
     const saved = readStorage(themeStorageKey);
     const initialTheme = saved || (prefersDarkTheme() ? "dark" : "light");
     applyTheme(initialTheme);
-
-    toggle.addEventListener("click", () => {
-      applyTheme(root.dataset.theme === "dark" ? "light" : "dark", true);
-    });
   }
 
   function applyTheme(theme, persist) {
     document.documentElement.dataset.theme = theme;
-    const toggle = document.querySelector("[data-theme-toggle]");
-    if (toggle) {
-      toggle.textContent = theme === "dark" ? "Light mode" : "Dark mode";
-      toggle.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
-    }
     if (persist) {
       writeStorage(themeStorageKey, theme);
     }
@@ -210,6 +230,21 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     if (lineHeightInput) lineHeightInput.value = String(preferences.lineHeight || 1.72);
     if (measureInput) measureInput.value = preferences.measure || "72ch";
     if (fontFamilyInput) fontFamilyInput.value = preferences.fontFamily || "classic";
+
+    const themeInput = overlay.querySelector("[data-reader-theme]");
+    if (themeInput) {
+      const savedTheme = readStorage(themeStorageKey);
+      themeInput.value = savedTheme || "system";
+      themeInput.addEventListener("change", () => {
+        const value = themeInput.value;
+        if (value === "system") {
+          applyTheme(prefersDarkTheme() ? "dark" : "light", false);
+          removeStorage(themeStorageKey);
+        } else {
+          applyTheme(value, true);
+        }
+      });
+    }
 
     if (Number.isFinite(currentPageChapterNumber) && spoilerWrap && spoilerLimitInput) {
       spoilerWrap.hidden = false;
@@ -1208,6 +1243,73 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       default:
         return 'Baskerville, "Palatino Linotype", "Book Antiqua", "Iowan Old Style", serif';
     }
+  }
+
+  function initializeSearchOverlay() {
+    const overlay = document.querySelector("[data-search-overlay]");
+    const toggle = document.querySelector("[data-search-toggle]");
+    if (!overlay || !toggle) return;
+
+    toggle.addEventListener("click", () => {
+      overlay.hidden = false;
+      document.body.classList.add("has-overlay");
+      const input = overlay.querySelector("[data-search-input]");
+      if (input instanceof HTMLElement) {
+        setTimeout(() => input.focus(), 50);
+      }
+    });
+
+    overlay.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("[data-search-close]")) {
+        closeSearchOverlay();
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !overlay.hidden) {
+        closeSearchOverlay();
+        return;
+      }
+      if (
+        overlay.hidden &&
+        (event.key === "/" || ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k")) &&
+        !(document.activeElement instanceof HTMLInputElement) &&
+        !(document.activeElement instanceof HTMLTextAreaElement)
+      ) {
+        event.preventDefault();
+        overlay.hidden = false;
+        document.body.classList.add("has-overlay");
+        const input = overlay.querySelector("[data-search-input]");
+        if (input instanceof HTMLElement) {
+          setTimeout(() => input.focus(), 50);
+        }
+      }
+    });
+  }
+
+  function closeSearchOverlay() {
+    const overlay = document.querySelector("[data-search-overlay]");
+    if (!overlay) return;
+    overlay.hidden = true;
+    document.body.classList.remove("has-overlay");
+  }
+
+  function initializeCanonModeToggle() {
+    const select = document.querySelector("[data-reader-canon-mode]");
+    if (!select) return;
+    const fullCanon = document.body.dataset.fullCanon === "true";
+    select.value = fullCanon ? "full" : "public";
+    select.addEventListener("change", () => {
+      const value = select.value;
+      if (value === "full") {
+        document.cookie = "narrarium-canon=full; path=/; SameSite=Strict";
+      } else {
+        document.cookie = "narrarium-canon=; path=/; max-age=0; SameSite=Strict";
+      }
+      window.location.reload();
+    });
   }
 
   function escapeRegex(value) {

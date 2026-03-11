@@ -20,6 +20,7 @@ export async function scaffoldReaderSite(targetDir, options = {}) {
     await Promise.all([
         copyFile(path.join(packageRoot, "astro.config.mjs"), path.join(targetRoot, "astro.config.mjs")),
         copyFile(path.join(packageRoot, "tsconfig.json"), path.join(targetRoot, "tsconfig.json")),
+        copyFile(path.join(packageRoot, "src", "middleware.ts"), path.join(targetRoot, "src", "middleware.ts")),
         cp(path.join(packageRoot, "scripts"), path.join(targetRoot, "scripts"), { recursive: true }),
         cp(path.join(packageRoot, "src", "components"), path.join(targetRoot, "src", "components"), { recursive: true }),
         cp(path.join(packageRoot, "src", "styles"), path.join(targetRoot, "src", "styles"), { recursive: true }),

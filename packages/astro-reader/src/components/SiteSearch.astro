@@ -13,23 +13,32 @@ const filters = [
 ];
 ---
 
-<div class="site-search" data-site-search>
-  <label class="site-search__field">
-    <span class="label">Search</span>
-    <input type="search" placeholder="Search chapters, scenes, and canon..." data-search-input />
-  </label>
-  <div class="site-search__filters" data-search-filters>
-    {filters.map((filter, index) => (
-      <button
-        type="button"
-        class:list={["site-search__filter", index === 0 && "is-active"]}
-        data-search-filter={filter.key}
-      >
-        {filter.label}
-      </button>
-    ))}
+<div class="search-overlay" data-search-overlay hidden>
+  <button type="button" class="search-overlay__backdrop" data-search-close aria-label="Close search"></button>
+  <div class="search-overlay__panel">
+    <div class="search-overlay__head">
+      <span class="eyebrow">Search</span>
+      <button type="button" class="icon-btn" data-search-close aria-label="Close search">×</button>
+    </div>
+    <div class="site-search" data-site-search>
+      <label class="site-search__field">
+        <span class="label">Search</span>
+        <input type="search" placeholder="Search chapters, scenes, and canon..." data-search-input />
+      </label>
+      <div class="site-search__filters" data-search-filters>
+        {filters.map((filter, index) => (
+          <button
+            type="button"
+            class:list={["site-search__filter", index === 0 && "is-active"]}
+            data-search-filter={filter.key}
+          >
+            {filter.label}
+          </button>
+        ))}
+      </div>
+      <div class="site-search__results" data-search-results hidden></div>
+    </div>
   </div>
-  <div class="site-search__results" data-search-results hidden></div>
 </div>
 
 <script type="application/json" id="reader-search-data" set:html={entriesJson}></script>
@@ -90,16 +99,6 @@ const filters = [
         filterButtons.forEach((candidate) => candidate.classList.toggle("is-active", candidate === button));
         renderResults(input.value);
       });
-    });
-    document.addEventListener("click", (event) => {
-      if (!(event.target instanceof Node) || searchRoot.contains(event.target)) return;
-      results.hidden = true;
-    });
-    document.addEventListener("keydown", (event) => {
-      if ((event.key === "/" && document.activeElement !== input) || ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k")) {
-        event.preventDefault();
-        input.focus();
-      }
     });
   }
 
