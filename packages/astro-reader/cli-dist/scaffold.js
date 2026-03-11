@@ -13,6 +13,7 @@ export async function scaffoldReaderSite(targetDir, options = {}) {
     await mkdir(path.join(targetRoot, "src", "lib"), { recursive: true });
     await mkdir(path.join(targetRoot, "src", "pages"), { recursive: true });
     await mkdir(path.join(targetRoot, "src", "components"), { recursive: true });
+    await mkdir(path.join(targetRoot, "src", "styles"), { recursive: true });
     await mkdir(path.join(targetRoot, "scripts"), { recursive: true });
     await mkdir(path.join(targetRoot, ".github", "workflows"), { recursive: true });
     await mkdir(path.join(targetRoot, "public", "downloads"), { recursive: true });
@@ -21,6 +22,7 @@ export async function scaffoldReaderSite(targetDir, options = {}) {
         copyFile(path.join(packageRoot, "tsconfig.json"), path.join(targetRoot, "tsconfig.json")),
         cp(path.join(packageRoot, "scripts"), path.join(targetRoot, "scripts"), { recursive: true }),
         cp(path.join(packageRoot, "src", "components"), path.join(targetRoot, "src", "components"), { recursive: true }),
+        cp(path.join(packageRoot, "src", "styles"), path.join(targetRoot, "src", "styles"), { recursive: true }),
         cp(path.join(packageRoot, "src", "lib"), path.join(targetRoot, "src", "lib"), { recursive: true }),
         cp(path.join(packageRoot, "src", "layouts"), path.join(targetRoot, "src", "layouts"), { recursive: true }),
         cp(path.join(packageRoot, "src", "pages"), path.join(targetRoot, "src", "pages"), { recursive: true }),
