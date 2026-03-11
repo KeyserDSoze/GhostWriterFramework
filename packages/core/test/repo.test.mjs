@@ -815,7 +815,6 @@ test("findWikipediaResearchSnapshot reuses saved research before a fresh fetch i
     });
 
     const savedPath = await writeWikipediaResearchSnapshot(rootPath, {
-      lang: "en",
       title: "Venice",
       pageUrl: "https://en.wikipedia.org/wiki/Venice",
       summary: "Venice is built across a lagoon.",
@@ -823,12 +822,11 @@ test("findWikipediaResearchSnapshot reuses saved research before a fresh fetch i
     });
 
     const snapshot = await findWikipediaResearchSnapshot(rootPath, {
-      lang: "en",
       title: "Venice",
     });
 
     assert.equal(snapshot?.filePath, savedPath);
-    assert.match(snapshot?.relativePath ?? "", /research\/wikipedia\/en\/venice\.md/);
+    assert.match(snapshot?.relativePath ?? "", /research\/wikipedia\/venice\.md/);
     assert.equal(snapshot?.sourceUrl, "https://en.wikipedia.org/wiki/Venice");
     assert.match(snapshot?.retrievedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
     assert.match(snapshot?.body ?? "", /Existing research snapshot/);

@@ -22,8 +22,6 @@ export const BOOK_DIRECTORIES = [
   "evaluations/chapters",
   "research",
   "research/wikipedia",
-  "research/wikipedia/en",
-  "research/wikipedia/it",
   "assets",
   "assets/book",
   "assets/characters",
@@ -38,6 +36,8 @@ export const BOOK_DIRECTORIES = [
   ".opencode/commands",
   ".opencode/plugins",
   ".claude/skills",
+  ".vscode",
+  ".github",
 ] as const;
 
 export const ENTITY_TYPE_TO_DIRECTORY = {

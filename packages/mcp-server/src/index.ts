@@ -59,8 +59,10 @@ import {
 import {
   buildRepositorySpecSummary,
   buildSetupInstructions,
+  fetchWikidataEntity,
   fetchWikipediaPage,
   searchWikipedia,
+  type NormalizedWikidataClaims,
 } from "./public-tools.js";
 
 const server = new McpServer({
@@ -558,7 +560,7 @@ server.tool(
     maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
-    const { sources, note: wikipediaNote } = await collectHistoricalResearchSupport({
+    const { sources, note: wikipediaNote, wikidataClaims } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
       rootPath,
@@ -568,6 +570,7 @@ server.tool(
       maxWikipediaSnapshotAgeDays,
     });
 
+    const wikidataFields = wikidataClaims ? mapWikidataToCharacter(wikidataClaims) : {};
     const result = await createCharacterProfile(rootPath, {
       name,
       slug,
@@ -607,7 +610,7 @@ server.tool(
       overwrite,
       historical,
       sources,
-      frontmatter,
+      frontmatter: { ...wikidataFields, ...frontmatter },
     });
 
     return textResponse(`Created character at ${result.filePath}.${wikipediaNote}`);
@@ -696,7 +699,7 @@ server.tool(
     maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
-    const { sources, note } = await collectHistoricalResearchSupport({
+    const { sources, note, wikidataClaims } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
       rootPath,
@@ -706,6 +709,7 @@ server.tool(
       maxWikipediaSnapshotAgeDays,
     });
 
+    const wikidataFields = wikidataClaims ? mapWikidataToLocation(wikidataClaims) : {};
     const result = await createLocationProfile(rootPath, {
       name,
       slug,
@@ -728,7 +732,7 @@ server.tool(
       overwrite,
       historical,
       sources,
-      frontmatter,
+      frontmatter: { ...wikidataFields, ...frontmatter },
     });
 
     return textResponse(`Created location at ${result.filePath}.${note}`);
@@ -821,7 +825,7 @@ server.tool(
     maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
-    const { sources, note } = await collectHistoricalResearchSupport({
+    const { sources, note, wikidataClaims } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
       rootPath,
@@ -831,6 +835,7 @@ server.tool(
       maxWikipediaSnapshotAgeDays,
     });
 
+    const wikidataFields = wikidataClaims ? mapWikidataToFaction(wikidataClaims) : {};
     const result = await createFactionProfile(rootPath, {
       name,
       slug,
@@ -855,7 +860,7 @@ server.tool(
       overwrite,
       historical,
       sources,
-      frontmatter,
+      frontmatter: { ...wikidataFields, ...frontmatter },
     });
 
     return textResponse(`Created faction at ${result.filePath}.${note}`);
@@ -946,7 +951,7 @@ server.tool(
     maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
-    const { sources, note } = await collectHistoricalResearchSupport({
+    const { sources, note, wikidataClaims } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
       rootPath,
@@ -956,6 +961,7 @@ server.tool(
       maxWikipediaSnapshotAgeDays,
     });
 
+    const wikidataFields = wikidataClaims ? mapWikidataToItem(wikidataClaims) : {};
     const result = await createItemProfile(rootPath, {
       name,
       slug,
@@ -979,7 +985,7 @@ server.tool(
       overwrite,
       historical,
       sources,
-      frontmatter,
+      frontmatter: { ...wikidataFields, ...frontmatter },
     });
 
     return textResponse(`Created item at ${result.filePath}.${note}`);
@@ -2248,6 +2254,7 @@ server.tool(
     }
 
     const secondaryLang = lang !== "en" ? lang : null;
+    const effectiveLang = lang;
 
     const [enResult, secondaryResult] = await Promise.allSettled([
       fetchWikipediaPage(title, "en"),
@@ -2264,6 +2271,13 @@ server.tool(
 
     const primary = enPage ?? secondaryPage!;
     const secondary = enPage && secondaryPage ? secondaryPage : null;
+
+    // Fetch Wikidata structured data
+    const wikidataId = enPage?.wikidataId;
+    const wikidataClaims = wikidataId
+      ? await fetchWikidataEntity(wikidataId, effectiveLang).catch(() => null)
+      : null;
+
     let researchPath = "";
 
     if (saveToResearch) {
@@ -2280,12 +2294,16 @@ server.tool(
         secondarySummary: secondary?.extract,
         secondaryPageUrl: secondary?.url,
         secondaryLang: secondaryLang ?? undefined,
+        wikidataSection: wikidataClaims ? formatWikidataSection(wikidataClaims) : undefined,
       });
     }
 
     const lines = [`${primary.title}\n${primary.description ?? ""}\n\n${primary.extract}\n\n${primary.url}`];
     if (secondary) {
       lines.push(`\n[${secondaryLang!.toUpperCase()}] ${secondary.title}\n${secondary.description ?? ""}\n\n${secondary.extract}\n\n${secondary.url}`);
+    }
+    if (wikidataClaims) {
+      lines.push(`\n[Wikidata ${wikidataClaims.qid}] ${formatWikidataSection(wikidataClaims)}`);
     }
     if (researchPath) {
       lines.push(`\nSaved to ${researchPath}`);
@@ -2502,6 +2520,62 @@ function wizardChecklist(options: {
   ].join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// Wikidata helpers
+// ---------------------------------------------------------------------------
+
+function formatWikidataSection(claims: NormalizedWikidataClaims): string {
+  const lines: string[] = [];
+  lines.push(`- **QID**: ${claims.qid}`);
+  if (claims.label) lines.push(`- **Label**: ${claims.label}`);
+  if (claims.description) lines.push(`- **Description**: ${claims.description}`);
+  if (claims.born) lines.push(`- **Born**: ${claims.born}`);
+  if (claims.died) lines.push(`- **Died**: ${claims.died}`);
+  if (claims.founded) lines.push(`- **Founded**: ${claims.founded}`);
+  if (claims.dissolved) lines.push(`- **Dissolved**: ${claims.dissolved}`);
+  if (claims.gender) lines.push(`- **Gender**: ${claims.gender}`);
+  if (claims.nationality) lines.push(`- **Nationality**: ${claims.nationality}`);
+  if (claims.occupation?.length) lines.push(`- **Occupation**: ${claims.occupation.join(", ")}`);
+  if (claims.country) lines.push(`- **Country**: ${claims.country}`);
+  if (claims.creator) lines.push(`- **Creator**: ${claims.creator}`);
+  if (claims.coordinates) {
+    lines.push(`- **Coordinates**: ${claims.coordinates.lat}, ${claims.coordinates.lng}`);
+  }
+  return lines.join("\n");
+}
+
+function mapWikidataToCharacter(claims: NormalizedWikidataClaims): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (claims.born) fields.born = claims.born;
+  if (claims.died) fields.died = claims.died;
+  if (claims.gender) fields.gender = claims.gender;
+  if (claims.nationality) fields.nationality = claims.nationality;
+  if (claims.occupation?.length) fields.wikidata_occupation = claims.occupation[0];
+  return fields;
+}
+
+function mapWikidataToLocation(claims: NormalizedWikidataClaims): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (claims.coordinates) fields.coordinates = claims.coordinates;
+  if (claims.country) fields.country = claims.country;
+  return fields;
+}
+
+function mapWikidataToFaction(claims: NormalizedWikidataClaims): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (claims.founded) fields.founded = claims.founded;
+  if (claims.dissolved) fields.dissolved = claims.dissolved;
+  if (claims.country) fields.country = claims.country;
+  return fields;
+}
+
+function mapWikidataToItem(claims: NormalizedWikidataClaims): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (claims.creator) fields.creator = claims.creator;
+  if (claims.founded) fields.created = claims.founded;
+  return fields;
+}
+
 async function collectHistoricalResearchSupport(options: {
   historical: boolean;
   wikipediaTitle?: string;
@@ -2510,7 +2584,7 @@ async function collectHistoricalResearchSupport(options: {
   slug?: string;
   forceWikipediaRefresh?: boolean;
   maxWikipediaSnapshotAgeDays?: number;
-}): Promise<{ sources: string[]; note: string }> {
+}): Promise<{ sources: string[]; note: string; wikidataClaims?: NormalizedWikidataClaims }> {
   if (!options.historical || !options.wikipediaTitle) {
     return { sources: [], note: "" };
   }
@@ -2527,6 +2601,7 @@ async function collectHistoricalResearchSupport(options: {
   }
 
   const secondaryLang = options.lang && options.lang !== "en" ? options.lang : null;
+  const effectiveLang = options.lang ?? "en";
 
   const [enResult, secondaryResult] = await Promise.allSettled([
     fetchWikipediaPage(options.wikipediaTitle, "en"),
@@ -2544,6 +2619,13 @@ async function collectHistoricalResearchSupport(options: {
   const primary = enPage ?? secondaryPage!;
   const secondary = enPage && secondaryPage ? secondaryPage : null;
 
+  // Fetch Wikidata in parallel with snapshot write
+  const wikidataId = enPage?.wikidataId;
+  const wikidataClaimsResult = wikidataId
+    ? await fetchWikidataEntity(wikidataId, effectiveLang).catch(() => null)
+    : null;
+  const wikidataClaims = wikidataClaimsResult ?? undefined;
+
   const researchPath = await writeWikipediaResearchSnapshot(options.rootPath, {
     title: primary.title,
     pageUrl: primary.url,
@@ -2553,11 +2635,13 @@ async function collectHistoricalResearchSupport(options: {
     secondarySummary: secondary?.extract,
     secondaryPageUrl: secondary?.url,
     secondaryLang: secondaryLang ?? undefined,
+    wikidataSection: wikidataClaims ? formatWikidataSection(wikidataClaims) : undefined,
   });
 
   return {
     sources: [primary.url, ...(secondary ? [secondary.url] : [])],
     note: ` Saved research snapshot to ${researchPath}.`,
+    wikidataClaims,
   };
 }
 
@@ -2678,6 +2762,7 @@ async function finalizeWizardSession(
 
   switch (session.kind) {
     case "character": {
+      const wikidataFields = research.wikidataClaims ? mapWikidataToCharacter(research.wikidataClaims) : {};
       const result = await createCharacterProfile(session.rootPath, {
         slug: options.slug,
         overwrite: options.overwrite,
@@ -2711,11 +2796,12 @@ async function finalizeWizardSession(
         historical,
         sources: research.sources,
         body: options.body,
-        frontmatter: options.frontmatter,
+        frontmatter: { ...wikidataFields, ...options.frontmatter },
       });
       return appendPlotSyncNote(session.rootPath, `Created ${session.kind} at ${result.filePath}.${research.note}`);
     }
     case "location": {
+      const wikidataFields = research.wikidataClaims ? mapWikidataToLocation(research.wikidataClaims) : {};
       const result = await createLocationProfile(session.rootPath, {
         slug: options.slug,
         overwrite: options.overwrite,
@@ -2734,11 +2820,12 @@ async function finalizeWizardSession(
         historical,
         sources: research.sources,
         body: options.body,
-        frontmatter: options.frontmatter,
+        frontmatter: { ...wikidataFields, ...options.frontmatter },
       });
       return appendPlotSyncNote(session.rootPath, `Created ${session.kind} at ${result.filePath}.${research.note}`);
     }
     case "faction": {
+      const wikidataFields = research.wikidataClaims ? mapWikidataToFaction(research.wikidataClaims) : {};
       const result = await createFactionProfile(session.rootPath, {
         slug: options.slug,
         overwrite: options.overwrite,
@@ -2759,11 +2846,12 @@ async function finalizeWizardSession(
         historical,
         sources: research.sources,
         body: options.body,
-        frontmatter: options.frontmatter,
+        frontmatter: { ...wikidataFields, ...options.frontmatter },
       });
       return `Created ${session.kind} at ${result.filePath}.${research.note}`;
     }
     case "item": {
+      const wikidataFields = research.wikidataClaims ? mapWikidataToItem(research.wikidataClaims) : {};
       const result = await createItemProfile(session.rootPath, {
         slug: options.slug,
         overwrite: options.overwrite,
@@ -2783,7 +2871,7 @@ async function finalizeWizardSession(
         historical,
         sources: research.sources,
         body: options.body,
-        frontmatter: options.frontmatter,
+        frontmatter: { ...wikidataFields, ...options.frontmatter },
       });
       return `Created ${session.kind} at ${result.filePath}.${research.note}`;
     }
