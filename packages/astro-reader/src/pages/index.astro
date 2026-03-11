@@ -25,17 +25,34 @@ const chapterCards = await Promise.all(
 
 <BaseLayout title={title} description="Read a Narrarium repository chapter by chapter." activeSection="home">
   <section class="hero">
-    <p class="eyebrow">Reader</p>
-    <h1>{title}</h1>
-    <p class="lede">
-      {ready
-        ? "Read the book chapter by chapter and browse the linked canon from one place."
-        : "Set `NARRARIUM_BOOK_ROOT` to a Narrarium book repository to load the reader."}
-    </p>
-
-    {ready && chapters.length > 0 && <div class="chip-row"><a class="chip" href="downloads/book.epub" download>Download EPUB</a></div>}
-
-    {coverFigure && <AssetFigure figure={coverFigure} className="hero-media" />}
+    {coverFigure ? (
+      <div class="hero-layout">
+        <div class="hero-cover">
+          <AssetFigure figure={coverFigure} />
+        </div>
+        <div class="hero-body">
+          <p class="eyebrow">Reader</p>
+          <h1>{title}</h1>
+          <p class="lede">
+            {ready
+              ? "Read the book chapter by chapter and browse the linked canon from one place."
+              : "Set `NARRARIUM_BOOK_ROOT` to a Narrarium book repository to load the reader."}
+          </p>
+          {ready && chapters.length > 0 && <div class="chip-row"><a class="chip" href="downloads/book.epub" download>Download EPUB</a></div>}
+        </div>
+      </div>
+    ) : (
+      <>
+        <p class="eyebrow">Reader</p>
+        <h1>{title}</h1>
+        <p class="lede">
+          {ready
+            ? "Read the book chapter by chapter and browse the linked canon from one place."
+            : "Set `NARRARIUM_BOOK_ROOT` to a Narrarium book repository to load the reader."}
+        </p>
+        {ready && chapters.length > 0 && <div class="chip-row"><a class="chip" href="downloads/book.epub" download>Download EPUB</a></div>}
+      </>
+    )}
 
     <div class="grid stats">
       <div class="card">
@@ -62,51 +79,51 @@ const chapterCards = await Promise.all(
       <section class="section">
         <h2>Browse</h2>
         <div class="catalog-grid">
-          <article class="card catalog-card">
+          <article class="catalog-card">
             <a href="characters/">
-              <div class="chapter-number">Characters</div>
+              <span class="browse-card-icon">👤</span>
               <h3 class="chapter-title">Characters</h3>
               <div class="chapter-meta">Browse the people in the story.</div>
               <div class="chip-row"><span class="chip">{visibleCharacterCount} visible</span></div>
             </a>
           </article>
-          <article class="card catalog-card">
+          <article class="catalog-card">
             <a href="locations/">
-              <div class="chapter-number">Locations</div>
+              <span class="browse-card-icon">📍</span>
               <h3 class="chapter-title">Locations</h3>
               <div class="chapter-meta">Browse places, settings, and landmarks.</div>
               <div class="chip-row"><span class="chip">{visibleLocationCount} visible</span></div>
             </a>
           </article>
-          <article class="card catalog-card">
+          <article class="catalog-card">
             <a href="factions/">
-              <div class="chapter-number">Factions</div>
+              <span class="browse-card-icon">⚔️</span>
               <h3 class="chapter-title">Factions</h3>
               <div class="chapter-meta">Browse groups, alliances, and power blocks.</div>
               <div class="chip-row"><span class="chip">{visibleFactionCount} visible</span></div>
             </a>
           </article>
-          <article class="card catalog-card">
+          <article class="catalog-card">
             <a href="items/">
-              <div class="chapter-number">Items</div>
+              <span class="browse-card-icon">🗡️</span>
               <h3 class="chapter-title">Items</h3>
               <div class="chapter-meta">Browse objects, tools, and recurring symbols.</div>
               <div class="chip-row"><span class="chip">{visibleItemCount} visible</span></div>
             </a>
           </article>
           {fullCanonMode && (
-            <article class="card catalog-card">
+            <article class="catalog-card">
               <a href="secrets/">
-                <div class="chapter-number">Secrets</div>
+                <span class="browse-card-icon">🔒</span>
                 <h3 class="chapter-title">Secrets</h3>
                 <div class="chapter-meta">Browse hidden information and later reveals.</div>
                 <div class="chip-row"><span class="chip">{secrets.length} entries</span></div>
               </a>
             </article>
           )}
-          <article class="card catalog-card">
+          <article class="catalog-card">
             <a href="timeline/">
-              <div class="chapter-number">Timeline</div>
+              <span class="browse-card-icon">📅</span>
               <h3 class="chapter-title">Timeline</h3>
               <div class="chapter-meta">Follow the order of events across the book.</div>
               <div class="chip-row"><span class="chip">{visibleTimelineCount} visible</span></div>
@@ -116,25 +133,25 @@ const chapterCards = await Promise.all(
       </section>
 
       <section class="section" id="chapters">
-      <h2>Chapters</h2>
-      {chapterCards.length > 0 ? (
-        <div class="chapter-list">
-          {chapterCards.map((chapter) => (
-            <article class="chapter-card">
-              <a href={`chapters/${chapter.slug}/`}>
-                {chapter.figure && <AssetFigure figure={chapter.figure} className="catalog-media" />}
-                <div class="chapter-number">Chapter {String(chapter.metadata.number).padStart(3, "0")}</div>
-                <h3 class="chapter-title">{chapter.metadata.title}</h3>
-                <div class="chapter-meta">{chapter.metadata.summary ?? "Open the chapter."}</div>
-              </a>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div class="empty">
-          This book is connected, but there are no chapters yet. Add the first chapter and the reader will show it automatically.
-        </div>
-      )}
+        <h2>Chapters</h2>
+        {chapterCards.length > 0 ? (
+          <div class="chapter-list">
+            {chapterCards.map((chapter) => (
+              <article class="chapter-card">
+                <a href={`chapters/${chapter.slug}/`}>
+                  {chapter.figure && <AssetFigure figure={chapter.figure} className="catalog-media" />}
+                  <div class="chapter-number">{String(chapter.metadata.number).padStart(3, "0")}</div>
+                  <h3 class="chapter-title">{chapter.metadata.title}</h3>
+                  <div class="chapter-meta">{chapter.metadata.summary ?? "Open the chapter."}</div>
+                </a>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div class="empty">
+            This book is connected, but there are no chapters yet. Add the first chapter and the reader will show it automatically.
+          </div>
+        )}
       </section>
     </>
   ) : (
