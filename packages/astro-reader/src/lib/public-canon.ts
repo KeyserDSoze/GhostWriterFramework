@@ -45,7 +45,7 @@ export async function buildPublicCanonIndexCards(
 
   for (const entity of entities) {
     const access = getSpoilerAccess(entity.metadata, chapterOrder);
-    if (!fullMode && (kind === "secret" || !access.isVisible)) {
+    if (!fullMode && !access.isVisible) {
       continue;
     }
 
@@ -75,7 +75,7 @@ export async function countPublicCanonEntries(kind: EntityType, entities: CanonE
 
   return entities.filter((entity) => {
     const access = getSpoilerAccess(entity.metadata, chapterOrder);
-    return fullMode ? true : kind !== "secret" && access.isVisible;
+    return fullMode ? true : access.isVisible;
   }).length;
 }
 
@@ -87,20 +87,17 @@ export async function buildCanonPageView(kind: EntityType, entity: CanonEntityDo
   const eyebrow = pageEyebrow(kind);
   const entityId = String(entity.metadata.id ?? `${kind}:${entity.slug}`);
 
-  if (!fullMode && (kind === "secret" || !access.isVisible)) {
+  if (!fullMode && !access.isVisible) {
     return {
       mode: "locked",
       title,
       eyebrow,
-      description: kind === "secret" ? "This dossier is hidden in public reader mode." : `This entry unlocks in ${formatChapterThreshold(access.visibleFrom)}.`,
+      description: `This entry unlocks in ${formatChapterThreshold(access.visibleFrom)}.`,
       metaEntries: access.visibleFrom !== null ? [["Unlocks in", formatChapterThreshold(access.visibleFrom)]] : [],
       figure: null,
       relatedLinks: [],
       storyLinks: [],
-      notice:
-        kind === "secret"
-          ? "Secrets stay off the public atlas unless you build the reader in full canon mode."
-          : `This canon page stays hidden until ${formatChapterThreshold(access.visibleFrom)} to avoid early spoilers.`,
+      notice: `This canon page stays hidden until ${formatChapterThreshold(access.visibleFrom)} to avoid early spoilers.`,
     };
   }
 
@@ -112,6 +109,7 @@ export async function buildCanonPageView(kind: EntityType, entity: CanonEntityDo
       description: teaserSummary(kind, entity.metadata, access),
       metaEntries: teaserMetaEntries(kind, entity.metadata, access),
       figure: access.revealedFrom === null ? await loadAssetFigure(entityId, title) : null,
+      html: entity.body ? await marked.parse(entity.body) : undefined,
       relatedLinks: [],
       storyLinks: [],
       notice:
@@ -185,7 +183,7 @@ function teaserSummary(kind: EntityType, metadata: Record<string, unknown>, acce
     case "timeline-event":
       return `${stringOr(metadata.date) ? `Dated ${String(metadata.date)}.` : "A recorded event in the book chronology."}${unlock}`;
     case "secret":
-      return "This dossier is hidden in public reader mode.";
+      return `${stringOr(metadata.function_in_book) || "A hidden truth woven into the story."}${unlock}`;
   }
 }
 
@@ -258,6 +256,7 @@ function teaserMetaEntries(
         ["Occupation", metadata.occupation],
         ["Origin", metadata.origin],
         ["Introduced in", metadata.introduced_in],
+        ["Background", metadata.background_summary],
         ["First impression", metadata.first_impression],
         ["Full dossier", access.revealedFrom !== null ? formatChapterThreshold(access.revealedFrom) : undefined],
       ]);
@@ -293,7 +292,10 @@ function teaserMetaEntries(
         ["Full dossier", access.revealedFrom !== null ? formatChapterThreshold(access.revealedFrom) : undefined],
       ]);
     case "secret":
-      return compactEntries([["Unlocks in", access.visibleFrom !== null ? formatChapterThreshold(access.visibleFrom) : undefined]]);
+      return compactEntries([
+        ["Kind", metadata.secret_kind],
+        ["Full dossier", access.revealedFrom !== null ? formatChapterThreshold(access.revealedFrom) : undefined],
+      ]);
   }
 }
 
@@ -308,14 +310,25 @@ function fullMetaEntries(kind: EntityType, metadata: Record<string, unknown>): A
         ["Spoken name", metadata.spoken_name],
         ["TTS label", metadata.tts_label],
         ["Function in book", metadata.function_in_book],
+        ["Background", metadata.background_summary],
         ["Occupation", metadata.occupation],
         ["Origin", metadata.origin],
         ["Age", metadata.age],
+        ["Home location", metadata.home_location],
         ["Introduced in", metadata.introduced_in],
         ["Factions", metadata.factions],
+        ["Aliases", metadata.aliases],
+        ["Former names", metadata.former_names],
+        ["Current identity", metadata.current_identity],
+        ["Identity arc", metadata.identity_arc],
         ["Traits", metadata.traits],
+        ["Mannerisms", metadata.mannerisms],
         ["Desires", metadata.desires],
         ["Fears", metadata.fears],
+        ["Relationships", metadata.relationships],
+        ["Arc", metadata.arc],
+        ["Internal conflict", metadata.internal_conflict],
+        ["External conflict", metadata.external_conflict],
       ]);
     case "location":
       return compactEntries([

@@ -146,6 +146,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
 
 <script is:inline>
   const themeStorageKey = "narrarium-reader-theme";
+  const canonModeStorageKey = "narrarium-reader-canon";
   const progressStorageKey = "narrarium-reader-progress";
   const bookmarkStorageKey = "narrarium-reader-bookmark";
   const preferencesStorageKey = "narrarium-reader-preferences";
@@ -1299,15 +1300,12 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   function initializeCanonModeToggle() {
     const select = document.querySelector("[data-reader-canon-mode]");
     if (!select) return;
-    const fullCanon = document.body.dataset.fullCanon === "true";
+    const savedMode = readStorage(canonModeStorageKey);
+    const fullCanon = savedMode !== null ? savedMode === "full" : document.body.dataset.fullCanon === "true";
+    document.body.dataset.fullCanon = fullCanon ? "true" : "false";
     select.value = fullCanon ? "full" : "public";
     select.addEventListener("change", () => {
-      const value = select.value;
-      if (value === "full") {
-        document.cookie = "narrarium-canon=full; path=/; SameSite=Strict";
-      } else {
-        document.cookie = "narrarium-canon=; path=/; max-age=0; SameSite=Strict";
-      }
+      writeStorage(canonModeStorageKey, select.value);
       window.location.reload();
     });
   }

@@ -59,6 +59,16 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
     </script>
   </head>
   <body class:list={[isChapterPage && "page-chapter"]} data-reader-chapter-number={currentChapterNumber} data-full-canon={fullCanonMode ? "true" : "false"}>
+    <script is:inline>
+      (() => {
+        try {
+          const saved = localStorage.getItem("narrarium-reader-canon");
+          if (saved !== null) {
+            document.body.dataset.fullCanon = saved === "full" ? "true" : "false";
+          }
+        } catch {}
+      })();
+    </script>
     <main class="shell">
       <header class="masthead">
         <a class="brand" href="./">Narrarium</a>
@@ -80,7 +90,7 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
       </header>
       <slot />
     </main>
-    <ReaderRuntime glossary={canonGlossary} chapters={readerChapters} currentChapterNumber={currentChapterNumber} />
     <SiteSearch entries={searchIndex} />
+    <ReaderRuntime glossary={canonGlossary} chapters={readerChapters} currentChapterNumber={currentChapterNumber} />
   </body>
 </html>
