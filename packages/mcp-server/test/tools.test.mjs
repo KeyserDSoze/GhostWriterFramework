@@ -131,11 +131,11 @@ test("mcp server tools support guided creation and structural updates", async ()
       "utf8",
     );
     await writeFile(
-      path.join(rootPath, "research", "wikipedia", "en", "venice.md"),
+      path.join(rootPath, "research", "wikipedia", "venice.md"),
       [
         "---",
         "type: research-note",
-        "id: research:wikipedia:en:venice",
+        "id: research:wikipedia:venice",
         "title: Venice",
         "language: en",
         "source_url: https://en.wikipedia.org/wiki/Venice",
@@ -380,7 +380,7 @@ test("mcp server tools support guided creation and structural updates", async ()
     assert.match(resumeBookContextText, /Conversation Resume/);
     assert.match(reusedHistoricalLocationText, /Reused existing research snapshot/);
     assert.match(reusedWikipediaText, /Reused saved research snapshot/);
-    assert.match(reusedWikipediaText, /research\/wikipedia\/en\/venice\.md/);
+    assert.match(reusedWikipediaText, /research\/wikipedia\/venice\.md/);
     assert.match(chapterFromDraftText, /Created or updated chapter from draft/);
     assert.match(paragraphFromDraftText, /Created or updated paragraph from draft/);
     assert.match(chapterFromDraftText, /Chapter resume synced at/);
