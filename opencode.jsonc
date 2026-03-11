@@ -10,7 +10,7 @@
         "reasoningSummary": "detailed",
         "textVerbosity": "high",
         "include": ["reasoning.encrypted_content", "usage"],
-        "store": true
+        "store": false
       }
     },
     "plan": {
@@ -21,7 +21,7 @@
         "reasoningSummary": "detailed",
         "textVerbosity": "high",
         "include": ["reasoning.encrypted_content", "usage"],
-        "store": true
+        "store": false
       }
     }
   },
