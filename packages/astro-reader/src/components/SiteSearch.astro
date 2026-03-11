@@ -22,8 +22,7 @@ const filters = [
     </div>
     <div class="site-search" data-site-search>
       <label class="site-search__field">
-        <span class="label">Search</span>
-        <input type="search" placeholder="Search chapters, scenes, and canon..." data-search-input />
+        <input type="search" placeholder="Search chapters, scenes, and canon..." aria-label="Search" data-search-input />
       </label>
       <div class="site-search__filters" data-search-filters>
         {filters.map((filter, index) => (
@@ -44,100 +43,102 @@ const filters = [
 <script type="application/json" id="reader-search-data" set:html={entriesJson}></script>
 
 <script is:inline>
-  const spoilerLimitStorageKey = "narrarium-reader-spoiler-limit";
-  const searchDataElement = document.getElementById("reader-search-data");
-  const searchEntries = searchDataElement ? JSON.parse(searchDataElement.textContent || "[]") : [];
-  const searchRoot = document.querySelector("[data-site-search]");
+  (() => {
+    const spoilerLimitStorageKey = "narrarium-reader-spoiler-limit";
+    const searchDataElement = document.getElementById("reader-search-data");
+    const searchEntries = searchDataElement ? JSON.parse(searchDataElement.textContent || "[]") : [];
+    const searchRoot = document.querySelector("[data-site-search]");
 
-  if (searchRoot) {
-    const input = searchRoot.querySelector("[data-search-input]");
-    const results = searchRoot.querySelector("[data-search-results]");
-    const filterButtons = [...searchRoot.querySelectorAll("[data-search-filter]")];
-    let activeFilter = "all";
+    if (searchRoot) {
+      const input = searchRoot.querySelector("[data-search-input]");
+      const results = searchRoot.querySelector("[data-search-results]");
+      const filterButtons = [...searchRoot.querySelectorAll("[data-search-filter]")];
+      let activeFilter = "all";
 
-    const renderResults = (value) => {
-      const query = String(value || "").trim().toLowerCase();
-      if (!query) {
-        results.hidden = true;
-        results.replaceChildren();
-        return;
-      }
+      const renderResults = (value) => {
+        const query = String(value || "").trim().toLowerCase();
+        if (!query) {
+          results.hidden = true;
+          results.replaceChildren();
+          return;
+        }
 
-      const spoilerLimit = getSpoilerLimit();
-      const matches = searchEntries
-        .filter((entry) => activeFilter === "all" || entry.kindKey === activeFilter)
-        .filter((entry) => spoilerLimit === null || entry.visibleFrom == null || spoilerLimit >= entry.visibleFrom)
-        .map((entry) => ({ entry, score: scoreSearchEntry(entry, query) }))
-        .filter((entry) => entry.score > 0)
-        .sort((left, right) => right.score - left.score)
-        .slice(0, 8);
+        const spoilerLimit = getSpoilerLimit();
+        const matches = searchEntries
+          .filter((entry) => activeFilter === "all" || entry.kindKey === activeFilter)
+          .filter((entry) => spoilerLimit === null || entry.visibleFrom == null || spoilerLimit >= entry.visibleFrom)
+          .map((entry) => ({ entry, score: scoreSearchEntry(entry, query) }))
+          .filter((entry) => entry.score > 0)
+          .sort((left, right) => right.score - left.score)
+          .slice(0, 8);
 
-      results.replaceChildren(...matches.map(({ entry }) => {
-        const anchor = document.createElement("a");
-        anchor.className = "site-search__result";
-        anchor.href = entry.href;
-        const kind = document.createElement("span");
-        kind.className = "chip";
-        kind.textContent = entry.kind;
-        const title = document.createElement("strong");
-        title.innerHTML = highlightMatch(entry.title, query);
-        const summary = document.createElement("span");
-        summary.className = "chapter-meta";
-        summary.innerHTML = highlightMatch(entry.summary, query);
-        anchor.append(kind, title, summary);
-        return anchor;
-      }));
+        results.replaceChildren(...matches.map(({ entry }) => {
+          const anchor = document.createElement("a");
+          anchor.className = "site-search__result";
+          anchor.href = entry.href;
+          const kind = document.createElement("span");
+          kind.className = "chip";
+          kind.textContent = entry.kind;
+          const title = document.createElement("strong");
+          title.innerHTML = highlightMatch(entry.title, query);
+          const summary = document.createElement("span");
+          summary.className = "chapter-meta";
+          summary.innerHTML = highlightMatch(entry.summary, query);
+          anchor.append(kind, title, summary);
+          return anchor;
+        }));
 
-      results.hidden = matches.length === 0;
-    };
+        results.hidden = matches.length === 0;
+      };
 
-    input.addEventListener("input", () => renderResults(input.value));
-    input.addEventListener("focus", () => renderResults(input.value));
-    filterButtons.forEach((button) => {
-      button.addEventListener("click", () => {
-        activeFilter = button.dataset.searchFilter || "all";
-        filterButtons.forEach((candidate) => candidate.classList.toggle("is-active", candidate === button));
-        renderResults(input.value);
+      input.addEventListener("input", () => renderResults(input.value));
+      input.addEventListener("focus", () => renderResults(input.value));
+      filterButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          activeFilter = button.dataset.searchFilter || "all";
+          filterButtons.forEach((candidate) => candidate.classList.toggle("is-active", candidate === button));
+          renderResults(input.value);
+        });
       });
-    });
-  }
+    }
 
-  function getSpoilerLimit() {
-    const value = Number(localStorage.getItem(spoilerLimitStorageKey) || "");
-    return Number.isFinite(value) ? value : null;
-  }
+    function getSpoilerLimit() {
+      const value = Number(localStorage.getItem(spoilerLimitStorageKey) || "");
+      return Number.isFinite(value) ? value : null;
+    }
 
-  function scoreSearchEntry(entry, query) {
-    const title = String(entry.title || "").toLowerCase();
-    const summary = String(entry.summary || "").toLowerCase();
-    const keywords = Array.isArray(entry.keywords) ? entry.keywords.join(" ").toLowerCase() : "";
+    function scoreSearchEntry(entry, query) {
+      const title = String(entry.title || "").toLowerCase();
+      const summary = String(entry.summary || "").toLowerCase();
+      const keywords = Array.isArray(entry.keywords) ? entry.keywords.join(" ").toLowerCase() : "";
 
-    let score = 0;
-    if (title === query) score += 120;
-    if (title.startsWith(query)) score += 80;
-    if (title.includes(query)) score += 45;
-    if (keywords.includes(query)) score += 20;
-    if (summary.includes(query)) score += 10;
-    return score;
-  }
+      let score = 0;
+      if (title === query) score += 120;
+      if (title.startsWith(query)) score += 80;
+      if (title.includes(query)) score += 45;
+      if (keywords.includes(query)) score += 20;
+      if (summary.includes(query)) score += 10;
+      return score;
+    }
 
-  function highlightMatch(value, query) {
-    const raw = String(value || "");
-    if (!query) return escapeHtml(raw);
-    const pattern = new RegExp(`(${escapeRegex(query)})`, "ig");
-    return escapeHtml(raw).replace(pattern, "<mark>$1</mark>");
-  }
+    function highlightMatch(value, query) {
+      const raw = String(value || "");
+      if (!query) return escapeHtml(raw);
+      const pattern = new RegExp(`(${escapeRegex(query)})`, "ig");
+      return escapeHtml(raw).replace(pattern, "<mark>$1</mark>");
+    }
 
-  function escapeHtml(value) {
-    return value
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#39;");
-  }
+    function escapeHtml(value) {
+      return value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
 
-  function escapeRegex(value) {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
+    function escapeRegex(value) {
+      return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+  })();
 </script>
