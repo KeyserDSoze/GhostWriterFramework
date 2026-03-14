@@ -9,6 +9,7 @@ Narrarium Framework is a local-first writing stack built around three pieces:
 ## Packages
 
 - `packages/core`: schemas, templates, repo scaffolding, search, validation, and EPUB export helpers
+- `packages/sdk-typescript`: dedicated TypeScript SDK package for remote GitHub and Azure DevOps book access
 - `packages/mcp-server`: local stdio MCP server for OpenCode, Claude Desktop, and compatible clients
 - `packages/create-narrarium-book`: starter CLI to scaffold a new book repository from the terminal
 - `packages/astro-reader`: Astro reader with spoiler-safe public mode, full canon opt-in, EPUB export, and doctor tooling
@@ -353,6 +354,7 @@ The current repository convention is documented in `docs/repository-spec.md`.
 The final public package set is:
 
 - `narrarium`
+- `narrarium-sdk`
 - `narrarium-mcp-server`
 - `create-narrarium-book`
 - `narrarium-astro-reader`

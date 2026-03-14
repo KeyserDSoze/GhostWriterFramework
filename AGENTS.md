@@ -55,6 +55,7 @@ Narrarium MCP already auto-refreshes `plot.md` and the resume files after final 
 - Use `npm run reader:init` or `narrarium-reader-init` to scaffold a standalone reader app.
 - Keep package naming aligned with the public package set:
   - `narrarium`
+  - `narrarium-sdk`
   - `narrarium-mcp-server`
   - `create-narrarium-book`
   - `narrarium-astro-reader`

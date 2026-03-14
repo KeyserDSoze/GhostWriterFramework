@@ -78,6 +78,56 @@ console.log(report.ok, report.issues);
 - use `secret_refs` and `private_notes` for author-facing hidden canon
 - store asset metadata in markdown beside images and prefer `alt_text` plus `caption` so web and EPUB output stay accessible
 
+## Remote book manager foundations
+
+`narrarium` now also exports the first SDK foundations for remote book access:
+
+- `BookManager` as the high-level entry point
+- `LocalStorageBookProfileStore` and `InMemoryBookProfileStore` for connection profiles
+- `NarrariumBookWorkspace` for in-memory edits before commit and push
+- `NarrariumRemoteProvider` so GitHub and Azure DevOps adapters can plug into the same flow
+- `GitHubRemoteProvider` with real GitHub snapshot loading plus direct commit/push scaffolding
+- `AzureDevOpsRemoteProvider` with matching Azure DevOps snapshot loading and direct push support
+- high-level workspace helpers like `upsertCharacter`, `updateChapter`, and `updateParagraph`
+
+Quick example:
+
+```js
+import {
+  AzureDevOpsRemoteProvider,
+  BookManager,
+  GitHubRemoteProvider,
+  LocalStorageBookProfileStore,
+} from "narrarium";
+
+const manager = new BookManager({
+  profileStore: new LocalStorageBookProfileStore(),
+  providers: [new GitHubRemoteProvider()],
+});
+
+const profile = await manager.createGitHubProfile({
+  name: "Primary Book",
+  owner: "your-org",
+  repository: "your-book",
+  branch: "main",
+  token: "github-token",
+});
+
+const snapshot = await manager.loadBook(profile);
+const workspace = manager.beginWorkspace(snapshot);
+
+workspace.updateChapter("chapter:001-the-arrival", {
+  frontmatter: { title: "The Arrival Revised" },
+});
+workspace.updateParagraph("paragraph:001-the-arrival:001-at-the-gate", {
+  body: "# Scene\n\nThe harbor measures every returning face.",
+});
+```
+
+`GitHubRemoteProvider` can now resolve the branch head, read the Narrarium markdown tree, build a typed snapshot, and push workspace changes back with GitHub commits. `AzureDevOpsRemoteProvider` now supports the same load and direct push flow through the Azure DevOps Git REST API.
+
+For Azure DevOps, register `new AzureDevOpsRemoteProvider()` and create a profile with `organization`, `project`, `repository`, `branch`, and PAT token.
+
 ## Story state and continuity
 
 Narrarium keeps structured continuity separate from the narrative summaries:

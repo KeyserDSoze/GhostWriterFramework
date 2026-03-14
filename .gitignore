@@ -4,3 +4,5 @@ dist/
 .DS_Store
 coverage/
 packages/astro-reader/public/downloads/
+bin/
+obj/

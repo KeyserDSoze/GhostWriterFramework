@@ -11,18 +11,18 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w narrarium && npm run build -w narrarium-mcp-server && npm run build -w create-narrarium-book && npm run build -w narrarium-astro-reader",
+    "build": "npm run build -w narrarium && npm run build -w narrarium-sdk && npm run build -w narrarium-mcp-server && npm run build -w create-narrarium-book && npm run build -w narrarium-astro-reader",
     "create:book": "node packages/create-narrarium-book/dist/index.js",
     "docs:build": "npm run build -w narrarium-docs-site",
     "docs:dev": "npm run dev -w narrarium-docs-site",
-    "pack:all": "npm pack --dry-run -w narrarium && npm pack --dry-run -w narrarium-mcp-server && npm pack --dry-run -w narrarium-astro-reader && npm pack --dry-run -w create-narrarium-book",
+    "pack:all": "npm pack --dry-run -w narrarium && npm pack --dry-run -w narrarium-sdk && npm pack --dry-run -w narrarium-mcp-server && npm pack --dry-run -w narrarium-astro-reader && npm pack --dry-run -w create-narrarium-book",
     "publish:all": "node scripts/publish-workspaces.mjs",
     "release:check": "npm run build && npm run validate && npm run test && npm run pack:all",
     "release:tag-check": "node scripts/check-release-tag.mjs",
     "reader:init": "node packages/astro-reader/cli-dist/cli.js",
     "dev:mcp": "npm run dev -w narrarium-mcp-server",
     "dev:site": "npm run dev -w narrarium-astro-reader",
-    "test": "npm run test -w narrarium && npm run test -w narrarium-mcp-server && npm run test -w create-narrarium-book && npm run test -w narrarium-astro-reader",
-    "validate": "npm run validate -w narrarium --if-present"
+    "test": "npm run test -w narrarium && npm run test -w narrarium-sdk && npm run test -w narrarium-mcp-server && npm run test -w create-narrarium-book && npm run test -w narrarium-astro-reader",
+    "validate": "npm run validate -w narrarium --if-present && npm run validate -w narrarium-sdk --if-present"
   }
 }

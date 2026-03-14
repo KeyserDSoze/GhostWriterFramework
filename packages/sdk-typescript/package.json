@@ -1,0 +1,48 @@
+{
+  "name": "narrarium-sdk",
+  "version": "0.1.18",
+  "type": "module",
+  "description": "Remote GitHub and Azure DevOps SDK surface for Narrarium repositories.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KeyserDSoze/GhostWriterFramework",
+    "directory": "packages/sdk-typescript"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "narrarium",
+    "sdk",
+    "github",
+    "azure-devops",
+    "books"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/**/*.test.mjs",
+    "validate": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "narrarium": "^0.1.18"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.9.3"
+  }
+}
