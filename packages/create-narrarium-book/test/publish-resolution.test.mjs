@@ -39,9 +39,10 @@ test("starter upgrade mode refreshes managed repo files", async () => {
     assert.equal(result.status, 0, result.stderr || result.stdout);
 
     const opencodeConfig = await readFile(path.join(rootPath, "opencode.jsonc"), "utf8");
-    assert.match(opencodeConfig, /"default_agent": "build"/);
+    assert.match(opencodeConfig, /"legacy": true/);
+    assert.match(opencodeConfig, /\.github\/copilot-instructions\.md/);
     assert.match(result.stdout, /Narrarium book upgraded at/);
-    assert.match(result.stdout, /Backed up replaced files under/);
+    assert.match(result.stdout, /Updated managed files: opencode\.jsonc/);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }
