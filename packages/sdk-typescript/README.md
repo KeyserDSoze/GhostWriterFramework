@@ -15,6 +15,7 @@ npm install narrarium-sdk
 - `BookManager`
 - `GitHubRemoteProvider`
 - `AzureDevOpsRemoteProvider`
+- `NarrariumApiClient` for calling the server endpoints exposed by `Narrarium.Sdk.AspNetCore`
 - profile stores for memory and localStorage
 - in-memory book snapshots and workspaces
 - high-level workspace helpers for chapters, paragraphs, and characters

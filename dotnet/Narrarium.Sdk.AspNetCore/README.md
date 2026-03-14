@@ -4,6 +4,13 @@
 
 It is meant for server-side applications that want to expose the same book profile, load, and commit flows to a remote client such as the TypeScript SDK.
 
+Mapped endpoints include:
+
+- `/api/narrarium/profiles`
+- `/api/narrarium/profiles/{profileId}/book`
+- `/api/narrarium/profiles/{profileId}/git`
+- `/api/narrarium/profiles/{profileId}/commit`
+
 ## Typical setup
 
 ```csharp

@@ -1283,7 +1283,7 @@ server.tool(
 
 server.tool(
   "chapter_writing_context",
-  "Assemble the context that should be read before writing or polishing a chapter: prose defaults, plot map, resumes, prior chapter state, and matching chapter draft.",
+  "Assemble the point-in-time context that should be read before writing or polishing a chapter: prose defaults, scoped story-so-far context, prior chapter state, and matching chapter draft without leaking later story material.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -1296,7 +1296,7 @@ server.tool(
 
 server.tool(
   "paragraph_writing_context",
-  "Assemble the context that should be read before writing or polishing a paragraph: prose defaults, plot map, resumes, prior scenes, and the matching paragraph draft.",
+  "Assemble the point-in-time context that should be read before writing or polishing a paragraph: prose defaults, scoped story-so-far context, prior scenes only, and the matching paragraph draft or final paragraph without leaking later story material.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -1359,7 +1359,7 @@ server.tool(
 
 server.tool(
   "revise_paragraph",
-  "Propose a revision for an existing final paragraph without writing files. Use this for targeted editorial passes like clarity, pacing, tension, dialogue, voice, show-dont-tell, or redundancy cleanup. The result can also suggest state_changes to review if the paragraph carries continuity-sensitive beats.",
+  "Propose a revision for an existing final paragraph without writing files. Use this for targeted editorial passes like clarity, pacing, tension, dialogue, voice, show-dont-tell, or redundancy cleanup. Show the proposal to the user first, then apply it with update_paragraph only after clear confirmation. The result can also suggest state_changes to review if the paragraph carries continuity-sensitive beats.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -1390,7 +1390,8 @@ server.tool(
       "Proposed body:",
       result.proposedBody,
       "Follow-up:",
-      "- Apply the proposal manually with update_paragraph if you want to keep it.",
+      "- Ask the user whether they want to keep this proposal before applying it.",
+      "- Apply the confirmed proposal with update_paragraph.",
       ...(result.shouldReviewStateChanges
         ? ["- If you apply the revision and keep the story beats, review the suggested state_changes and run sync_story_state manually when ready."]
         : []),
@@ -1403,12 +1404,17 @@ server.tool(
 
 server.tool(
   "resume_book_context",
-  "Assemble restart context for a book project using prose rules, plot, summaries, and exported conversations from the repo-local conversations folder.",
+  "Assemble restart context for a book project using prose rules, stable context, summaries, and exported conversations. You can also scope it to a target chapter or paragraph so the canon only reflects the story up to that writing point.",
   {
     rootPath: z.string().min(1),
+    chapter: z.string().optional(),
+    paragraph: z.string().optional(),
   },
-  async ({ rootPath }) => {
-    const result = await buildResumeBookContext(rootPath);
+  async ({ rootPath, chapter, paragraph }) => {
+    const result = await buildResumeBookContext(rootPath, {
+      chapter,
+      paragraph,
+    });
     return textResponse(result.text);
   },
 );
@@ -1887,7 +1893,7 @@ server.tool(
 
 server.tool(
   "update_paragraph",
-  "Update an existing paragraph or scene markdown file. Use this for summary, viewpoint, tags, and body revisions without renumbering or renaming the file.",
+  "Apply an existing paragraph or scene revision after the user confirmed it. Use this for summary, viewpoint, tags, and body revisions without renumbering or renaming the file. The MCP layer refreshes plot and resume files after the update.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),

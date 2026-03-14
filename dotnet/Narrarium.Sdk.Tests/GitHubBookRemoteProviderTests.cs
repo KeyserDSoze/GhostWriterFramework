@@ -20,6 +20,7 @@ public sealed class GitHubBookRemoteProviderTests
             tree = new[]
             {
                 new { path = "book.md", mode = "100644", type = "blob", sha = "blob-book" },
+                new { path = "context.md", mode = "100644", type = "blob", sha = "blob-context" },
                 new { path = "chapters/001-the-arrival/chapter.md", mode = "100644", type = "blob", sha = "blob-chapter" },
             },
         });
@@ -28,6 +29,12 @@ public sealed class GitHubBookRemoteProviderTests
             sha = "blob-book",
             encoding = "base64",
             content = Convert.ToBase64String(Encoding.UTF8.GetBytes("---\ntype: book\nid: book\ntitle: Test Book\nlanguage: en\ncanon: draft\n---\n\n# Premise\n\nA harbor story.\n")),
+        });
+        handler.AddJson(HttpMethod.Get, "https://api.github.com/repos/owner/book/git/blobs/blob-context", new
+        {
+            sha = "blob-context",
+            encoding = "base64",
+            content = Convert.ToBase64String(Encoding.UTF8.GetBytes("---\ntype: context\nid: context:book\ntitle: Book Context\n---\n\n# Historical And Temporal Frame\n\nStable harbor frame.\n")),
         });
         handler.AddJson(HttpMethod.Get, "https://api.github.com/repos/owner/book/git/blobs/blob-chapter", new
         {
@@ -56,6 +63,7 @@ public sealed class GitHubBookRemoteProviderTests
         var snapshot = await provider.LoadBookAsync(profile);
         Assert.Equal("commit-1", snapshot.CommitSha);
         Assert.NotNull(snapshot.Book);
+        Assert.NotNull(snapshot.Context);
         Assert.Single(snapshot.Chapters);
 
         var workspace = new BookWorkspace(snapshot);

@@ -56,6 +56,7 @@ export const ENTITY_TYPES = Object.keys(ENTITY_TYPE_TO_DIRECTORY) as Array<
 export const DEFAULT_CANON = "draft";
 
 export const BOOK_FILE = "book.md";
+export const CONTEXT_FILE = "context.md";
 export const PLOT_FILE = "plot.md";
 
 export const GUIDELINE_FILES = {
@@ -75,6 +76,7 @@ export const STORY_STATE_CURRENT_FILE = "state/current.md";
 
 export const CONTENT_GLOB = [
   "book.md",
+  "context.md",
   "plot.md",
   "guidelines/**/*.md",
   "characters/**/*.md",

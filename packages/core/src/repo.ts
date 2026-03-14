@@ -7,6 +7,7 @@ import { marked } from "marked";
 import {
   BOOK_DIRECTORIES,
   BOOK_FILE,
+  CONTEXT_FILE,
   CONTENT_GLOB,
   DEFAULT_CANON,
   ENTITY_TYPE_TO_DIRECTORY,
@@ -72,6 +73,7 @@ type MarkdownDocument<T = Record<string, unknown>> = {
 };
 
 const SUPPORTED_REFERENCE_PATTERN = /\b(?:chapter:[a-z0-9-]+|paragraph:[a-z0-9-]+:[a-z0-9-]+|character:[a-z0-9-]+|location:[a-z0-9-]+|faction:[a-z0-9-]+|item:[a-z0-9-]+|secret:[a-z0-9-]+|timeline-event:[a-z0-9-]+|guideline:[a-z0-9-]+|style:[a-z0-9-]+)\b/gi;
+const OPENCODE_INSTRUCTION_FILE = ".github/copilot-instructions.md";
 
 type SearchHit = {
   path: string;
@@ -522,6 +524,50 @@ export async function initializeBookRepo(
 
   await ensureFile(
     root,
+    CONTEXT_FILE,
+    renderMarkdown(
+      {
+        type: "context",
+        id: "context:book",
+        title: "Book Context",
+      },
+      [
+        "# Historical And Temporal Frame",
+        "",
+        "- Record the time period, historical pressures, and what people in this world can plausibly know or do.",
+        "",
+        "# Geographic Frame",
+        "",
+        "- Describe the core places, distances, climate, routes, and spatial constraints that should stay stable across the book.",
+        "",
+        "# Social And Political Frame",
+        "",
+        "- Note class pressure, institutions, factions, religion, law, trade, or any background power that shapes scenes before plot-specific events do.",
+        "",
+        "# Cultural Frame",
+        "",
+        "- Capture speech norms, etiquette, shame or honor systems, taboos, rituals, and values that affect behavior in-scene.",
+        "",
+        "# World Rules And Constraints",
+        "",
+        "- Write the non-negotiable facts of the setting here.",
+        "- Keep stable background rules here, not scene-by-scene plot progression.",
+        "",
+        "# Recurring Background Pressures",
+        "",
+        "- List the invisible forces that should keep shaping scenes: surveillance, debt, weather, war pressure, scarcity, rumor, family duty, and so on.",
+        "",
+        "# Writing Implications",
+        "",
+        "- Translate the context above into concrete prose reminders for chapter and paragraph writing.",
+        "- Example: travel is slow, information is delayed, public actions have social afterlife, violence has factional consequences.",
+      ].join("\n"),
+    ),
+    created,
+  );
+
+  await ensureFile(
+    root,
     GUIDELINE_FILES.prose,
     renderMarkdown(
       guidelineSchema.parse({
@@ -947,6 +993,16 @@ export async function upgradeBookRepo(
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, file.content, "utf8");
     updated.push(toPosixPath(file.relativePath));
+  }
+
+  const opencodeConfigPath = path.join(root, "opencode.jsonc");
+  const existingOpencodeConfig = await readFile(opencodeConfigPath, "utf8").catch(() => null);
+  if (existingOpencodeConfig) {
+    const patched = ensureOpencodeInstructionEntry(existingOpencodeConfig);
+    if (patched.updated) {
+      await writeFile(opencodeConfigPath, patched.content, "utf8");
+      updated.push("opencode.jsonc");
+    }
   }
 
   return {
@@ -1940,9 +1996,30 @@ export async function readParagraphDraft(
   };
 }
 
+export async function readParagraph(
+  rootPath: string,
+  chapter: string,
+  paragraph: string,
+): Promise<{ path: string; metadata: ParagraphFrontmatter; body: string }> {
+  const root = path.resolve(rootPath);
+  const filePath = await resolveParagraphFilePath(root, chapter, paragraph);
+
+  if (!(await pathExists(filePath))) {
+    throw new Error(`Paragraph does not exist: ${filePath}`);
+  }
+
+  const document = await readMarkdownFile(filePath, paragraphSchema);
+  return {
+    path: filePath,
+    metadata: document.frontmatter,
+    body: document.body,
+  };
+}
+
 export async function buildChapterWritingContext(
   rootPath: string,
   chapter: string,
+  options?: { throughParagraphNumber?: number },
 ): Promise<{ text: string; files: string[] }> {
   const root = path.resolve(rootPath);
   const chapterSlugValue = normalizeChapterReference(chapter);
@@ -1950,9 +2027,20 @@ export async function buildChapterWritingContext(
   const sections: string[] = [];
   const chapterData = await readChapter(root, chapterSlugValue).catch(() => null);
   const draft = await readChapterDraft(root, chapterSlugValue).catch(() => null);
+  const throughParagraphNumber = options?.throughParagraphNumber;
+  const chapters = await listChapters(root);
+  const targetChapterNumber = chapterData?.metadata.number ?? draft?.metadata.number;
+  const previousChapters =
+    targetChapterNumber !== undefined
+      ? chapters.filter((entry) => entry.metadata.number < targetChapterNumber)
+      : chapters.filter((entry) => entry.slug !== chapterSlugValue);
+  const previousChapter = previousChapters.at(-1) ?? null;
 
   const prose = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.prose));
   addContextSection(sections, files, root, prose, "Always-read prose guide", 1600);
+
+  const contextDocument = await readLooseMarkdownIfExists(path.join(root, CONTEXT_FILE));
+  addContextSection(sections, files, root, contextDocument, "Stable book context", 1400);
 
   const styleGuide = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.style));
   addContextSection(sections, files, root, styleGuide, "Default style guide", 1100);
@@ -1983,35 +2071,37 @@ export async function buildChapterWritingContext(
   }
 
   const plot = await readPlot(root);
-  if (plot) {
-    addContextSection(sections, files, root, plot, "Rolling plot map", 1400);
-  }
-
-  const totalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE));
-  addContextSection(sections, files, root, totalResume, "Book summary so far", 1200);
-
-  const storyStateStatus = await readStoryStateStatus(root);
-  const storyStateCurrent = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_CURRENT_FILE));
-  addContextSection(
+  addScopedChapterContextSection(
     sections,
     files,
     root,
-    storyStateCurrent,
-    storyStateStatus.dirty ? "Structured story state (stale)" : "Structured story state",
-    1050,
+    plot,
+    `Plot map before this ${throughParagraphNumber !== undefined ? "paragraph" : "chapter"}`,
+    previousChapters.length,
+    previousChapters.length > 0 ? "No earlier chapter plot beats are summarized yet." : "No earlier chapters exist yet.",
   );
 
-  if (storyStateStatus.dirty) {
-    const storyStateStatusDocument = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_STATUS_FILE));
-    addContextSection(sections, files, root, storyStateStatusDocument, "Story state sync status", 1000);
+  const totalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE));
+  addScopedChapterContextSection(
+    sections,
+    files,
+    root,
+    totalResume,
+    `Story so far before this ${throughParagraphNumber !== undefined ? "paragraph" : "chapter"}`,
+    previousChapters.length,
+    previousChapters.length > 0 ? "No earlier chapter summary exists yet." : "No earlier chapters exist yet.",
+  );
+
+  if (previousChapter) {
+    const stateSnapshot = await readLooseMarkdownIfExists(path.join(root, "state", "chapters", `${previousChapter.slug}.md`));
+    addContextSection(sections, files, root, stateSnapshot, "Structured story state before this chapter", 1050);
   }
 
-  const chapterResume = await readLooseMarkdownIfExists(path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`));
-  addContextSection(sections, files, root, chapterResume, "Current chapter resume", 900);
+  if (throughParagraphNumber === undefined) {
+    const chapterResume = await readLooseMarkdownIfExists(path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`));
+    addContextSection(sections, files, root, chapterResume, "Current chapter resume", 900);
+  }
 
-  const chapters = await listChapters(root);
-  const chapterIndex = chapters.findIndex((entry) => entry.slug === chapterSlugValue);
-  const previousChapter = chapterIndex > 0 ? chapters[chapterIndex - 1] : null;
   if (previousChapter) {
     sections.push(
       [
@@ -2026,6 +2116,10 @@ export async function buildChapterWritingContext(
   }
 
   if (chapterData) {
+    const visibleExistingScenes =
+      throughParagraphNumber !== undefined
+        ? chapterData.paragraphs.filter((paragraph) => paragraph.metadata.number < throughParagraphNumber)
+        : chapterData.paragraphs;
     files.add(toPosixPath(path.join("chapters", chapterSlugValue, "chapter.md")));
     sections.push(
       [
@@ -2040,12 +2134,16 @@ export async function buildChapterWritingContext(
         `- Prose modes: ${(chapterData.metadata.prose_mode ?? []).join(", ") || "default book-level"}`,
         `- Style refs: ${(chapterData.metadata.style_refs ?? []).join(", ") || "none"}`,
         `- Timeline: ${chapterData.metadata.timeline_ref ?? "not set"}`,
-        `- Existing scenes: ${chapterData.paragraphs.map((paragraph) => `${formatOrdinal(paragraph.metadata.number)} ${paragraph.metadata.title}`).join("; ") || "none"}`,
+        `- ${throughParagraphNumber !== undefined ? "Existing scenes before this paragraph" : "Existing scenes"}: ${visibleExistingScenes.map((paragraph) => `${formatOrdinal(paragraph.metadata.number)} ${paragraph.metadata.title}`).join("; ") || "none"}`,
       ].join("\n"),
     );
   }
 
   if (draft) {
+    const visibleDraftScenes =
+      throughParagraphNumber !== undefined
+        ? draft.paragraphs.filter((paragraph) => paragraph.metadata.number < throughParagraphNumber)
+        : draft.paragraphs;
     files.add(toPosixPath(path.join("drafts", chapterSlugValue, "chapter.md")));
     sections.push(
       [
@@ -2059,7 +2157,7 @@ export async function buildChapterWritingContext(
         `- Prose modes: ${(draft.metadata.prose_mode ?? []).join(", ") || "default book-level"}`,
         `- Style refs: ${(draft.metadata.style_refs ?? []).join(", ") || "none"}`,
         `- Timeline: ${draft.metadata.timeline_ref ?? "not set"}`,
-        `- Draft scenes: ${draft.paragraphs.map((paragraph) => `${formatOrdinal(paragraph.metadata.number)} ${paragraph.metadata.title}`).join("; ") || "none"}`,
+        `- ${throughParagraphNumber !== undefined ? "Draft scenes before this paragraph" : "Draft scenes"}: ${visibleDraftScenes.map((paragraph) => `${formatOrdinal(paragraph.metadata.number)} ${paragraph.metadata.title}`).join("; ") || "none"}`,
         "",
         summarizeText(draft.body, 1200) || "No chapter draft body yet.",
       ].join("\n"),
@@ -2088,38 +2186,82 @@ export async function buildParagraphWritingContext(
 ): Promise<{ text: string; files: string[] }> {
   const root = path.resolve(rootPath);
   const chapterSlugValue = normalizeChapterReference(chapter);
-  const paragraphDraft = await readParagraphDraft(root, chapterSlugValue, paragraph);
-  const chapterContext = await buildChapterWritingContext(root, chapterSlugValue);
+  const paragraphDraft = await readParagraphDraft(root, chapterSlugValue, paragraph).catch(() => null);
+  const paragraphFinal = await readParagraph(root, chapterSlugValue, paragraph).catch(() => null);
+
+  if (!paragraphDraft && !paragraphFinal) {
+    throw new Error(`Paragraph does not exist in drafts or final chapter: ${paragraph}`);
+  }
+
+  const targetNumber = paragraphDraft?.metadata.number ?? paragraphFinal?.metadata.number;
+  const chapterContext = await buildChapterWritingContext(root, chapterSlugValue, {
+    throughParagraphNumber: targetNumber,
+  });
   const files = new Set(chapterContext.files);
-  files.add(toPosixPath(path.relative(root, paragraphDraft.path)));
 
   const finalChapter = await readChapter(root, chapterSlugValue).catch(() => null);
   const priorScenes = finalChapter
-    ? finalChapter.paragraphs.filter((entry) => entry.metadata.number < paragraphDraft.metadata.number)
+    ? finalChapter.paragraphs.filter((entry) => entry.metadata.number < (targetNumber ?? Number.MAX_SAFE_INTEGER))
     : [];
+  const draftChapter = await readChapterDraft(root, chapterSlugValue).catch(() => null);
+  const priorDraftScenes = draftChapter
+    ? draftChapter.paragraphs.filter((entry) => entry.metadata.number < (targetNumber ?? Number.MAX_SAFE_INTEGER))
+    : [];
+  const priorSceneLines =
+    priorScenes.length > 0
+      ? priorScenes.map(
+          (entry) => `${formatOrdinal(entry.metadata.number)} ${entry.metadata.title}: ${(entry.metadata.summary ?? summarizeText(entry.body, 160)) || "No summary yet."}`,
+        )
+      : priorDraftScenes.length > 0
+        ? priorDraftScenes.map(
+            (entry) => `${formatOrdinal(entry.metadata.number)} ${entry.metadata.title}: ${(entry.metadata.summary ?? summarizeText(entry.body, 160)) || "No summary yet."}`,
+          )
+        : ["No earlier scenes in this chapter yet."];
+
+  if (paragraphFinal) {
+    files.add(toPosixPath(path.relative(root, paragraphFinal.path)));
+  }
+  if (paragraphDraft) {
+    files.add(toPosixPath(path.relative(root, paragraphDraft.path)));
+  }
 
   return {
     text: [
-      chapterContext.text,
+      stripSourceFilesSection(chapterContext.text),
       "",
-      "## Target paragraph draft",
+      ...(paragraphFinal
+        ? [
+            "## Current final paragraph",
+            "",
+            `Source: ${toPosixPath(path.relative(root, paragraphFinal.path))}`,
+            `- Title: ${paragraphFinal.metadata.title}`,
+            `- Summary: ${paragraphFinal.metadata.summary ?? "No summary yet."}`,
+            `- Viewpoint: ${paragraphFinal.metadata.viewpoint ?? "not set"}`,
+            "",
+            summarizeText(paragraphFinal.body, 1400) || "No paragraph body yet.",
+            "",
+          ]
+        : []),
+      ...(paragraphDraft
+        ? [
+            "## Target paragraph draft",
+            "",
+            `Source: ${toPosixPath(path.relative(root, paragraphDraft.path))}`,
+            `- Title: ${paragraphDraft.metadata.title}`,
+            `- Summary: ${paragraphDraft.metadata.summary ?? "No summary yet."}`,
+            `- Viewpoint: ${paragraphDraft.metadata.viewpoint ?? "not set"}`,
+            "",
+            summarizeText(paragraphDraft.body, 1400) || "No paragraph draft body yet.",
+            "",
+          ]
+        : []),
+      "## Prior scenes in this chapter before this paragraph",
       "",
-      `Source: ${toPosixPath(path.relative(root, paragraphDraft.path))}`,
-      `- Title: ${paragraphDraft.metadata.title}`,
-      `- Summary: ${paragraphDraft.metadata.summary ?? "No summary yet."}`,
-      `- Viewpoint: ${paragraphDraft.metadata.viewpoint ?? "not set"}`,
+      bulletLines(priorSceneLines),
       "",
-      summarizeText(paragraphDraft.body, 1400) || "No paragraph draft body yet.",
+      "## Source files consulted",
       "",
-      "## Prior scenes in this chapter",
-      "",
-      bulletLines(
-        priorScenes.length > 0
-          ? priorScenes.map(
-              (entry) => `${formatOrdinal(entry.metadata.number)} ${entry.metadata.title}: ${(entry.metadata.summary ?? summarizeText(entry.body, 160)) || "No summary yet."}`,
-            )
-          : ["No earlier final scenes in this chapter yet."],
-      ),
+      ...Array.from(files).sort().map((filePath) => `- ${filePath}`),
     ].join("\n"),
     files: Array.from(files).sort(),
   };
@@ -2127,35 +2269,57 @@ export async function buildParagraphWritingContext(
 
 export async function buildResumeBookContext(
   rootPath: string,
+  options?: { chapter?: string; paragraph?: string },
 ): Promise<{ text: string; files: string[] }> {
   const root = path.resolve(rootPath);
   const files = new Set<string>();
   const sections: string[] = [];
 
   const book = await readBook(root);
-  const prose = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.prose));
-  const plot = await readPlot(root);
-  const totalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE));
-  const storyStateCurrent = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_CURRENT_FILE));
-  const storyStateStatus = await readStoryStateStatus(root);
-  const storyStateStatusDocument = storyStateStatus.dirty
-    ? await readLooseMarkdownIfExists(path.join(root, STORY_STATE_STATUS_FILE))
-    : null;
+  const targetChapter = options?.chapter?.trim();
+  const targetParagraph = options?.paragraph?.trim();
+
+  if (targetParagraph && !targetChapter) {
+    throw new Error("resume_book_context requires a chapter when paragraph is provided.");
+  }
+
   const continuation = await readLooseMarkdownIfExists(path.join(root, "conversations", "CONTINUATION.md"));
   const resume = await readLooseMarkdownIfExists(path.join(root, "conversations", "RESUME.md"));
 
-  addContextSection(sections, files, root, prose, "Always-read prose guide", 1500);
-  addContextSection(sections, files, root, plot, "Rolling plot map", 1400);
-  addContextSection(sections, files, root, totalResume, "Book summary so far", 1100);
-  addContextSection(
-    sections,
-    files,
-    root,
-    storyStateCurrent,
-    storyStateStatus.dirty ? "Structured story state (stale)" : "Structured story state",
-    1080,
-  );
-  addContextSection(sections, files, root, storyStateStatusDocument, "Story state sync status", 1070);
+  if (targetChapter) {
+    const targetContext = targetParagraph
+      ? await buildParagraphWritingContext(root, targetChapter, targetParagraph)
+      : await buildChapterWritingContext(root, targetChapter);
+    sections.push(stripSourceFilesSection(targetContext.text));
+    for (const filePath of targetContext.files) {
+      files.add(filePath);
+    }
+  } else {
+    const prose = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.prose));
+    const contextDocument = await readLooseMarkdownIfExists(path.join(root, CONTEXT_FILE));
+    const plot = await readPlot(root);
+    const totalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE));
+    const storyStateCurrent = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_CURRENT_FILE));
+    const storyStateStatus = await readStoryStateStatus(root);
+    const storyStateStatusDocument = storyStateStatus.dirty
+      ? await readLooseMarkdownIfExists(path.join(root, STORY_STATE_STATUS_FILE))
+      : null;
+
+    addContextSection(sections, files, root, prose, "Always-read prose guide", 1500);
+    addContextSection(sections, files, root, contextDocument, "Stable book context", 1400);
+    addContextSection(sections, files, root, plot, "Rolling plot map", 1400);
+    addContextSection(sections, files, root, totalResume, "Book summary so far", 1100);
+    addContextSection(
+      sections,
+      files,
+      root,
+      storyStateCurrent,
+      storyStateStatus.dirty ? "Structured story state (stale)" : "Structured story state",
+      1080,
+    );
+    addContextSection(sections, files, root, storyStateStatusDocument, "Story state sync status", 1070);
+  }
+
   addContextSection(sections, files, root, resume, "Conversation resume", 1100);
   addContextSection(sections, files, root, continuation, "Conversation continuation", 1500);
 
@@ -2177,7 +2341,9 @@ export async function buildResumeBookContext(
     text: [
       `# Resume Book Context${book ? ` for ${book.frontmatter.title}` : ""}`,
       "",
-      "Use this to restart book work from repository state, exported conversation history, and current canon.",
+      targetChapter
+        ? `Use this to restart book work before ${targetParagraph ? `paragraph ${targetParagraph} in ${normalizeChapterReference(targetChapter)}` : `chapter ${normalizeChapterReference(targetChapter)}`}, using point-in-time canon plus exported conversation history.`
+        : "Use this to restart book work from repository state, exported conversation history, and current canon.",
       "",
       ...sections,
       "## Source files consulted",
@@ -2877,6 +3043,10 @@ export async function updateChapterDraft(
         : String(parsed.content ?? "").trim();
 
   await writeFile(filePath, renderMarkdown(validated, nextBody), "utf8");
+  await markStoryStateDirty(root, {
+    changedPaths: [toPosixPath(path.relative(root, filePath))],
+    reason: "chapter-updated",
+  });
   return { filePath, frontmatter: validated };
 }
 
@@ -7146,6 +7316,7 @@ function buildOpencodeProjectConfig(): string {
   return [
     "{",
     '  "$schema": "https://opencode.ai/config.json",',
+    `  "instructions": ["${OPENCODE_INSTRUCTION_FILE}"],`,
     '  "default_agent": "build",',
     '  "agent": {',
     '    "build": {',
@@ -7183,6 +7354,102 @@ function buildOpencodeProjectConfig(): string {
     '}',
     '',
   ].join("\n");
+}
+
+function ensureOpencodeInstructionEntry(content: string): { content: string; updated: boolean } {
+  if (content.includes(OPENCODE_INSTRUCTION_FILE)) {
+    return { content, updated: false };
+  }
+
+  const parsed = tryParseJsoncObject(content);
+  if (!parsed) {
+    return { content, updated: false };
+  }
+
+  const existingInstructions = Array.isArray(parsed.instructions)
+    ? parsed.instructions.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : [];
+  if (existingInstructions.includes(OPENCODE_INSTRUCTION_FILE)) {
+    return { content, updated: false };
+  }
+
+  parsed.instructions = [...existingInstructions, OPENCODE_INSTRUCTION_FILE];
+  return {
+    content: `${JSON.stringify(parsed, null, 2)}\n`,
+    updated: true,
+  };
+}
+
+function tryParseJsoncObject(content: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(stripJsonComments(content));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function stripJsonComments(content: string): string {
+  let result = "";
+  let inString = false;
+  let isEscaped = false;
+  let lineComment = false;
+  let blockComment = false;
+
+  for (let index = 0; index < content.length; index += 1) {
+    const current = content[index];
+    const next = content[index + 1];
+
+    if (lineComment) {
+      if (current === "\n") {
+        lineComment = false;
+        result += current;
+      }
+      continue;
+    }
+
+    if (blockComment) {
+      if (current === "*" && next === "/") {
+        blockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+
+    if (inString) {
+      result += current;
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (current === "\\") {
+        isEscaped = true;
+      } else if (current === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (current === '"') {
+      inString = true;
+      result += current;
+      continue;
+    }
+
+    if (current === "/" && next === "/") {
+      lineComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (current === "/" && next === "*") {
+      blockComment = true;
+      index += 1;
+      continue;
+    }
+
+    result += current;
+  }
+
+  return result;
 }
 
 function buildConversationsReadme(): string {
@@ -7229,6 +7496,7 @@ function buildGithubCopilotInstructions(): string {
     "",
     "## Folder model",
     "",
+    "- `context.md` for stable historical, social, geographic, and world-context constraints that should stay in view while writing",
     "- `characters/`, `items/`, `locations/`, `factions/`, `timelines/`, `secrets/`",
     "- `chapters/<nnn-slug>/chapter.md` for chapter metadata",
     "- `chapters/<nnn-slug>/<nnn-slug>.md` for paragraph or scene files",
@@ -7259,9 +7527,11 @@ function buildGithubCopilotInstructions(): string {
     "- Use `create_character` for full character files.",
     "- Use `create_location`, `create_faction`, `create_item`, `create_secret`, and `create_timeline_event` for rich canon files.",
     "- Use `create_chapter_draft` and `create_paragraph_draft` when roughing scenes before final prose.",
-    "- Use `chapter_writing_context` and `paragraph_writing_context` before drafting polished prose from rough material.",
+    "- Use `chapter_writing_context` and `paragraph_writing_context` before drafting polished prose from rough material or revising final prose.",
+    "- Treat chapter and paragraph writing context as point-in-time context: use only the story up to that chapter or scene, not later story material.",
     "- Use `revise_chapter` when you want a proposal-only diagnosis and scene revision plan for an existing final chapter before deciding what to apply manually.",
     "- Use `revise_paragraph` when you want a proposal-only editorial pass on an existing final scene before deciding whether to apply it with `update_paragraph`.",
+    "- When revising a final paragraph, show the `revise_paragraph` proposal, ask the user whether they want to keep it, and call `update_paragraph` only after clear confirmation.",
     "- Use `resume_book_context` when restarting work from exported conversation history.",
     "- Use `update_chapter` and `update_paragraph` for existing story structure files.",
     "- Use `update_chapter_draft` and `update_paragraph_draft` when iterating on rough drafts.",
@@ -7283,8 +7553,9 @@ function buildGithubCopilotInstructions(): string {
     "- Keep prose in body content and structured facts in frontmatter.",
     "- Always read `guidelines/prose.md` before drafting new chapter or paragraph prose.",
     "- If a chapter declares `style_refs`, `narration_person`, `narration_tense`, or `prose_mode`, treat that as an explicit chapter-level override; otherwise follow the book-level default prose, style, and voice guides.",
-    "- Before writing a scene, review the relevant prior chapter content, the latest summaries in `resumes/`, the current snapshot in `state/` when available, and any matching files in `drafts/`.",
+    "- Before writing or rewriting a scene, review `context.md`, the relevant prior chapter content, the scoped summaries for story so far, any point-in-time state snapshot available before that point, and any matching files in `drafts/`.",
     "- Keep `plot.md` aligned with chapter summaries, secret reveals, and timeline references.",
+    "- After `update_paragraph`, assume plot and resume files were refreshed automatically by the MCP layer, and review `sync_story_state` separately only when continuity snapshots must be updated.",
     "- If stylistic guidance is missing, inspect the rest of `guidelines/` before choosing a default.",
   ].join("\n");
 }
@@ -7293,11 +7564,11 @@ function buildGithubCopilotInstructions(): string {
 // Do NOT include user-editable config files here.
 function getManagedBookScaffoldFiles(createSkills: boolean): Array<{ relativePath: string; content: string }> {
   return [
+    { relativePath: ".github/copilot-instructions.md", content: buildGithubCopilotInstructions() },
     ...(createSkills
       ? [
           { relativePath: `.opencode/skills/${SKILL_NAME}/SKILL.md`, content: skillTemplate },
           { relativePath: `.claude/skills/${SKILL_NAME}/SKILL.md`, content: skillTemplate },
-          { relativePath: ".github/copilot-instructions.md", content: buildGithubCopilotInstructions() },
         ]
       : []),
     { relativePath: ".opencode/commands/resume-book.md", content: buildResumeBookCommand() },
@@ -7318,17 +7589,24 @@ function getInitOnlyBookScaffoldFiles(): Array<{ relativePath: string; content: 
 function buildResumeBookCommand(): string {
   return [
     "---",
-    "description: Resume book work from repo state, plot, and exported conversations",
+    "description: Resume book work globally or from a target chapter/paragraph",
     "agent: build",
     "---",
     "Resume work on this Narrarium book.",
     "",
+    "Argument format:",
+    "- `/resume-book` for the latest overall book state",
+    "- `/resume-book chapter:002-ledger-suspicion` to resume before a target chapter",
+    "- `/resume-book chapter:002-ledger-suspicion 002-tense-exchange` to resume before a target paragraph",
+    "- Any remaining text after the target should be treated as the actual follow-up request.",
+    "",
     "Before doing anything else:",
-    "1. Call the `resume_book_context` MCP tool.",
-    "2. Read the files it references, especially `guidelines/prose.md`, `plot.md`, `resumes/total.md`, `state/current.md`, `state/status.md` when present, and the latest files in `conversations/`.",
-    "3. Briefly restate where the book stands, what the latest conversation was doing, and the next best actions.",
-    "4. Then continue with this user request if one is present: $ARGUMENTS",
-    "5. If no extra request is present, ask for the next book task only after giving the short status recap.",
+    "1. Parse `$ARGUMENTS`: if the first token starts with `chapter:`, use it as the chapter target; if the next token looks like a paragraph id or slug, use it as the paragraph target; everything after that is the follow-up request.",
+    "2. Call the `resume_book_context` MCP tool with the scoped `chapter` and optional `paragraph` when a target was provided; otherwise call it without scope.",
+    "3. Read the files it references, especially `context.md`, `guidelines/prose.md`, scoped story summaries, `state/current.md`, `state/status.md` when present, and the latest files in `conversations/`.",
+    "4. Briefly restate where the book stands, what the latest conversation was doing, and the next best actions.",
+    "5. Then continue with the parsed follow-up request if one is present.",
+    "6. If no extra request is present, ask for the next book task only after giving the short status recap.",
     "",
     "Prefer continuity over novelty. Respect `known_from`, `reveal_in`, and all prose/style guidelines.",
   ].join("\n");
@@ -7617,6 +7895,71 @@ function addContextSection(
       summarizeText(document.body, maxLength) || "No body content yet.",
     ].join("\n"),
   );
+}
+
+function addScopedChapterContextSection(
+  sections: string[],
+  files: Set<string>,
+  root: string,
+  document: MarkdownDocument<Record<string, unknown>> | MarkdownDocument<PlotFrontmatter> | null,
+  heading: string,
+  chapterCount: number,
+  emptyMessage: string,
+): void {
+  if (!document) {
+    return;
+  }
+
+  const relativePath = toPosixPath(path.relative(root, document.path));
+  const scopedBody = buildScopedChapterContextBody(document.body, chapterCount, emptyMessage);
+  files.add(relativePath);
+  sections.push(
+    [
+      `## ${heading}`,
+      "",
+      `Source: ${relativePath}`,
+      "",
+      scopedBody,
+    ].join("\n"),
+  );
+}
+
+function buildScopedChapterContextBody(body: string, chapterCount: number, emptyMessage: string): string {
+  const normalizedBody = String(body ?? "").trim();
+  if (!normalizedBody) {
+    return emptyMessage;
+  }
+
+  const chapterMatches = Array.from(normalizedBody.matchAll(/^## Chapter .*$/gm));
+  if (chapterMatches.length === 0) {
+    return summarizeText(normalizedBody, 1200) || emptyMessage;
+  }
+
+  const intro = normalizedBody.slice(0, chapterMatches[0].index ?? 0).trim();
+  if (chapterCount <= 0) {
+    return [intro, emptyMessage].filter(Boolean).join("\n\n");
+  }
+
+  const availableCount = Math.min(chapterCount, chapterMatches.length);
+  const lastIncludedMatch = chapterMatches[availableCount - 1];
+  const nextChapterMatch = chapterMatches[availableCount];
+  const nextTopLevelHeadingIndex = findNextTopLevelHeadingIndex(normalizedBody, (lastIncludedMatch.index ?? 0) + 1);
+  const endIndex = nextChapterMatch?.index ?? nextTopLevelHeadingIndex ?? normalizedBody.length;
+  const scopedSections = normalizedBody.slice(chapterMatches[0].index ?? 0, endIndex).trim();
+
+  return [intro, scopedSections].filter(Boolean).join("\n\n");
+}
+
+function findNextTopLevelHeadingIndex(body: string, fromIndex: number): number | null {
+  const searchBody = body.slice(fromIndex);
+  const match = /^# (?!#).*/m.exec(searchBody);
+  return match?.index !== undefined ? fromIndex + match.index : null;
+}
+
+function stripSourceFilesSection(text: string): string {
+  const marker = "\n## Source files consulted\n";
+  const index = text.indexOf(marker);
+  return index === -1 ? text : text.slice(0, index).trimEnd();
 }
 
 function buildChapterOverviewSummary(chapterData: {

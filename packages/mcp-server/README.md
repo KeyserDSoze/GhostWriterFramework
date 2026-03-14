@@ -161,7 +161,7 @@ You can also pass `fromChapter`, `toChapter`, or `throughChapter` directly when 
 
 See `docs/query-canon.md` for a fuller guide with use cases, scope rules, output fields, and limitations.
 
-`revise_paragraph` is the editorial counterpart to `update_paragraph`: it proposes a revision for a final scene, does not write files, and can suggest `state_changes` review if the scene touches continuity-sensitive beats.
+`revise_paragraph` is the editorial counterpart to `update_paragraph`: it proposes a revision for a final scene, does not write files, and can suggest `state_changes` review if the scene touches continuity-sensitive beats. The intended flow is proposal first, user confirmation second, apply with `update_paragraph` third.
 
 See `docs/revise-paragraph.md` for modes, examples, and the manual apply workflow.
 
@@ -169,7 +169,9 @@ See `docs/revise-paragraph.md` for modes, examples, and the manual apply workflo
 
 See `docs/revise-chapter.md` for the chapter-level workflow and output structure.
 
-Chapter style overrides are also supported explicitly through chapter frontmatter and style profiles in `guidelines/styles/`. If a chapter does not declare an override, writing context falls back to the book-level default prose and voice guides.
+Chapter style overrides are also supported explicitly through chapter frontmatter and style profiles in `guidelines/styles/`. If a chapter does not declare an override, writing context falls back to the book-level default prose and voice guides. Chapter and paragraph writing context now stay scoped to the story up to that point instead of pulling in later chapter material.
+
+`resume_book_context` also accepts optional `chapter` and `paragraph` parameters when you want to restart from a specific writing point instead of the latest overall state.
 
 See `docs/style-profiles.md` for the chapter style workflow.
 

@@ -18,12 +18,18 @@ public sealed class AzureDevOpsBookRemoteProviderTests
             value = new[]
             {
                 new { path = "/book.md", gitObjectType = "blob", isFolder = false },
+                new { path = "/context.md", gitObjectType = "blob", isFolder = false },
             },
         });
         handler.AddJson(HttpMethod.Get, "https://dev.azure.com/org/project/_apis/git/repositories/book/items?path=%2Fbook.md&includeContent=true&%24format=json&versionDescriptor.version=commit-az-1&versionDescriptor.versionType=commit&api-version=7.1", new
         {
             path = "/book.md",
             content = "---\ntype: book\nid: book\ntitle: Azure Book\nlanguage: en\ncanon: draft\n---\n\n# Premise\n\nA harbor mystery.\n",
+        });
+        handler.AddJson(HttpMethod.Get, "https://dev.azure.com/org/project/_apis/git/repositories/book/items?path=%2Fcontext.md&includeContent=true&%24format=json&versionDescriptor.version=commit-az-1&versionDescriptor.versionType=commit&api-version=7.1", new
+        {
+            path = "/context.md",
+            content = "---\ntype: context\nid: context:book\ntitle: Book Context\n---\n\n# Historical And Temporal Frame\n\nStable harbor frame.\n",
         });
         handler.AddJson(HttpMethod.Post, "https://dev.azure.com/org/project/_apis/git/repositories/book/pushes?api-version=7.1", new
         {
@@ -50,6 +56,7 @@ public sealed class AzureDevOpsBookRemoteProviderTests
         var snapshot = await provider.LoadBookAsync(profile);
         Assert.Equal("commit-az-1", snapshot.CommitSha);
         Assert.NotNull(snapshot.Book);
+        Assert.NotNull(snapshot.Context);
 
         var workspace = new BookWorkspace(snapshot);
         workspace.UpsertMarkdown("context.md", "# Book Context\n\nStable frame.\n");

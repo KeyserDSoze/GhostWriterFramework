@@ -5,6 +5,7 @@ import {
   chapterDraftSchema,
   chapterSchema,
   characterSchema,
+  contextSchema,
   factionSchema,
   guidelineSchema,
   itemSchema,
@@ -111,6 +112,7 @@ export function parseNarrariumMarkdownDocument(path: string, rawMarkdown: string
     case "asset":
       return buildTypedDocument(kind, normalizedPath, assetSchema.parse(frontmatter), body, rawMarkdown);
     case "context":
+      return buildTypedDocument(kind, normalizedPath, contextSchema.parse(frontmatter), body, rawMarkdown);
     case "timeline-main":
     case "resume":
     case "evaluation":

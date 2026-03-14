@@ -4,6 +4,7 @@ import type {
   ChapterDraftFrontmatter,
   ChapterFrontmatter,
   CharacterFrontmatter,
+  ContextFrontmatter,
   FactionFrontmatter,
   GuidelineFrontmatter,
   ItemFrontmatter,
@@ -103,6 +104,7 @@ type LooseFrontmatter = Record<string, unknown>;
 export type NarrariumKnownFrontmatter =
   | BookFrontmatter
   | PlotFrontmatter
+  | ContextFrontmatter
   | GuidelineFrontmatter
   | CharacterFrontmatter
   | ItemFrontmatter
@@ -127,6 +129,7 @@ export interface NarrariumDocument<TFrontmatter = NarrariumKnownFrontmatter> {
 }
 
 export type NarrariumAnyDocument = NarrariumDocument<NarrariumKnownFrontmatter>;
+export type NarrariumContextDocument = NarrariumDocument<ContextFrontmatter>;
 
 export interface NarrariumChapterSnapshot {
   slug: string;
@@ -149,7 +152,7 @@ export interface NarrariumBookSnapshot {
   loadedAt: string;
   book: NarrariumDocument<BookFrontmatter> | null;
   plot: NarrariumDocument<PlotFrontmatter> | null;
-  context: NarrariumDocument<LooseFrontmatter> | null;
+  context: NarrariumContextDocument | null;
   guidelines: Array<NarrariumDocument<GuidelineFrontmatter>>;
   characters: Array<NarrariumDocument<CharacterFrontmatter>>;
   items: Array<NarrariumDocument<ItemFrontmatter>>;

@@ -77,6 +77,14 @@ export const plotSchema = z
   })
   .passthrough();
 
+export const contextSchema = z
+  .object({
+    type: z.literal("context").default("context"),
+    id: z.literal("context:book").default("context:book"),
+    title: z.string().min(1).default("Book Context"),
+  })
+  .passthrough();
+
 export const guidelineSchema = z
   .object({
     type: z.literal("guideline"),
@@ -333,6 +341,7 @@ export const anyKnownSchema = z.discriminatedUnion("type", [
 
 export type BookFrontmatter = z.infer<typeof bookSchema>;
 export type PlotFrontmatter = z.infer<typeof plotSchema>;
+export type ContextFrontmatter = z.infer<typeof contextSchema>;
 export type GuidelineFrontmatter = z.infer<typeof guidelineSchema>;
 export type CharacterFrontmatter = z.infer<typeof characterSchema>;
 export type ItemFrontmatter = z.infer<typeof itemSchema>;

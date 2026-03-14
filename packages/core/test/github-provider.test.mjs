@@ -109,6 +109,8 @@ test("GitHubRemoteProvider loads a Narrarium snapshot from repository markdown",
   assert.equal(snapshot.ref, "refs/heads/main");
   assert.equal(snapshot.book?.frontmatter.title, "Test Book");
   assert.equal(snapshot.context?.kind, "context");
+  assert.equal(snapshot.context?.frontmatter.id, "context:book");
+  assert.equal(snapshot.context?.frontmatter.title, "Book Context");
   assert.equal(snapshot.characters.length, 1);
   assert.equal(snapshot.characters[0].frontmatter.name, "Lyra Vale");
   assert.equal(snapshot.chapters.length, 1);

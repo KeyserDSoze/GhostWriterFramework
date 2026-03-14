@@ -114,7 +114,7 @@ export class NarrariumApiClient {
       return true;
     }
 
-    await throwApiError(response, "DELETE", this.buildUrl(`/profiles/${encodeURIComponent(profileId)}`));
+    return throwApiError(response, "DELETE", this.buildUrl(`/profiles/${encodeURIComponent(profileId)}`));
   }
 
   setDefaultProfile(profileId: string): Promise<BookConnectionProfileResponse | null> {
@@ -136,7 +136,7 @@ export class NarrariumApiClient {
   private async requestJson<TResponse>(method: string, path: string, body?: unknown): Promise<TResponse> {
     const response = await this.send(method, path, body);
     if (!response.ok) {
-      await throwApiError(response, method, this.buildUrl(path));
+      return throwApiError(response, method, this.buildUrl(path));
     }
 
     return (await response.json()) as TResponse;
@@ -149,7 +149,7 @@ export class NarrariumApiClient {
     }
 
     if (!response.ok) {
-      await throwApiError(response, method, this.buildUrl(path));
+      return throwApiError(response, method, this.buildUrl(path));
     }
 
     return (await response.json()) as TResponse;

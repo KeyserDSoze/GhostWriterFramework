@@ -161,6 +161,7 @@ test("core book workflow supports canon indexes and structural updates", async (
     const timelineMain = await readTimelineMain(rootPath);
     const plot = await syncPlot(rootPath);
     const opencodeConfig = await readFile(path.join(rootPath, "opencode.jsonc"), "utf8");
+    const contextDocument = await readFile(path.join(rootPath, "context.md"), "utf8");
     const conversationsReadme = await readFile(path.join(rootPath, "conversations", "README.md"), "utf8");
     const resumeCommand = await readFile(path.join(rootPath, ".opencode", "commands", "resume-book.md"), "utf8");
     const conversationPlugin = await readFile(path.join(rootPath, ".opencode", "plugins", "conversation-export.js"), "utf8");
@@ -235,12 +236,16 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.match(plot.content, /Lyra knows the harbor ledgers were forged/);
     assert.match(plot.content, /2214-06-12/);
     assert.match(earlyTotalResume.content, /The harbor watches before it welcomes/);
+    assert.match(contextDocument, /# Historical And Temporal Frame/);
     assert.match(opencodeConfig, /"default_agent": "build"/);
+    assert.match(opencodeConfig, /\.github\/copilot-instructions\.md/);
     assert.match(opencodeConfig, /"reasoningEffort": "high"/);
     assert.match(opencodeConfig, /"textVerbosity": "high"/);
     assert.match(opencodeConfig, /"watcher"/);
     assert.match(conversationsReadme, /portable exports of OpenCode/);
     assert.match(resumeCommand, /resume_book_context/);
+    assert.match(resumeCommand, /chapter:002-ledger-suspicion/);
+    assert.match(resumeCommand, /context\.md/);
     assert.match(conversationPlugin, /ConversationExportPlugin/);
     assert.equal(resumes.chapterCount, 1);
     assert.equal(refreshedResumes.chapterCount, 1);
@@ -742,10 +747,116 @@ test("upgradeBookRepo refreshes managed scaffolding and preserves author files",
     const resumeCommand = await readFile(path.join(rootPath, ".opencode", "commands", "resume-book.md"), "utf8");
     const proseGuide = await readFile(path.join(rootPath, "guidelines", "prose.md"), "utf8");
 
-    assert.match(opencodeConfig, /"default_agent": "build"/);
+    assert.match(opencodeConfig, /"legacy": true/);
+    assert.match(opencodeConfig, /\.github\/copilot-instructions\.md/);
     assert.match(resumeCommand, /resume_book_context/);
     assert.equal(proseGuide, "# Custom Prose\n\nKeep this intact.\n");
     assert.match(result.updated.join("\n"), /resume-book\.md/);
+    assert.match(result.updated.join("\n"), /opencode\.jsonc/);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("writing contexts stay scoped to story so far without leaking later scenes or chapters", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-point-in-time-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Point In Time Book",
+      language: "en",
+    });
+
+    await createChapter(rootPath, {
+      number: 1,
+      title: "Harbor Arrival",
+      frontmatter: {
+        summary: "Lyra reaches the harbor under rain.",
+      },
+      body: "# Purpose\n\nOpen with rain and scrutiny.",
+    });
+    await createParagraph(rootPath, {
+      chapter: "chapter:001-harbor-arrival",
+      number: 1,
+      title: "Rain Gate",
+      frontmatter: {
+        summary: "Lyra enters through the rain gate.",
+      },
+      body: "# Scene\n\nRain clung to the harbor gate as Lyra arrived.",
+    });
+
+    await createChapter(rootPath, {
+      number: 2,
+      title: "Ledger Suspicion",
+      frontmatter: {
+        summary: "Lyra notices the ledger has been touched.",
+      },
+      body: "# Purpose\n\nTighten suspicion around the records.",
+    });
+    await createParagraph(rootPath, {
+      chapter: "chapter:002-ledger-suspicion",
+      number: 1,
+      title: "Broken Seal",
+      frontmatter: {
+        summary: "Lyra spots the broken wax before speaking.",
+      },
+      body: "# Scene\n\nLyra saw the broken wax before anyone answered her.",
+    });
+    await createParagraph(rootPath, {
+      chapter: "chapter:002-ledger-suspicion",
+      number: 2,
+      title: "Tense Exchange",
+      frontmatter: {
+        summary: "Lyra presses the clerk without blinking.",
+      },
+      body: "# Scene\n\nLyra asked the clerk who had touched the ledger.",
+    });
+    await createParagraph(rootPath, {
+      chapter: "chapter:002-ledger-suspicion",
+      number: 3,
+      title: "Future Alarm",
+      frontmatter: {
+        summary: "A bell rings from the tower after the exchange.",
+      },
+      body: "# Scene\n\nThe bell from the tower rang after the exchange was over.",
+    });
+
+    await createChapter(rootPath, {
+      number: 3,
+      title: "Bell Tower Betrayal",
+      frontmatter: {
+        summary: "A bell tower betrayal exposes the next move.",
+      },
+      body: "# Purpose\n\nFuture betrayal at the bell tower.",
+    });
+
+    await syncAllResumes(rootPath);
+    await syncPlot(rootPath);
+
+    const chapterContext = await buildChapterWritingContext(rootPath, "chapter:002-ledger-suspicion");
+    const paragraphContext = await buildParagraphWritingContext(rootPath, "chapter:002-ledger-suspicion", "002-tense-exchange");
+    const resumeContext = await buildResumeBookContext(rootPath, {
+      chapter: "chapter:002-ledger-suspicion",
+      paragraph: "002-tense-exchange",
+    });
+
+    assert.match(chapterContext.text, /Story so far before this chapter/);
+    assert.match(chapterContext.text, /Stable book context/);
+    assert.match(chapterContext.text, /Lyra reaches the harbor under rain/);
+    assert.doesNotMatch(chapterContext.text, /bell tower betrayal/i);
+    assert.doesNotMatch(chapterContext.text, /Future betrayal at the bell tower/i);
+
+    assert.match(paragraphContext.text, /Prior scenes in this chapter before this paragraph/);
+    assert.match(paragraphContext.text, /Lyra spots the broken wax before speaking/);
+    assert.match(paragraphContext.text, /Lyra asked the clerk who had touched the ledger/);
+    assert.doesNotMatch(paragraphContext.text, /A bell rings from the tower after the exchange/);
+    assert.doesNotMatch(paragraphContext.text, /bell tower betrayal/i);
+
+    assert.match(resumeContext.text, /before paragraph 002-tense-exchange/);
+    assert.match(resumeContext.text, /Stable book context/);
+    assert.match(resumeContext.text, /Lyra spots the broken wax before speaking/);
+    assert.doesNotMatch(resumeContext.text, /A bell rings from the tower after the exchange/);
+    assert.doesNotMatch(resumeContext.text, /bell tower betrayal/i);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }
