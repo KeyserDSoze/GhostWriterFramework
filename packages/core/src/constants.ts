@@ -57,8 +57,10 @@ export const DEFAULT_CANON = "draft";
 
 export const BOOK_FILE = "book.md";
 export const CONTEXT_FILE = "context.md";
+export const IDEAS_FILE = "ideas.md";
 export const NOTES_FILE = "notes.md";
 export const PLOT_FILE = "plot.md";
+export const PROMOTED_FILE = "promoted.md";
 export const STORY_DESIGN_FILE = "story-design.md";
 
 export const GUIDELINE_FILES = {
@@ -79,8 +81,10 @@ export const STORY_STATE_CURRENT_FILE = "state/current.md";
 export const CONTENT_GLOB = [
   "book.md",
   "context.md",
+  "ideas.md",
   "notes.md",
   "plot.md",
+  "promoted.md",
   "story-design.md",
   "guidelines/**/*.md",
   "characters/**/*.md",

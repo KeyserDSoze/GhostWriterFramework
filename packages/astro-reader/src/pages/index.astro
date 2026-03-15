@@ -6,7 +6,7 @@ import { loadAssetFigure } from "../lib/assets";
 import { countPublicCanonEntries } from "../lib/public-canon";
 import { isFullCanonMode } from "../lib/reader-mode";
 
-const { ready, root, book, chapters, characters, locations, factions, items, secrets, timelineEvents } = await loadHomePageData();
+const { ready, root, book, chapters, draftChapterCount, characters, locations, factions, items, secrets, timelineEvents } = await loadHomePageData();
 const title = book?.frontmatter.title ?? "Narrarium Reader";
 const coverFigure = await loadAssetFigure("book", `${title} cover`);
 const fullCanonMode = isFullCanonMode();
@@ -129,6 +129,16 @@ const chapterCards = await Promise.all(
               <div class="chip-row"><span class="chip">{visibleTimelineCount} visible</span></div>
             </a>
           </article>
+          {fullCanonMode && (
+            <article class="catalog-card">
+              <a href="workshop/">
+                <span class="browse-card-icon">🧭</span>
+                <h3 class="chapter-title">Workshop</h3>
+                <div class="chapter-meta">Inspect drafts, ideas, notes, story design, and promoted items.</div>
+                <div class="chip-row"><span class="chip">{draftChapterCount} draft chapters</span></div>
+              </a>
+            </article>
+          )}
         </div>
       </section>
 

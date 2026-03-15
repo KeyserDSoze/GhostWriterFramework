@@ -162,3 +162,68 @@ test("NarrariumApiClient exposes note-specific HTTP helpers", async () => {
     "https://narrarium.test/api/narrarium/profiles/profile-1/chapters/chapter%3A001-opening-move/notes",
   ]);
 });
+
+test("NarrariumApiClient exposes structured work item helpers", async () => {
+  const requests = [];
+  const client = new NarrariumApiClient({
+    baseUrl: "https://narrarium.test",
+    fetch: async (input, init = {}) => {
+      const url = typeof input === "string" ? input : input.url;
+      requests.push({
+        url,
+        method: init.method ?? "GET",
+        body: typeof init.body === "string" ? JSON.parse(init.body) : null,
+      });
+
+      return jsonResponse({
+        profileId: "profile-1",
+        provider: "github",
+        branch: "main",
+        previousCommitSha: "commit-1",
+        commitSha: "commit-2",
+        pushedAt: "2026-03-14T00:01:00.000Z",
+        changedPaths: ["ideas.md"],
+        message: "Update work items",
+      });
+    },
+  });
+
+  await client.saveBookItem("profile-1", {
+    baseCommitSha: "commit-1",
+    message: "Save idea",
+    bucket: "ideas",
+    title: "Ledger crack",
+    body: "Let the forged ledger crack open the conspiracy.",
+    status: "review",
+  });
+  await client.saveChapterItem("profile-1", "chapter:001-opening-move", {
+    baseCommitSha: "commit-1",
+    message: "Save chapter note",
+    bucket: "notes",
+    title: "Watch pattern",
+    body: "Show the altered watch pattern before Lyra speaks.",
+  });
+  await client.promoteBookItem("profile-1", {
+    baseCommitSha: "commit-1",
+    message: "Promote idea",
+    source: "ideas",
+    entryId: "ideas-1",
+    promotedTo: "story-design",
+    target: "story-design",
+  });
+  await client.promoteChapterItem("profile-1", "chapter:001-opening-move", {
+    baseCommitSha: "commit-1",
+    message: "Promote chapter idea",
+    source: "ideas",
+    entryId: "ideas-2",
+    promotedTo: "draft:chapter:001-opening-move",
+    target: "notes",
+  });
+
+  assert.deepEqual(requests.map((entry) => entry.url), [
+    "https://narrarium.test/api/narrarium/profiles/profile-1/items",
+    "https://narrarium.test/api/narrarium/profiles/profile-1/chapters/chapter%3A001-opening-move/items",
+    "https://narrarium.test/api/narrarium/profiles/profile-1/items/promote",
+    "https://narrarium.test/api/narrarium/profiles/profile-1/chapters/chapter%3A001-opening-move/items/promote",
+  ]);
+});

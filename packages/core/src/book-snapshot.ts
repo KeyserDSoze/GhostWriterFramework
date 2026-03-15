@@ -54,7 +54,9 @@ export function classifyNarrariumDocumentKind(path: string): NarrariumDocumentKi
   if (normalizedPath === "book.md") return "book";
   if (normalizedPath === "plot.md") return "plot";
   if (normalizedPath === "context.md") return "context";
+  if (normalizedPath === "ideas.md") return "note";
   if (normalizedPath === "notes.md") return "note";
+  if (normalizedPath === "promoted.md") return "note";
   if (normalizedPath === "story-design.md") return "note";
   if (normalizedPath.startsWith("guidelines/")) return "guideline";
   if (normalizedPath.startsWith("characters/")) return "character";
@@ -66,7 +68,7 @@ export function classifyNarrariumDocumentKind(path: string): NarrariumDocumentKi
   if (normalizedPath.startsWith("timelines/events/")) return "timeline-event";
   if (normalizedPath.startsWith("chapters/") && normalizedPath.endsWith("/chapter.md")) return "chapter";
   if (normalizedPath.startsWith("chapters/")) return "paragraph";
-  if (normalizedPath.startsWith("drafts/") && normalizedPath.endsWith("/notes.md")) return "note";
+  if (normalizedPath.startsWith("drafts/") && /\/(notes|ideas|promoted)\.md$/i.test(normalizedPath)) return "note";
   if (normalizedPath.startsWith("drafts/") && normalizedPath.endsWith("/chapter.md")) return "chapter-draft";
   if (normalizedPath.startsWith("drafts/")) return "paragraph-draft";
   if (normalizedPath.startsWith("resumes/")) return "resume";
@@ -160,10 +162,18 @@ export function buildNarrariumBookSnapshot(input: BuildNarrariumBookSnapshotInpu
         snapshot.context = document as typeof snapshot.context;
         break;
       case "note":
-        if (document.path === "notes.md") {
+        if (document.path === "ideas.md") {
+          snapshot.bookIdeas = document as typeof snapshot.bookIdeas;
+        } else if (document.path === "notes.md") {
           snapshot.bookNotes = document as typeof snapshot.bookNotes;
+        } else if (document.path === "promoted.md") {
+          snapshot.promotedItems = document as typeof snapshot.promotedItems;
         } else if (document.path === "story-design.md") {
           snapshot.storyDesign = document as typeof snapshot.storyDesign;
+        } else if (document.path.endsWith("/ideas.md")) {
+          snapshot.chapterDraftIdeas.push(document as (typeof snapshot.chapterDraftIdeas)[number]);
+        } else if (document.path.endsWith("/promoted.md")) {
+          snapshot.chapterDraftPromoted.push(document as (typeof snapshot.chapterDraftPromoted)[number]);
         } else {
           snapshot.chapterDraftNotes.push(document as (typeof snapshot.chapterDraftNotes)[number]);
         }
@@ -228,8 +238,10 @@ export function buildNarrariumBookSnapshot(input: BuildNarrariumBookSnapshotInpu
     }
   }
 
+  snapshot.chapterDraftIdeas.sort(compareDocuments);
   snapshot.guidelines.sort(compareDocuments);
   snapshot.chapterDraftNotes.sort(compareDocuments);
+  snapshot.chapterDraftPromoted.sort(compareDocuments);
   snapshot.characters.sort(compareDocuments);
   snapshot.items.sort(compareDocuments);
   snapshot.locations.sort(compareDocuments);

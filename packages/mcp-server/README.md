@@ -173,7 +173,7 @@ Chapter style overrides are also supported explicitly through chapter frontmatte
 
 `resume_book_context` also accepts optional `chapter` and `paragraph` parameters when you want to restart from a specific writing point instead of the latest overall state.
 
-Use `update_book_notes` for global working notes or `story-design.md`, and `update_chapter_notes` for draft-local notes stored in `drafts/<chapter>/notes.md`.
+Use `save_book_item` and `save_chapter_item` for structured active ideas and notes, `promote_book_item` and `promote_chapter_item` to archive promoted items out of the active queues, and `update_book_notes` / `update_chapter_notes` when you want to edit the supporting documents themselves.
 
 See `docs/style-profiles.md` for the chapter style workflow.
 

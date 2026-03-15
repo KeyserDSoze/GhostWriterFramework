@@ -14,7 +14,9 @@ internal static class NarrariumDocumentPaths
         if (normalizedPath.Equals("book.md", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.Book;
         if (normalizedPath.Equals("plot.md", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.Plot;
         if (normalizedPath.Equals("context.md", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.Context;
+        if (normalizedPath.Equals("ideas.md", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.Note;
         if (normalizedPath.Equals("notes.md", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.Note;
+        if (normalizedPath.Equals("promoted.md", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.Note;
         if (normalizedPath.Equals("story-design.md", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.Note;
         if (normalizedPath.StartsWith("guidelines/", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.Guideline;
         if (normalizedPath.StartsWith("characters/", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.Character;
@@ -26,7 +28,10 @@ internal static class NarrariumDocumentPaths
         if (normalizedPath.StartsWith("timelines/events/", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.TimelineEvent;
         if (normalizedPath.StartsWith("chapters/", StringComparison.OrdinalIgnoreCase) && normalizedPath.EndsWith("/chapter.md", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.Chapter;
         if (normalizedPath.StartsWith("chapters/", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.Paragraph;
-        if (normalizedPath.StartsWith("drafts/", StringComparison.OrdinalIgnoreCase) && normalizedPath.EndsWith("/notes.md", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.Note;
+        if (normalizedPath.StartsWith("drafts/", StringComparison.OrdinalIgnoreCase) &&
+            (normalizedPath.EndsWith("/notes.md", StringComparison.OrdinalIgnoreCase) ||
+             normalizedPath.EndsWith("/ideas.md", StringComparison.OrdinalIgnoreCase) ||
+             normalizedPath.EndsWith("/promoted.md", StringComparison.OrdinalIgnoreCase))) return BookDocumentKind.Note;
         if (normalizedPath.StartsWith("drafts/", StringComparison.OrdinalIgnoreCase) && normalizedPath.EndsWith("/chapter.md", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.ChapterDraft;
         if (normalizedPath.StartsWith("drafts/", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.ParagraphDraft;
         if (normalizedPath.StartsWith("resumes/", StringComparison.OrdinalIgnoreCase)) return BookDocumentKind.Resume;

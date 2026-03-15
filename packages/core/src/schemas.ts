@@ -85,13 +85,30 @@ export const contextSchema = z
   })
   .passthrough();
 
+export const workItemEntrySchema = z
+  .object({
+    id: z.string().min(1),
+    title: z.string().min(1),
+    body: z.string().default(""),
+    status: z.enum(["active", "review", "resolved", "rejected", "promoted"]).default("active"),
+    tags: z.array(z.string()).default([]),
+    created_at: yamlDateStringSchema,
+    updated_at: yamlDateStringSchema,
+    source_kind: z.enum(["idea", "note"]).optional(),
+    promoted_to: z.string().optional(),
+    promoted_at: yamlDateStringSchema.optional(),
+  })
+  .passthrough();
+
 export const noteSchema = z
   .object({
     type: z.literal("note").default("note"),
     id: z.string().min(1),
     title: z.string().min(1),
     scope: z.enum(["book", "story-design", "chapter-draft"]).default("book"),
+    bucket: z.enum(["notes", "ideas", "promoted", "story-design"]).default("notes"),
     chapter: z.string().optional(),
+    entries: z.array(workItemEntrySchema).default([]),
   })
   .passthrough();
 
@@ -354,6 +371,7 @@ export const anyKnownSchema = z.discriminatedUnion("type", [
 export type BookFrontmatter = z.infer<typeof bookSchema>;
 export type PlotFrontmatter = z.infer<typeof plotSchema>;
 export type ContextFrontmatter = z.infer<typeof contextSchema>;
+export type WorkItemEntryFrontmatter = z.infer<typeof workItemEntrySchema>;
 export type NoteFrontmatter = z.infer<typeof noteSchema>;
 export type GuidelineFrontmatter = z.infer<typeof guidelineSchema>;
 export type CharacterFrontmatter = z.infer<typeof characterSchema>;

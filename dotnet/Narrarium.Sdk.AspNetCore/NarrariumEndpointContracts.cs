@@ -73,6 +73,48 @@ public sealed record NoteMutationRequest
     public string? AppendBody { get; init; }
 }
 
+public sealed record SaveWorkItemRequest
+{
+    public required string BaseCommitSha { get; init; }
+
+    public required string Message { get; init; }
+
+    public string? AuthorName { get; init; }
+
+    public string? AuthorEmail { get; init; }
+
+    public required string Bucket { get; init; }
+
+    public string? EntryId { get; init; }
+
+    public required string Title { get; init; }
+
+    public required string Body { get; init; }
+
+    public IReadOnlyList<string> Tags { get; init; } = Array.Empty<string>();
+
+    public string Status { get; init; } = "active";
+}
+
+public sealed record PromoteWorkItemRequest
+{
+    public required string BaseCommitSha { get; init; }
+
+    public required string Message { get; init; }
+
+    public string? AuthorName { get; init; }
+
+    public string? AuthorEmail { get; init; }
+
+    public required string Source { get; init; }
+
+    public required string EntryId { get; init; }
+
+    public required string PromotedTo { get; init; }
+
+    public string? Target { get; init; }
+}
+
 public sealed record CommitBookChangeRequest
 {
     public required string Kind { get; init; }

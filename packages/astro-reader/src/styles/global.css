@@ -248,6 +248,42 @@ body.tts-enabled .shell {
   flex-wrap: wrap;
 }
 
+.workspace-card {
+  width: 100%;
+}
+
+.workspace-entry-list {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 1rem;
+}
+
+.workspace-entry {
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+
+.workspace-entry h4,
+.workspace-entry h5 {
+  margin: 0.35rem 0 0.45rem;
+  font-size: 1rem;
+}
+
+.workspace-entry p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.workspace-subsection {
+  margin-top: 1.4rem;
+}
+
+.workspace-subsection h4 {
+  margin: 0 0 0.75rem;
+}
+
 /* ─── Icon buttons (masthead controls) ──────────────────────── */
 .masthead-btn {
   display: inline-flex;

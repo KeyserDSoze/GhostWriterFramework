@@ -34,10 +34,14 @@ import {
   readTimelineMain,
   reviseChapter,
   reviseParagraph,
+  saveBookWorkItem,
+  saveChapterDraftWorkItem,
   syncPlot,
   syncAllResumes,
   syncStoryState,
   syncTotalResume,
+  promoteBookWorkItem,
+  promoteChapterDraftWorkItem,
   upgradeBookRepo,
   updateBookNotes,
   updateChapterDraftNotes,
@@ -980,16 +984,20 @@ test("draft workflow can assemble writing context and promote drafts into final 
       body: "# Rough Scene\n\nLivia vede il sigillo sbagliato e capisce che qualcuno ha toccato il registro.",
     });
 
-    await updateBookNotes(rootPath, {
-      appendBody: "## Active Notes\n\n- Ricordare che Livia ha un rapporto teso con i registri del porto.",
+    await saveBookWorkItem(rootPath, {
+      bucket: "notes",
+      title: "Registry tension",
+      body: "Ricordare che Livia ha un rapporto teso con i registri del porto.",
     });
     await updateBookNotes(rootPath, {
       target: "story-design",
       appendBody: "## Main Arcs\n\n- Il sospetto sui registri deve intrecciarsi con il tema dell'identita nascosta.",
     });
-    await updateChapterDraftNotes(rootPath, {
+    await saveChapterDraftWorkItem(rootPath, {
       chapter: "chapter:001-la-soglia",
-      appendBody: "## Scene Goals\n\n- Tenere alta la tensione appena Livia arriva al varco.",
+      bucket: "notes",
+      title: "Arrival pressure",
+      body: "Tenere alta la tensione appena Livia arriva al varco.",
     });
 
     const context = await buildParagraphWritingContext(rootPath, "chapter:001-la-soglia", "001-il-varco");
@@ -1037,6 +1045,80 @@ test("draft workflow can assemble writing context and promote drafts into final 
     assert.equal(paragraphResult.frontmatter.summary, "Brutta della prima scena.");
     assert.equal(chapter.paragraphs[0].metadata.viewpoint, "character:livia-sarne");
     assert.match(chapter.paragraphs[0].body, /ceralacca/);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("structured ideas and notes can be promoted out of active queues while preserving an archive", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-ideas-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Ideas Test Book",
+      language: "en",
+    });
+
+    await createChapterDraft(rootPath, {
+      number: 1,
+      title: "Opening Move",
+      body: "# Rough Intent\n\nOpen under pressure.",
+    });
+
+    const bookIdea = await saveBookWorkItem(rootPath, {
+      bucket: "ideas",
+      title: "Ledger crack",
+      body: "Let the forged ledger crack open the larger conspiracy.",
+      tags: ["plot", "mystery"],
+      status: "review",
+    });
+
+    const promotedIdea = await promoteBookWorkItem(rootPath, {
+      source: "ideas",
+      entryId: bookIdea.entry.id,
+      promotedTo: "story-design",
+      target: "story-design",
+    });
+
+    const chapterIdea = await saveChapterDraftWorkItem(rootPath, {
+      chapter: "chapter:001-opening-move",
+      bucket: "ideas",
+      title: "Watch pattern",
+      body: "Show the altered watch pattern before the first line of dialogue.",
+    });
+
+    const promotedChapterIdea = await promoteChapterDraftWorkItem(rootPath, {
+      chapter: "chapter:001-opening-move",
+      source: "ideas",
+      entryId: chapterIdea.entry.id,
+      promotedTo: "draft:chapter:001-opening-move",
+      target: "notes",
+    });
+
+    const context = await buildChapterWritingContext(rootPath, "chapter:001-opening-move");
+    const ideasDocument = await readFile(path.join(rootPath, "ideas.md"), "utf8");
+    const promotedDocument = await readFile(path.join(rootPath, "promoted.md"), "utf8");
+    const chapterIdeasDocument = await readFile(path.join(rootPath, "drafts", "001-opening-move", "ideas.md"), "utf8");
+    const chapterPromotedDocument = await readFile(path.join(rootPath, "drafts", "001-opening-move", "promoted.md"), "utf8");
+    const storyDesignDocument = await readFile(path.join(rootPath, "story-design.md"), "utf8");
+    const chapterNotesDocument = await readFile(path.join(rootPath, "drafts", "001-opening-move", "notes.md"), "utf8");
+
+    assert.match(ideasDocument, /bucket: ideas/);
+    assert.doesNotMatch(ideasDocument, /Ledger crack/);
+    assert.match(promotedDocument, /Ledger crack/);
+    assert.match(promotedDocument, /promoted_to: story-design/);
+    assert.match(storyDesignDocument, /Promoted: Ledger crack/);
+
+    assert.doesNotMatch(chapterIdeasDocument, /Watch pattern/);
+    assert.match(chapterPromotedDocument, /Watch pattern/);
+    assert.match(chapterPromotedDocument, /promoted_to: draft:chapter:001-opening-move/);
+    assert.match(chapterNotesDocument, /Watch pattern/);
+
+    assert.match(context.text, /Chapter draft notes/);
+    assert.match(context.text, /Watch pattern/);
+    assert.doesNotMatch(context.text, /Ledger crack: Let the forged ledger crack open the larger conspiracy/);
+    assert.equal(promotedIdea.targetFilePath?.endsWith("story-design.md"), true);
+    assert.equal(promotedChapterIdea.targetFilePath?.endsWith(path.join("drafts", "001-opening-move", "notes.md")), true);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }

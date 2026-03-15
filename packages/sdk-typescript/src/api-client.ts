@@ -81,6 +81,30 @@ export interface NoteMutationRequest {
   appendBody?: string;
 }
 
+export interface SaveWorkItemRequest {
+  baseCommitSha: string;
+  message: string;
+  authorName?: string;
+  authorEmail?: string;
+  bucket: "ideas" | "notes";
+  entryId?: string;
+  title: string;
+  body: string;
+  tags?: string[];
+  status?: "active" | "review" | "resolved" | "rejected";
+}
+
+export interface PromoteWorkItemRequest {
+  baseCommitSha: string;
+  message: string;
+  authorName?: string;
+  authorEmail?: string;
+  source: "ideas" | "notes";
+  entryId: string;
+  promotedTo: string;
+  target?: "notes" | "story-design";
+}
+
 export class NarrariumApiClient {
   private readonly fetchImpl: FetchLike;
   private readonly baseUrl: string;
@@ -141,6 +165,30 @@ export class NarrariumApiClient {
 
   commit(profileId: string, request: CommitBookRequest): Promise<BookPushResult> {
     return this.requestJson<BookPushResult>("POST", `/profiles/${encodeURIComponent(profileId)}/commit`, request);
+  }
+
+  saveBookItem(profileId: string, request: SaveWorkItemRequest): Promise<BookPushResult> {
+    return this.requestJson<BookPushResult>("POST", `/profiles/${encodeURIComponent(profileId)}/items`, request);
+  }
+
+  saveChapterItem(profileId: string, chapter: string, request: SaveWorkItemRequest): Promise<BookPushResult> {
+    return this.requestJson<BookPushResult>(
+      "POST",
+      `/profiles/${encodeURIComponent(profileId)}/chapters/${encodeURIComponent(chapter)}/items`,
+      request,
+    );
+  }
+
+  promoteBookItem(profileId: string, request: PromoteWorkItemRequest): Promise<BookPushResult> {
+    return this.requestJson<BookPushResult>("POST", `/profiles/${encodeURIComponent(profileId)}/items/promote`, request);
+  }
+
+  promoteChapterItem(profileId: string, chapter: string, request: PromoteWorkItemRequest): Promise<BookPushResult> {
+    return this.requestJson<BookPushResult>(
+      "POST",
+      `/profiles/${encodeURIComponent(profileId)}/chapters/${encodeURIComponent(chapter)}/items/promote`,
+      request,
+    );
   }
 
   updateBookNotes(profileId: string, request: NoteMutationRequest): Promise<BookPushResult> {

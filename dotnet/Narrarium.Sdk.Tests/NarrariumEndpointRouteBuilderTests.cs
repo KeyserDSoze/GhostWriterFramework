@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Text.Json.Nodes;
 using Narrarium.Sdk;
 using Narrarium.Sdk.AspNetCore;
 
@@ -137,6 +138,74 @@ public sealed class NarrariumEndpointRouteBuilderTests
         Assert.Contains("drafts/001-opening-move/notes.md", chapterResult.ChangedPaths);
     }
 
+    [Fact]
+    public async Task Structured_item_endpoints_push_ideas_and_promotions()
+    {
+        await using var app = await CreateAppAsync();
+        var manager = app.Services.GetRequiredService<BookManager>();
+        var profile = await manager.CreateGitHubProfileAsync("Book", "owner", "repo", "main", "token");
+
+        var client = app.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Test");
+        client.DefaultRequestHeaders.Add("x-test-scope", "narrarium.write");
+
+        var saveBookResponse = await client.PostAsJsonAsync($"/api/narrarium/profiles/{profile.Id}/items", new SaveWorkItemRequest
+        {
+            BaseCommitSha = "commit-test-1",
+            Message = "Save idea",
+            Bucket = "ideas",
+            Title = "Ledger crack",
+            Body = "Let the forged ledger crack open the conspiracy.",
+            Status = "review",
+        });
+        saveBookResponse.EnsureSuccessStatusCode();
+        var saveBookResult = await saveBookResponse.Content.ReadFromJsonAsync<BookPushResult>();
+
+        var saveChapterResponse = await client.PostAsJsonAsync($"/api/narrarium/profiles/{profile.Id}/chapters/chapter:001-opening-move/items", new SaveWorkItemRequest
+        {
+            BaseCommitSha = "commit-test-1",
+            Message = "Save chapter idea",
+            Bucket = "ideas",
+            Title = "Watch pattern",
+            Body = "Show the altered watch pattern before Lyra speaks.",
+        });
+        saveChapterResponse.EnsureSuccessStatusCode();
+        var saveChapterResult = await saveChapterResponse.Content.ReadFromJsonAsync<BookPushResult>();
+
+        var promoteBookResponse = await client.PostAsJsonAsync($"/api/narrarium/profiles/{profile.Id}/items/promote", new PromoteWorkItemRequest
+        {
+            BaseCommitSha = "commit-test-1",
+            Message = "Promote book idea",
+            Source = "ideas",
+            EntryId = "ideas-abc",
+            PromotedTo = "story-design",
+            Target = "story-design",
+        });
+        promoteBookResponse.EnsureSuccessStatusCode();
+        var promoteBookResult = await promoteBookResponse.Content.ReadFromJsonAsync<BookPushResult>();
+
+        var promoteChapterResponse = await client.PostAsJsonAsync($"/api/narrarium/profiles/{profile.Id}/chapters/chapter:001-opening-move/items/promote", new PromoteWorkItemRequest
+        {
+            BaseCommitSha = "commit-test-1",
+            Message = "Promote chapter idea",
+            Source = "ideas",
+            EntryId = "ideas-def",
+            PromotedTo = "draft:chapter:001-opening-move",
+            Target = "notes",
+        });
+        promoteChapterResponse.EnsureSuccessStatusCode();
+        var promoteChapterResult = await promoteChapterResponse.Content.ReadFromJsonAsync<BookPushResult>();
+
+        Assert.NotNull(saveBookResult);
+        Assert.Contains("ideas.md", saveBookResult.ChangedPaths);
+        Assert.NotNull(saveChapterResult);
+        Assert.Contains("drafts/001-opening-move/ideas.md", saveChapterResult.ChangedPaths);
+        Assert.NotNull(promoteBookResult);
+        Assert.Contains("promoted.md", promoteBookResult.ChangedPaths);
+        Assert.NotNull(promoteChapterResult);
+        Assert.Contains("drafts/001-opening-move/promoted.md", promoteChapterResult.ChangedPaths);
+    }
+
     private static async Task<WebApplication> CreateAppAsync()
     {
         var builder = WebApplication.CreateBuilder();
@@ -163,7 +232,68 @@ public sealed class NarrariumEndpointRouteBuilderTests
 
         public Task<BookSnapshot> LoadBookAsync(BookConnectionProfile profile, CancellationToken cancellationToken = default)
         {
-            var snapshot = BookSnapshot.CreateEmpty(profile.Id, profile.Provider, profile.Branch, "commit-test-1", profile.Ref, DateTimeOffset.Parse("2026-03-14T00:00:00Z"));
+            var bookIdeas = new NoteDocument
+            {
+                Kind = BookDocumentKind.Note,
+                Path = "ideas.md",
+                Frontmatter = new JsonObject
+                {
+                    ["type"] = "note",
+                    ["id"] = "note:ideas",
+                    ["title"] = "Book Ideas",
+                    ["scope"] = "book",
+                    ["bucket"] = "ideas",
+                    ["entries"] = new JsonArray(
+                        new JsonObject
+                        {
+                            ["id"] = "ideas-abc",
+                            ["title"] = "Ledger crack",
+                            ["body"] = "Let the forged ledger crack open the conspiracy.",
+                            ["status"] = "review",
+                            ["created_at"] = "2026-03-14T00:00:00Z",
+                            ["updated_at"] = "2026-03-14T00:00:00Z",
+                            ["tags"] = new JsonArray(),
+                        }),
+                },
+                Body = "# Active Ideas",
+            };
+            var chapterIdeas = new NoteDocument
+            {
+                Kind = BookDocumentKind.Note,
+                Path = "drafts/001-opening-move/ideas.md",
+                Frontmatter = new JsonObject
+                {
+                    ["type"] = "note",
+                    ["id"] = "note:chapter-draft:ideas:001-opening-move",
+                    ["title"] = "Chapter Draft Ideas 001-opening-move",
+                    ["scope"] = "chapter-draft",
+                    ["bucket"] = "ideas",
+                    ["chapter"] = "chapter:001-opening-move",
+                    ["entries"] = new JsonArray(
+                        new JsonObject
+                        {
+                            ["id"] = "ideas-def",
+                            ["title"] = "Watch pattern",
+                            ["body"] = "Show the altered watch pattern before Lyra speaks.",
+                            ["status"] = "review",
+                            ["created_at"] = "2026-03-14T00:00:00Z",
+                            ["updated_at"] = "2026-03-14T00:00:00Z",
+                            ["tags"] = new JsonArray(),
+                        }),
+                },
+                Body = "# Chapter Ideas",
+            };
+
+            var snapshot = BookSnapshot.CreateEmpty(profile.Id, profile.Provider, profile.Branch, "commit-test-1", profile.Ref, DateTimeOffset.Parse("2026-03-14T00:00:00Z")) with
+            {
+                BookIdeas = bookIdeas,
+                ChapterDraftIdeas = [chapterIdeas],
+                DocumentsByPath = new Dictionary<string, NarrariumDocument>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [bookIdeas.Path] = bookIdeas,
+                    [chapterIdeas.Path] = chapterIdeas,
+                },
+            };
             return Task.FromResult(snapshot);
         }
 

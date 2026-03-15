@@ -1,0 +1,138 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { isFullCanonMode } from "../../lib/reader-mode";
+import { loadWorkshopPageData } from "../../lib/workshop";
+
+const fullCanonMode = isFullCanonMode();
+const { ready, global, draftChapters } = await loadWorkshopPageData();
+
+const globalDocuments = global
+  ? [
+      { label: "Context", document: global.context },
+      { label: "Story Design", document: global.storyDesign },
+      { label: "Ideas", document: global.ideas },
+      { label: "Notes", document: global.notes },
+      { label: "Promoted", document: global.promoted },
+    ]
+  : [];
+---
+
+<BaseLayout title="Workshop" description="Inspect drafts, ideas, notes, and story design." activeSection="workshop">
+  <section class="hero">
+    <p class="eyebrow">Workshop</p>
+    <h1>Drafts, Ideas, and Notes</h1>
+    <p class="lede">
+      {fullCanonMode
+        ? "Review global planning material, draft chapters, and promoted work items from one author-facing workspace."
+        : "Workshop content is available only in full canon mode."}
+    </p>
+  </section>
+
+  {!ready ? (
+    <div class="empty">No Narrarium book repository is connected yet.</div>
+  ) : !fullCanonMode ? (
+    <div class="empty">Switch the reader to full canon mode to inspect workshop material such as drafts, ideas, notes, and story design.</div>
+  ) : (
+    <>
+      <section class="section">
+        <h2>Global Workspace</h2>
+        <div class="chapter-list">
+          {globalDocuments.map(({ label, document }) => (
+            <article class="chapter-card workspace-card">
+              <div class="chapter-number">{label}</div>
+              <h3 class="chapter-title">{document?.title ?? `${label} unavailable`}</h3>
+              <div class="chapter-meta">{document ? document.path : "File not present in this book yet."}</div>
+              {document ? (
+                <>
+                  <div class="chip-row"><span class="chip">{document.entries.length} entries</span></div>
+                  <div class="prose" set:html={document.bodyHtml}></div>
+                  {document.entries.length > 0 && (
+                    <div class="workspace-entry-list">
+                      {document.entries.map((entry) => (
+                        <article class="workspace-entry">
+                          <div class="chip-row">
+                            <span class="chip">{entry.status}</span>
+                            {entry.tags.map((tag) => (
+                              <span class="chip">{tag}</span>
+                            ))}
+                            {entry.promotedTo && <span class="chip">to {entry.promotedTo}</span>}
+                          </div>
+                          <h4>{entry.title}</h4>
+                          <p>{entry.body || "No details yet."}</p>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Draft Chapters</h2>
+        {draftChapters.length > 0 ? (
+          <div class="chapter-list">
+            {draftChapters.map((chapter) => (
+              <article class="chapter-card workspace-card">
+                <div class="chapter-number">Draft</div>
+                <h3 class="chapter-title">{chapter.title}</h3>
+                <div class="chapter-meta">{chapter.summary}</div>
+                <div class="chip-row">
+                  <span class="chip">{chapter.paragraphs.length} scenes</span>
+                  <span class="chip">{chapter.ideas?.entries.length ?? 0} ideas</span>
+                  <span class="chip">{chapter.notes?.entries.length ?? 0} notes</span>
+                  <span class="chip">{chapter.promoted?.entries.length ?? 0} promoted</span>
+                </div>
+                <div class="prose" set:html={chapter.bodyHtml}></div>
+                {chapter.paragraphs.length > 0 && (
+                  <div class="workspace-subsection">
+                    <h4>Draft Scenes</h4>
+                    <div class="workspace-entry-list">
+                      {chapter.paragraphs.map((paragraph) => (
+                        <article class="workspace-entry">
+                          <h5>{paragraph.title}</h5>
+                          <p>{paragraph.summary}</p>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {[chapter.ideas, chapter.notes, chapter.promoted].map(
+                  (document, index) =>
+                    document && (
+                      <div class="workspace-subsection">
+                        <h4>{index === 0 ? "Ideas" : index === 1 ? "Notes" : "Promoted"}</h4>
+                        <div class="prose" set:html={document.bodyHtml}></div>
+                        {document.entries.length > 0 && (
+                          <div class="workspace-entry-list">
+                            {document.entries.map((entry) => (
+                              <article class="workspace-entry">
+                                <div class="chip-row">
+                                  <span class="chip">{entry.status}</span>
+                                  {entry.tags.map((tag) => (
+                                    <span class="chip">{tag}</span>
+                                  ))}
+                                  {entry.promotedTo && <span class="chip">to {entry.promotedTo}</span>}
+                                </div>
+                                <h5>{entry.title}</h5>
+                                <p>{entry.body || "No details yet."}</p>
+                              </article>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ),
+                )}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div class="empty">No chapter drafts exist yet.</div>
+        )}
+      </section>
+    </>
+  )}
+</BaseLayout>

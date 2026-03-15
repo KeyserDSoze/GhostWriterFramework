@@ -14,6 +14,7 @@ interface Props {
   activeSection?:
     | "home"
     | "chapters"
+    | "workshop"
     | "characters"
     | "locations"
     | "factions"
@@ -75,6 +76,7 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
         <nav class="site-nav">
           <a class:list={["nav-link", activeSection === "home" && "is-active"]} href="./">Book</a>
           <a class:list={["nav-link", activeSection === "chapters" && "is-active"]} href="./#chapters">Chapters</a>
+          {fullCanonMode && <a class:list={["nav-link", activeSection === "workshop" && "is-active"]} href="workshop/">Workshop</a>}
           <a class:list={["nav-link", activeSection === "characters" && "is-active"]} href="characters/">Characters</a>
           <a class:list={["nav-link", activeSection === "locations" && "is-active"]} href="locations/">Locations</a>
           <a class:list={["nav-link", activeSection === "factions" && "is-active"]} href="factions/">Factions</a>

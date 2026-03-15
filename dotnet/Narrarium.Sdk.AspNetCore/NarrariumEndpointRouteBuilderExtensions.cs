@@ -114,6 +114,160 @@ public static class NarrariumEndpointRouteBuilderExtensions
             return TypedResults.Ok(BookGitStateResponse.FromSnapshot(snapshot));
         }).RequireAuthorization(options.ReadPolicyName);
 
+        profiles.MapPost("/{profileId}/items", async Task<Results<Ok<BookPushResult>, NotFound, Conflict<string>>> (
+            string profileId,
+            SaveWorkItemRequest request,
+            BookManager manager,
+            CancellationToken cancellationToken) =>
+        {
+            var profile = await manager.GetProfileAsync(profileId, cancellationToken);
+            if (profile is null)
+            {
+                return TypedResults.NotFound();
+            }
+
+            var snapshot = await manager.LoadBookAsync(profile, cancellationToken);
+            if (!string.Equals(snapshot.CommitSha, request.BaseCommitSha, StringComparison.OrdinalIgnoreCase))
+            {
+                return TypedResults.Conflict($"Branch moved from {request.BaseCommitSha} to {snapshot.CommitSha}. Reload before updating work items.");
+            }
+
+            var workspace = manager.BeginWorkspace(snapshot);
+            workspace.SaveBookItem(new StructuredWorkItemInput
+            {
+                Bucket = request.Bucket,
+                EntryId = request.EntryId,
+                Title = request.Title,
+                Body = request.Body,
+                Tags = request.Tags,
+                Status = request.Status,
+            });
+
+            var push = await manager.CommitAndPushAsync(profile, snapshot, workspace, new BookCommitRequest
+            {
+                Message = request.Message,
+                AuthorName = request.AuthorName,
+                AuthorEmail = request.AuthorEmail,
+            }, cancellationToken);
+
+            return TypedResults.Ok(push);
+        }).RequireAuthorization(options.WritePolicyName);
+
+        profiles.MapPost("/{profileId}/items/promote", async Task<Results<Ok<BookPushResult>, NotFound, Conflict<string>>> (
+            string profileId,
+            PromoteWorkItemRequest request,
+            BookManager manager,
+            CancellationToken cancellationToken) =>
+        {
+            var profile = await manager.GetProfileAsync(profileId, cancellationToken);
+            if (profile is null)
+            {
+                return TypedResults.NotFound();
+            }
+
+            var snapshot = await manager.LoadBookAsync(profile, cancellationToken);
+            if (!string.Equals(snapshot.CommitSha, request.BaseCommitSha, StringComparison.OrdinalIgnoreCase))
+            {
+                return TypedResults.Conflict($"Branch moved from {request.BaseCommitSha} to {snapshot.CommitSha}. Reload before promoting work items.");
+            }
+
+            var workspace = manager.BeginWorkspace(snapshot);
+            workspace.PromoteBookItem(new PromoteWorkItemInput
+            {
+                Source = request.Source,
+                EntryId = request.EntryId,
+                PromotedTo = request.PromotedTo,
+                Target = request.Target,
+            });
+
+            var push = await manager.CommitAndPushAsync(profile, snapshot, workspace, new BookCommitRequest
+            {
+                Message = request.Message,
+                AuthorName = request.AuthorName,
+                AuthorEmail = request.AuthorEmail,
+            }, cancellationToken);
+
+            return TypedResults.Ok(push);
+        }).RequireAuthorization(options.WritePolicyName);
+
+        profiles.MapPost("/{profileId}/chapters/{chapter}/items", async Task<Results<Ok<BookPushResult>, NotFound, Conflict<string>>> (
+            string profileId,
+            string chapter,
+            SaveWorkItemRequest request,
+            BookManager manager,
+            CancellationToken cancellationToken) =>
+        {
+            var profile = await manager.GetProfileAsync(profileId, cancellationToken);
+            if (profile is null)
+            {
+                return TypedResults.NotFound();
+            }
+
+            var snapshot = await manager.LoadBookAsync(profile, cancellationToken);
+            if (!string.Equals(snapshot.CommitSha, request.BaseCommitSha, StringComparison.OrdinalIgnoreCase))
+            {
+                return TypedResults.Conflict($"Branch moved from {request.BaseCommitSha} to {snapshot.CommitSha}. Reload before updating chapter work items.");
+            }
+
+            var workspace = manager.BeginWorkspace(snapshot);
+            workspace.SaveChapterDraftItem(chapter, new StructuredWorkItemInput
+            {
+                Bucket = request.Bucket,
+                EntryId = request.EntryId,
+                Title = request.Title,
+                Body = request.Body,
+                Tags = request.Tags,
+                Status = request.Status,
+            });
+
+            var push = await manager.CommitAndPushAsync(profile, snapshot, workspace, new BookCommitRequest
+            {
+                Message = request.Message,
+                AuthorName = request.AuthorName,
+                AuthorEmail = request.AuthorEmail,
+            }, cancellationToken);
+
+            return TypedResults.Ok(push);
+        }).RequireAuthorization(options.WritePolicyName);
+
+        profiles.MapPost("/{profileId}/chapters/{chapter}/items/promote", async Task<Results<Ok<BookPushResult>, NotFound, Conflict<string>>> (
+            string profileId,
+            string chapter,
+            PromoteWorkItemRequest request,
+            BookManager manager,
+            CancellationToken cancellationToken) =>
+        {
+            var profile = await manager.GetProfileAsync(profileId, cancellationToken);
+            if (profile is null)
+            {
+                return TypedResults.NotFound();
+            }
+
+            var snapshot = await manager.LoadBookAsync(profile, cancellationToken);
+            if (!string.Equals(snapshot.CommitSha, request.BaseCommitSha, StringComparison.OrdinalIgnoreCase))
+            {
+                return TypedResults.Conflict($"Branch moved from {request.BaseCommitSha} to {snapshot.CommitSha}. Reload before promoting chapter work items.");
+            }
+
+            var workspace = manager.BeginWorkspace(snapshot);
+            workspace.PromoteChapterDraftItem(chapter, new PromoteWorkItemInput
+            {
+                Source = request.Source,
+                EntryId = request.EntryId,
+                PromotedTo = request.PromotedTo,
+                Target = request.Target,
+            });
+
+            var push = await manager.CommitAndPushAsync(profile, snapshot, workspace, new BookCommitRequest
+            {
+                Message = request.Message,
+                AuthorName = request.AuthorName,
+                AuthorEmail = request.AuthorEmail,
+            }, cancellationToken);
+
+            return TypedResults.Ok(push);
+        }).RequireAuthorization(options.WritePolicyName);
+
         profiles.MapPost("/{profileId}/notes", async Task<Results<Ok<BookPushResult>, NotFound, Conflict<string>>> (
             string profileId,
             NoteMutationRequest request,

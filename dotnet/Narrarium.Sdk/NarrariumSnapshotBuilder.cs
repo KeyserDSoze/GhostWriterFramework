@@ -16,12 +16,16 @@ internal static class NarrariumSnapshotBuilder
         BookDocument? book = null;
         PlotDocument? plot = null;
         ContextDocument? context = null;
+        NoteDocument? bookIdeas = null;
         NoteDocument? bookNotes = null;
+        NoteDocument? promotedItems = null;
         NoteDocument? storyDesign = null;
         TimelineMainDocument? timelineMain = null;
 
         var guidelines = new List<GuidelineDocument>();
+        var chapterDraftIdeas = new List<NoteDocument>();
         var chapterDraftNotes = new List<NoteDocument>();
+        var chapterDraftPromoted = new List<NoteDocument>();
         var characters = new List<CharacterDocument>();
         var items = new List<ItemDocument>();
         var locations = new List<LocationDocument>();
@@ -57,13 +61,29 @@ internal static class NarrariumSnapshotBuilder
                     context = typed;
                     break;
                 case NoteDocument typed:
-                    if (string.Equals(typed.Path, "notes.md", StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(typed.Path, "ideas.md", StringComparison.OrdinalIgnoreCase))
+                    {
+                        bookIdeas = typed;
+                    }
+                    else if (string.Equals(typed.Path, "notes.md", StringComparison.OrdinalIgnoreCase))
                     {
                         bookNotes = typed;
+                    }
+                    else if (string.Equals(typed.Path, "promoted.md", StringComparison.OrdinalIgnoreCase))
+                    {
+                        promotedItems = typed;
                     }
                     else if (string.Equals(typed.Path, "story-design.md", StringComparison.OrdinalIgnoreCase))
                     {
                         storyDesign = typed;
+                    }
+                    else if (typed.Path.EndsWith("/ideas.md", StringComparison.OrdinalIgnoreCase))
+                    {
+                        chapterDraftIdeas.Add(typed);
+                    }
+                    else if (typed.Path.EndsWith("/promoted.md", StringComparison.OrdinalIgnoreCase))
+                    {
+                        chapterDraftPromoted.Add(typed);
                     }
                     else
                     {
@@ -132,7 +152,9 @@ internal static class NarrariumSnapshotBuilder
         }
 
         SortDocuments(guidelines);
+        SortDocuments(chapterDraftIdeas);
         SortDocuments(chapterDraftNotes);
+        SortDocuments(chapterDraftPromoted);
         SortDocuments(characters);
         SortDocuments(items);
         SortDocuments(locations);
@@ -191,7 +213,9 @@ internal static class NarrariumSnapshotBuilder
             Book = book,
             Plot = plot,
             Context = context,
+            BookIdeas = bookIdeas,
             BookNotes = bookNotes,
+            PromotedItems = promotedItems,
             StoryDesign = storyDesign,
             TimelineMain = timelineMain,
             Guidelines = guidelines,
@@ -203,7 +227,9 @@ internal static class NarrariumSnapshotBuilder
             TimelineEvents = timelineEvents,
             Chapters = chapters,
             DraftChapters = draftChapters,
+            ChapterDraftIdeas = chapterDraftIdeas,
             ChapterDraftNotes = chapterDraftNotes,
+            ChapterDraftPromoted = chapterDraftPromoted,
             Resumes = resumes,
             StateDocuments = stateDocuments,
             Evaluations = evaluations,

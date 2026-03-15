@@ -13,8 +13,10 @@ import {
   ENTITY_TYPE_TO_DIRECTORY,
   ENTITY_TYPES,
   GUIDELINE_FILES,
+  IDEAS_FILE,
   NOTES_FILE,
   PLOT_FILE,
+  PROMOTED_FILE,
   SKILL_NAME,
   STORY_STATE_CURRENT_FILE,
   STORY_STATE_STATUS_FILE,
@@ -41,6 +43,7 @@ import {
   plotSchema,
   researchNoteSchema,
   secretSchema,
+  workItemEntrySchema,
   type BookFrontmatter,
   type AssetFrontmatter,
   type CharacterFrontmatter,
@@ -58,6 +61,7 @@ import {
   type PlotFrontmatter,
   type SecretFrontmatter,
   type TimelineEventFrontmatter,
+  type WorkItemEntryFrontmatter,
 } from "./schemas.js";
 import { skillTemplate } from "./skill-template.js";
 import { defaultBodyForType, renderMarkdown } from "./templates.js";
@@ -404,6 +408,37 @@ type UpdateChapterDraftNoteInput = {
   frontmatterPatch?: Record<string, unknown>;
 };
 
+type WorkItemBucket = "ideas" | "notes" | "promoted";
+type WorkItemEditableStatus = Extract<WorkItemEntryFrontmatter["status"], "active" | "review" | "resolved" | "rejected">;
+
+type SaveBookWorkItemInput = {
+  bucket: Exclude<WorkItemBucket, "promoted">;
+  entryId?: string;
+  title: string;
+  body: string;
+  tags?: string[];
+  status?: WorkItemEditableStatus;
+};
+
+type SaveChapterDraftWorkItemInput = SaveBookWorkItemInput & {
+  chapter: string;
+};
+
+type PromoteBookWorkItemInput = {
+  source: Exclude<WorkItemBucket, "promoted">;
+  entryId: string;
+  promotedTo: string;
+  target?: "notes" | "story-design";
+};
+
+type PromoteChapterDraftWorkItemInput = {
+  chapter: string;
+  source: Exclude<WorkItemBucket, "promoted">;
+  entryId: string;
+  promotedTo: string;
+  target?: "notes";
+};
+
 type RelatedCanonHit = {
   path: string;
   title: string;
@@ -588,6 +623,22 @@ export async function initializeBookRepo(
 
   await ensureFile(
     root,
+    IDEAS_FILE,
+    renderMarkdown(
+      noteSchema.parse({
+        type: "note",
+        id: "note:ideas",
+        title: "Book Ideas",
+        scope: "book",
+        bucket: "ideas",
+      }),
+      defaultIdeasBody(),
+    ),
+    created,
+  );
+
+  await ensureFile(
+    root,
     NOTES_FILE,
     renderMarkdown(
       noteSchema.parse({
@@ -595,8 +646,25 @@ export async function initializeBookRepo(
         id: "note:book",
         title: "Book Notes",
         scope: "book",
+        bucket: "notes",
       }),
       defaultBookNotesBody(),
+    ),
+    created,
+  );
+
+  await ensureFile(
+    root,
+    PROMOTED_FILE,
+    renderMarkdown(
+      noteSchema.parse({
+        type: "note",
+        id: "note:promoted",
+        title: "Promoted Items",
+        scope: "book",
+        bucket: "promoted",
+      }),
+      defaultPromotedBody(),
     ),
     created,
   );
@@ -610,6 +678,7 @@ export async function initializeBookRepo(
         id: "note:story-design",
         title: "Story Design",
         scope: "story-design",
+        bucket: "story-design",
       }),
       defaultStoryDesignBody(),
     ),
@@ -1405,7 +1474,7 @@ export async function createChapter(
 export async function createChapterDraft(
   rootPath: string,
   options: CreateChapterDraftInput,
-): Promise<{ folderPath: string; draftFilePath: string; draftId: string; chapterId: string; notesFilePath: string }> {
+): Promise<{ folderPath: string; draftFilePath: string; draftId: string; chapterId: string; notesFilePath: string; ideasFilePath: string; promotedFilePath: string }> {
   const root = path.resolve(rootPath);
   const slug = chapterSlug(options.number, options.title);
   const folderPath = path.join(root, "drafts", slug);
@@ -1433,14 +1502,14 @@ export async function createChapterDraft(
     "utf8",
   );
 
-  const notesFilePath = await ensureChapterDraftNotesFile(root, slug);
+  const workspaceFiles = await ensureChapterDraftWorkspaceFiles(root, slug);
 
   return {
     folderPath,
     draftFilePath,
     draftId: `draft:chapter:${slug}`,
     chapterId: `chapter:${slug}`,
-    notesFilePath,
+    ...workspaceFiles,
   };
 }
 
@@ -1498,7 +1567,7 @@ export async function createParagraph(
 export async function createParagraphDraft(
   rootPath: string,
   options: CreateParagraphDraftInput,
-): Promise<{ filePath: string; draftId: string; paragraphId: string; notesFilePath: string }> {
+): Promise<{ filePath: string; draftId: string; paragraphId: string; notesFilePath: string; ideasFilePath: string; promotedFilePath: string }> {
   const root = path.resolve(rootPath);
   const chapter = normalizeChapterReference(options.chapter);
   const folderPath = path.join(root, "drafts", chapter);
@@ -1530,13 +1599,13 @@ export async function createParagraphDraft(
     "utf8",
   );
 
-  const notesFilePath = await ensureChapterDraftNotesFile(root, chapter);
+  const workspaceFiles = await ensureChapterDraftWorkspaceFiles(root, chapter);
 
   return {
     filePath,
     draftId: `draft:paragraph:${chapter}:${slug}`,
     paragraphId: `paragraph:${chapter}:${slug}`,
-    notesFilePath,
+    ...workspaceFiles,
   };
 }
 
@@ -1555,6 +1624,7 @@ export async function updateBookNotes(
         id: "note:story-design",
         title: "Story Design",
         scope: "story-design",
+        bucket: "story-design",
       },
       defaultBody: defaultStoryDesignBody(),
       body: options.body,
@@ -1570,6 +1640,7 @@ export async function updateBookNotes(
       id: "note:book",
       title: "Book Notes",
       scope: "book",
+      bucket: "notes",
     },
     defaultBody: defaultBookNotesBody(),
     body: options.body,
@@ -1584,20 +1655,145 @@ export async function updateChapterDraftNotes(
 ): Promise<{ filePath: string; frontmatter: NoteFrontmatter }> {
   const root = path.resolve(rootPath);
   const chapterSlugValue = normalizeChapterReference(options.chapter);
-  await ensureChapterDraftNotesFile(root, chapterSlugValue);
+  await ensureChapterDraftWorkspaceFile(root, chapterSlugValue, "notes");
   return updateNoteDocument(root, {
     relativePath: chapterDraftNotesRelativePath(chapterSlugValue),
     baseFrontmatter: {
       type: "note",
-      id: `note:chapter-draft:${chapterSlugValue}`,
+      id: `note:chapter-draft:notes:${chapterSlugValue}`,
       title: `Chapter Draft Notes ${chapterSlugValue}`,
       scope: "chapter-draft",
+      bucket: "notes",
       chapter: `chapter:${chapterSlugValue}`,
     },
     defaultBody: defaultChapterDraftNotesBody(),
     body: options.body,
     appendBody: options.appendBody,
     frontmatterPatch: options.frontmatterPatch,
+  });
+}
+
+export async function saveBookWorkItem(
+  rootPath: string,
+  options: SaveBookWorkItemInput,
+): Promise<{ filePath: string; frontmatter: NoteFrontmatter; entry: WorkItemEntryFrontmatter }> {
+  const root = path.resolve(rootPath);
+  const relativePath = options.bucket === "ideas" ? IDEAS_FILE : NOTES_FILE;
+  const baseFrontmatter =
+    options.bucket === "ideas"
+      ? {
+          type: "note",
+          id: "note:ideas",
+          title: "Book Ideas",
+          scope: "book",
+          bucket: "ideas",
+        }
+      : {
+          type: "note",
+          id: "note:book",
+          title: "Book Notes",
+          scope: "book",
+          bucket: "notes",
+        };
+  return upsertWorkItemInNoteDocument(root, {
+    relativePath,
+    baseFrontmatter,
+    defaultBody: options.bucket === "ideas" ? defaultIdeasBody() : defaultBookNotesBody(),
+    entryId: options.entryId,
+    title: options.title,
+    body: options.body,
+    tags: options.tags,
+    status: options.status,
+  });
+}
+
+export async function saveChapterDraftWorkItem(
+  rootPath: string,
+  options: SaveChapterDraftWorkItemInput,
+): Promise<{ filePath: string; frontmatter: NoteFrontmatter; entry: WorkItemEntryFrontmatter }> {
+  const root = path.resolve(rootPath);
+  const chapterSlugValue = normalizeChapterReference(options.chapter);
+  const bucket = options.bucket;
+  await ensureChapterDraftWorkspaceFile(root, chapterSlugValue, bucket);
+  return upsertWorkItemInNoteDocument(root, {
+    relativePath: chapterDraftWorkspaceRelativePath(chapterSlugValue, bucket),
+    baseFrontmatter: {
+      type: "note",
+      id: `note:chapter-draft:${bucket}:${chapterSlugValue}`,
+      title: bucket === "ideas" ? `Chapter Draft Ideas ${chapterSlugValue}` : `Chapter Draft Notes ${chapterSlugValue}`,
+      scope: "chapter-draft",
+      bucket,
+      chapter: `chapter:${chapterSlugValue}`,
+    },
+    defaultBody: bucket === "ideas" ? defaultChapterDraftIdeasBody() : defaultChapterDraftNotesBody(),
+    entryId: options.entryId,
+    title: options.title,
+    body: options.body,
+    tags: options.tags,
+    status: options.status,
+  });
+}
+
+export async function promoteBookWorkItem(
+  rootPath: string,
+  options: PromoteBookWorkItemInput,
+): Promise<{ sourceFilePath: string; promotedFilePath: string; promotedEntry: WorkItemEntryFrontmatter; targetFilePath?: string }> {
+  const root = path.resolve(rootPath);
+  return promoteWorkItem(root, {
+    sourceRelativePath: options.source === "ideas" ? IDEAS_FILE : NOTES_FILE,
+    sourceBaseFrontmatter:
+      options.source === "ideas"
+        ? { type: "note", id: "note:ideas", title: "Book Ideas", scope: "book", bucket: "ideas" }
+        : { type: "note", id: "note:book", title: "Book Notes", scope: "book", bucket: "notes" },
+    sourceDefaultBody: options.source === "ideas" ? defaultIdeasBody() : defaultBookNotesBody(),
+    promotedRelativePath: PROMOTED_FILE,
+    promotedBaseFrontmatter: {
+      type: "note",
+      id: "note:promoted",
+      title: "Promoted Items",
+      scope: "book",
+      bucket: "promoted",
+    },
+    promotedDefaultBody: defaultPromotedBody(),
+    entryId: options.entryId,
+    promotedTo: options.promotedTo,
+    target: options.target,
+  });
+}
+
+export async function promoteChapterDraftWorkItem(
+  rootPath: string,
+  options: PromoteChapterDraftWorkItemInput,
+): Promise<{ sourceFilePath: string; promotedFilePath: string; promotedEntry: WorkItemEntryFrontmatter; targetFilePath?: string }> {
+  const root = path.resolve(rootPath);
+  const chapterSlugValue = normalizeChapterReference(options.chapter);
+  await ensureChapterDraftWorkspaceFile(root, chapterSlugValue, options.source);
+  await ensureChapterDraftWorkspaceFile(root, chapterSlugValue, "promoted");
+  return promoteWorkItem(root, {
+    sourceRelativePath: chapterDraftWorkspaceRelativePath(chapterSlugValue, options.source),
+    sourceBaseFrontmatter: {
+      type: "note",
+      id: `note:chapter-draft:${options.source}:${chapterSlugValue}`,
+      title: options.source === "ideas" ? `Chapter Draft Ideas ${chapterSlugValue}` : `Chapter Draft Notes ${chapterSlugValue}`,
+      scope: "chapter-draft",
+      bucket: options.source,
+      chapter: `chapter:${chapterSlugValue}`,
+    },
+    sourceDefaultBody: options.source === "ideas" ? defaultChapterDraftIdeasBody() : defaultChapterDraftNotesBody(),
+    promotedRelativePath: chapterDraftPromotedRelativePath(chapterSlugValue),
+    promotedBaseFrontmatter: {
+      type: "note",
+      id: `note:chapter-draft:promoted:${chapterSlugValue}`,
+      title: `Chapter Draft Promoted ${chapterSlugValue}`,
+      scope: "chapter-draft",
+      bucket: "promoted",
+      chapter: `chapter:${chapterSlugValue}`,
+    },
+    promotedDefaultBody: defaultChapterDraftPromotedBody(),
+    entryId: options.entryId,
+    promotedTo: options.promotedTo,
+    target: options.target,
+    chapterSlugValue,
   });
 }
 
@@ -2032,7 +2228,7 @@ export async function readChapter(
 
   const chapterDocument = await readMarkdownFile(chapterFile, chapterSchema);
   const files = await fg("*.md", { cwd: folder, absolute: true, onlyFiles: true });
-  const paragraphFiles = files.filter((filePath) => !["chapter.md", "notes.md"].includes(path.basename(filePath)));
+  const paragraphFiles = files.filter((filePath) => !["chapter.md", "notes.md", "ideas.md", "promoted.md"].includes(path.basename(filePath)));
   const paragraphs: Array<{ path: string; metadata: ParagraphFrontmatter; body: string }> = [];
 
   for (const filePath of paragraphFiles) {
@@ -2072,7 +2268,7 @@ export async function readChapterDraft(
 
   const chapterDocument = await readMarkdownFile(chapterFile, chapterDraftSchema);
   const files = await fg("*.md", { cwd: folder, absolute: true, onlyFiles: true });
-  const paragraphFiles = files.filter((filePath) => !["chapter.md", "notes.md"].includes(path.basename(filePath)));
+  const paragraphFiles = files.filter((filePath) => !["chapter.md", "notes.md", "ideas.md", "promoted.md"].includes(path.basename(filePath)));
   const paragraphs: Array<{ path: string; metadata: ParagraphDraftFrontmatter; body: string }> = [];
 
   for (const filePath of paragraphFiles) {
@@ -2163,7 +2359,7 @@ export async function buildChapterWritingContext(
   addContextSection(sections, files, root, storyDesign, "Story design", 1300);
 
   const bookNotes = await readLooseMarkdownIfExists(path.join(root, NOTES_FILE));
-  addContextSection(sections, files, root, bookNotes, "Book notes", 1200);
+  addWorkItemSection(sections, files, root, bookNotes, "Book notes", 8, "No active book notes yet.");
 
   const styleGuide = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.style));
   addContextSection(sections, files, root, styleGuide, "Default style guide", 1100);
@@ -2288,7 +2484,7 @@ export async function buildChapterWritingContext(
   }
 
   const chapterDraftNotes = await readLooseMarkdownIfExists(path.join(root, chapterDraftNotesRelativePath(chapterSlugValue)));
-  addContextSection(sections, files, root, chapterDraftNotes, "Chapter draft notes", 1200);
+  addWorkItemSection(sections, files, root, chapterDraftNotes, "Chapter draft notes", 8, "No active chapter draft notes yet.");
 
   return {
     text: [
@@ -2436,7 +2632,7 @@ export async function buildResumeBookContext(
     addContextSection(sections, files, root, prose, "Always-read prose guide", 1500);
     addContextSection(sections, files, root, contextDocument, "Stable book context", 1400);
     addContextSection(sections, files, root, storyDesign, "Story design", 1300);
-    addContextSection(sections, files, root, bookNotes, "Book notes", 1200);
+    addWorkItemSection(sections, files, root, bookNotes, "Book notes", 8, "No active book notes yet.");
     addContextSection(sections, files, root, plot, "Rolling plot map", 1400);
     addContextSection(sections, files, root, totalResume, "Book summary so far", 1100);
     addContextSection(
@@ -6869,7 +7065,7 @@ async function validateFile(root: string, filePath: string): Promise<void> {
     return;
   }
 
-  if (relativePath === NOTES_FILE || relativePath === STORY_DESIGN_FILE) {
+  if ([IDEAS_FILE, NOTES_FILE, PROMOTED_FILE, STORY_DESIGN_FILE].includes(relativePath)) {
     noteSchema.parse(data);
     return;
   }
@@ -6904,7 +7100,7 @@ async function validateFile(root: string, filePath: string): Promise<void> {
     return;
   }
 
-  if (relativePath.startsWith("drafts/") && path.basename(filePath) === "notes.md") {
+  if (relativePath.startsWith("drafts/") && ["notes.md", "ideas.md", "promoted.md"].includes(path.basename(filePath))) {
     noteSchema.parse(data);
     return;
   }
@@ -7642,12 +7838,14 @@ function buildGithubCopilotInstructions(): string {
     "## Folder model",
     "",
     "- `context.md` for stable historical, social, geographic, and world-context constraints that should stay in view while writing",
+    "- `ideas.md` for unstable ideas that still need review before they become notes, design decisions, or draft material",
     "- `story-design.md` for the initial book design: arcs, reveals, interwoven threads, and ending shape",
-    "- `notes.md` for global working notes, reminders, unresolved questions, and future ideas",
+    "- `notes.md` for reviewed working notes and reminders that are ready to influence drafting",
+    "- `promoted.md` for archived ideas and notes that were already moved into notes, design, or draft work",
     "- `characters/`, `items/`, `locations/`, `factions/`, `timelines/`, `secrets/`",
     "- `chapters/<nnn-slug>/chapter.md` for chapter metadata",
     "- `chapters/<nnn-slug>/<nnn-slug>.md` for paragraph or scene files",
-    "- `drafts/<nnn-slug>/chapter.md`, matching scene drafts, and `drafts/<nnn-slug>/notes.md` for rough chapter work",
+    "- `drafts/<nnn-slug>/chapter.md`, matching scene drafts, and `drafts/<nnn-slug>/{ideas,notes,promoted}.md` for rough chapter work",
     "- `plot.md` for the rolling book map: chapter progression, reveals, and timeline anchors",
     "- `conversations/` for exported writing chats, resume files, and continuation prompts",
     "- `resumes/` for running summaries",
@@ -7680,7 +7878,8 @@ function buildGithubCopilotInstructions(): string {
     "- Use `revise_paragraph` when you want a proposal-only editorial pass on an existing final scene before deciding whether to apply it with `update_paragraph`.",
     "- When revising a final paragraph, show the `revise_paragraph` proposal, ask the user whether they want to keep it, and call `update_paragraph` only after clear confirmation.",
     "- Use `resume_book_context` when restarting work from exported conversation history.",
-    "- Use `update_book_notes` and `update_chapter_notes` when the user asks to keep or revise working notes instead of changing canon files directly.",
+    "- Use `save_book_item` and `save_chapter_item` for structured ideas and notes, and `promote_book_item` / `promote_chapter_item` when reviewed material leaves the active queue.",
+    "- Use `update_book_notes` and `update_chapter_notes` when the user asks to edit the support documents themselves instead of individual structured entries.",
     "- Use `update_chapter` and `update_paragraph` for existing story structure files.",
     "- Use `update_chapter_draft` and `update_paragraph_draft` when iterating on rough drafts.",
     "- Use `create_chapter_from_draft` and `create_paragraph_from_draft` to promote drafts into final story files.",
@@ -7702,7 +7901,8 @@ function buildGithubCopilotInstructions(): string {
     "- Always read `guidelines/prose.md` before drafting new chapter or paragraph prose.",
     "- If a chapter declares `style_refs`, `narration_person`, `narration_tense`, or `prose_mode`, treat that as an explicit chapter-level override; otherwise follow the book-level default prose, style, and voice guides.",
     "- Before writing or rewriting a scene, review `context.md`, `story-design.md`, `notes.md`, any matching chapter draft notes, the relevant prior chapter content, the scoped summaries for story so far, any point-in-time state snapshot available before that point, and any matching files in `drafts/`.",
-    "- Treat notes files as working support material, not canon. If a note becomes a stable fact, move it into the correct canon file.",
+    "- Treat `ideas.md` as unstable material under review; do not treat active ideas as accepted canon or default drafting instructions unless the user asks you to use them.",
+    "- Treat notes, ideas, and promoted archives as working support material, not canon. If something becomes a stable fact, move it into the correct canon file.",
     "- Keep `plot.md` aligned with chapter summaries, secret reveals, and timeline references.",
     "- After `update_paragraph`, assume plot and resume files were refreshed automatically by the MCP layer, and review `sync_story_state` separately only when continuity snapshots must be updated.",
     "- If stylistic guidance is missing, inspect the rest of `guidelines/` before choosing a default.",
@@ -8046,6 +8246,52 @@ function addContextSection(
   );
 }
 
+function addWorkItemSection(
+  sections: string[],
+  files: Set<string>,
+  root: string,
+  document: MarkdownDocument<Record<string, unknown>> | null,
+  heading: string,
+  entryLimit: number,
+  emptyMessage: string,
+): void {
+  if (!document) {
+    return;
+  }
+
+  const relativePath = toPosixPath(path.relative(root, document.path));
+  files.add(relativePath);
+  const entries = extractActiveWorkItemEntries(document.frontmatter).slice(0, entryLimit);
+  const bodyIntro = summarizeText(document.body, 280);
+  sections.push(
+    [
+      `## ${heading}`,
+      "",
+      `Source: ${relativePath}`,
+      "",
+      ...(bodyIntro ? [bodyIntro, ""] : []),
+      entries.length > 0
+        ? bulletLines(
+            entries.map((entry) => {
+              const tags = entry.tags.length > 0 ? ` [${entry.tags.join(", ")}]` : "";
+              const body = summarizeText(entry.body, 220) || "No details yet.";
+              return `${entry.title}${tags}: ${body}`;
+            }),
+          )
+        : emptyMessage,
+    ].join("\n"),
+  );
+}
+
+function extractActiveWorkItemEntries(frontmatter: Record<string, unknown>): WorkItemEntryFrontmatter[] {
+  const entries = Array.isArray(frontmatter.entries) ? frontmatter.entries : [];
+  return entries
+    .map((entry) => workItemEntrySchema.safeParse(entry))
+    .filter((entry): entry is { success: true; data: WorkItemEntryFrontmatter } => entry.success)
+    .map((entry) => entry.data)
+    .filter((entry) => ["active", "review"].includes(entry.status));
+}
+
 function addScopedChapterContextSection(
   sections: string[],
   files: Set<string>,
@@ -8111,24 +8357,61 @@ function stripSourceFilesSection(text: string): string {
   return index === -1 ? text : text.slice(0, index).trimEnd();
 }
 
-function chapterDraftNotesRelativePath(chapterSlugValue: string): string {
-  return toPosixPath(path.join("drafts", chapterSlugValue, "notes.md"));
+function chapterDraftWorkspaceRelativePath(chapterSlugValue: string, bucket: WorkItemBucket): string {
+  const fileName = bucket === "ideas" ? "ideas.md" : bucket === "promoted" ? "promoted.md" : "notes.md";
+  return toPosixPath(path.join("drafts", chapterSlugValue, fileName));
 }
 
-async function ensureChapterDraftNotesFile(root: string, chapterSlugValue: string): Promise<string> {
-  const relativePath = chapterDraftNotesRelativePath(chapterSlugValue);
+function chapterDraftNotesRelativePath(chapterSlugValue: string): string {
+  return chapterDraftWorkspaceRelativePath(chapterSlugValue, "notes");
+}
+
+function chapterDraftIdeasRelativePath(chapterSlugValue: string): string {
+  return chapterDraftWorkspaceRelativePath(chapterSlugValue, "ideas");
+}
+
+function chapterDraftPromotedRelativePath(chapterSlugValue: string): string {
+  return chapterDraftWorkspaceRelativePath(chapterSlugValue, "promoted");
+}
+
+async function ensureChapterDraftWorkspaceFiles(root: string, chapterSlugValue: string): Promise<{
+  notesFilePath: string;
+  ideasFilePath: string;
+  promotedFilePath: string;
+}> {
+  const notesFilePath = await ensureChapterDraftWorkspaceFile(root, chapterSlugValue, "notes");
+  const ideasFilePath = await ensureChapterDraftWorkspaceFile(root, chapterSlugValue, "ideas");
+  const promotedFilePath = await ensureChapterDraftWorkspaceFile(root, chapterSlugValue, "promoted");
+  return { notesFilePath, ideasFilePath, promotedFilePath };
+}
+
+async function ensureChapterDraftWorkspaceFile(root: string, chapterSlugValue: string, bucket: WorkItemBucket): Promise<string> {
+  const relativePath = chapterDraftWorkspaceRelativePath(chapterSlugValue, bucket);
   const absolutePath = path.join(root, relativePath);
 
   await mkdir(path.dirname(absolutePath), { recursive: true });
   if (!(await pathExists(absolutePath))) {
+    const title =
+      bucket === "ideas"
+        ? `Chapter Draft Ideas ${chapterSlugValue}`
+        : bucket === "promoted"
+          ? `Chapter Draft Promoted ${chapterSlugValue}`
+          : `Chapter Draft Notes ${chapterSlugValue}`;
     const frontmatter = noteSchema.parse({
       type: "note",
-      id: `note:chapter-draft:${chapterSlugValue}`,
-      title: `Chapter Draft Notes ${chapterSlugValue}`,
+      id: `note:chapter-draft:${bucket}:${chapterSlugValue}`,
+      title,
       scope: "chapter-draft",
+      bucket,
       chapter: `chapter:${chapterSlugValue}`,
     });
-    await writeFile(absolutePath, renderMarkdown(frontmatter, defaultChapterDraftNotesBody()), "utf8");
+    const body =
+      bucket === "ideas"
+        ? defaultChapterDraftIdeasBody()
+        : bucket === "promoted"
+          ? defaultChapterDraftPromotedBody()
+          : defaultChapterDraftNotesBody();
+    await writeFile(absolutePath, renderMarkdown(frontmatter, body), "utf8");
   }
 
   return absolutePath;
@@ -8168,6 +8451,196 @@ async function updateNoteDocument(
   return { filePath, frontmatter };
 }
 
+async function upsertWorkItemInNoteDocument(
+  root: string,
+  options: {
+    relativePath: string;
+    baseFrontmatter: Record<string, unknown>;
+    defaultBody: string;
+    entryId?: string;
+    title: string;
+    body: string;
+    tags?: string[];
+    status?: WorkItemEntryFrontmatter["status"];
+  },
+): Promise<{ filePath: string; frontmatter: NoteFrontmatter; entry: WorkItemEntryFrontmatter }> {
+  const filePath = path.join(root, options.relativePath);
+  await mkdir(path.dirname(filePath), { recursive: true });
+
+  const existingRaw = await readFile(filePath, "utf8").catch(() => null);
+  const parsed = existingRaw ? matter(existingRaw) : { data: {}, content: options.defaultBody };
+  const currentBody = String(parsed.content ?? "").trim() || options.defaultBody;
+  const currentFrontmatter = noteSchema.parse({
+    ...options.baseFrontmatter,
+    ...(parsed.data as Record<string, unknown>),
+  });
+  const entries = [...(currentFrontmatter.entries ?? [])];
+  const now = new Date().toISOString();
+  const entryId = options.entryId ?? buildWorkItemId(currentFrontmatter.bucket);
+  const existingIndex = entries.findIndex((entry) => entry.id === entryId);
+  const nextEntry = workItemEntrySchema.parse({
+    ...(existingIndex >= 0 ? entries[existingIndex] : {}),
+    id: entryId,
+    title: options.title,
+    body: options.body,
+    tags: options.tags ?? (existingIndex >= 0 ? entries[existingIndex].tags : []),
+    status: options.status ?? (existingIndex >= 0 ? entries[existingIndex].status : "active"),
+    created_at: existingIndex >= 0 ? entries[existingIndex].created_at : now,
+    updated_at: now,
+  });
+
+  if (existingIndex >= 0) {
+    entries[existingIndex] = nextEntry;
+  } else {
+    entries.push(nextEntry);
+  }
+
+  const frontmatter = noteSchema.parse({
+    ...currentFrontmatter,
+    entries,
+  });
+  await writeFile(filePath, renderMarkdown(frontmatter, currentBody), "utf8");
+  return { filePath, frontmatter, entry: nextEntry };
+}
+
+async function promoteWorkItem(
+  root: string,
+  options: {
+    sourceRelativePath: string;
+    sourceBaseFrontmatter: Record<string, unknown>;
+    sourceDefaultBody: string;
+    promotedRelativePath: string;
+    promotedBaseFrontmatter: Record<string, unknown>;
+    promotedDefaultBody: string;
+    entryId: string;
+    promotedTo: string;
+    target?: "notes" | "story-design";
+    chapterSlugValue?: string;
+  },
+): Promise<{ sourceFilePath: string; promotedFilePath: string; promotedEntry: WorkItemEntryFrontmatter; targetFilePath?: string }> {
+  const sourceFilePath = path.join(root, options.sourceRelativePath);
+  const source = await readOrCreateNoteDocument(root, {
+    relativePath: options.sourceRelativePath,
+    baseFrontmatter: options.sourceBaseFrontmatter,
+    defaultBody: options.sourceDefaultBody,
+  });
+  const sourceEntries = [...source.frontmatter.entries];
+  const sourceIndex = sourceEntries.findIndex((entry) => entry.id === options.entryId);
+  if (sourceIndex === -1) {
+    throw new Error(`Work item ${options.entryId} not found in ${options.sourceRelativePath}`);
+  }
+
+  const entry = sourceEntries[sourceIndex];
+  sourceEntries.splice(sourceIndex, 1);
+  const sourceFrontmatter = noteSchema.parse({
+    ...source.frontmatter,
+    entries: sourceEntries,
+  });
+  await writeFile(sourceFilePath, renderMarkdown(sourceFrontmatter, source.body), "utf8");
+
+  let targetFilePath: string | undefined;
+  if (options.target === "notes") {
+    const targetRelativePath = options.chapterSlugValue ? chapterDraftNotesRelativePath(options.chapterSlugValue) : NOTES_FILE;
+    const targetBaseFrontmatter = options.chapterSlugValue
+      ? {
+          type: "note",
+          id: `note:chapter-draft:notes:${options.chapterSlugValue}`,
+          title: `Chapter Draft Notes ${options.chapterSlugValue}`,
+          scope: "chapter-draft",
+          bucket: "notes",
+          chapter: `chapter:${options.chapterSlugValue}`,
+        }
+      : {
+          type: "note",
+          id: "note:book",
+          title: "Book Notes",
+          scope: "book",
+          bucket: "notes",
+        };
+    const savedTarget = await upsertWorkItemInNoteDocument(root, {
+      relativePath: targetRelativePath,
+      baseFrontmatter: targetBaseFrontmatter,
+      defaultBody: options.chapterSlugValue ? defaultChapterDraftNotesBody() : defaultBookNotesBody(),
+      title: entry.title,
+      body: entry.body,
+      tags: entry.tags,
+      status: "active",
+    });
+    targetFilePath = savedTarget.filePath;
+  } else if (options.target === "story-design") {
+    const result = await updateBookNotes(root, {
+      target: "story-design",
+      appendBody: formatPromotedStoryDesignSection(entry),
+    });
+    targetFilePath = result.filePath;
+  }
+
+  const promoted = await upsertWorkItemInNoteDocument(root, {
+    relativePath: options.promotedRelativePath,
+    baseFrontmatter: options.promotedBaseFrontmatter,
+    defaultBody: options.promotedDefaultBody,
+    title: entry.title,
+    body: entry.body,
+    tags: entry.tags,
+    status: "promoted",
+    entryId: entry.id,
+  });
+
+  const promotedEntry = workItemEntrySchema.parse({
+    ...promoted.entry,
+    source_kind: options.sourceRelativePath.includes("ideas") ? "idea" : "note",
+    promoted_to: options.promotedTo,
+    promoted_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+  const promotedFrontmatter = noteSchema.parse({
+    ...promoted.frontmatter,
+    entries: promoted.frontmatter.entries.map((entryItem) => (entryItem.id === promotedEntry.id ? promotedEntry : entryItem)),
+  });
+  const promotedFilePath = path.join(root, options.promotedRelativePath);
+  await writeFile(promotedFilePath, renderMarkdown(promotedFrontmatter, (await readOrCreateNoteDocument(root, {
+    relativePath: options.promotedRelativePath,
+    baseFrontmatter: options.promotedBaseFrontmatter,
+    defaultBody: options.promotedDefaultBody,
+  })).body), "utf8");
+
+  return {
+    sourceFilePath,
+    promotedFilePath,
+    promotedEntry,
+    targetFilePath,
+  };
+}
+
+async function readOrCreateNoteDocument(
+  root: string,
+  options: { relativePath: string; baseFrontmatter: Record<string, unknown>; defaultBody: string },
+): Promise<{ filePath: string; frontmatter: NoteFrontmatter; body: string }> {
+  const filePath = path.join(root, options.relativePath);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const existingRaw = await readFile(filePath, "utf8").catch(() => null);
+  const parsed = existingRaw ? matter(existingRaw) : { data: {}, content: options.defaultBody };
+  const frontmatter = noteSchema.parse({
+    ...options.baseFrontmatter,
+    ...(parsed.data as Record<string, unknown>),
+  });
+  const body = String(parsed.content ?? "").trim() || options.defaultBody;
+  if (!existingRaw) {
+    await writeFile(filePath, renderMarkdown(frontmatter, body), "utf8");
+  }
+  return { filePath, frontmatter, body };
+}
+
+function buildWorkItemId(bucket: string): string {
+  return `${bucket}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function formatPromotedStoryDesignSection(entry: WorkItemEntryFrontmatter): string {
+  return [`## Promoted: ${entry.title}`, "", entry.body.trim() || "No body."]
+    .filter((value) => value.length > 0)
+    .join("\n");
+}
+
 function defaultBookNotesBody(): string {
   return [
     "# Active Notes",
@@ -8185,6 +8658,24 @@ function defaultBookNotesBody(): string {
     "## Future Ideas",
     "",
     "- Add future ideas here.",
+  ].join("\n");
+}
+
+function defaultIdeasBody(): string {
+  return [
+    "# Active Ideas",
+    "",
+    "Use this file for unstable or exploratory ideas that still need review before they become notes, design decisions, or draft material.",
+    "",
+    "Promote reviewed ideas into notes, story design, or a draft workflow instead of leaving them active forever.",
+  ].join("\n");
+}
+
+function defaultPromotedBody(): string {
+  return [
+    "# Promoted Items",
+    "",
+    "This file keeps the history of ideas and notes that were moved into notes, story design, or drafts so they leave the active queues without being lost.",
   ].join("\n");
 }
 
@@ -8233,6 +8724,22 @@ function defaultChapterDraftNotesBody(): string {
     "## Lines Or Images To Reuse",
     "",
     "- Add fragments, images, and phrasing worth carrying into final prose.",
+  ].join("\n");
+}
+
+function defaultChapterDraftIdeasBody(): string {
+  return [
+    "# Chapter Ideas",
+    "",
+    "Use this file for unstable chapter-level ideas that still need review before becoming notes or draft material.",
+  ].join("\n");
+}
+
+function defaultChapterDraftPromotedBody(): string {
+  return [
+    "# Chapter Promoted Items",
+    "",
+    "This file keeps promoted chapter ideas and notes after they were moved into chapter notes, story design, or draft work.",
   ].join("\n");
 }
 

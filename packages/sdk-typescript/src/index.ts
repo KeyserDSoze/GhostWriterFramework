@@ -24,6 +24,8 @@ export type {
   CreateAzureDevOpsProfileRequest,
   CreateGitHubProfileRequest,
   NoteMutationRequest,
+  PromoteWorkItemRequest,
+  SaveWorkItemRequest,
   NarrariumApiClientOptions,
 } from "./api-client.js";
 
@@ -66,4 +68,5 @@ export type {
   NarrariumWorkspaceDeleteChange,
   NarrariumWorkspaceUpsertChange,
   StringKeyValueStore,
+  WorkItemEntryFrontmatter,
 } from "narrarium";

@@ -27,6 +27,13 @@ HTTP note helpers exposed by `NarrariumApiClient` include:
 - `updateStoryDesign(...)`
 - `updateChapterNotes(...)`
 
+Structured work-item helpers include:
+
+- `saveBookItem(...)`
+- `saveChapterItem(...)`
+- `promoteBookItem(...)`
+- `promoteChapterItem(...)`
+
 ## Quick example
 
 ```ts

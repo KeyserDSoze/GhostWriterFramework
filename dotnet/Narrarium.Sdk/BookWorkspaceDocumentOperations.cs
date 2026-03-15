@@ -70,3 +70,29 @@ public sealed record ParagraphDocumentLocator
 
     public string? Id { get; init; }
 }
+
+public sealed record StructuredWorkItemInput
+{
+    public required string Bucket { get; init; }
+
+    public string? EntryId { get; init; }
+
+    public required string Title { get; init; }
+
+    public required string Body { get; init; }
+
+    public IReadOnlyList<string> Tags { get; init; } = Array.Empty<string>();
+
+    public string Status { get; init; } = "active";
+}
+
+public sealed record PromoteWorkItemInput
+{
+    public required string Source { get; init; }
+
+    public required string EntryId { get; init; }
+
+    public required string PromotedTo { get; init; }
+
+    public string? Target { get; init; }
+}

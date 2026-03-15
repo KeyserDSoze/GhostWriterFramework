@@ -157,7 +157,9 @@ export interface NarrariumBookSnapshot {
   book: NarrariumDocument<BookFrontmatter> | null;
   plot: NarrariumDocument<PlotFrontmatter> | null;
   context: NarrariumContextDocument | null;
+  bookIdeas: NarrariumNoteDocument | null;
   bookNotes: NarrariumNoteDocument | null;
+  promotedItems: NarrariumNoteDocument | null;
   storyDesign: NarrariumNoteDocument | null;
   guidelines: Array<NarrariumDocument<GuidelineFrontmatter>>;
   characters: Array<NarrariumDocument<CharacterFrontmatter>>;
@@ -169,7 +171,9 @@ export interface NarrariumBookSnapshot {
   timelineEvents: Array<NarrariumDocument<TimelineEventFrontmatter>>;
   chapters: Array<NarrariumChapterSnapshot>;
   draftChapters: Array<NarrariumDraftChapterSnapshot>;
+  chapterDraftIdeas: Array<NarrariumNoteDocument>;
   chapterDraftNotes: Array<NarrariumNoteDocument>;
+  chapterDraftPromoted: Array<NarrariumNoteDocument>;
   resumes: Array<NarrariumDocument<LooseFrontmatter>>;
   stateDocuments: Array<NarrariumDocument<LooseFrontmatter>>;
   evaluations: Array<NarrariumDocument<LooseFrontmatter>>;
@@ -201,7 +205,9 @@ export function createEmptyBookSnapshot(input: CreateEmptyBookSnapshotInput): Na
     book: null,
     plot: null,
     context: null,
+    bookIdeas: null,
     bookNotes: null,
+    promotedItems: null,
     storyDesign: null,
     guidelines: [],
     characters: [],
@@ -213,7 +219,9 @@ export function createEmptyBookSnapshot(input: CreateEmptyBookSnapshotInput): Na
     timelineEvents: [],
     chapters: [],
     draftChapters: [],
+    chapterDraftIdeas: [],
     chapterDraftNotes: [],
+    chapterDraftPromoted: [],
     resumes: [],
     stateDocuments: [],
     evaluations: [],

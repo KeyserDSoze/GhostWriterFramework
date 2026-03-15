@@ -42,12 +42,16 @@ import {
   reviseParagraph,
   renderMarkdown,
   searchBook,
+  saveBookWorkItem,
+  saveChapterDraftWorkItem,
   syncAllResumes,
   syncChapterEvaluation,
   syncChapterResume,
   syncPlot,
   syncStoryState,
   syncTotalResume,
+  promoteBookWorkItem,
+  promoteChapterDraftWorkItem,
   updateChapter,
   updateChapterDraft,
   updateBookNotes,
@@ -1595,7 +1599,9 @@ server.tool(
       },
     });
 
-    return textResponse(`Created chapter draft ${result.draftId} at ${result.draftFilePath}. Chapter notes live at ${result.notesFilePath}.`);
+    return textResponse(
+      `Created chapter draft ${result.draftId} at ${result.draftFilePath}. Chapter notes live at ${result.notesFilePath}. Chapter ideas live at ${result.ideasFilePath}. Promoted archive lives at ${result.promotedFilePath}.`,
+    );
   },
 );
 
@@ -1644,6 +1650,60 @@ server.tool(
 );
 
 server.tool(
+  "save_book_item",
+  "Create or update a structured idea or note entry at book level. Use this for active idea queues and note queues rather than freeform body edits.",
+  {
+    rootPath: z.string().min(1),
+    bucket: z.enum(["ideas", "notes"]),
+    entryId: z.string().optional(),
+    title: z.string().min(1),
+    body: z.string().min(1),
+    tags: z.array(z.string()).default([]),
+    status: z.enum(["active", "review", "resolved", "rejected"]).default("active"),
+  },
+  async ({ rootPath, bucket, entryId, title, body, tags, status }) => {
+    const result = await saveBookWorkItem(rootPath, {
+      bucket,
+      entryId,
+      title,
+      body,
+      tags,
+      status,
+    });
+
+    return textResponse(`Saved ${bucket.slice(0, -1)} entry ${result.entry.id} at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "save_chapter_item",
+  "Create or update a structured idea or note entry tied to a chapter draft.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    bucket: z.enum(["ideas", "notes"]),
+    entryId: z.string().optional(),
+    title: z.string().min(1),
+    body: z.string().min(1),
+    tags: z.array(z.string()).default([]),
+    status: z.enum(["active", "review", "resolved", "rejected"]).default("active"),
+  },
+  async ({ rootPath, chapter, bucket, entryId, title, body, tags, status }) => {
+    const result = await saveChapterDraftWorkItem(rootPath, {
+      chapter,
+      bucket,
+      entryId,
+      title,
+      body,
+      tags,
+      status,
+    });
+
+    return textResponse(`Saved chapter ${bucket.slice(0, -1)} entry ${result.entry.id} at ${result.filePath}.`);
+  },
+);
+
+server.tool(
   "update_chapter_notes",
   "Update or append chapter-specific working notes stored in drafts/<chapter>/notes.md. Use this when the user wants to keep or refine notes tied to a chapter draft.",
   {
@@ -1662,6 +1722,56 @@ server.tool(
     });
 
     return textResponse(`Updated chapter notes at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "promote_book_item",
+  "Promote a structured book-level idea or note out of the active queue. You can move it into notes or story design, or archive it as promoted after you already used it in a draft.",
+  {
+    rootPath: z.string().min(1),
+    source: z.enum(["ideas", "notes"]),
+    entryId: z.string().min(1),
+    promotedTo: z.string().min(1),
+    target: z.enum(["notes", "story-design"]).optional(),
+  },
+  async ({ rootPath, source, entryId, promotedTo, target }) => {
+    const result = await promoteBookWorkItem(rootPath, {
+      source,
+      entryId,
+      promotedTo,
+      target,
+    });
+
+    return textResponse(
+      `Promoted ${source.slice(0, -1)} entry ${result.promotedEntry.id} to ${promotedTo}. Archived it at ${result.promotedFilePath}${result.targetFilePath ? ` and updated ${result.targetFilePath}` : ""}.`,
+    );
+  },
+);
+
+server.tool(
+  "promote_chapter_item",
+  "Promote a structured chapter-level idea or note out of the active queue. You can move it into chapter notes or archive it as promoted after using it in draft work.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    source: z.enum(["ideas", "notes"]),
+    entryId: z.string().min(1),
+    promotedTo: z.string().min(1),
+    target: z.enum(["notes"]).optional(),
+  },
+  async ({ rootPath, chapter, source, entryId, promotedTo, target }) => {
+    const result = await promoteChapterDraftWorkItem(rootPath, {
+      chapter,
+      source,
+      entryId,
+      promotedTo,
+      target,
+    });
+
+    return textResponse(
+      `Promoted chapter ${source.slice(0, -1)} entry ${result.promotedEntry.id} to ${promotedTo}. Archived it at ${result.promotedFilePath}${result.targetFilePath ? ` and updated ${result.targetFilePath}` : ""}.`,
+    );
   },
 );
 
@@ -1687,7 +1797,9 @@ server.tool(
       frontmatter,
     });
 
-    return textResponse(`Created paragraph draft ${result.draftId} at ${result.filePath}. Chapter notes live at ${result.notesFilePath}.`);
+    return textResponse(
+      `Created paragraph draft ${result.draftId} at ${result.filePath}. Chapter notes live at ${result.notesFilePath}. Chapter ideas live at ${result.ideasFilePath}. Promoted archive lives at ${result.promotedFilePath}.`,
+    );
   },
 );
 

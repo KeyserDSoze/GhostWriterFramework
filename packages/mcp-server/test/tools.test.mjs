@@ -104,15 +104,60 @@ test("mcp server tools support guided creation and structural updates", async ()
       body: "# Rough Scene\n\nLyra sees the changed watch pattern before she speaks.",
     });
 
-    const bookNotesText = await callToolText(client, "update_book_notes", {
+    const bookNotesText = await callToolText(client, "save_book_item", {
       rootPath,
-      appendBody: "## Active Notes\n\n- Keep pressure on the forged registry seal.",
+      bucket: "notes",
+      title: "Registry pressure",
+      body: "Keep pressure on the forged registry seal.",
+      status: "active",
     });
 
-    const chapterNotesText = await callToolText(client, "update_chapter_notes", {
+    const chapterNotesText = await callToolText(client, "save_chapter_item", {
       rootPath,
       chapter: "chapter:001-opening-move",
-      appendBody: "## Scene Goals\n\n- Make the altered watch pattern visible before Lyra speaks.",
+      bucket: "notes",
+      title: "Scene goal",
+      body: "Make the altered watch pattern visible before Lyra speaks.",
+      status: "active",
+    });
+
+    const saveBookIdeaText = await callToolText(client, "save_book_item", {
+      rootPath,
+      bucket: "ideas",
+      title: "Ledger crack",
+      body: "Let the forged ledger crack open the larger conspiracy.",
+      tags: ["plot"],
+      status: "review",
+    });
+
+    const saveChapterIdeaText = await callToolText(client, "save_chapter_item", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+      bucket: "ideas",
+      title: "Watch pattern",
+      body: "Show the altered watch pattern before Lyra speaks.",
+      tags: ["scene"],
+      status: "review",
+    });
+
+    const bookIdeaId = extractWorkItemId(saveBookIdeaText);
+    const chapterIdeaId = extractWorkItemId(saveChapterIdeaText);
+
+    const promoteBookIdeaText = await callToolText(client, "promote_book_item", {
+      rootPath,
+      source: "ideas",
+      entryId: bookIdeaId,
+      promotedTo: "story-design",
+      target: "story-design",
+    });
+
+    const promoteChapterIdeaText = await callToolText(client, "promote_chapter_item", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+      source: "ideas",
+      entryId: chapterIdeaId,
+      promotedTo: "draft:chapter:001-opening-move",
+      target: "notes",
     });
 
     const chapterContextText = await callToolText(client, "chapter_writing_context", {
@@ -383,13 +428,18 @@ test("mcp server tools support guided creation and structural updates", async ()
     assert.match(createParagraphText, /sync_story_state/);
     assert.match(chapterDraftText, /Created chapter draft/);
     assert.match(paragraphDraftText, /Created paragraph draft/);
-    assert.match(bookNotesText, /Updated book notes/);
-    assert.match(chapterNotesText, /Updated chapter notes/);
+    assert.match(bookNotesText, /Saved note entry/);
+    assert.match(chapterNotesText, /Saved chapter note entry/);
+    assert.match(saveBookIdeaText, /Saved idea entry/);
+    assert.match(saveChapterIdeaText, /Saved chapter idea entry/);
+    assert.match(promoteBookIdeaText, /Promoted idea entry/);
+    assert.match(promoteChapterIdeaText, /Promoted chapter idea entry/);
     assert.match(chapterContextText, /Always-read prose guide/);
     assert.match(chapterContextText, /Story design/);
     assert.match(chapterContextText, /Book notes/);
     assert.match(chapterContextText, /Chapter draft notes/);
     assert.match(chapterContextText, /forged registry seal/);
+    assert.match(chapterContextText, /Watch pattern/);
     assert.match(chapterContextText, /Explicit chapter override: yes/);
     assert.match(chapterContextText, /style:first-person-show/);
     assert.match(paragraphContextText, /Target paragraph draft/);
@@ -475,5 +525,11 @@ async function callToolText(client, name, args) {
 function extractSessionId(text) {
   const match = text.match(/Session: (.+)/);
   assert.ok(match, "wizard response should include a session id");
+  return match[1].trim();
+}
+
+function extractWorkItemId(text) {
+  const match = text.match(/entry ([a-z0-9-]+)/i);
+  assert.ok(match, "tool response should include a work item id");
   return match[1].trim();
 }

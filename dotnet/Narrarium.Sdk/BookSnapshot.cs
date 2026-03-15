@@ -20,7 +20,11 @@ public sealed record BookSnapshot
 
     public ContextDocument? Context { get; init; }
 
+    public NoteDocument? BookIdeas { get; init; }
+
     public NoteDocument? BookNotes { get; init; }
+
+    public NoteDocument? PromotedItems { get; init; }
 
     public NoteDocument? StoryDesign { get; init; }
 
@@ -44,7 +48,11 @@ public sealed record BookSnapshot
 
     public IReadOnlyList<DraftChapterSnapshot> DraftChapters { get; init; } = Array.Empty<DraftChapterSnapshot>();
 
+    public IReadOnlyList<NoteDocument> ChapterDraftIdeas { get; init; } = Array.Empty<NoteDocument>();
+
     public IReadOnlyList<NoteDocument> ChapterDraftNotes { get; init; } = Array.Empty<NoteDocument>();
+
+    public IReadOnlyList<NoteDocument> ChapterDraftPromoted { get; init; } = Array.Empty<NoteDocument>();
 
     public IReadOnlyList<ResumeDocument> Resumes { get; init; } = Array.Empty<ResumeDocument>();
 
