@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Narrarium.Sdk;
 
 namespace Narrarium.Sdk.AspNetCore;
@@ -53,6 +54,23 @@ public sealed record CommitBookRequest
     public string? AuthorEmail { get; init; }
 
     public IReadOnlyList<CommitBookChangeRequest> Changes { get; init; } = Array.Empty<CommitBookChangeRequest>();
+}
+
+public sealed record NoteMutationRequest
+{
+    public required string BaseCommitSha { get; init; }
+
+    public required string Message { get; init; }
+
+    public string? AuthorName { get; init; }
+
+    public string? AuthorEmail { get; init; }
+
+    public JsonObject? FrontmatterPatch { get; init; }
+
+    public string? Body { get; init; }
+
+    public string? AppendBody { get; init; }
 }
 
 public sealed record CommitBookChangeRequest

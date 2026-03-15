@@ -23,6 +23,7 @@ export type {
   CommitBookRequest,
   CreateAzureDevOpsProfileRequest,
   CreateGitHubProfileRequest,
+  NoteMutationRequest,
   NarrariumApiClientOptions,
 } from "./api-client.js";
 
@@ -46,6 +47,7 @@ export type {
   CreateGitHubBookConnectionProfileInput,
   GitHubBookConnectionProfile,
   LocalStorageBookProfileStoreOptions,
+  NoteFrontmatter,
   NarrariumAnyDocument,
   NarrariumBookSnapshot,
   NarrariumChapterSnapshot,
@@ -53,6 +55,7 @@ export type {
   NarrariumDocument,
   NarrariumDocumentKind,
   NarrariumDraftChapterSnapshot,
+  NarrariumNoteDocument,
   NarrariumRemoteProvider,
   NarrariumRemoteProviderCommitArgs,
   NarrariumRemoteProviderLoadArgs,

@@ -111,6 +111,51 @@ public sealed class BookWorkspace
         }, patch.RawMarkdown);
     }
 
+    public void UpdateBookNotes(NarrariumDocumentPatch patch)
+    {
+        var current = ResolveOrCreateNoteDocument(
+            path: "notes.md",
+            id: "note:book",
+            title: "Book Notes",
+            scope: "book");
+        UpsertDocument(current with
+        {
+            Frontmatter = MergeFrontmatter(current.Frontmatter, patch.Frontmatter),
+            Body = ResolveNextNoteBody(current.Body, patch),
+        }, patch.RawMarkdown);
+    }
+
+    public void UpdateStoryDesign(NarrariumDocumentPatch patch)
+    {
+        var current = ResolveOrCreateNoteDocument(
+            path: "story-design.md",
+            id: "note:story-design",
+            title: "Story Design",
+            scope: "story-design");
+        UpsertDocument(current with
+        {
+            Frontmatter = MergeFrontmatter(current.Frontmatter, patch.Frontmatter),
+            Body = ResolveNextNoteBody(current.Body, patch),
+        }, patch.RawMarkdown);
+    }
+
+    public void UpdateChapterDraftNotes(string chapterOrId, NarrariumDocumentPatch patch)
+    {
+        var chapterSlug = NormalizeChapterDraftReference(chapterOrId);
+        var path = $"drafts/{chapterSlug}/notes.md";
+        var current = ResolveOrCreateNoteDocument(
+            path: path,
+            id: $"note:chapter-draft:{chapterSlug}",
+            title: $"Chapter Draft Notes {chapterSlug}",
+            scope: "chapter-draft",
+            chapterId: $"chapter:{chapterSlug}");
+        UpsertDocument(current with
+        {
+            Frontmatter = MergeFrontmatter(current.Frontmatter, patch.Frontmatter),
+            Body = ResolveNextNoteBody(current.Body, patch),
+        }, patch.RawMarkdown);
+    }
+
     public void UpsertMarkdown(string path, string rawMarkdown)
     {
         var normalizedPath = NarrariumDocumentPaths.Normalize(path);
@@ -211,6 +256,102 @@ public sealed class BookWorkspace
         return (JsonObject)(source.DeepClone() ?? new JsonObject());
     }
 
+    private NoteDocument ResolveOrCreateNoteDocument(string path, string id, string title, string scope, string? chapterId = null)
+    {
+        var normalizedPath = NarrariumDocumentPaths.Normalize(path);
+        if (_changes.TryGetValue(normalizedPath, out var change))
+        {
+            if (change.Kind == BookWorkspaceChangeKind.Delete)
+            {
+                throw new InvalidOperationException($"Cannot update '{normalizedPath}' because it is already marked for deletion in the workspace.");
+            }
+
+            if (change.Document is null)
+            {
+                throw new InvalidOperationException($"Cannot apply a typed update to '{normalizedPath}' because the workspace currently stores raw markdown for that path.");
+            }
+
+            if (change.Document is not NoteDocument typedChanged)
+            {
+                throw new InvalidOperationException($"Expected Note document at '{normalizedPath}' but found {change.Document.Kind}.");
+            }
+
+            return typedChanged;
+        }
+
+        if (Snapshot.DocumentsByPath.TryGetValue(normalizedPath, out var current))
+        {
+            if (current is not NoteDocument typedCurrent)
+            {
+                throw new InvalidOperationException($"Expected Note document at '{normalizedPath}' but found {current.Kind}.");
+            }
+
+            return typedCurrent;
+        }
+
+        var frontmatter = new JsonObject
+        {
+            ["type"] = "note",
+            ["id"] = id,
+            ["title"] = title,
+            ["scope"] = scope,
+        };
+        if (!string.IsNullOrWhiteSpace(chapterId))
+        {
+            frontmatter["chapter"] = chapterId;
+        }
+
+        return new NoteDocument
+        {
+            Kind = BookDocumentKind.Note,
+            Path = normalizedPath,
+            Frontmatter = frontmatter,
+            Body = DefaultNoteBody(scope),
+        };
+    }
+
+    private static string ResolveNextNoteBody(string currentBody, NarrariumDocumentPatch patch)
+    {
+        if (patch.Body is not null)
+        {
+            return patch.Body;
+        }
+
+        if (!string.IsNullOrWhiteSpace(patch.AppendBody))
+        {
+            return AppendMarkdownSection(currentBody, patch.AppendBody);
+        }
+
+        return currentBody;
+    }
+
+    private static string AppendMarkdownSection(string existingBody, string appended)
+    {
+        var trimmedExisting = string.IsNullOrWhiteSpace(existingBody) ? string.Empty : existingBody.TrimEnd();
+        var trimmedAppend = appended.Trim();
+        if (trimmedExisting.Length == 0)
+        {
+            return trimmedAppend;
+        }
+
+        if (trimmedAppend.Length == 0)
+        {
+            return trimmedExisting;
+        }
+
+        return $"{trimmedExisting}\n\n{trimmedAppend}";
+    }
+
+    private static string DefaultNoteBody(string scope)
+    {
+        return scope switch
+        {
+            "story-design" => "# Core Design\n\nDescribe the structural design of the book here.",
+            "chapter-draft" => "# Chapter Notes\n\nCapture local draft notes, scene goals, and reminders here.",
+            _ => "# Active Notes\n\nCapture global working notes here.",
+        };
+    }
+
     private static CharacterDocumentLocator ToCharacterLocator(string slugOrId)
     {
         return slugOrId.StartsWith("character:", StringComparison.Ordinal)
@@ -284,6 +425,16 @@ public sealed class BookWorkspace
     private static string BuildParagraphPath(string chapterSlug, string slug)
     {
         return $"chapters/{NormalizeSlug(chapterSlug)}/{NormalizeSlug(slug)}.md";
+    }
+
+    private static string NormalizeChapterDraftReference(string chapterOrId)
+    {
+        if (chapterOrId.StartsWith("chapter:", StringComparison.Ordinal))
+        {
+            return NormalizeSlug(chapterOrId["chapter:".Length..]);
+        }
+
+        return NormalizeSlug(chapterOrId);
     }
 
     private static string ExtractEntitySlug(string value, string prefix)

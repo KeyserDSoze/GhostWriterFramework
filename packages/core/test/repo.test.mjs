@@ -39,6 +39,8 @@ import {
   syncStoryState,
   syncTotalResume,
   upgradeBookRepo,
+  updateBookNotes,
+  updateChapterDraftNotes,
   updateChapter,
   updateEntity,
   updateParagraph,
@@ -162,6 +164,8 @@ test("core book workflow supports canon indexes and structural updates", async (
     const plot = await syncPlot(rootPath);
     const opencodeConfig = await readFile(path.join(rootPath, "opencode.jsonc"), "utf8");
     const contextDocument = await readFile(path.join(rootPath, "context.md"), "utf8");
+    const notesDocument = await readFile(path.join(rootPath, "notes.md"), "utf8");
+    const storyDesignDocument = await readFile(path.join(rootPath, "story-design.md"), "utf8");
     const conversationsReadme = await readFile(path.join(rootPath, "conversations", "README.md"), "utf8");
     const resumeCommand = await readFile(path.join(rootPath, ".opencode", "commands", "resume-book.md"), "utf8");
     const conversationPlugin = await readFile(path.join(rootPath, ".opencode", "plugins", "conversation-export.js"), "utf8");
@@ -237,6 +241,8 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.match(plot.content, /2214-06-12/);
     assert.match(earlyTotalResume.content, /The harbor watches before it welcomes/);
     assert.match(contextDocument, /# Historical And Temporal Frame/);
+    assert.match(notesDocument, /# Active Notes/);
+    assert.match(storyDesignDocument, /# Core Design/);
     assert.match(opencodeConfig, /"default_agent": "build"/);
     assert.match(opencodeConfig, /\.github\/copilot-instructions\.md/);
     assert.match(opencodeConfig, /"reasoningEffort": "high"/);
@@ -974,6 +980,18 @@ test("draft workflow can assemble writing context and promote drafts into final 
       body: "# Rough Scene\n\nLivia vede il sigillo sbagliato e capisce che qualcuno ha toccato il registro.",
     });
 
+    await updateBookNotes(rootPath, {
+      appendBody: "## Active Notes\n\n- Ricordare che Livia ha un rapporto teso con i registri del porto.",
+    });
+    await updateBookNotes(rootPath, {
+      target: "story-design",
+      appendBody: "## Main Arcs\n\n- Il sospetto sui registri deve intrecciarsi con il tema dell'identita nascosta.",
+    });
+    await updateChapterDraftNotes(rootPath, {
+      chapter: "chapter:001-la-soglia",
+      appendBody: "## Scene Goals\n\n- Tenere alta la tensione appena Livia arriva al varco.",
+    });
+
     const context = await buildParagraphWritingContext(rootPath, "chapter:001-la-soglia", "001-il-varco");
     const chapterResult = await createChapterFromDraft(rootPath, {
       chapter: "chapter:001-la-soglia",
@@ -1006,6 +1024,11 @@ test("draft workflow can assemble writing context and promote drafts into final 
     const chapter = await readChapter(rootPath, "chapter:001-la-soglia");
 
     assert.match(context.text, /guidelines\/prose\.md/);
+    assert.match(context.text, /story-design\.md/);
+    assert.match(context.text, /notes\.md/);
+    assert.match(context.text, /rapporto teso con i registri del porto/);
+    assert.match(context.text, /identita nascosta/);
+    assert.match(context.text, /Tenere alta la tensione appena Livia arriva al varco/);
     assert.match(context.text, /plot\.md/);
     assert.match(context.text, /Rough Scene/);
     assert.match(resumeContext.text, /Conversation Resume/);

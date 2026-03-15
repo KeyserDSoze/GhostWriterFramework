@@ -6,6 +6,9 @@ Narrarium treats a repository as the source of truth for a book project.
 
 ```text
 book.md
+context.md
+story-design.md
+notes.md
 plot.md
 guidelines/
   prose.md
@@ -34,6 +37,7 @@ chapters/
 drafts/
   001-chapter-title/
     chapter.md
+    notes.md
     001-paragraph-title.md
     002-paragraph-title.md
 conversations/
@@ -307,6 +311,7 @@ Treat `state_changes` as the chapter delta, not as a full-world snapshot.
 - use `start_wizard` for guided creation when the brief is incomplete and multiple fields still need collecting
 - use `character_wizard` before `create_character` when character information is incomplete
 - use `create_chapter_draft` and `create_paragraph_draft` when roughing a scene before writing final prose
+- use `update_book_notes` for global working notes and `story-design.md`, and `update_chapter_notes` for chapter-local draft notes
 - use `chapter_writing_context` and `paragraph_writing_context` before drafting polished prose from rough material
 - use `resume_book_context` or `/resume-book` when restarting from exported conversation history
 - use `create_chapter_from_draft` and `create_paragraph_from_draft` when promoting rough material into final story files
@@ -327,6 +332,7 @@ Treat `state_changes` as the chapter delta, not as a full-world snapshot.
 - before fetching Wikipedia again, reuse a matching snapshot from `research/wikipedia/` when one already exists; use explicit refresh controls when the snapshot is stale or should be bypassed
 - prefer updating existing canon files over duplicating similar facts elsewhere
 - before writing final chapter or paragraph prose, read `guidelines/prose.md`, relevant prior story files, and any matching files in `drafts/`
+- treat `notes.md`, `story-design.md`, and `drafts/<chapter>/notes.md` as working support material, not canon; move stable facts into canon files when they become true in the book
 - keep `plot.md` aligned with chapter summaries, reveals, and dated timeline anchors
 - final chapter and paragraph mutations through Narrarium MCP auto-refresh `plot.md` plus the chapter and total resumes, but story-state sync stays manual; evaluations remain explicit/manual
 

@@ -104,6 +104,17 @@ test("mcp server tools support guided creation and structural updates", async ()
       body: "# Rough Scene\n\nLyra sees the changed watch pattern before she speaks.",
     });
 
+    const bookNotesText = await callToolText(client, "update_book_notes", {
+      rootPath,
+      appendBody: "## Active Notes\n\n- Keep pressure on the forged registry seal.",
+    });
+
+    const chapterNotesText = await callToolText(client, "update_chapter_notes", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+      appendBody: "## Scene Goals\n\n- Make the altered watch pattern visible before Lyra speaks.",
+    });
+
     const chapterContextText = await callToolText(client, "chapter_writing_context", {
       rootPath,
       chapter: "chapter:001-opening-move",
@@ -372,7 +383,13 @@ test("mcp server tools support guided creation and structural updates", async ()
     assert.match(createParagraphText, /sync_story_state/);
     assert.match(chapterDraftText, /Created chapter draft/);
     assert.match(paragraphDraftText, /Created paragraph draft/);
+    assert.match(bookNotesText, /Updated book notes/);
+    assert.match(chapterNotesText, /Updated chapter notes/);
     assert.match(chapterContextText, /Always-read prose guide/);
+    assert.match(chapterContextText, /Story design/);
+    assert.match(chapterContextText, /Book notes/);
+    assert.match(chapterContextText, /Chapter draft notes/);
+    assert.match(chapterContextText, /forged registry seal/);
     assert.match(chapterContextText, /Explicit chapter override: yes/);
     assert.match(chapterContextText, /style:first-person-show/);
     assert.match(paragraphContextText, /Target paragraph draft/);

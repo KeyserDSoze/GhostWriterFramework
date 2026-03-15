@@ -50,6 +50,8 @@ import {
   syncTotalResume,
   updateChapter,
   updateChapterDraft,
+  updateBookNotes,
+  updateChapterDraftNotes,
   updateEntity,
   updateParagraph,
   updateParagraphDraft,
@@ -1593,7 +1595,7 @@ server.tool(
       },
     });
 
-    return textResponse(`Created chapter draft ${result.draftId} at ${result.draftFilePath}.`);
+    return textResponse(`Created chapter draft ${result.draftId} at ${result.draftFilePath}. Chapter notes live at ${result.notesFilePath}.`);
   },
 );
 
@@ -1620,6 +1622,50 @@ server.tool(
 );
 
 server.tool(
+  "update_book_notes",
+  "Update the global working notes or story-design document. Use appendBody when the user asks you to keep a note without replacing the whole file.",
+  {
+    rootPath: z.string().min(1),
+    target: z.enum(["notes", "story-design"]).default("notes"),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+    body: z.string().optional(),
+    appendBody: z.string().optional(),
+  },
+  async ({ rootPath, target, frontmatterPatch, body, appendBody }) => {
+    const result = await updateBookNotes(rootPath, {
+      target,
+      frontmatterPatch,
+      body,
+      appendBody,
+    });
+
+    return textResponse(`Updated ${target === "story-design" ? "story-design" : "book notes"} at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "update_chapter_notes",
+  "Update or append chapter-specific working notes stored in drafts/<chapter>/notes.md. Use this when the user wants to keep or refine notes tied to a chapter draft.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+    body: z.string().optional(),
+    appendBody: z.string().optional(),
+  },
+  async ({ rootPath, chapter, frontmatterPatch, body, appendBody }) => {
+    const result = await updateChapterDraftNotes(rootPath, {
+      chapter,
+      frontmatterPatch,
+      body,
+      appendBody,
+    });
+
+    return textResponse(`Updated chapter notes at ${result.filePath}.`);
+  },
+);
+
+server.tool(
   "create_paragraph_draft",
   "Create a rough paragraph or scene draft inside drafts/ using the same chapter tree as the final chapter.",
   {
@@ -1641,7 +1687,7 @@ server.tool(
       frontmatter,
     });
 
-    return textResponse(`Created paragraph draft ${result.draftId} at ${result.filePath}.`);
+    return textResponse(`Created paragraph draft ${result.draftId} at ${result.filePath}. Chapter notes live at ${result.notesFilePath}.`);
   },
 );
 

@@ -62,6 +62,7 @@ internal static class NarrariumMarkdown
             BookDocumentKind.Book => new BookDocument { Kind = kind, Path = path, Frontmatter = frontmatter, Body = body, RawMarkdown = rawMarkdown },
             BookDocumentKind.Plot => new PlotDocument { Kind = kind, Path = path, Frontmatter = frontmatter, Body = body, RawMarkdown = rawMarkdown },
             BookDocumentKind.Context => new ContextDocument { Kind = kind, Path = path, Frontmatter = frontmatter, Body = body, RawMarkdown = rawMarkdown },
+            BookDocumentKind.Note => new NoteDocument { Kind = kind, Path = path, Frontmatter = frontmatter, Body = body, RawMarkdown = rawMarkdown },
             BookDocumentKind.Guideline => new GuidelineDocument { Kind = kind, Path = path, Frontmatter = frontmatter, Body = body, RawMarkdown = rawMarkdown },
             BookDocumentKind.Character => new CharacterDocument { Kind = kind, Path = path, Frontmatter = frontmatter, Body = body, RawMarkdown = rawMarkdown },
             BookDocumentKind.Item => new ItemDocument { Kind = kind, Path = path, Frontmatter = frontmatter, Body = body, RawMarkdown = rawMarkdown },

@@ -8,6 +8,8 @@ public sealed record NarrariumDocumentPatch
 
     public string? Body { get; init; }
 
+    public string? AppendBody { get; init; }
+
     public string? RawMarkdown { get; init; }
 }
 

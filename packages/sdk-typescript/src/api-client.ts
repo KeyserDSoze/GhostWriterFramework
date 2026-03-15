@@ -71,6 +71,16 @@ export interface CommitBookRequest {
   changes: CommitBookChangeRequest[];
 }
 
+export interface NoteMutationRequest {
+  baseCommitSha: string;
+  message: string;
+  authorName?: string;
+  authorEmail?: string;
+  frontmatterPatch?: Record<string, unknown>;
+  body?: string;
+  appendBody?: string;
+}
+
 export class NarrariumApiClient {
   private readonly fetchImpl: FetchLike;
   private readonly baseUrl: string;
@@ -131,6 +141,22 @@ export class NarrariumApiClient {
 
   commit(profileId: string, request: CommitBookRequest): Promise<BookPushResult> {
     return this.requestJson<BookPushResult>("POST", `/profiles/${encodeURIComponent(profileId)}/commit`, request);
+  }
+
+  updateBookNotes(profileId: string, request: NoteMutationRequest): Promise<BookPushResult> {
+    return this.requestJson<BookPushResult>("POST", `/profiles/${encodeURIComponent(profileId)}/notes`, request);
+  }
+
+  updateStoryDesign(profileId: string, request: NoteMutationRequest): Promise<BookPushResult> {
+    return this.requestJson<BookPushResult>("POST", `/profiles/${encodeURIComponent(profileId)}/story-design`, request);
+  }
+
+  updateChapterNotes(profileId: string, chapter: string, request: NoteMutationRequest): Promise<BookPushResult> {
+    return this.requestJson<BookPushResult>(
+      "POST",
+      `/profiles/${encodeURIComponent(profileId)}/chapters/${encodeURIComponent(chapter)}/notes`,
+      request,
+    );
   }
 
   private async requestJson<TResponse>(method: string, path: string, body?: unknown): Promise<TResponse> {

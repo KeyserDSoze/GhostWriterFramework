@@ -21,6 +21,8 @@ public sealed record PlotDocument : NarrariumDocument;
 
 public sealed record ContextDocument : NarrariumDocument;
 
+public sealed record NoteDocument : NarrariumDocument;
+
 public sealed record GuidelineDocument : NarrariumDocument;
 
 public sealed record CharacterDocument : NarrariumDocument;

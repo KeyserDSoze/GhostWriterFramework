@@ -5,6 +5,7 @@ public enum BookDocumentKind
     Book,
     Plot,
     Context,
+    Note,
     Guideline,
     Character,
     Item,

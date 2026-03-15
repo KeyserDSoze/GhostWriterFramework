@@ -114,6 +114,115 @@ public static class NarrariumEndpointRouteBuilderExtensions
             return TypedResults.Ok(BookGitStateResponse.FromSnapshot(snapshot));
         }).RequireAuthorization(options.ReadPolicyName);
 
+        profiles.MapPost("/{profileId}/notes", async Task<Results<Ok<BookPushResult>, NotFound, Conflict<string>>> (
+            string profileId,
+            NoteMutationRequest request,
+            BookManager manager,
+            CancellationToken cancellationToken) =>
+        {
+            var profile = await manager.GetProfileAsync(profileId, cancellationToken);
+            if (profile is null)
+            {
+                return TypedResults.NotFound();
+            }
+
+            var snapshot = await manager.LoadBookAsync(profile, cancellationToken);
+            if (!string.Equals(snapshot.CommitSha, request.BaseCommitSha, StringComparison.OrdinalIgnoreCase))
+            {
+                return TypedResults.Conflict($"Branch moved from {request.BaseCommitSha} to {snapshot.CommitSha}. Reload before updating notes.");
+            }
+
+            var workspace = manager.BeginWorkspace(snapshot);
+            workspace.UpdateBookNotes(new NarrariumDocumentPatch
+            {
+                Frontmatter = request.FrontmatterPatch,
+                Body = request.Body,
+                AppendBody = request.AppendBody,
+            });
+
+            var push = await manager.CommitAndPushAsync(profile, snapshot, workspace, new BookCommitRequest
+            {
+                Message = request.Message,
+                AuthorName = request.AuthorName,
+                AuthorEmail = request.AuthorEmail,
+            }, cancellationToken);
+
+            return TypedResults.Ok(push);
+        }).RequireAuthorization(options.WritePolicyName);
+
+        profiles.MapPost("/{profileId}/story-design", async Task<Results<Ok<BookPushResult>, NotFound, Conflict<string>>> (
+            string profileId,
+            NoteMutationRequest request,
+            BookManager manager,
+            CancellationToken cancellationToken) =>
+        {
+            var profile = await manager.GetProfileAsync(profileId, cancellationToken);
+            if (profile is null)
+            {
+                return TypedResults.NotFound();
+            }
+
+            var snapshot = await manager.LoadBookAsync(profile, cancellationToken);
+            if (!string.Equals(snapshot.CommitSha, request.BaseCommitSha, StringComparison.OrdinalIgnoreCase))
+            {
+                return TypedResults.Conflict($"Branch moved from {request.BaseCommitSha} to {snapshot.CommitSha}. Reload before updating story design.");
+            }
+
+            var workspace = manager.BeginWorkspace(snapshot);
+            workspace.UpdateStoryDesign(new NarrariumDocumentPatch
+            {
+                Frontmatter = request.FrontmatterPatch,
+                Body = request.Body,
+                AppendBody = request.AppendBody,
+            });
+
+            var push = await manager.CommitAndPushAsync(profile, snapshot, workspace, new BookCommitRequest
+            {
+                Message = request.Message,
+                AuthorName = request.AuthorName,
+                AuthorEmail = request.AuthorEmail,
+            }, cancellationToken);
+
+            return TypedResults.Ok(push);
+        }).RequireAuthorization(options.WritePolicyName);
+
+        profiles.MapPost("/{profileId}/chapters/{chapter}/notes", async Task<Results<Ok<BookPushResult>, NotFound, Conflict<string>>> (
+            string profileId,
+            string chapter,
+            NoteMutationRequest request,
+            BookManager manager,
+            CancellationToken cancellationToken) =>
+        {
+            var profile = await manager.GetProfileAsync(profileId, cancellationToken);
+            if (profile is null)
+            {
+                return TypedResults.NotFound();
+            }
+
+            var snapshot = await manager.LoadBookAsync(profile, cancellationToken);
+            if (!string.Equals(snapshot.CommitSha, request.BaseCommitSha, StringComparison.OrdinalIgnoreCase))
+            {
+                return TypedResults.Conflict($"Branch moved from {request.BaseCommitSha} to {snapshot.CommitSha}. Reload before updating chapter notes.");
+            }
+
+            var workspace = manager.BeginWorkspace(snapshot);
+            workspace.UpdateChapterDraftNotes(chapter, new NarrariumDocumentPatch
+            {
+                Frontmatter = request.FrontmatterPatch,
+                Body = request.Body,
+                AppendBody = request.AppendBody,
+            });
+
+            var push = await manager.CommitAndPushAsync(profile, snapshot, workspace, new BookCommitRequest
+            {
+                Message = request.Message,
+                AuthorName = request.AuthorName,
+                AuthorEmail = request.AuthorEmail,
+            }, cancellationToken);
+
+            return TypedResults.Ok(push);
+        }).RequireAuthorization(options.WritePolicyName);
+
         profiles.MapPost("/{profileId}/commit", async Task<Results<Ok<BookPushResult>, NotFound, BadRequest<string>, Conflict<string>>> (
             string profileId,
             CommitBookRequest request,

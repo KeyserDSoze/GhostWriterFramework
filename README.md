@@ -164,6 +164,7 @@ An example project config lives in `opencode.jsonc` and points OpenCode to the l
 It also tunes the default `build` and `plan` agents for book work with higher reasoning effort, detailed summaries, and more verbose responses while keeping temperature moderate for canon consistency.
 Generated book repos also point `instructions` to `.github/copilot-instructions.md`, so OpenCode and Copilot share the same repository-specific writing workflow.
 Generated book repos also include `context.md` for stable historical, geographic, social, and world-context notes that should stay visible while writing chapters and scenes.
+Generated book repos also include `story-design.md` for the initial design of the book and `notes.md` for global working notes. Chapter-local notes live in `drafts/<chapter>/notes.md` and are created when draft work starts.
 Book repos also include `conversations/` as a portable place to keep exported writing chats.
 The generated `.opencode/plugins/conversation-export.js` plugin updates `conversations/RESUME.md`, `conversations/CONTINUATION.md`, and per-session exports automatically when OpenCode sessions go idle.
 The generated `/resume-book` command and MCP tool `resume_book_context` help you restart from repo state on a fresh machine or session, including `context.md`, `plot.md`, `resumes/`, and `state/` snapshots when present. `/resume-book` also supports scoped targets such as a chapter or paragraph, for example `/resume-book chapter:002-ledger-suspicion 002-tense-exchange`.

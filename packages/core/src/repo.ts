@@ -13,10 +13,12 @@ import {
   ENTITY_TYPE_TO_DIRECTORY,
   ENTITY_TYPES,
   GUIDELINE_FILES,
+  NOTES_FILE,
   PLOT_FILE,
   SKILL_NAME,
   STORY_STATE_CURRENT_FILE,
   STORY_STATE_STATUS_FILE,
+  STORY_DESIGN_FILE,
   TIMELINE_MAIN_FILE,
   TOTAL_EVALUATION_FILE,
   TOTAL_RESUME_FILE,
@@ -27,11 +29,13 @@ import {
   characterSchema,
   chapterSchema,
   chapterDraftSchema,
+  contextSchema,
   entitySchemaMap,
   factionSchema,
   guidelineSchema,
   itemSchema,
   locationSchema,
+  noteSchema,
   paragraphSchema,
   paragraphDraftSchema,
   plotSchema,
@@ -42,11 +46,13 @@ import {
   type CharacterFrontmatter,
   type ChapterFrontmatter,
   type ChapterDraftFrontmatter,
+  type ContextFrontmatter,
   type EntityType,
   type FactionFrontmatter,
   type GuidelineFrontmatter,
   type ItemFrontmatter,
   type LocationFrontmatter,
+  type NoteFrontmatter,
   type ParagraphFrontmatter,
   type ParagraphDraftFrontmatter,
   type PlotFrontmatter,
@@ -384,6 +390,20 @@ type CreateParagraphDraftInput = {
   overwrite?: boolean;
 };
 
+type UpdateBookNoteInput = {
+  target?: "notes" | "story-design";
+  body?: string;
+  appendBody?: string;
+  frontmatterPatch?: Record<string, unknown>;
+};
+
+type UpdateChapterDraftNoteInput = {
+  chapter: string;
+  body?: string;
+  appendBody?: string;
+  frontmatterPatch?: Record<string, unknown>;
+};
+
 type RelatedCanonHit = {
   path: string;
   title: string;
@@ -562,6 +582,36 @@ export async function initializeBookRepo(
         "- Translate the context above into concrete prose reminders for chapter and paragraph writing.",
         "- Example: travel is slow, information is delayed, public actions have social afterlife, violence has factional consequences.",
       ].join("\n"),
+    ),
+    created,
+  );
+
+  await ensureFile(
+    root,
+    NOTES_FILE,
+    renderMarkdown(
+      noteSchema.parse({
+        type: "note",
+        id: "note:book",
+        title: "Book Notes",
+        scope: "book",
+      }),
+      defaultBookNotesBody(),
+    ),
+    created,
+  );
+
+  await ensureFile(
+    root,
+    STORY_DESIGN_FILE,
+    renderMarkdown(
+      noteSchema.parse({
+        type: "note",
+        id: "note:story-design",
+        title: "Story Design",
+        scope: "story-design",
+      }),
+      defaultStoryDesignBody(),
     ),
     created,
   );
@@ -1355,7 +1405,7 @@ export async function createChapter(
 export async function createChapterDraft(
   rootPath: string,
   options: CreateChapterDraftInput,
-): Promise<{ folderPath: string; draftFilePath: string; draftId: string; chapterId: string }> {
+): Promise<{ folderPath: string; draftFilePath: string; draftId: string; chapterId: string; notesFilePath: string }> {
   const root = path.resolve(rootPath);
   const slug = chapterSlug(options.number, options.title);
   const folderPath = path.join(root, "drafts", slug);
@@ -1383,11 +1433,14 @@ export async function createChapterDraft(
     "utf8",
   );
 
+  const notesFilePath = await ensureChapterDraftNotesFile(root, slug);
+
   return {
     folderPath,
     draftFilePath,
     draftId: `draft:chapter:${slug}`,
     chapterId: `chapter:${slug}`,
+    notesFilePath,
   };
 }
 
@@ -1445,7 +1498,7 @@ export async function createParagraph(
 export async function createParagraphDraft(
   rootPath: string,
   options: CreateParagraphDraftInput,
-): Promise<{ filePath: string; draftId: string; paragraphId: string }> {
+): Promise<{ filePath: string; draftId: string; paragraphId: string; notesFilePath: string }> {
   const root = path.resolve(rootPath);
   const chapter = normalizeChapterReference(options.chapter);
   const folderPath = path.join(root, "drafts", chapter);
@@ -1477,11 +1530,75 @@ export async function createParagraphDraft(
     "utf8",
   );
 
+  const notesFilePath = await ensureChapterDraftNotesFile(root, chapter);
+
   return {
     filePath,
     draftId: `draft:paragraph:${chapter}:${slug}`,
     paragraphId: `paragraph:${chapter}:${slug}`,
+    notesFilePath,
   };
+}
+
+export async function updateBookNotes(
+  rootPath: string,
+  options: UpdateBookNoteInput = {},
+): Promise<{ filePath: string; frontmatter: NoteFrontmatter }> {
+  const root = path.resolve(rootPath);
+  const target = options.target ?? "notes";
+
+  if (target === "story-design") {
+    return updateNoteDocument(root, {
+      relativePath: STORY_DESIGN_FILE,
+      baseFrontmatter: {
+        type: "note",
+        id: "note:story-design",
+        title: "Story Design",
+        scope: "story-design",
+      },
+      defaultBody: defaultStoryDesignBody(),
+      body: options.body,
+      appendBody: options.appendBody,
+      frontmatterPatch: options.frontmatterPatch,
+    });
+  }
+
+  return updateNoteDocument(root, {
+    relativePath: NOTES_FILE,
+    baseFrontmatter: {
+      type: "note",
+      id: "note:book",
+      title: "Book Notes",
+      scope: "book",
+    },
+    defaultBody: defaultBookNotesBody(),
+    body: options.body,
+    appendBody: options.appendBody,
+    frontmatterPatch: options.frontmatterPatch,
+  });
+}
+
+export async function updateChapterDraftNotes(
+  rootPath: string,
+  options: UpdateChapterDraftNoteInput,
+): Promise<{ filePath: string; frontmatter: NoteFrontmatter }> {
+  const root = path.resolve(rootPath);
+  const chapterSlugValue = normalizeChapterReference(options.chapter);
+  await ensureChapterDraftNotesFile(root, chapterSlugValue);
+  return updateNoteDocument(root, {
+    relativePath: chapterDraftNotesRelativePath(chapterSlugValue),
+    baseFrontmatter: {
+      type: "note",
+      id: `note:chapter-draft:${chapterSlugValue}`,
+      title: `Chapter Draft Notes ${chapterSlugValue}`,
+      scope: "chapter-draft",
+      chapter: `chapter:${chapterSlugValue}`,
+    },
+    defaultBody: defaultChapterDraftNotesBody(),
+    body: options.body,
+    appendBody: options.appendBody,
+    frontmatterPatch: options.frontmatterPatch,
+  });
 }
 
 export async function createAssetPrompt(
@@ -1915,7 +2032,7 @@ export async function readChapter(
 
   const chapterDocument = await readMarkdownFile(chapterFile, chapterSchema);
   const files = await fg("*.md", { cwd: folder, absolute: true, onlyFiles: true });
-  const paragraphFiles = files.filter((filePath) => path.basename(filePath) !== "chapter.md");
+  const paragraphFiles = files.filter((filePath) => !["chapter.md", "notes.md"].includes(path.basename(filePath)));
   const paragraphs: Array<{ path: string; metadata: ParagraphFrontmatter; body: string }> = [];
 
   for (const filePath of paragraphFiles) {
@@ -1955,7 +2072,7 @@ export async function readChapterDraft(
 
   const chapterDocument = await readMarkdownFile(chapterFile, chapterDraftSchema);
   const files = await fg("*.md", { cwd: folder, absolute: true, onlyFiles: true });
-  const paragraphFiles = files.filter((filePath) => path.basename(filePath) !== "chapter.md");
+  const paragraphFiles = files.filter((filePath) => !["chapter.md", "notes.md"].includes(path.basename(filePath)));
   const paragraphs: Array<{ path: string; metadata: ParagraphDraftFrontmatter; body: string }> = [];
 
   for (const filePath of paragraphFiles) {
@@ -2041,6 +2158,12 @@ export async function buildChapterWritingContext(
 
   const contextDocument = await readLooseMarkdownIfExists(path.join(root, CONTEXT_FILE));
   addContextSection(sections, files, root, contextDocument, "Stable book context", 1400);
+
+  const storyDesign = await readLooseMarkdownIfExists(path.join(root, STORY_DESIGN_FILE));
+  addContextSection(sections, files, root, storyDesign, "Story design", 1300);
+
+  const bookNotes = await readLooseMarkdownIfExists(path.join(root, NOTES_FILE));
+  addContextSection(sections, files, root, bookNotes, "Book notes", 1200);
 
   const styleGuide = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.style));
   addContextSection(sections, files, root, styleGuide, "Default style guide", 1100);
@@ -2163,6 +2286,9 @@ export async function buildChapterWritingContext(
       ].join("\n"),
     );
   }
+
+  const chapterDraftNotes = await readLooseMarkdownIfExists(path.join(root, chapterDraftNotesRelativePath(chapterSlugValue)));
+  addContextSection(sections, files, root, chapterDraftNotes, "Chapter draft notes", 1200);
 
   return {
     text: [
@@ -2297,6 +2423,8 @@ export async function buildResumeBookContext(
   } else {
     const prose = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.prose));
     const contextDocument = await readLooseMarkdownIfExists(path.join(root, CONTEXT_FILE));
+    const storyDesign = await readLooseMarkdownIfExists(path.join(root, STORY_DESIGN_FILE));
+    const bookNotes = await readLooseMarkdownIfExists(path.join(root, NOTES_FILE));
     const plot = await readPlot(root);
     const totalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE));
     const storyStateCurrent = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_CURRENT_FILE));
@@ -2307,6 +2435,8 @@ export async function buildResumeBookContext(
 
     addContextSection(sections, files, root, prose, "Always-read prose guide", 1500);
     addContextSection(sections, files, root, contextDocument, "Stable book context", 1400);
+    addContextSection(sections, files, root, storyDesign, "Story design", 1300);
+    addContextSection(sections, files, root, bookNotes, "Book notes", 1200);
     addContextSection(sections, files, root, plot, "Rolling plot map", 1400);
     addContextSection(sections, files, root, totalResume, "Book summary so far", 1100);
     addContextSection(
@@ -6734,6 +6864,16 @@ async function validateFile(root: string, filePath: string): Promise<void> {
     return;
   }
 
+  if (relativePath === CONTEXT_FILE) {
+    contextSchema.parse(data);
+    return;
+  }
+
+  if (relativePath === NOTES_FILE || relativePath === STORY_DESIGN_FILE) {
+    noteSchema.parse(data);
+    return;
+  }
+
   if (relativePath.startsWith("guidelines/")) {
     guidelineSchema.parse(data);
     return;
@@ -6761,6 +6901,11 @@ async function validateFile(root: string, filePath: string): Promise<void> {
 
   if (relativePath.startsWith("drafts/") && path.basename(filePath) === "chapter.md") {
     chapterDraftSchema.parse(data);
+    return;
+  }
+
+  if (relativePath.startsWith("drafts/") && path.basename(filePath) === "notes.md") {
+    noteSchema.parse(data);
     return;
   }
 
@@ -7497,10 +7642,12 @@ function buildGithubCopilotInstructions(): string {
     "## Folder model",
     "",
     "- `context.md` for stable historical, social, geographic, and world-context constraints that should stay in view while writing",
+    "- `story-design.md` for the initial book design: arcs, reveals, interwoven threads, and ending shape",
+    "- `notes.md` for global working notes, reminders, unresolved questions, and future ideas",
     "- `characters/`, `items/`, `locations/`, `factions/`, `timelines/`, `secrets/`",
     "- `chapters/<nnn-slug>/chapter.md` for chapter metadata",
     "- `chapters/<nnn-slug>/<nnn-slug>.md` for paragraph or scene files",
-    "- `drafts/<nnn-slug>/chapter.md` and matching files for rough chapter and scene drafts",
+    "- `drafts/<nnn-slug>/chapter.md`, matching scene drafts, and `drafts/<nnn-slug>/notes.md` for rough chapter work",
     "- `plot.md` for the rolling book map: chapter progression, reveals, and timeline anchors",
     "- `conversations/` for exported writing chats, resume files, and continuation prompts",
     "- `resumes/` for running summaries",
@@ -7533,6 +7680,7 @@ function buildGithubCopilotInstructions(): string {
     "- Use `revise_paragraph` when you want a proposal-only editorial pass on an existing final scene before deciding whether to apply it with `update_paragraph`.",
     "- When revising a final paragraph, show the `revise_paragraph` proposal, ask the user whether they want to keep it, and call `update_paragraph` only after clear confirmation.",
     "- Use `resume_book_context` when restarting work from exported conversation history.",
+    "- Use `update_book_notes` and `update_chapter_notes` when the user asks to keep or revise working notes instead of changing canon files directly.",
     "- Use `update_chapter` and `update_paragraph` for existing story structure files.",
     "- Use `update_chapter_draft` and `update_paragraph_draft` when iterating on rough drafts.",
     "- Use `create_chapter_from_draft` and `create_paragraph_from_draft` to promote drafts into final story files.",
@@ -7553,7 +7701,8 @@ function buildGithubCopilotInstructions(): string {
     "- Keep prose in body content and structured facts in frontmatter.",
     "- Always read `guidelines/prose.md` before drafting new chapter or paragraph prose.",
     "- If a chapter declares `style_refs`, `narration_person`, `narration_tense`, or `prose_mode`, treat that as an explicit chapter-level override; otherwise follow the book-level default prose, style, and voice guides.",
-    "- Before writing or rewriting a scene, review `context.md`, the relevant prior chapter content, the scoped summaries for story so far, any point-in-time state snapshot available before that point, and any matching files in `drafts/`.",
+    "- Before writing or rewriting a scene, review `context.md`, `story-design.md`, `notes.md`, any matching chapter draft notes, the relevant prior chapter content, the scoped summaries for story so far, any point-in-time state snapshot available before that point, and any matching files in `drafts/`.",
+    "- Treat notes files as working support material, not canon. If a note becomes a stable fact, move it into the correct canon file.",
     "- Keep `plot.md` aligned with chapter summaries, secret reveals, and timeline references.",
     "- After `update_paragraph`, assume plot and resume files were refreshed automatically by the MCP layer, and review `sync_story_state` separately only when continuity snapshots must be updated.",
     "- If stylistic guidance is missing, inspect the rest of `guidelines/` before choosing a default.",
@@ -7603,7 +7752,7 @@ function buildResumeBookCommand(): string {
     "Before doing anything else:",
     "1. Parse `$ARGUMENTS`: if the first token starts with `chapter:`, use it as the chapter target; if the next token looks like a paragraph id or slug, use it as the paragraph target; everything after that is the follow-up request.",
     "2. Call the `resume_book_context` MCP tool with the scoped `chapter` and optional `paragraph` when a target was provided; otherwise call it without scope.",
-    "3. Read the files it references, especially `context.md`, `guidelines/prose.md`, scoped story summaries, `state/current.md`, `state/status.md` when present, and the latest files in `conversations/`.",
+    "3. Read the files it references, especially `context.md`, `story-design.md`, `notes.md`, any scoped chapter draft notes, `guidelines/prose.md`, scoped story summaries, `state/current.md`, `state/status.md` when present, and the latest files in `conversations/`.",
     "4. Briefly restate where the book stands, what the latest conversation was doing, and the next best actions.",
     "5. Then continue with the parsed follow-up request if one is present.",
     "6. If no extra request is present, ask for the next book task only after giving the short status recap.",
@@ -7960,6 +8109,131 @@ function stripSourceFilesSection(text: string): string {
   const marker = "\n## Source files consulted\n";
   const index = text.indexOf(marker);
   return index === -1 ? text : text.slice(0, index).trimEnd();
+}
+
+function chapterDraftNotesRelativePath(chapterSlugValue: string): string {
+  return toPosixPath(path.join("drafts", chapterSlugValue, "notes.md"));
+}
+
+async function ensureChapterDraftNotesFile(root: string, chapterSlugValue: string): Promise<string> {
+  const relativePath = chapterDraftNotesRelativePath(chapterSlugValue);
+  const absolutePath = path.join(root, relativePath);
+
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  if (!(await pathExists(absolutePath))) {
+    const frontmatter = noteSchema.parse({
+      type: "note",
+      id: `note:chapter-draft:${chapterSlugValue}`,
+      title: `Chapter Draft Notes ${chapterSlugValue}`,
+      scope: "chapter-draft",
+      chapter: `chapter:${chapterSlugValue}`,
+    });
+    await writeFile(absolutePath, renderMarkdown(frontmatter, defaultChapterDraftNotesBody()), "utf8");
+  }
+
+  return absolutePath;
+}
+
+async function updateNoteDocument(
+  root: string,
+  options: {
+    relativePath: string;
+    baseFrontmatter: Record<string, unknown>;
+    defaultBody: string;
+    body?: string;
+    appendBody?: string;
+    frontmatterPatch?: Record<string, unknown>;
+  },
+): Promise<{ filePath: string; frontmatter: NoteFrontmatter }> {
+  const filePath = path.join(root, options.relativePath);
+  await mkdir(path.dirname(filePath), { recursive: true });
+
+  const existingRaw = await readFile(filePath, "utf8").catch(() => null);
+  const parsed = existingRaw ? matter(existingRaw) : { data: {}, content: options.defaultBody };
+  const currentBody = String(parsed.content ?? "").trim();
+  const nextBody =
+    options.body !== undefined
+      ? options.body
+      : options.appendBody
+        ? appendMarkdownSection(currentBody, options.appendBody)
+        : currentBody || options.defaultBody;
+
+  const frontmatter = noteSchema.parse({
+    ...options.baseFrontmatter,
+    ...(parsed.data as Record<string, unknown>),
+    ...(options.frontmatterPatch ?? {}),
+  });
+
+  await writeFile(filePath, renderMarkdown(frontmatter, nextBody), "utf8");
+  return { filePath, frontmatter };
+}
+
+function defaultBookNotesBody(): string {
+  return [
+    "# Active Notes",
+    "",
+    "Use this file for general book notes, reminders, unresolved decisions, and anything that should stay visible outside a single chapter draft.",
+    "",
+    "## Open Questions",
+    "",
+    "- Add open questions here.",
+    "",
+    "## Continuity Reminders",
+    "",
+    "- Add continuity reminders here.",
+    "",
+    "## Future Ideas",
+    "",
+    "- Add future ideas here.",
+  ].join("\n");
+}
+
+function defaultStoryDesignBody(): string {
+  return [
+    "# Core Design",
+    "",
+    "Describe the core shape of the book and what kind of narrative engine keeps it moving.",
+    "",
+    "## Central Conflict",
+    "",
+    "- State the pressure that keeps the whole book in motion.",
+    "",
+    "## Main Arcs",
+    "",
+    "- Track the major arcs and how they should interweave.",
+    "",
+    "## Reveal Strategy",
+    "",
+    "- Note where secrets, reversals, and payoff chains should land.",
+    "",
+    "## Structural Beats",
+    "",
+    "- Capture the major movements of the book, even when chapter details are still provisional.",
+    "",
+    "## Ending Shape",
+    "",
+    "- Record the intended ending pressure, emotional landing, and what the final chapters must resolve.",
+  ].join("\n");
+}
+
+function defaultChapterDraftNotesBody(): string {
+  return [
+    "# Chapter Notes",
+    "",
+    "Use this file for local draft notes tied to the chapter, including optional scene goals, reminders, and unresolved fixes.",
+    "",
+    "## Scene Goals",
+    "",
+    "- Add the intended scene goals here.",
+    "",
+    "## Risks And Continuity Checks",
+    "",
+    "- Add continuity risks or checks here.",
+    "",
+    "## Lines Or Images To Reuse",
+    "",
+    "- Add fragments, images, and phrasing worth carrying into final prose.",
+  ].join("\n");
 }
 
 function buildChapterOverviewSummary(chapterData: {

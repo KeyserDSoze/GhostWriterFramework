@@ -21,6 +21,12 @@ npm install narrarium-sdk
 - high-level workspace helpers for chapters, paragraphs, and characters
 - markdown snapshot builders and serializers for Narrarium documents
 
+HTTP note helpers exposed by `NarrariumApiClient` include:
+
+- `updateBookNotes(...)`
+- `updateStoryDesign(...)`
+- `updateChapterNotes(...)`
+
 ## Quick example
 
 ```ts

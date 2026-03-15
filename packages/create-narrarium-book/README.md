@@ -50,7 +50,7 @@ The upgrade command creates missing folders, refreshes managed OpenCode and skil
 ## What it creates
 
 - canonical book folders such as `characters/`, `locations/`, `factions/`, `chapters/`, `drafts/`, and `secrets/`
-- `context.md`, `plot.md`, `guidelines/`, `conversations/`, `resumes/`, `evaluations/`, and `research/wikipedia/`
+- `context.md`, `story-design.md`, `notes.md`, `plot.md`, `guidelines/`, `conversations/`, `resumes/`, `evaluations/`, and `research/wikipedia/`
 - `opencode.jsonc` plus bundled Narrarium skills for OpenCode and Claude, including `instructions` that point to `.github/copilot-instructions.md` so the same book-writing rules are reused by both tools
 - `conversations/README.md` plus automatic OpenCode exports, `RESUME.md`, `CONTINUATION.md`, and a `/resume-book` command for restarting from repo state globally or from a target chapter/paragraph
 - optional sample content

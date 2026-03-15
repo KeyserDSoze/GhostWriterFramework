@@ -10,6 +10,9 @@ Mapped endpoints include:
 - `/api/narrarium/profiles/{profileId}/book`
 - `/api/narrarium/profiles/{profileId}/git`
 - `/api/narrarium/profiles/{profileId}/commit`
+- `/api/narrarium/profiles/{profileId}/notes`
+- `/api/narrarium/profiles/{profileId}/story-design`
+- `/api/narrarium/profiles/{profileId}/chapters/{chapter}/notes`
 
 ## Typical setup
 

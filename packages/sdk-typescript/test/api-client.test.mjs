@@ -114,3 +114,51 @@ test("NarrariumApiClient posts commit payloads to the API", async () => {
     },
   ]);
 });
+
+test("NarrariumApiClient exposes note-specific HTTP helpers", async () => {
+  const requests = [];
+  const client = new NarrariumApiClient({
+    baseUrl: "https://narrarium.test",
+    fetch: async (input, init = {}) => {
+      const url = typeof input === "string" ? input : input.url;
+      requests.push({
+        url,
+        method: init.method ?? "GET",
+        body: typeof init.body === "string" ? JSON.parse(init.body) : null,
+      });
+
+      return jsonResponse({
+        profileId: "profile-1",
+        provider: "github",
+        branch: "main",
+        previousCommitSha: "commit-1",
+        commitSha: "commit-2",
+        pushedAt: "2026-03-14T00:01:00.000Z",
+        changedPaths: ["notes.md"],
+        message: "Update notes",
+      });
+    },
+  });
+
+  await client.updateBookNotes("profile-1", {
+    baseCommitSha: "commit-1",
+    message: "Update notes",
+    appendBody: "## Active Notes\n\n- Keep the registry pressure visible.",
+  });
+  await client.updateStoryDesign("profile-1", {
+    baseCommitSha: "commit-1",
+    message: "Update story design",
+    appendBody: "## Main Arcs\n\n- Tie the forged ledger to the hidden identity arc.",
+  });
+  await client.updateChapterNotes("profile-1", "chapter:001-opening-move", {
+    baseCommitSha: "commit-1",
+    message: "Update chapter notes",
+    appendBody: "## Scene Goals\n\n- Make the altered watch pattern obvious before the first line.",
+  });
+
+  assert.deepEqual(requests.map((entry) => entry.url), [
+    "https://narrarium.test/api/narrarium/profiles/profile-1/notes",
+    "https://narrarium.test/api/narrarium/profiles/profile-1/story-design",
+    "https://narrarium.test/api/narrarium/profiles/profile-1/chapters/chapter%3A001-opening-move/notes",
+  ]);
+});

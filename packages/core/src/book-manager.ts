@@ -9,6 +9,7 @@ import type {
   GuidelineFrontmatter,
   ItemFrontmatter,
   LocationFrontmatter,
+  NoteFrontmatter,
   ParagraphDraftFrontmatter,
   ParagraphFrontmatter,
   PlotFrontmatter,
@@ -80,6 +81,7 @@ export type NarrariumDocumentKind =
   | "book"
   | "plot"
   | "context"
+  | "note"
   | "guideline"
   | "character"
   | "item"
@@ -105,6 +107,7 @@ export type NarrariumKnownFrontmatter =
   | BookFrontmatter
   | PlotFrontmatter
   | ContextFrontmatter
+  | NoteFrontmatter
   | GuidelineFrontmatter
   | CharacterFrontmatter
   | ItemFrontmatter
@@ -130,6 +133,7 @@ export interface NarrariumDocument<TFrontmatter = NarrariumKnownFrontmatter> {
 
 export type NarrariumAnyDocument = NarrariumDocument<NarrariumKnownFrontmatter>;
 export type NarrariumContextDocument = NarrariumDocument<ContextFrontmatter>;
+export type NarrariumNoteDocument = NarrariumDocument<NoteFrontmatter>;
 
 export interface NarrariumChapterSnapshot {
   slug: string;
@@ -153,6 +157,8 @@ export interface NarrariumBookSnapshot {
   book: NarrariumDocument<BookFrontmatter> | null;
   plot: NarrariumDocument<PlotFrontmatter> | null;
   context: NarrariumContextDocument | null;
+  bookNotes: NarrariumNoteDocument | null;
+  storyDesign: NarrariumNoteDocument | null;
   guidelines: Array<NarrariumDocument<GuidelineFrontmatter>>;
   characters: Array<NarrariumDocument<CharacterFrontmatter>>;
   items: Array<NarrariumDocument<ItemFrontmatter>>;
@@ -163,6 +169,7 @@ export interface NarrariumBookSnapshot {
   timelineEvents: Array<NarrariumDocument<TimelineEventFrontmatter>>;
   chapters: Array<NarrariumChapterSnapshot>;
   draftChapters: Array<NarrariumDraftChapterSnapshot>;
+  chapterDraftNotes: Array<NarrariumNoteDocument>;
   resumes: Array<NarrariumDocument<LooseFrontmatter>>;
   stateDocuments: Array<NarrariumDocument<LooseFrontmatter>>;
   evaluations: Array<NarrariumDocument<LooseFrontmatter>>;
@@ -194,6 +201,8 @@ export function createEmptyBookSnapshot(input: CreateEmptyBookSnapshotInput): Na
     book: null,
     plot: null,
     context: null,
+    bookNotes: null,
+    storyDesign: null,
     guidelines: [],
     characters: [],
     items: [],
@@ -204,6 +213,7 @@ export function createEmptyBookSnapshot(input: CreateEmptyBookSnapshotInput): Na
     timelineEvents: [],
     chapters: [],
     draftChapters: [],
+    chapterDraftNotes: [],
     resumes: [],
     stateDocuments: [],
     evaluations: [],

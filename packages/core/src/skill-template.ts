@@ -16,10 +16,12 @@ Treat the repository as the canonical source of truth for the book.
 ## Folder model
 
 - \`context.md\` for stable historical, social, geographic, and world-context constraints that should stay in view while writing
+- \`story-design.md\` for the initial book design: arcs, reveals, interwoven threads, and ending shape
+- \`notes.md\` for global working notes, reminders, unresolved questions, and future ideas
 - \`characters/\`, \`items/\`, \`locations/\`, \`factions/\`, \`timelines/\`, \`secrets/\`
 - \`chapters/<nnn-slug>/chapter.md\` for chapter metadata
 - \`chapters/<nnn-slug>/<nnn-slug>.md\` for paragraph or scene files
-- \`drafts/<nnn-slug>/chapter.md\` and matching files for rough chapter and scene drafts
+- \`drafts/<nnn-slug>/chapter.md\`, matching scene drafts, and \`drafts/<nnn-slug>/notes.md\` for rough chapter work
 - \`plot.md\` for the rolling book map: chapter progression, reveals, and timeline anchors
 - \`conversations/\` for exported writing chats, resume files, and continuation prompts
 - \`resumes/\` for running summaries
@@ -52,6 +54,7 @@ Treat the repository as the canonical source of truth for the book.
 - Use \`revise_paragraph\` when you want a proposal-only editorial pass on an existing final scene before deciding whether to apply it with \`update_paragraph\`.
 - When revising a final paragraph, show the \`revise_paragraph\` proposal, ask the user whether they want to keep it, and call \`update_paragraph\` only after clear confirmation.
 - Use \`resume_book_context\` or the \`/resume-book\` command when restarting work from exported conversation history.
+- Use \`update_book_notes\` and \`update_chapter_notes\` when the user asks to keep or revise working notes instead of changing canon files directly.
 - Use \`update_chapter\` and \`update_paragraph\` for existing story structure files.
 - Use \`update_chapter_draft\` and \`update_paragraph_draft\` when iterating on rough drafts.
 - Use \`create_chapter_from_draft\` and \`create_paragraph_from_draft\` to promote drafts into final story files.
@@ -72,8 +75,9 @@ Treat the repository as the canonical source of truth for the book.
 - Keep prose in body content and structured facts in frontmatter.
 - Always read \`guidelines/prose.md\` before drafting new chapter or paragraph prose.
 - If a chapter declares \`style_refs\`, \`narration_person\`, \`narration_tense\`, or \`prose_mode\`, treat that as an explicit chapter-level override; otherwise follow the book-level default prose, style, and voice guides.
-- Before writing a scene, review \`context.md\`, the relevant prior chapter content, the latest scoped summaries in \`resumes/\`, the current point-in-time snapshot in \`state/\` when available, and any matching files in \`drafts/\`.
+- Before writing a scene, review \`context.md\`, \`story-design.md\`, \`notes.md\`, any matching chapter draft notes, the relevant prior chapter content, the latest scoped summaries in \`resumes/\`, the current point-in-time snapshot in \`state/\` when available, and any matching files in \`drafts/\`.
 - Keep \`plot.md\` aligned with chapter summaries, secret reveals, and timeline references.
 - After \`update_paragraph\`, assume plot and resume files were refreshed automatically by the MCP layer, and review \`sync_story_state\` separately only when continuity snapshots must be updated.
+- Treat notes files as working support material, not canon. If a note becomes a stable fact, move it into the correct canon file.
 - If stylistic guidance is missing, inspect the rest of \`guidelines/\` before choosing a default.
 `;

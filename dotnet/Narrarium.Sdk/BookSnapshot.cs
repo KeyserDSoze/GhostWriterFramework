@@ -20,6 +20,10 @@ public sealed record BookSnapshot
 
     public ContextDocument? Context { get; init; }
 
+    public NoteDocument? BookNotes { get; init; }
+
+    public NoteDocument? StoryDesign { get; init; }
+
     public TimelineMainDocument? TimelineMain { get; init; }
 
     public IReadOnlyList<GuidelineDocument> Guidelines { get; init; } = Array.Empty<GuidelineDocument>();
@@ -39,6 +43,8 @@ public sealed record BookSnapshot
     public IReadOnlyList<BookChapterSnapshot> Chapters { get; init; } = Array.Empty<BookChapterSnapshot>();
 
     public IReadOnlyList<DraftChapterSnapshot> DraftChapters { get; init; } = Array.Empty<DraftChapterSnapshot>();
+
+    public IReadOnlyList<NoteDocument> ChapterDraftNotes { get; init; } = Array.Empty<NoteDocument>();
 
     public IReadOnlyList<ResumeDocument> Resumes { get; init; } = Array.Empty<ResumeDocument>();
 

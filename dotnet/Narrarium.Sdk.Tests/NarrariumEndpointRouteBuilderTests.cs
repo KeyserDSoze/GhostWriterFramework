@@ -91,6 +91,52 @@ public sealed class NarrariumEndpointRouteBuilderTests
         Assert.Equal("commit-test-2", result.CommitSha);
     }
 
+    [Fact]
+    public async Task Note_endpoints_push_book_story_design_and_chapter_notes()
+    {
+        await using var app = await CreateAppAsync();
+        var manager = app.Services.GetRequiredService<BookManager>();
+        var profile = await manager.CreateGitHubProfileAsync("Book", "owner", "repo", "main", "token");
+
+        var client = app.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Test");
+        client.DefaultRequestHeaders.Add("x-test-scope", "narrarium.write");
+
+        var notesResponse = await client.PostAsJsonAsync($"/api/narrarium/profiles/{profile.Id}/notes", new NoteMutationRequest
+        {
+            BaseCommitSha = "commit-test-1",
+            Message = "Update notes",
+            AppendBody = "## Active Notes\n\n- Keep pressure on the forged seal.",
+        });
+        notesResponse.EnsureSuccessStatusCode();
+        var notesResult = await notesResponse.Content.ReadFromJsonAsync<BookPushResult>();
+
+        var designResponse = await client.PostAsJsonAsync($"/api/narrarium/profiles/{profile.Id}/story-design", new NoteMutationRequest
+        {
+            BaseCommitSha = "commit-test-1",
+            Message = "Update story design",
+            AppendBody = "## Main Arcs\n\n- Tie the forged seal to the hidden identity arc.",
+        });
+        designResponse.EnsureSuccessStatusCode();
+        var designResult = await designResponse.Content.ReadFromJsonAsync<BookPushResult>();
+
+        var chapterResponse = await client.PostAsJsonAsync($"/api/narrarium/profiles/{profile.Id}/chapters/chapter:001-opening-move/notes", new NoteMutationRequest
+        {
+            BaseCommitSha = "commit-test-1",
+            Message = "Update chapter notes",
+            AppendBody = "## Scene Goals\n\n- Show the watch pattern change before Lyra speaks.",
+        });
+        chapterResponse.EnsureSuccessStatusCode();
+        var chapterResult = await chapterResponse.Content.ReadFromJsonAsync<BookPushResult>();
+
+        Assert.NotNull(notesResult);
+        Assert.Contains("notes.md", notesResult.ChangedPaths);
+        Assert.NotNull(designResult);
+        Assert.Contains("story-design.md", designResult.ChangedPaths);
+        Assert.NotNull(chapterResult);
+        Assert.Contains("drafts/001-opening-move/notes.md", chapterResult.ChangedPaths);
+    }
+
     private static async Task<WebApplication> CreateAppAsync()
     {
         var builder = WebApplication.CreateBuilder();

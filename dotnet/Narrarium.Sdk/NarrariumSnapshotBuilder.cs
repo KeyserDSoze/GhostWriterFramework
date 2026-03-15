@@ -16,9 +16,12 @@ internal static class NarrariumSnapshotBuilder
         BookDocument? book = null;
         PlotDocument? plot = null;
         ContextDocument? context = null;
+        NoteDocument? bookNotes = null;
+        NoteDocument? storyDesign = null;
         TimelineMainDocument? timelineMain = null;
 
         var guidelines = new List<GuidelineDocument>();
+        var chapterDraftNotes = new List<NoteDocument>();
         var characters = new List<CharacterDocument>();
         var items = new List<ItemDocument>();
         var locations = new List<LocationDocument>();
@@ -52,6 +55,20 @@ internal static class NarrariumSnapshotBuilder
                     break;
                 case ContextDocument typed:
                     context = typed;
+                    break;
+                case NoteDocument typed:
+                    if (string.Equals(typed.Path, "notes.md", StringComparison.OrdinalIgnoreCase))
+                    {
+                        bookNotes = typed;
+                    }
+                    else if (string.Equals(typed.Path, "story-design.md", StringComparison.OrdinalIgnoreCase))
+                    {
+                        storyDesign = typed;
+                    }
+                    else
+                    {
+                        chapterDraftNotes.Add(typed);
+                    }
                     break;
                 case GuidelineDocument typed:
                     guidelines.Add(typed);
@@ -115,6 +132,7 @@ internal static class NarrariumSnapshotBuilder
         }
 
         SortDocuments(guidelines);
+        SortDocuments(chapterDraftNotes);
         SortDocuments(characters);
         SortDocuments(items);
         SortDocuments(locations);
@@ -173,6 +191,8 @@ internal static class NarrariumSnapshotBuilder
             Book = book,
             Plot = plot,
             Context = context,
+            BookNotes = bookNotes,
+            StoryDesign = storyDesign,
             TimelineMain = timelineMain,
             Guidelines = guidelines,
             Characters = characters,
@@ -183,6 +203,7 @@ internal static class NarrariumSnapshotBuilder
             TimelineEvents = timelineEvents,
             Chapters = chapters,
             DraftChapters = draftChapters,
+            ChapterDraftNotes = chapterDraftNotes,
             Resumes = resumes,
             StateDocuments = stateDocuments,
             Evaluations = evaluations,

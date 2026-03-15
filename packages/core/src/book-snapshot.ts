@@ -10,6 +10,7 @@ import {
   guidelineSchema,
   itemSchema,
   locationSchema,
+  noteSchema,
   paragraphDraftSchema,
   paragraphSchema,
   plotSchema,
@@ -53,6 +54,8 @@ export function classifyNarrariumDocumentKind(path: string): NarrariumDocumentKi
   if (normalizedPath === "book.md") return "book";
   if (normalizedPath === "plot.md") return "plot";
   if (normalizedPath === "context.md") return "context";
+  if (normalizedPath === "notes.md") return "note";
+  if (normalizedPath === "story-design.md") return "note";
   if (normalizedPath.startsWith("guidelines/")) return "guideline";
   if (normalizedPath.startsWith("characters/")) return "character";
   if (normalizedPath.startsWith("items/")) return "item";
@@ -63,6 +66,7 @@ export function classifyNarrariumDocumentKind(path: string): NarrariumDocumentKi
   if (normalizedPath.startsWith("timelines/events/")) return "timeline-event";
   if (normalizedPath.startsWith("chapters/") && normalizedPath.endsWith("/chapter.md")) return "chapter";
   if (normalizedPath.startsWith("chapters/")) return "paragraph";
+  if (normalizedPath.startsWith("drafts/") && normalizedPath.endsWith("/notes.md")) return "note";
   if (normalizedPath.startsWith("drafts/") && normalizedPath.endsWith("/chapter.md")) return "chapter-draft";
   if (normalizedPath.startsWith("drafts/")) return "paragraph-draft";
   if (normalizedPath.startsWith("resumes/")) return "resume";
@@ -113,6 +117,8 @@ export function parseNarrariumMarkdownDocument(path: string, rawMarkdown: string
       return buildTypedDocument(kind, normalizedPath, assetSchema.parse(frontmatter), body, rawMarkdown);
     case "context":
       return buildTypedDocument(kind, normalizedPath, contextSchema.parse(frontmatter), body, rawMarkdown);
+    case "note":
+      return buildTypedDocument(kind, normalizedPath, noteSchema.parse(frontmatter), body, rawMarkdown);
     case "timeline-main":
     case "resume":
     case "evaluation":
@@ -152,6 +158,15 @@ export function buildNarrariumBookSnapshot(input: BuildNarrariumBookSnapshotInpu
         break;
       case "context":
         snapshot.context = document as typeof snapshot.context;
+        break;
+      case "note":
+        if (document.path === "notes.md") {
+          snapshot.bookNotes = document as typeof snapshot.bookNotes;
+        } else if (document.path === "story-design.md") {
+          snapshot.storyDesign = document as typeof snapshot.storyDesign;
+        } else {
+          snapshot.chapterDraftNotes.push(document as (typeof snapshot.chapterDraftNotes)[number]);
+        }
         break;
       case "guideline":
         snapshot.guidelines.push(document as (typeof snapshot.guidelines)[number]);
@@ -214,6 +229,7 @@ export function buildNarrariumBookSnapshot(input: BuildNarrariumBookSnapshotInpu
   }
 
   snapshot.guidelines.sort(compareDocuments);
+  snapshot.chapterDraftNotes.sort(compareDocuments);
   snapshot.characters.sort(compareDocuments);
   snapshot.items.sort(compareDocuments);
   snapshot.locations.sort(compareDocuments);
