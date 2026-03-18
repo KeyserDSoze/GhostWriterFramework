@@ -1,6 +1,7 @@
 import { cp, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isClearlyInvalidBookRootValue, normalizeReaderEnvValue, resolveReaderBookRootCandidate } from "./lib/env.js";
 
 type ScaffoldOptions = {
   bookRoot?: string;
@@ -14,13 +15,14 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
   const packageRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
   const bookRoot = options.bookRoot ?? "..";
   const packageName = options.packageName ?? inferPackageName(targetRoot);
-  const coreDependency = options.coreDependency ?? `^${await readCurrentPackageVersion(packageRoot)}`;
+  const coreDependency = options.coreDependency ?? await readNarrariumCoreVersion(packageRoot);
   const pagesDomain = options.pagesDomain?.trim() || undefined;
 
   await mkdir(path.join(targetRoot, "src", "layouts"), { recursive: true });
   await mkdir(path.join(targetRoot, "src", "lib"), { recursive: true });
   await mkdir(path.join(targetRoot, "src", "pages"), { recursive: true });
   await mkdir(path.join(targetRoot, "src", "components"), { recursive: true });
+  await mkdir(path.join(targetRoot, "src", "styles"), { recursive: true });
   await mkdir(path.join(targetRoot, "scripts"), { recursive: true });
   await mkdir(path.join(targetRoot, ".github", "workflows"), { recursive: true });
   await mkdir(path.join(targetRoot, "public", "downloads"), { recursive: true });
@@ -28,8 +30,10 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
   await Promise.all([
     copyFile(path.join(packageRoot, "astro.config.mjs"), path.join(targetRoot, "astro.config.mjs")),
     copyFile(path.join(packageRoot, "tsconfig.json"), path.join(targetRoot, "tsconfig.json")),
+    copyFile(path.join(packageRoot, "src", "middleware.ts"), path.join(targetRoot, "src", "middleware.ts")),
     cp(path.join(packageRoot, "scripts"), path.join(targetRoot, "scripts"), { recursive: true }),
     cp(path.join(packageRoot, "src", "components"), path.join(targetRoot, "src", "components"), { recursive: true }),
+    cp(path.join(packageRoot, "src", "styles"), path.join(targetRoot, "src", "styles"), { recursive: true }),
     cp(path.join(packageRoot, "src", "lib"), path.join(targetRoot, "src", "lib"), { recursive: true }),
     cp(path.join(packageRoot, "src", "layouts"), path.join(targetRoot, "src", "layouts"), { recursive: true }),
     cp(path.join(packageRoot, "src", "pages"), path.join(targetRoot, "src", "pages"), { recursive: true }),
@@ -44,6 +48,7 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
         type: "module",
         scripts: {
           "export:epub": "node ./scripts/export-epub.mjs",
+          doctor: "node ./scripts/doctor.mjs",
           dev: "node ./scripts/dev.mjs",
           build: "npm run export:epub && astro build",
           preview: "astro preview",
@@ -52,6 +57,7 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
           "narrarium": coreDependency,
           astro: "^5.14.1",
           chokidar: "^4.0.3",
+          "js-yaml": "^3.14.2",
           marked: "^16.3.0",
         },
         devDependencies: {
@@ -82,7 +88,17 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
     await writeFile(path.join(targetRoot, "public", "CNAME"), `${pagesDomain}\n`, "utf8");
   }
 
-  await writeFile(path.join(targetRoot, ".env.example"), `NARRARIUM_BOOK_ROOT=${toPosix(bookRoot)}\n`, "utf8");
+  await writeFile(
+    path.join(targetRoot, ".env.example"),
+    buildReaderEnvFile(bookRoot),
+    "utf8",
+  );
+  const envPath = path.join(targetRoot, ".env");
+  const existingEnv = await readFile(envPath, "utf8").catch(() => null);
+  const nextEnv = mergeReaderEnvFile(existingEnv, bookRoot, targetRoot);
+  if (nextEnv !== existingEnv) {
+    await writeFile(envPath, nextEnv, "utf8");
+  }
   await writeFile(path.join(targetRoot, ".gitignore"), "node_modules/\ndist/\n.astro/\n.env\npublic/downloads/\n", "utf8");
   await writeFile(
     path.join(targetRoot, "README.md"),
@@ -105,10 +121,13 @@ This site was scaffolded from \`narrarium-astro-reader\`.
 
 ## Configure
 
-Set the book root in a local environment file:
+The scaffold creates a local \`.env\` with the book root already filled in. Adjust it if this reader should point somewhere else:
 
 \`\`\`bash
 NARRARIUM_BOOK_ROOT=${toPosix(bookRoot)}
+# NARRARIUM_READER_CANON_MODE=full
+# EPUBCHECK_CMD=epubcheck
+# EPUBCHECK_JAR=/absolute/path/to/epubcheck.jar
 \`\`\`
 
 ## Run
@@ -121,6 +140,16 @@ npm run dev
 The dev server exports a fresh EPUB to \`public/downloads/book.epub\` before Astro starts.
 It also watches the linked book repository, regenerates the EPUB when canon files change, and triggers a full browser reload.
 
+By default the reader uses a spoiler-safe public mode. If you want a private full-canon deployment, enable \`NARRARIUM_READER_CANON_MODE=full\` before running dev or build.
+
+## Doctor
+
+\`\`\`bash
+npm run doctor
+\`\`\`
+
+This checks broken canon references, spoiler thresholds, missing asset metadata, and stale \`plot.md\`, \`resumes/\`, or \`state/\` files.
+
 ## Build
 
 \`\`\`bash
@@ -128,6 +157,8 @@ npm run build
 \`\`\`
 
 The build also refreshes the EPUB automatically and ships a ready-to-deploy static site.
+
+If you want EPUBCheck validation too, set \`EPUBCHECK_JAR=/absolute/path/to/epubcheck.jar\` or \`EPUBCHECK_CMD=epubcheck\` before running export or build.
 
 ## GitHub Pages
 
@@ -138,6 +169,47 @@ By default it deploys to standard GitHub Pages using the repository name as the 
 
 function buildBookConfigScript(bookRoot: string): string {
   return `export const defaultBookRoot = ${JSON.stringify(toPosix(bookRoot))};\n`;
+}
+
+function buildReaderEnvFile(bookRoot: string): string {
+  return [
+    `NARRARIUM_BOOK_ROOT=${toPosix(bookRoot)}`,
+    "# NARRARIUM_READER_CANON_MODE=full",
+    "# EPUBCHECK_CMD=epubcheck",
+    "# EPUBCHECK_JAR=/absolute/path/to/epubcheck.jar",
+    "",
+  ].join("\n");
+}
+
+function mergeReaderEnvFile(existingContent: string | null, bookRoot: string, targetRoot: string): string {
+  const desiredRoot = toPosix(bookRoot);
+  if (existingContent === null) {
+    return buildReaderEnvFile(bookRoot);
+  }
+
+  const lines = existingContent.split(/\r?\n/);
+  let handled = false;
+
+  const nextLines = lines.map((line) => {
+    const match = line.match(/^(\s*NARRARIUM_BOOK_ROOT\s*=\s*)(.*)$/);
+    if (!match) {
+      return line;
+    }
+
+    handled = true;
+    const currentValue = normalizeReaderEnvValue(match[2]);
+    if (currentValue && !isClearlyInvalidBookRootValue(currentValue) && resolveReaderBookRootCandidate(currentValue, targetRoot)) {
+      return line;
+    }
+
+    return `${match[1]}${desiredRoot}`;
+  });
+
+  if (handled) {
+    return nextLines.join("\n");
+  }
+
+  return `${buildReaderEnvFile(bookRoot).trimEnd()}\n${existingContent}`;
 }
 
 function buildPagesWorkflow(pagesDomain?: string): string {
@@ -217,8 +289,8 @@ function inferPackageName(targetRoot: string): string {
   return base;
 }
 
-async function readCurrentPackageVersion(packageRoot: string): Promise<string> {
+async function readNarrariumCoreVersion(packageRoot: string): Promise<string> {
   const raw = await readFile(path.join(packageRoot, "package.json"), "utf8");
-  const parsed = JSON.parse(raw) as { version?: string };
-  return parsed.version ?? "0.1.0";
+  const parsed = JSON.parse(raw) as { dependencies?: Record<string, string> };
+  return parsed.dependencies?.["narrarium"] ?? "^0.1.7";
 }

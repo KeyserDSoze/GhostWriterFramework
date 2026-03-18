@@ -18,15 +18,18 @@ Use Narrarium as a book-writing framework where the repository is the source of 
    - `wizard_answer`
    - `wizard_finalize`
 5. After significant structural changes, refresh maintenance files:
+   - `sync_plot`
    - `sync_resume` or `sync_all_resumes`
    - `evaluate_chapter` or `evaluate_book`
+
+Narrarium MCP already auto-refreshes `plot.md` and the resume files after final chapter or paragraph mutations. Evaluations remain manual unless explicitly requested.
 
 ## Canon discipline
 
 - Do not duplicate canon if the fact already exists in another markdown file.
 - Keep structured facts in frontmatter and prose in markdown body.
 - Do not reveal a secret before its `known_from` or `reveal_in` threshold.
-- Treat `guidelines/`, `resumes/`, `evaluations/`, and `secrets/` as first-class context, not optional notes.
+- Treat `guidelines/`, `drafts/`, `plot.md`, `conversations/`, `resumes/`, `evaluations/`, and `secrets/` as first-class context, not optional notes.
 
 ## Historical or factual content
 
@@ -36,8 +39,15 @@ Use Narrarium as a book-writing framework where the repository is the source of 
 ## Chapter and scene updates
 
 - Use `create_chapter` and `create_paragraph` for new structure.
+- Use `create_chapter_draft` and `create_paragraph_draft` for rough scaffolding before final prose.
+- Use `chapter_writing_context` and `paragraph_writing_context` before drafting polished prose from rough material.
+- Use `resume_book_context` when restarting work from exported conversation history or a fresh session.
 - Use `update_chapter` and `update_paragraph` for existing files.
+- Use `update_chapter_draft` and `update_paragraph_draft` when refining rough material.
+- Use `create_chapter_from_draft` and `create_paragraph_from_draft` when turning rough drafts into final story files.
 - Avoid renumbering or renaming chapter and paragraph files unless the user explicitly asks for structural migration.
+- Before writing new chapter or paragraph prose, read `guidelines/prose.md`, the relevant prior story context, and any matching draft files.
+- Keep `plot.md` updated whenever chapter progression, timeline anchors, or reveal timing changes.
 
 ## Reader and publishing
 
@@ -45,6 +55,7 @@ Use Narrarium as a book-writing framework where the repository is the source of 
 - Use `npm run reader:init` or `narrarium-reader-init` to scaffold a standalone reader app.
 - Keep package naming aligned with the public package set:
   - `narrarium`
+  - `narrarium-sdk`
   - `narrarium-mcp-server`
   - `create-narrarium-book`
   - `narrarium-astro-reader`

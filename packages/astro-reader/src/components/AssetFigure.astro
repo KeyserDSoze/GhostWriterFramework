@@ -14,4 +14,5 @@ const ratioStyle = figure.aspectRatio.includes(":")
 
 <figure class:list={["media-frame", className]}>
   <img src={figure.src} alt={figure.alt} loading="lazy" style={ratioStyle} />
+  {figure.caption && <figcaption class="chapter-meta">{figure.caption}</figcaption>}
 </figure>

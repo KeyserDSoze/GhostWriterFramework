@@ -14,30 +14,30 @@ const publicToolCount = tools.filter((tool) => tool.surface === "public").length
     <p class="eyebrow">GitHub Pages</p>
     <h1>Narrarium Framework docs</h1>
     <p class="lede">
-      This site is built from the repository itself: root docs, package READMEs, and live MCP tool definitions are collected during build so the published reference stays aligned with the codebase.
+      This site is built directly from the repository. Root docs, package READMEs, and live MCP tool definitions are collected during build so the published reference stays aligned with the codebase.
     </p>
   </section>
 
   <section class="grid cards">
     <article class="card">
-      <h3>Scattered markdown, one site</h3>
+      <h3>One reference, many sources</h3>
       <p>Root docs, package READMEs, and agent rules are aggregated automatically into a single navigation tree.</p>
       <a class="pill" href={withBase("/docs/")}>Browse docs</a>
     </article>
     <article class="card">
       <h3>MCP integration reference</h3>
-      <p>See local and public MCP surfaces, setup patterns, and live tool lists extracted from the server source.</p>
+      <p>See local and public MCP surfaces, setup patterns, and tool lists extracted from the server source.</p>
       <a class="pill" href={withBase("/mcp/")}>Open MCP docs</a>
     </article>
     <article class="card">
       <h3>Packages at a glance</h3>
-      <p>Jump straight into `narrarium`, `narrarium-mcp-server`, `create-narrarium-book`, and `narrarium-astro-reader` package documentation.</p>
+      <p>Jump straight into the `narrarium`, `narrarium-mcp-server`, `create-narrarium-book`, and `narrarium-astro-reader` package docs.</p>
       <a class="pill" href={withBase("/docs/create-narrarium-book/")}>Starter CLI</a>
     </article>
   </section>
 
   <section style="margin-top: 1.5rem;">
-    <h2>What is synced into this site</h2>
+    <h2>What this site syncs</h2>
     <div class="grid cards">
       {groups.map((group) => (
         <article class="card">

@@ -7,6 +7,7 @@ export const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta
 
 export const packages = [
   { name: "narrarium", dir: path.join(workspaceRoot, "packages", "core") },
+  { name: "narrarium-sdk", dir: path.join(workspaceRoot, "packages", "sdk-typescript") },
   { name: "narrarium-astro-reader", dir: path.join(workspaceRoot, "packages", "astro-reader") },
   { name: "narrarium-mcp-server", dir: path.join(workspaceRoot, "packages", "mcp-server") },
   { name: "create-narrarium-book", dir: path.join(workspaceRoot, "packages", "create-narrarium-book") },

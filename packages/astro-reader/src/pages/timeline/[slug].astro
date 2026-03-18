@@ -1,14 +1,12 @@
 ---
-import { marked } from "marked";
-import BaseLayout from "../../layouts/BaseLayout.astro";
-import { getBookRoot, loadEntityPageData } from "../../lib/book";
+import path from "node:path";
+import { listEntities, pathExists } from "narrarium";
+import AssetFigure from "../../components/AssetFigure.astro";
 import MetadataSection from "../../components/MetadataSection.astro";
 import RelatedLinks from "../../components/RelatedLinks.astro";
-import AssetFigure from "../../components/AssetFigure.astro";
-import { loadRelatedCanonLinks } from "../../lib/canon";
-import { loadAssetFigure } from "../../lib/assets";
-import { listEntities, pathExists } from "narrarium";
-import path from "node:path";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { getBookRoot, loadEntityPageData } from "../../lib/book";
+import { buildCanonPageView } from "../../lib/public-canon";
 
 export async function getStaticPaths() {
   const root = getBookRoot();
@@ -21,38 +19,41 @@ export async function getStaticPaths() {
 
 const { slug } = Astro.props;
 const entity = await loadEntityPageData("timeline-event", slug);
-const html = await marked.parse(entity.body);
-const metaEntries = [
-  ["Date", entity.metadata.date],
-  ["Participants", entity.metadata.participants],
-  ["Significance", entity.metadata.significance],
-  ["Function in book", entity.metadata.function_in_book],
-  ["Consequences", entity.metadata.consequences],
-].filter(([, value]) => value !== undefined && value !== null && (!Array.isArray(value) || value.length > 0));
-const relatedLinks = await loadRelatedCanonLinks(String(entity.metadata.id ?? `timeline-event:${slug}`), [entity.metadata.refs, ...metaEntries.map(([, value]) => value)]);
-const figure = await loadAssetFigure(String(entity.metadata.id ?? `timeline-event:${slug}`), String(entity.metadata.title ?? slug));
+const view = await buildCanonPageView("timeline-event", entity);
 ---
 
-<BaseLayout title={String(entity.metadata.title ?? slug)} description={String(entity.metadata.significance ?? entity.metadata.function_in_book ?? "Timeline event") } activeSection="timeline">
+<BaseLayout title={view.title} description={view.description} activeSection="timeline">
   <section class="hero">
-    <p class="eyebrow">Timeline Event</p>
-    <h1>{String(entity.metadata.title ?? slug)}</h1>
-    <p class="lede">{String(entity.metadata.significance ?? entity.metadata.function_in_book ?? "Canonical timeline event.")}</p>
+    <p class="eyebrow">{view.eyebrow}</p>
+    <h1>{view.title}</h1>
+    <p class="lede">{view.description}</p>
     <div class="chapter-meta"><a href="timeline/">Back to timeline</a></div>
-    {figure && <AssetFigure figure={figure} className="hero-media" />}
+    {view.figure && <AssetFigure figure={view.figure} className="hero-media" />}
   </section>
 
-  <section class="section">
-    <MetadataSection entries={metaEntries} />
-  </section>
+  {view.notice && <div class="empty">{view.notice}</div>}
 
-  {relatedLinks.length > 0 && (
+  {view.metaEntries.length > 0 && (
     <section class="section">
-      <RelatedLinks links={relatedLinks} />
+      <MetadataSection entries={view.metaEntries} heading={view.mode === "full" ? "Metadata" : "Public dossier"} />
     </section>
   )}
 
-  <section class="section">
-    <article class="scene prose" set:html={html} />
-  </section>
+  {view.relatedLinks.length > 0 && (
+    <section class="section">
+      <RelatedLinks links={view.relatedLinks} />
+    </section>
+  )}
+
+  {view.storyLinks.length > 0 && (
+    <section class="section">
+      <RelatedLinks links={view.storyLinks} heading="Mentioned in story" />
+    </section>
+  )}
+
+  {view.html && (
+    <section class="section">
+      <article class="scene prose" set:html={view.html} />
+    </section>
+  )}
 </BaseLayout>

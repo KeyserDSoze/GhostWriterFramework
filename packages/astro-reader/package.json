@@ -1,6 +1,6 @@
 {
   "name": "narrarium-astro-reader",
-  "version": "0.1.0",
+  "version": "0.1.21",
   "type": "module",
   "description": "Astro reader and scaffolding CLI for Narrarium book repositories.",
   "license": "MIT",
@@ -15,7 +15,9 @@
   "exports": {
     "./scaffold": {
       "types": "./cli-dist/scaffold.d.ts",
-      "import": "./cli-dist/scaffold.js"
+      "import": "./cli-dist/scaffold.js",
+      "require": "./cli-dist/scaffold.js",
+      "default": "./cli-dist/scaffold.js"
     }
   },
   "files": [
@@ -41,13 +43,14 @@
   "scripts": {
     "build:cli": "tsc -p tsconfig.cli.json",
     "export:epub": "node ./scripts/export-epub.mjs",
+    "doctor": "node ./scripts/doctor.mjs",
     "dev": "node ./scripts/dev.mjs",
     "build": "npm run build:cli && npm run export:epub && astro build",
     "preview": "astro preview",
     "test": "npm run build:cli && node --test test/**/*.test.mjs"
   },
   "dependencies": {
-    "narrarium": "^0.1.0",
+    "narrarium": "^0.1.21",
     "astro": "^5.14.1",
     "chokidar": "^4.0.3",
     "marked": "^16.3.0"

@@ -1,5 +1,33 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "default_agent": "build",
+  "agent": {
+    "build": {
+      "temperature": 0.45,
+      "top_p": 1,
+      "options": {
+        "reasoningEffort": "high",
+        "reasoningSummary": "detailed",
+        "textVerbosity": "high",
+        "include": ["reasoning.encrypted_content", "usage"],
+        "store": false
+      }
+    },
+    "plan": {
+      "temperature": 0.2,
+      "top_p": 1,
+      "options": {
+        "reasoningEffort": "high",
+        "reasoningSummary": "detailed",
+        "textVerbosity": "high",
+        "include": ["reasoning.encrypted_content", "usage"],
+        "store": false
+      }
+    }
+  },
+  "watcher": {
+    "ignore": ["conversations/sessions/**", "conversations/*.json"]
+  },
   "mcp": {
     "narrarium": {
       "type": "local",

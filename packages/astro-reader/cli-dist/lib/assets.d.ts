@@ -1,6 +1,7 @@
 export type ReaderFigure = {
     src: string;
     alt: string;
+    caption?: string;
     aspectRatio: string;
     orientation: "portrait" | "landscape" | "square";
 };

@@ -10,7 +10,8 @@ export async function loadAssetFigure(subject, alt, assetKind) {
     const buffer = await readFile(asset.imagePath);
     return {
         src: `data:${mimeTypeForExtension(path.extname(asset.imagePath))};base64,${buffer.toString("base64")}`,
-        alt,
+        alt: typeof asset.metadata.alt_text === "string" && asset.metadata.alt_text.trim() ? asset.metadata.alt_text : alt,
+        caption: typeof asset.metadata.caption === "string" && asset.metadata.caption.trim() ? asset.metadata.caption : undefined,
         aspectRatio: asset.metadata.aspect_ratio,
         orientation: asset.metadata.orientation,
     };

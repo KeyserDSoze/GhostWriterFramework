@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import path from "node:path";
 import process from "node:process";
 import chokidar from "chokidar";
 import { defaultBookRoot } from "./book-config.mjs";
 import { exportReaderEpub, formatWatchedPath, resolveBookRoot, resolveBookWatchTargets } from "./book-dev-utils.mjs";
 
 const require = createRequire(import.meta.url);
-const astroCliPath = require.resolve("astro/astro.js");
+const astroCliPath = resolveAstroCliPath();
 const bookRoot = resolveBookRoot(defaultBookRoot);
 const watchTargets = resolveBookWatchTargets(bookRoot);
 
@@ -80,11 +81,19 @@ async function flushQueuedExport() {
 async function runExport(reason) {
   exportInFlight = true;
   try {
-    const { result } = await exportReaderEpub(defaultBookRoot);
-    if (reason === "startup") {
+    const { result, validation } = await exportReaderEpub(defaultBookRoot);
+    if (result.skipped) {
+      console.log(`[narrarium-reader] ${validation.detail}`);
+    } else if (reason === "startup") {
       console.log(`[narrarium-reader] Exported EPUB with ${result.chapterCount} chapters to ${result.outputPath}`);
     } else {
       console.log(`[narrarium-reader] Updated EPUB after ${reason}`);
+    }
+
+    if (validation.status === "passed") {
+      console.log(`[narrarium-reader] ${validation.detail}`);
+    } else if (validation.status === "failed") {
+      console.error(`[narrarium-reader] ${validation.detail}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -113,4 +122,16 @@ function describeEvent(eventName) {
     default:
       return eventName;
   }
+}
+
+function resolveAstroCliPath() {
+  const astroPackageJsonPath = require.resolve("astro/package.json");
+  const astroPackageJson = require(astroPackageJsonPath);
+  const astroBin = typeof astroPackageJson.bin === "string" ? astroPackageJson.bin : astroPackageJson.bin?.astro;
+
+  if (!astroBin) {
+    throw new Error("Could not resolve Astro CLI entry from astro/package.json");
+  }
+
+  return path.join(path.dirname(astroPackageJsonPath), astroBin);
 }

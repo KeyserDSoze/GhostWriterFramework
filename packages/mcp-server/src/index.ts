@@ -7,45 +7,69 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
   assetSchema,
+  buildChapterWritingContext,
+  buildParagraphWritingContext,
+  buildResumeBookContext,
   characterRoleTierSchema,
   characterStoryRoleSchema,
   createAssetPrompt,
   createChapter,
+  createChapterDraft,
+  createChapterFromDraft,
   createCharacterProfile,
   createEntity,
   createFactionProfile,
   createItemProfile,
   createLocationProfile,
   createParagraph,
+  createParagraphDraft,
+  createParagraphFromDraft,
   createSecretProfile,
   createTimelineEventProfile,
   evaluateBook,
   exportEpub,
+  findWikipediaResearchSnapshot,
   initializeBookRepo,
   listRelatedCanon,
+  queryCanon,
+  readStoryStateStatus,
   readAsset,
   registerAsset,
   renameChapter,
   renameEntity,
   renameParagraph,
+  reviseChapter,
+  reviseParagraph,
   renderMarkdown,
   searchBook,
+  saveBookWorkItem,
+  saveChapterDraftWorkItem,
   syncAllResumes,
   syncParagraphEvaluation,
   syncChapterEvaluation,
   syncChapterResume,
+  syncPlot,
+  syncStoryState,
   syncTotalResume,
+  promoteBookWorkItem,
+  promoteChapterDraftWorkItem,
   updateChapter,
+  updateChapterDraft,
+  updateBookNotes,
+  updateChapterDraftNotes,
   updateEntity,
   updateParagraph,
+  updateParagraphDraft,
   validateBook,
   writeWikipediaResearchSnapshot,
 } from "narrarium";
 import {
   buildRepositorySpecSummary,
   buildSetupInstructions,
+  fetchWikidataEntity,
   fetchWikipediaPage,
   searchWikipedia,
+  type NormalizedWikidataClaims,
 } from "./public-tools.js";
 
 const server = new McpServer({
@@ -64,6 +88,34 @@ const entityTypeSchema = z.enum([
 
 const imageOrientationSchema = z.enum(["portrait", "landscape", "square"]);
 const imageProviderSchema = z.enum(["openai"]);
+const revisionModeSchema = z.enum(["clarity", "pacing", "dialogue", "voice", "tension", "show-dont-tell", "redundancy"]);
+const revisionIntensitySchema = z.enum(["light", "medium", "strong"]);
+const wikipediaRefreshToolFields = {
+  forceWikipediaRefresh: z.boolean().default(false),
+  maxWikipediaSnapshotAgeDays: z.number().int().positive().optional(),
+};
+const hiddenCanonToolFields = {
+  secretRefs: z.array(z.string()).default([]),
+  privateNotes: z.string().optional(),
+  revealIn: z.string().optional(),
+  knownFrom: z.string().optional(),
+};
+const pronunciationToolFields = {
+  pronunciation: z.string().optional(),
+  spokenName: z.string().optional(),
+  ttsLabel: z.string().optional(),
+};
+const hiddenCanonWizardSteps: WizardStep[] = [
+  { key: "secretRefs", prompt: "List linked secret ids for this entry, if any.", type: "stringArray" },
+  { key: "privateNotes", prompt: "Add private notes or hidden canon for this entry.", type: "string" },
+  { key: "knownFrom", prompt: "From which chapter can the reader safely know this hidden information?", type: "string" },
+  { key: "revealIn", prompt: "In which chapter should this hidden information be fully revealed?", type: "string" },
+];
+const pronunciationWizardSteps: WizardStep[] = [
+  { key: "pronunciation", prompt: "Optional pronunciation guide for humans, such as LYE-rah VAYL.", type: "string" },
+  { key: "spokenName", prompt: "Optional spoken name or simplified label the browser voice should read aloud.", type: "string" },
+  { key: "ttsLabel", prompt: "Optional full TTS replacement if the browser should speak a different phrase than the visible name.", type: "string" },
+];
 
 const wizardKindSchema = z.enum([
   "character",
@@ -108,10 +160,15 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "speakingStyle", prompt: "How does the character speak? Describe rhythm, vocabulary, tone, and verbal habits.", type: "string", required: true },
     { key: "backgroundSummary", prompt: "What shaped this character before the story begins?", type: "string", required: true },
     { key: "functionInBook", prompt: "What narrative function does this character serve in the book?", type: "string", required: true },
+    ...pronunciationWizardSteps,
     { key: "age", prompt: "How old is the character, if known?", type: "int" },
     { key: "occupation", prompt: "What is their occupation, role, or public identity?", type: "string" },
     { key: "origin", prompt: "Where do they come from?", type: "string" },
     { key: "firstImpression", prompt: "What first impression should the reader get?", type: "string" },
+    { key: "currentIdentity", prompt: "What identity or name are they currently presenting to the world?", type: "string" },
+    { key: "formerNames", prompt: "List former names or identities tied to this character.", type: "stringArray" },
+    { key: "identityShifts", prompt: "List major identity changes, disguises, or transformations.", type: "stringArray" },
+    { key: "identityArc", prompt: "How does this character's identity evolve across the book?", type: "string" },
     { key: "traits", prompt: "List important traits, comma separated if needed.", type: "stringArray" },
     { key: "mannerisms", prompt: "List notable mannerisms or repeated behaviors.", type: "stringArray" },
     { key: "desires", prompt: "What does the character want?", type: "stringArray" },
@@ -123,6 +180,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "factions", prompt: "List faction ids or names tied to this character.", type: "stringArray" },
     { key: "homeLocation", prompt: "What is the character's home location id or name?", type: "string" },
     { key: "introducedIn", prompt: "In which chapter is the character introduced?", type: "string" },
+    ...hiddenCanonWizardSteps,
     { key: "historical", prompt: "Is this character historical or fact-checked? yes or no.", type: "bool" },
     { key: "wikipediaTitle", prompt: "If historical, what Wikipedia page should be used for verification?", type: "string", condition: (data) => Boolean(data.historical) },
   ],
@@ -132,11 +190,13 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "region", prompt: "What larger region, nation, or zone contains it?", type: "string" },
     { key: "atmosphere", prompt: "What should the place feel like on the page?", type: "string", required: true },
     { key: "functionInBook", prompt: "Why does this location matter narratively?", type: "string", required: true },
+    ...pronunciationWizardSteps,
     { key: "landmarks", prompt: "List the key landmarks.", type: "stringArray" },
     { key: "risks", prompt: "List the dangers or pressures associated with this location.", type: "stringArray" },
     { key: "factionsPresent", prompt: "Which factions are active here?", type: "stringArray" },
     { key: "basedOnRealPlace", prompt: "Is it based on a real place or historical site? yes or no.", type: "bool" },
     { key: "timelineRef", prompt: "What timeline reference anchors this location, if any?", type: "string" },
+    ...hiddenCanonWizardSteps,
     { key: "historical", prompt: "Should this location be fact-checked as historical or factual? yes or no.", type: "bool" },
     { key: "wikipediaTitle", prompt: "If fact-checked, what Wikipedia page should be used?", type: "string", condition: (data) => Boolean(data.historical) || Boolean(data.basedOnRealPlace) },
   ],
@@ -146,6 +206,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "mission", prompt: "What does the faction want?", type: "string", required: true },
     { key: "ideology", prompt: "How does the faction justify itself?", type: "string", required: true },
     { key: "functionInBook", prompt: "What narrative pressure does this faction create?", type: "string", required: true },
+    ...pronunciationWizardSteps,
     { key: "publicImage", prompt: "How is the faction perceived publicly?", type: "string" },
     { key: "hiddenAgenda", prompt: "What hidden agenda or private motive does it have?", type: "string" },
     { key: "leaders", prompt: "Who leads the faction?", type: "stringArray" },
@@ -153,6 +214,7 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "enemies", prompt: "Who are its enemies?", type: "stringArray" },
     { key: "methods", prompt: "What methods does it use to get results?", type: "stringArray" },
     { key: "baseLocation", prompt: "What is the faction's base location?", type: "string" },
+    ...hiddenCanonWizardSteps,
     { key: "historical", prompt: "Should this faction be checked against history or factual research? yes or no.", type: "bool" },
     { key: "wikipediaTitle", prompt: "If factual, what Wikipedia page should be used?", type: "string", condition: (data) => Boolean(data.historical) },
   ],
@@ -162,12 +224,14 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "appearance", prompt: "What does the item look like?", type: "string", required: true },
     { key: "purpose", prompt: "What does the item do or enable?", type: "string", required: true },
     { key: "functionInBook", prompt: "Why does the item matter to the story?", type: "string", required: true },
+    ...pronunciationWizardSteps,
     { key: "significance", prompt: "Why is the item especially valuable or symbolic?", type: "string" },
     { key: "originStory", prompt: "Where does the item come from?", type: "string" },
     { key: "powers", prompt: "List powers or capabilities.", type: "stringArray" },
     { key: "limitations", prompt: "List limits, risks, or costs.", type: "stringArray" },
     { key: "owner", prompt: "Who currently owns or carries the item?", type: "string" },
     { key: "introducedIn", prompt: "Where is the item introduced?", type: "string" },
+    ...hiddenCanonWizardSteps,
     { key: "historical", prompt: "Is this item historical or fact-checked? yes or no.", type: "bool" },
     { key: "wikipediaTitle", prompt: "If factual, what Wikipedia page should be used?", type: "string", condition: (data) => Boolean(data.historical) },
   ],
@@ -176,10 +240,13 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "secretKind", prompt: "What kind of secret is it? identity, betrayal, crime, prophecy, origin, etc.", type: "string" },
     { key: "functionInBook", prompt: "Why does this secret exist in the story?", type: "string", required: true },
     { key: "stakes", prompt: "What changes if the secret is revealed or suppressed?", type: "string", required: true },
+    ...pronunciationWizardSteps,
     { key: "protectedBy", prompt: "Who or what protects the secret?", type: "stringArray" },
     { key: "falseBeliefs", prompt: "What false beliefs does this secret create or preserve?", type: "stringArray" },
     { key: "revealStrategy", prompt: "How should the reveal be staged?", type: "string" },
     { key: "holders", prompt: "Who knows the truth?", type: "stringArray" },
+    { key: "secretRefs", prompt: "List related secret ids for cross-reference, if any.", type: "stringArray" },
+    { key: "privateNotes", prompt: "Add private notes that should stay off the main canon surface.", type: "string" },
     { key: "revealIn", prompt: "In which chapter should it be revealed?", type: "string" },
     { key: "knownFrom", prompt: "From which chapter can the reader safely know it?", type: "string" },
     { key: "timelineRef", prompt: "What timeline reference anchors the secret?", type: "string" },
@@ -192,7 +259,9 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "participants", prompt: "Who participates in this event?", type: "stringArray" },
     { key: "significance", prompt: "Why is this event important?", type: "string" },
     { key: "functionInBook", prompt: "What is this event used for in the book?", type: "string" },
+    ...pronunciationWizardSteps,
     { key: "consequences", prompt: "List the consequences of the event.", type: "stringArray" },
+    ...hiddenCanonWizardSteps,
     { key: "historical", prompt: "Should this event be checked against history or factual research? yes or no.", type: "bool" },
     { key: "wikipediaTitle", prompt: "If factual, what Wikipedia page should be used?", type: "string", condition: (data) => Boolean(data.historical) },
   ],
@@ -201,6 +270,10 @@ const wizardDefinitions: Record<WizardKind, WizardStep[]> = {
     { key: "title", prompt: "What is the chapter title?", type: "string", required: true },
     { key: "summary", prompt: "What is the chapter summary?", type: "string" },
     { key: "pov", prompt: "Which POV ids or names drive this chapter?", type: "stringArray" },
+    { key: "styleRefs", prompt: "List explicit style profile ids for this chapter only, if it should diverge from the book default.", type: "stringArray" },
+    { key: "narrationPerson", prompt: "If this chapter needs an explicit narration person, what is it? first, second, third, etc.", type: "string" },
+    { key: "narrationTense", prompt: "If this chapter needs an explicit narration tense, what is it? past, present, etc.", type: "string" },
+    { key: "proseMode", prompt: "List explicit prose modes for this chapter, such as show-dont-tell, tight-interiority, or descriptive-wide-lens.", type: "stringArray" },
     { key: "timelineRef", prompt: "What timeline reference should this chapter carry?", type: "string" },
     { key: "tags", prompt: "List chapter tags.", type: "stringArray" },
     { key: "body", prompt: "Optional chapter notes body or beat scaffold.", type: "string" },
@@ -233,12 +306,14 @@ server.tool(
       language,
       createSkills,
     });
+    const plot = await syncPlot(rootPath);
 
     return textResponse(
       [
         `Initialized Narrarium book repo at ${result.rootPath}.`,
         `Created ${result.created.length} seed files and directories.`,
         result.created.length > 0 ? `Created files: ${result.created.join(", ")}` : "All seed files already existed.",
+        `Synced plot at ${plot.filePath}.`,
       ].join("\n"),
     );
   },
@@ -334,10 +409,10 @@ server.tool(
     overwrite: z.boolean().default(false),
     frontmatter: z.record(z.string(), z.unknown()).default({}),
     body: z.string().optional(),
-    saveWikipediaResearch: z.boolean().default(true),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
+    wikipediaLang: z.string().min(2).default("en"),
+    ...wikipediaRefreshToolFields,
   },
-  async ({ sessionId, slug, overwrite, frontmatter, body, saveWikipediaResearch, wikipediaLang }) => {
+  async ({ sessionId, slug, overwrite, frontmatter, body, wikipediaLang, forceWikipediaRefresh, maxWikipediaSnapshotAgeDays }) => {
     const session = wizardSessions.get(sessionId);
     if (!session) {
       throw new Error(`Unknown wizard session: ${sessionId}`);
@@ -348,8 +423,9 @@ server.tool(
       overwrite,
       frontmatter,
       body,
-      saveWikipediaResearch,
-      wikipediaLang,
+      lang: wikipediaLang,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
     wizardSessions.delete(sessionId);
     return textResponse(result);
@@ -390,12 +466,14 @@ server.tool(
         "Strong optional fields:",
         "- Story role: protagonist, antagonist, mentor, ally, foil, love-interest, comic-relief, other",
         "- Age, occupation, origin, first impression",
+        "- Current identity, former names, and identity shifts",
         "- Traits and mannerisms",
         "- Desires and fears",
         "- Internal and external conflict",
         "- Arc",
         "- Relationships",
         "- Factions, home location, first chapter",
+        "- Hidden canon: linked secret ids, private notes, known-from, reveal chapter",
         "- Historical flag and Wikipedia title if factual verification is needed",
       ].join("\n"),
     );
@@ -419,6 +497,10 @@ server.tool(
     occupation: z.string().optional(),
     origin: z.string().optional(),
     firstImpression: z.string().optional(),
+    currentIdentity: z.string().optional(),
+    formerNames: z.array(z.string()).default([]),
+    identityShifts: z.array(z.string()).default([]),
+    identityArc: z.string().optional(),
     arc: z.string().optional(),
     internalConflict: z.string().optional(),
     externalConflict: z.string().optional(),
@@ -430,12 +512,14 @@ server.tool(
     factions: z.array(z.string()).default([]),
     homeLocation: z.string().optional(),
     introducedIn: z.string().optional(),
+    ...pronunciationToolFields,
+    ...hiddenCanonToolFields,
     timelineAges: z.record(z.string(), z.number().int().nonnegative()).default({}),
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
+    ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
   async ({
@@ -452,6 +536,10 @@ server.tool(
     occupation,
     origin,
     firstImpression,
+    currentIdentity,
+    formerNames,
+    identityShifts,
+    identityArc,
     arc,
     internalConflict,
     externalConflict,
@@ -463,23 +551,33 @@ server.tool(
     factions,
     homeLocation,
     introducedIn,
+    pronunciation,
+    spokenName,
+    ttsLabel,
+    secretRefs,
+    privateNotes,
+    revealIn,
+    knownFrom,
     timelineAges,
     overwrite,
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
-    const { sources, note: wikipediaNote } = await collectHistoricalResearchSupport({
+    const { sources, note: wikipediaNote, wikidataClaims } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
-      wikipediaLang,
       rootPath,
       slug,
-      saveWikipediaResearch,
+      lang: wikipediaLang,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
 
+    const wikidataFields = wikidataClaims ? mapWikidataToCharacter(wikidataClaims) : {};
     const result = await createCharacterProfile(rootPath, {
       name,
       slug,
@@ -493,6 +591,10 @@ server.tool(
       occupation,
       origin,
       firstImpression,
+      currentIdentity,
+      formerNames,
+      identityShifts,
+      identityArc,
       arc,
       internalConflict,
       externalConflict,
@@ -504,11 +606,18 @@ server.tool(
       factions,
       homeLocation,
       introducedIn,
+      pronunciation,
+      spokenName,
+      ttsLabel,
+      secretRefs,
+      privateNotes,
+      revealIn,
+      knownFrom,
       timelineAges,
       overwrite,
       historical,
       sources,
-      frontmatter,
+      frontmatter: { ...wikidataFields, ...frontmatter },
     });
 
     return textResponse(`Created character at ${result.filePath}.${wikipediaNote}`);
@@ -536,6 +645,7 @@ server.tool(
           "Location kind, region, timeline reference",
           "Landmarks and risks",
           "Factions present",
+          "Hidden canon: linked secret ids, private notes, known-from, reveal chapter",
           "Whether it is based on a real place or historical site",
           "Historical flag and Wikipedia title if factual verification is needed",
         ],
@@ -559,11 +669,13 @@ server.tool(
     factionsPresent: z.array(z.string()).default([]),
     basedOnRealPlace: z.boolean().default(false),
     timelineRef: z.string().optional(),
+    ...pronunciationToolFields,
+    ...hiddenCanonToolFields,
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
+    ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
   async ({
@@ -579,22 +691,32 @@ server.tool(
     factionsPresent,
     basedOnRealPlace,
     timelineRef,
+    pronunciation,
+    spokenName,
+    ttsLabel,
+    secretRefs,
+    privateNotes,
+    revealIn,
+    knownFrom,
     overwrite,
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
-    const { sources, note } = await collectHistoricalResearchSupport({
+    const { sources, note, wikidataClaims } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
-      wikipediaLang,
       rootPath,
       slug,
-      saveWikipediaResearch,
+      lang: wikipediaLang,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
 
+    const wikidataFields = wikidataClaims ? mapWikidataToLocation(wikidataClaims) : {};
     const result = await createLocationProfile(rootPath, {
       name,
       slug,
@@ -607,10 +729,17 @@ server.tool(
       factionsPresent,
       basedOnRealPlace,
       timelineRef,
+      pronunciation,
+      spokenName,
+      ttsLabel,
+      secretRefs,
+      privateNotes,
+      revealIn,
+      knownFrom,
       overwrite,
       historical,
       sources,
-      frontmatter,
+      frontmatter: { ...wikidataFields, ...frontmatter },
     });
 
     return textResponse(`Created location at ${result.filePath}.${note}`);
@@ -639,6 +768,7 @@ server.tool(
           "Faction kind, public image, hidden agenda",
           "Leaders, allies, enemies, methods",
           "Base location",
+          "Hidden canon: linked secret ids, private notes, known-from, reveal chapter",
           "Historical flag and Wikipedia title if factual verification is needed",
         ],
       }),
@@ -663,11 +793,13 @@ server.tool(
     enemies: z.array(z.string()).default([]),
     methods: z.array(z.string()).default([]),
     baseLocation: z.string().optional(),
+    ...pronunciationToolFields,
+    ...hiddenCanonToolFields,
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
+    ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
   async ({
@@ -685,22 +817,32 @@ server.tool(
     enemies,
     methods,
     baseLocation,
+    pronunciation,
+    spokenName,
+    ttsLabel,
+    secretRefs,
+    privateNotes,
+    revealIn,
+    knownFrom,
     overwrite,
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
-    const { sources, note } = await collectHistoricalResearchSupport({
+    const { sources, note, wikidataClaims } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
-      wikipediaLang,
       rootPath,
       slug,
-      saveWikipediaResearch,
+      lang: wikipediaLang,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
 
+    const wikidataFields = wikidataClaims ? mapWikidataToFaction(wikidataClaims) : {};
     const result = await createFactionProfile(rootPath, {
       name,
       slug,
@@ -715,10 +857,17 @@ server.tool(
       enemies,
       methods,
       baseLocation,
+      pronunciation,
+      spokenName,
+      ttsLabel,
+      secretRefs,
+      privateNotes,
+      revealIn,
+      knownFrom,
       overwrite,
       historical,
       sources,
-      frontmatter,
+      frontmatter: { ...wikidataFields, ...frontmatter },
     });
 
     return textResponse(`Created faction at ${result.filePath}.${note}`);
@@ -747,6 +896,7 @@ server.tool(
           "Item kind, significance, origin story",
           "Owner and chapter of introduction",
           "Powers and limitations",
+          "Hidden canon: linked secret ids, private notes, known-from, reveal chapter",
           "Historical flag and Wikipedia title if factual verification is needed",
         ],
       }),
@@ -770,11 +920,13 @@ server.tool(
     limitations: z.array(z.string()).default([]),
     owner: z.string().optional(),
     introducedIn: z.string().optional(),
+    ...pronunciationToolFields,
+    ...hiddenCanonToolFields,
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
+    ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
   async ({
@@ -791,22 +943,32 @@ server.tool(
     limitations,
     owner,
     introducedIn,
+    pronunciation,
+    spokenName,
+    ttsLabel,
+    secretRefs,
+    privateNotes,
+    revealIn,
+    knownFrom,
     overwrite,
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
-    const { sources, note } = await collectHistoricalResearchSupport({
+    const { sources, note, wikidataClaims } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
-      wikipediaLang,
       rootPath,
       slug,
-      saveWikipediaResearch,
+      lang: wikipediaLang,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
 
+    const wikidataFields = wikidataClaims ? mapWikidataToItem(wikidataClaims) : {};
     const result = await createItemProfile(rootPath, {
       name,
       slug,
@@ -820,10 +982,17 @@ server.tool(
       limitations,
       owner,
       introducedIn,
+      pronunciation,
+      spokenName,
+      ttsLabel,
+      secretRefs,
+      privateNotes,
+      revealIn,
+      knownFrom,
       overwrite,
       historical,
       sources,
-      frontmatter,
+      frontmatter: { ...wikidataFields, ...frontmatter },
     });
 
     return textResponse(`Created item at ${result.filePath}.${note}`);
@@ -852,6 +1021,7 @@ server.tool(
           "Who holds it and who protects it",
           "False beliefs created by the secret",
           "Reveal strategy, reveal chapter, known-from chapter, timeline reference",
+          "Private notes and linked secret ids",
           "Historical flag and Wikipedia title if factual verification is needed",
         ],
       }),
@@ -872,14 +1042,17 @@ server.tool(
     falseBeliefs: z.array(z.string()).default([]),
     revealStrategy: z.string().optional(),
     holders: z.array(z.string()).default([]),
+    ...pronunciationToolFields,
+    secretRefs: z.array(z.string()).default([]),
+    privateNotes: z.string().optional(),
     revealIn: z.string().optional(),
     knownFrom: z.string().optional(),
     timelineRef: z.string().optional(),
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
+    ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
   async ({
@@ -893,6 +1066,11 @@ server.tool(
     falseBeliefs,
     revealStrategy,
     holders,
+    pronunciation,
+    spokenName,
+    ttsLabel,
+    secretRefs,
+    privateNotes,
     revealIn,
     knownFrom,
     timelineRef,
@@ -900,16 +1078,18 @@ server.tool(
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
     const { sources, note } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
-      wikipediaLang,
       rootPath,
       slug,
-      saveWikipediaResearch,
+      lang: wikipediaLang,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
 
     const result = await createSecretProfile(rootPath, {
@@ -922,6 +1102,11 @@ server.tool(
       falseBeliefs,
       revealStrategy,
       holders,
+      pronunciation,
+      spokenName,
+      ttsLabel,
+      secretRefs,
+      privateNotes,
       revealIn,
       knownFrom,
       timelineRef,
@@ -931,7 +1116,7 @@ server.tool(
       frontmatter,
     });
 
-    return textResponse(`Created secret at ${result.filePath}.${note}`);
+    return textResponse(await appendPlotSyncNote(rootPath, `Created secret at ${result.filePath}.${note}`));
   },
 );
 
@@ -956,6 +1141,7 @@ server.tool(
         optional: [
           "Function in book",
           "Consequences",
+          "Hidden canon: linked secret ids, private notes, known-from, reveal chapter",
           "Historical flag and Wikipedia title if factual verification is needed",
           "Use start_wizard with kind timeline-event for a true guided session",
         ],
@@ -975,11 +1161,13 @@ server.tool(
     significance: z.string().optional(),
     functionInBook: z.string().optional(),
     consequences: z.array(z.string()).default([]),
+    ...pronunciationToolFields,
+    ...hiddenCanonToolFields,
     overwrite: z.boolean().default(false),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
+    ...wikipediaRefreshToolFields,
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
   async ({
@@ -991,20 +1179,29 @@ server.tool(
     significance,
     functionInBook,
     consequences,
+    pronunciation,
+    spokenName,
+    ttsLabel,
+    secretRefs,
+    privateNotes,
+    revealIn,
+    knownFrom,
     overwrite,
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
     frontmatter,
   }) => {
     const { sources, note } = await collectHistoricalResearchSupport({
       historical,
       wikipediaTitle,
-      wikipediaLang,
       rootPath,
       slug,
-      saveWikipediaResearch,
+      lang: wikipediaLang,
+      forceWikipediaRefresh,
+      maxWikipediaSnapshotAgeDays,
     });
 
     const result = await createTimelineEventProfile(rootPath, {
@@ -1015,13 +1212,20 @@ server.tool(
       significance,
       functionInBook,
       consequences,
+      pronunciation,
+      spokenName,
+      ttsLabel,
+      secretRefs,
+      privateNotes,
+      revealIn,
+      knownFrom,
       overwrite,
       historical,
       sources,
       frontmatter,
     });
 
-    return textResponse(`Created timeline event at ${result.filePath}.${note}`);
+    return textResponse(await appendPlotSyncNote(rootPath, `Created timeline event at ${result.filePath}.${note}`));
   },
 );
 
@@ -1044,9 +1248,11 @@ server.tool(
         optional: [
           "Summary",
           "POV ids",
+          "Explicit style refs or narration mode if this chapter should differ from the book default",
           "Timeline reference",
           "Tags",
           "Notes body or beat scaffold",
+          "If the prose is not ready yet, create a matching chapter draft first",
           "Use start_wizard with kind chapter for a true guided session",
         ],
       }),
@@ -1075,10 +1281,149 @@ server.tool(
           "Viewpoint",
           "Tags",
           "Optional body text",
+          "If the prose is not ready yet, create a matching paragraph draft first",
           "Use start_wizard with kind paragraph for a true guided session",
         ],
       }),
     ),
+);
+
+server.tool(
+  "chapter_writing_context",
+  "Assemble the point-in-time context that should be read before writing or polishing a chapter: prose defaults, scoped story-so-far context, prior chapter state, and matching chapter draft without leaking later story material.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+  },
+  async ({ rootPath, chapter }) => {
+    const result = await buildChapterWritingContext(rootPath, chapter);
+    return textResponse(result.text);
+  },
+);
+
+server.tool(
+  "paragraph_writing_context",
+  "Assemble the point-in-time context that should be read before writing or polishing a paragraph: prose defaults, scoped story-so-far context, prior scenes only, and the matching paragraph draft or final paragraph without leaking later story material.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+  },
+  async ({ rootPath, chapter, paragraph }) => {
+    const result = await buildParagraphWritingContext(rootPath, chapter, paragraph);
+    return textResponse(result.text);
+  },
+);
+
+server.tool(
+  "revise_chapter",
+  "Propose a chapter-level editorial pass without writing files. Use this when you want diagnosis plus scene-by-scene rewrite proposals for an existing final chapter. The result can also suggest merged state_changes review if multiple scenes touch continuity-sensitive beats.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    mode: revisionModeSchema,
+    intensity: revisionIntensitySchema.default("medium"),
+    preserveFacts: z.boolean().default(true),
+  },
+  async ({ rootPath, chapter, mode, intensity, preserveFacts }) => {
+    const result = await reviseChapter(rootPath, {
+      chapter,
+      mode,
+      intensity,
+      preserveFacts,
+    });
+    const lines = [
+      `Proposed chapter revision for ${result.chapter} at ${result.filePath}.`,
+      `Mode: ${result.mode}`,
+      `Intensity: ${result.intensity}`,
+      `Preserve facts: ${result.preserveFacts ? "yes" : "no"}`,
+      `Scene count: ${result.sceneCount}`,
+      `Changed scene count: ${result.changedSceneCount}`,
+      `Overall continuity impact: ${result.overallContinuityImpact}`,
+      "Files written: no",
+      ...(result.chapterDiagnosis.length > 0 ? ["Diagnosis:", ...result.chapterDiagnosis.map((note) => `- ${note}`)] : []),
+      ...(result.revisionPlan.length > 0 ? ["Revision plan:", ...result.revisionPlan.map((note) => `- ${note}`)] : []),
+      ...(result.suggestedStateChanges
+        ? ["Suggested merged state_changes:", JSON.stringify(result.suggestedStateChanges, null, 2)]
+        : []),
+      "Scene proposals:",
+      ...result.proposedParagraphs.flatMap((proposal) => [
+        `- ${proposal.paragraph} :: ${proposal.title}`,
+        `  Continuity impact: ${proposal.continuityImpact}`,
+        `  Proposed body: ${proposal.proposedBody}`,
+      ]),
+      "Follow-up:",
+      "- Apply any scene proposal manually with update_paragraph if you want to keep it.",
+      ...(result.shouldReviewStateChanges
+        ? ["- If you apply continuity-sensitive changes, review the suggested state_changes and run sync_story_state manually when ready."]
+        : []),
+      ...(result.sources.length > 0 ? ["Sources:", ...result.sources.map((source) => `- ${source}`)] : []),
+    ];
+
+    return textResponse(lines.join("\n"));
+  },
+);
+
+server.tool(
+  "revise_paragraph",
+  "Propose a revision for an existing final paragraph without writing files. Use this for targeted editorial passes like clarity, pacing, tension, dialogue, voice, show-dont-tell, or redundancy cleanup. Show the proposal to the user first, then apply it with update_paragraph only after clear confirmation. The result can also suggest state_changes to review if the paragraph carries continuity-sensitive beats.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+    mode: revisionModeSchema,
+    intensity: revisionIntensitySchema.default("medium"),
+    preserveFacts: z.boolean().default(true),
+  },
+  async ({ rootPath, chapter, paragraph, mode, intensity, preserveFacts }) => {
+    const result = await reviseParagraph(rootPath, {
+      chapter,
+      paragraph,
+      mode,
+      intensity,
+      preserveFacts,
+    });
+    const lines = [
+      `Proposed revision for ${result.paragraph} at ${result.filePath}.`,
+      `Mode: ${result.mode}`,
+      `Intensity: ${result.intensity}`,
+      `Preserve facts: ${result.preserveFacts ? "yes" : "no"}`,
+      `Continuity impact: ${result.continuityImpact}`,
+      "Files written: no",
+      ...(result.editorialNotes.length > 0 ? ["Notes:", ...result.editorialNotes.map((note) => `- ${note}`)] : []),
+      ...(result.suggestedStateChanges
+        ? ["Suggested state_changes:", JSON.stringify(result.suggestedStateChanges, null, 2)]
+        : []),
+      "Proposed body:",
+      result.proposedBody,
+      "Follow-up:",
+      "- Ask the user whether they want to keep this proposal before applying it.",
+      "- Apply the confirmed proposal with update_paragraph.",
+      ...(result.shouldReviewStateChanges
+        ? ["- If you apply the revision and keep the story beats, review the suggested state_changes and run sync_story_state manually when ready."]
+        : []),
+      ...(result.sources.length > 0 ? ["Sources:", ...result.sources.map((source) => `- ${source}`)] : []),
+    ];
+
+    return textResponse(lines.join("\n"));
+  },
+);
+
+server.tool(
+  "resume_book_context",
+  "Assemble restart context for a book project using prose rules, stable context, summaries, and exported conversations. You can also scope it to a target chapter or paragraph so the canon only reflects the story up to that writing point.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().optional(),
+    paragraph: z.string().optional(),
+  },
+  async ({ rootPath, chapter, paragraph }) => {
+    const result = await buildResumeBookContext(rootPath, {
+      chapter,
+      paragraph,
+    });
+    return textResponse(result.text);
+  },
 );
 
 server.tool(
@@ -1093,8 +1438,8 @@ server.tool(
     frontmatter: z.record(z.string(), z.unknown()).default({}),
     historical: z.boolean().default(false),
     wikipediaTitle: z.string().optional(),
-    wikipediaLang: z.enum(["en", "it"]).default("en"),
-    saveWikipediaResearch: z.boolean().default(true),
+    wikipediaLang: z.string().min(2).default("en"),
+    ...wikipediaRefreshToolFields,
   },
   async ({
     rootPath,
@@ -1106,7 +1451,8 @@ server.tool(
     historical,
     wikipediaTitle,
     wikipediaLang,
-    saveWikipediaResearch,
+    forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays,
   }) => {
     let wikipediaNote = "";
     let mergedFrontmatter: Record<string, unknown> = { ...frontmatter, historical };
@@ -1115,10 +1461,11 @@ server.tool(
       const { sources, note } = await collectHistoricalResearchSupport({
         historical,
         wikipediaTitle,
-        wikipediaLang,
+        lang: wikipediaLang,
         rootPath,
         slug,
-        saveWikipediaResearch,
+        forceWikipediaRefresh,
+        maxWikipediaSnapshotAgeDays,
       });
       mergedFrontmatter = {
         ...mergedFrontmatter,
@@ -1138,7 +1485,7 @@ server.tool(
     });
 
     return textResponse(
-      `Created ${kind} at ${result.filePath}.${wikipediaNote}`,
+      await maybeAppendPlotSyncNote(rootPath, kind, `Created ${kind} at ${result.filePath}.${wikipediaNote}`),
     );
   },
 );
@@ -1150,21 +1497,39 @@ server.tool(
     rootPath: z.string().min(1),
     number: z.number().int().positive(),
     title: z.string().min(1),
+    summary: z.string().optional(),
+    pov: z.array(z.string()).default([]),
+    styleRefs: z.array(z.string()).default([]),
+    narrationPerson: z.string().optional(),
+    narrationTense: z.string().optional(),
+    proseMode: z.array(z.string()).default([]),
+    timelineRef: z.string().optional(),
+    tags: z.array(z.string()).default([]),
     body: z.string().optional(),
     overwrite: z.boolean().default(false),
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
-  async ({ rootPath, number, title, body, overwrite, frontmatter }) => {
+  async ({ rootPath, number, title, summary, pov, styleRefs, narrationPerson, narrationTense, proseMode, timelineRef, tags, body, overwrite, frontmatter }) => {
     const result = await createChapter(rootPath, {
       number,
       title,
       body,
       overwrite,
-      frontmatter,
+      frontmatter: {
+        summary,
+        pov,
+        style_refs: styleRefs,
+        narration_person: narrationPerson,
+        narration_tense: narrationTense,
+        prose_mode: proseMode,
+        timeline_ref: timelineRef,
+        tags,
+        ...frontmatter,
+      },
     });
 
     return textResponse(
-      `Created chapter ${result.chapterId} at ${result.chapterFilePath}.`,
+      await appendChapterPathMaintenanceNote(rootPath, result.chapterFilePath, `Created chapter ${result.chapterId} at ${result.chapterFilePath}.`),
     );
   },
 );
@@ -1192,8 +1557,320 @@ server.tool(
     });
 
     return textResponse(
-      `Created paragraph ${result.paragraphId} at ${result.filePath}.`,
+      await appendParagraphPathMaintenanceNote(rootPath, result.filePath, `Created paragraph ${result.paragraphId} at ${result.filePath}.`),
     );
+  },
+);
+
+server.tool(
+  "create_chapter_draft",
+  "Create a rough chapter draft inside drafts/ using the same chapter slug structure as the final chapter tree.",
+  {
+    rootPath: z.string().min(1),
+    number: z.number().int().positive(),
+    title: z.string().min(1),
+    summary: z.string().optional(),
+    pov: z.array(z.string()).default([]),
+    styleRefs: z.array(z.string()).default([]),
+    narrationPerson: z.string().optional(),
+    narrationTense: z.string().optional(),
+    proseMode: z.array(z.string()).default([]),
+    timelineRef: z.string().optional(),
+    tags: z.array(z.string()).default([]),
+    body: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({ rootPath, number, title, summary, pov, styleRefs, narrationPerson, narrationTense, proseMode, timelineRef, tags, body, overwrite, frontmatter }) => {
+    const result = await createChapterDraft(rootPath, {
+      number,
+      title,
+      body,
+      overwrite,
+      frontmatter: {
+        summary,
+        pov,
+        style_refs: styleRefs,
+        narration_person: narrationPerson,
+        narration_tense: narrationTense,
+        prose_mode: proseMode,
+        timeline_ref: timelineRef,
+        tags,
+        ...frontmatter,
+      },
+    });
+
+    return textResponse(
+      `Created chapter draft ${result.draftId} at ${result.draftFilePath}. Chapter notes live at ${result.notesFilePath}. Chapter ideas live at ${result.ideasFilePath}. Promoted archive lives at ${result.promotedFilePath}.`,
+    );
+  },
+);
+
+server.tool(
+  "update_chapter_draft",
+  "Update an existing chapter draft by patching its frontmatter and replacing or appending rough draft body content.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+    body: z.string().optional(),
+    appendBody: z.string().optional(),
+  },
+  async ({ rootPath, chapter, frontmatterPatch, body, appendBody }) => {
+    const result = await updateChapterDraft(rootPath, {
+      chapter,
+      frontmatterPatch,
+      body,
+      appendBody,
+    });
+
+    return textResponse(`Updated chapter draft at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "update_book_notes",
+  "Update the global working notes or story-design document. Use appendBody when the user asks you to keep a note without replacing the whole file.",
+  {
+    rootPath: z.string().min(1),
+    target: z.enum(["notes", "story-design"]).default("notes"),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+    body: z.string().optional(),
+    appendBody: z.string().optional(),
+  },
+  async ({ rootPath, target, frontmatterPatch, body, appendBody }) => {
+    const result = await updateBookNotes(rootPath, {
+      target,
+      frontmatterPatch,
+      body,
+      appendBody,
+    });
+
+    return textResponse(`Updated ${target === "story-design" ? "story-design" : "book notes"} at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "save_book_item",
+  "Create or update a structured idea or note entry at book level. Use this for active idea queues and note queues rather than freeform body edits.",
+  {
+    rootPath: z.string().min(1),
+    bucket: z.enum(["ideas", "notes"]),
+    entryId: z.string().optional(),
+    title: z.string().min(1),
+    body: z.string().min(1),
+    tags: z.array(z.string()).default([]),
+    status: z.enum(["active", "review", "resolved", "rejected"]).default("active"),
+  },
+  async ({ rootPath, bucket, entryId, title, body, tags, status }) => {
+    const result = await saveBookWorkItem(rootPath, {
+      bucket,
+      entryId,
+      title,
+      body,
+      tags,
+      status,
+    });
+
+    return textResponse(`Saved ${bucket.slice(0, -1)} entry ${result.entry.id} at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "save_chapter_item",
+  "Create or update a structured idea or note entry tied to a chapter draft.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    bucket: z.enum(["ideas", "notes"]),
+    entryId: z.string().optional(),
+    title: z.string().min(1),
+    body: z.string().min(1),
+    tags: z.array(z.string()).default([]),
+    status: z.enum(["active", "review", "resolved", "rejected"]).default("active"),
+  },
+  async ({ rootPath, chapter, bucket, entryId, title, body, tags, status }) => {
+    const result = await saveChapterDraftWorkItem(rootPath, {
+      chapter,
+      bucket,
+      entryId,
+      title,
+      body,
+      tags,
+      status,
+    });
+
+    return textResponse(`Saved chapter ${bucket.slice(0, -1)} entry ${result.entry.id} at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "update_chapter_notes",
+  "Update or append chapter-specific working notes stored in drafts/<chapter>/notes.md. Use this when the user wants to keep or refine notes tied to a chapter draft.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+    body: z.string().optional(),
+    appendBody: z.string().optional(),
+  },
+  async ({ rootPath, chapter, frontmatterPatch, body, appendBody }) => {
+    const result = await updateChapterDraftNotes(rootPath, {
+      chapter,
+      frontmatterPatch,
+      body,
+      appendBody,
+    });
+
+    return textResponse(`Updated chapter notes at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "promote_book_item",
+  "Promote a structured book-level idea or note out of the active queue. You can move it into notes or story design, or archive it as promoted after you already used it in a draft.",
+  {
+    rootPath: z.string().min(1),
+    source: z.enum(["ideas", "notes"]),
+    entryId: z.string().min(1),
+    promotedTo: z.string().min(1),
+    target: z.enum(["notes", "story-design"]).optional(),
+  },
+  async ({ rootPath, source, entryId, promotedTo, target }) => {
+    const result = await promoteBookWorkItem(rootPath, {
+      source,
+      entryId,
+      promotedTo,
+      target,
+    });
+
+    return textResponse(
+      `Promoted ${source.slice(0, -1)} entry ${result.promotedEntry.id} to ${promotedTo}. Archived it at ${result.promotedFilePath}${result.targetFilePath ? ` and updated ${result.targetFilePath}` : ""}.`,
+    );
+  },
+);
+
+server.tool(
+  "promote_chapter_item",
+  "Promote a structured chapter-level idea or note out of the active queue. You can move it into chapter notes or archive it as promoted after using it in draft work.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    source: z.enum(["ideas", "notes"]),
+    entryId: z.string().min(1),
+    promotedTo: z.string().min(1),
+    target: z.enum(["notes"]).optional(),
+  },
+  async ({ rootPath, chapter, source, entryId, promotedTo, target }) => {
+    const result = await promoteChapterDraftWorkItem(rootPath, {
+      chapter,
+      source,
+      entryId,
+      promotedTo,
+      target,
+    });
+
+    return textResponse(
+      `Promoted chapter ${source.slice(0, -1)} entry ${result.promotedEntry.id} to ${promotedTo}. Archived it at ${result.promotedFilePath}${result.targetFilePath ? ` and updated ${result.targetFilePath}` : ""}.`,
+    );
+  },
+);
+
+server.tool(
+  "create_paragraph_draft",
+  "Create a rough paragraph or scene draft inside drafts/ using the same chapter tree as the final chapter.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    number: z.number().int().positive(),
+    title: z.string().min(1),
+    body: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    frontmatter: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({ rootPath, chapter, number, title, body, overwrite, frontmatter }) => {
+    const result = await createParagraphDraft(rootPath, {
+      chapter,
+      number,
+      title,
+      body,
+      overwrite,
+      frontmatter,
+    });
+
+    return textResponse(
+      `Created paragraph draft ${result.draftId} at ${result.filePath}. Chapter notes live at ${result.notesFilePath}. Chapter ideas live at ${result.ideasFilePath}. Promoted archive lives at ${result.promotedFilePath}.`,
+    );
+  },
+);
+
+server.tool(
+  "update_paragraph_draft",
+  "Update an existing paragraph draft by patching its frontmatter and replacing or appending rough scene content.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+    body: z.string().optional(),
+    appendBody: z.string().optional(),
+  },
+  async ({ rootPath, chapter, paragraph, frontmatterPatch, body, appendBody }) => {
+    const result = await updateParagraphDraft(rootPath, {
+      chapter,
+      paragraph,
+      frontmatterPatch,
+      body,
+      appendBody,
+    });
+
+    return textResponse(`Updated paragraph draft at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "create_chapter_from_draft",
+  "Promote a chapter draft into the final chapters/ tree. It copies structural frontmatter from drafts/, accepts polished body text if provided, and syncs plot.md after writing.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    body: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({ rootPath, chapter, body, overwrite, frontmatterPatch }) => {
+    const result = await createChapterFromDraft(rootPath, {
+      chapter,
+      body,
+      overwrite,
+      frontmatterPatch,
+    });
+
+    return textResponse(await appendChapterPathMaintenanceNote(rootPath, result.filePath, `Created or updated chapter from draft at ${result.filePath} using ${result.draftPath}.`));
+  },
+);
+
+server.tool(
+  "create_paragraph_from_draft",
+  "Promote a paragraph draft into the final chapters/ tree. It copies structural frontmatter from drafts/, accepts polished body text if provided, and syncs plot.md after writing.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+    body: z.string().optional(),
+    overwrite: z.boolean().default(false),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}),
+  },
+  async ({ rootPath, chapter, paragraph, body, overwrite, frontmatterPatch }) => {
+    const result = await createParagraphFromDraft(rootPath, {
+      chapter,
+      paragraph,
+      body,
+      overwrite,
+      frontmatterPatch,
+    });
+
+    return textResponse(await appendParagraphPathMaintenanceNote(rootPath, result.filePath, `Created or updated paragraph from draft at ${result.filePath} using ${result.draftPath}.`));
   },
 );
 
@@ -1369,13 +2046,13 @@ server.tool(
       appendBody,
     });
 
-    return textResponse(`Updated chapter at ${result.filePath}.`);
+    return textResponse(await appendChapterPathMaintenanceNote(rootPath, result.filePath, `Updated chapter at ${result.filePath}.`));
   },
 );
 
 server.tool(
   "update_paragraph",
-  "Update an existing paragraph or scene markdown file. Use this for summary, viewpoint, tags, and body revisions without renumbering or renaming the file.",
+  "Apply an existing paragraph or scene revision after the user confirmed it. Use this for summary, viewpoint, tags, and body revisions without renumbering or renaming the file. The MCP layer refreshes plot and resume files after the update.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -1393,7 +2070,7 @@ server.tool(
       appendBody,
     });
 
-    return textResponse(`Updated paragraph at ${result.filePath}.`);
+    return textResponse(await appendParagraphPathMaintenanceNote(rootPath, result.filePath, `Updated paragraph at ${result.filePath}.`));
   },
 );
 
@@ -1417,6 +2094,37 @@ server.tool(
       (hit, index) =>
         `${index + 1}. [${hit.type}] ${hit.title} :: ${hit.path}\n   ${hit.excerpt}`,
     );
+
+    return textResponse(lines.join("\n"));
+  },
+);
+
+server.tool(
+  "query_canon",
+  "Answer a natural-language canon question by combining structured state, summaries, chapters, and repository search. Use this for questions like where a character is, what they know, who holds a secret, when something first appears, or how a relationship/condition/open loop changes across a chapter range.",
+  {
+    rootPath: z.string().min(1),
+    question: z.string().min(1),
+    throughChapter: z.string().optional(),
+    fromChapter: z.string().optional(),
+    toChapter: z.string().optional(),
+    limit: z.number().int().positive().max(12).default(6),
+  },
+  async ({ rootPath, question, throughChapter, fromChapter, toChapter, limit }) => {
+    const result = await queryCanon(rootPath, question, { throughChapter, fromChapter, toChapter, limit });
+    const lines = [
+      `Answer: ${result.answer}`,
+      `Confidence: ${result.confidence}`,
+      `Intent: ${result.intent}`,
+      ...(result.matchedTarget ? [`Matched target: ${result.matchedTarget}`] : []),
+      ...(result.fromChapter ? [`From chapter: ${result.fromChapter}`] : []),
+      ...(result.toChapter ? [`To chapter: ${result.toChapter}`] : []),
+      ...(result.throughChapter ? [`Through chapter: ${result.throughChapter}`] : []),
+      ...(result.notes.length > 0 ? ["Notes:", ...result.notes.map((note) => `- ${note}`)] : []),
+      ...(result.sources.length > 0
+        ? ["Sources:", ...result.sources.map((source, index) => `${index + 1}. [${source.type}] ${source.title} :: ${source.path} (${source.reason})`)]
+        : []),
+    ];
 
     return textResponse(lines.join("\n"));
   },
@@ -1462,7 +2170,7 @@ server.tool(
       appendBody,
     });
 
-    return textResponse(`Updated ${kind} at ${result.filePath}.`);
+    return textResponse(await maybeAppendPlotSyncNote(rootPath, kind, `Updated ${kind} at ${result.filePath}.`));
   },
 );
 
@@ -1484,7 +2192,7 @@ server.tool(
       newSlug,
     });
 
-    return textResponse(`Renamed ${kind} from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`);
+    return textResponse(await maybeAppendPlotSyncNote(rootPath, kind, `Renamed ${kind} from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`));
   },
 );
 
@@ -1504,7 +2212,7 @@ server.tool(
       newNumber,
     });
 
-    return textResponse(`Renamed chapter from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`);
+    return textResponse(await appendChapterPathMaintenanceNote(rootPath, result.newPath, `Renamed chapter from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`));
   },
 );
 
@@ -1526,7 +2234,7 @@ server.tool(
       newNumber,
     });
 
-    return textResponse(`Renamed paragraph from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`);
+    return textResponse(await appendParagraphPathMaintenanceNote(rootPath, result.newPath, `Renamed paragraph from ${result.oldPath} to ${result.newPath}. Updated ${result.updatedReferences} markdown files.${formatMovedAssetsNote(result.movedAssetPaths)}`));
   },
 );
 
@@ -1591,6 +2299,32 @@ server.tool(
 );
 
 server.tool(
+  "sync_story_state",
+  "Refresh state/current.md and per-chapter state snapshots from chapter resume state_changes. This stays manual by design and clears the stale story-state flag.",
+  {
+    rootPath: z.string().min(1),
+  },
+  async ({ rootPath }) => {
+    const result = await syncStoryState(rootPath);
+    return textResponse(
+      `Synced story state at ${result.currentFilePath} and ${result.chapterFiles.length} chapter snapshot files. Status updated at ${result.statusFilePath}.`,
+    );
+  },
+);
+
+server.tool(
+  "sync_plot",
+  "Refresh the root plot.md file so it tracks chapter progression, revealed secrets, and timeline dates from current canon.",
+  {
+    rootPath: z.string().min(1),
+  },
+  async ({ rootPath }) => {
+    const result = await syncPlot(rootPath);
+    return textResponse(`Synced plot at ${result.filePath} using ${result.chapterCount} chapters.`);
+  },
+);
+
+server.tool(
   "evaluate_chapter",
   "Refresh a full chapter evaluation by reading the whole chapter across all paragraph files, checking active style rules and custom chapter patterns, scoring quality, and writing next steps plus paragraph evaluation files.",
   {
@@ -1638,24 +2372,39 @@ server.tool(
 
 server.tool(
   "wikipedia_search",
-  "Search English or Italian Wikipedia for historical or factual research before adding canon to the book repository.",
+  "Search English and the user's request language Wikipedia for historical or factual research before adding canon to the book repository.",
   {
     query: z.string().min(1),
-    lang: z.enum(["en", "it"]).default("en"),
     limit: z.number().int().positive().max(10).default(5),
+    lang: z.string().min(2).default("en"),
   },
-  async ({ query, lang, limit }) => {
-    const results = await searchWikipedia(query, lang, limit);
+  async ({ query, limit, lang }) => {
+    const secondaryLang = lang !== "en" ? lang : null;
+    const langs = secondaryLang ? ["en", secondaryLang] : ["en"];
+    const results = await Promise.allSettled(langs.map((l) => searchWikipedia(query, l, limit)));
 
-    if (results.length === 0) {
-      return textResponse(`No Wikipedia matches found for "${query}" in ${lang}.`);
+    const seenTitles = new Set<string>();
+    const merged: Array<{ title: string; snippet: string; url: string; lang: string }> = [];
+    for (let i = 0; i < langs.length; i++) {
+      const result = results[i];
+      const entries = result.status === "fulfilled" ? result.value : [];
+      for (const entry of entries) {
+        if (!seenTitles.has(entry.title.toLowerCase())) {
+          seenTitles.add(entry.title.toLowerCase());
+          merged.push({ ...entry, lang: langs[i] });
+        }
+      }
+    }
+
+    if (merged.length === 0) {
+      return textResponse(`No Wikipedia matches found for "${query}".`);
     }
 
     return textResponse(
-      results
+      merged
         .map(
           (entry, index) =>
-            `${index + 1}. ${entry.title}\n   ${entry.snippet}\n   ${entry.url}`,
+            `${index + 1}. [${entry.lang}] ${entry.title}\n   ${entry.snippet}\n   ${entry.url}`,
         )
         .join("\n"),
     );
@@ -1664,16 +2413,50 @@ server.tool(
 
 server.tool(
   "wikipedia_page",
-  "Fetch a Wikipedia page summary and optionally save it into research/wikipedia inside the local book repository.",
+  "Fetch English and the user's request language Wikipedia page summaries and save them into research/wikipedia inside the local book repository.",
   {
     title: z.string().min(1),
-    lang: z.enum(["en", "it"]).default("en"),
     rootPath: z.string().optional(),
-    saveToResearch: z.boolean().default(false),
+    saveToResearch: z.boolean().default(true),
     slug: z.string().optional(),
+    lang: z.string().min(2).default("en"),
+    ...wikipediaRefreshToolFields,
   },
-  async ({ title, lang, rootPath, saveToResearch, slug }) => {
-    const page = await fetchWikipediaPage(title, lang);
+  async ({ title, lang, rootPath, saveToResearch, slug, forceWikipediaRefresh, maxWikipediaSnapshotAgeDays }) => {
+    if (rootPath) {
+      const existing = await findWikipediaResearchSnapshot(rootPath, { title, slug });
+      if (existing && shouldReuseWikipediaSnapshot(existing, { forceWikipediaRefresh, maxWikipediaSnapshotAgeDays })) {
+        return textResponse(
+          `${existing.title}\n\nReused saved research snapshot from ${existing.relativePath}.\n\n${existing.body}\n\n${existing.sourceUrl}`,
+        );
+      }
+    }
+
+    const secondaryLang = lang !== "en" ? lang : null;
+    const effectiveLang = lang;
+
+    const [enResult, secondaryResult] = await Promise.allSettled([
+      fetchWikipediaPage(title, "en"),
+      secondaryLang
+        ? fetchWikipediaPage(title, secondaryLang)
+        : Promise.reject(new Error("no secondary lang")),
+    ]);
+    const enPage = enResult.status === "fulfilled" ? enResult.value : null;
+    const secondaryPage = secondaryLang && secondaryResult.status === "fulfilled" ? secondaryResult.value : null;
+
+    if (!enPage && !secondaryPage) {
+      throw new Error(`Wikipedia page not found for "${title}".`);
+    }
+
+    const primary = enPage ?? secondaryPage!;
+    const secondary = enPage && secondaryPage ? secondaryPage : null;
+
+    // Fetch Wikidata structured data
+    const wikidataId = enPage?.wikidataId;
+    const wikidataClaims = wikidataId
+      ? await fetchWikidataEntity(wikidataId, effectiveLang).catch(() => null)
+      : null;
+
     let researchPath = "";
 
     if (saveToResearch) {
@@ -1682,18 +2465,30 @@ server.tool(
       }
 
       researchPath = await writeWikipediaResearchSnapshot(rootPath, {
-        lang,
-        title: page.title,
-        pageUrl: page.url,
+        title: primary.title,
+        pageUrl: primary.url,
         slug,
-        summary: page.extract,
-        body: page.description ? `Description: ${page.description}` : undefined,
+        summary: primary.extract,
+        body: primary.description ? `Description: ${primary.description}` : undefined,
+        secondarySummary: secondary?.extract,
+        secondaryPageUrl: secondary?.url,
+        secondaryLang: secondaryLang ?? undefined,
+        wikidataSection: wikidataClaims ? formatWikidataSection(wikidataClaims) : undefined,
       });
     }
 
-    return textResponse(
-      `${page.title}\n${page.description ?? ""}\n\n${page.extract}\n\n${page.url}${researchPath ? `\nSaved to ${researchPath}` : ""}`,
-    );
+    const lines = [`${primary.title}\n${primary.description ?? ""}\n\n${primary.extract}\n\n${primary.url}`];
+    if (secondary) {
+      lines.push(`\n[${secondaryLang!.toUpperCase()}] ${secondary.title}\n${secondary.description ?? ""}\n\n${secondary.extract}\n\n${secondary.url}`);
+    }
+    if (wikidataClaims) {
+      lines.push(`\n[Wikidata ${wikidataClaims.qid}] ${formatWikidataSection(wikidataClaims)}`);
+    }
+    if (researchPath) {
+      lines.push(`\nSaved to ${researchPath}`);
+    }
+
+    return textResponse(lines.join(""));
   },
 );
 
@@ -1728,6 +2523,56 @@ function textResponse(text: string) {
   return {
     content: [{ type: "text" as const, text }],
   };
+}
+
+async function appendPlotSyncNote(rootPath: string, baseText: string): Promise<string> {
+  const result = await syncPlot(rootPath);
+  return `${baseText} Plot synced at ${result.filePath}.`;
+}
+
+async function appendStoryMaintenanceNote(rootPath: string, chapter: string, baseText: string): Promise<string> {
+  const [plot, chapterResume, totalResume] = await Promise.all([
+    syncPlot(rootPath),
+    syncChapterResume(rootPath, chapter),
+    syncTotalResume(rootPath),
+  ]);
+  const storyStateStatus = await readStoryStateStatus(rootPath);
+
+  return [
+    baseText,
+    `Plot synced at ${plot.filePath}.`,
+    `Chapter resume synced at ${chapterResume.filePath}.`,
+    `Total resume synced at ${totalResume.filePath}.`,
+    formatStoryStateReminder(storyStateStatus),
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+async function appendChapterPathMaintenanceNote(rootPath: string, chapterFilePath: string, baseText: string): Promise<string> {
+  const chapterSlug = path.basename(path.dirname(chapterFilePath));
+  return appendStoryMaintenanceNote(rootPath, chapterSlug, baseText);
+}
+
+async function appendParagraphPathMaintenanceNote(rootPath: string, paragraphFilePath: string, baseText: string): Promise<string> {
+  const chapterSlug = path.basename(path.dirname(paragraphFilePath));
+  return appendStoryMaintenanceNote(rootPath, chapterSlug, baseText);
+}
+
+async function maybeAppendPlotSyncNote(rootPath: string, kind: z.infer<typeof entityTypeSchema>, baseText: string): Promise<string> {
+  if (kind !== "secret" && kind !== "timeline-event") {
+    return baseText;
+  }
+
+  return appendPlotSyncNote(rootPath, baseText);
+}
+
+function formatStoryStateReminder(status: Awaited<ReturnType<typeof readStoryStateStatus>>): string {
+  if (!status.dirty) {
+    return "";
+  }
+
+  return `Story state marked stale at ${status.filePath}. Run sync_story_state manually when you want refreshed state/current.md and state/chapters/.`;
 }
 
 function extractPromptSection(body: string): string {
@@ -1854,34 +2699,150 @@ function wizardChecklist(options: {
   ].join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// Wikidata helpers
+// ---------------------------------------------------------------------------
+
+function formatWikidataSection(claims: NormalizedWikidataClaims): string {
+  const lines: string[] = [];
+  lines.push(`- **QID**: ${claims.qid}`);
+  if (claims.label) lines.push(`- **Label**: ${claims.label}`);
+  if (claims.description) lines.push(`- **Description**: ${claims.description}`);
+  if (claims.born) lines.push(`- **Born**: ${claims.born}`);
+  if (claims.died) lines.push(`- **Died**: ${claims.died}`);
+  if (claims.founded) lines.push(`- **Founded**: ${claims.founded}`);
+  if (claims.dissolved) lines.push(`- **Dissolved**: ${claims.dissolved}`);
+  if (claims.gender) lines.push(`- **Gender**: ${claims.gender}`);
+  if (claims.nationality) lines.push(`- **Nationality**: ${claims.nationality}`);
+  if (claims.occupation?.length) lines.push(`- **Occupation**: ${claims.occupation.join(", ")}`);
+  if (claims.country) lines.push(`- **Country**: ${claims.country}`);
+  if (claims.creator) lines.push(`- **Creator**: ${claims.creator}`);
+  if (claims.coordinates) {
+    lines.push(`- **Coordinates**: ${claims.coordinates.lat}, ${claims.coordinates.lng}`);
+  }
+  return lines.join("\n");
+}
+
+function mapWikidataToCharacter(claims: NormalizedWikidataClaims): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (claims.born) fields.born = claims.born;
+  if (claims.died) fields.died = claims.died;
+  if (claims.gender) fields.gender = claims.gender;
+  if (claims.nationality) fields.nationality = claims.nationality;
+  if (claims.occupation?.length) fields.wikidata_occupation = claims.occupation[0];
+  return fields;
+}
+
+function mapWikidataToLocation(claims: NormalizedWikidataClaims): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (claims.coordinates) fields.coordinates = claims.coordinates;
+  if (claims.country) fields.country = claims.country;
+  return fields;
+}
+
+function mapWikidataToFaction(claims: NormalizedWikidataClaims): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (claims.founded) fields.founded = claims.founded;
+  if (claims.dissolved) fields.dissolved = claims.dissolved;
+  if (claims.country) fields.country = claims.country;
+  return fields;
+}
+
+function mapWikidataToItem(claims: NormalizedWikidataClaims): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (claims.creator) fields.creator = claims.creator;
+  if (claims.founded) fields.created = claims.founded;
+  return fields;
+}
+
 async function collectHistoricalResearchSupport(options: {
   historical: boolean;
   wikipediaTitle?: string;
-  wikipediaLang: "en" | "it";
+  lang?: string;
   rootPath: string;
   slug?: string;
-  saveWikipediaResearch: boolean;
-}): Promise<{ sources: string[]; note: string }> {
+  forceWikipediaRefresh?: boolean;
+  maxWikipediaSnapshotAgeDays?: number;
+}): Promise<{ sources: string[]; note: string; wikidataClaims?: NormalizedWikidataClaims }> {
   if (!options.historical || !options.wikipediaTitle) {
     return { sources: [], note: "" };
   }
 
-  const page = await fetchWikipediaPage(options.wikipediaTitle, options.wikipediaLang);
-  let note = "";
-
-  if (options.saveWikipediaResearch) {
-    const researchPath = await writeWikipediaResearchSnapshot(options.rootPath, {
-      lang: options.wikipediaLang,
-      title: page.title,
-      pageUrl: page.url,
-      slug: options.slug,
-      summary: page.extract,
-      body: page.description ? `Description: ${page.description}` : undefined,
-    });
-    note = ` Saved research snapshot to ${researchPath}.`;
+  const existing = await findWikipediaResearchSnapshot(options.rootPath, {
+    title: options.wikipediaTitle,
+    slug: options.slug,
+  });
+  if (existing && shouldReuseWikipediaSnapshot(existing, options)) {
+    return {
+      sources: [existing.sourceUrl],
+      note: ` Reused existing research snapshot at ${existing.relativePath}.`,
+    };
   }
 
-  return { sources: [page.url], note };
+  const secondaryLang = options.lang && options.lang !== "en" ? options.lang : null;
+  const effectiveLang = options.lang ?? "en";
+
+  const [enResult, secondaryResult] = await Promise.allSettled([
+    fetchWikipediaPage(options.wikipediaTitle, "en"),
+    secondaryLang
+      ? fetchWikipediaPage(options.wikipediaTitle, secondaryLang)
+      : Promise.reject(new Error("no secondary lang")),
+  ]);
+  const enPage = enResult.status === "fulfilled" ? enResult.value : null;
+  const secondaryPage = secondaryLang && secondaryResult.status === "fulfilled" ? secondaryResult.value : null;
+
+  if (!enPage && !secondaryPage) {
+    throw new Error(`Wikipedia page not found for "${options.wikipediaTitle}".`);
+  }
+
+  const primary = enPage ?? secondaryPage!;
+  const secondary = enPage && secondaryPage ? secondaryPage : null;
+
+  // Fetch Wikidata in parallel with snapshot write
+  const wikidataId = enPage?.wikidataId;
+  const wikidataClaimsResult = wikidataId
+    ? await fetchWikidataEntity(wikidataId, effectiveLang).catch(() => null)
+    : null;
+  const wikidataClaims = wikidataClaimsResult ?? undefined;
+
+  const researchPath = await writeWikipediaResearchSnapshot(options.rootPath, {
+    title: primary.title,
+    pageUrl: primary.url,
+    slug: options.slug,
+    summary: primary.extract,
+    body: primary.description ? `Description: ${primary.description}` : undefined,
+    secondarySummary: secondary?.extract,
+    secondaryPageUrl: secondary?.url,
+    secondaryLang: secondaryLang ?? undefined,
+    wikidataSection: wikidataClaims ? formatWikidataSection(wikidataClaims) : undefined,
+  });
+
+  return {
+    sources: [primary.url, ...(secondary ? [secondary.url] : [])],
+    note: ` Saved research snapshot to ${researchPath}.`,
+    wikidataClaims,
+  };
+}
+
+function shouldReuseWikipediaSnapshot(
+  snapshot: { retrievedAt: string },
+  options: { forceWikipediaRefresh?: boolean; maxWikipediaSnapshotAgeDays?: number },
+): boolean {
+  if (options.forceWikipediaRefresh) {
+    return false;
+  }
+
+  if (!options.maxWikipediaSnapshotAgeDays) {
+    return true;
+  }
+
+  const retrievedAt = Date.parse(snapshot.retrievedAt);
+  if (Number.isNaN(retrievedAt)) {
+    return false;
+  }
+
+  const maxAgeMs = options.maxWikipediaSnapshotAgeDays * 24 * 60 * 60 * 1000;
+  return Date.now() - retrievedAt <= maxAgeMs;
 }
 
 function createWizardSession(kind: WizardKind, rootPath: string, seed: Record<string, unknown>): WizardSession {
@@ -1955,8 +2916,9 @@ async function finalizeWizardSession(
     overwrite: boolean;
     frontmatter: Record<string, unknown>;
     body?: string;
-    saveWikipediaResearch: boolean;
-    wikipediaLang: "en" | "it";
+    lang?: string;
+    forceWikipediaRefresh?: boolean;
+    maxWikipediaSnapshotAgeDays?: number;
   },
 ): Promise<string> {
   const pending = getNextWizardStep(session);
@@ -1970,14 +2932,16 @@ async function finalizeWizardSession(
   const research = await collectHistoricalResearchSupport({
     historical,
     wikipediaTitle,
-    wikipediaLang: options.wikipediaLang,
+    lang: options.lang,
     rootPath: session.rootPath,
     slug: options.slug,
-    saveWikipediaResearch: options.saveWikipediaResearch,
+    forceWikipediaRefresh: options.forceWikipediaRefresh,
+    maxWikipediaSnapshotAgeDays: options.maxWikipediaSnapshotAgeDays,
   });
 
   switch (session.kind) {
     case "character": {
+      const wikidataFields = research.wikidataClaims ? mapWikidataToCharacter(research.wikidataClaims) : {};
       const result = await createCharacterProfile(session.rootPath, {
         slug: options.slug,
         overwrite: options.overwrite,
@@ -1991,6 +2955,10 @@ async function finalizeWizardSession(
         occupation: stringOrUndefined(data.occupation),
         origin: stringOrUndefined(data.origin),
         firstImpression: stringOrUndefined(data.firstImpression),
+        currentIdentity: stringOrUndefined(data.currentIdentity),
+        formerNames: stringArrayOrEmpty(data.formerNames),
+        identityShifts: stringArrayOrEmpty(data.identityShifts),
+        identityArc: stringOrUndefined(data.identityArc),
         arc: stringOrUndefined(data.arc),
         internalConflict: stringOrUndefined(data.internalConflict),
         externalConflict: stringOrUndefined(data.externalConflict),
@@ -2002,14 +2970,17 @@ async function finalizeWizardSession(
         factions: stringArrayOrEmpty(data.factions),
         homeLocation: stringOrUndefined(data.homeLocation),
         introducedIn: stringOrUndefined(data.introducedIn),
+        ...pronunciationInputFromData(data),
+        ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
         body: options.body,
-        frontmatter: options.frontmatter,
+        frontmatter: { ...wikidataFields, ...options.frontmatter },
       });
-      return `Created ${session.kind} at ${result.filePath}.${research.note}`;
+      return appendPlotSyncNote(session.rootPath, `Created ${session.kind} at ${result.filePath}.${research.note}`);
     }
     case "location": {
+      const wikidataFields = research.wikidataClaims ? mapWikidataToLocation(research.wikidataClaims) : {};
       const result = await createLocationProfile(session.rootPath, {
         slug: options.slug,
         overwrite: options.overwrite,
@@ -2023,14 +2994,17 @@ async function finalizeWizardSession(
         factionsPresent: stringArrayOrEmpty(data.factionsPresent),
         basedOnRealPlace: Boolean(data.basedOnRealPlace),
         timelineRef: stringOrUndefined(data.timelineRef),
+        ...pronunciationInputFromData(data),
+        ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
         body: options.body,
-        frontmatter: options.frontmatter,
+        frontmatter: { ...wikidataFields, ...options.frontmatter },
       });
-      return `Created ${session.kind} at ${result.filePath}.${research.note}`;
+      return appendPlotSyncNote(session.rootPath, `Created ${session.kind} at ${result.filePath}.${research.note}`);
     }
     case "faction": {
+      const wikidataFields = research.wikidataClaims ? mapWikidataToFaction(research.wikidataClaims) : {};
       const result = await createFactionProfile(session.rootPath, {
         slug: options.slug,
         overwrite: options.overwrite,
@@ -2046,14 +3020,17 @@ async function finalizeWizardSession(
         enemies: stringArrayOrEmpty(data.enemies),
         methods: stringArrayOrEmpty(data.methods),
         baseLocation: stringOrUndefined(data.baseLocation),
+        ...pronunciationInputFromData(data),
+        ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
         body: options.body,
-        frontmatter: options.frontmatter,
+        frontmatter: { ...wikidataFields, ...options.frontmatter },
       });
       return `Created ${session.kind} at ${result.filePath}.${research.note}`;
     }
     case "item": {
+      const wikidataFields = research.wikidataClaims ? mapWikidataToItem(research.wikidataClaims) : {};
       const result = await createItemProfile(session.rootPath, {
         slug: options.slug,
         overwrite: options.overwrite,
@@ -2068,10 +3045,12 @@ async function finalizeWizardSession(
         limitations: stringArrayOrEmpty(data.limitations),
         owner: stringOrUndefined(data.owner),
         introducedIn: stringOrUndefined(data.introducedIn),
+        ...pronunciationInputFromData(data),
+        ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
         body: options.body,
-        frontmatter: options.frontmatter,
+        frontmatter: { ...wikidataFields, ...options.frontmatter },
       });
       return `Created ${session.kind} at ${result.filePath}.${research.note}`;
     }
@@ -2087,8 +3066,8 @@ async function finalizeWizardSession(
         falseBeliefs: stringArrayOrEmpty(data.falseBeliefs),
         revealStrategy: stringOrUndefined(data.revealStrategy),
         holders: stringArrayOrEmpty(data.holders),
-        revealIn: stringOrUndefined(data.revealIn),
-        knownFrom: stringOrUndefined(data.knownFrom),
+        ...pronunciationInputFromData(data),
+        ...hiddenCanonInputFromData(data),
         timelineRef: stringOrUndefined(data.timelineRef),
         historical,
         sources: research.sources,
@@ -2107,6 +3086,8 @@ async function finalizeWizardSession(
         significance: stringOrUndefined(data.significance),
         functionInBook: stringOrUndefined(data.functionInBook),
         consequences: stringArrayOrEmpty(data.consequences),
+        ...pronunciationInputFromData(data),
+        ...hiddenCanonInputFromData(data),
         historical,
         sources: research.sources,
         body: options.body,
@@ -2123,12 +3104,16 @@ async function finalizeWizardSession(
         frontmatter: {
           summary: stringOrUndefined(data.summary),
           pov: stringArrayOrEmpty(data.pov),
+          style_refs: stringArrayOrEmpty(data.styleRefs),
+          narration_person: stringOrUndefined(data.narrationPerson),
+          narration_tense: stringOrUndefined(data.narrationTense),
+          prose_mode: stringArrayOrEmpty(data.proseMode),
           timeline_ref: stringOrUndefined(data.timelineRef),
           tags: stringArrayOrEmpty(data.tags),
           ...options.frontmatter,
         },
       });
-      return `Created ${session.kind} at ${result.chapterFilePath}.`;
+      return appendChapterPathMaintenanceNote(session.rootPath, result.chapterFilePath, `Created ${session.kind} at ${result.chapterFilePath}.`);
     }
     case "paragraph": {
       const result = await createParagraph(session.rootPath, {
@@ -2144,7 +3129,7 @@ async function finalizeWizardSession(
           ...options.frontmatter,
         },
       });
-      return `Created ${session.kind} at ${result.filePath}.`;
+      return appendParagraphPathMaintenanceNote(session.rootPath, result.filePath, `Created ${session.kind} at ${result.filePath}.`);
     }
     default:
       throw new Error(`Unsupported wizard kind: ${session.kind}`);
@@ -2262,6 +3247,23 @@ function stringOrUndefined(value: unknown): string | undefined {
 
 function numberOrUndefined(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function hiddenCanonInputFromData(data: Record<string, unknown>) {
+  return {
+    secretRefs: stringArrayOrEmpty(data.secretRefs),
+    privateNotes: stringOrUndefined(data.privateNotes),
+    revealIn: stringOrUndefined(data.revealIn),
+    knownFrom: stringOrUndefined(data.knownFrom),
+  };
+}
+
+function pronunciationInputFromData(data: Record<string, unknown>) {
+  return {
+    pronunciation: stringOrUndefined(data.pronunciation),
+    spokenName: stringOrUndefined(data.spokenName),
+    ttsLabel: stringOrUndefined(data.ttsLabel),
+  };
 }
 
 function stringArrayOrEmpty(value: unknown): string[] {

@@ -52,6 +52,8 @@ export function defaultBodyForType(type: string): string {
         "",
         "# Relationships",
         "",
+        "# Identity And Change",
+        "",
         "# Public Knowledge",
         "",
         "# Private Knowledge",
@@ -132,11 +134,39 @@ export function defaultBodyForType(type: string): string {
         "",
         "# Notes",
       ].join("\n");
+    case "chapter-draft":
+      return [
+        "# Rough Intent",
+        "",
+        "What should this chapter accomplish before prose gets polished?",
+        "",
+        "# Rough Beats",
+        "",
+        "List the chapter's provisional movements, reveals, and emotional turns.",
+        "",
+        "# Continuity Checks",
+        "",
+        "Note what earlier chapters, secrets, or guidelines must be respected.",
+      ].join("\n");
     case "paragraph":
       return [
         "# Scene",
         "",
         "Write the paragraph or scene here.",
+      ].join("\n");
+    case "paragraph-draft":
+      return [
+        "# Rough Scene",
+        "",
+        "Capture the raw version of the scene, including fragments, beats, and dialogue ideas.",
+        "",
+        "# Intent",
+        "",
+        "State what this scene must change, reveal, or pressure.",
+        "",
+        "# Carry Into Final Prose",
+        "",
+        "List the lines, images, or subtext that should survive into the finished paragraph.",
       ].join("\n");
     case "research-note":
       return [

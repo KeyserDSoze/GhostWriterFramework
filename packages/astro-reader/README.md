@@ -22,33 +22,69 @@ npx narrarium-astro-reader reader --book-root .. --package-name my-book-reader
 
 ## What the reader includes
 
-- book landing page
-- chapter index and chapter reading pages
+- book landing page plus chapter-by-chapter reading
 - previous, next, and jump chapter navigation
+- reading preferences, bookmark, and continue-reading state stored locally
 - live search across canon, chapters, and scenes
-- character index and detail pages
-- location index and detail pages
-- faction index and detail pages
-- item index and detail pages
-- secret index and detail pages
-- timeline index and event detail pages
-- automatic rendering of canonical book, entity, chapter, and scene images when matching assets exist
-- automatic EPUB export for `public/downloads/book.epub`
+- character, location, faction, item, secret, and timeline indexes
+- canon mention popups, backlinks, and asset rendering for book, entity, chapter, and scene art
+- automatic EPUB export to `public/downloads/book.epub`
 - live watcher for book markdown, canon, and assets during `npm run dev`
-- web-only canon mention popups and light or dark theme toggle
-- popup tabs for overview, notes, metadata, and image previews
+- `npm run doctor` for broken references, spoiler thresholds, asset metadata, and stale `plot.md`, `resumes/`, or `state/`
+- optional EPUBCheck validation during export or build
 - starter GitHub Pages deployment workflow when scaffolded into a standalone app
+
+## Reader modes
+
+The generated reader defaults to a spoiler-safe public mode.
+
+In public mode:
+
+- secrets stay hidden from the public atlas and nav
+- direct canon pages fall back to teaser or locked views when `known_from` or `reveal_in` say a dossier is not safe yet
+- search, canon popups, and backlinks follow the same thresholds
+
+If you want an author-only or spoiler-friendly deployment, enable full canon mode:
+
+```bash
+NARRARIUM_READER_CANON_MODE=full
+# or
+NARRARIUM_READER_ALLOW_FULL_CANON=true
+```
 
 ## Local development
 
+The scaffold creates `.env` with the computed book root already filled in. Update it if the reader should point somewhere else:
+
 ```bash
-cp .env.example .env
 npm install
 npm run dev
 ```
 
-The generated reader expects `NARRARIUM_BOOK_ROOT` to point at a Narrarium book repository.
-`npm run dev` now watches the linked book repo, regenerates the EPUB on changes, and triggers a full browser reload.
-`npm run build` also refreshes the EPUB automatically before Astro builds.
+Typical `.env` values:
 
-You can also pass `--pages-domain example.com` when scaffolding to emit `public/CNAME` and a Pages workflow already pointed at that domain.
+```bash
+NARRARIUM_BOOK_ROOT=..
+# NARRARIUM_READER_CANON_MODE=full
+# EPUBCHECK_CMD=epubcheck
+# EPUBCHECK_JAR=/absolute/path/to/epubcheck.jar
+```
+
+`npm run dev` watches the linked book repo, regenerates the EPUB on changes, and triggers a full browser reload.
+`npm run build` refreshes the EPUB automatically before Astro builds the site.
+
+## Validation and export
+
+```bash
+npm run doctor
+npm run export:epub
+npm run build
+```
+
+If `EPUBCHECK_CMD` or `EPUBCHECK_JAR` is set, EPUB export and build also run EPUBCheck.
+
+`npm run doctor` also reports if the linked book repository has stale or missing structured story-state snapshots, so author-facing continuity drift shows up before deployment.
+
+## GitHub Pages
+
+You can pass `--pages-domain example.com` when scaffolding to emit `public/CNAME` and a Pages workflow already pointed at that domain.

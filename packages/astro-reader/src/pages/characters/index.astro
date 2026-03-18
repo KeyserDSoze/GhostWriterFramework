@@ -1,44 +1,44 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import { loadEntityIndexData } from "../../lib/book";
 import AssetFigure from "../../components/AssetFigure.astro";
-import { loadAssetFigure } from "../../lib/assets";
+import { loadEntityIndexData } from "../../lib/book";
+import { buildPublicCanonIndexCards } from "../../lib/public-canon";
 
 const { ready, entities } = await loadEntityIndexData("character");
-const cards = await Promise.all(
-  entities.map(async (entity) => ({
-    ...entity,
-    figure: await loadAssetFigure(String(entity.metadata.id ?? `character:${entity.slug}`), String(entity.metadata.name ?? entity.slug)),
-  })),
-);
+const cards = await buildPublicCanonIndexCards("character", entities);
 ---
 
 <BaseLayout title="Characters" description="Browse the book cast." activeSection="characters">
   <section class="hero">
     <p class="eyebrow">Canon Atlas</p>
     <h1>Characters</h1>
-    <p class="lede">Browse the cast register, voice notes, roles, and relationships stored in the repository.</p>
+    <p class="lede">Browse the visible cast without exposing deeper canon notes too early.</p>
   </section>
 
   {ready ? (
-    <section class="section">
-      <div class="catalog-grid">
-        {cards.map((entity) => (
-          <article class="card catalog-card">
-            <a href={`characters/${entity.slug}/`}>
-              {entity.figure && <AssetFigure figure={entity.figure} className="catalog-media" />}
-              <div class="chapter-number">{String(entity.metadata.role_tier ?? "character")}</div>
-              <h2 class="chapter-title">{String(entity.metadata.name ?? entity.slug)}</h2>
-              <div class="chapter-meta">{String(entity.metadata.function_in_book ?? entity.metadata.story_role ?? "Open the entry to inspect role, voice, and notes.")}</div>
-              <div class="chip-row">
-                {entity.metadata.story_role && <span class="chip">{String(entity.metadata.story_role)}</span>}
-                {entity.metadata.historical && <span class="chip">historical</span>}
-              </div>
-            </a>
-          </article>
-        ))}
-      </div>
-    </section>
+    cards.length > 0 ? (
+      <section class="section">
+        <div class="catalog-grid">
+          {cards.map((entity) => (
+            <article class="card catalog-card">
+              <a href={`characters/${entity.slug}/`}>
+                {entity.figure && <AssetFigure figure={entity.figure} className="catalog-media" />}
+                <div class="chapter-number">{entity.eyebrow}</div>
+                <h2 class="chapter-title">{entity.label}</h2>
+                <div class="chapter-meta">{entity.summary}</div>
+                {entity.chips.length > 0 && (
+                  <div class="chip-row">
+                    {entity.chips.map((chip) => <span class="chip">{chip}</span>)}
+                  </div>
+                )}
+              </a>
+            </article>
+          ))}
+        </div>
+      </section>
+    ) : (
+      <div class="empty">No public-safe character dossiers are visible yet.</div>
+    )
   ) : (
     <div class="empty">No book repository detected for the reader.</div>
   )}

@@ -1,17 +1,18 @@
 # Narrarium Framework
 
-Narrarium Framework is a local-first book writing framework built around three pieces:
+Narrarium Framework is a local-first writing stack built around three pieces:
 
 - a strict but extensible repository convention where the repository *is* the book
 - a local MCP server that teaches OpenCode or Claude how to create, search, validate, and enrich that repository
-- an Astro-based reader package that turns the repository into a browsable website
+- an Astro-based reader that turns the repository into a browsable site and EPUB pipeline
 
 ## Packages
 
 - `packages/core`: schemas, templates, repo scaffolding, search, validation, and EPUB export helpers
+- `packages/sdk-typescript`: dedicated TypeScript SDK package for remote GitHub and Azure DevOps book access
 - `packages/mcp-server`: local stdio MCP server for OpenCode, Claude Desktop, and compatible clients
 - `packages/create-narrarium-book`: starter CLI to scaffold a new book repository from the terminal
-- `packages/astro-reader`: Astro reader that renders the repository chapter by chapter
+- `packages/astro-reader`: Astro reader with spoiler-safe public mode, full canon opt-in, EPUB export, and doctor tooling
 
 ## Local MCP workflow
 
@@ -24,7 +25,96 @@ The intended workflow is local-first:
 
 This keeps the actual writing artifacts in your filesystem instead of hiding them inside a hosted app.
 
-## Install
+## Quick start from npm
+
+If you just want to use Narrarium, start from the published packages:
+
+```bash
+npx create-narrarium-book my-book --title "My Book" --language en
+cd my-book
+npm run dev
+npm run doctor
+```
+
+This scaffolds a book repo, creates `reader/` by default, installs the reader dependencies, prepares OpenCode config, and gives you a live reading site plus EPUB export while you write.
+The generated root scripts include `npm run dev`, `npm run build`, `npm run export:epub`, and `npm run doctor`.
+
+If you want sample content from the start:
+
+```bash
+npx create-narrarium-book my-book --title "My Book" --language en --sample
+```
+
+If you want a book repo without the reader scaffold:
+
+```bash
+npx create-narrarium-book my-book --title "My Book" --language en --no-reader
+```
+
+The starter also has an interactive mode:
+
+```bash
+npx create-narrarium-book
+```
+
+To refresh the managed Narrarium scaffolding inside an existing repo:
+
+```bash
+npx create-narrarium-book --upgrade .
+```
+
+Add `--with-reader` if you also want to refresh the generated reader scaffold and root convenience files.
+
+## Run the MCP server from npm
+
+```bash
+npx narrarium-mcp-server
+```
+
+If the package is already installed in the project or globally, the binary is:
+
+```bash
+narrarium-mcp
+```
+
+## Scaffold a standalone reader from npm
+
+Create a standalone Astro reader app inside or beside a book repo:
+
+```bash
+npx narrarium-astro-reader reader --book-root .. --package-name my-book-reader
+cd reader
+npm install
+npm run dev
+```
+
+The reader includes dedicated indexes for chapters, characters, locations, factions, items, secrets, and timeline events. `npm run dev` watches the linked book repo, refreshes the EPUB, and triggers a full browser reload when canon changes.
+
+By default the generated reader runs in a spoiler-safe public mode:
+
+- secret pages stay out of the public atlas and nav
+- direct canon pages fall back to teaser or locked views when `known_from` or `reveal_in` say the lore is not safe yet
+- search, popups, and canon backlinks respect the same thresholds
+
+For author-only or spoiler-friendly deployments, set one of these before building or running the reader:
+
+```bash
+NARRARIUM_READER_CANON_MODE=full
+# or
+NARRARIUM_READER_ALLOW_FULL_CANON=true
+```
+
+If you want EPUBCheck validation during export or build, also set one of these:
+
+```bash
+EPUBCHECK_CMD=epubcheck
+# or
+EPUBCHECK_JAR=/absolute/path/to/epubcheck.jar
+```
+
+## Develop this monorepo
+
+These commands are for working on the Narrarium framework repository itself:
 
 ```bash
 npm install
@@ -49,42 +139,15 @@ Build the GitHub Pages documentation site locally with:
 npm run docs:build
 ```
 
-## Create a new book repo
-
-Build the framework once, then scaffold a new local-first book repo:
+Repo-only helper commands:
 
 ```bash
 npm run create:book -- my-book --title "My Book" --language en --sample
-```
-
-The starter now scaffolds a reader in `reader/` by default, installs its dependencies, prepares OpenCode config, includes a GitHub Pages workflow for the generated site, writes root `npm run dev` / `npm run build` / `npm run export:epub` scripts for convenience, and wires `npm run dev` to watch your book files for live reload plus EPUB refresh while you write.
-You can also preconfigure the generated reader for a custom domain with `--pages-domain your-domain.com`.
-
-If you want a book repo without the reader scaffold:
-
-```bash
-npm run create:book -- my-book --title "My Book" --language en --sample --no-reader
-```
-
-The starter also has an interactive mode:
-
-```bash
-npm run create:book
-```
-
-## Run the MCP server locally
-
-```bash
 npm run dev:mcp
+npm run reader:init -- reader --book-root .. --package-name my-book-reader
 ```
 
-Or after building:
-
-```bash
-node packages/mcp-server/dist/index.js
-```
-
-If you want the public HTTP version locally, for Vercel-style setup/research flows:
+If you want the public HTTP version locally, for Vercel-style setup and research flows:
 
 ```bash
 npm run dev:http -w narrarium-mcp-server
@@ -95,34 +158,25 @@ This serves:
 - `http://localhost:3000/mcp`
 - `http://localhost:3000/health`
 
-## Run the Astro reader
-
-Set `NARRARIUM_BOOK_ROOT` to the path of a book repository created with Narrarium.
-
-```bash
-set NARRARIUM_BOOK_ROOT=C:\path\to\my-book
-npm run dev:site
-```
-
-## Scaffold an installable reader site
-
-Create a standalone Astro reader app inside or beside a book repo:
-
-```bash
-npm run reader:init -- reader --book-root .. --package-name my-book-reader
-```
-
-The reader now includes dedicated indexes for chapters, characters, locations, factions, items, secrets, and timeline events, plus live file watching during `npm run dev`.
-
 ## OpenCode config
 
 An example project config lives in `opencode.jsonc` and points OpenCode to the local MCP server build output.
+It also tunes the default `build` and `plan` agents for book work with higher reasoning effort, detailed summaries, and more verbose responses while keeping temperature moderate for canon consistency.
+Generated book repos also point `instructions` to `.github/copilot-instructions.md`, so OpenCode and Copilot share the same repository-specific writing workflow.
+Generated book repos also include `context.md` for stable historical, geographic, social, and world-context notes that should stay visible while writing chapters and scenes.
+Generated book repos also include `ideas.md`, `story-design.md`, `notes.md`, and `promoted.md` so unstable ideas, reviewed notes, structural design, and promoted archive items stay separate. Chapter-local variants live under `drafts/<chapter>/` and are created when draft work starts.
+The Astro reader now exposes an author-facing `Workshop` area in full canon mode so you can inspect drafts, ideas, notes, story design, and promoted items alongside the published canon pages.
+Book repos also include `conversations/` as a portable place to keep exported writing chats.
+The generated `.opencode/plugins/conversation-export.js` plugin updates `conversations/RESUME.md`, `conversations/CONTINUATION.md`, and per-session exports automatically when OpenCode sessions go idle.
+The generated `/resume-book` command and MCP tool `resume_book_context` help you restart from repo state on a fresh machine or session, including `context.md`, `plot.md`, `resumes/`, and `state/` snapshots when present. `/resume-book` also supports scoped targets such as a chapter or paragraph, for example `/resume-book chapter:002-ledger-suspicion 002-tense-exchange`.
 
 ## Agent rules
 
 Project-level OpenCode and agent rules live in `AGENTS.md`.
 
 ## Main MCP tools
+
+These are the main building blocks exposed by the local MCP server:
 
 - `init_book_repo`: scaffold a book repository in a target folder
 - `setup_framework`: return the exact `npx` commands to bootstrap a new Narrarium project
@@ -131,6 +185,7 @@ Project-level OpenCode and agent rules live in `AGENTS.md`.
 - `create_character`: create a rich character file with voice, role, backstory, and function in book
 - `location_wizard`, `faction_wizard`, `item_wizard`, `secret_wizard`: return the checklist for each canon type
 - `timeline_event_wizard`, `chapter_wizard`, `paragraph_wizard`: return the checklist for those creation flows
+- `chapter_writing_context`, `paragraph_writing_context`, `resume_book_context`: assemble the context to resume or write book prose safely
 - `create_location`, `create_faction`, `create_item`, `create_secret`, `create_timeline_event`: create rich canonical files for those types
 - `start_wizard`, `wizard_answer`, `wizard_status`, `wizard_finalize`, `wizard_cancel`: run a true multi-step guided creation session
 - `create_entity`: create faster stubs for other canon files
@@ -139,6 +194,9 @@ Project-level OpenCode and agent rules live in `AGENTS.md`.
 - `create_asset_prompt`, `register_asset`, `generate_asset_image`: manage canonical art prompts and image files
 - `rename_entity`, `rename_chapter`, `rename_paragraph`: rename canon safely and move matching asset folders too
 - `search_book`: search the repository before inventing canon
+- `query_canon`: answer natural-language canon questions using state, resumes, chapters, and fallback search, including locations, knowledge, inventory, relationships, conditions, open loops, secret holders, first appearances, and chapter-range evolution queries
+- `revise_paragraph`: propose a targeted editorial pass for a final scene without writing files, and suggest `state_changes` review when continuity-sensitive beats are involved
+- `revise_chapter`: propose a chapter-level editorial pass with diagnosis and scene-by-scene suggestions, again without writing files automatically
 - `list_related_canon`: find files that reference an id or concept
 - `sync_resume`: refresh chapter or total summaries from current files
 - `sync_all_resumes`: refresh all chapter resumes plus the total summary in one pass
@@ -147,6 +205,50 @@ Project-level OpenCode and agent rules live in `AGENTS.md`.
 - `evaluate_book`: refresh the full-book evaluation and optionally all chapter and paragraph evaluations
 - `wikipedia_search` and `wikipedia_page`: research factual or historical material
 - `export_epub`: turn the repository into an EPUB
+
+Final chapter and paragraph mutations through the MCP layer auto-refresh `plot.md`, the per-chapter resumes, and `resumes/total.md`. Structured story state stays manual on purpose: rewrites mark `state/status.md` as dirty, then you decide when to run `sync_story_state`. Evaluations stay manual so critique remains explicit.
+
+For factual or historical work, Narrarium now checks existing `research/wikipedia/` snapshots first and reuses them before fetching Wikipedia again when it can. If you need a refresh, use `forceWikipediaRefresh` or limit reuse with `maxWikipediaSnapshotAgeDays`.
+
+## Story state workflow
+
+Narrarium now separates two continuity layers:
+
+- `resumes/` stays human-readable and narrative-first
+- `state/` stores structured continuity snapshots for agents, checks, and continuity review
+
+The intended workflow is:
+
+1. Write or revise chapter and paragraph prose.
+2. Let Narrarium auto-refresh `plot.md` and the resume files.
+3. Record chapter-specific structured deltas in `resumes/chapters/<slug>.md` under `state_changes` frontmatter.
+4. Run `sync_story_state` manually when you want refreshed continuity snapshots.
+
+That produces:
+
+- `state/status.md`: whether story state is stale, when it was last mutated, and which files changed
+- `state/current.md`: the latest consolidated continuity snapshot
+- `state/chapters/*.md`: per-chapter structured snapshots after applying each chapter delta in order
+
+Recommended `state_changes` keys in chapter resumes:
+
+- `locations`
+- `knowledge_gain` and `knowledge_loss`
+- `inventory_add` and `inventory_remove`
+- `relationship_updates`
+- `conditions`
+- `wounds`
+- `open_loops_add` and `open_loops_resolved`
+
+`doctorBook()` and `npm run doctor` now warn if `state/` is missing or stale, and writing-context tools read `state/current.md` plus `state/status.md` when available.
+
+For continuity questions and range-based canon queries, see `docs/query-canon.md`.
+
+For proposal-only editorial revision passes on final scene files, see `docs/revise-paragraph.md`.
+
+For chapter-level proposal-only editorial passes, see `docs/revise-chapter.md`.
+
+For explicit per-chapter style overrides with book-level fallback, see `docs/style-profiles.md`.
 
 ## Practical image examples
 
@@ -235,11 +337,15 @@ Generate chapter art into `assets/chapters/001-the-arrival/primary.png`:
 
 The recommended place for reusable style rules and prompt templates is `guidelines/images.md`.
 
+When you store asset metadata, prefer adding `alt_text` and `caption` in the asset markdown frontmatter so the web reader and EPUB can render accessible descriptions and captions consistently.
+
 The Astro reader now auto-renders these canonical assets when present for:
 
 - `book` cover on the home page
 - entity detail pages such as characters, locations, factions, items, secrets, and timeline events
 - chapter pages and paragraph or scene sections
+
+In public reader mode, those canon surfaces still respect `known_from` and `reveal_in` before exposing full details.
 
 If you later rename canon with `rename_entity`, `rename_chapter`, or `rename_paragraph`, Narrarium also moves the matching asset folders.
 
@@ -252,11 +358,12 @@ The current repository convention is documented in `docs/repository-spec.md`.
 The final public package set is:
 
 - `narrarium`
+- `narrarium-sdk`
 - `narrarium-mcp-server`
 - `create-narrarium-book`
 - `narrarium-astro-reader`
 
-The initial public version is `0.1.0`.
+The public package line started at `0.1.0`; current workspace versions may be newer.
 
 Publishing notes and release order live in `docs/publishing.md`.
 

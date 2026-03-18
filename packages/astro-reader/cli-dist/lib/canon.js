@@ -1,6 +1,7 @@
 import path from "node:path";
 import { listChapters, listEntities, listRelatedCanon, readChapter, toPosixPath } from "narrarium";
 import { getBookRoot } from "./book.js";
+import { loadChapterOrder } from "./spoilers.js";
 const entityKinds = ["character", "location", "faction", "item", "secret", "timeline-event"];
 let referenceIndexPromise = null;
 export async function resolveValueParts(value) {
@@ -39,6 +40,23 @@ export async function loadRelatedCanonLinks(id, values) {
     for (const hit of relatedHits) {
         const href = resolveContentPathToHref(hit.path);
         if (!href || seen.has(href))
+            continue;
+        seen.add(href);
+        links.push({ href, label: hit.title, kind: hit.type });
+    }
+    return links;
+}
+export async function loadStoryMentionLinks(id, maxChapterNumber) {
+    const hits = await listRelatedCanon(getBookRoot(), id, { limit: 12 });
+    const chapterOrder = maxChapterNumber !== undefined ? await loadChapterOrder() : null;
+    const chapterLimit = maxChapterNumber ?? Number.MAX_SAFE_INTEGER;
+    const seen = new Set();
+    const links = [];
+    for (const hit of hits) {
+        const href = resolveStoryPathToHref(hit.path);
+        if (!href || seen.has(href))
+            continue;
+        if (chapterOrder && isStoryHitAfterChapter(hit.path, chapterOrder, chapterLimit))
             continue;
         seen.add(href);
         links.push({ href, label: hit.title, kind: hit.type });
@@ -125,6 +143,27 @@ function resolveContentPathToHref(filePath) {
         return `chapters/${paragraphMatch[1]}/#scene-${paragraphMatch[2]}`;
     }
     return null;
+}
+function resolveStoryPathToHref(filePath) {
+    const normalized = toPosixPath(filePath);
+    const chapterMatch = normalized.match(/^chapters\/([^/]+)\/chapter\.md$/);
+    if (chapterMatch) {
+        return `chapters/${chapterMatch[1]}/`;
+    }
+    const paragraphMatch = normalized.match(/^chapters\/([^/]+)\/([^/]+)\.md$/);
+    if (paragraphMatch) {
+        return `chapters/${paragraphMatch[1]}/#scene-${paragraphMatch[2]}`;
+    }
+    return null;
+}
+function isStoryHitAfterChapter(filePath, chapterOrder, maxChapterNumber) {
+    const normalized = toPosixPath(filePath);
+    const chapterMatch = normalized.match(/^chapters\/([^/]+)\//);
+    if (!chapterMatch?.[1]) {
+        return false;
+    }
+    const chapterNumber = chapterOrder.get(chapterMatch[1]);
+    return typeof chapterNumber === "number" && chapterNumber > maxChapterNumber;
 }
 function buildFallbackReference(value) {
     if (value.startsWith("chapter:")) {

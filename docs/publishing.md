@@ -1,26 +1,28 @@
 # Publishing
 
-Narrarium is prepared to publish as four public npm packages.
+Narrarium is prepared to publish as five public npm packages.
 
 ## Final package names
 
 - `narrarium`
+- `narrarium-sdk`
 - `narrarium-mcp-server`
 - `create-narrarium-book`
 - `narrarium-astro-reader`
 
-## Initial public version
+## Versioning note
 
-- `0.1.0`
+- The public package line started at `0.1.0`.
 
-Keep the four packages aligned on the same initial release unless there is a strong reason to split versions later.
+Keep the five packages aligned unless there is a strong reason to split versions later.
 
 ## Release order
 
 1. `narrarium`
-2. `narrarium-astro-reader`
-3. `narrarium-mcp-server`
-4. `create-narrarium-book`
+2. `narrarium-sdk`
+3. `narrarium-astro-reader`
+4. `narrarium-mcp-server`
+5. `create-narrarium-book`
 
 The starter and reader depend on the published package names, so publish the lower-level packages first.
 
@@ -76,6 +78,7 @@ Publish in release order from the workspace root:
 
 ```bash
 npm publish -w narrarium --access public
+npm publish -w narrarium-sdk --access public
 npm publish -w narrarium-astro-reader --access public
 npm publish -w narrarium-mcp-server --access public
 npm publish -w create-narrarium-book --access public
@@ -89,6 +92,6 @@ npm run publish:all
 
 ## Notes
 
-- The default production flow is now: bump versions, merge to `main`, let GitHub Actions publish the packages that are not already on npm.
+- The default production flow is: bump versions, merge to `main`, and let GitHub Actions publish the packages that are not already on npm.
 - `narrarium-reader-init` supports published installs and can also be driven locally from the workspace.
 - `create-narrarium-book --with-reader` keeps using a local file dependency when run from this monorepo so the generated reader works immediately during development.

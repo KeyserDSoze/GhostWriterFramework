@@ -16,19 +16,19 @@ const publicHealthUrl = process.env.MCP_HEALTH_URL ?? "https://narrarium.space/h
     <p class="eyebrow">Integration</p>
     <h1>MCP server integration</h1>
     <p class="lede">
-      Narrarium exposes a local stdio MCP server for repo mutations and a public HTTP MCP surface for setup and research. This page is generated from the actual MCP source files, so the tool list reflects the implementation.
+      Narrarium exposes a local stdio MCP server for repository mutations and a public HTTP MCP surface for setup and research. This page is generated from the MCP source files, so the tool list reflects the implementation.
     </p>
   </section>
 
   <section class="grid cards">
     <article class="card">
       <h3>Local stdio MCP</h3>
-      <p>Use for canon creation, chapter and scene work, assets, renames, validation, resumes, evaluations, and EPUB export.</p>
+      <p>Use it for canon creation, chapter and scene work, assets, renames, validation, resumes, evaluations, and EPUB export.</p>
       <pre><code>npx narrarium-mcp-server</code></pre>
     </article>
     <article class="card">
       <h3>Public HTTP MCP</h3>
-      <p>Use for setup guidance, repository spec help, and Wikipedia research. Intended for `/mcp` and `/health` deployment on Vercel.</p>
+      <p>Use it for setup guidance, repository spec help, and Wikipedia research. It is intended for `/mcp` and `/health` deployment on Vercel.</p>
       <pre><code>{publicMcpUrl}</code></pre>
       <p><strong>Health:</strong> <code>{publicHealthUrl}</code></p>
     </article>
@@ -38,6 +38,24 @@ const publicHealthUrl = process.env.MCP_HEALTH_URL ?? "https://narrarium.space/h
     <h2>OpenCode config</h2>
     <article class="doc-prose">
       <pre><code>{opencodeConfig}</code></pre>
+    </article>
+  </section>
+
+  <section class="grid cards" style="margin-top: 1.5rem;">
+    <article class="card">
+      <h3>Continuity workflow</h3>
+      <p>
+        Final chapter and paragraph mutations refresh <code>plot.md</code> and <code>resumes/</code> automatically, but structured continuity state stays manual by design.
+      </p>
+      <p>
+        After stable rewrites, add or refine <code>state_changes</code> in the relevant chapter resume, then run <code>sync_story_state</code> to rebuild <code>state/current.md</code>, <code>state/chapters/</code>, and clear <code>state/status.md</code>.
+      </p>
+    </article>
+    <article class="card">
+      <h3>What doctor checks</h3>
+      <p>
+        <code>doctorBook()</code> and generated reader doctor scripts now flag missing or stale <code>state/</code> snapshots, alongside broken references, spoiler issues, asset metadata gaps, and stale plot or resume files.
+      </p>
     </article>
   </section>
 
