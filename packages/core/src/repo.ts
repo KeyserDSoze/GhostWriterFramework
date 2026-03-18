@@ -2799,7 +2799,7 @@ async function buildEffectiveChapterStyleContext(
   draftMetadata?: Pick<ChapterDraftFrontmatter, "style_refs" | "narration_person" | "narration_tense" | "prose_mode"> | null,
 ): Promise<{
   summarySection: string;
-  profileDocuments: Array<MarkdownDocument<GuidelineFrontmatter>>;
+  profileDocuments: GuidelineDocument[];
   files: string[];
 }> {
   const styleRefs = (chapterMetadata?.style_refs?.length ? chapterMetadata.style_refs : draftMetadata?.style_refs) ?? [];
@@ -2816,7 +2816,7 @@ async function buildEffectiveChapterStyleContext(
   const guidelinesById = new Map(guidelineDocuments.map((document) => [String(document.frontmatter.id).toLowerCase(), document]));
   const profileDocuments = styleRefs
     .map((reference) => guidelinesById.get(reference.toLowerCase()))
-    .filter((document): document is MarkdownDocument<GuidelineFrontmatter> => Boolean(document));
+    .filter((document): document is GuidelineDocument => Boolean(document));
   const unresolvedStyleRefs = styleRefs.filter((reference) => !guidelinesById.has(reference.toLowerCase()));
   const files = profileDocuments.map((document) => toPosixPath(path.relative(root, document.path)));
   const summarySection = [
@@ -10081,18 +10081,6 @@ async function buildEntityReferenceLookup(root: string, kind: EntityType): Promi
     references.add(`${kind}:${entity.slug}`.toLowerCase());
   }
   return references;
-}
-
-async function listGuidelines(rootPath: string): Promise<Array<MarkdownDocument<GuidelineFrontmatter>>> {
-  const root = path.resolve(rootPath);
-  const files = await fg("guidelines/**/*.md", {
-    cwd: root,
-    absolute: true,
-    onlyFiles: true,
-  });
-
-  const documents = await Promise.all(files.map((filePath) => readMarkdownFile(filePath, guidelineSchema)));
-  return documents.sort((left, right) => left.path.localeCompare(right.path));
 }
 
 function collectSupportedReferences(frontmatter: Record<string, unknown>, body: string): string[] {
