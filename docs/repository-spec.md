@@ -340,6 +340,7 @@ Treat `state_changes` as the chapter delta, not as a full-world snapshot.
 - before fetching Wikipedia again, reuse a matching snapshot from `research/wikipedia/` when one already exists; use explicit refresh controls when the snapshot is stale or should be bypassed
 - prefer updating existing canon files over duplicating similar facts elsewhere
 - before writing final chapter or paragraph prose, read `guidelines/prose.md`, relevant prior story files, and any matching files in `drafts/`
+- write character, item, location, faction, secret, and timeline-event names as plain text in chapter and paragraph prose; do not insert markdown links to canon files or reader routes because the reader resolves visible mentions automatically
 - treat `ideas.md`, `notes.md`, `story-design.md`, `promoted.md`, and their chapter-draft variants as working support material, not canon; move stable facts into canon files when they become true in the book
 - keep `plot.md` aligned with chapter summaries, reveals, and dated timeline anchors
 - final chapter and paragraph mutations through Narrarium MCP auto-refresh `plot.md` plus the chapter and total resumes, but story-state sync stays manual; evaluations remain explicit/manual
@@ -351,6 +352,7 @@ Generated readers default to a spoiler-safe public mode.
 - secret pages stay hidden from the public atlas and nav
 - direct canon pages may render as teaser or locked views instead of full dossiers
 - search, canon popups, and story backlinks only surface lore that is safe for the current chapter threshold
+- plain-text canon mentions in chapter and paragraph prose are upgraded by the reader into spoiler-safe popups and links when they are visible at the current threshold
 
 For author-only or spoiler-friendly deployments, enable full canon mode with `NARRARIUM_READER_CANON_MODE=full` or `NARRARIUM_READER_ALLOW_FULL_CANON=true` before running the reader build.
 

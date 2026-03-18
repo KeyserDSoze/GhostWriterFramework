@@ -45,7 +45,7 @@ If the repo has a generated reader and you also want to refresh it:
 npx create-narrarium-book --upgrade . --with-reader
 ```
 
-The upgrade command creates missing folders, refreshes managed OpenCode and skill files, updates root convenience scripts, and backs up overwritten scaffold files into `.narrarium-upgrade-backups/`.
+The upgrade command creates missing folders, refreshes managed OpenCode and skill files, updates root convenience scripts, and migrates legacy story prose links like `[Mariamne](../../characters/mariamne-ii/)` into plain-text canon mentions so the reader can resolve visible names automatically.
 
 ## What it creates
 

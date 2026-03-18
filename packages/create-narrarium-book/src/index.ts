@@ -147,6 +147,7 @@ async function runUpgrade(args: ParsedArgs) {
   const resolved = await resolveUpgradeInputs(args);
   const targetPath = path.resolve(process.cwd(), resolved.targetDir);
   const upgrade = await upgradeBookRepo(targetPath, { createSkills: true });
+  const migrated = (upgrade as { migrated?: string[] }).migrated ?? [];
   const book = await readBook(targetPath);
 
   let readerPath = "";
@@ -171,6 +172,9 @@ async function runUpgrade(args: ParsedArgs) {
       `Narrarium book upgraded at ${targetPath}`,
       upgrade.created.length > 0 ? `- Created missing scaffold files: ${upgrade.created.join(", ")}` : "- No scaffold files were missing.",
       upgrade.updated.length > 0 ? `- Updated managed files: ${upgrade.updated.join(", ")}` : "- Managed repo files were already up to date.",
+      migrated.length > 0
+        ? `- Migrated story prose links to plain-text canon mentions: ${migrated.join(", ")}`
+        : "- No legacy story prose links needed migration.",
       ...(readerPath ? [`- Reader scaffold upgraded at ${readerPath}`] : ["- Reader scaffold not touched. Pass `--with-reader` to refresh it too."]),
       ...(readerInstalled ? ["- Reader dependencies were reinstalled automatically"] : []),
       "",

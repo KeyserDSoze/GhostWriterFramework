@@ -261,6 +261,7 @@ export function buildRepositorySpecSummary(): string {
     "",
     "Rules:",
     "- keep structured facts in frontmatter and prose in the markdown body",
+    "- write character, item, location, faction, secret, and timeline-event names as plain text in prose; do not hand-author markdown links to canon files because the reader resolves visible mentions automatically",
     "- use stable ids like character:lyra-vale or chapter:001-the-arrival",
     "- search canon before inventing facts",
     "- use summaries and evaluations as first-class context",

@@ -28,6 +28,7 @@ Narrarium MCP already auto-refreshes `plot.md` and the resume files after final 
 
 - Do not duplicate canon if the fact already exists in another markdown file.
 - Keep structured facts in frontmatter and prose in markdown body.
+- In chapter and scene prose, write character, item, location, faction, secret, and timeline-event names as plain text. Do not insert markdown links to canon files or reader routes; the reader will link visible canon mentions.
 - Do not reveal a secret before its `known_from` or `reveal_in` threshold.
 - Treat `guidelines/`, `drafts/`, `plot.md`, `conversations/`, `resumes/`, `evaluations/`, and `secrets/` as first-class context, not optional notes.
 

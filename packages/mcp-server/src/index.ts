@@ -1290,7 +1290,7 @@ server.tool(
 
 server.tool(
   "chapter_writing_context",
-  "Assemble the point-in-time context that should be read before writing or polishing a chapter: prose defaults, scoped story-so-far context, prior chapter state, and matching chapter draft without leaking later story material.",
+  "Assemble the point-in-time context that should be read before writing or polishing a chapter: prose defaults, scoped story-so-far context, prior chapter state, and matching chapter draft without leaking later story material. In prose, keep canon names as plain text instead of markdown links; the reader resolves visible mentions.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -1303,7 +1303,7 @@ server.tool(
 
 server.tool(
   "paragraph_writing_context",
-  "Assemble the point-in-time context that should be read before writing or polishing a paragraph: prose defaults, scoped story-so-far context, prior scenes only, and the matching paragraph draft or final paragraph without leaking later story material.",
+  "Assemble the point-in-time context that should be read before writing or polishing a paragraph: prose defaults, scoped story-so-far context, prior scenes only, and the matching paragraph draft or final paragraph without leaking later story material. In prose, keep canon names as plain text instead of markdown links; the reader resolves visible mentions.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -1492,7 +1492,7 @@ server.tool(
 
 server.tool(
   "create_chapter",
-  "Create a chapter folder, chapter metadata file, and paired resume and evaluation files in the local book repository.",
+  "Create a chapter folder, chapter metadata file, and paired resume and evaluation files in the local book repository. In prose bodies, keep canon names as plain text instead of markdown links to canon files.",
   {
     rootPath: z.string().min(1),
     number: z.number().int().positive(),
@@ -1536,7 +1536,7 @@ server.tool(
 
 server.tool(
   "create_paragraph",
-  "Create a numbered paragraph or scene markdown file inside an existing chapter folder.",
+  "Create a numbered paragraph or scene markdown file inside an existing chapter folder. In prose bodies, keep canon names as plain text instead of markdown links to canon files.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -1564,7 +1564,7 @@ server.tool(
 
 server.tool(
   "create_chapter_draft",
-  "Create a rough chapter draft inside drafts/ using the same chapter slug structure as the final chapter tree.",
+  "Create a rough chapter draft inside drafts/ using the same chapter slug structure as the final chapter tree. Keep canon names as plain text in the draft prose instead of markdown links.",
   {
     rootPath: z.string().min(1),
     number: z.number().int().positive(),
@@ -1806,7 +1806,7 @@ server.tool(
 
 server.tool(
   "update_paragraph_draft",
-  "Update an existing paragraph draft by patching its frontmatter and replacing or appending rough scene content.",
+  "Update an existing paragraph draft by patching its frontmatter and replacing or appending rough scene content. Keep canon names as plain text in the draft prose instead of markdown links.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -1830,7 +1830,7 @@ server.tool(
 
 server.tool(
   "create_chapter_from_draft",
-  "Promote a chapter draft into the final chapters/ tree. It copies structural frontmatter from drafts/, accepts polished body text if provided, and syncs plot.md after writing.",
+  "Promote a chapter draft into the final chapters/ tree. It copies structural frontmatter from drafts/, accepts polished body text if provided, and syncs plot.md after writing. Final prose should keep canon names as plain text instead of markdown links.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -1852,7 +1852,7 @@ server.tool(
 
 server.tool(
   "create_paragraph_from_draft",
-  "Promote a paragraph draft into the final chapters/ tree. It copies structural frontmatter from drafts/, accepts polished body text if provided, and syncs plot.md after writing.",
+  "Promote a paragraph draft into the final chapters/ tree. It copies structural frontmatter from drafts/, accepts polished body text if provided, and syncs plot.md after writing. Final prose should keep canon names as plain text instead of markdown links.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -2030,7 +2030,7 @@ server.tool(
 
 server.tool(
   "update_chapter",
-  "Update an existing chapter metadata file and optional chapter notes body. Use this for summary, POV, tags, and chapter notes changes without touching chapter numbering or folder naming.",
+  "Update an existing chapter metadata file and optional chapter notes body. Use this for summary, POV, tags, and chapter notes changes without touching chapter numbering or folder naming. In prose bodies, keep canon names as plain text instead of markdown links.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -2052,7 +2052,7 @@ server.tool(
 
 server.tool(
   "update_paragraph",
-  "Apply an existing paragraph or scene revision after the user confirmed it. Use this for summary, viewpoint, tags, and body revisions without renumbering or renaming the file. The MCP layer refreshes plot and resume files after the update.",
+  "Apply an existing paragraph or scene revision after the user confirmed it. Use this for summary, viewpoint, tags, and body revisions without renumbering or renaming the file. Keep canon names as plain text instead of markdown links; the MCP layer refreshes plot and resume files after the update.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),

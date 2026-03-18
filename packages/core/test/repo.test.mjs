@@ -748,14 +748,59 @@ test("upgradeBookRepo refreshes managed scaffolding and preserves author files",
       language: "it",
     });
 
+    await createChapter(rootPath, {
+      number: 1,
+      title: "Upgrade Arrival",
+      body: "# Purpose\n\nPlaceholder chapter body.",
+    });
+    await createParagraph(rootPath, {
+      chapter: "chapter:001-upgrade-arrival",
+      number: 1,
+      title: "Linked Scene",
+      body: "# Scene\n\nPlaceholder scene body.",
+    });
+    await createParagraphDraft(rootPath, {
+      chapter: "chapter:001-upgrade-arrival",
+      number: 2,
+      title: "Linked Draft",
+      body: "# Rough Scene\n\nPlaceholder draft body.",
+    });
+
     await writeFile(path.join(rootPath, "opencode.jsonc"), '{"legacy":true}\n', "utf8");
     await writeFile(path.join(rootPath, ".opencode", "commands", "resume-book.md"), "old command\n", "utf8");
     await writeFile(path.join(rootPath, "guidelines", "prose.md"), "# Custom Prose\n\nKeep this intact.\n", "utf8");
+    await writeFile(
+      path.join(rootPath, "chapters", "001-upgrade-arrival", "chapter.md"),
+      (await readFile(path.join(rootPath, "chapters", "001-upgrade-arrival", "chapter.md"), "utf8")).replace(
+        "Placeholder chapter body.",
+        "[Lyra Vale](../../characters/lyra-vale/) reaches [Gray Harbor](../../locations/gray-harbor/).",
+      ),
+      "utf8",
+    );
+    await writeFile(
+      path.join(rootPath, "chapters", "001-upgrade-arrival", "001-linked-scene.md"),
+      (await readFile(path.join(rootPath, "chapters", "001-upgrade-arrival", "001-linked-scene.md"), "utf8")).replace(
+        "Placeholder scene body.",
+        "[Brass Key](../../items/brass-key/) stays hidden beside the [external archive](https://example.com/archive).",
+      ),
+      "utf8",
+    );
+    await writeFile(
+      path.join(rootPath, "drafts", "001-upgrade-arrival", "002-linked-draft.md"),
+      (await readFile(path.join(rootPath, "drafts", "001-upgrade-arrival", "002-linked-draft.md"), "utf8")).replace(
+        "Placeholder draft body.",
+        "[Mariamne](../../characters/mariamne-ii/) studies the [Harbor Lockdown](../../timelines/events/harbor-lockdown/).",
+      ),
+      "utf8",
+    );
 
     const result = await upgradeBookRepo(rootPath);
     const opencodeConfig = await readFile(path.join(rootPath, "opencode.jsonc"), "utf8");
     const resumeCommand = await readFile(path.join(rootPath, ".opencode", "commands", "resume-book.md"), "utf8");
     const proseGuide = await readFile(path.join(rootPath, "guidelines", "prose.md"), "utf8");
+    const chapterFile = await readFile(path.join(rootPath, "chapters", "001-upgrade-arrival", "chapter.md"), "utf8");
+    const paragraphFile = await readFile(path.join(rootPath, "chapters", "001-upgrade-arrival", "001-linked-scene.md"), "utf8");
+    const draftFile = await readFile(path.join(rootPath, "drafts", "001-upgrade-arrival", "002-linked-draft.md"), "utf8");
 
     assert.match(opencodeConfig, /"legacy": true/);
     assert.match(opencodeConfig, /\.github\/copilot-instructions\.md/);
@@ -763,6 +808,74 @@ test("upgradeBookRepo refreshes managed scaffolding and preserves author files",
     assert.equal(proseGuide, "# Custom Prose\n\nKeep this intact.\n");
     assert.match(result.updated.join("\n"), /resume-book\.md/);
     assert.match(result.updated.join("\n"), /opencode\.jsonc/);
+    assert.deepEqual(result.migrated, [
+      "chapters/001-upgrade-arrival/001-linked-scene.md",
+      "chapters/001-upgrade-arrival/chapter.md",
+      "drafts/001-upgrade-arrival/002-linked-draft.md",
+    ]);
+    assert.match(chapterFile, /Lyra Vale reaches Gray Harbor\./);
+    assert.doesNotMatch(chapterFile, /\]\(\.\.\/\.\.\/(characters|locations)\//);
+    assert.match(paragraphFile, /Brass Key stays hidden beside the \[external archive\]\(https:\/\/example\.com\/archive\)\./);
+    assert.doesNotMatch(paragraphFile, /\]\(\.\.\/\.\.\/items\//);
+    assert.match(draftFile, /Mariamne studies the Harbor Lockdown\./);
+    assert.doesNotMatch(draftFile, /\]\(\.\.\/\.\.\/(characters|timelines)\//);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("story prose normalizes internal canon markdown links into plain text on write", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-plain-mentions-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Plain Mention Book",
+      language: "en",
+    });
+
+    await createChapter(rootPath, {
+      number: 1,
+      title: "Linked Arrival",
+      body: "# Purpose\n\n[Lyra Vale](../../characters/lyra-vale/) reaches [Gray Harbor](../../locations/gray-harbor/).",
+    });
+    await createParagraph(rootPath, {
+      chapter: "chapter:001-linked-arrival",
+      number: 1,
+      title: "Gate Ledger",
+      body: "# Scene\n\n[Lyra Vale](character:lyra-vale) hides the [Brass Key](../../items/brass-key.md) and keeps an [external archive](https://example.com/archive).",
+    });
+    await updateParagraph(rootPath, {
+      chapter: "chapter:001-linked-arrival",
+      paragraph: "001-gate-ledger",
+      appendBody: "[Harbor Council](../factions/harbor-council/) waits behind the glass.",
+    });
+    await createParagraphDraft(rootPath, {
+      chapter: "chapter:001-linked-arrival",
+      number: 2,
+      title: "Draft Watch",
+      body: "# Rough Scene\n\n[Mariamne](../../characters/mariamne-ii/) studies the [Harbor Lockdown](../../timelines/events/harbor-lockdown/).",
+    });
+    await createParagraphFromDraft(rootPath, {
+      chapter: "chapter:001-linked-arrival",
+      paragraph: "002-draft-watch",
+    });
+
+    const chapterFile = await readFile(path.join(rootPath, "chapters", "001-linked-arrival", "chapter.md"), "utf8");
+    const paragraphFile = await readFile(path.join(rootPath, "chapters", "001-linked-arrival", "001-gate-ledger.md"), "utf8");
+    const draftFile = await readFile(path.join(rootPath, "drafts", "001-linked-arrival", "002-draft-watch.md"), "utf8");
+    const promotedFile = await readFile(path.join(rootPath, "chapters", "001-linked-arrival", "002-draft-watch.md"), "utf8");
+
+    assert.match(chapterFile, /Lyra Vale reaches Gray Harbor\./);
+    assert.doesNotMatch(chapterFile, /\]\(\.\.\/\.\.\/(characters|locations)\//);
+    assert.match(paragraphFile, /Lyra Vale hides the Brass Key/);
+    assert.match(paragraphFile, /Harbor Council waits behind the glass\./);
+    assert.match(paragraphFile, /\[external archive\]\(https:\/\/example\.com\/archive\)/);
+    assert.doesNotMatch(paragraphFile, /character:lyra-vale/);
+    assert.doesNotMatch(paragraphFile, /\]\((?:\.\.\/)?(?:characters|items|factions)\//);
+    assert.match(draftFile, /Mariamne studies the Harbor Lockdown\./);
+    assert.doesNotMatch(draftFile, /\]\(\.\.\/\.\.\/(characters|timelines)\//);
+    assert.match(promotedFile, /Mariamne studies the Harbor Lockdown\./);
+    assert.doesNotMatch(promotedFile, /\]\(\.\.\/\.\.\/(characters|timelines)\//);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }

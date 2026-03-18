@@ -144,7 +144,9 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
 <script type="application/json" id="canon-glossary-data" set:html={glossaryJson}></script>
 <script type="application/json" id="reader-chapter-data" set:html={chaptersJson}></script>
 
-<script is:inline>
+<script>
+  import { buildCanonHrefIndex, normalizeCanonEntityHref } from "../lib/canon-mentions.js";
+
   const themeStorageKey = "narrarium-reader-theme";
   const canonModeStorageKey = "narrarium-reader-canon";
   const progressStorageKey = "narrarium-reader-progress";
@@ -354,6 +356,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     const limit = getSelectedSpoilerLimit();
     const visibleEntries = glossaryEntries.filter((entry) => isEntryVisible(entry, limit));
     const glossaryById = new Map(visibleEntries.map((entry) => [entry.id, entry]));
+    const hrefIndex = buildCanonHrefIndex(visibleEntries);
     const termMap = new Map();
 
     for (const entry of visibleEntries) {
@@ -368,15 +371,15 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     }
 
     const terms = [...termMap.keys()].sort((left, right) => right.length - left.length);
-    if (terms.length === 0) return;
+    const pattern = terms.length > 0
+      ? new RegExp(`(^|[^\\p{L}\\p{N}])(${terms.map(escapeRegex).join("|")})(?=$|[^\\p{L}\\p{N}])`, "giu")
+      : null;
 
-    const pattern = new RegExp(`(^|[^\\p{L}\\p{N}])(${terms.map(escapeRegex).join("|")})(?=$|[^\\p{L}\\p{N}])`, "giu");
-
-    enhanceCanonRoot(document, pattern, termMap);
-    initializeCanonOverlay(pattern, termMap, glossaryById, limit);
+    enhanceCanonRoot(document, pattern, termMap, hrefIndex);
+    initializeCanonOverlay(pattern, termMap, hrefIndex, glossaryById, limit);
   }
 
-  function enhanceCanonRoot(root, pattern, termMap) {
+  function enhanceCanonRoot(root, pattern, termMap, hrefIndex) {
     const containers = root instanceof Document
       ? root.querySelectorAll(".prose p, .prose li, .prose blockquote")
       : root.matches?.(".prose")
@@ -385,7 +388,11 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
 
     containers.forEach((container) => {
       if (container.dataset.canonEnhanced === "true") return;
+      rewriteLegacyCanonLinks(container, hrefIndex);
       container.dataset.canonEnhanced = "true";
+      if (!pattern) {
+        return;
+      }
       const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
       const textNodes = [];
       while (walker.nextNode()) {
@@ -430,12 +437,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       }
 
       if (entryId) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "canon-mention";
-        button.dataset.canonId = entryId;
-        button.textContent = term;
-        fragment.append(button);
+        fragment.append(createCanonMentionButton(entryId, term));
       } else {
         fragment.append(term);
       }
@@ -450,7 +452,33 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     textNode.replaceWith(fragment);
   }
 
-  function initializeCanonOverlay(pattern, termMap, glossaryById, limit) {
+  function rewriteLegacyCanonLinks(container, hrefIndex) {
+    container.querySelectorAll("a[href]").forEach((anchor) => {
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.closest("[data-no-canon]")) {
+        return;
+      }
+
+      const normalizedHref = normalizeCanonEntityHref(anchor.getAttribute("href") || "");
+      if (!normalizedHref) {
+        return;
+      }
+
+      const label = anchor.textContent || "";
+      const entryId = hrefIndex.get(normalizedHref);
+      anchor.replaceWith(entryId ? createCanonMentionButton(entryId, label) : document.createTextNode(label));
+    });
+  }
+
+  function createCanonMentionButton(entryId, label) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "canon-mention";
+    button.dataset.canonId = entryId;
+    button.textContent = label;
+    return button;
+  }
+
+  function initializeCanonOverlay(pattern, termMap, hrefIndex, glossaryById, limit) {
     const overlay = document.querySelector("[data-canon-overlay]");
     if (!overlay || overlay.dataset.bound === "true") return;
     overlay.dataset.bound = "true";
@@ -482,7 +510,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
         link.href = entry.href;
         link.hidden = !revealed;
         body.innerHTML = revealed ? entry.bodyHtml || "" : "";
-        enhanceCanonRoot(body, pattern, termMap);
+        enhanceCanonRoot(body, pattern, termMap, hrefIndex);
         metadata.replaceChildren(...(entry.metadataEntries || []).map((item) => {
           const row = document.createElement("div");
           row.className = "meta-row";

@@ -43,6 +43,7 @@ In public mode:
 - secrets stay hidden from the public atlas and nav
 - direct canon pages fall back to teaser or locked views when `known_from` or `reveal_in` say a dossier is not safe yet
 - search, canon popups, and backlinks follow the same thresholds
+- chapter and scene prose should keep canon names as plain text; the reader upgrades visible mentions into canon popups and also rewrites legacy internal canon links at runtime
 
 If you want an author-only or spoiler-friendly deployment, enable full canon mode:
 

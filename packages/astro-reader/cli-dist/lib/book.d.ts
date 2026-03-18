@@ -26,6 +26,7 @@ export declare function loadHomePageData(): Promise<{
         path: string;
         metadata: import("narrarium").ChapterFrontmatter;
     }[];
+    draftChapterCount: number;
     characters: {
         slug: string;
         path: string;

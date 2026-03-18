@@ -76,6 +76,7 @@ Treat the repository as the canonical source of truth for the book.
 - Do not reveal secrets before their \`known_from\` or \`reveal_in\` point.
 - Respect chapter numbering and paragraph numbering.
 - Keep prose in body content and structured facts in frontmatter.
+- In chapter and paragraph prose, write character, item, location, faction, secret, and timeline-event names as plain text. Do not insert markdown links to canon files or reader routes; the reader resolves visible mentions automatically.
 - Always read \`guidelines/prose.md\` before drafting new chapter or paragraph prose.
 - If a chapter declares \`style_refs\`, \`narration_person\`, \`narration_tense\`, or \`prose_mode\`, treat that as an explicit chapter-level override; otherwise follow the book-level default prose, style, and voice guides.
 - Before writing a scene, review \`context.md\`, \`story-design.md\`, \`notes.md\`, any matching chapter draft notes, the relevant prior chapter content, the latest scoped summaries in \`resumes/\`, the current point-in-time snapshot in \`state/\` when available, and any matching files in \`drafts/\`.

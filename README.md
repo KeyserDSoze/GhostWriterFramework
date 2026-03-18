@@ -63,6 +63,8 @@ To refresh the managed Narrarium scaffolding inside an existing repo:
 npx create-narrarium-book --upgrade .
 ```
 
+The upgrade also migrates legacy story prose links like `[Mariamne](../../characters/mariamne-ii/)` into plain-text canon mentions so the reader can link visible names itself.
+
 Add `--with-reader` if you also want to refresh the generated reader scaffold and root convenience files.
 
 ## Run the MCP server from npm
@@ -95,6 +97,7 @@ By default the generated reader runs in a spoiler-safe public mode:
 - secret pages stay out of the public atlas and nav
 - direct canon pages fall back to teaser or locked views when `known_from` or `reveal_in` say the lore is not safe yet
 - search, popups, and canon backlinks respect the same thresholds
+- chapter and scene prose should keep canon names as plain text; the reader upgrades visible mentions into spoiler-safe popups and links automatically, including legacy internal canon links during runtime
 
 For author-only or spoiler-friendly deployments, set one of these before building or running the reader:
 

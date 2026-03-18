@@ -24,6 +24,7 @@ npm install narrarium
 - validate markdown frontmatter and file placement
 - create rich canon files for characters, locations, factions, items, secrets, and timeline events
 - create and update chapters, scenes, chapter drafts, and paragraph drafts
+- normalize chapter and paragraph prose so canon names stay plain text instead of hand-authored markdown links to canon files
 - answer natural-language canon questions with `queryCanon()`
 - propose targeted scene revisions with `reviseParagraph()` without writing files yet
 - propose chapter-level editorial plans with `reviseChapter()` without mutating files
@@ -138,6 +139,8 @@ Narrarium keeps structured continuity separate from the narrative summaries:
 - `state/status.md` tracks whether story state is stale and why
 
 Story mutations mark the state as stale, but they do not auto-sync the snapshots. That is deliberate: you decide when a rewrite is stable enough to refresh continuity state.
+
+Chapter and paragraph prose should keep canon names as plain text. If older story files still contain internal canon links, `upgradeBookRepo()` migrates them during a repo upgrade and normal create/update flows strip them on save.
 
 Typical flow:
 

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readdir } from "node:fs/promises";
 import { listChapters, listEntities, pathExists, readBook, readChapter, readEntity, readTimelineMain, } from "narrarium";
 import { defaultBookRoot } from "./book-config.js";
 import { readReaderBookRootEnv, resolveReaderBookRootCandidate } from "./env.js";
@@ -18,6 +19,7 @@ export async function loadHomePageData() {
             root,
             book: null,
             chapters: [],
+            draftChapterCount: 0,
             characters: [],
             locations: [],
             factions: [],
@@ -26,9 +28,10 @@ export async function loadHomePageData() {
             timelineEvents: [],
         };
     }
-    const [book, chapters, characters, locations, factions, items, secrets, timelineEvents] = await Promise.all([
+    const [book, chapters, draftChapterCount, characters, locations, factions, items, secrets, timelineEvents] = await Promise.all([
         readBook(root),
         listChapters(root),
+        countDraftChapters(root),
         listEntities(root, "character"),
         listEntities(root, "location"),
         listEntities(root, "faction"),
@@ -41,6 +44,7 @@ export async function loadHomePageData() {
         root,
         book,
         chapters,
+        draftChapterCount,
         characters,
         locations,
         factions,
@@ -48,6 +52,11 @@ export async function loadHomePageData() {
         secrets,
         timelineEvents,
     };
+}
+async function countDraftChapters(root) {
+    const draftsRoot = path.join(root, "drafts");
+    const entries = await readdir(draftsRoot, { withFileTypes: true }).catch(() => []);
+    return entries.filter((entry) => entry.isDirectory()).length;
 }
 export async function loadChapterPageData(chapterSlug) {
     const root = getBookRoot();

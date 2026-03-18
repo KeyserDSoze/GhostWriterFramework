@@ -51,4 +51,5 @@ Treat the repository as the canonical source of truth for the book.
 - Do not reveal secrets before their `known_from` or `reveal_in` point.
 - Respect chapter numbering and paragraph numbering.
 - Keep prose in body content and structured facts in frontmatter.
+- In chapter and paragraph prose, write character, item, location, faction, secret, and timeline-event names as plain text. Do not insert markdown links to canon files or reader routes; the reader resolves visible mentions automatically.
 - If stylistic guidance is missing, inspect `guidelines/` before choosing a default.

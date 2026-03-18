@@ -84,6 +84,8 @@ type MarkdownDocument<T = Record<string, unknown>> = {
 
 const SUPPORTED_REFERENCE_PATTERN = /\b(?:chapter:[a-z0-9-]+|paragraph:[a-z0-9-]+:[a-z0-9-]+|character:[a-z0-9-]+|location:[a-z0-9-]+|faction:[a-z0-9-]+|item:[a-z0-9-]+|secret:[a-z0-9-]+|timeline-event:[a-z0-9-]+|guideline:[a-z0-9-]+|style:[a-z0-9-]+)\b/gi;
 const OPENCODE_INSTRUCTION_FILE = ".github/copilot-instructions.md";
+const CANON_ENTITY_LINK_REFERENCE_PATTERN = /^(character|location|faction|item|secret|timeline-event):[a-z0-9-]+$/i;
+const STORY_MARKDOWN_LINK_PATTERN = /(?<!!)\[([^\]]+)\]\(([^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\)/g;
 
 type SearchHit = {
   path: string;
@@ -780,6 +782,7 @@ export async function initializeBookRepo(
         "- Default mode: novel prose.",
         "- Prioritize scene-based writing over summary whenever the moment matters emotionally or narratively.",
         "- Before drafting a chapter or paragraph, read this file, the relevant chapter files, matching drafts/, and the latest resumes/ for continuity.",
+        "- In chapter and paragraph prose, write canon names as plain text. Do not insert markdown links to characters/, items/, locations/, factions/, secrets/, or timeline entries; the reader resolves visible mentions automatically.",
         "- This file defines the book-level prose default. If a chapter does not declare its own style profile, use this default together with guidelines/style.md and guidelines/voices.md.",
         "- Chapter-level style changes must be explicit in chapter frontmatter, not inferred.",
         "",
@@ -1163,6 +1166,7 @@ export async function upgradeBookRepo(
   rootPath: string;
   created: string[];
   updated: string[];
+  migrated: string[];
 }> {
   const root = path.resolve(rootPath);
   const book = await readBook(root);
@@ -1203,11 +1207,39 @@ export async function upgradeBookRepo(
     }
   }
 
+  const migrated = await migrateLegacyStoryMarkdownLinks(root);
+
   return {
     rootPath: root,
     created,
     updated,
+    migrated,
   };
+}
+
+async function migrateLegacyStoryMarkdownLinks(rootPath: string): Promise<string[]> {
+  const root = path.resolve(rootPath);
+  const files = await fg(["chapters/**/*.md", "drafts/**/*.md"], {
+    cwd: root,
+    absolute: true,
+    onlyFiles: true,
+    ignore: ["**/node_modules/**", "**/dist/**", "**/.astro/**"],
+  });
+  const migrated: string[] = [];
+
+  for (const filePath of files) {
+    const raw = await readFile(filePath, "utf8");
+    const parsed = matter(raw);
+    const normalizedBody = normalizeStoryMarkdownBody(String(parsed.content ?? ""));
+    if (normalizedBody === String(parsed.content ?? "")) {
+      continue;
+    }
+
+    await writeFile(filePath, matter.stringify(normalizedBody, parsed.data), "utf8");
+    migrated.push(toPosixPath(path.relative(root, filePath)));
+  }
+
+  return migrated.sort();
 }
 
 export async function createEntity(
@@ -1506,7 +1538,7 @@ export async function createChapter(
 
   await writeFile(
     chapterFilePath,
-    renderMarkdown(frontmatter, options.body ?? defaultBodyForType("chapter")),
+    renderMarkdown(frontmatter, normalizeStoryMarkdownBody(options.body ?? defaultBodyForType("chapter"))),
     "utf8",
   );
 
@@ -1577,7 +1609,7 @@ export async function createChapterDraft(
 
   await writeFile(
     draftFilePath,
-    renderMarkdown(frontmatter, options.body ?? defaultBodyForType("chapter-draft")),
+    renderMarkdown(frontmatter, normalizeStoryMarkdownBody(options.body ?? defaultBodyForType("chapter-draft"))),
     "utf8",
   );
 
@@ -1631,7 +1663,7 @@ export async function createParagraph(
 
   await writeFile(
     filePath,
-    renderMarkdown(frontmatter, options.body ?? defaultBodyForType("paragraph")),
+    renderMarkdown(frontmatter, normalizeStoryMarkdownBody(options.body ?? defaultBodyForType("paragraph"))),
     "utf8",
   );
 
@@ -1674,7 +1706,7 @@ export async function createParagraphDraft(
 
   await writeFile(
     filePath,
-    renderMarkdown(frontmatter, options.body ?? defaultBodyForType("paragraph-draft")),
+    renderMarkdown(frontmatter, normalizeStoryMarkdownBody(options.body ?? defaultBodyForType("paragraph-draft"))),
     "utf8",
   );
 
@@ -2604,6 +2636,7 @@ export async function buildChapterWritingContext(
       `# Chapter Writing Context for ${chapterSlugValue}`,
       "",
       "Read these before drafting or polishing the chapter prose.",
+      "Write canon names as plain text in the prose body. Do not insert markdown links to canon files or reader routes; the reader resolves visible mentions automatically.",
       "",
       ...sections,
       "## Source files consulted",
@@ -3401,7 +3434,7 @@ export async function updateEntity(
         ? appendMarkdownSection(String(parsed.content ?? "").trim(), options.appendBody)
         : String(parsed.content ?? "").trim();
 
-  await writeFile(filePath, renderMarkdown(validated, nextBody), "utf8");
+  await writeFile(filePath, renderMarkdown(validated, normalizeStoryMarkdownBody(nextBody)), "utf8");
   await markStoryStateDirty(root, {
     changedPaths: [toPosixPath(path.relative(root, filePath))],
     reason: "chapter-updated",
@@ -3441,7 +3474,7 @@ export async function updateChapter(
         ? appendMarkdownSection(String(parsed.content ?? "").trim(), options.appendBody)
         : String(parsed.content ?? "").trim();
 
-  await writeFile(filePath, renderMarkdown(validated, nextBody), "utf8");
+  await writeFile(filePath, renderMarkdown(validated, normalizeStoryMarkdownBody(nextBody)), "utf8");
   await markStoryStateDirty(root, {
     changedPaths: [toPosixPath(path.relative(root, filePath))],
     reason: "paragraph-updated",
@@ -3481,7 +3514,7 @@ export async function updateChapterDraft(
         ? appendMarkdownSection(String(parsed.content ?? "").trim(), options.appendBody)
         : String(parsed.content ?? "").trim();
 
-  await writeFile(filePath, renderMarkdown(validated, nextBody), "utf8");
+  await writeFile(filePath, renderMarkdown(validated, normalizeStoryMarkdownBody(nextBody)), "utf8");
   await markStoryStateDirty(root, {
     changedPaths: [toPosixPath(path.relative(root, filePath))],
     reason: "chapter-updated",
@@ -3522,7 +3555,7 @@ export async function updateParagraph(
         ? appendMarkdownSection(String(parsed.content ?? "").trim(), options.appendBody)
         : String(parsed.content ?? "").trim();
 
-  await writeFile(filePath, renderMarkdown(validated, nextBody), "utf8");
+  await writeFile(filePath, renderMarkdown(validated, normalizeStoryMarkdownBody(nextBody)), "utf8");
   return { filePath, frontmatter: validated };
 }
 
@@ -4880,6 +4913,93 @@ function analyzeText(text: string): TextAnalysis {
     firstSentence: sentences[0] ?? summarizeText(plainText, 120),
     lastSentence: sentences[sentences.length - 1] ?? summarizeText(plainText, 120),
   };
+}
+
+function normalizeStoryMarkdownBody(body: string): string {
+  return body.replace(STORY_MARKDOWN_LINK_PATTERN, (match, label: string, target: string) =>
+    resolveCanonEntityLinkTarget(target) ? label : match,
+  );
+}
+
+function resolveCanonEntityLinkTarget(target: string): string | null {
+  const normalizedTarget = target.trim().replace(/^<|>$/g, "");
+  if (!normalizedTarget) {
+    return null;
+  }
+
+  if (CANON_ENTITY_LINK_REFERENCE_PATTERN.test(normalizedTarget)) {
+    return normalizedTarget.toLowerCase();
+  }
+
+  const strippedOrigin = normalizedTarget
+    .replace(/^[a-z]+:\/\/[^/]+/i, "")
+    .split(/[?#]/, 1)[0]
+    .replace(/\\/g, "/");
+  const segments = strippedOrigin
+    .split("/")
+    .filter(Boolean)
+    .filter((segment) => segment !== "." && segment !== "..");
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const current = segments[index]?.toLowerCase();
+    if (!current) {
+      continue;
+    }
+
+    if (current === "timelines" && segments[index + 1]?.toLowerCase() === "events") {
+      const slug = normalizeCanonEntityLinkSlug(segments[index + 2]);
+      if (slug) {
+        return `timeline-event:${slug}`;
+      }
+      continue;
+    }
+
+    const kind = normalizeCanonEntityLinkKind(current);
+    if (!kind) {
+      continue;
+    }
+
+    const slug = normalizeCanonEntityLinkSlug(segments[index + 1]);
+    if (slug) {
+      return `${kind}:${slug}`;
+    }
+  }
+
+  return null;
+}
+
+function normalizeCanonEntityLinkKind(segment: string): string | null {
+  switch (segment.toLowerCase()) {
+    case "character":
+    case "characters":
+      return "character";
+    case "location":
+    case "locations":
+      return "location";
+    case "faction":
+    case "factions":
+      return "faction";
+    case "item":
+    case "items":
+      return "item";
+    case "secret":
+    case "secrets":
+      return "secret";
+    case "timeline":
+    case "timeline-event":
+      return "timeline-event";
+    default:
+      return null;
+  }
+}
+
+function normalizeCanonEntityLinkSlug(segment: string | undefined): string | null {
+  if (!segment) {
+    return null;
+  }
+
+  const normalized = segment.replace(/\.md$/i, "").trim().toLowerCase();
+  return /^[a-z0-9-]+$/.test(normalized) ? normalized : null;
 }
 
 function stripMarkdown(text: string): string {
@@ -9123,13 +9243,14 @@ function buildGithubCopilotInstructions(): string {
     "- Before fetching Wikipedia again, check whether `research/wikipedia/` already has the needed snapshot and reuse it when possible; use explicit refresh controls when the snapshot should be bypassed.",
     "- Use Wikipedia search and page tools for historical entities, places, timelines, or factual references.",
     "",
-    "## Writing discipline",
-    "",
-    "- Do not reveal secrets before their `known_from` or `reveal_in` point.",
-    "- Respect chapter numbering and paragraph numbering.",
-    "- Keep prose in body content and structured facts in frontmatter.",
-    "- Always read `guidelines/prose.md` before drafting new chapter or paragraph prose.",
-    "- If a chapter declares `style_refs`, `narration_person`, `narration_tense`, or `prose_mode`, treat that as an explicit chapter-level override; otherwise follow the book-level default prose, style, and voice guides.",
+      "## Writing discipline",
+      "",
+      "- Do not reveal secrets before their `known_from` or `reveal_in` point.",
+      "- Respect chapter numbering and paragraph numbering.",
+      "- Keep prose in body content and structured facts in frontmatter.",
+      "- In chapter and paragraph prose, write character, item, location, faction, secret, and timeline-event names as plain text. Do not insert markdown links to canon files or reader routes; the reader resolves visible mentions automatically.",
+      "- Always read `guidelines/prose.md` before drafting new chapter or paragraph prose.",
+      "- If a chapter declares `style_refs`, `narration_person`, `narration_tense`, or `prose_mode`, treat that as an explicit chapter-level override; otherwise follow the book-level default prose, style, and voice guides.",
     "- Before writing or rewriting a scene, review `context.md`, `story-design.md`, `notes.md`, any matching chapter draft notes, the relevant prior chapter content, the scoped summaries for story so far, any point-in-time state snapshot available before that point, and any matching files in `drafts/`.",
     "- Treat `ideas.md` as unstable material under review; do not treat active ideas as accepted canon or default drafting instructions unless the user asks you to use them.",
     "- Treat notes, ideas, and promoted archives as working support material, not canon. If something becomes a stable fact, move it into the correct canon file.",
