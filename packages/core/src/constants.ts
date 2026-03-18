@@ -14,6 +14,7 @@ export const BOOK_DIRECTORIES = [
   "resumes/chapters",
   "evaluations",
   "evaluations/chapters",
+  "evaluations/paragraphs",
   "research",
   "research/wikipedia",
   "research/wikipedia/en",

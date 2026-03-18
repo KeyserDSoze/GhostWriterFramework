@@ -36,6 +36,7 @@ import {
   type ChapterFrontmatter,
   type EntityType,
   type FactionFrontmatter,
+  type GuidelineFrontmatter,
   type ItemFrontmatter,
   type LocationFrontmatter,
   type ParagraphFrontmatter,
@@ -74,6 +75,85 @@ type CanonEntityDocument = {
   path: string;
   metadata: Record<string, unknown>;
   body: string;
+};
+
+type GuidelineDocument = MarkdownDocument<GuidelineFrontmatter> & {
+  slug: string;
+};
+
+type EvaluationStyleContext = {
+  coreGuidelines: GuidelineDocument[];
+  referencedGuidelines: GuidelineDocument[];
+  unresolvedRefs: string[];
+  metadataSignals: Array<{ key: string; value: string }>;
+  showDontTell: boolean;
+};
+
+type ChapterReadResult = {
+  metadata: ChapterFrontmatter;
+  body: string;
+  paragraphs: Array<{ path: string; metadata: ParagraphFrontmatter; body: string }>;
+};
+
+type ChapterParagraph = ChapterReadResult["paragraphs"][number];
+
+type TextAnalysis = {
+  plainText: string;
+  wordCount: number;
+  sentenceCount: number;
+  paragraphCount: number;
+  estimatedReadingMinutes: number;
+  avgSentenceWords: number;
+  avgParagraphWords: number;
+  dialogueRatio: number;
+  sensoryCueCount: number;
+  tellingCueCount: number;
+  lexicalDiversity: number;
+  repeatedWordHotspots: string[];
+  firstSentence: string;
+  lastSentence: string;
+};
+
+type ScorecardEntry = {
+  label: string;
+  score: number;
+  strengths: string[];
+  concerns: string[];
+};
+
+type ParagraphEvaluationInsight = {
+  slug: string;
+  title: string;
+  summary: string;
+  summaryPresent: boolean;
+  viewpoint: string;
+  filePath: string;
+  wordCount: number;
+  estimatedReadingMinutes: number;
+  dialogueRatio: number;
+  sensoryCueCount: number;
+  tellingCueCount: number;
+  repeatedWordHotspots: string[];
+  firstSentence: string;
+  lastSentence: string;
+  scorecard: ScorecardEntry[];
+  strengths: string[];
+  concerns: string[];
+  nextSteps: string[];
+};
+
+type ChapterEvaluationDraft = {
+  chapterSlug: string;
+  chapterData: Awaited<ReturnType<typeof readChapter>>;
+  styleContext: EvaluationStyleContext;
+  chapterAnalysis: TextAnalysis;
+  paragraphInsights: ParagraphEvaluationInsight[];
+  scorecard: ScorecardEntry[];
+  strengths: string[];
+  concerns: string[];
+  nextSteps: string[];
+  missingParagraphSummaries: number;
+  missingParagraphViewpoints: number;
 };
 
 type CreateEntityInput = {
@@ -816,6 +896,7 @@ export async function createParagraph(
   const root = path.resolve(rootPath);
   const chapter = normalizeChapterReference(options.chapter);
   const folderPath = path.join(root, "chapters", chapter);
+  const evaluationDirectory = path.join(root, "evaluations", "paragraphs", chapter);
 
   if (!(await pathExists(folderPath))) {
     throw new Error(`Chapter folder does not exist: ${folderPath}`);
@@ -843,6 +924,22 @@ export async function createParagraph(
     filePath,
     renderMarkdown(frontmatter, options.body ?? defaultBodyForType("paragraph")),
     "utf8",
+  );
+
+  await ensureFile(
+    root,
+    toPosixPath(path.relative(root, path.join(evaluationDirectory, `${slug}.md`))),
+    renderMarkdown(
+      {
+        type: "evaluation",
+        id: `evaluation:paragraph:${chapter}:${slug}`,
+        title: `Evaluation ${chapter} ${slug}`,
+        chapter: `chapter:${chapter}`,
+        paragraph: `paragraph:${chapter}:${slug}`,
+      },
+      "# Evaluation\n\nTrack paragraph quality, chapter fit, and revision notes here.\n",
+    ),
+    [],
   );
 
   return { filePath, paragraphId: `paragraph:${chapter}:${slug}` };
@@ -1179,10 +1276,44 @@ export async function renameParagraph(
 
   const oldParagraphId = `paragraph:${chapterSlugValue}:${oldParagraphSlug}`;
   const newParagraphId = `paragraph:${chapterSlugValue}:${newParagraphSlug}`;
+  const oldEvaluationPath = path.join(root, "evaluations", "paragraphs", chapterSlugValue, `${oldParagraphSlug}.md`);
+  const newEvaluationPath = path.join(root, "evaluations", "paragraphs", chapterSlugValue, `${newParagraphSlug}.md`);
+
+  if (await pathExists(oldEvaluationPath)) {
+    await mkdir(path.dirname(newEvaluationPath), { recursive: true });
+    if (oldEvaluationPath !== newEvaluationPath && (await pathExists(newEvaluationPath))) {
+      throw new Error(`Paragraph evaluation already exists at destination: ${newEvaluationPath}`);
+    }
+    if (oldEvaluationPath !== newEvaluationPath) {
+      await rename(oldEvaluationPath, newEvaluationPath);
+    }
+
+    const evaluationRaw = await readFile(newEvaluationPath, "utf8");
+    const evaluationParsed = matter(evaluationRaw);
+    await writeFile(
+      newEvaluationPath,
+      renderMarkdown(
+        {
+          ...(evaluationParsed.data as Record<string, unknown>),
+          id: `evaluation:paragraph:${chapterSlugValue}:${newParagraphSlug}`,
+          title: `Evaluation ${chapterSlugValue} ${newParagraphSlug}`,
+          chapter: `chapter:${chapterSlugValue}`,
+          paragraph: `paragraph:${chapterSlugValue}:${newParagraphSlug}`,
+        },
+        String(evaluationParsed.content ?? "").trim(),
+      ),
+      "utf8",
+    );
+  }
+
   const movedAssetPaths = await moveAssetDirectoryIfPresent(root, oldParagraphId, newParagraphId);
   const updatedReferences = await replaceReferencesInMarkdownFiles(root, [
     [oldParagraphId, newParagraphId],
     [`asset:paragraph:${chapterSlugValue}:${oldParagraphSlug}:`, `asset:paragraph:${chapterSlugValue}:${newParagraphSlug}:`],
+    [
+      `evaluation:paragraph:${chapterSlugValue}:${oldParagraphSlug}`,
+      `evaluation:paragraph:${chapterSlugValue}:${newParagraphSlug}`,
+    ],
     [assetDirectoryPrefix(oldParagraphId), assetDirectoryPrefix(newParagraphId)],
   ]);
 
@@ -1653,96 +1784,150 @@ export async function syncAllResumes(
   };
 }
 
-export async function syncChapterEvaluation(
+export async function syncParagraphEvaluation(
   rootPath: string,
   chapter: string,
+  paragraph: string,
 ): Promise<{ filePath: string; content: string }> {
   const root = path.resolve(rootPath);
   const chapterSlug = normalizeChapterReference(chapter);
-  const chapterData = await readChapter(root, chapterSlug);
-  const filePath = path.join(root, "evaluations", "chapters", `${chapterSlug}.md`);
-
-  const content = renderMarkdown(
-    {
-      type: "evaluation",
-      id: `evaluation:chapter:${chapterSlug}`,
-      title: `Evaluation ${chapterSlug}`,
-      chapter: `chapter:${chapterSlug}`,
-    },
-    [
-      "# Evaluation Snapshot",
-      "",
-      `- Scene count: ${chapterData.paragraphs.length}`,
-      `- POV: ${(chapterData.metadata.pov ?? []).join(", ") || "not set"}`,
-      `- Timeline: ${chapterData.metadata.timeline_ref ?? "not set"}`,
-      `- Chapter summary present: ${chapterData.metadata.summary ? "yes" : "no"}`,
-      "",
-      "# Continuity Checks",
-      "",
-      "- Verify timeline references align with prior canon.",
-      "- Verify secrets are not revealed too early.",
-      "- Verify character voice matches guidelines and prior scenes.",
-      "",
-      "# Scene Inventory",
-      "",
-      ...chapterData.paragraphs.flatMap((paragraph) => [
-        `## ${formatOrdinal(paragraph.metadata.number)} ${paragraph.metadata.title}`,
-        "",
-        (paragraph.metadata.summary ?? summarizeText(paragraph.body, 160)) || "Add scene evaluation notes here.",
-        "",
-      ]),
-      "# Revision Questions",
-      "",
-      "- Which scene is weakest and why?",
-      "- Where does pacing slow down?",
-      "- What information should move earlier or later?",
-      "- Which emotional beat needs stronger payoff?",
-    ].join("\n"),
-  );
+  const draft = await buildChapterEvaluationDraft(root, chapterSlug);
+  const paragraphInsight = findParagraphInsight(draft.paragraphInsights, paragraph);
+  const filePath = path.join(root, "evaluations", "paragraphs", chapterSlug, `${paragraphInsight.slug}.md`);
+  const content = renderParagraphEvaluationContent(root, draft, paragraphInsight);
 
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, content, "utf8");
   return { filePath, content };
 }
 
+export async function syncChapterEvaluation(
+  rootPath: string,
+  chapter: string,
+): Promise<{ filePath: string; content: string }> {
+  const root = path.resolve(rootPath);
+  const chapterSlug = normalizeChapterReference(chapter);
+  const filePath = path.join(root, "evaluations", "chapters", `${chapterSlug}.md`);
+  const draft = await buildChapterEvaluationDraft(root, chapterSlug);
+  const content = renderChapterEvaluationContent(root, draft);
+
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, content, "utf8");
+
+  for (const paragraphInsight of draft.paragraphInsights) {
+    const paragraphFilePath = path.join(
+      root,
+      "evaluations",
+      "paragraphs",
+      chapterSlug,
+      `${paragraphInsight.slug}.md`,
+    );
+    const paragraphContent = renderParagraphEvaluationContent(root, draft, paragraphInsight);
+    await mkdir(path.dirname(paragraphFilePath), { recursive: true });
+    await writeFile(paragraphFilePath, paragraphContent, "utf8");
+  }
+
+  return { filePath, content };
+}
+
 export async function evaluateBook(
   rootPath: string,
   options?: { syncChapterEvaluations?: boolean },
-): Promise<{ filePath: string; chapterCount: number; chapterEvaluationFiles: string[] }> {
+): Promise<{
+  filePath: string;
+  chapterCount: number;
+  chapterEvaluationFiles: string[];
+  paragraphEvaluationFiles: string[];
+}> {
   const root = path.resolve(rootPath);
   const chapters = await listChapters(root);
   const syncChapterEvaluations = options?.syncChapterEvaluations ?? true;
   const chapterEvaluationFiles: string[] = [];
+  const paragraphEvaluationFiles: string[] = [];
   const chapterBreakdowns: Array<{
+    slug: string;
     title: string;
     number: number;
     sceneCount: number;
     hasSummary: boolean;
     hasPov: boolean;
     tagsCount: number;
+    missingParagraphSummaries: number;
+    missingParagraphViewpoints: number;
+    readabilityScore: number;
+    beautyScore: number;
+    styleAlignmentScore: number;
+    revisionUrgency: string;
+    nextSteps: string[];
   }> = [];
 
+  const aggregatedStyles = new Map<string, string[]>();
+  const aggregatedSignals = new Map<string, string[]>();
+
   for (const chapter of chapters) {
-    const chapterData = await readChapter(root, chapter.slug);
+    const draft = await buildChapterEvaluationDraft(root, chapter.slug);
+    const readability = getScore(draft.scorecard, "Reader Readability");
+    const beauty = getScore(draft.scorecard, "Beauty And Memorability");
+    const styleAlignment = getScore(draft.scorecard, "Style Alignment");
     chapterBreakdowns.push({
+      slug: chapter.slug,
       title: chapter.metadata.title,
       number: chapter.metadata.number,
-      sceneCount: chapterData.paragraphs.length,
+      sceneCount: draft.chapterData.paragraphs.length,
       hasSummary: Boolean(chapter.metadata.summary),
       hasPov: (chapter.metadata.pov ?? []).length > 0,
       tagsCount: (chapter.metadata.tags ?? []).length,
+      missingParagraphSummaries: draft.missingParagraphSummaries,
+      missingParagraphViewpoints: draft.missingParagraphViewpoints,
+      readabilityScore: readability,
+      beautyScore: beauty,
+      styleAlignmentScore: styleAlignment,
+      revisionUrgency: formatRevisionUrgency(draft.concerns.length, draft.nextSteps.length),
+      nextSteps: draft.nextSteps,
     });
+
+    collectGuidelineTitles(aggregatedStyles, draft.styleContext.coreGuidelines);
+    collectGuidelineTitles(aggregatedStyles, draft.styleContext.referencedGuidelines);
+
+    for (const signal of draft.styleContext.metadataSignals) {
+      const values = aggregatedSignals.get(signal.key) ?? [];
+      values.push(signal.value);
+      aggregatedSignals.set(signal.key, uniqueValues(values));
+    }
+
+    if (draft.styleContext.showDontTell) {
+      const values = aggregatedSignals.get("show_dont_tell") ?? [];
+      values.push("required");
+      aggregatedSignals.set("show_dont_tell", uniqueValues(values));
+    }
 
     if (syncChapterEvaluations) {
       const result = await syncChapterEvaluation(root, chapter.slug);
       chapterEvaluationFiles.push(result.filePath);
+      paragraphEvaluationFiles.push(
+        ...draft.paragraphInsights.map((paragraphInsight) =>
+          path.join(root, "evaluations", "paragraphs", chapter.slug, `${paragraphInsight.slug}.md`),
+        ),
+      );
     }
   }
 
   const totalScenes = chapterBreakdowns.reduce((sum, chapter) => sum + chapter.sceneCount, 0);
   const missingSummary = chapterBreakdowns.filter((chapter) => !chapter.hasSummary);
   const missingPov = chapterBreakdowns.filter((chapter) => !chapter.hasPov);
+  const missingParagraphSummaries = chapterBreakdowns.filter((chapter) => chapter.missingParagraphSummaries > 0);
+  const missingParagraphViewpoints = chapterBreakdowns.filter((chapter) => chapter.missingParagraphViewpoints > 0);
   const filePath = path.join(root, TOTAL_EVALUATION_FILE);
+  const averageReadability = averageScore(chapterBreakdowns.map((chapter) => chapter.readabilityScore));
+  const averageBeauty = averageScore(chapterBreakdowns.map((chapter) => chapter.beautyScore));
+  const averageStyleAlignment = averageScore(chapterBreakdowns.map((chapter) => chapter.styleAlignmentScore));
+  const criticalChapters = chapterBreakdowns.filter((chapter) => chapter.readabilityScore <= 5 || chapter.styleAlignmentScore <= 5);
+  const activeStyleRefs = uniqueValues(
+    [...aggregatedStyles.entries()].flatMap(([, titles]) => titles),
+  );
+  const styleSignals = [...aggregatedSignals.entries()]
+    .filter(([, values]) => values.length > 0)
+    .sort(([left], [right]) => left.localeCompare(right));
 
   const content = renderMarkdown(
     {
@@ -1757,6 +1942,29 @@ export async function evaluateBook(
       `- Scenes: ${totalScenes}`,
       `- Chapters missing summary: ${missingSummary.length}`,
       `- Chapters missing POV: ${missingPov.length}`,
+      `- Paragraphs missing summary: ${chapterBreakdowns.reduce((sum, chapter) => sum + chapter.missingParagraphSummaries, 0)}`,
+      `- Paragraphs missing viewpoint: ${chapterBreakdowns.reduce((sum, chapter) => sum + chapter.missingParagraphViewpoints, 0)}`,
+      `- Average reader readability: ${averageReadability}/10`,
+      `- Average beauty and memorability: ${averageBeauty}/10`,
+      `- Average style alignment: ${averageStyleAlignment}/10`,
+      "",
+      "# Global Scorecard",
+      "",
+      `- Reader readability: ${averageReadability}/10`,
+      `- Beauty and memorability: ${averageBeauty}/10`,
+      `- Style alignment: ${averageStyleAlignment}/10`,
+      criticalChapters.length > 0
+        ? `- Chapters needing immediate attention: ${criticalChapters.map((chapter) => formatOrdinal(chapter.number)).join(", ")}`
+        : "- No chapter is currently flagged as urgent by the score thresholds.",
+      "",
+      "# Style Context",
+      "",
+      activeStyleRefs.length > 0
+        ? `- Active guideline references: ${activeStyleRefs.join(", ")}`
+        : "- Active guideline references: none resolved yet, rely on guidelines/ defaults.",
+      ...(styleSignals.length > 0
+        ? styleSignals.map(([key, values]) => `- ${humanizeKey(key)}: ${values.join(", ")}`)
+        : ["- Style signals from metadata: none detected."]),
       "",
       "# Global Checks",
       "",
@@ -1764,6 +1972,7 @@ export async function evaluateBook(
       "- Verify major characters keep a consistent voice and motivation.",
       "- Verify secrets are only revealed after their allowed threshold.",
       "- Verify chapter openings and endings follow the style rules in guidelines/.",
+      "- Verify chapter and paragraph evaluations stay aligned with each other after revisions.",
       "",
       "# Chapter Breakdown",
       "",
@@ -1774,6 +1983,13 @@ export async function evaluateBook(
         `- Summary present: ${chapter.hasSummary ? "yes" : "no"}`,
         `- POV present: ${chapter.hasPov ? "yes" : "no"}`,
         `- Tag count: ${chapter.tagsCount}`,
+        `- Paragraph summaries missing: ${chapter.missingParagraphSummaries}`,
+        `- Paragraph viewpoints missing: ${chapter.missingParagraphViewpoints}`,
+        `- Reader readability: ${chapter.readabilityScore}/10`,
+        `- Beauty and memorability: ${chapter.beautyScore}/10`,
+        `- Style alignment: ${chapter.styleAlignmentScore}/10`,
+        `- Revision urgency: ${chapter.revisionUrgency}`,
+        ...chapter.nextSteps.map((step) => `- Next step: ${step}`),
         "",
       ]),
       "# Revision Priorities",
@@ -1784,13 +2000,1045 @@ export async function evaluateBook(
       missingPov.length > 0
         ? `- Add POV metadata for: ${missingPov.map((chapter) => formatOrdinal(chapter.number)).join(", ")}`
         : "- POV metadata exists for all chapters.",
+      missingParagraphSummaries.length > 0
+        ? `- Add paragraph summaries inside: ${missingParagraphSummaries.map((chapter) => formatOrdinal(chapter.number)).join(", ")}`
+        : "- Paragraph summaries exist for all chapters.",
+      missingParagraphViewpoints.length > 0
+        ? `- Add paragraph viewpoints inside: ${missingParagraphViewpoints.map((chapter) => formatOrdinal(chapter.number)).join(", ")}`
+        : "- Paragraph viewpoints exist for all chapters.",
       "- Review continuity against resumes/ and secrets/ after each major revision.",
+      "- Re-run chapter and paragraph evaluations after structural edits so next steps stay current.",
     ].join("\n"),
   );
 
   await writeFile(filePath, content, "utf8");
-  return { filePath, chapterCount: chapterBreakdowns.length, chapterEvaluationFiles };
+  return { filePath, chapterCount: chapterBreakdowns.length, chapterEvaluationFiles, paragraphEvaluationFiles };
 }
+
+async function buildChapterEvaluationDraft(root: string, chapter: string): Promise<ChapterEvaluationDraft> {
+  const chapterSlug = normalizeChapterReference(chapter);
+  const chapterData = await readChapter(root, chapterSlug);
+  const styleContext = await resolveEvaluationStyleContext(root, chapterData);
+  const chapterText = chapterData.paragraphs.map((paragraph) => paragraph.body.trim()).filter(Boolean).join("\n\n");
+  const chapterAnalysis = analyzeText(chapterText);
+  const inheritedViewpoint = (chapterData.metadata.pov ?? []).join(", ") || "not set";
+
+  const paragraphInsights: ParagraphEvaluationInsight[] = chapterData.paragraphs.map((paragraph) => {
+    const paragraphAnalysis = analyzeText(paragraph.body);
+    const summaryPresent = Boolean(paragraph.metadata.summary);
+    const viewpoint = paragraph.metadata.viewpoint ?? inheritedViewpoint;
+    const scorecard = buildParagraphScorecard(chapterData, paragraph, paragraphAnalysis, styleContext);
+    const strengths = collectEvaluationNotes(scorecard, "strengths", 4);
+    const concerns = collectEvaluationNotes(scorecard, "concerns", 4);
+    const nextSteps = buildParagraphNextSteps(chapterData, paragraph, paragraphAnalysis, styleContext);
+
+    return {
+      slug: path.basename(paragraph.path, ".md"),
+      title: paragraph.metadata.title,
+      summary:
+        paragraph.metadata.summary ??
+        summarizeText(stripMarkdown(paragraph.body), 180) ??
+        "Add scene evaluation notes here.",
+      summaryPresent,
+      viewpoint,
+      filePath: toPosixPath(path.relative(root, paragraph.path)),
+      wordCount: paragraphAnalysis.wordCount,
+      estimatedReadingMinutes: paragraphAnalysis.estimatedReadingMinutes,
+      dialogueRatio: paragraphAnalysis.dialogueRatio,
+      sensoryCueCount: paragraphAnalysis.sensoryCueCount,
+      tellingCueCount: paragraphAnalysis.tellingCueCount,
+      repeatedWordHotspots: paragraphAnalysis.repeatedWordHotspots,
+      firstSentence: paragraphAnalysis.firstSentence,
+      lastSentence: paragraphAnalysis.lastSentence,
+      scorecard,
+      strengths,
+      concerns,
+      nextSteps,
+    };
+  });
+
+  const scorecard = buildChapterScorecard(chapterData, chapterAnalysis, paragraphInsights, styleContext);
+  const strengths = collectEvaluationNotes(scorecard, "strengths", 5);
+  const concerns = collectEvaluationNotes(scorecard, "concerns", 5);
+  const nextSteps = buildChapterNextSteps(chapterData, chapterAnalysis, paragraphInsights, styleContext);
+
+  return {
+    chapterSlug,
+    chapterData,
+    styleContext,
+    chapterAnalysis,
+    paragraphInsights,
+    scorecard,
+    strengths,
+    concerns,
+    nextSteps,
+    missingParagraphSummaries: paragraphInsights.filter((paragraph) => !paragraph.summaryPresent).length,
+    missingParagraphViewpoints: paragraphInsights.filter((paragraph) => paragraph.viewpoint === "not set").length,
+  };
+}
+
+async function resolveEvaluationStyleContext(
+  root: string,
+  chapterData: ChapterReadResult,
+): Promise<EvaluationStyleContext> {
+  const guidelines = await listGuidelines(root);
+  const guidelineById = new Map(guidelines.map((guideline) => [guideline.frontmatter.id, guideline]));
+  const coreGuidelines = ["guideline:style", "guideline:chapter-rules", "guideline:voices", "guideline:structure"]
+    .map((id) => guidelineById.get(id))
+    .filter((guideline): guideline is GuidelineDocument => Boolean(guideline));
+
+  const metadataEntries = [chapterData.metadata, ...chapterData.paragraphs.map((paragraph) => paragraph.metadata)];
+  const refs = uniqueValues(metadataEntries.flatMap((metadata) => extractStyleRefs(metadata as Record<string, unknown>)));
+  const referencedGuidelines = refs
+    .map((ref) => guidelineById.get(ref))
+    .filter((guideline): guideline is GuidelineDocument => Boolean(guideline));
+  const unresolvedRefs = refs.filter((ref) => !guidelineById.has(ref));
+  const metadataSignals = uniqueSignalEntries(
+    metadataEntries.flatMap((metadata) => extractStyleSignals(metadata as Record<string, unknown>)),
+  );
+  const styleTexts = [
+    ...coreGuidelines.map((guideline) => guideline.body),
+    ...referencedGuidelines.map((guideline) => guideline.body),
+    ...metadataSignals.map((signal) => signal.value),
+  ];
+
+  return {
+    coreGuidelines,
+    referencedGuidelines,
+    unresolvedRefs,
+    metadataSignals,
+    showDontTell: styleTexts.some((value) => containsShowDontTellText(value)),
+  };
+}
+
+async function listGuidelines(root: string): Promise<GuidelineDocument[]> {
+  const files = await fg("guidelines/**/*.md", {
+    cwd: root,
+    absolute: true,
+    onlyFiles: true,
+  });
+
+  const results: GuidelineDocument[] = [];
+  for (const filePath of files) {
+    const document = await readMarkdownFile(filePath, guidelineSchema);
+    results.push({
+      ...document,
+      slug: path.basename(filePath, ".md"),
+    });
+  }
+
+  return results.sort((left, right) => left.slug.localeCompare(right.slug));
+}
+
+function renderChapterEvaluationContent(root: string, draft: ChapterEvaluationDraft): string {
+  const chapterSlug = draft.chapterSlug;
+  const paragraphFiles = draft.paragraphInsights.map((paragraph) =>
+    `evaluations/paragraphs/${chapterSlug}/${paragraph.slug}.md`,
+  );
+
+  return renderMarkdown(
+    {
+      type: "evaluation",
+      id: `evaluation:chapter:${chapterSlug}`,
+      title: `Evaluation ${chapterSlug}`,
+      chapter: `chapter:${chapterSlug}`,
+      paragraph_count: draft.chapterData.paragraphs.length,
+      word_count: draft.chapterAnalysis.wordCount,
+      readability: getScore(draft.scorecard, "Reader Readability"),
+      beauty: getScore(draft.scorecard, "Beauty And Memorability"),
+      style_alignment: getScore(draft.scorecard, "Style Alignment"),
+    },
+    [
+      "# Evaluation Snapshot",
+      "",
+      `- Source used: all ${draft.chapterData.paragraphs.length} paragraph files were read together in chapter order.`,
+      `- Paragraph evaluation files: ${paragraphFiles.join(", ") || "none"}`,
+      `- Total words: ${draft.chapterAnalysis.wordCount}`,
+      `- Estimated reading time: ${draft.chapterAnalysis.estimatedReadingMinutes} min`,
+      `- POV: ${(draft.chapterData.metadata.pov ?? []).join(", ") || "not set"}`,
+      `- Timeline: ${draft.chapterData.metadata.timeline_ref ?? "not set"}`,
+      `- Chapter summary present: ${draft.chapterData.metadata.summary ? "yes" : "no"}`,
+      `- Paragraph summaries missing: ${draft.missingParagraphSummaries}`,
+      `- Paragraph viewpoints missing: ${draft.missingParagraphViewpoints}`,
+      "",
+      "# Scorecard",
+      "",
+      ...renderScorecardLines(draft.scorecard),
+      "",
+      "# Style Context",
+      "",
+      ...renderStyleContextLines(root, draft.styleContext),
+      "",
+      "# What Works",
+      "",
+      ...renderBulletSection(draft.strengths, "No strong chapter-level advantages were detected yet."),
+      "",
+      "# Revision Concerns",
+      "",
+      ...renderBulletSection(draft.concerns, "No major chapter-level concerns were detected by the heuristic checks."),
+      "",
+      "# Next Steps",
+      "",
+      ...renderBulletSection(draft.nextSteps, "No immediate next step was generated."),
+      "",
+      "# Paragraph Breakdown",
+      "",
+      ...draft.paragraphInsights.flatMap((paragraph) => [
+        `## ${paragraph.slug} ${paragraph.title}`,
+        "",
+        `- File: ${paragraph.filePath}`,
+        `- Evaluation file: evaluations/paragraphs/${chapterSlug}/${paragraph.slug}.md`,
+        `- Summary: ${paragraph.summary}`,
+        `- Viewpoint: ${paragraph.viewpoint}`,
+        `- Reader readability: ${getScore(paragraph.scorecard, "Reader Readability")}/10`,
+        `- Beauty and memorability: ${getScore(paragraph.scorecard, "Beauty And Memorability")}/10`,
+        `- Style alignment: ${getScore(paragraph.scorecard, "Style Alignment")}/10`,
+        `- What works: ${paragraph.strengths.join("; ") || "No specific strength detected yet."}`,
+        `- What to revise: ${paragraph.concerns.join("; ") || "No specific concern detected yet."}`,
+        `- Next step: ${paragraph.nextSteps.join("; ") || "No next step generated."}`,
+        "",
+      ]),
+      "# Continuity Checks",
+      "",
+      "- Verify timeline references align with prior canon.",
+      "- Verify secrets are not revealed too early.",
+      "- Verify character voice matches guidelines and prior scenes.",
+      "- Verify paragraph evaluations still match the chapter after each revision pass.",
+      "",
+      "# Text Anchors",
+      "",
+      `- Opening line: ${draft.chapterAnalysis.firstSentence || "not available"}`,
+      `- Closing line: ${draft.chapterAnalysis.lastSentence || "not available"}`,
+    ].join("\n"),
+  );
+}
+
+function renderParagraphEvaluationContent(
+  root: string,
+  draft: ChapterEvaluationDraft,
+  paragraph: ParagraphEvaluationInsight,
+): string {
+  return renderMarkdown(
+    {
+      type: "evaluation",
+      id: `evaluation:paragraph:${draft.chapterSlug}:${paragraph.slug}`,
+      title: `Evaluation ${draft.chapterSlug} ${paragraph.slug}`,
+      chapter: `chapter:${draft.chapterSlug}`,
+      paragraph: `paragraph:${draft.chapterSlug}:${paragraph.slug}`,
+      word_count: paragraph.wordCount,
+      readability: getScore(paragraph.scorecard, "Reader Readability"),
+      beauty: getScore(paragraph.scorecard, "Beauty And Memorability"),
+      style_alignment: getScore(paragraph.scorecard, "Style Alignment"),
+    },
+    [
+      "# Paragraph Evaluation",
+      "",
+      `- Source used: ${paragraph.filePath}, evaluated with the rest of chapter ${draft.chapterSlug} as context.`,
+      `- Summary present: ${paragraph.summaryPresent ? "yes" : "no"}`,
+      `- Viewpoint: ${paragraph.viewpoint}`,
+      `- Word count: ${paragraph.wordCount}`,
+      `- Estimated reading time: ${paragraph.estimatedReadingMinutes} min`,
+      `- Dialogue ratio: ${paragraph.dialogueRatio}`,
+      `- Sensory cues: ${paragraph.sensoryCueCount}`,
+      `- Telling cues: ${paragraph.tellingCueCount}`,
+      "",
+      "# Scorecard",
+      "",
+      ...renderScorecardLines(paragraph.scorecard),
+      "",
+      "# Style Context",
+      "",
+      ...renderStyleContextLines(root, draft.styleContext),
+      "",
+      "# What Works",
+      "",
+      ...renderBulletSection(paragraph.strengths, "No clear paragraph-level strength was detected yet."),
+      "",
+      "# Revision Concerns",
+      "",
+      ...renderBulletSection(paragraph.concerns, "No specific paragraph-level concern was detected by the heuristic checks."),
+      "",
+      "# Next Steps",
+      "",
+      ...renderBulletSection(paragraph.nextSteps, "No immediate paragraph-level next step was generated."),
+      "",
+      "# Chapter Fit",
+      "",
+      `- Chapter readability: ${getScore(draft.scorecard, "Reader Readability")}/10`,
+      `- Chapter beauty and memorability: ${getScore(draft.scorecard, "Beauty And Memorability")}/10`,
+      `- Chapter style alignment: ${getScore(draft.scorecard, "Style Alignment")}/10`,
+      `- Paragraph summary: ${paragraph.summary}`,
+      "",
+      "# Text Anchors",
+      "",
+      `- Opening line: ${paragraph.firstSentence || "not available"}`,
+      `- Closing line: ${paragraph.lastSentence || "not available"}`,
+      paragraph.repeatedWordHotspots.length > 0
+        ? `- Repeated word hotspots: ${paragraph.repeatedWordHotspots.join(", ")}`
+        : "- Repeated word hotspots: none detected.",
+    ].join("\n"),
+  );
+}
+
+function buildChapterScorecard(
+  chapterData: ChapterReadResult,
+  chapterAnalysis: TextAnalysis,
+  paragraphInsights: ParagraphEvaluationInsight[],
+  styleContext: EvaluationStyleContext,
+): ScorecardEntry[] {
+  const paragraphReadability = averageScore(
+    paragraphInsights.map((paragraph) => getScore(paragraph.scorecard, "Reader Readability")),
+  );
+  const paragraphBeauty = averageScore(
+    paragraphInsights.map((paragraph) => getScore(paragraph.scorecard, "Beauty And Memorability")),
+  );
+  const paragraphStyle = averageScore(
+    paragraphInsights.map((paragraph) => getScore(paragraph.scorecard, "Style Alignment")),
+  );
+  const missingViewpoints = paragraphInsights.filter((paragraph) => paragraph.viewpoint === "not set").length;
+  const missingSummaries = paragraphInsights.filter((paragraph) => !paragraph.summaryPresent).length;
+  const expectationText = buildStyleExpectationText(styleContext);
+
+  const readabilityStrengths: string[] = [];
+  const readabilityConcerns: string[] = [];
+  let readability = paragraphReadability || 5;
+  if (chapterAnalysis.avgSentenceWords >= 8 && chapterAnalysis.avgSentenceWords <= 22) {
+    readability += 1;
+    readabilityStrengths.push(`Average sentence length stays readable at ${chapterAnalysis.avgSentenceWords} words.`);
+  } else if (chapterAnalysis.avgSentenceWords > 28) {
+    readability -= 2;
+    readabilityConcerns.push(`Average sentence length is heavy at ${chapterAnalysis.avgSentenceWords} words.`);
+  }
+  if (chapterAnalysis.repeatedWordHotspots.length > 2) {
+    readability -= 1;
+    readabilityConcerns.push(`Repeated terms may flatten the prose: ${chapterAnalysis.repeatedWordHotspots.join(", ")}.`);
+  } else {
+    readabilityStrengths.push("Diction stays varied enough to keep the prose moving.");
+  }
+
+  const beautyStrengths: string[] = [];
+  const beautyConcerns: string[] = [];
+  let beauty = paragraphBeauty || 5;
+  if (chapterAnalysis.sensoryCueCount >= Math.max(2, Math.round(chapterAnalysis.wordCount / 140))) {
+    beauty += 1;
+    beautyStrengths.push("The chapter keeps concrete sensory detail on the page.");
+  } else {
+    beauty -= 1;
+    beautyConcerns.push("The chapter could use more concrete sensory detail to leave a stronger impression.");
+  }
+  if (chapterAnalysis.firstSentence && chapterAnalysis.lastSentence && chapterAnalysis.firstSentence !== chapterAnalysis.lastSentence) {
+    beauty += 1;
+    beautyStrengths.push("The chapter has distinct opening and closing anchors.");
+  }
+  if (styleContext.showDontTell && chapterAnalysis.tellingCueCount > chapterAnalysis.sensoryCueCount) {
+    beauty -= 1;
+    beautyConcerns.push("Explicit explanation currently outweighs dramatized detail in several places.");
+  }
+
+  const structureStrengths: string[] = [];
+  const structureConcerns: string[] = [];
+  let structure = 6;
+  if (chapterData.paragraphs.length > 0) {
+    structure += 1;
+    structureStrengths.push(`The chapter is broken into ${chapterData.paragraphs.length} scene units.`);
+  } else {
+    structure -= 3;
+    structureConcerns.push("The chapter has no paragraph files to evaluate yet.");
+  }
+  if (chapterData.metadata.summary) {
+    structure += 1;
+    structureStrengths.push("The chapter summary clarifies the intended dramatic movement.");
+  } else {
+    structure -= 1;
+    structureConcerns.push("The chapter summary is missing, so the intended movement is harder to verify quickly.");
+  }
+  if (missingSummaries > 0) {
+    structure -= 1;
+    structureConcerns.push(`${missingSummaries} paragraph evaluations lack summary metadata.`);
+  }
+  if (chapterAnalysis.avgParagraphWords > 220) {
+    structure -= 1;
+    structureConcerns.push(`Average scene length is dense at ${chapterAnalysis.avgParagraphWords} words.`);
+  }
+
+  const voiceStrengths: string[] = [];
+  const voiceConcerns: string[] = [];
+  let voice = 6;
+  if ((chapterData.metadata.pov ?? []).length > 0) {
+    voice += 1;
+    voiceStrengths.push(`Chapter POV is explicit: ${(chapterData.metadata.pov ?? []).join(", ")}.`);
+  } else {
+    voice -= 1;
+    voiceConcerns.push("Chapter POV metadata is missing.");
+  }
+  if (missingViewpoints === 0) {
+    voice += 1;
+    voiceStrengths.push("Every paragraph can be checked against an explicit viewpoint.");
+  } else {
+    voice -= 1;
+    voiceConcerns.push(`${missingViewpoints} paragraphs do not expose a clear viewpoint.`);
+  }
+  if (expectationText.includes("voice") || expectationText.includes("narration")) {
+    voice += 1;
+    voiceStrengths.push("Voice-related guidance is present in the active guidelines.");
+  }
+
+  const styleStrengths: string[] = [];
+  const styleConcerns: string[] = [];
+  let styleAlignment = paragraphStyle || 5;
+  if (styleContext.coreGuidelines.length > 0 || styleContext.referencedGuidelines.length > 0) {
+    styleAlignment += 1;
+    styleStrengths.push("The evaluation has explicit guideline material to check against.");
+  }
+  if (styleContext.unresolvedRefs.length > 0) {
+    styleAlignment -= 2;
+    styleConcerns.push(`Some style references could not be resolved: ${styleContext.unresolvedRefs.join(", ")}.`);
+  }
+  if (styleContext.showDontTell) {
+    if (chapterAnalysis.sensoryCueCount >= chapterAnalysis.tellingCueCount) {
+      styleAlignment += 1;
+      styleStrengths.push("Show, don't tell is mostly supported by the current balance of concrete detail and exposition.");
+    } else {
+      styleAlignment -= 2;
+      styleConcerns.push("Show, don't tell is active, but telling cues outnumber concrete sensory anchors.");
+    }
+  }
+  styleAlignment += computeStyleExpectationAdjustment(chapterAnalysis, expectationText);
+
+  const continuityStrengths: string[] = [];
+  const continuityConcerns: string[] = [];
+  let continuity = 6;
+  if (chapterData.metadata.timeline_ref) {
+    continuity += 1;
+    continuityStrengths.push(`Timeline metadata is set to ${chapterData.metadata.timeline_ref}.`);
+  }
+  if (chapterData.metadata.summary) {
+    continuity += 1;
+    continuityStrengths.push("The chapter summary helps anchor intent against the rest of the book.");
+  }
+  if (chapterData.paragraphs.length > 0) {
+    continuity += 1;
+    continuityStrengths.push("The chapter has scene-level material that can be cross-checked against canon.");
+  }
+  if (!chapterData.metadata.timeline_ref) {
+    continuityConcerns.push("Timeline metadata is not set, so chronology must be checked manually.");
+  }
+  if (missingViewpoints > 0 || missingSummaries > 0) {
+    continuity -= 1;
+    continuityConcerns.push("Missing scene metadata weakens future continuity checks.");
+  }
+
+  return [
+    buildScorecardEntry("Reader Readability", readability, readabilityStrengths, readabilityConcerns),
+    buildScorecardEntry("Beauty And Memorability", beauty, beautyStrengths, beautyConcerns),
+    buildScorecardEntry("Structure And Pacing", structure, structureStrengths, structureConcerns),
+    buildScorecardEntry("Viewpoint And Voice", voice, voiceStrengths, voiceConcerns),
+    buildScorecardEntry("Style Alignment", styleAlignment, styleStrengths, styleConcerns),
+    buildScorecardEntry("Continuity And Coherence", continuity, continuityStrengths, continuityConcerns),
+  ];
+}
+
+function buildParagraphScorecard(
+  chapterData: ChapterReadResult,
+  paragraph: ChapterParagraph,
+  analysis: TextAnalysis,
+  styleContext: EvaluationStyleContext,
+): ScorecardEntry[] {
+  const expectationText = buildStyleExpectationText(styleContext);
+  const summaryPresent = Boolean(paragraph.metadata.summary);
+  const viewpointPresent = Boolean(paragraph.metadata.viewpoint || (chapterData.metadata.pov ?? []).length > 0);
+
+  const readabilityStrengths: string[] = [];
+  const readabilityConcerns: string[] = [];
+  let readability = 6;
+  if (analysis.avgSentenceWords >= 8 && analysis.avgSentenceWords <= 22) {
+    readability += 2;
+    readabilityStrengths.push(`Sentence length stays accessible at ${analysis.avgSentenceWords} words on average.`);
+  } else if (analysis.avgSentenceWords > 28) {
+    readability -= 2;
+    readabilityConcerns.push(`Sentence length is heavy at ${analysis.avgSentenceWords} words on average.`);
+  }
+  if (analysis.lexicalDiversity >= 0.38) {
+    readability += 1;
+    readabilityStrengths.push("The wording is varied enough to avoid monotony.");
+  }
+  if (analysis.repeatedWordHotspots.length > 2) {
+    readability -= 1;
+    readabilityConcerns.push(`Repeated terms may blur the beat: ${analysis.repeatedWordHotspots.join(", ")}.`);
+  }
+  if (analysis.wordCount < 45) {
+    readability -= 1;
+    readabilityConcerns.push("The paragraph may be too brief to fully land its dramatic beat.");
+  }
+
+  const beautyStrengths: string[] = [];
+  const beautyConcerns: string[] = [];
+  let beauty = 6;
+  if (analysis.sensoryCueCount >= Math.max(1, Math.round(analysis.wordCount / 120))) {
+    beauty += 2;
+    beautyStrengths.push("Concrete sensory detail gives the scene texture.");
+  } else if (analysis.wordCount > 60) {
+    beauty -= 1;
+    beautyConcerns.push("The scene could use a more concrete image or sensation.");
+  }
+  if (analysis.firstSentence && analysis.lastSentence && analysis.firstSentence !== analysis.lastSentence) {
+    beauty += 1;
+    beautyStrengths.push("The scene opens and closes on distinct beats.");
+  }
+  if (styleContext.showDontTell && analysis.tellingCueCount > analysis.sensoryCueCount) {
+    beauty -= 1;
+    beautyConcerns.push("Explanation outweighs dramatized detail in this scene.");
+  }
+
+  const clarityStrengths: string[] = [];
+  const clarityConcerns: string[] = [];
+  let clarity = 6;
+  if (analysis.wordCount >= 60) {
+    clarity += 1;
+    clarityStrengths.push("The scene has enough room to establish a clear beat.");
+  }
+  if (summaryPresent) {
+    clarity += 1;
+    clarityStrengths.push("The scene summary clarifies its role in revision passes.");
+  } else {
+    clarity -= 1;
+    clarityConcerns.push("Summary metadata is missing for this scene.");
+  }
+  if (analysis.avgSentenceWords > 28) {
+    clarity -= 1;
+    clarityConcerns.push("Long sentences may soften the scene's clarity.");
+  }
+
+  const styleStrengths: string[] = [];
+  const styleConcerns: string[] = [];
+  let styleAlignment = 6;
+  if (styleContext.coreGuidelines.length > 0 || styleContext.referencedGuidelines.length > 0) {
+    styleAlignment += 1;
+    styleStrengths.push("The scene can be checked against explicit style guidance.");
+  }
+  if (styleContext.showDontTell) {
+    if (analysis.sensoryCueCount >= analysis.tellingCueCount) {
+      styleAlignment += 1;
+      styleStrengths.push("Show, don't tell is mostly respected in this scene.");
+    } else {
+      styleAlignment -= 2;
+      styleConcerns.push("Show, don't tell is active, but the scene still explains too much directly.");
+    }
+  }
+  if (styleContext.unresolvedRefs.length > 0) {
+    styleAlignment -= 2;
+    styleConcerns.push(`Some style references could not be resolved: ${styleContext.unresolvedRefs.join(", ")}.`);
+  }
+  styleAlignment += computeStyleExpectationAdjustment(analysis, expectationText);
+
+  const fitStrengths: string[] = [];
+  const fitConcerns: string[] = [];
+  let chapterFit = 6;
+  if (viewpointPresent) {
+    chapterFit += 1;
+    fitStrengths.push("Viewpoint is explicit here or inherited from the chapter.");
+  } else {
+    chapterFit -= 2;
+    fitConcerns.push("Viewpoint is not explicit, which makes chapter-level voice checks harder.");
+  }
+  if (summaryPresent) {
+    chapterFit += 1;
+  }
+  if ((chapterData.metadata.pov ?? []).length > 0 && paragraph.metadata.viewpoint) {
+    const chapterPov = new Set(chapterData.metadata.pov ?? []);
+    if (!chapterPov.has(paragraph.metadata.viewpoint)) {
+      chapterFit -= 1;
+      fitConcerns.push("The paragraph viewpoint differs from the chapter POV metadata; verify that the shift is intentional.");
+    }
+  }
+
+  return [
+    buildScorecardEntry("Reader Readability", readability, readabilityStrengths, readabilityConcerns),
+    buildScorecardEntry("Beauty And Memorability", beauty, beautyStrengths, beautyConcerns),
+    buildScorecardEntry("Scene Clarity", clarity, clarityStrengths, clarityConcerns),
+    buildScorecardEntry("Style Alignment", styleAlignment, styleStrengths, styleConcerns),
+    buildScorecardEntry("Chapter Fit", chapterFit, fitStrengths, fitConcerns),
+  ];
+}
+
+function buildParagraphNextSteps(
+  chapterData: ChapterReadResult,
+  paragraph: ChapterParagraph,
+  analysis: TextAnalysis,
+  styleContext: EvaluationStyleContext,
+): string[] {
+  const steps: string[] = [];
+  const paragraphSlug = path.basename(paragraph.path, ".md");
+
+  if (!paragraph.metadata.summary) {
+    steps.push(`Add a summary for ${paragraphSlug} so chapter evaluation stays precise.`);
+  }
+  if (!paragraph.metadata.viewpoint && (chapterData.metadata.pov ?? []).length === 0) {
+    steps.push(`Set an explicit viewpoint for ${paragraphSlug} to anchor voice checks.`);
+  }
+  if (styleContext.showDontTell && analysis.tellingCueCount > analysis.sensoryCueCount) {
+    steps.push(`Replace direct explanation in ${paragraphSlug} with observable action, dialogue, or sensory detail.`);
+  }
+  if (analysis.avgSentenceWords > 28) {
+    steps.push(`Split or tighten the longest sentences in ${paragraphSlug}; the current average is ${analysis.avgSentenceWords} words.`);
+  }
+  if (analysis.repeatedWordHotspots.length > 2) {
+    steps.push(`Vary repeated wording in ${paragraphSlug}, especially ${analysis.repeatedWordHotspots.join(", ")}.`);
+  }
+  if (analysis.sensoryCueCount === 0 && analysis.wordCount > 70) {
+    steps.push(`Add one or two concrete sensory anchors to ${paragraphSlug} so the beat feels lived rather than summarized.`);
+  }
+  if (analysis.wordCount < 45) {
+    steps.push(`Check whether ${paragraphSlug} needs one more concrete beat before the scene closes.`);
+  }
+
+  return uniqueValues(steps).slice(0, 4);
+}
+
+function buildChapterNextSteps(
+  chapterData: ChapterReadResult,
+  chapterAnalysis: TextAnalysis,
+  paragraphInsights: ParagraphEvaluationInsight[],
+  styleContext: EvaluationStyleContext,
+): string[] {
+  const steps: string[] = [];
+  const missingSummarySlugs = paragraphInsights.filter((paragraph) => !paragraph.summaryPresent).map((paragraph) => paragraph.slug);
+  const missingViewpointSlugs = paragraphInsights
+    .filter((paragraph) => paragraph.viewpoint === "not set")
+    .map((paragraph) => paragraph.slug);
+  const weakReadability = pickWeakParagraphs(paragraphInsights, "Reader Readability");
+  const weakStyle = pickWeakParagraphs(paragraphInsights, "Style Alignment");
+
+  if (!chapterData.metadata.summary) {
+    steps.push(`Add a chapter summary for ${chapterData.metadata.id} so the evaluation has a declared target.`);
+  }
+  if ((chapterData.metadata.pov ?? []).length === 0) {
+    steps.push(`Set chapter POV metadata for ${chapterData.metadata.id} so voice checks stay explicit.`);
+  }
+  if (missingSummarySlugs.length > 0) {
+    steps.push(`Add paragraph summaries for ${missingSummarySlugs.join(", ")}.`);
+  }
+  if (missingViewpointSlugs.length > 0) {
+    steps.push(`Add paragraph viewpoints for ${missingViewpointSlugs.join(", ")}.`);
+  }
+  if (styleContext.showDontTell && chapterAnalysis.tellingCueCount > chapterAnalysis.sensoryCueCount) {
+    steps.push("Rework the most explanatory passages so the chapter shows more through action, image, and dialogue.");
+  }
+  if (chapterAnalysis.avgSentenceWords > 24) {
+    steps.push(`Tighten long sentences across the chapter; the current average is ${chapterAnalysis.avgSentenceWords} words.`);
+  }
+  if (weakReadability.length > 0) {
+    steps.push(`Prioritize readability revisions in ${weakReadability.join(", ")}.`);
+  }
+  if (weakStyle.length > 0) {
+    steps.push(`Check style alignment first in ${weakStyle.join(", ")}.`);
+  }
+  if (styleContext.unresolvedRefs.length > 0) {
+    steps.push(`Create or fix the missing style references: ${styleContext.unresolvedRefs.join(", ")}.`);
+  }
+  if (!chapterAnalysis.lastSentence) {
+    steps.push("Strengthen the chapter ending so the final beat leaves a clear turn or consequence.");
+  }
+
+  return uniqueValues(steps).slice(0, 6);
+}
+
+function analyzeText(text: string): TextAnalysis {
+  const plainText = stripMarkdown(text);
+  const paragraphs = plainText.split(/\n\s*\n/g).map((entry) => entry.trim()).filter(Boolean);
+  const sentences = plainText
+    .split(/(?<=[.!?])\s+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const words = extractWords(plainText);
+  const wordCount = words.length;
+  const sentenceCount = sentences.length;
+  const paragraphCount = paragraphs.length;
+  const quotedSegments = plainText.match(/["“”](.*?)["“”]/g) ?? [];
+  const dialogueWords = extractWords(quotedSegments.join(" ")).length;
+  const uniqueWordCount = new Set(words.map((word) => word.toLowerCase())).size;
+
+  return {
+    plainText,
+    wordCount,
+    sentenceCount,
+    paragraphCount,
+    estimatedReadingMinutes: Math.max(1, Math.ceil(wordCount / 180)),
+    avgSentenceWords: sentenceCount > 0 ? roundToTenths(wordCount / sentenceCount) : 0,
+    avgParagraphWords: paragraphCount > 0 ? roundToTenths(wordCount / paragraphCount) : 0,
+    dialogueRatio: wordCount > 0 ? roundToTenths(dialogueWords / wordCount) : 0,
+    sensoryCueCount: countPatternMatches(plainText, SENSORY_PATTERNS),
+    tellingCueCount: countPatternMatches(plainText, TELLING_PATTERNS),
+    lexicalDiversity: wordCount > 0 ? roundToTenths(uniqueWordCount / wordCount) : 0,
+    repeatedWordHotspots: detectRepeatedWords(words),
+    firstSentence: sentences[0] ?? summarizeText(plainText, 120),
+    lastSentence: sentences[sentences.length - 1] ?? summarizeText(plainText, 120),
+  };
+}
+
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^[-*+]\s+/gm, "")
+    .replace(/^>\s?/gm, "")
+    .replace(/[\*_~]/g, "")
+    .replace(/\r/g, "")
+    .trim();
+}
+
+function extractWords(text: string): string[] {
+  return text.match(/[\p{L}\p{N}']+/gu) ?? [];
+}
+
+function countPatternMatches(text: string, patterns: RegExp[]): number {
+  return patterns.reduce((total, pattern) => total + (text.match(pattern)?.length ?? 0), 0);
+}
+
+function detectRepeatedWords(words: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const rawWord of words) {
+    const word = rawWord.toLowerCase();
+    if (word.length < 4 || COMMON_STOP_WORDS.has(word)) continue;
+    counts.set(word, (counts.get(word) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .filter(([, count]) => count >= 3)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 5)
+    .map(([word, count]) => `${word} x${count}`);
+}
+
+function buildScorecardEntry(
+  label: string,
+  score: number,
+  strengths: string[],
+  concerns: string[],
+): ScorecardEntry {
+  return {
+    label,
+    score: clampScore(score),
+    strengths: uniqueValues(strengths).slice(0, 3),
+    concerns: uniqueValues(concerns).slice(0, 3),
+  };
+}
+
+function collectEvaluationNotes(
+  scorecard: ScorecardEntry[],
+  key: "strengths" | "concerns",
+  limit: number,
+): string[] {
+  const entries = scorecard
+    .filter((entry) => (key === "strengths" ? entry.score >= 7 : entry.score <= 6))
+    .flatMap((entry) => entry[key]);
+  return uniqueValues(entries).slice(0, limit);
+}
+
+function buildStyleExpectationText(styleContext: EvaluationStyleContext): string {
+  return [
+    ...styleContext.coreGuidelines.map((guideline) => guideline.body),
+    ...styleContext.referencedGuidelines.map((guideline) => guideline.body),
+    ...styleContext.metadataSignals.map((signal) => signal.value),
+  ]
+    .join("\n")
+    .toLowerCase();
+}
+
+function computeStyleExpectationAdjustment(analysis: TextAnalysis, expectationText: string): number {
+  let adjustment = 0;
+
+  if (
+    expectationText.includes("short sentence") ||
+    expectationText.includes("short sentences") ||
+    expectationText.includes("frasi brevi") ||
+    expectationText.includes("tight") ||
+    expectationText.includes("lean") ||
+    expectationText.includes("minimal")
+  ) {
+    adjustment += analysis.avgSentenceWords <= 18 ? 1 : -1;
+  }
+
+  if (
+    expectationText.includes("lyrical") ||
+    expectationText.includes("poetic") ||
+    expectationText.includes("lush") ||
+    expectationText.includes("liric")
+  ) {
+    adjustment += analysis.sensoryCueCount >= Math.max(1, Math.round(analysis.wordCount / 140)) ? 1 : -1;
+  }
+
+  if (expectationText.includes("dialogue") || expectationText.includes("dialogo")) {
+    adjustment += analysis.dialogueRatio >= 0.12 ? 1 : -1;
+  }
+
+  return adjustment;
+}
+
+function renderScorecardLines(scorecard: ScorecardEntry[]): string[] {
+  return scorecard.flatMap((entry) => [
+    `- ${entry.label}: ${entry.score}/10`,
+    ...(entry.strengths.length > 0 ? [`- ${entry.label} strengths: ${entry.strengths.join("; ")}`] : []),
+    ...(entry.concerns.length > 0 ? [`- ${entry.label} concerns: ${entry.concerns.join("; ")}`] : []),
+  ]);
+}
+
+function renderBulletSection(values: string[], fallback: string): string[] {
+  return values.length > 0 ? values.map((value) => `- ${value}`) : [`- ${fallback}`];
+}
+
+function renderStyleContextLines(root: string, styleContext: EvaluationStyleContext): string[] {
+  const lines: string[] = [];
+
+  if (styleContext.coreGuidelines.length > 0) {
+    lines.push(
+      `- Core guidelines: ${styleContext.coreGuidelines
+        .map((guideline) => `${guideline.frontmatter.id} (${toPosixPath(path.relative(root, guideline.path))})`)
+        .join(", ")}`,
+    );
+  } else {
+    lines.push("- Core guidelines: none found.");
+  }
+
+  if (styleContext.referencedGuidelines.length > 0) {
+    lines.push(
+      `- Referenced custom guidelines: ${styleContext.referencedGuidelines
+        .map((guideline) => `${guideline.frontmatter.id} (${toPosixPath(path.relative(root, guideline.path))})`)
+        .join(", ")}`,
+    );
+  } else {
+    lines.push("- Referenced custom guidelines: none resolved.");
+  }
+
+  if (styleContext.metadataSignals.length > 0) {
+    lines.push(
+      `- Metadata style signals: ${styleContext.metadataSignals
+        .map((signal) => `${humanizeKey(signal.key)}=${signal.value}`)
+        .join(", ")}`,
+    );
+  } else {
+    lines.push("- Metadata style signals: none detected.");
+  }
+
+  lines.push(
+    styleContext.showDontTell
+      ? "- Show, don't tell check: active. The evaluation compares sensory cues against explicit telling cues."
+      : "- Show, don't tell check: not explicitly requested by metadata or guideline text.",
+  );
+
+  if (styleContext.unresolvedRefs.length > 0) {
+    lines.push(`- Missing style references: ${styleContext.unresolvedRefs.join(", ")}`);
+  }
+
+  return lines;
+}
+
+function extractStyleRefs(metadata: Record<string, unknown>): string[] {
+  const refKeys = [
+    "style_ref",
+    "style_refs",
+    "guideline_ref",
+    "guideline_refs",
+    "evaluation_style_ref",
+    "evaluation_style_refs",
+    "writing_style_ref",
+    "writing_style_refs",
+    "chapter_style_ref",
+    "chapter_style_refs",
+    "custom_style_ref",
+    "custom_style_refs",
+    "refs",
+  ];
+
+  return uniqueValues(
+    refKeys.flatMap((key) => readStringValues(metadata[key]).filter((value) => value.startsWith("guideline:"))),
+  );
+}
+
+function extractStyleSignals(metadata: Record<string, unknown>): Array<{ key: string; value: string }> {
+  const signalKeys = [
+    "style",
+    "style_note",
+    "style_notes",
+    "custom_style",
+    "custom_styles",
+    "writing_style",
+    "writing_styles",
+    "methodology",
+    "methodologies",
+    "writing_pattern",
+    "writing_patterns",
+    "style_pattern",
+    "style_patterns",
+    "narrative_mode",
+    "narrative_modes",
+    "tone",
+    "voice",
+    "register",
+    "pacing_mode",
+    "tags",
+  ];
+
+  const results = signalKeys.flatMap((key) =>
+    readStringValues(metadata[key]).map((value) => ({ key, value })),
+  );
+
+  if (metadata.show_dont_tell === true || metadata.showDontTell === true) {
+    results.push({ key: "show_dont_tell", value: "enabled" });
+  }
+
+  return results;
+}
+
+function readStringValues(value: unknown): string[] {
+  if (typeof value === "string") return value.trim() ? [value.trim()] : [];
+  if (Array.isArray(value)) {
+    return value
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function uniqueSignalEntries(
+  values: Array<{ key: string; value: string }>,
+): Array<{ key: string; value: string }> {
+  const seen = new Set<string>();
+  const results: Array<{ key: string; value: string }> = [];
+
+  for (const value of values) {
+    const normalizedKey = `${value.key.toLowerCase()}::${value.value.toLowerCase()}`;
+    if (seen.has(normalizedKey)) continue;
+    seen.add(normalizedKey);
+    results.push(value);
+  }
+
+  return results;
+}
+
+function containsShowDontTellText(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return (
+    normalized.includes("show, don't tell") ||
+    normalized.includes("show don't tell") ||
+    normalized.includes("show-don't-tell") ||
+    normalized.includes("mostra, non raccontare") ||
+    normalized.includes("mostra non raccontare") ||
+    normalized.includes("show_dont_tell")
+  );
+}
+
+function pickWeakParagraphs(paragraphInsights: ParagraphEvaluationInsight[], label: string): string[] {
+  return paragraphInsights
+    .filter((paragraph) => getScore(paragraph.scorecard, label) <= 6)
+    .sort((left, right) => getScore(left.scorecard, label) - getScore(right.scorecard, label))
+    .slice(0, 2)
+    .map((paragraph) => paragraph.slug);
+}
+
+function findParagraphInsight(
+  insights: ParagraphEvaluationInsight[],
+  paragraph: string,
+): ParagraphEvaluationInsight {
+  const normalized = paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim();
+  const match = insights.find((entry) => entry.slug === normalized);
+  if (!match) {
+    throw new Error(`Paragraph evaluation target not found: ${paragraph}`);
+  }
+  return match;
+}
+
+function getScore(scorecard: ScorecardEntry[], label: string): number {
+  return scorecard.find((entry) => entry.label === label)?.score ?? 0;
+}
+
+function collectGuidelineTitles(bucket: Map<string, string[]>, guidelines: GuidelineDocument[]): void {
+  for (const guideline of guidelines) {
+    const values = bucket.get(guideline.slug) ?? [];
+    values.push(`${guideline.frontmatter.id} (${guideline.frontmatter.title})`);
+    bucket.set(guideline.slug, uniqueValues(values));
+  }
+}
+
+function averageScore(values: number[]): number {
+  if (values.length === 0) return 0;
+  return roundToTenths(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+function clampScore(value: number): number {
+  return Math.max(1, Math.min(10, Math.round(value)));
+}
+
+function roundToTenths(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function humanizeKey(value: string): string {
+  if (value === "show_dont_tell") return "show don't tell";
+  return value.replace(/[_-]+/g, " ");
+}
+
+function formatRevisionUrgency(concernCount: number, nextStepCount: number): string {
+  if (concernCount >= 4 || nextStepCount >= 5) return "high";
+  if (concernCount >= 2 || nextStepCount >= 3) return "medium";
+  return "low";
+}
+
+const COMMON_STOP_WORDS = new Set([
+  "about",
+  "also",
+  "ancora",
+  "anche",
+  "because",
+  "come",
+  "con",
+  "cosa",
+  "dalla",
+  "dalle",
+  "della",
+  "delle",
+  "dello",
+  "degli",
+  "dentro",
+  "dopo",
+  "dove",
+  "from",
+  "have",
+  "into",
+  "more",
+  "nella",
+  "nelle",
+  "nello",
+  "quella",
+  "quello",
+  "questa",
+  "questo",
+  "sono",
+  "stata",
+  "stato",
+  "that",
+  "their",
+  "there",
+  "they",
+  "this",
+  "very",
+  "when",
+  "with",
+]);
+
+const SENSORY_PATTERNS = [
+  /\b(saw|seen|hear|heard|sound|voice|smell|scent|taste|touch|cold|warm|rough|soft|bright|dark|fog|rain|wind|salt|blood|shadow|glow|grit|ache|shiver|sweat|pulse|whisper)\w*\b/giu,
+  /\b(vide|vede|ud[iì]|ascolt|odore|profum|gusto|tocca|fredd|cald|ruvid|morb|luce|buio|nebbia|piogg|vento|sale|sangue|ombra|bagliore|brivid|sudore|battit|sussurr)\w*\b/giu,
+];
+
+const TELLING_PATTERNS = [
+  /\b(felt|feel|thought|think|knew|know|realized|realise|noticed|notice|remembered|remember|wanted|want|wondered|wonder|seemed|seem|decided|decide|understood|understand|believed|believe)\w*\b/giu,
+  /\b(sent[iì]|pens|sape|cap[iì]|nota|notav|ricord|vole|sembr|decis|cred|comprese|capiva)\w*\b/giu,
+];
 
 export async function validateBook(rootPath: string): Promise<{
   valid: boolean;

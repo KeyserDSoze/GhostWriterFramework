@@ -142,8 +142,9 @@ Project-level OpenCode and agent rules live in `AGENTS.md`.
 - `list_related_canon`: find files that reference an id or concept
 - `sync_resume`: refresh chapter or total summaries from current files
 - `sync_all_resumes`: refresh all chapter resumes plus the total summary in one pass
-- `evaluate_chapter`: refresh a deterministic evaluation scaffold
-- `evaluate_book`: refresh the full-book evaluation scaffold and optionally all chapter evaluations
+- `evaluate_chapter`: refresh a full chapter evaluation using all paragraph text, active style rules, scores, and next steps
+- `evaluate_paragraph`: refresh one paragraph evaluation while still reading the whole chapter as context
+- `evaluate_book`: refresh the full-book evaluation and optionally all chapter and paragraph evaluations
 - `wikipedia_search` and `wikipedia_page`: research factual or historical material
 - `export_epub`: turn the repository into an EPUB
 

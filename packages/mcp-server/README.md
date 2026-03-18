@@ -98,6 +98,8 @@ Point OpenCode or another MCP client at the built server and use tools such as:
 - `rename_paragraph`
 - `start_wizard` / `wizard_answer` / `wizard_finalize`
 - `sync_all_resumes`
+- `evaluate_chapter`
+- `evaluate_paragraph`
 - `evaluate_book`
 
 ## Practical asset examples

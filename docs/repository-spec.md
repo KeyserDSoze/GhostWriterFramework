@@ -31,6 +31,7 @@ resumes/
 evaluations/
   total.md
   chapters/
+  paragraphs/
 research/
   wikipedia/
     en/
@@ -141,6 +142,7 @@ status: hidden
 - use `location_wizard`, `faction_wizard`, `item_wizard`, and `secret_wizard` before creating rich canon files when briefs are incomplete
 - use `resumes/` to keep running summaries stable
 - use `evaluations/` for structural critique, continuity checks, and quality notes
+- chapter and paragraph evaluations should be saved files, not just transient chat output
 - if content is historical or factual, fetch research before writing canon
 - prefer updating existing canon files over duplicating similar facts elsewhere
 

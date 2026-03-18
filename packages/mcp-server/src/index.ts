@@ -31,6 +31,7 @@ import {
   renderMarkdown,
   searchBook,
   syncAllResumes,
+  syncParagraphEvaluation,
   syncChapterEvaluation,
   syncChapterResume,
   syncTotalResume,
@@ -1591,20 +1592,34 @@ server.tool(
 
 server.tool(
   "evaluate_chapter",
-  "Refresh the deterministic evaluation scaffold for a chapter so the agent can review pacing, continuity, and revision targets.",
+  "Refresh a full chapter evaluation by reading the whole chapter across all paragraph files, checking active style rules and custom chapter patterns, scoring quality, and writing next steps plus paragraph evaluation files.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
   },
   async ({ rootPath, chapter }) => {
     const result = await syncChapterEvaluation(rootPath, chapter);
-    return textResponse(`Synced chapter evaluation scaffold at ${result.filePath}.`);
+    return textResponse(`Synced chapter evaluation at ${result.filePath} and refreshed paragraph evaluation files for that chapter.`);
+  },
+);
+
+server.tool(
+  "evaluate_paragraph",
+  "Refresh the saved evaluation for a single paragraph while still using the full chapter as context, including scores, style checks, and concrete next steps.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+  },
+  async ({ rootPath, chapter, paragraph }) => {
+    const result = await syncParagraphEvaluation(rootPath, chapter, paragraph);
+    return textResponse(`Synced paragraph evaluation at ${result.filePath} using the whole chapter as context.`);
   },
 );
 
 server.tool(
   "evaluate_book",
-  "Refresh the total evaluation scaffold for the whole book and optionally refresh chapter evaluations too.",
+  "Refresh the total book evaluation with chapter scorecards, style checks, and revision priorities, and optionally refresh all chapter and paragraph evaluations too.",
   {
     rootPath: z.string().min(1),
     syncChapterEvaluations: z.boolean().default(true),
@@ -1614,7 +1629,7 @@ server.tool(
     return textResponse(
       `Synced book evaluation at ${result.filePath} using ${result.chapterCount} chapters.${
         result.chapterEvaluationFiles.length > 0
-          ? ` Also refreshed ${result.chapterEvaluationFiles.length} chapter evaluation files.`
+          ? ` Also refreshed ${result.chapterEvaluationFiles.length} chapter evaluation files and ${result.paragraphEvaluationFiles.length} paragraph evaluation files.`
           : ""
       }`,
     );
