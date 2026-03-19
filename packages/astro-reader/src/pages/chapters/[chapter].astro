@@ -239,6 +239,7 @@ const renderedParagraphs = await Promise.all(
       let focusHintHideTimer = null;
       let railPointerInside = false;
       let focusHintShownForSession = false;
+      let refreshScheduled = false;
 
       applyFocusMode(readStorage(focusModeKey) === "true", false, { allowFullscreenRequest: false });
       updateMarkerUi(readMarker());
@@ -312,8 +313,6 @@ const renderedParagraphs = await Promise.all(
 
         handleFocusRailWake();
       });
-
-      let refreshScheduled = false;
 
       function scheduleSceneRefresh() {
         if (refreshScheduled) {
