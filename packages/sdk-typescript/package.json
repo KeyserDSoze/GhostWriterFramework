@@ -1,6 +1,6 @@
 {
   "name": "narrarium-sdk",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "type": "module",
   "description": "Remote GitHub and Azure DevOps SDK surface for Narrarium repositories.",
   "license": "MIT",
@@ -39,7 +39,7 @@
     "validate": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "narrarium": "^0.1.22"
+    "narrarium": "^0.1.23"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",

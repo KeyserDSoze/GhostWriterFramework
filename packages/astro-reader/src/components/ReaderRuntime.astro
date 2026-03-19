@@ -121,7 +121,10 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       <p class="eyebrow">Read Aloud</p>
       <p class="tts-player__title" data-tts-title>Ready</p>
     </div>
-    <span class="chip" data-tts-badge>Browser voice</span>
+    <div class="tts-player__top-actions">
+      <span class="chip" data-tts-badge>Browser voice</span>
+      <button type="button" class="icon-btn" data-tts-close aria-label="Hide read aloud controls">x</button>
+    </div>
   </div>
   <p class="tts-player__label" data-tts-label>Choose a chapter or scene to start reading aloud.</p>
   <div class="tts-player__controls">
@@ -156,6 +159,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   const ttsVoiceStorageKey = "narrarium-reader-tts-voice";
   const ttsRateStorageKey = "narrarium-reader-tts-rate";
   const ttsProgressStorageKey = "narrarium-reader-tts-progress";
+  const ttsPlayerDismissedStorageKey = "narrarium-reader-tts-player-dismissed";
   const glossaryDataElement = document.getElementById("canon-glossary-data");
   const chapterDataElement = document.getElementById("reader-chapter-data");
   const glossaryEntries = glossaryDataElement ? JSON.parse(glossaryDataElement.textContent || "[]") : [];
@@ -657,12 +661,12 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     const player = document.querySelector("[data-tts-player]");
     const roots = [...document.querySelectorAll("[data-tts-root]")];
     const triggers = [...document.querySelectorAll("[data-tts-trigger]")];
+    const panelToggle = document.querySelector("[data-tts-panel-toggle]");
     if (!(player instanceof HTMLElement) || roots.length === 0) {
       return;
     }
 
     document.body.classList.add("tts-enabled");
-    player.hidden = false;
     triggers.forEach((trigger) => {
       if (trigger instanceof HTMLElement) {
         trigger.hidden = false;
@@ -674,12 +678,17 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       return;
     }
 
+    if (panelToggle instanceof HTMLButtonElement) {
+      panelToggle.hidden = false;
+    }
+
     const titleElement = player.querySelector("[data-tts-title]");
     const labelElement = player.querySelector("[data-tts-label]");
     const badgeElement = player.querySelector("[data-tts-badge]");
     const statusElement = player.querySelector("[data-tts-status]");
     const playToggle = player.querySelector("[data-tts-play-toggle]");
     const stopButton = player.querySelector("[data-tts-stop]");
+    const closeButton = player.querySelector("[data-tts-close]");
     const voiceSelect = player.querySelector("[data-tts-voice]");
     const rateInput = player.querySelector("[data-tts-rate]");
 
@@ -690,6 +699,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       !(statusElement instanceof HTMLElement) ||
       !(playToggle instanceof HTMLButtonElement) ||
       !(stopButton instanceof HTMLButtonElement) ||
+      !(closeButton instanceof HTMLButtonElement) ||
       !(voiceSelect instanceof HTMLSelectElement) ||
       !(rateInput instanceof HTMLInputElement)
     ) {
@@ -709,14 +719,19 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       runId: 0,
       speaking: false,
       paused: false,
+      focusMode: document.body.classList.contains("is-focus-mode"),
+      dismissed: readStorage(ttsPlayerDismissedStorageKey) === "true",
       titleElement,
       labelElement,
       badgeElement,
       statusElement,
       playToggle,
       stopButton,
+      closeButton,
       voiceSelect,
       rateInput,
+      player,
+      panelToggle,
     };
 
     const savedProgress = readJson(ttsProgressStorageKey);
@@ -739,10 +754,24 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       window.speechSynthesis.onvoiceschanged = () => populateVoiceOptions(state);
     }
 
+    if (panelToggle instanceof HTMLButtonElement) {
+      panelToggle.addEventListener("click", () => {
+        if (state.player.hidden) {
+          showTtsPlayer(state, { persistDismissed: false });
+          updateTtsUi(state);
+          return;
+        }
+
+        hideTtsPlayer(state, { persistDismissed: true });
+      });
+    }
+
     window.addEventListener("beforeunload", () => {
       state.runId += 1;
       state.speech.cancel();
     });
+
+    hideTtsPlayer(state, { persistDismissed: false });
   }
 
   function buildTtsScopes(roots) {
@@ -883,6 +912,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
 
       trigger.dataset.defaultLabel = trigger.textContent || "Read aloud";
       trigger.addEventListener("click", () => {
+        showTtsPlayer(state, { persistDismissed: false });
         const scopeId = trigger.dataset.ttsTrigger || "chapter";
         startTtsScope(state, scopeId);
         updateTtsTriggerButtons(triggers, state);
@@ -892,6 +922,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
 
   function bindTtsPlayerControls(state) {
     state.playToggle.addEventListener("click", () => {
+      showTtsPlayer(state, { persistDismissed: false });
       if (state.speech.speaking && !state.speech.paused) {
         state.speech.pause();
         state.paused = true;
@@ -912,6 +943,10 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     state.stopButton.addEventListener("click", () => {
       stopTts(state, true);
       updateTtsUi(state);
+    });
+
+    state.closeButton.addEventListener("click", () => {
+      hideTtsPlayer(state, { persistDismissed: true });
     });
 
     state.voiceSelect.addEventListener("change", () => {
@@ -937,6 +972,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     window.addEventListener("narrarium:tts-start", (event) => {
       const detail = event instanceof CustomEvent ? event.detail || {} : {};
       const scopeId = typeof detail.scopeId === "string" ? detail.scopeId : "chapter";
+      showTtsPlayer(state, { persistDismissed: false });
       startTtsScope(state, scopeId, { fromStart: Boolean(detail.fromStart) });
       updateTtsTriggerButtons(state.triggers, state);
     });
@@ -945,6 +981,15 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
       const detail = event instanceof CustomEvent ? event.detail || {} : {};
       stopTts(state, detail.keepProgress !== false);
       updateTtsUi(state);
+    });
+
+    window.addEventListener("narrarium:focus-mode-change", (event) => {
+      const detail = event instanceof CustomEvent ? event.detail || {} : {};
+      state.focusMode = Boolean(detail.enabled);
+      if (state.focusMode) {
+        hideTtsPlayer(state, { persistDismissed: false });
+      }
+      syncTtsPanelToggle(state);
     });
   }
 
@@ -1154,6 +1199,41 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
         : "Speech will resume from the saved sentence when available.";
     state.playToggle.textContent = state.speaking ? (state.paused ? "Resume" : "Pause") : hasResume ? "Resume" : "Read chapter";
     updateTtsTriggerButtons(state.triggers, state);
+  }
+
+  function showTtsPlayer(state, options) {
+    if (state.focusMode) {
+      return;
+    }
+
+    state.dismissed = false;
+    state.player.hidden = false;
+    syncTtsPanelToggle(state);
+    if (options?.persistDismissed === false) {
+      removeStorage(ttsPlayerDismissedStorageKey);
+    } else {
+      writeStorage(ttsPlayerDismissedStorageKey, "false");
+    }
+  }
+
+  function hideTtsPlayer(state, options) {
+    state.player.hidden = true;
+    state.dismissed = true;
+    syncTtsPanelToggle(state);
+    if (options?.persistDismissed) {
+      writeStorage(ttsPlayerDismissedStorageKey, "true");
+    }
+  }
+
+  function syncTtsPanelToggle(state) {
+    if (!(state.panelToggle instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    const expanded = !state.player.hidden && !state.focusMode;
+    state.panelToggle.setAttribute("aria-pressed", expanded ? "true" : "false");
+    state.panelToggle.setAttribute("aria-label", expanded ? "Hide read aloud controls" : "Open read aloud controls");
+    state.panelToggle.textContent = expanded ? "🔈" : "🔊";
   }
 
   function highlightTtsSegment(segment) {

@@ -31,10 +31,10 @@ const currentIndex = allChapters.findIndex((entry) => entry.slug === chapterSlug
 const previousChapter = currentIndex > 0 ? allChapters[currentIndex - 1] : null;
 const nextChapter = currentIndex >= 0 && currentIndex < allChapters.length - 1 ? allChapters[currentIndex + 1] : null;
 const chapterHtml = await marked.parse(chapter.body);
-const chapterMetaEntries = [
-  ["Point of view", chapter.metadata.pov],
-  ["Timeline", chapter.metadata.timeline_ref],
-  ["Tags", chapter.metadata.tags],
+const chapterMetaEntries: Array<[string, unknown]> = [
+  ["Point of view", chapter.metadata.pov] as [string, unknown],
+  ["Timeline", chapter.metadata.timeline_ref] as [string, unknown],
+  ["Tags", chapter.metadata.tags] as [string, unknown],
 ].filter(([, value]) => value !== undefined && value !== null && (!Array.isArray(value) || value.length > 0));
 const chapterId = String(chapter.metadata.id);
 const chapterRelatedLinks = await loadRelatedCanonLinks(chapterId, [chapter.metadata.pov, chapter.metadata.timeline_ref]);
@@ -73,7 +73,7 @@ const renderedParagraphs = await Promise.all(
   </div>
 
   <section class="section chapter-reading-frame">
-    <div class="chapter-focus-banner">
+    <div class="chapter-focus-banner focus-hidden">
       <p class="eyebrow">Full read</p>
       <h2>{chapter.metadata.title}</h2>
       <p class="chapter-meta" data-reader-current-scene>Chapter opening</p>
@@ -195,42 +195,81 @@ const renderedParagraphs = await Promise.all(
         <p class="eyebrow">Full read</p>
         <div class="focus-rail__title">{chapter.metadata.title}</div>
       </div>
-      <div class="focus-rail__status" data-reader-current-scene>Chapter opening</div>
     </div>
     <div class="focus-rail__controls">
       <a class:list={["focus-rail__link", !previousChapter && "is-disabled"]} href={previousChapter ? `chapters/${previousChapter.slug}/` : undefined} aria-disabled={!previousChapter}>Previous</a>
-      <button type="button" class="focus-rail__button is-primary" data-reader-focus-tts="chapter">From start</button>
-      <button type="button" class="focus-rail__button" data-reader-marker-play disabled>From mark</button>
-      <button type="button" class="focus-rail__button" data-reader-focus-stop>Stop voice</button>
+      <label class="focus-rail__jump">
+        <span class="sr-only">Jump to chapter</span>
+        <select data-reader-focus-jump aria-label="Jump to chapter">
+          {allChapters.map((entry) => (
+            <option value={entry.slug} selected={entry.slug === chapterSlug}>
+              {`Chapter ${String(entry.metadata.number).padStart(3, "0")} - ${entry.metadata.title}`}
+            </option>
+          ))}
+        </select>
+      </label>
       <a class:list={["focus-rail__link", !nextChapter && "is-disabled"]} href={nextChapter ? `chapters/${nextChapter.slug}/` : undefined} aria-disabled={!nextChapter}>Next</a>
       <button type="button" class="focus-rail__button" data-reader-focus-toggle>Exit</button>
     </div>
   </aside>
 
+  <div class="focus-hint" data-reader-focus-hint aria-hidden="true">
+    Move the mouse, tap, or press a key to show controls.
+  </div>
+
   <script is:inline>
     (() => {
       const focusModeKey = "narrarium-reader-focus-mode";
       const voiceMarkerKey = "narrarium-reader-voice-marker";
+      const focusRailHideDelayMs = 1800;
+      const focusHintHideDelayMs = 2600;
       const root = document.body;
       const chapterPath = window.location.pathname;
+      const chapterSegments = chapterPath.split("/").filter(Boolean);
+      const currentChapterSlug = chapterSegments[chapterSegments.length - 1] || "";
+      const fullscreenTarget = document.documentElement;
       const toggleButtons = [...document.querySelectorAll("[data-reader-focus-toggle]")];
       const markerButtons = [...document.querySelectorAll("[data-reader-marker-set]")];
-      const markerPlayButton = document.querySelector("[data-reader-marker-play]");
-      const chapterPlayButton = document.querySelector("[data-reader-focus-tts='chapter']");
-      const stopVoiceButton = document.querySelector("[data-reader-focus-stop]");
+      const chapterJumpSelect = document.querySelector("[data-reader-focus-jump]");
+      const focusRail = document.querySelector(".focus-rail");
+      const focusHint = document.querySelector("[data-reader-focus-hint]");
       const currentSceneLabels = [...document.querySelectorAll("[data-reader-current-scene]")];
       const sceneElements = [...document.querySelectorAll("[data-reader-scene]")];
+      let focusRailHideTimer = null;
+      let focusHintHideTimer = null;
+      let railPointerInside = false;
+      let focusHintShownForSession = false;
 
-      applyFocusMode(readStorage(focusModeKey) === "true", false);
+      applyFocusMode(readStorage(focusModeKey) === "true", false, { allowFullscreenRequest: false });
       updateMarkerUi(readMarker());
       updateActiveScene();
 
       window.addEventListener("scroll", scheduleSceneRefresh, { passive: true });
       window.addEventListener("resize", scheduleSceneRefresh);
+      document.addEventListener("pointermove", handleFocusRailWake, { passive: true });
+      document.addEventListener("touchstart", handleFocusRailWake, { passive: true });
+      document.addEventListener("fullscreenchange", handleFullscreenChange);
+
+      focusRail?.addEventListener("pointerenter", () => {
+        railPointerInside = true;
+        showFocusRail();
+      });
+      focusRail?.addEventListener("pointerleave", () => {
+        railPointerInside = false;
+        scheduleFocusRailHide();
+      });
+      focusRail?.addEventListener("focusin", () => {
+        showFocusRail();
+      });
+      focusRail?.addEventListener("focusout", () => {
+        window.requestAnimationFrame(() => {
+          scheduleFocusRailHide();
+        });
+      });
 
       toggleButtons.forEach((button) => {
         button.addEventListener("click", () => {
-          applyFocusMode(!root.classList.contains("is-focus-mode"), true);
+          applyFocusMode(!root.classList.contains("is-focus-mode"), true, { allowFullscreenRequest: true });
         });
       });
 
@@ -246,20 +285,13 @@ const renderedParagraphs = await Promise.all(
         });
       });
 
-      chapterPlayButton?.addEventListener("click", () => {
-        startTtsFromScope("chapter");
-      });
-
-      markerPlayButton?.addEventListener("click", () => {
-        const marker = readMarker();
-        if (!marker || marker.path !== chapterPath || !marker.scopeId) {
+      chapterJumpSelect?.addEventListener("change", () => {
+        const nextSlug = chapterJumpSelect.value;
+        if (!nextSlug || nextSlug === currentChapterSlug) {
           return;
         }
-        startTtsFromScope(marker.scopeId);
-      });
 
-      stopVoiceButton?.addEventListener("click", () => {
-        window.dispatchEvent(new CustomEvent("narrarium:tts-stop", { detail: { keepProgress: true } }));
+        window.location.href = `chapters/${nextSlug}/`;
       });
 
       document.addEventListener("keydown", (event) => {
@@ -268,13 +300,17 @@ const renderedParagraphs = await Promise.all(
         }
 
         if (event.key === "Escape" && root.classList.contains("is-focus-mode")) {
-          applyFocusMode(false, true);
+          applyFocusMode(false, true, { allowFullscreenRequest: true });
+          return;
         }
 
         if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "f") {
           event.preventDefault();
-          applyFocusMode(!root.classList.contains("is-focus-mode"), true);
+          applyFocusMode(!root.classList.contains("is-focus-mode"), true, { allowFullscreenRequest: true });
+          return;
         }
+
+        handleFocusRailWake();
       });
 
       let refreshScheduled = false;
@@ -291,28 +327,130 @@ const renderedParagraphs = await Promise.all(
         });
       }
 
-      function applyFocusMode(enabled, persist) {
+      function applyFocusMode(enabled, persist, options = { allowFullscreenRequest: false }) {
         root.classList.toggle("is-focus-mode", enabled);
+        window.dispatchEvent(new CustomEvent("narrarium:focus-mode-change", { detail: { enabled } }));
         toggleButtons.forEach((button) => {
           button.textContent = enabled ? "Exit full read" : "Full read";
           button.setAttribute("aria-pressed", enabled ? "true" : "false");
         });
+        if (enabled) {
+          resetFocusHintSession();
+          showFocusRailTemporarily();
+        } else {
+          clearFocusRailHideTimer();
+          clearFocusHintHideTimer();
+          focusRail?.classList.remove("is-hidden");
+          focusHint?.classList.remove("is-visible");
+        }
         scheduleSceneRefresh();
 
         if (persist) {
           writeStorage(focusModeKey, enabled ? "true" : "false");
         }
+
+        if (options.allowFullscreenRequest) {
+          void syncFullscreenForFocusMode(enabled);
+        }
       }
 
-      function startTtsFromScope(scopeId) {
-        window.dispatchEvent(
-          new CustomEvent("narrarium:tts-start", {
-            detail: {
-              scopeId,
-              fromStart: true,
-            },
-          }),
-        );
+      function handleFocusRailWake() {
+        if (!root.classList.contains("is-focus-mode")) {
+          return;
+        }
+
+        hideFocusHint();
+        showFocusRailTemporarily();
+      }
+
+      function showFocusRailTemporarily() {
+        showFocusRail();
+        scheduleFocusRailHide();
+      }
+
+      function showFocusRail() {
+        clearFocusRailHideTimer();
+        focusRail?.classList.remove("is-hidden");
+      }
+
+      function scheduleFocusRailHide() {
+        clearFocusRailHideTimer();
+
+        if (!root.classList.contains("is-focus-mode") || railPointerInside || focusRail?.matches(":focus-within")) {
+          return;
+        }
+
+        focusRailHideTimer = window.setTimeout(() => {
+          if (!railPointerInside && !focusRail?.matches(":focus-within") && root.classList.contains("is-focus-mode")) {
+            focusRail?.classList.add("is-hidden");
+            showFocusHintOnce();
+          }
+        }, focusRailHideDelayMs);
+      }
+
+      function clearFocusRailHideTimer() {
+        if (focusRailHideTimer !== null) {
+          window.clearTimeout(focusRailHideTimer);
+          focusRailHideTimer = null;
+        }
+      }
+
+      function showFocusHintOnce() {
+        if (focusHintShownForSession || !root.classList.contains("is-focus-mode")) {
+          return;
+        }
+
+        focusHintShownForSession = true;
+        focusHint?.classList.add("is-visible");
+        clearFocusHintHideTimer();
+        focusHintHideTimer = window.setTimeout(() => {
+          focusHint?.classList.remove("is-visible");
+          focusHintHideTimer = null;
+        }, focusHintHideDelayMs);
+      }
+
+      function hideFocusHint() {
+        clearFocusHintHideTimer();
+        focusHint?.classList.remove("is-visible");
+      }
+
+      function resetFocusHintSession() {
+        focusHintShownForSession = false;
+        hideFocusHint();
+      }
+
+      function clearFocusHintHideTimer() {
+        if (focusHintHideTimer !== null) {
+          window.clearTimeout(focusHintHideTimer);
+          focusHintHideTimer = null;
+        }
+      }
+
+      async function syncFullscreenForFocusMode(enabled) {
+        if (typeof fullscreenTarget.requestFullscreen !== "function" || typeof document.exitFullscreen !== "function") {
+          return;
+        }
+
+        try {
+          if (enabled) {
+            if (!document.fullscreenElement) {
+              await fullscreenTarget.requestFullscreen();
+            }
+          } else if (document.fullscreenElement) {
+            await document.exitFullscreen();
+          }
+        } catch {
+          // Ignore browsers that block or do not support fullscreen transitions.
+        }
+      }
+
+      function handleFullscreenChange() {
+        root.classList.toggle("is-reader-fullscreen", Boolean(document.fullscreenElement));
+
+        if (root.classList.contains("is-focus-mode")) {
+          hideFocusHint();
+          showFocusRailTemporarily();
+        }
       }
 
       function updateMarkerUi(marker) {
@@ -328,10 +466,6 @@ const renderedParagraphs = await Promise.all(
         document.querySelectorAll("[data-reader-marker-article]").forEach((article) => {
           article.classList.toggle("has-voice-marker", activeScopeId !== null && article.dataset.readerMarkerScope === activeScopeId);
         });
-
-        if (markerPlayButton instanceof HTMLButtonElement) {
-          markerPlayButton.disabled = !activeScopeId;
-        }
       }
 
       function updateActiveScene() {

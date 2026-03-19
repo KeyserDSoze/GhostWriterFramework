@@ -28,6 +28,8 @@ npx narrarium-astro-reader reader --book-root .. --package-name my-book-reader
 - live search across canon, chapters, and scenes
 - character, location, faction, item, secret, and timeline indexes
 - canon mention popups, backlinks, and asset rendering for book, entity, chapter, and scene art
+- a Full read chapter mode that opens an immersive browser-fullscreen reading view with continuous prose, auto-hiding minimal previous/jump/next navigation, a small ghost hint for rediscovering controls, and canon popups still available
+- dismissible Read Aloud controls that can be reopened from a subtle masthead speaker button and stay out of the way during Full read mode
 - automatic EPUB export to `public/downloads/book.epub`
 - live watcher for book markdown, canon, and assets during `npm run dev`
 - `npm run doctor` for broken references, spoiler thresholds, asset metadata, and stale `plot.md`, `resumes/`, or `state/`
