@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import {
   buildChapterWritingContext,
   buildParagraphWritingContext,
@@ -768,7 +768,14 @@ test("upgradeBookRepo refreshes managed scaffolding and preserves author files",
 
     await writeFile(path.join(rootPath, "opencode.jsonc"), '{"legacy":true}\n', "utf8");
     await writeFile(path.join(rootPath, ".opencode", "commands", "resume-book.md"), "old command\n", "utf8");
-    await writeFile(path.join(rootPath, "guidelines", "prose.md"), "# Custom Prose\n\nKeep this intact.\n", "utf8");
+    await writeFile(path.join(rootPath, "guidelines", "writing-style.md"), "# Custom Writing Style\n\nKeep this intact.\n", "utf8");
+    await writeFile(path.join(rootPath, "guidelines", "prose.md"), "# Legacy Prose\n", "utf8");
+    await writeFile(path.join(rootPath, "guidelines", "style.md"), "# Legacy Style\n", "utf8");
+    await writeFile(path.join(rootPath, "guidelines", "voices.md"), "# Legacy Voices\n", "utf8");
+    await writeFile(path.join(rootPath, "guidelines", "chapter-rules.md"), "# Legacy Chapter Rules\n", "utf8");
+    await writeFile(path.join(rootPath, "guidelines", "structure.md"), "# Legacy Structure\n", "utf8");
+    await mkdir(path.join(rootPath, "guidelines", "styles"), { recursive: true });
+    await writeFile(path.join(rootPath, "guidelines", "styles", "legacy.md"), "# Legacy Style Profile\n", "utf8");
     await writeFile(
       path.join(rootPath, "chapters", "001-upgrade-arrival", "chapter.md"),
       (await readFile(path.join(rootPath, "chapters", "001-upgrade-arrival", "chapter.md"), "utf8")).replace(
@@ -797,7 +804,7 @@ test("upgradeBookRepo refreshes managed scaffolding and preserves author files",
     const result = await upgradeBookRepo(rootPath);
     const opencodeConfig = await readFile(path.join(rootPath, "opencode.jsonc"), "utf8");
     const resumeCommand = await readFile(path.join(rootPath, ".opencode", "commands", "resume-book.md"), "utf8");
-    const proseGuide = await readFile(path.join(rootPath, "guidelines", "prose.md"), "utf8");
+    const writingStyle = await readFile(path.join(rootPath, "guidelines", "writing-style.md"), "utf8");
     const chapterFile = await readFile(path.join(rootPath, "chapters", "001-upgrade-arrival", "chapter.md"), "utf8");
     const paragraphFile = await readFile(path.join(rootPath, "chapters", "001-upgrade-arrival", "001-linked-scene.md"), "utf8");
     const draftFile = await readFile(path.join(rootPath, "drafts", "001-upgrade-arrival", "002-linked-draft.md"), "utf8");
@@ -805,14 +812,18 @@ test("upgradeBookRepo refreshes managed scaffolding and preserves author files",
     assert.match(opencodeConfig, /"legacy": true/);
     assert.match(opencodeConfig, /\.github\/copilot-instructions\.md/);
     assert.match(resumeCommand, /resume_book_context/);
-    assert.equal(proseGuide, "# Custom Prose\n\nKeep this intact.\n");
+    assert.equal(writingStyle, "# Custom Writing Style\n\nKeep this intact.\n");
     assert.match(result.updated.join("\n"), /resume-book\.md/);
     assert.match(result.updated.join("\n"), /opencode\.jsonc/);
+    assert.match(result.updated.join("\n"), /guidelines\/prose\.md/);
+    assert.match(result.updated.join("\n"), /guidelines\/styles/);
     assert.deepEqual(result.migrated, [
       "chapters/001-upgrade-arrival/001-linked-scene.md",
       "chapters/001-upgrade-arrival/chapter.md",
       "drafts/001-upgrade-arrival/002-linked-draft.md",
     ]);
+    assert.equal(await access(path.join(rootPath, "guidelines", "prose.md")).then(() => true).catch(() => false), false);
+    assert.equal(await access(path.join(rootPath, "guidelines", "styles")).then(() => true).catch(() => false), false);
     assert.match(chapterFile, /Lyra Vale reaches Gray Harbor\./);
     assert.doesNotMatch(chapterFile, /\]\(\.\.\/\.\.\/(characters|locations)\//);
     assert.match(paragraphFile, /Brass Key stays hidden beside the \[external archive\]\(https:\/\/example\.com\/archive\)\./);
@@ -985,8 +996,8 @@ test("writing contexts stay scoped to story so far without leaking later scenes 
   }
 });
 
-test("chapter writing contexts fall back to global style rules unless a chapter declares an explicit style profile", async () => {
-  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-style-profiles-"));
+test("chapter writing contexts always include the global writing style and surface chapter-specific writing-style files when present", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-writing-style-"));
 
   try {
     await initializeBookRepo(rootPath, {
@@ -1004,14 +1015,25 @@ test("chapter writing contexts fall back to global style rules unless a chapter 
     await createChapterDraft(rootPath, {
       number: 2,
       title: "Glass Confession",
-      frontmatter: {
-        style_refs: ["style:first-person-show"],
-        narration_person: "first",
-        narration_tense: "past",
-        prose_mode: ["show-dont-tell", "tight-interiority"],
-      },
       body: "# Rough Intent\n\nMake the confession intimate and immediate.",
     });
+
+    await writeFile(
+      path.join(rootPath, "drafts", "002-glass-confession", "writing-style.md"),
+      `---
+type: guideline
+id: guideline:chapter-writing-style
+title: Chapter Writing Style
+scope: chapter-writing-style
+---
+
+# Local Override
+
+- Use first-person confession with clipped pressure.
+- Keep physicality close to the speaking body.
+`,
+      "utf8",
+    );
 
     const styledContext = await buildChapterWritingContext(rootPath, "chapter:002-glass-confession");
     const promoted = await createChapterFromDraft(rootPath, {
@@ -1020,17 +1042,13 @@ test("chapter writing contexts fall back to global style rules unless a chapter 
     });
     const styledChapter = await readChapter(rootPath, "chapter:002-glass-confession");
 
-    assert.match(defaultContext.text, /Explicit chapter override: no/);
-    assert.match(defaultContext.text, /guidelines\/style\.md/);
-    assert.match(defaultContext.text, /guidelines\/voices\.md/);
-    assert.match(styledContext.text, /Explicit chapter override: yes/);
-    assert.match(styledContext.text, /style:first-person-show/);
-    assert.match(styledContext.text, /Narration person: first/);
-    assert.match(styledContext.text, /guidelines\/styles\/first-person-show\.md/);
-    assert.deepEqual(styledChapter.metadata.style_refs, ["style:first-person-show"]);
-    assert.equal(styledChapter.metadata.narration_person, "first");
-    assert.equal(styledChapter.metadata.narration_tense, "past");
-    assert.deepEqual(styledChapter.metadata.prose_mode, ["show-dont-tell", "tight-interiority"]);
+    assert.match(defaultContext.text, /Always-read writing style/);
+    assert.match(defaultContext.text, /guidelines\/writing-style\.md/);
+    assert.match(defaultContext.text, /Chapter-specific writing style: none in final chapter files/);
+    assert.match(styledContext.text, /Always use the global writing style from guidelines\/writing-style\.md/);
+    assert.match(styledContext.text, /Draft-specific writing style: drafts\/002-glass-confession\/writing-style\.md/);
+    assert.match(styledContext.text, /Use first-person confession with clipped pressure/);
+    assert.equal(styledChapter.metadata.title, "Glass Confession");
     assert.match(promoted.filePath, /chapter\.md$/);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
@@ -1144,7 +1162,7 @@ test("draft workflow can assemble writing context and promote drafts into final 
 
     const chapter = await readChapter(rootPath, "chapter:001-la-soglia");
 
-    assert.match(context.text, /guidelines\/prose\.md/);
+    assert.match(context.text, /guidelines\/writing-style\.md/);
     assert.match(context.text, /story-design\.md/);
     assert.match(context.text, /notes\.md/);
     assert.match(context.text, /rapporto teso con i registri del porto/);

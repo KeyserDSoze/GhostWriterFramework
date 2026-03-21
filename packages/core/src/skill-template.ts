@@ -29,7 +29,7 @@ Treat the repository as the canonical source of truth for the book.
 - \`resumes/\` for running summaries
 - \`state/\` for structured continuity snapshots and sync status
 - \`evaluations/\` for critique and continuity checks
-- \`guidelines/\` for prose defaults, style, structure, and voices
+- \`guidelines/writing-style.md\` for the always-on writing and review contract of the book
 
 ## Working rules
 
@@ -77,12 +77,12 @@ Treat the repository as the canonical source of truth for the book.
 - Respect chapter numbering and paragraph numbering.
 - Keep prose in body content and structured facts in frontmatter.
 - In chapter and paragraph prose, write character, item, location, faction, secret, and timeline-event names as plain text. Do not insert markdown links to canon files or reader routes; the reader resolves visible mentions automatically.
-- Always read \`guidelines/prose.md\` before drafting new chapter or paragraph prose.
-- If a chapter declares \`style_refs\`, \`narration_person\`, \`narration_tense\`, or \`prose_mode\`, treat that as an explicit chapter-level override; otherwise follow the book-level default prose, style, and voice guides.
-- Before writing a scene, review \`context.md\`, \`story-design.md\`, \`notes.md\`, any matching chapter draft notes, the relevant prior chapter content, the latest scoped summaries in \`resumes/\`, the current point-in-time snapshot in \`state/\` when available, and any matching files in \`drafts/\`.
+- Always read \`guidelines/writing-style.md\` before drafting or revising chapter and paragraph prose.
+- If \`chapters/<chapter>/writing-style.md\` or \`drafts/<chapter>/writing-style.md\` exists, treat it as an explicit chapter-local addendum or override on top of the global writing-style file.
+- Before writing a scene, review \`context.md\`, \`story-design.md\`, \`notes.md\`, any matching chapter draft notes, the relevant prior chapter content, the latest scoped summaries in \`resumes/\`, the global \`guidelines/writing-style.md\`, any chapter-specific \`writing-style.md\`, the current point-in-time snapshot in \`state/\` when available, and any matching files in \`drafts/\`.
 - Keep \`plot.md\` aligned with chapter summaries, secret reveals, and timeline references.
 - After \`update_paragraph\`, assume plot and resume files were refreshed automatically by the MCP layer, and review \`sync_story_state\` separately only when continuity snapshots must be updated.
 - Treat \`ideas.md\` as unstable material under review; do not treat active ideas as accepted canon or default drafting instructions unless the user asks you to use them.
 - Treat notes, ideas, and promoted archives as working support material, not canon. If something becomes a stable fact, move it into the correct canon file.
-- If stylistic guidance is missing, inspect the rest of \`guidelines/\` before choosing a default.
+- If stylistic guidance is missing, update \`guidelines/writing-style.md\` or add a chapter-local \`writing-style.md\` instead of inventing a new style ad hoc.
 `;

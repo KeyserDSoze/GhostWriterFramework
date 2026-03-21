@@ -245,7 +245,8 @@ export function buildRepositorySpecSummary(): string {
     "- book.md",
     "- guidelines/",
     "- guidelines/images.md for the shared visual style",
-    "- guidelines/styles/ for explicit per-chapter prose profiles",
+    "- guidelines/writing-style.md for the always-on writing and review contract of the book",
+    "- optional chapters/<slug>/writing-style.md and drafts/<slug>/writing-style.md for chapter-specific overrides",
     "- characters/",
     "- items/",
     "- locations/",
@@ -265,7 +266,7 @@ export function buildRepositorySpecSummary(): string {
     "- use stable ids like character:lyra-vale or chapter:001-the-arrival",
     "- search canon before inventing facts",
     "- use summaries and evaluations as first-class context",
-    "- use book-level prose defaults unless a chapter explicitly declares style_refs, narration_person, narration_tense, or prose_mode",
+    "- always use guidelines/writing-style.md while writing or reviewing prose, and apply any chapter-specific writing-style.md on top when present",
     "- keep state snapshots manual: update chapter resume state_changes and run sync_story_state when continuity changes",
     "- do not reveal secrets before known_from or reveal_in",
   ].join("\n");

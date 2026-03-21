@@ -13,16 +13,8 @@ notes.md
 promoted.md
 plot.md
 guidelines/
-  prose.md
-  style.md
-  chapter-rules.md
-  voices.md
-  structure.md
+  writing-style.md
   images.md
-  styles/
-    README.md
-    first-person-show.md
-    third-person-descriptive.md
 characters/
 items/
 locations/
@@ -109,16 +101,13 @@ All content files should start with YAML frontmatter.
 - `sources`: optional research sources
 - `historical`: marks content that should be checked against external sources
 
-### Chapter and draft style keys
+### Writing style files
 
-- `style_refs`: explicit chapter-level style profile ids such as `style:first-person-show`
-- `narration_person`: explicit narration person for the chapter, such as `first` or `third`
-- `narration_tense`: explicit narration tense for the chapter, such as `past` or `present`
-- `prose_mode`: chapter-specific prose behaviors such as `show-dont-tell`, `tight-interiority`, or `descriptive-wide-lens`
+- `guidelines/writing-style.md`: the always-on writing and review contract for the whole book
+- `chapters/<slug>/writing-style.md`: optional final-chapter-specific style override/addendum
+- `drafts/<slug>/writing-style.md`: optional draft-chapter-specific style override/addendum
 
 The generated reader uses `known_from` and `reveal_in` for spoiler-safe search, canon popups, public atlas pages, and backlink filtering.
-
-If these chapter-level style keys are absent, Narrarium falls back to the book-level prose, style, and voice guides.
 
 ### Resume and state-specific keys
 
@@ -229,24 +218,16 @@ Lyra returns to Gray Harbor and realizes the city is already watching for her.
 
 ```md
 ---
-type: chapter
-id: chapter:012-blood-ledger
-number: 12
-title: Blood Ledger
-pov:
-  - character:lyra-vale
-style_refs:
-  - style:first-person-show
-narration_person: first
-narration_tense: past
-prose_mode:
-  - show-dont-tell
-  - tight-interiority
+type: guideline
+id: guideline:chapter-writing-style
+title: Chapter Writing Style
+scope: chapter-writing-style
 ---
 
-# Purpose
+# Local Override
 
-Confessional chapter with close interior pressure.
+- Use first-person confession with clipped pressure.
+- Keep physicality close to the speaking body.
 ```
 
 ## Story state snapshots
@@ -339,7 +320,7 @@ Treat `state_changes` as the chapter delta, not as a full-world snapshot.
 - if content is historical or factual, fetch research before writing canon
 - before fetching Wikipedia again, reuse a matching snapshot from `research/wikipedia/` when one already exists; use explicit refresh controls when the snapshot is stale or should be bypassed
 - prefer updating existing canon files over duplicating similar facts elsewhere
-- before writing final chapter or paragraph prose, read `guidelines/prose.md`, relevant prior story files, and any matching files in `drafts/`
+- before writing final chapter or paragraph prose, read `guidelines/writing-style.md`, any chapter-specific `writing-style.md`, relevant prior story files, and any matching files in `drafts/`
 - write character, item, location, faction, secret, and timeline-event names as plain text in chapter and paragraph prose; do not insert markdown links to canon files or reader routes because the reader resolves visible mentions automatically
 - treat `ideas.md`, `notes.md`, `story-design.md`, `promoted.md`, and their chapter-draft variants as working support material, not canon; move stable facts into canon files when they become true in the book
 - keep `plot.md` aligned with chapter summaries, reveals, and dated timeline anchors

@@ -2,7 +2,6 @@ export const SKILL_NAME = "narrarium-book";
 
 export const BOOK_DIRECTORIES = [
   "guidelines",
-  "guidelines/styles",
   "characters",
   "items",
   "locations",
@@ -65,11 +64,7 @@ export const PROMOTED_FILE = "promoted.md";
 export const STORY_DESIGN_FILE = "story-design.md";
 
 export const GUIDELINE_FILES = {
-  prose: "guidelines/prose.md",
-  style: "guidelines/style.md",
-  chapterRules: "guidelines/chapter-rules.md",
-  voices: "guidelines/voices.md",
-  structure: "guidelines/structure.md",
+  writingStyle: "guidelines/writing-style.md",
   images: "guidelines/images.md",
 } as const;
 

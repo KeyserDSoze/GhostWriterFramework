@@ -58,9 +58,6 @@ test("mcp server tools support guided creation and structural updates", async ()
       rootPath,
       number: 1,
       title: "Opening Move",
-      styleRefs: ["style:first-person-show"],
-      narrationPerson: "first",
-      proseMode: ["show-dont-tell"],
       timelineRef: "timeline-event:harbor-lockdown",
     });
 
@@ -103,6 +100,22 @@ test("mcp server tools support guided creation and structural updates", async ()
       title: "First Scene",
       body: "# Rough Scene\n\nLyra sees the changed watch pattern before she speaks.",
     });
+
+    await writeFile(
+      path.join(rootPath, "drafts", "001-opening-move", "writing-style.md"),
+      `---
+type: guideline
+id: guideline:chapter-writing-style
+title: Chapter Writing Style
+scope: chapter-writing-style
+---
+
+# Local Override
+
+- Use first-person pressure anchored in physical detail.
+`,
+      "utf8",
+    );
 
     const bookNotesText = await callToolText(client, "save_book_item", {
       rootPath,
@@ -434,14 +447,15 @@ test("mcp server tools support guided creation and structural updates", async ()
     assert.match(saveChapterIdeaText, /Saved chapter idea entry/);
     assert.match(promoteBookIdeaText, /Promoted idea entry/);
     assert.match(promoteChapterIdeaText, /Promoted chapter idea entry/);
-    assert.match(chapterContextText, /Always-read prose guide/);
+    assert.match(chapterContextText, /Always-read writing style/);
     assert.match(chapterContextText, /Story design/);
     assert.match(chapterContextText, /Book notes/);
     assert.match(chapterContextText, /Chapter draft notes/);
     assert.match(chapterContextText, /forged registry seal/);
     assert.match(chapterContextText, /Watch pattern/);
-    assert.match(chapterContextText, /Explicit chapter override: yes/);
-    assert.match(chapterContextText, /style:first-person-show/);
+    assert.match(chapterContextText, /guidelines\/writing-style\.md/);
+    assert.match(chapterContextText, /drafts\/001-opening-move\/writing-style\.md/);
+    assert.match(chapterContextText, /Use first-person pressure anchored in physical detail/);
     assert.match(paragraphContextText, /Target paragraph draft/);
     assert.match(resumeBookContextText, /Resume Book Context/);
     assert.match(resumeBookContextText, /Conversation Resume/);

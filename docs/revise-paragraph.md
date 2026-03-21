@@ -154,7 +154,7 @@ After that, if needed, run `sync_story_state` manually.
 
 Typical flow:
 
-1. read `paragraph_writing_context`
+1. read `paragraph_writing_context` so the pass includes `guidelines/writing-style.md`, any chapter-specific `writing-style.md`, and the point-in-time story context
 2. run `revise_paragraph`
 3. inspect the proposed body and editorial notes
 4. if you want it, apply the revision manually with `update_paragraph`

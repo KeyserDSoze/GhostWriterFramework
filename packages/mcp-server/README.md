@@ -171,7 +171,7 @@ See `docs/revise-paragraph.md` for modes, examples, and the manual apply workflo
 
 See `docs/revise-chapter.md` for the chapter-level workflow and output structure.
 
-Chapter style overrides are also supported explicitly through chapter frontmatter and style profiles in `guidelines/styles/`. If a chapter does not declare an override, writing context falls back to the book-level default prose and voice guides. Chapter and paragraph writing context now stay scoped to the story up to that point instead of pulling in later chapter material.
+Chapter and paragraph writing context now always load `guidelines/writing-style.md`. If `chapters/<slug>/writing-style.md` or `drafts/<slug>/writing-style.md` exists, that chapter-local file is layered on top as an explicit override/addendum. Chapter and paragraph writing context also stay scoped to the story up to that point instead of pulling in later chapter material.
 
 `resume_book_context` also accepts optional `chapter` and `paragraph` parameters when you want to restart from a specific writing point instead of the latest overall state.
 

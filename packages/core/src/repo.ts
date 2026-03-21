@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import fg from "fast-glob";
@@ -84,6 +84,14 @@ type MarkdownDocument<T = Record<string, unknown>> = {
 
 const SUPPORTED_REFERENCE_PATTERN = /\b(?:chapter:[a-z0-9-]+|paragraph:[a-z0-9-]+:[a-z0-9-]+|character:[a-z0-9-]+|location:[a-z0-9-]+|faction:[a-z0-9-]+|item:[a-z0-9-]+|secret:[a-z0-9-]+|timeline-event:[a-z0-9-]+|guideline:[a-z0-9-]+|style:[a-z0-9-]+)\b/gi;
 const OPENCODE_INSTRUCTION_FILE = ".github/copilot-instructions.md";
+const LEGACY_WRITING_GUIDELINE_FILES = [
+  "guidelines/prose.md",
+  "guidelines/style.md",
+  "guidelines/voices.md",
+  "guidelines/chapter-rules.md",
+  "guidelines/structure.md",
+] as const;
+const LEGACY_WRITING_GUIDELINE_DIRECTORIES = ["guidelines/styles"] as const;
 const CANON_ENTITY_LINK_REFERENCE_PATTERN = /^(character|location|faction|item|secret|timeline-event):[a-z0-9-]+$/i;
 const STORY_MARKDOWN_LINK_PATTERN = /(?<!!)\[([^\]]+)\]\(([^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\)/g;
 
@@ -768,132 +776,15 @@ export async function initializeBookRepo(
 
   await ensureFile(
     root,
-    GUIDELINE_FILES.prose,
+    GUIDELINE_FILES.writingStyle,
     renderMarkdown(
       guidelineSchema.parse({
         type: "guideline",
-        id: "guideline:prose",
-        title: "Prose Defaults",
-        scope: "prose",
+        id: "guideline:writing-style",
+        title: "Writing Style",
+        scope: "writing-style",
       }),
-      [
-        "# Writing Mode",
-        "",
-        "- Default mode: novel prose.",
-        "- Prioritize scene-based writing over summary whenever the moment matters emotionally or narratively.",
-        "- Before drafting a chapter or paragraph, read this file, the relevant chapter files, matching drafts/, and the latest resumes/ for continuity.",
-        "- In chapter and paragraph prose, write canon names as plain text. Do not insert markdown links to characters/, items/, locations/, factions/, secrets/, or timeline entries; the reader resolves visible mentions automatically.",
-        "- This file defines the book-level prose default. If a chapter does not declare its own style profile, use this default together with guidelines/style.md and guidelines/voices.md.",
-        "- Chapter-level style changes must be explicit in chapter frontmatter, not inferred.",
-        "",
-        "# Show, Don't Tell",
-        "",
-        "- Prefer action, concrete sensory detail, subtext, and consequence over explanatory narration.",
-        "- State emotion directly only when restraint would make the moment less clear or less powerful.",
-        "- Let readers infer motive from gesture, choice, rhythm, and contradiction.",
-        "",
-        "Example tell:",
-        "She was angry.",
-        "",
-        "Example show:",
-        "She folded the letter once, twice, and only stopped when the paper split under her thumbs.",
-        "",
-        "# Dialogue",
-        "",
-        "- In Italian-language projects, use guillemets like « ... » as the default dialogue marks unless the book says otherwise.",
-        "- Keep dialogue anchored with gesture, interruption, and point-of-view awareness.",
-        "- Avoid over-explaining what a line already implies.",
-        "- Keep each speaker distinct in vocabulary, rhythm, and silence.",
-        "",
-        "# Scene Discipline",
-        "",
-        "- Every paragraph or scene should advance tension, revelation, choice, or consequence.",
-        "- Re-read previous scenes in the chapter before adding new prose so voice, time, and causality stay aligned.",
-        "- If a matching draft exists in drafts/, use it as scaffolding, not as a constraint against stronger prose.",
-      ].join("\n"),
-    ),
-    created,
-  );
-
-  await ensureFile(
-    root,
-    GUIDELINE_FILES.style,
-    renderMarkdown(
-      guidelineSchema.parse({
-        type: "guideline",
-        id: "guideline:style",
-        title: "Style Guide",
-        scope: "global",
-      }),
-      [
-        "# Book-Level Default Style",
-        "",
-        "- Define the default sentence rhythm, descriptive density, and tonal ceiling for the whole book.",
-        "- If a chapter does not declare `style_refs`, `narration_person`, `narration_tense`, or `prose_mode`, this guide stays in force.",
-        "- Chapter-specific style changes must be declared explicitly in chapter frontmatter.",
-        "",
-        "# Taboo Patterns",
-        "",
-        "- List habits the book should avoid globally.",
-        "",
-        "# Examples",
-        "",
-        "- Add default sentence and paragraph examples here.",
-      ].join("\n"),
-    ),
-    created,
-  );
-
-  await ensureFile(
-    root,
-    GUIDELINE_FILES.chapterRules,
-    renderMarkdown(
-      guidelineSchema.parse({
-        type: "guideline",
-        id: "guideline:chapter-rules",
-        title: "Chapter Rules",
-        scope: "chapters",
-      }),
-      "# Rules\n\n- Define how chapters open, escalate, and close.\n",
-    ),
-    created,
-  );
-
-  await ensureFile(
-    root,
-    GUIDELINE_FILES.voices,
-    renderMarkdown(
-      guidelineSchema.parse({
-        type: "guideline",
-        id: "guideline:voices",
-        title: "Voices",
-        scope: "voice",
-      }),
-      [
-        "# Default Narration",
-        "",
-        "- Define the default narrator distance, internality, and diction for the book.",
-        "- Record how first-person, close-third, or omniscient moments should behave if they appear.",
-        "",
-        "# Alternate Voice Notes",
-        "",
-        "- If a chapter needs a distinct narrator or diction set, create a style profile in guidelines/styles/ and reference it explicitly from that chapter.",
-      ].join("\n"),
-    ),
-    created,
-  );
-
-  await ensureFile(
-    root,
-    GUIDELINE_FILES.structure,
-    renderMarkdown(
-      guidelineSchema.parse({
-        type: "guideline",
-        id: "guideline:structure",
-        title: "Structure",
-        scope: "structure",
-      }),
-      "# Blueprint\n\nDescribe act structure, pacing, recurring motifs, and where deliberately different chapter styles belong in the book.\n",
+      defaultWritingStyleBody(),
     ),
     created,
   );
@@ -949,105 +840,6 @@ export async function initializeBookRepo(
         "# Notes",
         "",
         "Document palette, medium, lighting, costume rules, and camera language here.",
-      ].join("\n"),
-    ),
-    created,
-  );
-
-  await ensureFile(
-    root,
-    "guidelines/styles/README.md",
-    renderMarkdown(
-      guidelineSchema.parse({
-        type: "guideline",
-        id: "guideline:style-profiles",
-        title: "Style Profiles",
-        scope: "style-profiles",
-      }),
-      [
-        "# Chapter Style Profiles",
-        "",
-        "Use files in this folder when a chapter should deliberately diverge from the book-level default style.",
-        "",
-        "## Rule",
-        "",
-        "- If a chapter does not declare a style override, the default book-level prose/style/voice guides apply.",
-        "- If a chapter needs a different style, declare it explicitly in chapter frontmatter with `style_refs`, `narration_person`, `narration_tense`, and/or `prose_mode`.",
-        "- Do not rely on the agent to infer a style change automatically.",
-        "",
-        "## Example chapter frontmatter",
-        "",
-        "```yaml",
-        "style_refs:",
-        "  - style:first-person-show",
-        "narration_person: first",
-        "narration_tense: past",
-        "prose_mode:",
-        "  - show-dont-tell",
-        "  - tight-interiority",
-        "```",
-      ].join("\n"),
-    ),
-    created,
-  );
-
-  await ensureFile(
-    root,
-    "guidelines/styles/first-person-show.md",
-    renderMarkdown(
-      guidelineSchema.parse({
-        type: "guideline",
-        id: "style:first-person-show",
-        title: "First Person Show",
-        scope: "style-profile",
-      }),
-      [
-        "# Use When",
-        "",
-        "- The chapter should feel intimate, immediate, and filtered through one character's lived experience.",
-        "",
-        "# Rules",
-        "",
-        "- Use first-person narration explicitly.",
-        "- Prefer concrete action, sensory evidence, and subtext over explanation.",
-        "- Let the narrator's bias and omissions shape what the reader sees.",
-        "- Keep exposition compressed and emotional inference active.",
-        "",
-        "# Avoid",
-        "",
-        "- Detached summary paragraphs that break immediacy.",
-        "- Over-explaining emotions the scene already demonstrates.",
-      ].join("\n"),
-    ),
-    created,
-  );
-
-  await ensureFile(
-    root,
-    "guidelines/styles/third-person-descriptive.md",
-    renderMarkdown(
-      guidelineSchema.parse({
-        type: "guideline",
-        id: "style:third-person-descriptive",
-        title: "Third Person Descriptive",
-        scope: "style-profile",
-      }),
-      [
-        "# Use When",
-        "",
-        "- The chapter should widen its lens and give more room to atmosphere, setting, and spatial clarity.",
-        "",
-        "# Rules",
-        "",
-        "- Use third-person narration explicitly.",
-        "- Allow fuller scene description, but keep every descriptive block tied to mood, threat, or meaning.",
-        "- Balance external detail with selective internal access.",
-        "- Let setting and texture do structural work, not just ornament.",
-        "",
-        "# Avoid",
-        "",
-        "- Decorative description with no narrative pressure.",
-        "- Sudden slips into first-person interior monologue unless the chapter rules allow it.",
       ].join("\n"),
     ),
     created,
@@ -1204,6 +996,22 @@ export async function upgradeBookRepo(
     if (patched.updated) {
       await writeFile(opencodeConfigPath, patched.content, "utf8");
       updated.push("opencode.jsonc");
+    }
+  }
+
+  for (const relativePath of LEGACY_WRITING_GUIDELINE_FILES) {
+    const filePath = path.join(root, relativePath);
+    if (await pathExists(filePath)) {
+      await rm(filePath, { force: true });
+      updated.push(toPosixPath(relativePath));
+    }
+  }
+
+  for (const relativePath of LEGACY_WRITING_GUIDELINE_DIRECTORIES) {
+    const directoryPath = path.join(root, relativePath);
+    if (await pathExists(directoryPath)) {
+      await rm(directoryPath, { recursive: true, force: true });
+      updated.push(toPosixPath(relativePath));
     }
   }
 
@@ -2373,7 +2181,7 @@ export async function readChapter(
 
   const chapterDocument = await readMarkdownFile(chapterFile, chapterSchema);
   const files = await fg("*.md", { cwd: folder, absolute: true, onlyFiles: true });
-  const paragraphFiles = files.filter((filePath) => !["chapter.md", "notes.md", "ideas.md", "promoted.md"].includes(path.basename(filePath)));
+  const paragraphFiles = files.filter((filePath) => !["chapter.md", "writing-style.md", "notes.md", "ideas.md", "promoted.md"].includes(path.basename(filePath)));
   const paragraphs: Array<{ path: string; metadata: ParagraphFrontmatter; body: string }> = [];
 
   for (const filePath of paragraphFiles) {
@@ -2413,7 +2221,7 @@ export async function readChapterDraft(
 
   const chapterDocument = await readMarkdownFile(chapterFile, chapterDraftSchema);
   const files = await fg("*.md", { cwd: folder, absolute: true, onlyFiles: true });
-  const paragraphFiles = files.filter((filePath) => !["chapter.md", "notes.md", "ideas.md", "promoted.md"].includes(path.basename(filePath)));
+  const paragraphFiles = files.filter((filePath) => !["chapter.md", "writing-style.md", "notes.md", "ideas.md", "promoted.md"].includes(path.basename(filePath)));
   const paragraphs: Array<{ path: string; metadata: ParagraphDraftFrontmatter; body: string }> = [];
 
   for (const filePath of paragraphFiles) {
@@ -2494,8 +2302,8 @@ export async function buildChapterWritingContext(
       : chapters.filter((entry) => entry.slug !== chapterSlugValue);
   const previousChapter = previousChapters.at(-1) ?? null;
 
-  const prose = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.prose));
-  addContextSection(sections, files, root, prose, "Always-read prose guide", 1600);
+  const writingStyle = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.writingStyle));
+  addContextSection(sections, files, root, writingStyle, "Always-read writing style", 2200);
 
   const contextDocument = await readLooseMarkdownIfExists(path.join(root, CONTEXT_FILE));
   addContextSection(sections, files, root, contextDocument, "Stable book context", 1400);
@@ -2506,31 +2314,19 @@ export async function buildChapterWritingContext(
   const bookNotes = await readLooseMarkdownIfExists(path.join(root, NOTES_FILE));
   addWorkItemSection(sections, files, root, bookNotes, "Book notes", 8, "No active book notes yet.");
 
-  const styleGuide = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.style));
-  addContextSection(sections, files, root, styleGuide, "Default style guide", 1100);
-
-  const voicesGuide = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.voices));
-  addContextSection(sections, files, root, voicesGuide, "Default voice guide", 1000);
-
-  const chapterRules = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.chapterRules));
-  addContextSection(sections, files, root, chapterRules, "Chapter rules", 900);
-
-  const structureGuide = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.structure));
-  addContextSection(sections, files, root, structureGuide, "Structure guide", 850);
-
-  const styleContext = await buildEffectiveChapterStyleContext(root, chapterData?.metadata, draft?.metadata);
+  const styleContext = await buildEffectiveChapterStyleContext(root, chapterSlugValue, Boolean(chapterData), Boolean(draft));
   sections.push(styleContext.summarySection);
   for (const relativePath of styleContext.files) {
     files.add(relativePath);
   }
-  for (const profileDocument of styleContext.profileDocuments) {
+  for (const profileDocument of styleContext.documents) {
     addContextSection(
       sections,
       files,
       root,
       profileDocument,
-      `Explicit style profile ${String(profileDocument.frontmatter.id ?? path.basename(profileDocument.path, ".md"))}`,
-      1000,
+      toPosixPath(path.relative(root, profileDocument.path)).startsWith("drafts/") ? "Chapter-specific writing style (draft)" : "Chapter-specific writing style",
+      1600,
     );
   }
 
@@ -2593,10 +2389,6 @@ export async function buildChapterWritingContext(
         `- Title: ${chapterData.metadata.title}`,
         `- Summary: ${(chapterData.metadata.summary ?? summarizeText(chapterData.body, 240)) || "No summary yet."}`,
         `- POV: ${(chapterData.metadata.pov ?? []).join(", ") || "not set"}`,
-        `- Narration person: ${chapterData.metadata.narration_person ?? "default book-level"}`,
-        `- Narration tense: ${chapterData.metadata.narration_tense ?? "default book-level"}`,
-        `- Prose modes: ${(chapterData.metadata.prose_mode ?? []).join(", ") || "default book-level"}`,
-        `- Style refs: ${(chapterData.metadata.style_refs ?? []).join(", ") || "none"}`,
         `- Timeline: ${chapterData.metadata.timeline_ref ?? "not set"}`,
         `- ${throughParagraphNumber !== undefined ? "Existing scenes before this paragraph" : "Existing scenes"}: ${visibleExistingScenes.map((paragraph) => `${formatOrdinal(paragraph.metadata.number)} ${paragraph.metadata.title}`).join("; ") || "none"}`,
       ].join("\n"),
@@ -2616,10 +2408,6 @@ export async function buildChapterWritingContext(
         `Source: ${toPosixPath(path.join("drafts", chapterSlugValue, "chapter.md"))}`,
         `- Summary: ${draft.metadata.summary ?? "No summary yet."}`,
         `- POV: ${(draft.metadata.pov ?? []).join(", ") || "not set"}`,
-        `- Narration person: ${draft.metadata.narration_person ?? "default book-level"}`,
-        `- Narration tense: ${draft.metadata.narration_tense ?? "default book-level"}`,
-        `- Prose modes: ${(draft.metadata.prose_mode ?? []).join(", ") || "default book-level"}`,
-        `- Style refs: ${(draft.metadata.style_refs ?? []).join(", ") || "none"}`,
         `- Timeline: ${draft.metadata.timeline_ref ?? "not set"}`,
         `- ${throughParagraphNumber !== undefined ? "Draft scenes before this paragraph" : "Draft scenes"}: ${visibleDraftScenes.map((paragraph) => `${formatOrdinal(paragraph.metadata.number)} ${paragraph.metadata.title}`).join("; ") || "none"}`,
         "",
@@ -2763,7 +2551,7 @@ export async function buildResumeBookContext(
       files.add(filePath);
     }
   } else {
-    const prose = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.prose));
+    const writingStyle = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.writingStyle));
     const contextDocument = await readLooseMarkdownIfExists(path.join(root, CONTEXT_FILE));
     const storyDesign = await readLooseMarkdownIfExists(path.join(root, STORY_DESIGN_FILE));
     const bookNotes = await readLooseMarkdownIfExists(path.join(root, NOTES_FILE));
@@ -2775,7 +2563,7 @@ export async function buildResumeBookContext(
       ? await readLooseMarkdownIfExists(path.join(root, STORY_STATE_STATUS_FILE))
       : null;
 
-    addContextSection(sections, files, root, prose, "Always-read prose guide", 1500);
+    addContextSection(sections, files, root, writingStyle, "Always-read writing style", 2200);
     addContextSection(sections, files, root, contextDocument, "Stable book context", 1400);
     addContextSection(sections, files, root, storyDesign, "Story design", 1300);
     addWorkItemSection(sections, files, root, bookNotes, "Book notes", 8, "No active book notes yet.");
@@ -2826,52 +2614,84 @@ export async function buildResumeBookContext(
   };
 }
 
+async function readWritingStyleDocuments(
+  root: string,
+  chapterSlugValue?: string,
+  hasFinalChapter = false,
+  hasDraftChapter = false,
+): Promise<{
+  global: GuidelineDocument | null;
+  chapter: GuidelineDocument | null;
+  draft: GuidelineDocument | null;
+}> {
+  const global = await readGuidelineIfExists(path.join(root, GUIDELINE_FILES.writingStyle));
+  const chapter = chapterSlugValue && hasFinalChapter
+    ? await readGuidelineIfExists(path.join(root, "chapters", chapterSlugValue, "writing-style.md"))
+    : null;
+  const draft = chapterSlugValue && hasDraftChapter
+    ? await readGuidelineIfExists(path.join(root, "drafts", chapterSlugValue, "writing-style.md"))
+    : null;
+
+  return { global, chapter, draft };
+}
+
+async function readGuidelineIfExists(filePath: string): Promise<GuidelineDocument | null> {
+  if (!(await pathExists(filePath))) {
+    return null;
+  }
+
+  const document = await readMarkdownFile(filePath, guidelineSchema);
+  return {
+    ...document,
+    slug: path.basename(filePath, ".md"),
+  };
+}
+
+async function listWritingStyleSourceFiles(root: string, chapterSlugValue?: string): Promise<string[]> {
+  const styleDocuments = await readWritingStyleDocuments(root, chapterSlugValue, true, true);
+  return [styleDocuments.global, styleDocuments.chapter, styleDocuments.draft]
+    .filter((document): document is GuidelineDocument => Boolean(document))
+    .map((document) => toPosixPath(path.relative(root, document.path)));
+}
+
 async function buildEffectiveChapterStyleContext(
   root: string,
-  chapterMetadata?: Pick<ChapterFrontmatter, "style_refs" | "narration_person" | "narration_tense" | "prose_mode"> | null,
-  draftMetadata?: Pick<ChapterDraftFrontmatter, "style_refs" | "narration_person" | "narration_tense" | "prose_mode"> | null,
+  chapterSlugValue: string,
+  hasFinalChapter: boolean,
+  hasDraftChapter: boolean,
 ): Promise<{
   summarySection: string;
-  profileDocuments: GuidelineDocument[];
+  documents: GuidelineDocument[];
   files: string[];
 }> {
-  const styleRefs = (chapterMetadata?.style_refs?.length ? chapterMetadata.style_refs : draftMetadata?.style_refs) ?? [];
-  const proseMode = (chapterMetadata?.prose_mode?.length ? chapterMetadata.prose_mode : draftMetadata?.prose_mode) ?? [];
-  const narrationPerson = chapterMetadata?.narration_person ?? draftMetadata?.narration_person;
-  const narrationTense = chapterMetadata?.narration_tense ?? draftMetadata?.narration_tense;
-  const sourceLabel = chapterMetadata?.style_refs?.length || chapterMetadata?.narration_person || chapterMetadata?.narration_tense || chapterMetadata?.prose_mode?.length
-    ? "chapter frontmatter"
-    : draftMetadata?.style_refs?.length || draftMetadata?.narration_person || draftMetadata?.narration_tense || draftMetadata?.prose_mode?.length
-      ? "chapter draft frontmatter"
-      : "book-level defaults";
-  const explicitOverride = styleRefs.length > 0 || Boolean(narrationPerson || narrationTense || proseMode.length > 0);
-  const guidelineDocuments = styleRefs.length > 0 ? await listGuidelines(root) : [];
-  const guidelinesById = new Map(guidelineDocuments.map((document) => [String(document.frontmatter.id).toLowerCase(), document]));
-  const profileDocuments = styleRefs
-    .map((reference) => guidelinesById.get(reference.toLowerCase()))
-    .filter((document): document is GuidelineDocument => Boolean(document));
-  const unresolvedStyleRefs = styleRefs.filter((reference) => !guidelinesById.has(reference.toLowerCase()));
-  const files = profileDocuments.map((document) => toPosixPath(path.relative(root, document.path)));
+  const { global: globalStyle, chapter: chapterStyle, draft: draftStyle } = await readWritingStyleDocuments(
+    root,
+    chapterSlugValue,
+    hasFinalChapter,
+    hasDraftChapter,
+  );
+  const documents = [chapterStyle, draftStyle].filter((document): document is GuidelineDocument => Boolean(document));
+  const files = [globalStyle, ...documents]
+    .filter((document): document is GuidelineDocument => Boolean(document))
+    .map((document) => toPosixPath(path.relative(root, document.path)));
   const summarySection = [
     "## Effective chapter style",
     "",
-    `- Explicit chapter override: ${explicitOverride ? "yes" : "no"}`,
-    `- Source of current style instructions: ${sourceLabel}`,
-    `- Narration person: ${narrationPerson ?? "default book-level"}`,
-    `- Narration tense: ${narrationTense ?? "default book-level"}`,
-    `- Prose modes: ${proseMode.join(", ") || "default book-level"}`,
-    `- Style refs: ${styleRefs.join(", ") || "none"}`,
-    ...(explicitOverride
-      ? ["- This chapter asked for a style difference explicitly. Do not infer additional style drift beyond these instructions."]
-      : ["- No explicit chapter style profile is set, so the default book-level prose, style, and voice guides apply."]),
-    ...(unresolvedStyleRefs.length > 0
-      ? [`- Missing style refs to review: ${unresolvedStyleRefs.join(", ")}`]
-      : []),
+    `- Always use the global writing style from ${GUIDELINE_FILES.writingStyle}.`,
+    chapterStyle
+      ? `- Chapter-specific writing style: ${toPosixPath(path.relative(root, chapterStyle.path))}`
+      : "- Chapter-specific writing style: none in final chapter files.",
+    draftStyle
+      ? `- Draft-specific writing style: ${toPosixPath(path.relative(root, draftStyle.path))}`
+      : "- Draft-specific writing style: none in chapter draft files.",
+    documents.length > 0
+      ? "- When a chapter-specific writing-style.md exists, treat it as an explicit local override/addendum on top of the global writing style."
+      : "- No chapter-local writing-style.md is present, so the global writing style applies on its own.",
   ].join("\n");
 
   return {
     summarySection,
-    profileDocuments,
+    documents,
     files,
   };
 }
@@ -3248,12 +3068,13 @@ export async function reviseParagraph(
   const continuityImpact = classifyRevisionContinuityImpact(suggestedStateChanges);
   const chapterResumePath = path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`);
   const storyStateStatus = await readStoryStateStatus(root);
+  const revisionStyleSources = await listWritingStyleSourceFiles(root, chapterSlugValue);
   const sources = uniqueValues(
     [
       toPosixPath(path.relative(root, filePath)),
       toPosixPath(path.join("chapters", chapterSlugValue, "chapter.md")),
       ...(await pathExists(chapterResumePath) ? [toPosixPath(path.relative(root, chapterResumePath))] : []),
-      ...(await pathExists(path.join(root, GUIDELINE_FILES.prose)) ? [GUIDELINE_FILES.prose] : []),
+      ...revisionStyleSources,
       ...(await pathExists(path.join(root, STORY_STATE_CURRENT_FILE)) ? [STORY_STATE_CURRENT_FILE] : []),
       ...(storyStateStatus.dirty ? [STORY_STATE_STATUS_FILE] : []),
       ...(previousParagraph ? [toPosixPath(path.relative(root, previousParagraph.path))] : []),
@@ -3308,6 +3129,7 @@ export async function reviseChapter(
   const targets = await buildQueryCanonTargets(root, chapters);
   const chapterResumePath = path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`);
   const storyStateStatus = await readStoryStateStatus(root);
+  const revisionStyleSources = await listWritingStyleSourceFiles(root, chapterSlugValue);
 
   const proposedParagraphs = chapterData.paragraphs.map((paragraph, index) => {
     const previousParagraph = index > 0 ? chapterData.paragraphs[index - 1] : null;
@@ -3370,7 +3192,7 @@ export async function reviseChapter(
       toPosixPath(path.relative(root, chapterFilePath)),
       ...chapterData.paragraphs.map((paragraph) => toPosixPath(path.relative(root, paragraph.path))),
       ...(await pathExists(chapterResumePath) ? [toPosixPath(path.relative(root, chapterResumePath))] : []),
-      ...(await pathExists(path.join(root, GUIDELINE_FILES.prose)) ? [GUIDELINE_FILES.prose] : []),
+      ...revisionStyleSources,
       ...(await pathExists(path.join(root, STORY_STATE_CURRENT_FILE)) ? [STORY_STATE_CURRENT_FILE] : []),
       ...(storyStateStatus.dirty ? [STORY_STATE_STATUS_FILE] : []),
     ],
@@ -8440,6 +8262,11 @@ async function validateFile(root: string, filePath: string): Promise<void> {
     return;
   }
 
+  if (relativePath.startsWith("chapters/") && path.basename(filePath) === "writing-style.md") {
+    guidelineSchema.parse(data);
+    return;
+  }
+
   if (relativePath.startsWith("chapters/")) {
     paragraphSchema.parse(data);
     return;
@@ -8447,6 +8274,11 @@ async function validateFile(root: string, filePath: string): Promise<void> {
 
   if (relativePath.startsWith("drafts/") && path.basename(filePath) === "chapter.md") {
     chapterDraftSchema.parse(data);
+    return;
+  }
+
+  if (relativePath.startsWith("drafts/") && path.basename(filePath) === "writing-style.md") {
+    guidelineSchema.parse(data);
     return;
   }
 
@@ -9201,7 +9033,7 @@ function buildGithubCopilotInstructions(): string {
     "- `resumes/` for running summaries",
     "- `state/` for structured continuity snapshots and sync status",
     "- `evaluations/` for critique and continuity checks",
-    "- `guidelines/` for prose defaults, style, structure, and voices",
+    "- `guidelines/writing-style.md` for the always-on writing and review contract of the book",
     "",
     "## Working rules",
     "",
@@ -9249,14 +9081,14 @@ function buildGithubCopilotInstructions(): string {
       "- Respect chapter numbering and paragraph numbering.",
       "- Keep prose in body content and structured facts in frontmatter.",
       "- In chapter and paragraph prose, write character, item, location, faction, secret, and timeline-event names as plain text. Do not insert markdown links to canon files or reader routes; the reader resolves visible mentions automatically.",
-      "- Always read `guidelines/prose.md` before drafting new chapter or paragraph prose.",
-      "- If a chapter declares `style_refs`, `narration_person`, `narration_tense`, or `prose_mode`, treat that as an explicit chapter-level override; otherwise follow the book-level default prose, style, and voice guides.",
-    "- Before writing or rewriting a scene, review `context.md`, `story-design.md`, `notes.md`, any matching chapter draft notes, the relevant prior chapter content, the scoped summaries for story so far, any point-in-time state snapshot available before that point, and any matching files in `drafts/`.",
+      "- Always read `guidelines/writing-style.md` before drafting or revising chapter and paragraph prose.",
+      "- If `chapters/<chapter>/writing-style.md` or `drafts/<chapter>/writing-style.md` exists, treat it as an explicit chapter-local addendum or override on top of the global writing-style file.",
+    "- Before writing or rewriting a scene, review `context.md`, `story-design.md`, `notes.md`, any matching chapter draft notes, the relevant prior chapter content, the scoped summaries for story so far, the global `guidelines/writing-style.md`, any chapter-specific `writing-style.md`, any point-in-time state snapshot available before that point, and any matching files in `drafts/`.",
     "- Treat `ideas.md` as unstable material under review; do not treat active ideas as accepted canon or default drafting instructions unless the user asks you to use them.",
     "- Treat notes, ideas, and promoted archives as working support material, not canon. If something becomes a stable fact, move it into the correct canon file.",
     "- Keep `plot.md` aligned with chapter summaries, secret reveals, and timeline references.",
     "- After `update_paragraph`, assume plot and resume files were refreshed automatically by the MCP layer, and review `sync_story_state` separately only when continuity snapshots must be updated.",
-    "- If stylistic guidance is missing, inspect the rest of `guidelines/` before choosing a default.",
+    "- If stylistic guidance is missing, update `guidelines/writing-style.md` or add a chapter-local `writing-style.md` instead of inventing a new style ad hoc.",
   ].join("\n");
 }
 
@@ -9303,12 +9135,12 @@ function buildResumeBookCommand(): string {
     "Before doing anything else:",
     "1. Parse `$ARGUMENTS`: if the first token starts with `chapter:`, use it as the chapter target; if the next token looks like a paragraph id or slug, use it as the paragraph target; everything after that is the follow-up request.",
     "2. Call the `resume_book_context` MCP tool with the scoped `chapter` and optional `paragraph` when a target was provided; otherwise call it without scope.",
-    "3. Read the files it references, especially `context.md`, `story-design.md`, `notes.md`, any scoped chapter draft notes, `guidelines/prose.md`, scoped story summaries, `state/current.md`, `state/status.md` when present, and the latest files in `conversations/`.",
+    "3. Read the files it references, especially `context.md`, `story-design.md`, `notes.md`, any scoped chapter draft notes, `guidelines/writing-style.md`, any chapter-specific `writing-style.md`, scoped story summaries, `state/current.md`, `state/status.md` when present, and the latest files in `conversations/`.",
     "4. Briefly restate where the book stands, what the latest conversation was doing, and the next best actions.",
     "5. Then continue with the parsed follow-up request if one is present.",
     "6. If no extra request is present, ask for the next book task only after giving the short status recap.",
     "",
-    "Prefer continuity over novelty. Respect `known_from`, `reveal_in`, and all prose/style guidelines.",
+    "Prefer continuity over novelty. Respect `known_from`, `reveal_in`, and the writing-style rules.",
   ].join("\n");
 }
 
@@ -9432,12 +9264,12 @@ function buildConversationExportPlugin(): string {
     '      "",',
     '      "## Read first",',
     '      "",',
-    '      "1. guidelines/prose.md",',
-    '      "2. plot.md",',
-    '      "3. resumes/total.md",',
-    '      "4. state/current.md",',
-    '      "5. state/status.md if it shows dirty: true",',
-    '      "6. Any matching files in drafts/",',
+      '      "1. guidelines/writing-style.md",',
+      '      "2. plot.md",',
+      '      "3. resumes/total.md",',
+      '      "4. state/current.md",',
+      '      "5. state/status.md if it shows dirty: true",',
+      '      "6. Any chapter-specific writing-style.md or matching files in drafts/",',
     '      ...(continuationSessionLine ? [continuationSessionLine] : []),',
     '      "",',
     '      "## Current conversation snapshot",',
@@ -9990,6 +9822,162 @@ function formatPromotedStoryDesignSection(entry: WorkItemEntryFrontmatter): stri
   return [`## Promoted: ${entry.title}`, "", entry.body.trim() || "No body."]
     .filter((value) => value.length > 0)
     .join("\n");
+}
+
+function defaultWritingStyleBody(): string {
+  return [
+    "Agisci come un editor narrativo esperto in romanzi storici e scene ad alta tensione.",
+    "",
+    "Ti fornira una scena. Il tuo compito NON e cambiare il contenuto, ma aumentarne l'efficacia narrativa.",
+    "",
+    "NON devi applicare solo \"show, don't tell\".",
+    "Devi applicare CONTROLLO tra:",
+    "",
+    "- mostrare (show)",
+    "- raccontare (tell)",
+    "- ritmo",
+    "- chiarezza",
+    "",
+    "ATTENZIONE:",
+    "- NON riscrivere inutilmente.",
+    "- NON cambiare il significato della scena.",
+    "- NON alterare i dialoghi se funzionano.",
+    "",
+    "Intervieni solo su:",
+    "- azioni",
+    "- ritmo",
+    "- resa visiva",
+    "- densita narrativa",
+    "",
+    "# Obiettivo",
+    "",
+    "Trasforma la scena in qualcosa di:",
+    "",
+    "- visivo quando serve",
+    "- rapido quando serve",
+    "- fisico nei momenti chiave",
+    "- chiaro senza spiegazioni inutili",
+    "- dinamico nello spazio",
+    "",
+    "Il lettore deve:",
+    "- vedere cio che conta",
+    "- capire senza essere spiegato",
+    "- non rallentarsi inutilmente",
+    "",
+    "# Principio Base",
+    "",
+    "NON tutto va mostrato.",
+    "",
+    "Applica questa regola:",
+    "- momenti chiave -> show (azione, fisicita, dettaglio)",
+    "- transizioni e informazioni -> tell (rapido, invisibile)",
+    "",
+    "# 1. Show, Don't Tell (uso mirato)",
+    "",
+    "Trasforma in show solo quando:",
+    "- c'e tensione",
+    "- c'e conflitto",
+    "- c'e cambiamento",
+    "- il lettore deve sentire la scena",
+    "",
+    "Lascia in tell quando:",
+    "- e contesto",
+    "- e passaggio",
+    "- e informazione secondaria",
+    "",
+    "Evita, nei momenti chiave, formule come: 'Era furioso'.",
+    "Preferisci azioni concrete come: 'Strinse il bicchiere fino a farlo vibrare'.",
+    "",
+    "# 2. Elimina spiegazioni inutili",
+    "",
+    "Rimuovi:",
+    "- interpretazioni ovvie",
+    "- spiegazioni doppie",
+    "- frasi che ripetono cio che gia si vede",
+    "",
+    "# 3. Fisicita intelligente",
+    "",
+    "Inserisci fisicita solo se:",
+    "- aggiunge tensione",
+    "- rivela stato emotivo",
+    "- modifica la relazione tra personaggi",
+    "",
+    "Evita gesti casuali, riempitivi o ripetitivi.",
+    "",
+    "# 4. Varieta delle azioni",
+    "",
+    "Alterna:",
+    "- micro: occhi, dita, respiro",
+    "- macro: movimento nello spazio",
+    "- oggetti: interazione concreta",
+    "- postura: dominanza o sottomissione",
+    "",
+    "Ogni azione deve avere uno scopo.",
+    "",
+    "# 5. Spazio attivo",
+    "",
+    "I personaggi devono potersi avvicinare, allontanare, occupare spazio o cederlo.",
+    "Lo spazio racconta tensione, potere e relazione.",
+    "",
+    "# 6. Oggetti con funzione",
+    "",
+    "Gli oggetti devono essere usati, manipolati e riflettere stato mentale o status.",
+    "Evita oggetti decorativi.",
+    "",
+    "# 7. No formule deboli",
+    "",
+    "Riduci o elimina:",
+    "- sembrava",
+    "- come se",
+    "- quasi",
+    "- come a",
+    "",
+    "Usale solo se serve davvero ambiguita.",
+    "",
+    "# 8. Subtext",
+    "",
+    "Quando possibile:",
+    "- sostituisci spiegazioni con comportamento",
+    "- lascia che il dialogo contraddica le azioni",
+    "",
+    "# 9. Ritmo",
+    "",
+    "Alterna dialogo, azione breve e pausa.",
+    "Usa il ritmo per accelerare tensione o rallentare nei momenti chiave.",
+    "Evita blocchi lunghi statici e sequenze di azioni tutte uguali.",
+    "",
+    "# 10. Densita",
+    "",
+    "Ogni frase deve fare almeno una di queste cose:",
+    "- avanzare la scena",
+    "- mostrare tensione",
+    "- rivelare carattere",
+    "- chiarire dinamica",
+    "",
+    "Se non lo fa, taglia o semplifica.",
+    "",
+    "# Dialoghi e narrazione",
+    "",
+    "- Mantieni i dialoghi originali salvo piccoli aggiustamenti minimi davvero necessari.",
+    "- Definisci in questo file come funzionano prima o terza persona, distanza dal POV, tempo verbale e gestione del discorso diretto per il libro.",
+    "- Se un capitolo ha esigenze particolari, aggiungi un file `writing-style.md` dentro la cartella del capitolo o del draft del capitolo.",
+    "",
+    "# Output atteso per scrittura e review",
+    "",
+    "- Riscrivi la scena completa quando stai facendo una review editoriale.",
+    "- Mantieni i dialoghi con modifiche minime.",
+    "- Migliora azione, ritmo e resa.",
+    "- Non aggiungere spiegazioni fuori dal testo.",
+    "",
+    "# Stile desiderato",
+    "",
+    "- preciso",
+    "- concreto",
+    "- controllato, non iper-descrittivo",
+    "- visivo nei momenti chiave",
+    "- fluido nel resto",
+    "- tensione implicita, non dichiarata",
+  ].join("\n");
 }
 
 function defaultBookNotesBody(): string {

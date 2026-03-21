@@ -47,7 +47,7 @@ Narrarium MCP already auto-refreshes `plot.md` and the resume files after final 
 - Use `update_chapter_draft` and `update_paragraph_draft` when refining rough material.
 - Use `create_chapter_from_draft` and `create_paragraph_from_draft` when turning rough drafts into final story files.
 - Avoid renumbering or renaming chapter and paragraph files unless the user explicitly asks for structural migration.
-- Before writing new chapter or paragraph prose, read `guidelines/prose.md`, the relevant prior story context, and any matching draft files.
+- Before writing new chapter or paragraph prose, read `guidelines/writing-style.md`, any chapter-specific `writing-style.md`, the relevant prior story context, and any matching draft files.
 - Keep `plot.md` updated whenever chapter progression, timeline anchors, or reveal timing changes.
 
 ## Reader and publishing
