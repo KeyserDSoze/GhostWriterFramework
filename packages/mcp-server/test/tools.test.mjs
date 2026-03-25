@@ -54,6 +54,30 @@ test("mcp server tools support guided creation and structural updates", async ()
       revealIn: "chapter:008-the-unmasking",
     });
 
+    await callToolText(client, "create_character", {
+      rootPath,
+      name: "Sergio",
+      roleTier: "supporting",
+      speakingStyle: "Pushes with calm pressure until someone yields.",
+      backgroundSummary: "Uses touch and distance as control tactics.",
+      functionInBook: "Press another character emotionally.",
+      traits: ["controllante", "vanitoso"],
+      desires: ["ottenere una resa emotiva"],
+      fears: ["perdere il controllo"],
+    });
+
+    await callToolText(client, "create_character", {
+      rootPath,
+      name: "Federica",
+      roleTier: "supporting",
+      speakingStyle: "Cuts fast when she feels trapped.",
+      backgroundSummary: "Protects her boundaries with sharp reactions.",
+      functionInBook: "Resist pressure in a charged exchange.",
+      traits: ["guardinga", "reattiva"],
+      desires: ["mantenere autonomia"],
+      fears: ["essere controllata"],
+    });
+
     const createChapterText = await callToolText(client, "create_chapter", {
       rootPath,
       number: 1,
@@ -303,6 +327,37 @@ scope: chapter-writing-style
       mode: "tension",
       intensity: "medium",
     });
+    const actionBeatParagraphText = await callToolText(client, "update_paragraph", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+      paragraph: "001-first-scene",
+      body: [
+        "Sergio si spostò i suoi bellissimi capelli da un lato.",
+        "«Come stai?» esclamò.",
+        "Federica si girò di scatto.",
+        "«Benissimo, oggi è una grande giornata».",
+        "Sergio si avvicinò con la sua mano destra e le prese la sua mano sinistra.",
+        "«Vuoi rendermi felice almeno oggi?»",
+        "Federica indietreggiò e andò a sbattere contro il muro.",
+        "«Ma sei matto, farmi una richiesta del genere proprio oggi».",
+      ].join("\n"),
+    });
+    const beatReviewText = await callToolText(client, "review_dialogue_action_beats", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+      paragraph: "001-first-scene",
+    });
+    const reviewId = extractReviewId(beatReviewText);
+    const paragraphHash = extractParagraphHash(beatReviewText);
+    const selections = extractRecommendedSelections(beatReviewText);
+    const beatApplyText = await callToolText(client, "apply_dialogue_action_beats", {
+      rootPath,
+      chapter: "chapter:001-opening-move",
+      paragraph: "001-first-scene",
+      reviewId,
+      expectedParagraphHash: paragraphHash,
+      selections,
+    });
     const reviseChapterText = await callToolText(client, "revise_chapter", {
       rootPath,
       chapter: "chapter:001-opening-move",
@@ -476,13 +531,20 @@ scope: chapter-writing-style
     assert.match(searchText, /The Signal/i);
     assert.match(updateChapterText, /sync_story_state/);
     assert.match(updateParagraphText, /sync_story_state/);
+    assert.match(actionBeatParagraphText, /Updated paragraph/);
     assert.match(reviseParagraphText, /Files written: no/);
     assert.match(reviseParagraphText, /Continuity impact: clear/);
     assert.match(reviseParagraphText, /Suggested state_changes:/);
     assert.match(reviseParagraphText, /warn-taren/i);
+    assert.match(beatReviewText, /Reviewed dialogue action beats/);
+    assert.match(beatReviewText, /Recommended choice:/);
+    assert.match(beatReviewText, /Use a simple speech tag instead/);
+    assert.match(beatApplyText, /Applied dialogue action beat selections/);
+    assert.match(beatApplyText, /Changed beat count:/);
+    assert.match(beatApplyText, /ridusse la distanza|allungò la mano|cercando col muro una distanza/);
     assert.match(reviseChapterText, /Files written: no/);
     assert.match(reviseChapterText, /Revision plan:/);
-    assert.match(reviseChapterText, /Overall continuity impact: clear/);
+    assert.match(reviseChapterText, /Overall continuity impact: none/);
     assert.match(reviseChapterText, /Scene proposals:/);
     assert.match(renameEntityText, /Renamed character/);
     assert.match(renameChapterText, /Renamed chapter/);
@@ -546,4 +608,25 @@ function extractWorkItemId(text) {
   const match = text.match(/entry ([a-z0-9-]+)/i);
   assert.ok(match, "tool response should include a work item id");
   return match[1].trim();
+}
+
+function extractReviewId(text) {
+  const match = text.match(/Review id: ([a-z0-9]+)/i);
+  assert.ok(match, "tool response should include a review id");
+  return match[1].trim();
+}
+
+function extractParagraphHash(text) {
+  const match = text.match(/Paragraph hash: ([a-z0-9]+)/i);
+  assert.ok(match, "tool response should include a paragraph hash");
+  return match[1].trim();
+}
+
+function extractRecommendedSelections(text) {
+  const selections = Array.from(text.matchAll(/- (beat-\d+) ::[\s\S]*?Recommended choice: ([a-z0-9-]+) ::/gi)).map((match) => ({
+    beatId: match[1],
+    choiceId: match[2],
+  }));
+  assert.ok(selections.length > 0, "tool response should include recommended beat selections");
+  return selections;
 }

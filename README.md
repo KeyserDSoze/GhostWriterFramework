@@ -173,6 +173,7 @@ The Astro reader now exposes an author-facing `Workshop` area in full canon mode
 Book repos also include `conversations/` as a portable place to keep exported writing chats.
 The generated `.opencode/plugins/conversation-export.js` plugin updates `conversations/RESUME.md`, `conversations/CONTINUATION.md`, and per-session exports automatically when OpenCode sessions go idle.
 The generated `/resume-book` command and MCP tool `resume_book_context` help you restart from repo state on a fresh machine or session, including `context.md`, `plot.md`, `resumes/`, and `state/` snapshots when present. `/resume-book` also supports scoped targets such as a chapter or paragraph, for example `/resume-book chapter:002-ledger-suspicion 002-tense-exchange`.
+For dialogue-heavy revision, the MCP layer also supports `review_dialogue_action_beats` for beat-by-beat proposals and `apply_dialogue_action_beats` for applying only the confirmed beat selections to a final paragraph.
 
 ## Agent rules
 

@@ -167,6 +167,8 @@ See `docs/query-canon.md` for a fuller guide with use cases, scope rules, output
 
 See `docs/revise-paragraph.md` for modes, examples, and the manual apply workflow.
 
+`review_dialogue_action_beats` is the beat-by-beat counterpart for dialogue scenes: it reviews action beats around spoken lines, judges whether they are purposeful, can suggest stronger beats or a simple `said` fallback, and returns a preview without writing files. Apply only confirmed beat choices with `apply_dialogue_action_beats`.
+
 `revise_chapter` is the broader version: it proposes a diagnosis, a revision plan, and scene-by-scene suggestions for a final chapter without mutating repository files.
 
 See `docs/revise-chapter.md` for the chapter-level workflow and output structure.

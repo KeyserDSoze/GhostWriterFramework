@@ -38,6 +38,7 @@ import {
   renameChapter,
   renameEntity,
   renameParagraph,
+  reviewDialogueActionBeats,
   reviseChapter,
   reviseParagraph,
   renderMarkdown,
@@ -45,6 +46,7 @@ import {
   saveBookWorkItem,
   saveChapterDraftWorkItem,
   syncAllResumes,
+  applyDialogueActionBeats,
   syncParagraphEvaluation,
   syncChapterEvaluation,
   syncChapterResume,
@@ -1406,6 +1408,77 @@ server.tool(
 );
 
 server.tool(
+  "review_dialogue_action_beats",
+  "Review a final paragraph beat by beat to judge whether dialogue-adjacent actions are purposeful, weak, or better replaced with a simple speech tag. This is proposal-only and may also suggest new beats or recurring tics worth observing for character canon.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+    intensity: revisionIntensitySchema.default("medium"),
+    preserveDialogueWords: z.boolean().default(true),
+    allowMissingActionAdds: z.boolean().default(true),
+    allowSaidFallback: z.boolean().default(true),
+    includeTicSuggestions: z.boolean().default(true),
+  },
+  async ({ rootPath, chapter, paragraph, intensity, preserveDialogueWords, allowMissingActionAdds, allowSaidFallback, includeTicSuggestions }) => {
+    const result = await reviewDialogueActionBeats(rootPath, {
+      chapter,
+      paragraph,
+      intensity,
+      preserveDialogueWords,
+      allowMissingActionAdds,
+      allowSaidFallback,
+      includeTicSuggestions,
+    });
+
+    const lines = [
+      `Reviewed dialogue action beats for ${result.paragraph} at ${result.filePath}.`,
+      `Review id: ${result.reviewId}`,
+      `Paragraph hash: ${result.paragraphHash}`,
+      `Continuity impact: ${result.continuityImpact}`,
+      "Files written: no",
+      ...(result.editorialNotes.length > 0 ? ["Notes:", ...result.editorialNotes.map((note) => `- ${note}`)] : []),
+      "Beat proposals:",
+      ...result.beatProposals.flatMap((proposal) => {
+        const recommended = proposal.choices.find((choice) => choice.choiceId === proposal.recommendedChoiceId);
+        return [
+          `- ${proposal.beatId} :: ${proposal.quoteText}`,
+          `  Speaker: ${proposal.speaker ?? "unknown"}`,
+          `  Current beat: ${proposal.currentBeatText ?? "none"}`,
+          `  Assessment: ${proposal.purposeAssessment}`,
+          ...proposal.diagnosis.map((note) => `  - ${note}`),
+          "  Choices:",
+          ...proposal.choices.map(
+            (choice) => `    - ${choice.choiceId} :: ${choice.label} :: ${choice.proposedText}`,
+          ),
+          ...(recommended
+            ? [
+                `  Recommended choice: ${recommended.choiceId} :: ${recommended.label}`,
+              ]
+            : []),
+        ];
+      }),
+      ...(result.ticSuggestions.length > 0
+        ? [
+            "Tic suggestions:",
+            ...result.ticSuggestions.map(
+              (suggestion) => `- ${suggestion.characterId}: ${suggestion.ticText} (${suggestion.recommendation})`,
+            ),
+          ]
+        : []),
+      "Preview body:",
+      result.previewBody,
+      "Follow-up:",
+      "- Ask the user which beat proposals they want to keep.",
+      "- Apply only the confirmed selections with apply_dialogue_action_beats.",
+      ...(result.sources.length > 0 ? ["Sources:", ...result.sources.map((source) => `- ${source}`)] : []),
+    ];
+
+    return textResponse(lines.join("\n"));
+  },
+);
+
+server.tool(
   "resume_book_context",
   "Assemble restart context for a book project using prose rules, stable context, summaries, and exported conversations. You can also scope it to a target chapter or paragraph so the canon only reflects the story up to that writing point.",
   {
@@ -2067,6 +2140,58 @@ server.tool(
     });
 
     return textResponse(await appendParagraphPathMaintenanceNote(rootPath, result.filePath, `Updated paragraph at ${result.filePath}.`));
+  },
+);
+
+server.tool(
+  "apply_dialogue_action_beats",
+  "Apply confirmed dialogue action beat selections to a final paragraph after review_dialogue_action_beats. This only updates the chosen beats and then writes the paragraph.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+    reviewId: z.string().min(1),
+    expectedParagraphHash: z.string().min(1),
+    selections: z.array(
+      z.object({
+        beatId: z.string().min(1),
+        choiceId: z.string().min(1),
+      }),
+    ).min(1),
+  },
+  async ({ rootPath, chapter, paragraph, reviewId, expectedParagraphHash, selections }) => {
+    const result = await applyDialogueActionBeats(rootPath, {
+      chapter,
+      paragraph,
+      reviewId,
+      expectedParagraphHash,
+      selections,
+    });
+
+    const lines = [
+      `Applied dialogue action beat selections to ${result.paragraph} at ${result.filePath}.`,
+      `Review id: ${result.reviewId}`,
+      `Changed beat count: ${result.changedBeatCount}`,
+      `Continuity impact: ${result.continuityImpact}`,
+      ...(result.appliedSelections.length > 0
+        ? [
+            "Applied selections:",
+            ...result.appliedSelections.map(
+              (selection) => `- ${selection.beatId}: ${selection.choiceId} (${selection.operation})`,
+            ),
+          ]
+        : []),
+      ...(result.suggestedStateChanges
+        ? ["Suggested state_changes:", JSON.stringify(result.suggestedStateChanges, null, 2)]
+        : []),
+      "Updated body:",
+      result.updatedBody,
+      "Follow-up:",
+      "- Review the updated scene in context before moving on.",
+      "- If the beat changes still carry continuity-sensitive movement, review state_changes and run sync_story_state when ready.",
+    ];
+
+    return textResponse(lines.join("\n"));
   },
 );
 

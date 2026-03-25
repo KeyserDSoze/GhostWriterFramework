@@ -33,6 +33,7 @@ import {
   readEntity,
   readTimelineMain,
   reviseChapter,
+  reviewDialogueActionBeats,
   reviseParagraph,
   saveBookWorkItem,
   saveChapterDraftWorkItem,
@@ -47,6 +48,7 @@ import {
   updateChapterDraftNotes,
   updateChapter,
   updateEntity,
+  applyDialogueActionBeats,
   updateParagraph,
   validateBook,
   writeWikipediaResearchSnapshot,
@@ -1250,6 +1252,104 @@ test("structured ideas and notes can be promoted out of active queues while pres
     assert.doesNotMatch(context.text, /Ledger crack: Let the forged ledger crack open the larger conspiracy/);
     assert.equal(promotedIdea.targetFilePath?.endsWith("story-design.md"), true);
     assert.equal(promotedChapterIdea.targetFilePath?.endsWith(path.join("drafts", "001-opening-move", "notes.md")), true);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("dialogue action beat review works beat by beat and apply updates only confirmed beats", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-dialogue-beats-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Dialogue Beat Book",
+      language: "it",
+    });
+
+    await createCharacterProfile(rootPath, {
+      name: "Sergio",
+      roleTier: "supporting",
+      speakingStyle: "Spinge con calma apparente finche non ottiene una risposta.",
+      backgroundSummary: "Usa il contatto fisico per prendere spazio quando sente di perdere il controllo.",
+      functionInBook: "Press the emotional boundaries of the scene.",
+      traits: ["controllante", "vanitoso"],
+      desires: ["ottenere obbedienza emotiva"],
+      fears: ["perdere il controllo della situazione"],
+      mannerisms: [],
+    });
+    await createCharacterProfile(rootPath, {
+      name: "Federica",
+      roleTier: "supporting",
+      speakingStyle: "Taglia corto quando viene messa sotto pressione.",
+      backgroundSummary: "Difende i propri confini con reazioni fisiche brusche quando si sente invasa.",
+      functionInBook: "Resist Sergio's pressure in the exchange.",
+      traits: ["guardinga", "reattiva"],
+      desires: ["mantenere autonomia"],
+      fears: ["essere controllata"],
+      mannerisms: [],
+    });
+
+    await createChapter(rootPath, {
+      number: 1,
+      title: "Pressione",
+      frontmatter: {
+        pov: ["character:federica"],
+      },
+      body: "# Purpose\n\nAumentare la tensione fisica del confronto.",
+    });
+
+    await createParagraph(rootPath, {
+      chapter: "chapter:001-pressione",
+      number: 1,
+      title: "Le mani",
+      frontmatter: {
+        viewpoint: "character:federica",
+      },
+      body: [
+        "Sergio si spostò i suoi bellissimi capelli da un lato.",
+        "«Come stai?» esclamò.",
+        "Federica si girò di scatto.",
+        "«Benissimo, oggi è una grande giornata».",
+        "Sergio si avvicinò con la sua mano destra e le prese la sua mano sinistra.",
+        "«Vuoi rendermi felice almeno oggi?»",
+        "Federica indietreggiò e andò a sbattere contro il muro.",
+        "«Ma sei matto, farmi una richiesta del genere proprio oggi».",
+      ].join("\n"),
+    });
+
+    const review = await reviewDialogueActionBeats(rootPath, {
+      chapter: "chapter:001-pressione",
+      paragraph: "001-le-mani",
+    });
+
+    assert.equal(review.beatProposals.length, 4);
+    assert.match(review.sources.join("\n"), /characters\/sergio\.md/);
+    assert.match(review.sources.join("\n"), /characters\/federica\.md/);
+    assert.ok(review.beatProposals.some((beat) => beat.purposeAssessment !== "strong"));
+    assert.ok(review.beatProposals.every((beat) => beat.choices.some((choice) => choice.usesSaidFallback)));
+    assert.ok(review.previewBody !== review.originalBody);
+    assert.ok(review.ticSuggestions.length >= 1);
+
+    const selections = review.beatProposals.map((beat) => ({
+      beatId: beat.beatId,
+      choiceId: beat.recommendedChoiceId,
+    }));
+
+    const applied = await applyDialogueActionBeats(rootPath, {
+      chapter: "chapter:001-pressione",
+      paragraph: "001-le-mani",
+      reviewId: review.reviewId,
+      expectedParagraphHash: review.paragraphHash,
+      selections,
+    });
+
+    const paragraph = await readChapter(rootPath, "chapter:001-pressione");
+    const updatedBody = paragraph.paragraphs[0].body;
+
+    assert.equal(applied.changedBeatCount, 4);
+    assert.equal(applied.updatedBody, updatedBody);
+    assert.match(updatedBody, /ridusse la distanza|allungò la mano|cercando col muro una distanza/);
+    assert.doesNotMatch(updatedBody, /bellissimi capelli/);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }

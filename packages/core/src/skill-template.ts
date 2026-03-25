@@ -55,6 +55,8 @@ Treat the repository as the canonical source of truth for the book.
 - Use \`revise_chapter\` when you want a proposal-only diagnosis and scene revision plan for an existing final chapter before deciding what to apply manually.
 - Use \`revise_paragraph\` when you want a proposal-only editorial pass on an existing final scene before deciding whether to apply it with \`update_paragraph\`.
 - When revising a final paragraph, show the \`revise_paragraph\` proposal, ask the user whether they want to keep it, and call \`update_paragraph\` only after clear confirmation.
+- Use \`review_dialogue_action_beats\` when the user wants a beat-by-beat review of dialogue-adjacent actions instead of a full scene rewrite.
+- Use \`apply_dialogue_action_beats\` only after the user confirmed which beat-level proposals to keep.
 - Use \`resume_book_context\` or the \`/resume-book\` command when restarting work from exported conversation history.
 - Use \`save_book_item\` and \`save_chapter_item\` for structured ideas and notes, and \`promote_book_item\` / \`promote_chapter_item\` when reviewed material leaves the active queue.
 - Use \`update_book_notes\` and \`update_chapter_notes\` when the user asks to edit the support documents themselves instead of individual structured entries.

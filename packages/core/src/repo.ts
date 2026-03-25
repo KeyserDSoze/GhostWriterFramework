@@ -1,4 +1,5 @@
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import fg from "fast-glob";
@@ -199,6 +200,84 @@ export type ReviseChapterResult = {
   sources: string[];
 };
 
+export type DialogueActionBeatReviewChoice = {
+  choiceId: string;
+  operation: "keep" | "replace" | "insert_before" | "insert_after" | "remove";
+  label: string;
+  proposedText: string;
+  usesSaidFallback: boolean;
+  addsNewAction: boolean;
+  confidence: "low" | "medium" | "high";
+  rationale: {
+    psychology: string[];
+    sceneSpace: string[];
+    subtext: string[];
+    relationshipDynamics: string[];
+    canon: string[];
+  };
+};
+
+export type DialogueActionBeatProposal = {
+  beatId: string;
+  order: number;
+  speaker?: string;
+  actedCharacter?: string;
+  beatKind: "dialogue" | "action" | "gap";
+  quoteText: string;
+  currentBeatText?: string;
+  anchor: {
+    previousExcerpt?: string;
+    currentExcerpt: string;
+    nextExcerpt?: string;
+  };
+  purposeAssessment: "strong" | "weak" | "redundant" | "unclear" | "misaligned";
+  diagnosis: string[];
+  choices: DialogueActionBeatReviewChoice[];
+  recommendedChoiceId: string;
+};
+
+export type DialogueActionTicSuggestion = {
+  characterId: string;
+  ticText: string;
+  kind: "gesture" | "speech" | "avoidance" | "stress-response";
+  confidence: "low" | "medium" | "high";
+  reason: string;
+  evidence: string[];
+  recommendation: "observe_only" | "candidate_for_canon";
+};
+
+export type ReviewDialogueActionBeatsResult = {
+  reviewId: string;
+  filePath: string;
+  chapter: string;
+  paragraph: string;
+  paragraphHash: string;
+  originalBody: string;
+  previewBody: string;
+  continuityImpact: RevisionContinuityImpact;
+  suggestedStateChanges?: StoryStateChanges;
+  editorialNotes: string[];
+  beatProposals: DialogueActionBeatProposal[];
+  ticSuggestions: DialogueActionTicSuggestion[];
+  sources: string[];
+};
+
+export type ApplyDialogueActionBeatsResult = {
+  filePath: string;
+  chapter: string;
+  paragraph: string;
+  reviewId: string;
+  changedBeatCount: number;
+  appliedSelections: Array<{
+    beatId: string;
+    choiceId: string;
+    operation: DialogueActionBeatReviewChoice["operation"];
+  }>;
+  updatedBody: string;
+  continuityImpact: RevisionContinuityImpact;
+  suggestedStateChanges?: StoryStateChanges;
+};
+
 export type WikipediaResearchSnapshot = {
   filePath: string;
   relativePath: string;
@@ -235,6 +314,47 @@ type ChapterReadResult = {
 };
 
 type ChapterParagraph = ChapterReadResult["paragraphs"][number];
+
+type DialogueCharacterProfile = {
+  id: string;
+  title: string;
+  path: string;
+  aliases: string[];
+  speakingStyle?: string;
+  traits: string[];
+  mannerisms: string[];
+  desires: string[];
+  fears: string[];
+  relationships: string[];
+  backgroundSummary?: string;
+  internalConflict?: string;
+  externalConflict?: string;
+};
+
+type ParsedDialogueBeat = {
+  beatId: string;
+  order: number;
+  quoteLineIndex: number;
+  actionLineIndex: number | null;
+  speakerId?: string;
+  actedCharacterId?: string;
+  quoteText: string;
+  actionText?: string;
+  startLineIndex: number;
+  endLineIndex: number;
+  previousExcerpt?: string;
+  nextExcerpt?: string;
+};
+
+type InternalDialogueActionBeatChoice = DialogueActionBeatReviewChoice & {
+  proposedBlock: string;
+};
+
+type InternalDialogueActionBeatProposal = Omit<DialogueActionBeatProposal, "choices"> & {
+  startLineIndex: number;
+  endLineIndex: number;
+  choices: InternalDialogueActionBeatChoice[];
+};
 
 type TextAnalysis = {
   plainText: string;
@@ -3110,6 +3230,233 @@ export async function reviseParagraph(
   };
 }
 
+export async function reviewDialogueActionBeats(
+  rootPath: string,
+  options: {
+    chapter: string;
+    paragraph: string;
+    intensity?: RevisionIntensity;
+    preserveDialogueWords?: boolean;
+    allowMissingActionAdds?: boolean;
+    allowSaidFallback?: boolean;
+    includeTicSuggestions?: boolean;
+  },
+): Promise<ReviewDialogueActionBeatsResult> {
+  const root = path.resolve(rootPath);
+  const chapterSlugValue = normalizeChapterReference(options.chapter);
+  const filePath = await resolveParagraphFilePath(root, chapterSlugValue, options.paragraph);
+
+  if (!(await pathExists(filePath))) {
+    throw new Error(`Paragraph does not exist: ${filePath}`);
+  }
+
+  const paragraphDocument = await readMarkdownFile(filePath, paragraphSchema);
+  const chapterData = await readChapter(root, chapterSlugValue);
+  const chapters = await listChapters(root);
+  const targets = await buildQueryCanonTargets(root, chapters);
+  const primaryTarget = resolveRevisionPrimaryTarget(
+    targets,
+    paragraphDocument.frontmatter.viewpoint,
+    chapterData.metadata.pov,
+    paragraphDocument.body,
+  );
+  const characters = await listEntities(root, "character");
+  const characterProfiles = buildDialogueCharacterProfiles(characters);
+  const parsedBeats = parseDialogueActionBeats(paragraphDocument.body, characterProfiles);
+  const intensity = options.intensity ?? "medium";
+  const preserveDialogueWords = options.preserveDialogueWords ?? true;
+  const allowMissingActionAdds = options.allowMissingActionAdds ?? true;
+  const allowSaidFallback = options.allowSaidFallback ?? true;
+  const includeTicSuggestions = options.includeTicSuggestions ?? true;
+  const chapterResumePath = path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`);
+  const storyStateStatus = await readStoryStateStatus(root);
+  const revisionStyleSources = await listWritingStyleSourceFiles(root, chapterSlugValue);
+  const chapterStyleContext = await buildEffectiveChapterStyleContext(root, chapterSlugValue, true, true);
+
+  const proposals = parsedBeats.map((beat) =>
+    buildDialogueActionBeatProposal({
+      beat,
+      characterProfiles,
+      paragraphBody: paragraphDocument.body,
+      intensity,
+      preserveDialogueWords,
+      allowMissingActionAdds,
+      allowSaidFallback,
+      primaryTarget: primaryTarget?.title,
+    }),
+  );
+  const previewBody = applyDialogueActionBeatSelectionsToBody(
+    paragraphDocument.body,
+    proposals,
+    proposals.map((proposal) => ({
+      beatId: proposal.beatId,
+      choiceId: proposal.recommendedChoiceId,
+    })),
+  );
+  const suggestedStateChanges = suggestParagraphStateChanges(previewBody, {
+    primaryTarget,
+    targets,
+    paragraphTitle: paragraphDocument.frontmatter.title,
+    chapterTitle: chapterData.metadata.title,
+  });
+  const continuityImpact = classifyRevisionContinuityImpact(suggestedStateChanges);
+  const paragraphHash = createParagraphReviewHash(paragraphDocument.body);
+  const reviewId = createDialogueActionReviewId(filePath, paragraphHash, proposals.map((proposal) => `${proposal.beatId}:${proposal.recommendedChoiceId}`));
+  const ticSuggestions = includeTicSuggestions
+    ? buildDialogueActionTicSuggestions(proposals, characterProfiles)
+    : [];
+  const sources = uniqueValues(
+    [
+      toPosixPath(path.relative(root, filePath)),
+      toPosixPath(path.join("chapters", chapterSlugValue, "chapter.md")),
+      ...(await pathExists(chapterResumePath) ? [toPosixPath(path.relative(root, chapterResumePath))] : []),
+      ...revisionStyleSources,
+      ...(await pathExists(path.join(root, STORY_STATE_CURRENT_FILE)) ? [STORY_STATE_CURRENT_FILE] : []),
+      ...(storyStateStatus.dirty ? [STORY_STATE_STATUS_FILE] : []),
+      ...proposals.flatMap((proposal) => {
+        const ids = [proposal.speaker, proposal.actedCharacter].filter((value): value is string => Boolean(value));
+        return ids
+          .map((id) => characterProfiles.find((profile) => profile.id === id)?.path)
+          .filter((value): value is string => Boolean(value));
+      }),
+    ],
+  ).sort();
+
+  return {
+    reviewId,
+    filePath,
+    chapter: `chapter:${chapterSlugValue}`,
+    paragraph: paragraphDocument.frontmatter.id,
+    paragraphHash,
+    originalBody: paragraphDocument.body,
+    previewBody,
+    continuityImpact,
+    suggestedStateChanges,
+    editorialNotes: buildDialogueActionEditorialNotes({
+      proposals,
+      intensity,
+      chapterStyleSummary: chapterStyleContext.summarySection,
+    }),
+    beatProposals: proposals.map(stripInternalDialogueActionBeatProposal),
+    ticSuggestions,
+    sources,
+  };
+}
+
+export async function applyDialogueActionBeats(
+  rootPath: string,
+  options: {
+    chapter: string;
+    paragraph: string;
+    reviewId: string;
+    expectedParagraphHash: string;
+    selections: Array<{ beatId: string; choiceId: string }>;
+  },
+): Promise<ApplyDialogueActionBeatsResult> {
+  const review = await reviewDialogueActionBeats(rootPath, {
+    chapter: options.chapter,
+    paragraph: options.paragraph,
+  });
+
+  if (review.reviewId !== options.reviewId) {
+    throw new Error("Dialogue beat review is stale. Run review_dialogue_action_beats again before applying changes.");
+  }
+
+  if (review.paragraphHash !== options.expectedParagraphHash) {
+    throw new Error("Paragraph changed since the dialogue beat review was generated. Run the review again before applying changes.");
+  }
+
+  const internalProposals = await buildInternalDialogueActionBeatProposals(rootPath, {
+    chapter: options.chapter,
+    paragraph: options.paragraph,
+  });
+  const updatedBody = applyDialogueActionBeatSelectionsToBody(review.originalBody, internalProposals, options.selections);
+  const changedBeatCount = options.selections.filter((selection) => {
+    const proposal = internalProposals.find((item) => item.beatId === selection.beatId);
+    if (!proposal) {
+      return false;
+    }
+
+    return selection.choiceId !== proposal.recommendedChoiceId || proposal.choices.find((choice) => choice.choiceId === selection.choiceId)?.operation !== "keep";
+  }).length;
+
+  const updateResult = await updateParagraph(rootPath, {
+    chapter: options.chapter,
+    paragraph: options.paragraph,
+    body: updatedBody,
+  });
+  const chapterSlugValue = normalizeChapterReference(options.chapter);
+  const chapters = await listChapters(path.resolve(rootPath));
+  const targets = await buildQueryCanonTargets(path.resolve(rootPath), chapters);
+  const primaryTarget = resolveRevisionPrimaryTarget(
+    targets,
+    undefined,
+    (await readChapter(path.resolve(rootPath), chapterSlugValue)).metadata.pov,
+    updatedBody,
+  );
+  const suggestedStateChanges = suggestParagraphStateChanges(updatedBody, {
+    primaryTarget,
+    targets,
+    paragraphTitle: (await readParagraph(path.resolve(rootPath), chapterSlugValue, options.paragraph)).metadata.title,
+    chapterTitle: (await readChapter(path.resolve(rootPath), chapterSlugValue)).metadata.title,
+  });
+
+  return {
+    filePath: updateResult.filePath,
+    chapter: `chapter:${chapterSlugValue}`,
+    paragraph: options.paragraph.startsWith("paragraph:") ? options.paragraph : (await readParagraph(path.resolve(rootPath), chapterSlugValue, options.paragraph)).metadata.id,
+    reviewId: options.reviewId,
+    changedBeatCount,
+    appliedSelections: options.selections.map((selection) => {
+      const proposal = internalProposals.find((item) => item.beatId === selection.beatId);
+      const choice = proposal?.choices.find((item) => item.choiceId === selection.choiceId);
+      return {
+        beatId: selection.beatId,
+        choiceId: selection.choiceId,
+        operation: choice?.operation ?? "keep",
+      };
+    }),
+    updatedBody,
+    continuityImpact: classifyRevisionContinuityImpact(suggestedStateChanges),
+    suggestedStateChanges,
+  };
+}
+
+async function buildInternalDialogueActionBeatProposals(
+  rootPath: string,
+  options: { chapter: string; paragraph: string },
+): Promise<InternalDialogueActionBeatProposal[]> {
+  const root = path.resolve(rootPath);
+  const chapterSlugValue = normalizeChapterReference(options.chapter);
+  const filePath = await resolveParagraphFilePath(root, chapterSlugValue, options.paragraph);
+  const paragraphDocument = await readMarkdownFile(filePath, paragraphSchema);
+  const chapterData = await readChapter(root, chapterSlugValue);
+  const chapters = await listChapters(root);
+  const targets = await buildQueryCanonTargets(root, chapters);
+  const primaryTarget = resolveRevisionPrimaryTarget(
+    targets,
+    paragraphDocument.frontmatter.viewpoint,
+    chapterData.metadata.pov,
+    paragraphDocument.body,
+  );
+  const characters = await listEntities(root, "character");
+  const characterProfiles = buildDialogueCharacterProfiles(characters);
+  const parsedBeats = parseDialogueActionBeats(paragraphDocument.body, characterProfiles);
+
+  return parsedBeats.map((beat) =>
+    buildDialogueActionBeatProposal({
+      beat,
+      characterProfiles,
+      paragraphBody: paragraphDocument.body,
+      intensity: "medium",
+      preserveDialogueWords: true,
+      allowMissingActionAdds: true,
+      allowSaidFallback: true,
+      primaryTarget: primaryTarget?.title,
+    }),
+  );
+}
+
 export async function reviseChapter(
   rootPath: string,
   options: {
@@ -3222,6 +3569,636 @@ export async function reviseChapter(
     shouldReviewStateChanges: overallContinuityImpact !== "none",
     sources,
   };
+}
+
+function buildDialogueCharacterProfiles(characters: CanonEntityDocument[]): DialogueCharacterProfile[] {
+  return characters.map((character) => {
+    const metadata = character.metadata as Record<string, unknown>;
+    const aliases = uniqueValues(
+      [
+        typeof metadata.name === "string" ? metadata.name : undefined,
+        ...(Array.isArray(metadata.aliases) ? metadata.aliases.filter((value): value is string => typeof value === "string") : []),
+        ...(Array.isArray(metadata.former_names) ? metadata.former_names.filter((value): value is string => typeof value === "string") : []),
+        typeof metadata.current_identity === "string" ? metadata.current_identity : undefined,
+      ].filter((value): value is string => Boolean(value && value.trim())),
+    );
+
+    return {
+      id: String(metadata.id ?? `character:${character.slug}`),
+      title: typeof metadata.name === "string" ? metadata.name : character.slug,
+      path: toPosixPath(character.path),
+      aliases,
+      speakingStyle: typeof metadata.speaking_style === "string" ? metadata.speaking_style : undefined,
+      traits: Array.isArray(metadata.traits) ? metadata.traits.filter((value): value is string => typeof value === "string") : [],
+      mannerisms: Array.isArray(metadata.mannerisms) ? metadata.mannerisms.filter((value): value is string => typeof value === "string") : [],
+      desires: Array.isArray(metadata.desires) ? metadata.desires.filter((value): value is string => typeof value === "string") : [],
+      fears: Array.isArray(metadata.fears) ? metadata.fears.filter((value): value is string => typeof value === "string") : [],
+      relationships: Array.isArray(metadata.relationships) ? metadata.relationships.filter((value): value is string => typeof value === "string") : [],
+      backgroundSummary: typeof metadata.background_summary === "string" ? metadata.background_summary : undefined,
+      internalConflict: typeof metadata.internal_conflict === "string" ? metadata.internal_conflict : undefined,
+      externalConflict: typeof metadata.external_conflict === "string" ? metadata.external_conflict : undefined,
+    };
+  });
+}
+
+function parseDialogueActionBeats(body: string, characterProfiles: DialogueCharacterProfile[]): ParsedDialogueBeat[] {
+  const lines = body.split("\n");
+  const usedActionLines = new Set<number>();
+  const beats: ParsedDialogueBeat[] = [];
+  const sceneCharacters = extractSceneCharacterIds(body, characterProfiles);
+  let lastSpeakerId: string | undefined;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!isDialogueLine(line)) {
+      continue;
+    }
+
+    const previousIndex = findAdjacentActionLine(lines, index, -1, usedActionLines);
+    const nextIndex = previousIndex === null ? findAdjacentActionLine(lines, index, 1, usedActionLines) : null;
+    const actionLineIndex = previousIndex ?? nextIndex;
+    if (actionLineIndex !== null) {
+      usedActionLines.add(actionLineIndex);
+    }
+
+    const actionText = actionLineIndex !== null ? lines[actionLineIndex].trim() : extractEmbeddedDialogueTag(line);
+    const actorId = inferCharacterId(actionText ?? line, characterProfiles, lastSpeakerId, sceneCharacters);
+    const speakerId = actorId ?? inferAlternatingSpeaker(lastSpeakerId, sceneCharacters);
+    if (speakerId) {
+      lastSpeakerId = speakerId;
+    }
+
+    const startLineIndex = actionLineIndex !== null && actionLineIndex < index ? actionLineIndex : index;
+    const endLineIndex = actionLineIndex !== null && actionLineIndex > index ? actionLineIndex : index;
+    beats.push({
+      beatId: `beat-${beats.length + 1}`,
+      order: beats.length + 1,
+      quoteLineIndex: index,
+      actionLineIndex,
+      speakerId,
+      actedCharacterId: actorId,
+      quoteText: extractDialogueQuote(line),
+      actionText,
+      startLineIndex,
+      endLineIndex,
+      previousExcerpt: previousMeaningfulLine(lines, startLineIndex),
+      nextExcerpt: nextMeaningfulLine(lines, endLineIndex),
+    });
+  }
+
+  return beats;
+}
+
+function buildDialogueActionBeatProposal(input: {
+  beat: ParsedDialogueBeat;
+  characterProfiles: DialogueCharacterProfile[];
+  paragraphBody: string;
+  intensity: RevisionIntensity;
+  preserveDialogueWords: boolean;
+  allowMissingActionAdds: boolean;
+  allowSaidFallback: boolean;
+  primaryTarget?: string;
+}): InternalDialogueActionBeatProposal {
+  const speaker = input.beat.speakerId
+    ? input.characterProfiles.find((profile) => profile.id === input.beat.speakerId)
+    : undefined;
+  const assessment = assessDialogueActionBeat(input.beat, speaker, input.paragraphBody, input.primaryTarget);
+  const choices = buildDialogueActionBeatChoices({
+    beat: input.beat,
+    speaker,
+    assessment,
+    intensity: input.intensity,
+    preserveDialogueWords: input.preserveDialogueWords,
+    allowMissingActionAdds: input.allowMissingActionAdds,
+    allowSaidFallback: input.allowSaidFallback,
+  });
+  const recommendedChoiceId =
+    choices.find((choice) => !choice.usesSaidFallback && choice.operation !== "keep")?.choiceId ??
+    choices.find((choice) => choice.usesSaidFallback)?.choiceId ??
+    choices[0]?.choiceId ??
+    `${input.beat.beatId}-keep`;
+
+  return {
+    beatId: input.beat.beatId,
+    order: input.beat.order,
+    speaker: input.beat.speakerId,
+    actedCharacter: input.beat.actedCharacterId,
+    beatKind: input.beat.actionText ? "action" : "gap",
+    quoteText: input.beat.quoteText,
+    currentBeatText: input.beat.actionText,
+    anchor: {
+      previousExcerpt: input.beat.previousExcerpt,
+      currentExcerpt: buildCurrentDialogueExcerpt(input.beat),
+      nextExcerpt: input.beat.nextExcerpt,
+    },
+    purposeAssessment: assessment.level,
+    diagnosis: assessment.notes,
+    choices,
+    recommendedChoiceId,
+    startLineIndex: input.beat.startLineIndex,
+    endLineIndex: input.beat.endLineIndex,
+  };
+}
+
+function assessDialogueActionBeat(
+  beat: ParsedDialogueBeat,
+  speaker: DialogueCharacterProfile | undefined,
+  paragraphBody: string,
+  primaryTarget?: string,
+): {
+  level: DialogueActionBeatProposal["purposeAssessment"];
+  notes: string[];
+  psychology: string[];
+  sceneSpace: string[];
+  subtext: string[];
+  relationshipDynamics: string[];
+  canon: string[];
+} {
+  const notes: string[] = [];
+  const psychology: string[] = [];
+  const sceneSpace: string[] = [];
+  const subtext: string[] = [];
+  const relationshipDynamics: string[] = [];
+  const canon: string[] = [];
+  const action = (beat.actionText ?? "").trim();
+  const quote = beat.quoteText;
+
+  if (!action) {
+    notes.push("The line currently has no action beat around the spoken line.");
+    if (beat.previousExcerpt || beat.nextExcerpt) {
+      sceneSpace.push("A local beat could help anchor the exchange in space or pressure.");
+    }
+    if (speaker) {
+      canon.push(`Speaker profile available: ${speaker.title}.`);
+    }
+    return {
+      level: "unclear",
+      notes,
+      psychology,
+      sceneSpace,
+      subtext,
+      relationshipDynamics,
+      canon,
+    };
+  }
+
+  const normalizedAction = action.toLowerCase();
+  if (/(bellissim|mano destra|mano sinistra|suoi capelli|sua mano|suo sguardo)/i.test(normalizedAction)) {
+    notes.push("The action over-explains body parts or appearance instead of focusing on dramatic function.");
+  }
+  if (/(sorrise|annu[iì]|guard[oò]|sospir[oò]|si sistem[oò] i capelli|alz[oò] le spalle)/i.test(normalizedAction)) {
+    notes.push("The beat relies on a generic gesture that risks sounding decorative.");
+  }
+  if (/(si avvicin[oò]|arretr[oò]|indietreggi[oò]|sbatt|strinse|prese|lasci[oò]|occup|cedette spazio)/i.test(normalizedAction)) {
+    sceneSpace.push("The beat changes distance or contact, which can carry power and tension.");
+  }
+  if (/(registro|muro|porta|sedia|bicchiere|lettera|tunica|anello|manica|muro|tavolo)/i.test(paragraphBody)) {
+    sceneSpace.push("The scene already contains tangible objects or surfaces that can support a more purposeful beat.");
+  }
+  if (/(matto|felice|oggi|vuoi|non|mai|proprio)/i.test(quote.toLowerCase())) {
+    subtext.push("The spoken line carries emotional pressure, so the beat should sharpen rather than duplicate it.");
+  }
+  if (speaker) {
+    if (speaker.traits.length > 0) {
+      psychology.push(`Traits in canon: ${speaker.traits.slice(0, 3).join(", ")}.`);
+    }
+    if (speaker.fears.length > 0) {
+      psychology.push(`Fear pressure: ${speaker.fears.slice(0, 2).join(", ")}.`);
+    }
+    if (speaker.desires.length > 0) {
+      relationshipDynamics.push(`Current desire pressure: ${speaker.desires.slice(0, 2).join(", ")}.`);
+    }
+    if (speaker.relationships.length > 0) {
+      canon.push(`Known relationships: ${speaker.relationships.slice(0, 2).join(", ")}.`);
+    }
+    if (speaker.speakingStyle) {
+      canon.push(`Speaking style: ${speaker.speakingStyle}.`);
+    }
+  }
+  if (primaryTarget && speaker && primaryTarget !== speaker.title) {
+    relationshipDynamics.push(`The paragraph viewpoint leans toward ${primaryTarget}, so the beat should stay readable from that perspective.`);
+  }
+
+  if (notes.length === 0 && (sceneSpace.length > 0 || subtext.length > 0 || psychology.length > 0)) {
+    notes.push("The beat already does narrative work and can likely be tightened rather than replaced.");
+    return {
+      level: "strong",
+      notes,
+      psychology,
+      sceneSpace,
+      subtext,
+      relationshipDynamics,
+      canon,
+    };
+  }
+
+  return {
+    level: notes.length >= 2 ? "weak" : "misaligned",
+    notes,
+    psychology,
+    sceneSpace,
+    subtext,
+    relationshipDynamics,
+    canon,
+  };
+}
+
+function buildDialogueActionBeatChoices(input: {
+  beat: ParsedDialogueBeat;
+  speaker?: DialogueCharacterProfile;
+  assessment: ReturnType<typeof assessDialogueActionBeat>;
+  intensity: RevisionIntensity;
+  preserveDialogueWords: boolean;
+  allowMissingActionAdds: boolean;
+  allowSaidFallback: boolean;
+}): InternalDialogueActionBeatChoice[] {
+  const speakerLabel = input.speaker?.title ?? "The speaker";
+  const quoteLine = input.beat.quoteText;
+  const originalBlock = buildCurrentDialogueExcerpt(input.beat);
+  const choices: InternalDialogueActionBeatChoice[] = [
+    {
+      choiceId: `${input.beat.beatId}-keep`,
+      operation: "keep",
+      label: "Keep current beat",
+      proposedText: originalBlock,
+      proposedBlock: originalBlock,
+      usesSaidFallback: false,
+      addsNewAction: false,
+      confidence: input.assessment.level === "strong" ? "high" : "low",
+      rationale: {
+        psychology: input.assessment.psychology,
+        sceneSpace: input.assessment.sceneSpace,
+        subtext: input.assessment.subtext,
+        relationshipDynamics: input.assessment.relationshipDynamics,
+        canon: input.assessment.canon,
+      },
+    },
+  ];
+
+  const purposefulAction = buildPurposefulDialogueAction(input.speaker, input.beat, input.intensity);
+  const purposefulBlock = input.beat.actionLineIndex !== null && input.beat.actionLineIndex < input.beat.quoteLineIndex
+    ? `${purposefulAction}\n${quoteLine}`
+    : input.beat.actionLineIndex !== null && input.beat.actionLineIndex > input.beat.quoteLineIndex
+      ? `${quoteLine}\n${purposefulAction}`
+      : `${purposefulAction}\n${quoteLine}`;
+
+  if (input.beat.actionText) {
+    choices.push({
+      choiceId: `${input.beat.beatId}-replace-action`,
+      operation: "replace",
+      label: "Replace with a more purposeful action beat",
+      proposedText: purposefulAction,
+      proposedBlock: purposefulBlock,
+      usesSaidFallback: false,
+      addsNewAction: !Boolean(input.beat.actionText),
+      confidence: input.assessment.level === "strong" ? "medium" : "high",
+      rationale: buildDialogueActionRationale(input.speaker, input.assessment, "purposeful"),
+    });
+  } else if (input.allowMissingActionAdds) {
+    choices.push({
+      choiceId: `${input.beat.beatId}-insert-action`,
+      operation: "insert_before",
+      label: "Add a purposeful action beat",
+      proposedText: purposefulAction,
+      proposedBlock: purposefulBlock,
+      usesSaidFallback: false,
+      addsNewAction: true,
+      confidence: "medium",
+      rationale: buildDialogueActionRationale(input.speaker, input.assessment, "insert"),
+    });
+  }
+
+  if (input.allowSaidFallback) {
+    const saidBlock = formatDialogueWithSaidFallback(quoteLine, speakerLabel);
+    choices.push({
+      choiceId: `${input.beat.beatId}-said`,
+      operation: input.beat.actionText ? "replace" : "insert_after",
+      label: "Use a simple speech tag instead",
+      proposedText: saidBlock,
+      proposedBlock: saidBlock,
+      usesSaidFallback: true,
+      addsNewAction: false,
+      confidence: input.assessment.level === "strong" ? "low" : "high",
+      rationale: {
+        psychology: [],
+        sceneSpace: ["A simple tag keeps speaker clarity without forcing decorative motion."],
+        subtext: [],
+        relationshipDynamics: [],
+        canon: input.speaker ? [`Fallback remains consistent with ${input.speaker.title}'s existing voice.`] : [],
+      },
+    });
+  }
+
+  return choices;
+}
+
+function buildDialogueActionRationale(
+  speaker: DialogueCharacterProfile | undefined,
+  assessment: ReturnType<typeof assessDialogueActionBeat>,
+  mode: "purposeful" | "insert",
+): DialogueActionBeatReviewChoice["rationale"] {
+  return {
+    psychology: assessment.psychology.length > 0
+      ? assessment.psychology
+      : speaker
+        ? [`Tie the beat more closely to ${speaker.title}'s emotional pressure instead of generic body business.`]
+        : ["Use body language only if it reveals actual emotional pressure."],
+    sceneSpace: assessment.sceneSpace.length > 0
+      ? assessment.sceneSpace
+      : [mode === "insert" ? "Add a beat that clarifies distance, touch, or occupation of space." : "Replace decoration with blocking that changes how the line lands in space."],
+    subtext: assessment.subtext.length > 0
+      ? assessment.subtext
+      : ["The beat should add subtext or friction that the line itself does not already explain."],
+    relationshipDynamics: assessment.relationshipDynamics.length > 0
+      ? assessment.relationshipDynamics
+      : ["Let the beat show pressure, retreat, control, or resistance between the speakers."],
+    canon: assessment.canon,
+  };
+}
+
+function buildPurposefulDialogueAction(
+  speaker: DialogueCharacterProfile | undefined,
+  beat: ParsedDialogueBeat,
+  intensity: RevisionIntensity,
+): string {
+  const label = speaker?.title ?? "The speaker";
+  const profileText = [
+    ...(speaker?.traits ?? []),
+    ...(speaker?.fears ?? []),
+    ...(speaker?.desires ?? []),
+    speaker?.internalConflict,
+    speaker?.externalConflict,
+  ]
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .join(" ")
+    .toLowerCase();
+  const quote = beat.quoteText.toLowerCase();
+  const tenseCloser = intensity === "strong" ? "secco" : intensity === "light" ? "appena" : "senza fretta";
+
+  if (/(ansios|paur|nerv|insicur|timid)/i.test(profileText)) {
+    return `${label} si lisciò il bordo della manica ${tenseCloser}, evitando di fermarsi troppo a lungo sul suo sguardo.`;
+  }
+  if (/(controll|rigid|orgogli|domin|autorit)/i.test(profileText)) {
+    return `${label} ridusse la distanza ${tenseCloser} e lasciò che fosse il corpo a pretendere ascolto prima ancora delle parole.`;
+  }
+  if (/(segre|guard|diffiden|evasiv)/i.test(profileText)) {
+    return `${label} spostò il peso di lato ${tenseCloser}, come per tenersi una via d'uscita anche mentre parlava.`;
+  }
+  if (/(matto|non|proprio oggi|mai)/i.test(quote)) {
+    return `${label} arretrò ${tenseCloser}, cercando col muro una distanza che le parole non riuscivano più a dare.`;
+  }
+  if (/vuoi|per favore|felice/.test(quote)) {
+    return `${label} allungò la mano ${tenseCloser}, più per forzare la risposta che per cercare davvero contatto.`;
+  }
+  if (/come stai|come va|benissimo/.test(quote)) {
+    return `${label} inclinò il busto ${tenseCloser}, misurando la risposta prima ancora di lasciarla arrivare.`;
+  }
+
+  return `${label} spostò il peso ${tenseCloser}, usando la distanza tra i corpi per dare più pressione alla battuta.`;
+}
+
+function buildDialogueActionTicSuggestions(
+  proposals: InternalDialogueActionBeatProposal[],
+  characterProfiles: DialogueCharacterProfile[],
+): DialogueActionTicSuggestion[] {
+  const grouped = new Map<string, InternalDialogueActionBeatProposal[]>();
+  for (const proposal of proposals) {
+    if (!proposal.speaker) {
+      continue;
+    }
+
+    const current = grouped.get(proposal.speaker) ?? [];
+    current.push(proposal);
+    grouped.set(proposal.speaker, current);
+  }
+
+  const suggestions: DialogueActionTicSuggestion[] = [];
+  for (const [characterId, items] of grouped.entries()) {
+    if (items.length < 2) {
+      continue;
+    }
+
+    const profile = characterProfiles.find((entry) => entry.id === characterId);
+    if (!profile || profile.mannerisms.length > 0) {
+      continue;
+    }
+
+    const tic = suggestDialogueTic(profile);
+    if (!tic) {
+      continue;
+    }
+
+    suggestions.push({
+      characterId,
+      ticText: tic,
+      kind: /manica|anello|pollice/.test(tic.toLowerCase()) ? "stress-response" : "gesture",
+      confidence: items.length >= 3 ? "medium" : "low",
+      reason: `${profile.title} has repeated dialogue pressure without an established recurring beat in canon.`,
+      evidence: items.slice(0, 3).map((item) => item.quoteText),
+      recommendation: items.length >= 3 ? "candidate_for_canon" : "observe_only",
+    });
+  }
+
+  return suggestions;
+}
+
+function suggestDialogueTic(profile: DialogueCharacterProfile): string | null {
+  const profileText = [
+    ...profile.traits,
+    ...profile.fears,
+    profile.internalConflict,
+    profile.externalConflict,
+  ]
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .join(" ")
+    .toLowerCase();
+
+  if (/(ansios|nerv|timid|paur)/i.test(profileText)) {
+    return "Si liscia il bordo della manica quando la tensione sale.";
+  }
+  if (/(controll|rigid|orgogli|domin)/i.test(profileText)) {
+    return "Raddrizza il polso prima di prendere la parola quando vuole riprendere il controllo.";
+  }
+  if (/(guard|segre|diffiden)/i.test(profileText)) {
+    return "Sposta il peso verso l'uscita più vicina quando la conversazione gli si stringe addosso.";
+  }
+
+  return "Misura la distanza tra i corpi prima di parlare quando la scena si tende.";
+}
+
+function buildDialogueActionEditorialNotes(input: {
+  proposals: InternalDialogueActionBeatProposal[];
+  intensity: RevisionIntensity;
+  chapterStyleSummary: string;
+}): string[] {
+  const weakCount = input.proposals.filter((proposal) => ["weak", "misaligned", "unclear"].includes(proposal.purposeAssessment)).length;
+  const saidCount = input.proposals.filter((proposal) => proposal.choices.some((choice) => choice.usesSaidFallback)).length;
+  return [
+    `Reviewed ${input.proposals.length} dialogue beats with ${input.intensity} intensity.`,
+    weakCount > 0
+      ? `${weakCount} beats look decorative, weak, or under-motivated and should be tightened, replaced, or simplified.`
+      : "Most beats already carry clear dramatic purpose.",
+    saidCount > 0
+      ? `${saidCount} beats also have a clean said-tag fallback when no purposeful action is justified.`
+      : "No said-tag fallback was needed in the recommended pass.",
+    summarizeText(input.chapterStyleSummary.replace(/^## Effective chapter style\n\n/, ""), 220) || "",
+  ].filter(Boolean);
+}
+
+function stripInternalDialogueActionBeatProposal(proposal: InternalDialogueActionBeatProposal): DialogueActionBeatProposal {
+  return {
+    beatId: proposal.beatId,
+    order: proposal.order,
+    speaker: proposal.speaker,
+    actedCharacter: proposal.actedCharacter,
+    beatKind: proposal.beatKind,
+    quoteText: proposal.quoteText,
+    currentBeatText: proposal.currentBeatText,
+    anchor: proposal.anchor,
+    purposeAssessment: proposal.purposeAssessment,
+    diagnosis: proposal.diagnosis,
+    choices: proposal.choices.map(({ proposedBlock: _proposedBlock, ...choice }) => choice),
+    recommendedChoiceId: proposal.recommendedChoiceId,
+  };
+}
+
+function applyDialogueActionBeatSelectionsToBody(
+  body: string,
+  proposals: InternalDialogueActionBeatProposal[],
+  selections: Array<{ beatId: string; choiceId: string }>,
+): string {
+  const lines = body.split("\n");
+  const selectionsByBeat = new Map(selections.map((selection) => [selection.beatId, selection.choiceId]));
+
+  for (const proposal of [...proposals].sort((left, right) => right.startLineIndex - left.startLineIndex)) {
+    const choiceId = selectionsByBeat.get(proposal.beatId);
+    if (!choiceId) {
+      continue;
+    }
+
+    const choice = proposal.choices.find((item) => item.choiceId === choiceId);
+    if (!choice || choice.operation === "keep") {
+      continue;
+    }
+
+    const replacementLines = choice.proposedBlock.split("\n");
+    lines.splice(proposal.startLineIndex, proposal.endLineIndex - proposal.startLineIndex + 1, ...replacementLines);
+  }
+
+  return lines.join("\n");
+}
+
+function createParagraphReviewHash(body: string): string {
+  return createHash("sha256").update(body).digest("hex").slice(0, 16);
+}
+
+function createDialogueActionReviewId(filePath: string, paragraphHash: string, signatures: string[]): string {
+  return createHash("sha256")
+    .update([filePath, paragraphHash, ...signatures].join("|"))
+    .digest("hex")
+    .slice(0, 20);
+}
+
+function buildCurrentDialogueExcerpt(beat: ParsedDialogueBeat): string {
+  return beat.actionLineIndex !== null && beat.actionLineIndex < beat.quoteLineIndex
+    ? `${beat.actionText ?? ""}\n${beat.quoteText}`.trim()
+    : beat.actionLineIndex !== null && beat.actionLineIndex > beat.quoteLineIndex
+      ? `${beat.quoteText}\n${beat.actionText ?? ""}`.trim()
+      : beat.quoteText;
+}
+
+function extractSceneCharacterIds(body: string, characterProfiles: DialogueCharacterProfile[]): string[] {
+  const lowered = body.toLowerCase();
+  return characterProfiles
+    .filter((profile) => profile.aliases.some((alias) => lowered.includes(alias.toLowerCase())))
+    .map((profile) => profile.id);
+}
+
+function inferCharacterId(
+  text: string | undefined,
+  characterProfiles: DialogueCharacterProfile[],
+  lastSpeakerId: string | undefined,
+  sceneCharacters: string[],
+): string | undefined {
+  if (text) {
+    const lower = text.toLowerCase();
+    const matching = characterProfiles.find((profile) => profile.aliases.some((alias) => lower.includes(alias.toLowerCase())));
+    if (matching) {
+      return matching.id;
+    }
+  }
+
+  return inferAlternatingSpeaker(lastSpeakerId, sceneCharacters);
+}
+
+function inferAlternatingSpeaker(lastSpeakerId: string | undefined, sceneCharacters: string[]): string | undefined {
+  if (sceneCharacters.length === 2 && lastSpeakerId) {
+    return sceneCharacters.find((id) => id !== lastSpeakerId) ?? lastSpeakerId;
+  }
+  return sceneCharacters.length === 1 ? sceneCharacters[0] : undefined;
+}
+
+function findAdjacentActionLine(
+  lines: string[],
+  quoteLineIndex: number,
+  direction: -1 | 1,
+  usedActionLines: Set<number>,
+): number | null {
+  const candidateIndex = quoteLineIndex + direction;
+  if (candidateIndex < 0 || candidateIndex >= lines.length) {
+    return null;
+  }
+
+  const candidate = lines[candidateIndex].trim();
+  if (!candidate || candidate.startsWith("#") || isDialogueLine(candidate) || usedActionLines.has(candidateIndex)) {
+    return null;
+  }
+
+  return candidateIndex;
+}
+
+function previousMeaningfulLine(lines: string[], fromIndex: number): string | undefined {
+  for (let index = fromIndex - 1; index >= 0; index -= 1) {
+    const line = lines[index].trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    return line;
+  }
+  return undefined;
+}
+
+function nextMeaningfulLine(lines: string[], fromIndex: number): string | undefined {
+  for (let index = fromIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    return line;
+  }
+  return undefined;
+}
+
+function isDialogueLine(line: string): boolean {
+  return /[«“"].+[»”"]/u.test(line.trim());
+}
+
+function extractDialogueQuote(line: string): string {
+  const match = line.match(/[«“"].+[»”"]/u);
+  return match?.[0]?.trim() ?? line.trim();
+}
+
+function extractEmbeddedDialogueTag(line: string): string | undefined {
+  const quote = extractDialogueQuote(line);
+  const tag = line.replace(quote, "").trim();
+  return tag.length > 0 ? tag : undefined;
+}
+
+function formatDialogueWithSaidFallback(quoteText: string, speakerLabel: string): string {
+  const trimmed = quoteText.trim();
+  return /[?!»”"]$/.test(trimmed)
+    ? `${trimmed} disse ${speakerLabel}.`
+    : `${trimmed}, disse ${speakerLabel}.`;
 }
 
 export async function updateEntity(
@@ -9059,6 +10036,8 @@ function buildGithubCopilotInstructions(): string {
     "- Use `revise_chapter` when you want a proposal-only diagnosis and scene revision plan for an existing final chapter before deciding what to apply manually.",
     "- Use `revise_paragraph` when you want a proposal-only editorial pass on an existing final scene before deciding whether to apply it with `update_paragraph`.",
     "- When revising a final paragraph, show the `revise_paragraph` proposal, ask the user whether they want to keep it, and call `update_paragraph` only after clear confirmation.",
+    "- Use `review_dialogue_action_beats` when the user wants a beat-by-beat review of dialogue-adjacent actions instead of a full scene rewrite.",
+    "- Use `apply_dialogue_action_beats` only after the user confirmed which beat-level proposals to keep.",
     "- Use `resume_book_context` when restarting work from exported conversation history.",
     "- Use `save_book_item` and `save_chapter_item` for structured ideas and notes, and `promote_book_item` / `promote_chapter_item` when reviewed material leaves the active queue.",
     "- Use `update_book_notes` and `update_chapter_notes` when the user asks to edit the support documents themselves instead of individual structured entries.",
