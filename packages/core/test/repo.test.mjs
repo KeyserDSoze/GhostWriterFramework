@@ -170,6 +170,7 @@ test("core book workflow supports canon indexes and structural updates", async (
     const plot = await syncPlot(rootPath);
     const opencodeConfig = await readFile(path.join(rootPath, "opencode.jsonc"), "utf8");
     const contextDocument = await readFile(path.join(rootPath, "context.md"), "utf8");
+    const writingStyleDocument = await readFile(path.join(rootPath, "guidelines", "writing-style.md"), "utf8");
     const notesDocument = await readFile(path.join(rootPath, "notes.md"), "utf8");
     const storyDesignDocument = await readFile(path.join(rootPath, "story-design.md"), "utf8");
     const conversationsReadme = await readFile(path.join(rootPath, "conversations", "README.md"), "utf8");
@@ -247,6 +248,8 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.match(plot.content, /2214-06-12/);
     assert.match(earlyTotalResume.content, /The harbor watches before it welcomes/);
     assert.match(contextDocument, /# Historical And Temporal Frame/);
+    assert.match(writingStyleDocument, /# Action beat dialogici/);
+    assert.match(writingStyleDocument, /preferisci un tag semplice come `disse` o `chiese`/);
     assert.match(notesDocument, /# Active Notes/);
     assert.match(storyDesignDocument, /# Core Design/);
     assert.match(opencodeConfig, /"default_agent": "build"/);
@@ -832,6 +835,32 @@ test("upgradeBookRepo refreshes managed scaffolding and preserves author files",
     assert.doesNotMatch(paragraphFile, /\]\(\.\.\/\.\.\/items\//);
     assert.match(draftFile, /Mariamne studies the Harbor Lockdown\./);
     assert.doesNotMatch(draftFile, /\]\(\.\.\/\.\.\/(characters|timelines)\//);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("upgradeBookRepo creates default writing-style when missing but preserves it when present", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-upgrade-writing-style-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Upgrade Style Book",
+      language: "en",
+    });
+
+    await rm(path.join(rootPath, "guidelines", "writing-style.md"), { force: true });
+
+    const firstUpgrade = await upgradeBookRepo(rootPath);
+    const generatedWritingStyle = await readFile(path.join(rootPath, "guidelines", "writing-style.md"), "utf8");
+    assert.match(generatedWritingStyle, /# Action beat dialogici/);
+    assert.equal(firstUpgrade.created.includes("guidelines/writing-style.md"), true);
+
+    await writeFile(path.join(rootPath, "guidelines", "writing-style.md"), "# Custom Writing Style\n\nDo not overwrite me.\n", "utf8");
+
+    await upgradeBookRepo(rootPath);
+    const preservedWritingStyle = await readFile(path.join(rootPath, "guidelines", "writing-style.md"), "utf8");
+    assert.equal(preservedWritingStyle, "# Custom Writing Style\n\nDo not overwrite me.\n");
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }

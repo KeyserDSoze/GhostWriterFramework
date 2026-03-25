@@ -25,6 +25,8 @@ Typical flow:
 4. apply only the confirmed selections with `apply_dialogue_action_beats`
 5. if the beat changes affect continuity-sensitive material, review `state_changes`
 
+The paragraph context should always include `guidelines/writing-style.md`, and that file should contain explicit rules for dialogue action beats, said-tag fallbacks, use of space, and psychologically meaningful gestures.
+
 ## What it returns
 
 - `reviewId`
