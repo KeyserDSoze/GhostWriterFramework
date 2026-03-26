@@ -93,6 +93,40 @@ const LEGACY_WRITING_GUIDELINE_FILES = [
   "guidelines/structure.md",
 ] as const;
 const LEGACY_WRITING_GUIDELINE_DIRECTORIES = ["guidelines/styles"] as const;
+const QUERY_CANON_LEXICONS: Record<string, QueryCanonLexicon> = {
+  en: {
+    chapterAliases: ["chapter", "chap", "chap."],
+    firstAppearancePhrases: ["first appear", "first appears", "first show", "first mention"],
+    secretHolderPhrases: ["who knows", "who is aware"],
+    relationshipPhrases: ["relationship", "relation to", "trust", "ally", "enemy", "friend", "feels about", "relationship with"],
+    conditionPhrases: ["condition", "status", "wound", "wounds", "injured", "injury", "hurt"],
+    openLoopPhrases: ["open loop", "open loops", "unresolved", "unresolved thread", "pending thread"],
+    wherePhrases: ["where", "located"],
+    knowledgePhrases: ["know", "knows", "knows after", "know after"],
+    inventoryPhrases: ["inventory", "is carrying", "what carries", "have", "has"],
+    betweenWords: ["between"],
+    andWords: ["and"],
+    fromWords: ["from"],
+    toWords: ["to", "through"],
+    stopWords: ["who", "what", "when", "where", "does", "did", "is", "are", "the", "a", "an", "after", "before", "know", "knows", "have", "has", "first", "appear", "appears", "show", "shows", "up"],
+  },
+  it: {
+    chapterAliases: ["capitolo", "cap."],
+    firstAppearancePhrases: ["prima apparizione", "compare per la prima volta", "quando compare", "quando appare"],
+    secretHolderPhrases: ["chi sa", "chi conosce"],
+    relationshipPhrases: ["rapporto", "fiducia", "si fida", "alleato", "nemico", "amico"],
+    conditionPhrases: ["come sta", "condizione", "condizioni", "ferito", "ferita", "feriti", "ferite"],
+    openLoopPhrases: ["questioni aperte", "fili aperti", "irrisolto", "irrisolti"],
+    wherePhrases: ["dove", "si trova"],
+    knowledgePhrases: ["cosa sa", "sa di", "sa dopo"],
+    inventoryPhrases: ["cosa ha", "porta con", "possiede"],
+    betweenWords: ["tra", "fra"],
+    andWords: ["e"],
+    fromWords: ["da", "dal"],
+    toWords: ["a", "al", "fino al"],
+    stopWords: ["chi", "cosa", "quando", "dove", "il", "lo", "la", "gli", "le", "un", "una", "sa", "sanno", "ha", "hanno", "compare", "appaiono", "apparizione", "prima", "volta", "al", "nel", "si", "trova"],
+  },
+};
 const CANON_ENTITY_LINK_REFERENCE_PATTERN = /^(character|location|faction|item|secret|timeline-event):[a-z0-9-]+$/i;
 const STORY_MARKDOWN_LINK_PATTERN = /(?<!!)\[([^\]]+)\]\(([^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\)/g;
 
@@ -354,6 +388,23 @@ type InternalDialogueActionBeatProposal = Omit<DialogueActionBeatProposal, "choi
   startLineIndex: number;
   endLineIndex: number;
   choices: InternalDialogueActionBeatChoice[];
+};
+
+type QueryCanonLexicon = {
+  chapterAliases: string[];
+  firstAppearancePhrases: string[];
+  secretHolderPhrases: string[];
+  relationshipPhrases: string[];
+  conditionPhrases: string[];
+  openLoopPhrases: string[];
+  wherePhrases: string[];
+  knowledgePhrases: string[];
+  inventoryPhrases: string[];
+  betweenWords: string[];
+  andWords: string[];
+  fromWords: string[];
+  toWords: string[];
+  stopWords: string[];
 };
 
 type TextAnalysis = {
@@ -3053,18 +3104,21 @@ export async function queryCanon(
   }
 
   const limit = options?.limit ?? 6;
+  const book = await readBook(root);
+  const lexicon = resolveQueryCanonLexicon(book?.frontmatter.language);
   const chapters = await listChapters(root);
   const storyStateTimeline = await buildStoryStateTimeline(root);
   const storyStateStatus = await readStoryStateStatus(root);
-  const chapterRange = resolveQueryCanonChapterRange(chapters, normalizedQuestion, options?.fromChapter, options?.toChapter);
+  const chapterRange = resolveQueryCanonChapterRange(chapters, normalizedQuestion, options?.fromChapter, options?.toChapter, lexicon);
   const chapterScope = resolveQueryCanonChapterScope(
     chapters,
     normalizedQuestion,
     chapterRange?.endReference ?? options?.throughChapter,
+    lexicon,
   );
-  const intent = detectQueryCanonIntent(normalizedQuestion, Boolean(chapterRange));
-  const targets = await buildQueryCanonTargets(root, chapters);
-  const subjectHint = formatQueryCanonSubject(normalizedQuestion);
+  const intent = detectQueryCanonIntent(normalizedQuestion, Boolean(chapterRange), lexicon);
+  const targets = await buildQueryCanonTargets(root, chapters, lexicon);
+  const subjectHint = formatQueryCanonSubject(normalizedQuestion, lexicon);
   const targetResolution = resolveQueryCanonTarget(filterQueryCanonTargetsForIntent(targets, intent), normalizedQuestion, subjectHint);
   const lookup = buildQueryCanonLookup(targets, chapters);
   const effectiveThroughChapter = chapterRange?.endReference ?? chapterScope.reference;
@@ -3272,6 +3326,7 @@ export async function reviewDialogueActionBeats(
   const storyStateStatus = await readStoryStateStatus(root);
   const revisionStyleSources = await listWritingStyleSourceFiles(root, chapterSlugValue);
   const chapterStyleContext = await buildEffectiveChapterStyleContext(root, chapterSlugValue, true, true);
+  const bookLanguage = normalizeBookLanguage((await readBook(root))?.frontmatter.language);
 
   const proposals = parsedBeats.map((beat) =>
     buildDialogueActionBeatProposal({
@@ -3283,6 +3338,7 @@ export async function reviewDialogueActionBeats(
       allowMissingActionAdds,
       allowSaidFallback,
       primaryTarget: primaryTarget?.title,
+      language: bookLanguage,
     }),
   );
   const previewBody = applyDialogueActionBeatSelectionsToBody(
@@ -3303,7 +3359,7 @@ export async function reviewDialogueActionBeats(
   const paragraphHash = createParagraphReviewHash(paragraphDocument.body);
   const reviewId = createDialogueActionReviewId(filePath, paragraphHash, proposals.map((proposal) => `${proposal.beatId}:${proposal.recommendedChoiceId}`));
   const ticSuggestions = includeTicSuggestions
-    ? buildDialogueActionTicSuggestions(proposals, characterProfiles)
+    ? buildDialogueActionTicSuggestions(proposals, characterProfiles, bookLanguage)
     : [];
   const sources = uniqueValues(
     [
@@ -3442,6 +3498,7 @@ async function buildInternalDialogueActionBeatProposals(
   const characters = await listEntities(root, "character");
   const characterProfiles = buildDialogueCharacterProfiles(characters);
   const parsedBeats = parseDialogueActionBeats(paragraphDocument.body, characterProfiles);
+  const bookLanguage = normalizeBookLanguage((await readBook(root))?.frontmatter.language);
 
   return parsedBeats.map((beat) =>
     buildDialogueActionBeatProposal({
@@ -3453,6 +3510,7 @@ async function buildInternalDialogueActionBeatProposals(
       allowMissingActionAdds: true,
       allowSaidFallback: true,
       primaryTarget: primaryTarget?.title,
+      language: bookLanguage,
     }),
   );
 }
@@ -3658,6 +3716,7 @@ function buildDialogueActionBeatProposal(input: {
   allowMissingActionAdds: boolean;
   allowSaidFallback: boolean;
   primaryTarget?: string;
+  language: string;
 }): InternalDialogueActionBeatProposal {
   const speaker = input.beat.speakerId
     ? input.characterProfiles.find((profile) => profile.id === input.beat.speakerId)
@@ -3671,6 +3730,7 @@ function buildDialogueActionBeatProposal(input: {
     preserveDialogueWords: input.preserveDialogueWords,
     allowMissingActionAdds: input.allowMissingActionAdds,
     allowSaidFallback: input.allowSaidFallback,
+    language: input.language,
   });
   const recommendedChoiceId =
     choices.find((choice) => !choice.usesSaidFallback && choice.operation !== "keep")?.choiceId ??
@@ -3811,6 +3871,7 @@ function buildDialogueActionBeatChoices(input: {
   preserveDialogueWords: boolean;
   allowMissingActionAdds: boolean;
   allowSaidFallback: boolean;
+  language: string;
 }): InternalDialogueActionBeatChoice[] {
   const speakerLabel = input.speaker?.title ?? "The speaker";
   const quoteLine = input.beat.quoteText;
@@ -3835,7 +3896,7 @@ function buildDialogueActionBeatChoices(input: {
     },
   ];
 
-  const purposefulAction = buildPurposefulDialogueAction(input.speaker, input.beat, input.intensity);
+  const purposefulAction = buildPurposefulDialogueAction(input.speaker, input.beat, input.intensity, input.language);
   const purposefulBlock = input.beat.actionLineIndex !== null && input.beat.actionLineIndex < input.beat.quoteLineIndex
     ? `${purposefulAction}\n${quoteLine}`
     : input.beat.actionLineIndex !== null && input.beat.actionLineIndex > input.beat.quoteLineIndex
@@ -3852,7 +3913,7 @@ function buildDialogueActionBeatChoices(input: {
       usesSaidFallback: false,
       addsNewAction: !Boolean(input.beat.actionText),
       confidence: input.assessment.level === "strong" ? "medium" : "high",
-      rationale: buildDialogueActionRationale(input.speaker, input.assessment, "purposeful"),
+      rationale: buildDialogueActionRationale(input.speaker, input.assessment, "purposeful", input.language),
     });
   } else if (input.allowMissingActionAdds) {
     choices.push({
@@ -3864,7 +3925,7 @@ function buildDialogueActionBeatChoices(input: {
       usesSaidFallback: false,
       addsNewAction: true,
       confidence: "medium",
-      rationale: buildDialogueActionRationale(input.speaker, input.assessment, "insert"),
+      rationale: buildDialogueActionRationale(input.speaker, input.assessment, "insert", input.language),
     });
   }
 
@@ -3896,22 +3957,24 @@ function buildDialogueActionRationale(
   speaker: DialogueCharacterProfile | undefined,
   assessment: ReturnType<typeof assessDialogueActionBeat>,
   mode: "purposeful" | "insert",
+  language: string,
 ): DialogueActionBeatReviewChoice["rationale"] {
+  const pack = dialogueBeatLanguagePack(language);
   return {
     psychology: assessment.psychology.length > 0
       ? assessment.psychology
       : speaker
-        ? [`Tie the beat more closely to ${speaker.title}'s emotional pressure instead of generic body business.`]
-        : ["Use body language only if it reveals actual emotional pressure."],
+        ? [pack.tieBeatToEmotion(speaker.title)]
+        : [pack.useBodyOnlyIfMeaningful],
     sceneSpace: assessment.sceneSpace.length > 0
       ? assessment.sceneSpace
-      : [mode === "insert" ? "Add a beat that clarifies distance, touch, or occupation of space." : "Replace decoration with blocking that changes how the line lands in space."],
+      : [mode === "insert" ? pack.addSpaceBeat : pack.replaceDecorationWithBlocking],
     subtext: assessment.subtext.length > 0
       ? assessment.subtext
-      : ["The beat should add subtext or friction that the line itself does not already explain."],
+      : [pack.subtextRule],
     relationshipDynamics: assessment.relationshipDynamics.length > 0
       ? assessment.relationshipDynamics
-      : ["Let the beat show pressure, retreat, control, or resistance between the speakers."],
+      : [pack.relationshipRule],
     canon: assessment.canon,
   };
 }
@@ -3920,8 +3983,10 @@ function buildPurposefulDialogueAction(
   speaker: DialogueCharacterProfile | undefined,
   beat: ParsedDialogueBeat,
   intensity: RevisionIntensity,
+  language: string,
 ): string {
-  const label = speaker?.title ?? "The speaker";
+  const pack = dialogueBeatLanguagePack(language);
+  const label = speaker?.title ?? (normalizeBookLanguage(language) === "it" ? "Chi parla" : "The speaker");
   const profileText = [
     ...(speaker?.traits ?? []),
     ...(speaker?.fears ?? []),
@@ -3933,33 +3998,34 @@ function buildPurposefulDialogueAction(
     .join(" ")
     .toLowerCase();
   const quote = beat.quoteText.toLowerCase();
-  const tenseCloser = intensity === "strong" ? "secco" : intensity === "light" ? "appena" : "senza fretta";
+  const tenseCloser = intensity === "strong" ? pack.strong : intensity === "light" ? pack.light : pack.medium;
 
-  if (/(ansios|paur|nerv|insicur|timid)/i.test(profileText)) {
-    return `${label} si lisciò il bordo della manica ${tenseCloser}, evitando di fermarsi troppo a lungo sul suo sguardo.`;
+  if (/(anxious|anxiety|fear|nerv|timid|ansios|paur|insicur)/i.test(profileText)) {
+    return pack.anxiousBeat(label, tenseCloser);
   }
-  if (/(controll|rigid|orgogli|domin|autorit)/i.test(profileText)) {
-    return `${label} ridusse la distanza ${tenseCloser} e lasciò che fosse il corpo a pretendere ascolto prima ancora delle parole.`;
+  if (/(control|rigid|pride|proud|domin|authorit|controll|orgogli|autorit)/i.test(profileText)) {
+    return pack.controlBeat(label, tenseCloser);
   }
-  if (/(segre|guard|diffiden|evasiv)/i.test(profileText)) {
-    return `${label} spostò il peso di lato ${tenseCloser}, come per tenersi una via d'uscita anche mentre parlava.`;
+  if (/(secret|guarded|diffiden|evasiv|guard|segre)/i.test(profileText)) {
+    return pack.guardBeat(label, tenseCloser);
   }
-  if (/(matto|non|proprio oggi|mai)/i.test(quote)) {
-    return `${label} arretrò ${tenseCloser}, cercando col muro una distanza che le parole non riuscivano più a dare.`;
+  if (/(crazy|not today|never|matto|proprio oggi|mai)/i.test(quote)) {
+    return pack.retreatBeat(label, tenseCloser);
   }
-  if (/vuoi|per favore|felice/.test(quote)) {
-    return `${label} allungò la mano ${tenseCloser}, più per forzare la risposta che per cercare davvero contatto.`;
+  if (/(vuoi|per favore|felice|do you want|please|happy)/i.test(quote)) {
+    return pack.contactBeat(label, tenseCloser);
   }
-  if (/come stai|come va|benissimo/.test(quote)) {
-    return `${label} inclinò il busto ${tenseCloser}, misurando la risposta prima ancora di lasciarla arrivare.`;
+  if (/(come stai|come va|benissimo|how are you|how's it going|great)/i.test(quote)) {
+    return pack.measureBeat(label, tenseCloser);
   }
 
-  return `${label} spostò il peso ${tenseCloser}, usando la distanza tra i corpi per dare più pressione alla battuta.`;
+  return pack.defaultBeat(label, tenseCloser);
 }
 
 function buildDialogueActionTicSuggestions(
   proposals: InternalDialogueActionBeatProposal[],
   characterProfiles: DialogueCharacterProfile[],
+  language = "en",
 ): DialogueActionTicSuggestion[] {
   const grouped = new Map<string, InternalDialogueActionBeatProposal[]>();
   for (const proposal of proposals) {
@@ -3983,7 +4049,7 @@ function buildDialogueActionTicSuggestions(
       continue;
     }
 
-    const tic = suggestDialogueTic(profile);
+    const tic = suggestDialogueTic(profile, language);
     if (!tic) {
       continue;
     }
@@ -3991,7 +4057,7 @@ function buildDialogueActionTicSuggestions(
     suggestions.push({
       characterId,
       ticText: tic,
-      kind: /manica|anello|pollice/.test(tic.toLowerCase()) ? "stress-response" : "gesture",
+      kind: /sleeve|ring|thumb|manica|anello|pollice/.test(tic.toLowerCase()) ? "stress-response" : "gesture",
       confidence: items.length >= 3 ? "medium" : "low",
       reason: `${profile.title} has repeated dialogue pressure without an established recurring beat in canon.`,
       evidence: items.slice(0, 3).map((item) => item.quoteText),
@@ -4002,7 +4068,8 @@ function buildDialogueActionTicSuggestions(
   return suggestions;
 }
 
-function suggestDialogueTic(profile: DialogueCharacterProfile): string | null {
+function suggestDialogueTic(profile: DialogueCharacterProfile, language: string): string | null {
+  const pack = dialogueBeatLanguagePack(language);
   const profileText = [
     ...profile.traits,
     ...profile.fears,
@@ -4014,16 +4081,65 @@ function suggestDialogueTic(profile: DialogueCharacterProfile): string | null {
     .toLowerCase();
 
   if (/(ansios|nerv|timid|paur)/i.test(profileText)) {
-    return "Si liscia il bordo della manica quando la tensione sale.";
+    return pack.anxiousTic;
   }
   if (/(controll|rigid|orgogli|domin)/i.test(profileText)) {
-    return "Raddrizza il polso prima di prendere la parola quando vuole riprendere il controllo.";
+    return pack.controlTic;
   }
   if (/(guard|segre|diffiden)/i.test(profileText)) {
-    return "Sposta il peso verso l'uscita più vicina quando la conversazione gli si stringe addosso.";
+    return pack.guardTic;
   }
 
-  return "Misura la distanza tra i corpi prima di parlare quando la scena si tende.";
+  return pack.defaultTic;
+}
+
+function dialogueBeatLanguagePack(language: string) {
+  const isItalian = normalizeBookLanguage(language) === "it";
+  return isItalian
+    ? {
+        strong: "secco",
+        light: "appena",
+        medium: "senza fretta",
+        tieBeatToEmotion: (name: string) => `L'azione dovrebbe restare piu vicina alla pressione emotiva che grava su ${name}, invece di usare un gesto generico.`,
+        useBodyOnlyIfMeaningful: "Use the body only when it reveals real emotional or relational pressure.",
+        addSpaceBeat: "Add a beat that clarifies distance, contact, or occupation of space.",
+        replaceDecorationWithBlocking: "Replace decoration with movement that truly changes how the line lands in space.",
+        subtextRule: "The beat should add subtext or friction that the line alone does not already explain.",
+        relationshipRule: "Let the beat show pressure, retreat, control, or resistance between the characters.",
+        anxiousBeat: (label: string, closer: string) => `${label} si lisciò il bordo della manica ${closer}, evitando di fermarsi troppo a lungo sullo sguardo dell'altro.`,
+        controlBeat: (label: string, closer: string) => `${label} ridusse la distanza ${closer} e lasciò che fosse il corpo a pretendere ascolto prima ancora delle parole.`,
+        guardBeat: (label: string, closer: string) => `${label} spostò il peso di lato ${closer}, come per tenersi una via d'uscita anche mentre parlava.`,
+        retreatBeat: (label: string, closer: string) => `${label} arretrò ${closer}, cercando nel muro una distanza che le parole non riuscivano più a dare.`,
+        contactBeat: (label: string, closer: string) => `${label} allungò la mano ${closer}, più per forzare la risposta che per cercare davvero contatto.`,
+        measureBeat: (label: string, closer: string) => `${label} inclinò il busto ${closer}, misurando la risposta prima ancora di lasciarla arrivare.`,
+        defaultBeat: (label: string, closer: string) => `${label} spostò il peso ${closer}, usando la distanza tra i corpi per dare più pressione alla battuta.`,
+        anxiousTic: "Si liscia il bordo della manica quando la tensione sale.",
+        controlTic: "Raddrizza il polso prima di prendere la parola quando vuole riprendere il controllo.",
+        guardTic: "Sposta il peso verso l'uscita più vicina quando la conversazione gli si stringe addosso.",
+        defaultTic: "Misura la distanza tra i corpi prima di parlare quando la scena si tende.",
+      }
+    : {
+        strong: "sharply",
+        light: "lightly",
+        medium: "without haste",
+        tieBeatToEmotion: (name: string) => `The beat should stay closer to ${name}'s emotional pressure instead of using generic body business.`,
+        useBodyOnlyIfMeaningful: "Use body language only if it reveals actual emotional or relational pressure.",
+        addSpaceBeat: "Add a beat that clarifies distance, touch, or occupation of space.",
+        replaceDecorationWithBlocking: "Replace decorative motion with blocking that changes how the line lands in space.",
+        subtextRule: "The beat should add subtext or friction that the line itself does not already explain.",
+        relationshipRule: "Let the beat show pressure, retreat, control, or resistance between the speakers.",
+        anxiousBeat: (label: string, closer: string) => `${label} smoothed the edge of a sleeve ${closer}, careful not to hold the other gaze for too long.`,
+        controlBeat: (label: string, closer: string) => `${label} shortened the distance ${closer}, letting the body demand attention before the words did.`,
+        guardBeat: (label: string, closer: string) => `${label} shifted sideways ${closer}, as if keeping an exit open even while speaking.`,
+        retreatBeat: (label: string, closer: string) => `${label} stepped back ${closer}, letting the wall offer the distance the words no longer could.`,
+        contactBeat: (label: string, closer: string) => `${label} reached out ${closer}, more to force an answer than to seek real contact.`,
+        measureBeat: (label: string, closer: string) => `${label} leaned in ${closer}, measuring the answer before it had fully arrived.`,
+        defaultBeat: (label: string, closer: string) => `${label} shifted weight ${closer}, using the distance between bodies to press the line harder.`,
+        anxiousTic: "Smooths the edge of a sleeve whenever tension rises.",
+        controlTic: "Straightens the wrist before speaking whenever control starts to slip.",
+        guardTic: "Shifts weight toward the nearest exit when the conversation starts closing in.",
+        defaultTic: "Measures the distance between bodies before speaking when the scene tightens.",
+      };
 }
 
 function buildDialogueActionEditorialNotes(input: {
@@ -6950,6 +7066,7 @@ async function markStoryStateDirty(
 async function buildQueryCanonTargets(
   root: string,
   chapters: Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>,
+  lexicon: QueryCanonLexicon = resolveQueryCanonLexicon("en"),
 ): Promise<QueryCanonTarget[]> {
   const entityGroups = await Promise.all(ENTITY_TYPES.map((kind) => listEntities(root, kind)));
   const entityTargets = entityGroups.flatMap((documents, index) => {
@@ -6977,7 +7094,7 @@ async function buildQueryCanonTargets(
         kind: "chapter" as const,
         id: String(chapter.metadata.id ?? `chapter:${chapter.slug}`),
         title: chapter.metadata.title,
-        aliases: extractQueryCanonAliases("chapter", chapter.metadata, chapter.metadata.number),
+        aliases: extractQueryCanonAliases("chapter", chapter.metadata, chapter.metadata.number, lexicon),
         path: chapter.path,
         metadata: chapter.metadata,
         body: chapterData.body,
@@ -7010,6 +7127,7 @@ function extractQueryCanonAliases(
   kind: EntityType | "chapter",
   metadata: Record<string, unknown>,
   chapterNumber?: number,
+  lexicon: QueryCanonLexicon = resolveQueryCanonLexicon("en"),
 ): string[] {
   const values = uniqueValues(
     [
@@ -7026,8 +7144,9 @@ function extractQueryCanonAliases(
       ...(kind === "chapter" && typeof metadata.id === "string"
         ? [
             metadata.id,
-            typeof chapterNumber === "number" ? `chapter ${chapterNumber}` : undefined,
-            typeof chapterNumber === "number" ? `capitolo ${chapterNumber}` : undefined,
+            ...(typeof chapterNumber === "number"
+              ? lexicon.chapterAliases.map((alias) => `${alias} ${chapterNumber}`)
+              : []),
             humanizeQueryCanonToken(String(metadata.id).replace(/^chapter:/, "")),
           ]
         : []),
@@ -7037,39 +7156,39 @@ function extractQueryCanonAliases(
   return values.filter((value) => normalizeQueryCanonSearch(value).length > 0);
 }
 
-function detectQueryCanonIntent(question: string, hasRange: boolean): QueryCanonIntent {
+function detectQueryCanonIntent(question: string, hasRange: boolean, lexicon: QueryCanonLexicon): QueryCanonIntent {
   const lower = question.toLowerCase();
 
-  if (/(first appear|first appears|first show|first mention|prima apparizione|compare per la prima volta|quando compare|quando appare)/.test(lower)) {
+  if (new RegExp(buildAlternationPattern(lexicon.firstAppearancePhrases), "i").test(lower)) {
     return "first-appearance";
   }
 
-  if (/(who knows|chi sa|chi conosce|who is aware)/.test(lower)) {
+  if (new RegExp(buildAlternationPattern(lexicon.secretHolderPhrases), "i").test(lower)) {
     return "secret-holders";
   }
 
-  if (/(relationship|relation to|rapport|rapporto|trust|fid|ally|enemy|friend|feels about|relationship with)/.test(lower)) {
+  if (new RegExp(buildAlternationPattern(lexicon.relationshipPhrases), "i").test(lower)) {
     return hasRange ? "state-relationship-arc" : "state-relationship";
   }
 
-  if (/(condition|status|wound|wounds|injured|injury|hurt|ferit|condizion|come sta)/.test(lower)) {
+  if (new RegExp(buildAlternationPattern(lexicon.conditionPhrases), "i").test(lower)) {
     return hasRange ? "state-condition-arc" : "state-condition";
   }
 
-  if (/(open loop|open loops|unresolved|unresolved thread|pending thread|questioni aperte|fili aperti|irrisolt)/.test(lower)) {
+  if (new RegExp(buildAlternationPattern(lexicon.openLoopPhrases), "i").test(lower)) {
     return hasRange ? "state-open-loops-arc" : "state-open-loops";
   }
 
-  if (/\bwhere\b|\bdove\b|si trova|located/.test(lower)) {
+  if (new RegExp(buildAlternationPattern(lexicon.wherePhrases), "i").test(lower)) {
     return "state-location";
   }
 
-  if (/cosa sa|what does .* know|what .* knows|knows after|sa dopo|sa di/.test(lower)) {
-    return "state-knowledge";
+  if (matchesInventoryIntent(lower, lexicon)) {
+    return "state-inventory";
   }
 
-  if (/cosa ha|what does .* have|what .* carries|inventory|porta con|possiede|is carrying/.test(lower)) {
-    return "state-inventory";
+  if (matchesKnowledgeIntent(lower, lexicon)) {
+    return "state-knowledge";
   }
 
   return "general";
@@ -7080,9 +7199,10 @@ function resolveQueryCanonChapterRange(
   question: string,
   explicitFromChapter?: string,
   explicitToChapter?: string,
+  lexicon: QueryCanonLexicon = resolveQueryCanonLexicon("en"),
 ): QueryCanonChapterRange | undefined {
-  const explicitStart = explicitFromChapter ? resolveQueryCanonChapterReference(chapters, explicitFromChapter) : {};
-  const explicitEnd = explicitToChapter ? resolveQueryCanonChapterReference(chapters, explicitToChapter) : {};
+  const explicitStart = explicitFromChapter ? resolveQueryCanonChapterReference(chapters, explicitFromChapter, lexicon) : {};
+  const explicitEnd = explicitToChapter ? resolveQueryCanonChapterReference(chapters, explicitToChapter, lexicon) : {};
   const explicitNote = [explicitStart.note, explicitEnd.note].filter((value): value is string => Boolean(value)).join(" ");
 
   if (explicitStart.reference && explicitEnd.reference) {
@@ -7095,14 +7215,20 @@ function resolveQueryCanonChapterRange(
   }
 
   const betweenNumberedMatch = question.match(
-    /\b(?:between|tra|fra)\s+(?:chapter|chap(?:ter)?|capitolo|cap\.?)?\s*(\d{1,3})\s+(?:and|e)\s+(?:chapter|chap(?:ter)?|capitolo|cap\.?)?\s*(\d{1,3})\b/i,
+    new RegExp(
+      `\\b(?:${buildAlternationPattern(lexicon.betweenWords)})\\s+(?:${buildAlternationPattern(lexicon.chapterAliases)})?\\s*(\\d{1,3})\\s+(?:${buildAlternationPattern(lexicon.andWords)})\\s+(?:${buildAlternationPattern(lexicon.chapterAliases)})?\\s*(\\d{1,3})\\b`,
+      "i",
+    ),
   );
   if (betweenNumberedMatch) {
     return normalizeQueryCanonChapterRange(chapters, betweenNumberedMatch[1], betweenNumberedMatch[2]);
   }
 
   const fromToNumberedMatch = question.match(
-    /\b(?:from|da|dal)\s+(?:chapter|chap(?:ter)?|capitolo|cap\.?)?\s*(\d{1,3})\s+(?:to|through|a|al|fino al)\s+(?:chapter|chap(?:ter)?|capitolo|cap\.?)?\s*(\d{1,3})\b/i,
+    new RegExp(
+      `\\b(?:${buildAlternationPattern(lexicon.fromWords)})\\s+(?:${buildAlternationPattern(lexicon.chapterAliases)})?\\s*(\\d{1,3})\\s+(?:${buildAlternationPattern(lexicon.toWords)})\\s+(?:${buildAlternationPattern(lexicon.chapterAliases)})?\\s*(\\d{1,3})\\b`,
+      "i",
+    ),
   );
   if (fromToNumberedMatch) {
     return normalizeQueryCanonChapterRange(chapters, fromToNumberedMatch[1], fromToNumberedMatch[2]);
@@ -7148,19 +7274,20 @@ function resolveQueryCanonChapterScope(
   chapters: Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>,
   question: string,
   explicitThroughChapter?: string,
+  lexicon: QueryCanonLexicon = resolveQueryCanonLexicon("en"),
 ): { reference?: string; note?: string } {
   if (explicitThroughChapter) {
-    return resolveQueryCanonChapterReference(chapters, explicitThroughChapter);
+    return resolveQueryCanonChapterReference(chapters, explicitThroughChapter, lexicon);
   }
 
   const explicitId = question.match(/\bchapter:[a-z0-9-]+\b/i)?.[0];
   if (explicitId) {
-    return resolveQueryCanonChapterReference(chapters, explicitId);
+    return resolveQueryCanonChapterReference(chapters, explicitId, lexicon);
   }
 
-  const numberedMatch = question.match(/\b(?:chapter|chap(?:ter)?|capitolo|cap\.?)\s*(\d{1,3})\b/i);
+  const numberedMatch = question.match(new RegExp(`\\b(?:${buildAlternationPattern(lexicon.chapterAliases)})\\s*(\\d{1,3})\\b`, "i"));
   if (numberedMatch) {
-    return resolveQueryCanonChapterReference(chapters, numberedMatch[0]);
+    return resolveQueryCanonChapterReference(chapters, numberedMatch[0], lexicon);
   }
 
   return {};
@@ -7169,6 +7296,7 @@ function resolveQueryCanonChapterScope(
 function resolveQueryCanonChapterReference(
   chapters: Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>,
   value: string,
+  lexicon: QueryCanonLexicon = resolveQueryCanonLexicon("en"),
 ): { reference?: string; note?: string } {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -7184,7 +7312,7 @@ function resolveQueryCanonChapterReference(
       : { note: `No chapter found matching ${explicitId}.` };
   }
 
-  const numberedMatch = trimmed.match(/\b(?:chapter|chap(?:ter)?|capitolo|cap\.?)\s*(\d{1,3})\b/i) ??
+  const numberedMatch = trimmed.match(new RegExp(`\\b(?:${buildAlternationPattern(lexicon.chapterAliases)})\\s*(\\d{1,3})\\b`, "i")) ??
     trimmed.match(/^(\d{1,3})$/);
   if (numberedMatch) {
     const chapterNumber = Number(numberedMatch[1]);
@@ -8124,19 +8252,36 @@ function filterOpenLoopsForTarget(openLoops: string[], target: QueryCanonTarget)
   });
 }
 
-function formatQueryCanonSubject(question: string): string {
+function formatQueryCanonSubject(question: string, lexicon: QueryCanonLexicon = resolveQueryCanonLexicon("en")): string {
   const quoted = question.match(/["'“”](.+?)["'“”]/)?.[1];
   if (quoted) {
     return quoted.trim();
   }
 
+  const stopWordsPattern = buildAlternationPattern(lexicon.stopWords);
+  const chapterAliasPattern = buildAlternationPattern(lexicon.chapterAliases);
   return question
-    .replace(/\b(?:who|what|when|where|does|did|is|are|the|a|an|after|before|know|knows|have|has|first|appear|appears|show|shows|up)\b/gi, " ")
-    .replace(/\b(?:chi|cosa|quando|dove|il|lo|la|gli|le|un|una|sa|sanno|ha|hanno|compare|appaiono|apparizione|prima|volta|al|nel|si|trova)\b/gi, " ")
-    .replace(/\b(?:chapter|chap(?:ter)?|capitolo|cap\.?)\s*\d{1,3}\b/gi, " ")
+    .replace(new RegExp(`\\b(?:${stopWordsPattern})\\b`, "gi"), " ")
+    .replace(new RegExp(`\\b(?:${chapterAliasPattern})\\s*\d{1,3}\\b`, "gi"), " ")
     .replace(/[?!.]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function matchesKnowledgeIntent(lower: string, lexicon: QueryCanonLexicon): boolean {
+  if (/what does .* know|what .* knows|knows after|know after/i.test(lower)) {
+    return true;
+  }
+
+  return new RegExp(buildAlternationPattern(lexicon.knowledgePhrases), "i").test(lower);
+}
+
+function matchesInventoryIntent(lower: string, lexicon: QueryCanonLexicon): boolean {
+  if (/what does .* have|what .* carries|is carrying/i.test(lower)) {
+    return true;
+  }
+
+  return new RegExp(buildAlternationPattern(lexicon.inventoryPhrases), "i").test(lower);
 }
 
 function formatQueryCanonValue(value: string, lookup: QueryCanonLookup): string {
@@ -10071,6 +10216,46 @@ function buildGithubCopilotInstructions(): string {
   ].join("\n");
 }
 
+function resolveQueryCanonLexicon(language?: string): QueryCanonLexicon {
+  const normalized = normalizeBookLanguage(language);
+  const english = QUERY_CANON_LEXICONS.en;
+  const localized = QUERY_CANON_LEXICONS[normalized];
+
+  if (!localized || normalized === "en") {
+    return english;
+  }
+
+  return {
+    chapterAliases: uniqueValues([...english.chapterAliases, ...localized.chapterAliases]),
+    firstAppearancePhrases: uniqueValues([...english.firstAppearancePhrases, ...localized.firstAppearancePhrases]),
+    secretHolderPhrases: uniqueValues([...english.secretHolderPhrases, ...localized.secretHolderPhrases]),
+    relationshipPhrases: uniqueValues([...english.relationshipPhrases, ...localized.relationshipPhrases]),
+    conditionPhrases: uniqueValues([...english.conditionPhrases, ...localized.conditionPhrases]),
+    openLoopPhrases: uniqueValues([...english.openLoopPhrases, ...localized.openLoopPhrases]),
+    wherePhrases: uniqueValues([...english.wherePhrases, ...localized.wherePhrases]),
+    knowledgePhrases: uniqueValues([...english.knowledgePhrases, ...localized.knowledgePhrases]),
+    inventoryPhrases: uniqueValues([...english.inventoryPhrases, ...localized.inventoryPhrases]),
+    betweenWords: uniqueValues([...english.betweenWords, ...localized.betweenWords]),
+    andWords: uniqueValues([...english.andWords, ...localized.andWords]),
+    fromWords: uniqueValues([...english.fromWords, ...localized.fromWords]),
+    toWords: uniqueValues([...english.toWords, ...localized.toWords]),
+    stopWords: uniqueValues([...english.stopWords, ...localized.stopWords]),
+  };
+}
+
+function normalizeBookLanguage(language?: string): string {
+  const normalized = (language ?? "en").trim().toLowerCase();
+  return normalized.split(/[-_]/)[0] || "en";
+}
+
+function buildAlternationPattern(values: string[]): string {
+  return values
+    .slice()
+    .sort((left, right) => right.length - left.length)
+    .map((value) => escapeRegExp(value).replace(/\s+/g, "\\s+"))
+    .join("|");
+}
+
 // Files synced on every upgrade: skill templates, commands, plugins, readmes.
 // Do NOT include user-editable config files here.
 function getManagedBookScaffoldFiles(createSkills: boolean): Array<{ relativePath: string; content: string }> {
@@ -10805,215 +10990,215 @@ function formatPromotedStoryDesignSection(entry: WorkItemEntryFrontmatter): stri
 
 function defaultWritingStyleBody(): string {
   return [
-    "Agisci come un editor narrativo esperto in romanzi storici e scene ad alta tensione.",
+    "Act as a narrative editor experienced in historical fiction and high-tension scenes.",
     "",
-    "Questo file definisce il contratto di scrittura e di review del libro. Va letto sempre prima di scrivere o rivedere un capitolo o un paragrafo.",
+    "This file defines the book's writing and review contract. Read it before drafting or revising any chapter or paragraph.",
     "",
-    "# Invarianti",
+    "# Invariants",
     "",
-    "- Non cambiare il contenuto della scena senza motivo.",
-    "- Non cambiare il significato del conflitto o delle informazioni.",
-    "- Non alterare i dialoghi se funzionano gia.",
-    "- Non riscrivere inutilmente solo per far vedere che hai lavorato.",
-    "- Intervieni solo quando la pagina guadagna in chiarezza, tensione, ritmo, fisicita o densita narrativa.",
+    "- Do not change scene content without a real narrative reason.",
+    "- Do not change the meaning of conflict, intention, or information.",
+    "- Do not alter dialogue that already works.",
+    "- Do not rewrite for the sake of sounding more literary.",
+    "- Intervene only when the page gains clarity, tension, rhythm, physicality, or narrative density.",
     "",
-    "# Obiettivo",
+    "# Objective",
     "",
-    "Porta la scena verso una prosa che sia:",
+    "Push the prose toward something that is:",
     "",
-    "- visiva quando serve",
-    "- rapida quando serve",
-    "- fisica nei momenti chiave",
-    "- chiara senza spiegazioni inutili",
-    "- dinamica nello spazio",
-    "- controllata, senza sovrascrittura",
+    "- visual when it matters",
+    "- fast when it should move quickly",
+    "- physical in key moments",
+    "- clear without unnecessary explanation",
+    "- dynamic in space",
+    "- controlled rather than overwritten",
     "",
-    "Il lettore deve vedere cio che conta, capire senza essere guidato a forza e non rallentarsi inutilmente.",
+    "The reader should see what matters, understand without being over-guided, and never feel delayed by ornamental prose.",
     "",
-    "# Principio Base",
+    "# Core Principle",
     "",
-    "Non tutto va mostrato.",
+    "Not everything should be shown.",
     "",
-    "Usa questa regola:",
-    "- momenti chiave -> show (azione, fisicita, dettaglio, subtext)",
-    "- transizioni e informazioni -> tell (rapido, invisibile, pulito)",
+    "Use this rule:",
+    "- key moments -> show (action, physicality, detail, subtext)",
+    "- transitions and information -> tell (fast, quiet, clean)",
     "",
-    "Una scena forte non mostra sempre di piu: mostra meglio dove serve e racconta rapidamente dove non serve rallentare.",
+    "Strong prose does not always show more. It shows better where pressure matters and tells quickly where delay would weaken the scene.",
     "",
-    "# 1. Show, Don't Tell (uso mirato)",
+    "# 1. Show, Don't Tell (targeted use)",
     "",
-    "Trasforma in show solo quando:",
-    "- c'e tensione",
-    "- c'e conflitto",
-    "- c'e cambiamento",
-    "- il lettore deve sentire il peso del momento",
+    "Move toward show when:",
+    "- tension is rising",
+    "- conflict is active",
+    "- something changes",
+    "- the reader needs to feel the weight of the moment",
     "",
-    "Lascia in tell quando:",
-    "- serve contesto rapido",
-    "- serve transizione",
-    "- l'informazione e secondaria rispetto alla pressione della scena",
+    "Allow tell when:",
+    "- rapid context is enough",
+    "- the prose is bridging one dramatic unit to the next",
+    "- the information matters less than the pressure of the scene",
     "",
-    "Esempio debole:",
-    "- Era furioso.",
+    "Weak example:",
+    "- He was furious.",
     "",
-    "Esempio migliore:",
-    "- Strinse il bicchiere fino a farlo vibrare.",
+    "Stronger example:",
+    "- He tightened his grip on the glass until it trembled.",
     "",
-    "# 2. Elimina spiegazioni inutili",
+    "# 2. Remove unnecessary explanation",
     "",
-    "Rimuovi:",
-    "- interpretazioni ovvie",
-    "- spiegazioni doppie",
-    "- frasi che ripetono cio che gia si vede",
-    "- commenti che spiegano il sottotesto invece di lasciarlo lavorare",
+    "Remove:",
+    "- obvious interpretation",
+    "- doubled explanation",
+    "- sentences that repeat what is already visible",
+    "- commentary that explains subtext instead of letting it work",
     "",
-    "Non sacrificare la chiarezza pur di mostrare di piu. Se una frase deve restare rapida e informativa, lasciala rapida e informativa.",
+    "Do not sacrifice clarity just to show more. If a line must stay quick and informative, let it stay quick and informative.",
     "",
-    "# 3. Fisicita intelligente",
+    "# 3. Intelligent physicality",
     "",
-    "Inserisci fisicita solo se:",
-    "- aggiunge tensione",
-    "- rivela stato emotivo",
-    "- modifica il rapporto tra i personaggi",
-    "- sposta il peso del dialogo",
+    "Add physicality only when it:",
+    "- increases tension",
+    "- reveals emotional state",
+    "- changes the relationship between characters",
+    "- shifts the pressure of the exchange",
     "",
-    "Evita:",
-    "- gesti casuali",
-    "- riempitivi",
-    "- movimenti usati solo per non scrivere `disse`",
-    "- gesti sempre uguali",
+    "Avoid:",
+    "- random gestures",
+    "- filler motion",
+    "- movement used only to avoid `said`",
+    "- repeated stock gestures",
     "",
-    "# 4. Varieta delle azioni",
+    "# 4. Variety of action",
     "",
-    "Alterna:",
-    "- micro: occhi, dita, respiro",
-    "- macro: movimento nello spazio",
-    "- oggetti: interazione concreta",
-    "- postura: dominio, chiusura, cedimento, resistenza",
+    "Alternate:",
+    "- micro: eyes, fingers, breath",
+    "- macro: movement in space",
+    "- objects: concrete interaction",
+    "- posture: dominance, withdrawal, resistance, collapse",
     "",
-    "Ogni azione deve avere uno scopo. Se non cambia la lettura della scena, non basta.",
+    "Every action must do work. If it does not change how the line or moment is read, it is not enough.",
     "",
-    "# 5. Spazio attivo",
+    "# 5. Active space",
     "",
-    "Lo spazio non e uno sfondo neutro. Deve partecipare.",
+    "Space is not neutral background. It must participate in the scene.",
     "",
-    "I personaggi devono poter:",
-    "- avvicinarsi",
-    "- allontanarsi",
-    "- occupare spazio",
-    "- cederlo",
-    "- usare pareti, porte, tavoli, sedie, soglie e varchi come pressione narrativa",
+    "Characters should be able to:",
+    "- move closer",
+    "- move away",
+    "- occupy space",
+    "- surrender space",
+    "- use doors, walls, tables, thresholds, and furniture as narrative pressure",
     "",
-    "Lo spazio deve raccontare tensione, potere e relazione.",
+    "Space should reveal tension, power, and relationship.",
     "",
-    "# 6. Oggetti con funzione",
+    "# 6. Objects with function",
     "",
-    "Gli oggetti devono essere usati, manipolati o subiti.",
+    "Objects should be used, handled, or suffered.",
     "",
-    "Un oggetto e utile se:",
-    "- chiarisce status",
-    "- mostra controllo o nervosismo",
-    "- crea contrasto col dialogo",
-    "- rende fisico il sottotesto",
+    "An object is useful when it:",
+    "- clarifies status",
+    "- shows control or agitation",
+    "- creates contrast with the dialogue",
+    "- makes the subtext physical",
     "",
-    "Evita oggetti puramente decorativi.",
+    "Avoid decorative objects that do not carry dramatic value.",
     "",
-    "# 7. No formule deboli",
+    "# 7. Avoid weak phrasing",
     "",
-    "Riduci o elimina:",
-    "- sembrava",
-    "- come se",
-    "- quasi",
-    "- come a",
+    "Reduce or remove:",
+    "- seemed",
+    "- as if",
+    "- almost",
+    "- as though",
     "",
-    "Usale solo se l'ambiguita e davvero necessaria.",
+    "Keep them only when genuine ambiguity is necessary.",
     "",
     "# 8. Subtext",
     "",
-    "Quando possibile:",
-    "- sostituisci spiegazioni con comportamento",
-    "- lascia che il dialogo contraddica le azioni",
-    "- fai lavorare distanza, esitazione, contatto, silenzio e oggetti",
+    "Whenever possible:",
+    "- replace explanation with behavior",
+    "- let dialogue contradict action",
+    "- let distance, hesitation, touch, silence, and objects carry pressure",
     "",
-    "Il sottotesto e piu forte quando il testo non lo spiega a voce alta.",
+    "Subtext is strongest when the prose does not explain it aloud.",
     "",
-    "# 9. Ritmo",
+    "# 9. Rhythm",
     "",
-    "Alterna dialogo, azione breve e pausa.",
+    "Alternate dialogue, brief action, and pause.",
     "",
-    "Usa il ritmo per:",
-    "- accelerare la tensione",
-    "- rallentare nei punti di peso",
-    "- lasciare che una battuta atterri prima della successiva",
+    "Use rhythm to:",
+    "- accelerate tension",
+    "- slow down at points of weight",
+    "- let a line land before the next one arrives",
     "",
-    "Evita blocchi lunghi statici e sequenze di azioni tutte uguali.",
+    "Avoid long static blocks and sequences of interchangeable actions.",
     "",
-    "# 10. Densita",
+    "# 10. Density",
     "",
-    "Ogni frase deve fare almeno una di queste cose:",
-    "- avanzare la scena",
-    "- mostrare tensione",
-    "- rivelare carattere",
-    "- chiarire dinamica",
+    "Every sentence should do at least one of these things:",
+    "- move the scene forward",
+    "- show tension",
+    "- reveal character",
+    "- clarify dynamics",
     "",
-    "Se non lo fa, taglia o semplifica.",
+    "If it does none of them, cut or simplify it.",
     "",
-    "# Dialoghi e narrazione",
+    "# Dialogue and narration",
     "",
-    "- Mantieni i dialoghi originali salvo piccoli aggiustamenti minimi davvero necessari.",
-    "- Definisci qui come funzionano persona narrativa, distanza dal POV, tempo verbale e discorso diretto del libro.",
-    "- Se un capitolo ha esigenze particolari, aggiungi un file `writing-style.md` dentro la cartella del capitolo o del draft del capitolo.",
-    "- Il file globale resta sempre attivo anche quando esiste un override locale.",
+    "- Keep original dialogue unless a change is genuinely necessary.",
+    "- Define here how the book handles narrative person, POV distance, tense, and direct speech.",
+    "- If one chapter needs special handling, add a `writing-style.md` file inside that chapter or draft chapter folder.",
+    "- The global file remains active even when a local override exists.",
     "",
-    "# Action beat dialogici",
+    "# Dialogue action beats",
     "",
-    "- Usa un action beat accanto al dialogo solo se aggiunge qualcosa che il semplice `disse` non puo dare.",
-    "- Un action beat e forte quando chiarisce lo spazio, la psicologia, i rapporti di forza, il sottotesto, o l'uso degli oggetti nella scena.",
-    "- Se l'azione e solo decorativa o serve soltanto a evitare `disse`, preferisci un tag semplice come `disse` o `chiese`, oppure nessun tag se il turno di parola e gia limpido.",
-    "- Evita gesti ornamentali, anatomia meccanica e descrizioni che spiegano il corpo invece di usarlo per raccontare il conflitto.",
-    "- Quando aggiungi un action beat, fai in modo che racconti almeno una di queste cose: il luogo, la distanza, il non detto, il controllo, la paura, la resistenza, il desiderio, o lo status.",
+    "- Use an action beat beside dialogue only when it gives the reader something that `said` cannot.",
+    "- An action beat is strong when it clarifies space, psychology, power dynamics, subtext, or the use of objects in the scene.",
+    "- If the action is decorative or exists only to avoid `said`, prefer a simple tag like `said` or `asked`, or no tag at all if turn-taking is already clear.",
+    "- Avoid ornamental gestures, mechanical body mapping, and action that explains the body instead of using it to carry conflict.",
+    "- When you add an action beat, make it reveal at least one of these things: the place, the distance, the unspoken tension, control, fear, resistance, desire, or status.",
     "",
-    "Esempio debole:",
-    "- Sergio si sposto i capelli da un lato. «Come stai?»",
+    "Weak example:",
+    "- Sergio moved his hair to one side. \"How are you?\"",
     "",
-    "Perche e debole:",
-    "- il gesto non sposta il conflitto",
-    "- non chiarisce il rapporto",
-    "- non usa lo spazio",
-    "- sembra inserito solo per evitare `disse`",
+    "Why it is weak:",
+    "- the gesture does not change the conflict",
+    "- it does not clarify the relationship",
+    "- it does not use space",
+    "- it feels inserted only to avoid `said`",
     "",
-    "Esempio migliore:",
-    "- Sergio ridusse la distanza prima di parlare. «Come stai?»",
+    "Stronger example:",
+    "- Sergio shortened the distance before speaking. \"How are you?\"",
     "",
-    "Perche funziona meglio:",
-    "- racconta pressione e invasione di spazio",
-    "- modifica il modo in cui si legge la battuta",
-    "- chiarisce il rapporto di forza",
+    "Why it works better:",
+    "- it turns space into pressure",
+    "- it changes how the line is read",
+    "- it clarifies the power dynamic",
     "",
-    "Fallback corretto quando non c'e un beat utile:",
-    "- «Come stai?» disse Sergio.",
+    "Correct fallback when no useful beat exists:",
+    "- \"How are you?\" said Sergio.",
     "",
-    "# Tic ricorrenti",
+    "# Recurring tics",
     "",
-    "- Se un personaggio mostra un possibile tic ricorrente, usalo con parsimonia e solo se e coerente con il suo profilo psicologico.",
-    "- Non trasformare ogni scena in una vetrina di tic.",
-    "- Se un tic sembra forte, osservalo in piu scene o mettilo nelle note del personaggio; solo dopo puoi stabilizzarlo nel canon.",
+    "- If a character shows a possible recurring tic, use it sparingly and only if it matches the character's psychology.",
+    "- Do not turn every scene into a display case of tics.",
+    "- If a tic seems strong, observe it across multiple scenes or keep it in character notes before stabilizing it in canon.",
     "",
-    "# Output atteso per scrittura e review",
+    "# Expected output for writing and review",
     "",
-    "- In scrittura: produci una scena chiara, tesa, concreta e controllata.",
-    "- In review: intervieni su azione, ritmo, resa e blocking senza alterare inutilmente il contenuto.",
-    "- Mantieni i dialoghi con modifiche minime se funzionano gia.",
-    "- Non aggiungere spiegazioni fuori dal testo.",
+    "- In drafting: produce a scene that is clear, tense, concrete, and controlled.",
+    "- In review: improve action, rhythm, rendering, and blocking without unnecessarily changing content.",
+    "- Keep dialogue changes minimal when the dialogue already works.",
+    "- Do not add explanation outside the prose itself.",
     "",
-    "# Stile desiderato",
+    "# Desired style",
     "",
-    "- preciso",
-    "- concreto",
-    "- controllato, non iper-descrittivo",
-    "- visivo nei momenti chiave",
-    "- fluido nel resto",
-    "- tensione implicita, non dichiarata",
+    "- precise",
+    "- concrete",
+    "- controlled, not over-described",
+    "- visual at key moments",
+    "- fluid elsewhere",
+    "- tension implied rather than declared",
   ].join("\n");
 }
 

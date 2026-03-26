@@ -248,8 +248,8 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.match(plot.content, /2214-06-12/);
     assert.match(earlyTotalResume.content, /The harbor watches before it welcomes/);
     assert.match(contextDocument, /# Historical And Temporal Frame/);
-    assert.match(writingStyleDocument, /# Action beat dialogici/);
-    assert.match(writingStyleDocument, /preferisci un tag semplice come `disse` o `chiese`/);
+    assert.match(writingStyleDocument, /# Dialogue action beats/);
+    assert.match(writingStyleDocument, /prefer a simple tag like `said` or `asked`/);
     assert.match(notesDocument, /# Active Notes/);
     assert.match(storyDesignDocument, /# Core Design/);
     assert.match(opencodeConfig, /"default_agent": "build"/);
@@ -853,7 +853,7 @@ test("upgradeBookRepo creates default writing-style when missing but preserves i
 
     const firstUpgrade = await upgradeBookRepo(rootPath);
     const generatedWritingStyle = await readFile(path.join(rootPath, "guidelines", "writing-style.md"), "utf8");
-    assert.match(generatedWritingStyle, /# Action beat dialogici/);
+    assert.match(generatedWritingStyle, /# Dialogue action beats/);
     assert.equal(firstUpgrade.created.includes("guidelines/writing-style.md"), true);
 
     await writeFile(path.join(rootPath, "guidelines", "writing-style.md"), "# Custom Writing Style\n\nDo not overwrite me.\n", "utf8");
@@ -861,6 +861,84 @@ test("upgradeBookRepo creates default writing-style when missing but preserves i
     await upgradeBookRepo(rootPath);
     const preservedWritingStyle = await readFile(path.join(rootPath, "guidelines", "writing-style.md"), "utf8");
     assert.equal(preservedWritingStyle, "# Custom Writing Style\n\nDo not overwrite me.\n");
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("queryCanon uses the book language lexicon while keeping English fallback", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-query-language-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Italian Query Book",
+      language: "it",
+    });
+
+    await createCharacterProfile(rootPath, {
+      name: "Lyra Vale",
+      roleTier: "main",
+      speakingStyle: "Measured and alert.",
+      backgroundSummary: "Moves carefully through pressure.",
+      functionInBook: "Primary viewpoint anchor.",
+    });
+
+    await createCharacterProfile(rootPath, {
+      name: "Taren Dane",
+      roleTier: "supporting",
+      speakingStyle: "Dry and skeptical.",
+      backgroundSummary: "Keeps score longer than he admits.",
+      functionInBook: "Ally under tension.",
+    });
+
+    await createChapter(rootPath, { number: 1, title: "Ritorno" });
+    await createChapter(rootPath, { number: 2, title: "Braci" });
+    await syncAllResumes(rootPath);
+
+    const chapterOneResumePath = path.join(rootPath, "resumes", "chapters", "001-ritorno.md");
+    const chapterTwoResumePath = path.join(rootPath, "resumes", "chapters", "002-braci.md");
+    const chapterOneResume = await readFile(chapterOneResumePath, "utf8");
+    const chapterTwoResume = await readFile(chapterTwoResumePath, "utf8");
+    await writeFile(
+      chapterOneResumePath,
+      chapterOneResume.replace(
+        "chapter: chapter:001-ritorno\n",
+        [
+          "chapter: chapter:001-ritorno",
+          "state_changes:",
+          '  relationship_updates:',
+          '    "character:lyra-vale":',
+          '      "character:taren-dane": wary-trust',
+          "",
+        ].join("\n"),
+      ),
+      "utf8",
+    );
+    await writeFile(
+      chapterTwoResumePath,
+      chapterTwoResume.replace(
+        "chapter: chapter:002-braci\n",
+        [
+          "chapter: chapter:002-braci",
+          "state_changes:",
+          '  relationship_updates:',
+          '    "character:lyra-vale":',
+          '      "character:taren-dane": guarded-loyalty',
+          "",
+        ].join("\n"),
+      ),
+      "utf8",
+    );
+
+    await syncStoryState(rootPath);
+
+    const relationshipArc = await queryCanon(rootPath, "Come cambia il rapporto tra Lyra Vale e Taren Dane tra capitolo 1 e capitolo 2?");
+
+    assert.equal(relationshipArc.intent, "state-relationship-arc");
+    assert.equal(relationshipArc.fromChapter, "chapter:001-ritorno");
+    assert.equal(relationshipArc.toChapter, "chapter:002-braci");
+    assert.match(relationshipArc.answer, /wary trust/i);
+    assert.match(relationshipArc.answer, /guarded loyalty/i);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }
@@ -1122,91 +1200,91 @@ test("draft workflow can assemble writing context and promote drafts into final 
   try {
     await initializeBookRepo(rootPath, {
       title: "Draft Test Book",
-      language: "it",
+      language: "en",
     });
 
     await createChapterDraft(rootPath, {
       number: 1,
-      title: "La Soglia",
+      title: "The Threshold",
       frontmatter: {
-        summary: "Brutta del capitolo di apertura.",
+        summary: "Rough opening chapter summary.",
         pov: ["character:livia-sarne"],
       },
-      body: "# Rough Intent\n\nAprire con sospetto e controllo.\n\n# Rough Beats\n\n- Livia arriva al varco.\n- Nota un cambio nei registri.",
+      body: "# Rough Intent\n\nOpen with suspicion and control.\n\n# Rough Beats\n\n- Livia reaches the gate.\n- She notices a change in the ledgers.",
     });
 
     await createParagraphDraft(rootPath, {
-      chapter: "chapter:001-la-soglia",
+      chapter: "chapter:001-the-threshold",
       number: 1,
-      title: "Il Varco",
+      title: "At The Gate",
       frontmatter: {
-        summary: "Brutta della prima scena.",
+        summary: "Rough first-scene summary.",
         viewpoint: "character:livia-sarne",
       },
-      body: "# Rough Scene\n\nLivia vede il sigillo sbagliato e capisce che qualcuno ha toccato il registro.",
+      body: "# Rough Scene\n\nLivia sees the broken seal and realizes someone touched the ledger before she arrived.",
     });
 
     await saveBookWorkItem(rootPath, {
       bucket: "notes",
       title: "Registry tension",
-      body: "Ricordare che Livia ha un rapporto teso con i registri del porto.",
+      body: "Remember that Livia has a strained relationship with the harbor ledgers.",
     });
     await updateBookNotes(rootPath, {
       target: "story-design",
-      appendBody: "## Main Arcs\n\n- Il sospetto sui registri deve intrecciarsi con il tema dell'identita nascosta.",
+      appendBody: "## Main Arcs\n\n- Suspicion around the ledgers must intertwine with the hidden-identity arc.",
     });
     await saveChapterDraftWorkItem(rootPath, {
-      chapter: "chapter:001-la-soglia",
+      chapter: "chapter:001-the-threshold",
       bucket: "notes",
       title: "Arrival pressure",
-      body: "Tenere alta la tensione appena Livia arriva al varco.",
+      body: "Keep the pressure high as soon as Livia reaches the gate.",
     });
 
-    const context = await buildParagraphWritingContext(rootPath, "chapter:001-la-soglia", "001-il-varco");
+    const context = await buildParagraphWritingContext(rootPath, "chapter:001-the-threshold", "001-at-the-gate");
     const chapterResult = await createChapterFromDraft(rootPath, {
-      chapter: "chapter:001-la-soglia",
-      body: "# Purpose\n\nAprire il romanzo con pressione e sospetto.",
+      chapter: "chapter:001-the-threshold",
+      body: "# Purpose\n\nOpen the novel with pressure and suspicion.",
     });
     const paragraphResult = await createParagraphFromDraft(rootPath, {
-      chapter: "chapter:001-la-soglia",
-      paragraph: "001-il-varco",
-      body: "# Scene\n\nLivia poso la mano sul registro e capi dal taglio della ceralacca che qualcuno era arrivato prima di lei.",
+      chapter: "chapter:001-the-threshold",
+      paragraph: "001-at-the-gate",
+      body: "# Scene\n\nLivia set her hand on the ledger and knew from the broken wax that someone had arrived before her.",
     });
 
     await writeFile(
       path.join(rootPath, "conversations", "RESUME.md"),
-      "# Conversation Resume\n\nUltimo focus: aprire il romanzo con sospetto e controllo.\n",
+      "# Conversation Resume\n\nLatest focus: open the novel with suspicion and control.\n",
       "utf8",
     );
     await writeFile(
       path.join(rootPath, "conversations", "CONTINUATION.md"),
-      "# Continuation\n\nRiparti da Livia, dal varco, e dal dubbio sui registri.\n",
+      "# Continuation\n\nResume from Livia, the gate, and the ledger doubt.\n",
       "utf8",
     );
     await writeFile(
       path.join(rootPath, "conversations", "sessions", "20260310-0000--la-soglia--abc.md"),
-      "# Conversation Export\n\nLivia deve entrare in scena con tensione immediata.\n",
+      "# Conversation Export\n\nLivia needs to enter the page under immediate tension.\n",
       "utf8",
     );
 
     const resumeContext = await buildResumeBookContext(rootPath);
 
-    const chapter = await readChapter(rootPath, "chapter:001-la-soglia");
+    const chapter = await readChapter(rootPath, "chapter:001-the-threshold");
 
     assert.match(context.text, /guidelines\/writing-style\.md/);
     assert.match(context.text, /story-design\.md/);
     assert.match(context.text, /notes\.md/);
-    assert.match(context.text, /rapporto teso con i registri del porto/);
-    assert.match(context.text, /identita nascosta/);
-    assert.match(context.text, /Tenere alta la tensione appena Livia arriva al varco/);
+    assert.match(context.text, /strained relationship with the harbor ledgers/);
+    assert.match(context.text, /hidden-identity arc/);
+    assert.match(context.text, /Keep the pressure high as soon as Livia reaches the gate/);
     assert.match(context.text, /plot\.md/);
     assert.match(context.text, /Rough Scene/);
     assert.match(resumeContext.text, /Conversation Resume/);
-    assert.match(resumeContext.text, /Livia deve entrare in scena/);
-    assert.equal(chapterResult.frontmatter.summary, "Brutta del capitolo di apertura.");
-    assert.equal(paragraphResult.frontmatter.summary, "Brutta della prima scena.");
+    assert.match(resumeContext.text, /Livia needs to enter the page/);
+    assert.equal(chapterResult.frontmatter.summary, "Rough opening chapter summary.");
+    assert.equal(paragraphResult.frontmatter.summary, "Rough first-scene summary.");
     assert.equal(chapter.paragraphs[0].metadata.viewpoint, "character:livia-sarne");
-    assert.match(chapter.paragraphs[0].body, /ceralacca/);
+    assert.match(chapter.paragraphs[0].body, /broken wax/);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }
@@ -1298,23 +1376,23 @@ test("dialogue action beat review works beat by beat and apply updates only conf
     await createCharacterProfile(rootPath, {
       name: "Sergio",
       roleTier: "supporting",
-      speakingStyle: "Spinge con calma apparente finche non ottiene una risposta.",
-      backgroundSummary: "Usa il contatto fisico per prendere spazio quando sente di perdere il controllo.",
+      speakingStyle: "Pushes with calm insistence until he gets an answer.",
+      backgroundSummary: "Uses physical contact to take space when he feels control slipping.",
       functionInBook: "Press the emotional boundaries of the scene.",
-      traits: ["controllante", "vanitoso"],
-      desires: ["ottenere obbedienza emotiva"],
-      fears: ["perdere il controllo della situazione"],
+      traits: ["controlling", "vain"],
+      desires: ["obtain emotional obedience"],
+      fears: ["losing control of the situation"],
       mannerisms: [],
     });
     await createCharacterProfile(rootPath, {
       name: "Federica",
       roleTier: "supporting",
-      speakingStyle: "Taglia corto quando viene messa sotto pressione.",
-      backgroundSummary: "Difende i propri confini con reazioni fisiche brusche quando si sente invasa.",
+      speakingStyle: "Cuts the exchange short when pressure corners her.",
+      backgroundSummary: "Defends her boundaries with abrupt physical reactions when she feels invaded.",
       functionInBook: "Resist Sergio's pressure in the exchange.",
-      traits: ["guardinga", "reattiva"],
-      desires: ["mantenere autonomia"],
-      fears: ["essere controllata"],
+      traits: ["guarded", "reactive"],
+      desires: ["maintain autonomy"],
+      fears: ["being controlled"],
       mannerisms: [],
     });
 
@@ -1324,7 +1402,7 @@ test("dialogue action beat review works beat by beat and apply updates only conf
       frontmatter: {
         pov: ["character:federica"],
       },
-      body: "# Purpose\n\nAumentare la tensione fisica del confronto.",
+      body: "# Purpose\n\nIncrease the physical pressure of the exchange.",
     });
 
     await createParagraph(rootPath, {

@@ -61,9 +61,9 @@ test("mcp server tools support guided creation and structural updates", async ()
       speakingStyle: "Pushes with calm pressure until someone yields.",
       backgroundSummary: "Uses touch and distance as control tactics.",
       functionInBook: "Press another character emotionally.",
-      traits: ["controllante", "vanitoso"],
-      desires: ["ottenere una resa emotiva"],
-      fears: ["perdere il controllo"],
+      traits: ["controlling", "vain"],
+      desires: ["obtain emotional surrender"],
+      fears: ["losing control"],
     });
 
     await callToolText(client, "create_character", {
@@ -73,9 +73,9 @@ test("mcp server tools support guided creation and structural updates", async ()
       speakingStyle: "Cuts fast when she feels trapped.",
       backgroundSummary: "Protects her boundaries with sharp reactions.",
       functionInBook: "Resist pressure in a charged exchange.",
-      traits: ["guardinga", "reattiva"],
-      desires: ["mantenere autonomia"],
-      fears: ["essere controllata"],
+      traits: ["guarded", "reactive"],
+      desires: ["maintain autonomy"],
+      fears: ["being controlled"],
     });
 
     const createChapterText = await callToolText(client, "create_chapter", {
@@ -541,7 +541,7 @@ scope: chapter-writing-style
     assert.match(beatReviewText, /Use a simple speech tag instead/);
     assert.match(beatApplyText, /Applied dialogue action beat selections/);
     assert.match(beatApplyText, /Changed beat count:/);
-    assert.match(beatApplyText, /ridusse la distanza|allungò la mano|cercando col muro una distanza/);
+    assert.match(beatApplyText, /shortened the distance|reached out|letting the wall offer the distance/);
     assert.match(reviseChapterText, /Files written: no/);
     assert.match(reviseChapterText, /Revision plan:/);
     assert.match(reviseChapterText, /Overall continuity impact: none/);

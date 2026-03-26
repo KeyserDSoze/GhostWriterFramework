@@ -1,6 +1,6 @@
 {
   "name": "narrarium-mcp-server",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "type": "module",
   "description": "Local MCP server for Narrarium book repositories.",
   "license": "MIT",
@@ -47,7 +47,7 @@
     "test": "npm run build && node --test test/**/*.test.mjs"
   },
   "dependencies": {
-    "narrarium": "^0.1.26",
+    "narrarium": "^0.1.27",
     "@modelcontextprotocol/sdk": "^1.18.0",
     "zod": "^4.1.12"
   },
