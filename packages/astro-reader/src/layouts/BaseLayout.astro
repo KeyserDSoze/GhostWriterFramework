@@ -5,7 +5,7 @@ import SiteSearch from "../components/SiteSearch.astro";
 import { listChapters } from "narrarium";
 import { getBookRoot } from "../lib/book.js";
 import { loadCanonGlossary } from "../lib/glossary.js";
-import { isFullCanonMode } from "../lib/reader-mode.js";
+import { isFullCanonMode, getReaderPasswordHash } from "../lib/reader-mode.js";
 import { loadSearchIndex } from "../lib/search.js";
 
 interface Props {
@@ -29,6 +29,7 @@ const canonGlossary = await loadCanonGlossary(currentChapterNumber);
 const searchIndex = await loadSearchIndex(currentChapterNumber);
 const readerChapters = await listChapters(getBookRoot()).catch(() => []);
 const fullCanonMode = isFullCanonMode();
+const passwordHash = getReaderPasswordHash();
 const isChapterPage = Number.isFinite(currentChapterNumber);
 ---
 
@@ -59,7 +60,7 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
       })();
     </script>
   </head>
-  <body class:list={[isChapterPage && "page-chapter"]} data-reader-chapter-number={currentChapterNumber} data-full-canon={fullCanonMode ? "true" : "false"}>
+  <body class:list={[isChapterPage && "page-chapter"]} data-reader-chapter-number={currentChapterNumber} data-full-canon={fullCanonMode ? "true" : "false"} data-reader-password-hash={passwordHash ?? ""}>
     <script is:inline>
       (() => {
         try {
@@ -70,6 +71,39 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
         } catch {}
       })();
     </script>
+    <script is:inline>
+      (() => {
+        const hash = document.body.dataset.readerPasswordHash;
+        if (!hash) return;
+        try {
+          if (localStorage.getItem("narrarium-reader-auth") !== hash) {
+            document.body.classList.add("reader-auth-locked");
+          }
+        } catch {
+          document.body.classList.add("reader-auth-locked");
+        }
+      })();
+    </script>
+    {passwordHash && (
+      <div id="reader-password-gate" role="dialog" aria-modal="true" aria-label="Access required">
+        <div class="reader-password-gate__inner">
+          <p class="eyebrow">Narrarium Reader</p>
+          <h1 class="reader-password-gate__title">Access Required</h1>
+          <p class="reader-password-gate__desc">Enter the password to access this book.</p>
+          <form id="reader-password-form" class="reader-password-gate__form" novalidate>
+            <input
+              type="password"
+              id="reader-password-input"
+              class="reader-password-gate__input"
+              placeholder="Password"
+              autocomplete="current-password"
+            />
+            <button type="submit" class="reader-password-gate__button">Unlock</button>
+          </form>
+          <p id="reader-password-error" class="reader-password-gate__error" hidden>Incorrect password. Please try again.</p>
+        </div>
+      </div>
+    )}
     <main class="shell">
       <header class="masthead">
         <a class="brand" href="./">Narrarium</a>
@@ -95,5 +129,41 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
     </main>
     <SiteSearch entries={searchIndex} />
     <ReaderRuntime glossary={canonGlossary} chapters={readerChapters} currentChapterNumber={currentChapterNumber} />
+    {passwordHash && (
+      <script is:inline>
+        (function initPasswordGate() {
+          var gate = document.getElementById("reader-password-gate");
+          var form = document.getElementById("reader-password-form");
+          var input = document.getElementById("reader-password-input");
+          var errorEl = document.getElementById("reader-password-error");
+          var hash = document.body.dataset.readerPasswordHash;
+          if (!gate || !form || !hash) return;
+          if (input) { input.focus(); }
+          function buf2hex(buffer) {
+            return Array.from(new Uint8Array(buffer))
+              .map(function (b) { return b.toString(16).padStart(2, "0"); })
+              .join("");
+          }
+          form.addEventListener("submit", function (event) {
+            event.preventDefault();
+            var password = input ? input.value : "";
+            if (!password) return;
+            var data = new TextEncoder().encode(password);
+            crypto.subtle.digest("SHA-256", data).then(function (hashBuffer) {
+              var inputHash = buf2hex(hashBuffer);
+              if (inputHash === hash) {
+                try { localStorage.setItem("narrarium-reader-auth", hash); } catch {}
+                document.body.classList.remove("reader-auth-locked");
+              } else {
+                if (errorEl) { errorEl.hidden = false; }
+                if (input) { input.value = ""; input.focus(); }
+              }
+            }).catch(function () {
+              if (errorEl) { errorEl.hidden = false; }
+            });
+          });
+        })();
+      </script>
+    )}
   </body>
 </html>

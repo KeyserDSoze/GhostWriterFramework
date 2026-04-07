@@ -119,6 +119,7 @@ html[data-theme="dark"] .focus-rail__button.is-primary {
 
 body.is-focus-mode {
   background: var(--app-bg);
+  touch-action: manipulation;
 }
 
 body.is-focus-mode .masthead,
@@ -1463,4 +1464,99 @@ mark {
     grid-template-columns: 2.5rem 1fr;
     gap: 0 1rem;
   }
+}
+
+/* ─── Password gate ──────────────────────────────────────────── */
+#reader-password-gate {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: var(--app-bg);
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 1.5rem;
+}
+
+body.reader-auth-locked {
+  overflow: hidden;
+}
+
+body.reader-auth-locked #reader-password-gate {
+  display: flex;
+}
+
+.reader-password-gate__inner {
+  width: min(380px, 100%);
+  text-align: center;
+}
+
+.reader-password-gate__title {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  margin: 0.5rem 0 0;
+  letter-spacing: -0.02em;
+}
+
+.reader-password-gate__desc {
+  margin: 0.75rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.reader-password-gate__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1.75rem;
+}
+
+.reader-password-gate__input {
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 1rem;
+  text-align: center;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.reader-password-gate__input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.reader-password-gate__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.65rem 1.5rem;
+  border: 1px solid var(--accent);
+  border-radius: 100px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.reader-password-gate__button:hover {
+  background: color-mix(in srgb, var(--accent) 85%, #000);
+  border-color: color-mix(in srgb, var(--accent) 85%, #000);
+}
+
+.reader-password-gate__error {
+  margin: 0.75rem 0 0;
+  color: #c0392b;
+  font-size: 0.875rem;
+}
+
+html[data-theme="dark"] .reader-password-gate__error {
+  color: #e74c3c;
 }

@@ -214,7 +214,7 @@ const renderedParagraphs = await Promise.all(
   </aside>
 
   <div class="focus-hint" data-reader-focus-hint aria-hidden="true">
-    Move the mouse, tap, or press a key to show controls.
+    Double-tap or double-click to show controls, or press a key.
   </div>
 
   <script is:inline>
@@ -240,6 +240,8 @@ const renderedParagraphs = await Promise.all(
       let railPointerInside = false;
       let focusHintShownForSession = false;
       let refreshScheduled = false;
+      let lastTapTime = 0;
+      const doubleTapThresholdMs = 300;
 
       applyFocusMode(readStorage(focusModeKey) === "true", false, { allowFullscreenRequest: false });
       updateMarkerUi(readMarker());
@@ -247,8 +249,16 @@ const renderedParagraphs = await Promise.all(
 
       window.addEventListener("scroll", scheduleSceneRefresh, { passive: true });
       window.addEventListener("resize", scheduleSceneRefresh);
-      document.addEventListener("pointermove", handleFocusRailWake, { passive: true });
-      document.addEventListener("touchstart", handleFocusRailWake, { passive: true });
+      document.addEventListener("dblclick", handleFocusRailWake);
+      document.addEventListener("touchend", (event) => {
+        const now = Date.now();
+        if (now - lastTapTime < doubleTapThresholdMs) {
+          handleFocusRailWake();
+          lastTapTime = 0;
+        } else {
+          lastTapTime = now;
+        }
+      }, { passive: true });
       document.addEventListener("fullscreenchange", handleFullscreenChange);
 
       focusRail?.addEventListener("pointerenter", () => {
