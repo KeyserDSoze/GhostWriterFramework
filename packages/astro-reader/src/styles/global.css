@@ -1466,6 +1466,34 @@ mark {
   }
 }
 
+/* ─── Auto-decrypt loading overlay ──────────────────────────── */
+#reader-loading {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 199;
+  background: var(--app-bg);
+  align-items: center;
+  justify-content: center;
+}
+
+body.reader-decrypting #reader-loading {
+  display: flex;
+}
+
+.reader-loading__spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: reader-spin 0.7s linear infinite;
+}
+
+@keyframes reader-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ─── Password gate ──────────────────────────────────────────── */
 #reader-password-gate {
   display: none;

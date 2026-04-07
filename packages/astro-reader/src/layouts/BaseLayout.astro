@@ -173,6 +173,8 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
         try { storedKeyB64 = localStorage.getItem("narrarium-reader-aes-key"); } catch (_) {}
 
         if (storedKeyB64) {
+          // Show loading overlay while we verify and decrypt with the stored key.
+          document.body.classList.add("reader-decrypting");
           crypto.subtle.importKey(
             "raw", b64ToBytes(storedKeyB64),
             { name: "AES-GCM", length: 256 },
@@ -186,8 +188,12 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
                 return window._narrariumDecryptPage(key, true);
               });
             })
+            .then(function () {
+              document.body.classList.remove("reader-decrypting");
+            })
             .catch(function () {
               // Stored key is stale or corrupt — clear it and show lock screen.
+              document.body.classList.remove("reader-decrypting");
               try { localStorage.removeItem("narrarium-reader-aes-key"); } catch (_) {}
               document.body.classList.add("reader-auth-locked");
               _resolveReady("locked");
@@ -198,6 +204,11 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
         }
       })();
     </script>
+    {canary && (
+      <div id="reader-loading" aria-hidden="true">
+        <div class="reader-loading__spinner"></div>
+      </div>
+    )}
     {canary && (
       <div id="reader-password-gate" role="dialog" aria-modal="true" aria-label="Access required">
         <div class="reader-password-gate__inner">
