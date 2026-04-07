@@ -185,7 +185,22 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
               // before we touch any page content.
               return aesDecrypt(key, canaryIv, canaryCt).then(function (plaintext) {
                 if (plaintext !== "narrarium-ok") throw new Error("stale");
-                return window._narrariumDecryptPage(key, true);
+                // Expose the key so the EPUB download handler can reuse it.
+                window._narrariumAesKey = key;
+                // Guard against a race where the auto-decrypt micro-task resolves
+                // before the HTML parser has emitted <main> and its encrypted spans.
+                // If the DOM is still being parsed, defer until DOMContentLoaded.
+                function waitForDom() {
+                  if (document.readyState === "loading") {
+                    return new Promise(function (resolve) {
+                      document.addEventListener("DOMContentLoaded", resolve, { once: true });
+                    });
+                  }
+                  return Promise.resolve();
+                }
+                return waitForDom().then(function () {
+                  return window._narrariumDecryptPage(key, true);
+                });
               });
             })
             .then(function () {
@@ -246,6 +261,7 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
         <div class="masthead-actions">
           <a class="chip reader-status" data-continue-link href="./" hidden>Continue reading</a>
           <button type="button" class="masthead-btn" data-tts-panel-toggle aria-label="Open read aloud controls" aria-pressed="false" hidden>🔊</button>
+          <button type="button" class="masthead-btn" data-epub-download aria-label="Download EPUB" hidden>⬇</button>
           <button type="button" class="masthead-btn" data-search-toggle aria-label="Search">🔍</button>
           <button type="button" class="masthead-btn" data-reader-settings-toggle aria-label="Open reading settings">⚙</button>
         </div>
@@ -314,6 +330,9 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
                     try { localStorage.setItem("narrarium-reader-aes-key", b64); } catch (_) {}
                   });
 
+                  // Expose the key so the EPUB download handler can reuse it.
+                  window._narrariumAesKey = aesKey;
+
                   // Decrypt the page — passes false = manual unlock, so the
                   // content-unlocked event will fire for late-init scripts.
                   return window._narrariumDecryptPage(aesKey, false);
@@ -327,5 +346,65 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
         })();
       </script>
     )}
+    <script is:inline>
+      /* ── EPUB download ──────────────────────────────────────────────────────
+         The epub.enc static endpoint is always generated at build time.
+         • Encrypted build: client fetches, decrypts with the stored AES key,
+           creates an in-memory Blob and triggers a browser <a download>.
+         • Plain build:     client fetches, wraps in a Blob, triggers download.
+         The button is hidden until _narrariumContentReady resolves.
+      ──────────────────────────────────────────────────────────────────────── */
+      (function () {
+        var btn = document.querySelector("[data-epub-download]");
+        if (!btn) return;
+
+        window._narrariumContentReady.then(function (state) {
+          if (state === "decrypted" || state === "plain") {
+            btn.removeAttribute("hidden");
+          }
+        });
+
+        btn.addEventListener("click", function () {
+          var isEncrypted = Boolean(document.body.dataset.cryptoSalt);
+          var epubUrl = new URL("epub.enc", document.baseURI).toString();
+
+          btn.setAttribute("disabled", "");
+
+          fetch(epubUrl)
+            .then(function (r) {
+              if (!r.ok) throw new Error("fetch failed: " + r.status);
+              return r.arrayBuffer();
+            })
+            .then(function (buf) {
+              if (isEncrypted) {
+                var aesKey = window._narrariumAesKey;
+                if (!aesKey) throw new Error("no key");
+                var bytes = new Uint8Array(buf);
+                var iv = bytes.slice(0, 12);
+                var ct = bytes.slice(12);
+                return crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, aesKey, ct);
+              }
+              return buf;
+            })
+            .then(function (plainBuf) {
+              var blob = new Blob([plainBuf], { type: "application/epub+zip" });
+              var url = URL.createObjectURL(blob);
+              var a = document.createElement("a");
+              a.href = url;
+              a.download = "book.epub";
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+            })
+            .catch(function (err) {
+              console.error("[narrarium] EPUB download failed", err);
+            })
+            .finally(function () {
+              btn.removeAttribute("disabled");
+            });
+        });
+      })();
+    </script>
   </body>
 </html>

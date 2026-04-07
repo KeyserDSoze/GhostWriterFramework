@@ -30,4 +30,17 @@ export declare function encryptString(plaintext: string, password: string): Encr
  * the result equals `CANARY_PLAINTEXT` — no fast-hash oracle in the HTML.
  */
 export declare function encryptCanary(password: string): EncryptedChunk;
+/**
+ * Encrypt a raw Buffer with AES-256-GCM using the same PBKDF2-derived build
+ * key. Returns raw `iv` and `ct` Buffers for binary file endpoints.
+ *
+ * Wire format (concatenate before serving):
+ *   [12-byte IV][ciphertext ∥ 16-byte GCM auth tag]
+ *
+ * Client side: `bytes.slice(0, 12)` = IV, `bytes.slice(12)` = ciphertext+tag.
+ */
+export declare function encryptBufferRaw(data: Buffer, password: string): {
+    iv: Buffer;
+    ct: Buffer;
+};
 //# sourceMappingURL=content-crypto.d.ts.map

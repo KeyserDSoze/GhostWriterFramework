@@ -59,4 +59,22 @@ export function encryptString(plaintext, password) {
 export function encryptCanary(password) {
     return encryptString(CANARY_PLAINTEXT, password);
 }
+/**
+ * Encrypt a raw Buffer with AES-256-GCM using the same PBKDF2-derived build
+ * key. Returns raw `iv` and `ct` Buffers for binary file endpoints.
+ *
+ * Wire format (concatenate before serving):
+ *   [12-byte IV][ciphertext ∥ 16-byte GCM auth tag]
+ *
+ * Client side: `bytes.slice(0, 12)` = IV, `bytes.slice(12)` = ciphertext+tag.
+ */
+export function encryptBufferRaw(data, password) {
+    const salt = getBuildSalt();
+    const key = deriveKey(password, salt);
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const body = Buffer.concat([cipher.update(data), cipher.final()]);
+    const tag = cipher.getAuthTag(); // always 16 bytes for AES-GCM
+    return { iv, ct: Buffer.concat([body, tag]) };
+}
 //# sourceMappingURL=content-crypto.js.map

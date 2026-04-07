@@ -1,0 +1,28 @@
+---
+interface Props {
+  dialogId: string;
+  title: string;
+  htmlContent: string;
+}
+
+const { dialogId, title, htmlContent } = Astro.props;
+---
+
+<dialog class="eval-dialog" id={dialogId} aria-label={title}>
+  <div class="eval-dialog__inner">
+    <div class="eval-dialog__header">
+      <h2 class="eval-dialog__title">{title}</h2>
+      <button
+        type="button"
+        class="eval-dialog__close"
+        aria-label="Close evaluation"
+        data-eval-close={dialogId}
+      >
+        ✕
+      </button>
+    </div>
+    <div class="eval-dialog__body prose">
+      <Fragment set:html={htmlContent} />
+    </div>
+  </div>
+</dialog>

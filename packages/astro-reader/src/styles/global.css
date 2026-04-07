@@ -934,7 +934,7 @@ h3 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 1rem;
-  align-items: center;
+  align-items: stretch;
   border: 1px solid var(--line);
   background: var(--surface);
   padding: 0.9rem 1.25rem;
@@ -943,7 +943,7 @@ h3 {
 }
 
 .pager-link {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 0.4rem;
   padding: 0.5rem 0.75rem;
@@ -974,6 +974,7 @@ h3 {
 .pager-jump {
   display: grid;
   gap: 0.3rem;
+  align-content: center;
   min-width: 0;
 }
 
@@ -1587,4 +1588,75 @@ body.reader-auth-locked #reader-password-gate {
 
 html[data-theme="dark"] .reader-password-gate__error {
   color: #e74c3c;
+}
+
+/* ─── Evaluation modal ──────────────────────────────────────── */
+.eval-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  width: min(720px, calc(100% - 2rem));
+  max-height: calc(100dvh - 4rem);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+}
+
+.eval-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(3px);
+}
+
+.eval-dialog__inner {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 4rem);
+}
+
+.eval-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.eval-dialog__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.eval-dialog__close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.eval-dialog__close:hover {
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
+.eval-dialog__body {
+  overflow-y: auto;
+  padding: 1.5rem;
+  flex: 1 1 auto;
 }

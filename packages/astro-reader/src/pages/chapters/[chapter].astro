@@ -5,6 +5,7 @@ import { listChapters, pathExists } from "narrarium";
 import AssetFigure from "../../components/AssetFigure.astro";
 import ChapterPager from "../../components/ChapterPager.astro";
 import EncryptedHtml from "../../components/EncryptedHtml.astro";
+import EvaluationModal from "../../components/EvaluationModal.astro";
 import LinkedValue from "../../components/LinkedValue.astro";
 import MetadataSection from "../../components/MetadataSection.astro";
 import RelatedLinks from "../../components/RelatedLinks.astro";
@@ -12,6 +13,8 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 import { loadAssetFigure } from "../../lib/assets";
 import { loadRelatedCanonLinks, loadStoryMentionLinks } from "../../lib/canon";
 import { getBookRoot, loadChapterPageData } from "../../lib/book";
+import { loadChapterEvaluation, loadParagraphEvaluation } from "../../lib/evaluations";
+import { isFullCanonMode } from "../../lib/reader-mode";
 
 export async function getStaticPaths() {
   const root = getBookRoot();
@@ -41,13 +44,23 @@ const chapterId = String(chapter.metadata.id);
 const chapterRelatedLinks = await loadRelatedCanonLinks(chapterId, [chapter.metadata.pov, chapter.metadata.timeline_ref]);
 const chapterStoryLinks = await loadStoryMentionLinks(chapterId, chapter.metadata.number);
 const chapterFigure = await loadAssetFigure(String(chapter.metadata.id), chapter.metadata.title);
+
+// Full-canon mode: load evaluations for author view.
+const fullCanonMode = isFullCanonMode();
+const chapterEvaluation = fullCanonMode ? await loadChapterEvaluation(chapterSlug) : null;
+
 const renderedParagraphs = await Promise.all(
-  chapter.paragraphs.map(async (paragraph) => ({
-    ...paragraph,
-    anchorId: `scene-${path.basename(paragraph.path, ".md")}`,
-    figure: await loadAssetFigure(String(paragraph.metadata.id), paragraph.metadata.title),
-    html: await marked.parse(paragraph.body),
-  })),
+  chapter.paragraphs.map(async (paragraph) => {
+    const paragraphSlug = path.basename(paragraph.path, ".md");
+    return {
+      ...paragraph,
+      paragraphSlug,
+      anchorId: `scene-${paragraphSlug}`,
+      figure: await loadAssetFigure(String(paragraph.metadata.id), paragraph.metadata.title),
+      html: await marked.parse(paragraph.body),
+      evaluation: fullCanonMode ? await loadParagraphEvaluation(chapterSlug, paragraphSlug) : null,
+    };
+  }),
 );
 ---
 
@@ -66,6 +79,11 @@ const renderedParagraphs = await Promise.all(
       <button type="button" class="chip is-action" data-bookmark-toggle>Save bookmark</button>
       <button type="button" class="chip is-action" data-tts-trigger="chapter" hidden>Read aloud</button>
       <button type="button" class="chip is-action" data-reader-focus-toggle>Full read</button>
+      {chapterEvaluation && (
+        <button type="button" class="chip is-action eval-trigger" data-eval-open={`eval-chapter-${chapterSlug}`}>
+          Evaluation
+        </button>
+      )}
     </div>
   </section>
 
@@ -148,6 +166,11 @@ const renderedParagraphs = await Promise.all(
                     Mark voice start
                   </button>
                   <button type="button" class="chip is-action" data-tts-trigger={paragraph.anchorId} hidden>Read aloud</button>
+                  {paragraph.evaluation && (
+                    <button type="button" class="chip is-action eval-trigger" data-eval-open={`eval-paragraph-${paragraph.paragraphSlug}`}>
+                      Evaluation
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -220,6 +243,24 @@ const renderedParagraphs = await Promise.all(
   <div class="focus-hint" data-reader-focus-hint aria-hidden="true">
     Double-tap or double-click to show controls, or press a key.
   </div>
+
+  {/* Evaluation modals — full-canon mode only */}
+  {chapterEvaluation && (
+    <EvaluationModal
+      dialogId={`eval-chapter-${chapterSlug}`}
+      title={chapterEvaluation.title}
+      htmlContent={chapterEvaluation.htmlContent}
+    />
+  )}
+  {renderedParagraphs.map((paragraph) =>
+    paragraph.evaluation ? (
+      <EvaluationModal
+        dialogId={`eval-paragraph-${paragraph.paragraphSlug}`}
+        title={paragraph.evaluation.title}
+        htmlContent={paragraph.evaluation.htmlContent}
+      />
+    ) : null
+  )}
 
   <script is:inline>
     (() => {
@@ -548,6 +589,28 @@ const renderedParagraphs = await Promise.all(
       function isEditable(node) {
         return node instanceof HTMLElement && (node.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName));
       }
+
+      // ── Evaluation modal wiring ─────────────────────────────────────────
+      document.querySelectorAll("[data-eval-open]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var dialogId = btn.getAttribute("data-eval-open");
+          var dialog = dialogId ? document.getElementById(dialogId) : null;
+          if (dialog instanceof HTMLDialogElement) dialog.showModal();
+        });
+      });
+      document.querySelectorAll("[data-eval-close]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var dialogId = btn.getAttribute("data-eval-close");
+          var dialog = dialogId ? document.getElementById(dialogId) : null;
+          if (dialog instanceof HTMLDialogElement) dialog.close();
+        });
+      });
+      // Close on backdrop click (click lands directly on <dialog>, not its children).
+      document.querySelectorAll(".eval-dialog").forEach(function (dialog) {
+        dialog.addEventListener("click", function (event) {
+          if (event.target === dialog) /** @type {HTMLDialogElement} */ (dialog).close();
+        });
+      });
     })();
   </script>
 </BaseLayout>
