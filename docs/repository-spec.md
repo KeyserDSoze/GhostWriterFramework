@@ -313,7 +313,7 @@ Treat `state_changes` as the chapter delta, not as a full-world snapshot.
 - see `docs/revise-chapter.md` for the chapter-level workflow and output model
 - use `resumes/` to keep running summaries stable
 - use `state/` for structured continuity snapshots and refresh it manually with `sync_story_state` after stable rewrites
-- use `evaluations/` for structural critique, continuity checks, and quality notes
+- use `evaluations/` for structural critique, continuity checks, quality notes, editorial reading against the active writing-style files, canon coherence checks against active characters, locations, factions, items, and timelines, plus an explicit explanation of why the weighted verdict landed where it did
 - chapter and paragraph evaluations should be saved files, not just transient chat output
 - use `conversations/` for portable exported chat history, resume files, and continuation prompts; treat it as support material, not canon
 - use `npm run doctor` or `doctorBook()` to catch broken references, stale maintenance files, missing asset descriptions, and spoiler-threshold problems

@@ -228,6 +228,9 @@ test("core book workflow supports canon indexes and structural updates", async (
     const syncedChapterResume = await readFile(chapterResumePath, "utf8");
     const currentStoryState = await readFile(path.join(rootPath, "state", "current.md"), "utf8");
     const storyStateStatus = await readFile(path.join(rootPath, "state", "status.md"), "utf8");
+    const totalEvaluation = await readFile(evaluation.filePath, "utf8");
+    const chapterEvaluation = await readFile(evaluation.chapterEvaluationFiles[0], "utf8");
+    const paragraphEvaluation = await readFile(evaluation.paragraphEvaluationFiles[0], "utf8");
     const doctorCodes = doctor.issues.map((issue) => issue.code);
 
     assert.equal(characters.length, 2);
@@ -266,6 +269,25 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.equal(refreshedResumes.chapterCount, 1);
     assert.equal(storyState.chapterCount, 1);
     assert.equal(evaluation.chapterCount, 1);
+    assert.match(totalEvaluation, /Active guideline references: guideline:writing-style/);
+    assert.match(totalEvaluation, /Average weighted verdict score:/);
+    assert.match(totalEvaluation, /Overall weighted verdict:/);
+    assert.match(totalEvaluation, /# Why the weighted verdict landed here/);
+    assert.match(totalEvaluation, /editorial carrying 60% of the result/);
+    assert.match(chapterEvaluation, /# Editorial Reading/);
+    assert.match(chapterEvaluation, /# Canon Coherence/);
+    assert.match(chapterEvaluation, /# Why the weighted verdict landed here/);
+    assert.match(chapterEvaluation, /Weighted verdict:/);
+    assert.match(chapterEvaluation, /Recommended focus:/);
+    assert.match(chapterEvaluation, /Strongest drag on the verdict:/);
+    assert.match(chapterEvaluation, /Global writing style: guideline:writing-style/);
+    assert.match(paragraphEvaluation, /# Editorial Reading/);
+    assert.match(paragraphEvaluation, /# Canon Coherence/);
+    assert.match(paragraphEvaluation, /# Why the weighted verdict landed here/);
+    assert.match(paragraphEvaluation, /Weighted verdict:/);
+    assert.match(paragraphEvaluation, /Strongest signal in favor:/);
+    assert.match(paragraphEvaluation, /writing-style guidance/);
+    assert.match(paragraphEvaluation, /Timeline reference chapter:001-the-arrival anchors chronology to canon|Timeline reference/);
     assert.equal(validation.valid, true);
     assert.match(syncedChapterResume, /state_changes:/);
     assert.match(currentStoryState, /character:lyra-vale -> location:gray-harbor/);

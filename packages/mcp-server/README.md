@@ -179,6 +179,8 @@ Chapter and paragraph writing context now always load `guidelines/writing-style.
 
 Use `save_book_item` and `save_chapter_item` for structured active ideas and notes, `promote_book_item` and `promote_chapter_item` to archive promoted items out of the active queues, and `update_book_notes` / `update_chapter_notes` when you want to edit the supporting documents themselves.
 
+Evaluation tools now combine objective text signals with an editorial reading against `guidelines/writing-style.md` and any chapter-specific `writing-style.md` files, plus canon coherence checks against characters, locations, factions, items, and timeline references when they are present on the page. The saved evaluation files expose both objective and editorial scores, a weighted verdict, recommended focus, and a dedicated `Why the weighted verdict landed here` section.
+
 See `docs/style-profiles.md` for the chapter style workflow.
 
 ## Practical asset examples

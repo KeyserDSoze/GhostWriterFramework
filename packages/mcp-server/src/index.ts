@@ -2447,7 +2447,7 @@ server.tool(
 
 server.tool(
   "evaluate_chapter",
-  "Refresh a full chapter evaluation by reading the whole chapter across all paragraph files, checking active style rules and custom chapter patterns, scoring quality, and writing next steps plus paragraph evaluation files.",
+  "Refresh a full chapter evaluation by reading the whole chapter across all paragraph files, combining objective text signals with editorial reading against the active writing-style files and canon coherence checks, then writing objective/editorial scores, a weighted verdict, an explanation of why that verdict landed there, and next steps plus paragraph evaluation files.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -2460,7 +2460,7 @@ server.tool(
 
 server.tool(
   "evaluate_paragraph",
-  "Refresh the saved evaluation for a single paragraph while still using the full chapter as context, including scores, style checks, and concrete next steps.",
+  "Refresh the saved evaluation for a single paragraph while still using the full chapter as context, including objective scores, writing-style-aware editorial notes, canon coherence checks, a weighted verdict, an explanation of why that verdict landed there, and concrete next steps.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -2474,7 +2474,7 @@ server.tool(
 
 server.tool(
   "evaluate_book",
-  "Refresh the total book evaluation with chapter scorecards, style checks, and revision priorities, and optionally refresh all chapter and paragraph evaluations too.",
+  "Refresh the total book evaluation with chapter scorecards, writing-style-aware editorial checks, canon coherence checks, weighted verdict summaries, explicit verdict explanations, and revision priorities, and optionally refresh all chapter and paragraph evaluations too.",
   {
     rootPath: z.string().min(1),
     syncChapterEvaluations: z.boolean().default(true),

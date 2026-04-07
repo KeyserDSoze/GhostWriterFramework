@@ -334,11 +334,34 @@ type GuidelineDocument = MarkdownDocument<GuidelineFrontmatter> & {
 };
 
 type EvaluationStyleContext = {
-  coreGuidelines: GuidelineDocument[];
-  referencedGuidelines: GuidelineDocument[];
-  unresolvedRefs: string[];
+  globalWritingStyle: GuidelineDocument | null;
+  chapterWritingStyle: GuidelineDocument | null;
+  draftWritingStyle: GuidelineDocument | null;
   metadataSignals: Array<{ key: string; value: string }>;
+  expectationText: string;
   showDontTell: boolean;
+  prefersShortSentences: boolean;
+  prefersLyricalImagery: boolean;
+  valuesDialogue: boolean;
+  valuesPhysicality: boolean;
+  valuesActiveSpace: boolean;
+  valuesObjectFunction: boolean;
+  valuesSubtext: boolean;
+  valuesControlledProse: boolean;
+};
+
+type EvaluationCanonEntity = {
+  kind: EntityType | "timeline-event";
+  id: string;
+  title: string;
+  path: string;
+  aliases: string[];
+  coherenceHints: string[];
+};
+
+type EvaluationCanonContext = {
+  entities: EvaluationCanonEntity[];
+  byId: Map<string, EvaluationCanonEntity>;
 };
 
 type ChapterReadResult = {
@@ -449,6 +472,15 @@ type ParagraphEvaluationInsight = {
   scorecard: ScorecardEntry[];
   strengths: string[];
   concerns: string[];
+  editorialStrengths: string[];
+  editorialConcerns: string[];
+  canonStrengths: string[];
+  canonConcerns: string[];
+  objectiveScore: number;
+  editorialScore: number;
+  weightedScore: number;
+  weightedVerdict: string;
+  recommendedFocus: string;
   nextSteps: string[];
 };
 
@@ -461,9 +493,61 @@ type ChapterEvaluationDraft = {
   scorecard: ScorecardEntry[];
   strengths: string[];
   concerns: string[];
+  editorialStrengths: string[];
+  editorialConcerns: string[];
+  canonStrengths: string[];
+  canonConcerns: string[];
+  objectiveScore: number;
+  editorialScore: number;
+  weightedScore: number;
+  weightedVerdict: string;
+  recommendedFocus: string;
   nextSteps: string[];
   missingParagraphSummaries: number;
   missingParagraphViewpoints: number;
+};
+
+type BookEvaluationChapterBreakdown = {
+  slug: string;
+  title: string;
+  number: number;
+  sceneCount: number;
+  hasSummary: boolean;
+  hasPov: boolean;
+  tagsCount: number;
+  missingParagraphSummaries: number;
+  missingParagraphViewpoints: number;
+  readabilityScore: number;
+  beautyScore: number;
+  styleAlignmentScore: number;
+  objectiveScore: number;
+  editorialScore: number;
+  weightedScore: number;
+  weightedVerdict: string;
+  recommendedFocus: string;
+  revisionUrgency: string;
+  strengths: string[];
+  concerns: string[];
+  editorialStrengths: string[];
+  editorialConcerns: string[];
+  canonStrengths: string[];
+  canonConcerns: string[];
+  nextSteps: string[];
+};
+
+type WeightedVerdictExplanationInput = {
+  objectiveScore: number;
+  editorialScore: number;
+  weightedScore: number;
+  weightedVerdict: string;
+  recommendedFocus: string;
+  objectiveStrengths?: string[];
+  objectiveConcerns?: string[];
+  editorialStrengths?: string[];
+  editorialConcerns?: string[];
+  canonStrengths?: string[];
+  canonConcerns?: string[];
+  extraContextLines?: string[];
 };
 
 type CreateEntityInput = {
@@ -4998,22 +5082,7 @@ export async function evaluateBook(
   const syncChapterEvaluations = options?.syncChapterEvaluations ?? true;
   const chapterEvaluationFiles: string[] = [];
   const paragraphEvaluationFiles: string[] = [];
-  const chapterBreakdowns: Array<{
-    slug: string;
-    title: string;
-    number: number;
-    sceneCount: number;
-    hasSummary: boolean;
-    hasPov: boolean;
-    tagsCount: number;
-    missingParagraphSummaries: number;
-    missingParagraphViewpoints: number;
-    readabilityScore: number;
-    beautyScore: number;
-    styleAlignmentScore: number;
-    revisionUrgency: string;
-    nextSteps: string[];
-  }> = [];
+  const chapterBreakdowns: BookEvaluationChapterBreakdown[] = [];
 
   const aggregatedStyles = new Map<string, string[]>();
   const aggregatedSignals = new Map<string, string[]>();
@@ -5036,12 +5105,26 @@ export async function evaluateBook(
       readabilityScore: readability,
       beautyScore: beauty,
       styleAlignmentScore: styleAlignment,
-      revisionUrgency: formatRevisionUrgency(draft.concerns.length, draft.nextSteps.length),
+      objectiveScore: draft.objectiveScore,
+      editorialScore: draft.editorialScore,
+      weightedScore: draft.weightedScore,
+      weightedVerdict: draft.weightedVerdict,
+      recommendedFocus: draft.recommendedFocus,
+      revisionUrgency: formatRevisionUrgency(draft.concerns.length + draft.editorialConcerns.length + draft.canonConcerns.length, draft.nextSteps.length),
+      strengths: draft.strengths,
+      concerns: draft.concerns,
+      editorialStrengths: draft.editorialStrengths,
+      editorialConcerns: draft.editorialConcerns,
+      canonStrengths: draft.canonStrengths,
+      canonConcerns: draft.canonConcerns,
       nextSteps: draft.nextSteps,
     });
 
-    collectGuidelineTitles(aggregatedStyles, draft.styleContext.coreGuidelines);
-    collectGuidelineTitles(aggregatedStyles, draft.styleContext.referencedGuidelines);
+    collectGuidelineTitles(aggregatedStyles, [
+      draft.styleContext.globalWritingStyle,
+      draft.styleContext.chapterWritingStyle,
+      draft.styleContext.draftWritingStyle,
+    ].filter((guideline): guideline is GuidelineDocument => Boolean(guideline)));
 
     for (const signal of draft.styleContext.metadataSignals) {
       const values = aggregatedSignals.get(signal.key) ?? [];
@@ -5075,13 +5158,53 @@ export async function evaluateBook(
   const averageReadability = averageScore(chapterBreakdowns.map((chapter) => chapter.readabilityScore));
   const averageBeauty = averageScore(chapterBreakdowns.map((chapter) => chapter.beautyScore));
   const averageStyleAlignment = averageScore(chapterBreakdowns.map((chapter) => chapter.styleAlignmentScore));
-  const criticalChapters = chapterBreakdowns.filter((chapter) => chapter.readabilityScore <= 5 || chapter.styleAlignmentScore <= 5);
+  const averageObjective = averageScore(chapterBreakdowns.map((chapter) => chapter.objectiveScore));
+  const averageEditorial = averageScore(chapterBreakdowns.map((chapter) => chapter.editorialScore));
+  const averageWeighted = averageScore(chapterBreakdowns.map((chapter) => chapter.weightedScore));
+  const criticalChapters = chapterBreakdowns.filter((chapter) => chapter.editorialScore <= 6 || chapter.styleAlignmentScore <= 5);
+  const overallVerdict = buildWeightedVerdict({
+    objectiveScore: averageObjective,
+    editorialScore: averageEditorial,
+    concerns: criticalChapters.flatMap((chapter) => chapter.nextSteps),
+    editorialConcerns: criticalChapters.flatMap((chapter) => [chapter.recommendedFocus]),
+  });
   const activeStyleRefs = uniqueValues(
     [...aggregatedStyles.entries()].flatMap(([, titles]) => titles),
   );
   const styleSignals = [...aggregatedSignals.entries()]
     .filter(([, values]) => values.length > 0)
     .sort(([left], [right]) => left.localeCompare(right));
+  const verdictConcernSource = criticalChapters.length > 0 ? criticalChapters : chapterBreakdowns;
+  const weightedVerdictExplanation = buildWeightedVerdictExplanation({
+    objectiveScore: averageObjective,
+    editorialScore: averageEditorial,
+    weightedScore: averageWeighted,
+    weightedVerdict: overallVerdict.verdict,
+    recommendedFocus: overallVerdict.focus,
+    objectiveStrengths: chapterBreakdowns.flatMap((chapter) =>
+      chapter.strengths.map((note) => `Chapter ${formatOrdinal(chapter.number)}: ${note}`),
+    ),
+    objectiveConcerns: verdictConcernSource.flatMap((chapter) =>
+      chapter.concerns.map((note) => `Chapter ${formatOrdinal(chapter.number)}: ${note}`),
+    ),
+    editorialStrengths: chapterBreakdowns.flatMap((chapter) =>
+      chapter.editorialStrengths.map((note) => `Chapter ${formatOrdinal(chapter.number)}: ${note}`),
+    ),
+    editorialConcerns: verdictConcernSource.flatMap((chapter) =>
+      chapter.editorialConcerns.map((note) => `Chapter ${formatOrdinal(chapter.number)}: ${note}`),
+    ),
+    canonStrengths: chapterBreakdowns.flatMap((chapter) =>
+      chapter.canonStrengths.map((note) => `Chapter ${formatOrdinal(chapter.number)}: ${note}`),
+    ),
+    canonConcerns: verdictConcernSource.flatMap((chapter) =>
+      chapter.canonConcerns.map((note) => `Chapter ${formatOrdinal(chapter.number)}: ${note}`),
+    ),
+    extraContextLines: [
+      criticalChapters.length > 0
+        ? `Chapters pulling hardest on the verdict: ${criticalChapters.map((chapter) => `Chapter ${formatOrdinal(chapter.number)}`).join(", ")}.`
+        : "No chapter is currently pulling the book into the urgent band.",
+    ],
+  });
 
   const content = renderMarkdown(
     {
@@ -5101,15 +5224,29 @@ export async function evaluateBook(
       `- Average reader readability: ${averageReadability}/10`,
       `- Average beauty and memorability: ${averageBeauty}/10`,
       `- Average style alignment: ${averageStyleAlignment}/10`,
+      `- Average objective score: ${averageObjective}/10`,
+      `- Average editorial score: ${averageEditorial}/10`,
+      `- Average weighted verdict score: ${averageWeighted}/10`,
+      `- Overall weighted verdict: ${overallVerdict.verdict}`,
+      `- Overall recommended focus: ${overallVerdict.focus}`,
       "",
       "# Global Scorecard",
       "",
       `- Reader readability: ${averageReadability}/10`,
       `- Beauty and memorability: ${averageBeauty}/10`,
       `- Style alignment: ${averageStyleAlignment}/10`,
+      `- Objective score: ${averageObjective}/10`,
+      `- Editorial score: ${averageEditorial}/10`,
+      `- Weighted verdict score: ${averageWeighted}/10`,
+      `- Overall weighted verdict: ${overallVerdict.verdict}`,
+      `- Overall recommended focus: ${overallVerdict.focus}`,
       criticalChapters.length > 0
         ? `- Chapters needing immediate attention: ${criticalChapters.map((chapter) => formatOrdinal(chapter.number)).join(", ")}`
         : "- No chapter is currently flagged as urgent by the score thresholds.",
+      "",
+      "# Why the weighted verdict landed here",
+      "",
+      ...weightedVerdictExplanation,
       "",
       "# Style Context",
       "",
@@ -5142,6 +5279,11 @@ export async function evaluateBook(
         `- Reader readability: ${chapter.readabilityScore}/10`,
         `- Beauty and memorability: ${chapter.beautyScore}/10`,
         `- Style alignment: ${chapter.styleAlignmentScore}/10`,
+        `- Objective score: ${chapter.objectiveScore}/10`,
+        `- Editorial score: ${chapter.editorialScore}/10`,
+        `- Weighted verdict score: ${chapter.weightedScore}/10`,
+        `- Weighted verdict: ${chapter.weightedVerdict}`,
+        `- Recommended focus: ${chapter.recommendedFocus}`,
         `- Revision urgency: ${chapter.revisionUrgency}`,
         ...chapter.nextSteps.map((step) => `- Next step: ${step}`),
         "",
@@ -5173,6 +5315,7 @@ async function buildChapterEvaluationDraft(root: string, chapter: string): Promi
   const chapterSlug = normalizeChapterReference(chapter);
   const chapterData = await readChapter(root, chapterSlug);
   const styleContext = await resolveEvaluationStyleContext(root, chapterData);
+  const canonContext = await buildEvaluationCanonContext(root);
   const chapterText = chapterData.paragraphs.map((paragraph) => paragraph.body.trim()).filter(Boolean).join("\n\n");
   const chapterAnalysis = analyzeText(chapterText);
   const inheritedViewpoint = (chapterData.metadata.pov ?? []).join(", ") || "not set";
@@ -5184,7 +5327,22 @@ async function buildChapterEvaluationDraft(root: string, chapter: string): Promi
     const scorecard = buildParagraphScorecard(chapterData, paragraph, paragraphAnalysis, styleContext);
     const strengths = collectEvaluationNotes(scorecard, "strengths", 4);
     const concerns = collectEvaluationNotes(scorecard, "concerns", 4);
-    const nextSteps = buildParagraphNextSteps(chapterData, paragraph, paragraphAnalysis, styleContext);
+    const editorial = buildParagraphEditorialAssessment(chapterData, paragraph, paragraphAnalysis, styleContext);
+    const canon = buildParagraphCanonAssessment(chapterData, paragraph, paragraphAnalysis, canonContext);
+    const nextSteps = uniqueValues([
+      ...buildParagraphNextSteps(chapterData, paragraph, paragraphAnalysis, styleContext),
+      ...editorial.nextSteps,
+      ...canon.nextSteps,
+    ]);
+    const objectiveScore = averageScore(scorecard.map((entry) => entry.score));
+    const editorialScore = buildEditorialScore(editorial.strengths, editorial.concerns, canon.strengths, canon.concerns);
+    const weightedScore = buildWeightedEvaluationScore(objectiveScore, editorialScore);
+    const { verdict: weightedVerdict, focus: recommendedFocus } = buildWeightedVerdict({
+      objectiveScore,
+      editorialScore,
+      concerns: [...concerns, ...editorial.concerns, ...canon.concerns],
+      editorialConcerns: [...editorial.concerns, ...canon.concerns],
+    });
 
     return {
       slug: path.basename(paragraph.path, ".md"),
@@ -5207,6 +5365,15 @@ async function buildChapterEvaluationDraft(root: string, chapter: string): Promi
       scorecard,
       strengths,
       concerns,
+      editorialStrengths: editorial.strengths,
+      editorialConcerns: editorial.concerns,
+      canonStrengths: canon.strengths,
+      canonConcerns: canon.concerns,
+      objectiveScore,
+      editorialScore,
+      weightedScore,
+      weightedVerdict,
+      recommendedFocus,
       nextSteps,
     };
   });
@@ -5214,7 +5381,22 @@ async function buildChapterEvaluationDraft(root: string, chapter: string): Promi
   const scorecard = buildChapterScorecard(chapterData, chapterAnalysis, paragraphInsights, styleContext);
   const strengths = collectEvaluationNotes(scorecard, "strengths", 5);
   const concerns = collectEvaluationNotes(scorecard, "concerns", 5);
-  const nextSteps = buildChapterNextSteps(chapterData, chapterAnalysis, paragraphInsights, styleContext);
+  const editorial = buildChapterEditorialAssessment(chapterData, chapterAnalysis, paragraphInsights, styleContext);
+  const canon = buildChapterCanonAssessment(chapterData, chapterAnalysis, paragraphInsights, canonContext);
+  const nextSteps = uniqueValues([
+    ...buildChapterNextSteps(chapterData, chapterAnalysis, paragraphInsights, styleContext),
+    ...editorial.nextSteps,
+    ...canon.nextSteps,
+  ]);
+  const objectiveScore = averageScore(scorecard.map((entry) => entry.score));
+  const editorialScore = buildEditorialScore(editorial.strengths, editorial.concerns, canon.strengths, canon.concerns);
+  const weightedScore = buildWeightedEvaluationScore(objectiveScore, editorialScore);
+  const { verdict: weightedVerdict, focus: recommendedFocus } = buildWeightedVerdict({
+    objectiveScore,
+    editorialScore,
+    concerns: [...concerns, ...editorial.concerns, ...canon.concerns],
+    editorialConcerns: [...editorial.concerns, ...canon.concerns],
+  });
 
   return {
     chapterSlug,
@@ -5225,6 +5407,15 @@ async function buildChapterEvaluationDraft(root: string, chapter: string): Promi
     scorecard,
     strengths,
     concerns,
+    editorialStrengths: editorial.strengths,
+    editorialConcerns: editorial.concerns,
+    canonStrengths: canon.strengths,
+    canonConcerns: canon.concerns,
+    objectiveScore,
+    editorialScore,
+    weightedScore,
+    weightedVerdict,
+    recommendedFocus,
     nextSteps,
     missingParagraphSummaries: paragraphInsights.filter((paragraph) => !paragraph.summaryPresent).length,
     missingParagraphViewpoints: paragraphInsights.filter((paragraph) => paragraph.viewpoint === "not set").length,
@@ -5235,33 +5426,41 @@ async function resolveEvaluationStyleContext(
   root: string,
   chapterData: ChapterReadResult,
 ): Promise<EvaluationStyleContext> {
-  const guidelines = await listGuidelines(root);
-  const guidelineById = new Map(guidelines.map((guideline) => [guideline.frontmatter.id, guideline]));
-  const coreGuidelines = ["guideline:style", "guideline:chapter-rules", "guideline:voices", "guideline:structure"]
-    .map((id) => guidelineById.get(id))
-    .filter((guideline): guideline is GuidelineDocument => Boolean(guideline));
-
+  const { global, chapter, draft } = await readWritingStyleDocuments(
+    root,
+    chapterData.metadata.id.replace(/^chapter:/, ""),
+    true,
+    true,
+  );
   const metadataEntries = [chapterData.metadata, ...chapterData.paragraphs.map((paragraph) => paragraph.metadata)];
-  const refs = uniqueValues(metadataEntries.flatMap((metadata) => extractStyleRefs(metadata as Record<string, unknown>)));
-  const referencedGuidelines = refs
-    .map((ref) => guidelineById.get(ref))
-    .filter((guideline): guideline is GuidelineDocument => Boolean(guideline));
-  const unresolvedRefs = refs.filter((ref) => !guidelineById.has(ref));
   const metadataSignals = uniqueSignalEntries(
     metadataEntries.flatMap((metadata) => extractStyleSignals(metadata as Record<string, unknown>)),
   );
-  const styleTexts = [
-    ...coreGuidelines.map((guideline) => guideline.body),
-    ...referencedGuidelines.map((guideline) => guideline.body),
+  const expectationText = [
+    global?.body,
+    chapter?.body,
+    draft?.body,
     ...metadataSignals.map((signal) => signal.value),
-  ];
+  ]
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .join("\n")
+    .toLowerCase();
 
   return {
-    coreGuidelines,
-    referencedGuidelines,
-    unresolvedRefs,
+    globalWritingStyle: global,
+    chapterWritingStyle: chapter,
+    draftWritingStyle: draft,
     metadataSignals,
-    showDontTell: styleTexts.some((value) => containsShowDontTellText(value)),
+    expectationText,
+    showDontTell: containsShowDontTellText(expectationText),
+    prefersShortSentences: containsAnyExpectation(expectationText, ["short sentence", "short sentences", "tight", "lean", "minimal", "frasi brevi"]),
+    prefersLyricalImagery: containsAnyExpectation(expectationText, ["lyrical", "poetic", "lush", "liric"]),
+    valuesDialogue: containsAnyExpectation(expectationText, ["dialogue", "dialogo", "speech tag", "action beat"]),
+    valuesPhysicality: containsAnyExpectation(expectationText, ["physical", "physicality", "fisic", "body language", "azione fisica"]),
+    valuesActiveSpace: containsAnyExpectation(expectationText, ["space", "distance", "spazio", "blocking", "occupation of space"]),
+    valuesObjectFunction: containsAnyExpectation(expectationText, ["object", "objects", "oggetti", "props"]),
+    valuesSubtext: containsAnyExpectation(expectationText, ["subtext", "sottotesto", "unspoken"]),
+    valuesControlledProse: containsAnyExpectation(expectationText, ["controlled", "controllato", "not overwritten", "non iper-descrittivo", "precise", "preciso"]),
   };
 }
 
@@ -5289,6 +5488,19 @@ function renderChapterEvaluationContent(root: string, draft: ChapterEvaluationDr
   const paragraphFiles = draft.paragraphInsights.map((paragraph) =>
     `evaluations/paragraphs/${chapterSlug}/${paragraph.slug}.md`,
   );
+  const weightedVerdictExplanation = buildWeightedVerdictExplanation({
+    objectiveScore: draft.objectiveScore,
+    editorialScore: draft.editorialScore,
+    weightedScore: draft.weightedScore,
+    weightedVerdict: draft.weightedVerdict,
+    recommendedFocus: draft.recommendedFocus,
+    objectiveStrengths: draft.strengths,
+    objectiveConcerns: draft.concerns,
+    editorialStrengths: draft.editorialStrengths,
+    editorialConcerns: draft.editorialConcerns,
+    canonStrengths: draft.canonStrengths,
+    canonConcerns: draft.canonConcerns,
+  });
 
   return renderMarkdown(
     {
@@ -5301,6 +5513,11 @@ function renderChapterEvaluationContent(root: string, draft: ChapterEvaluationDr
       readability: getScore(draft.scorecard, "Reader Readability"),
       beauty: getScore(draft.scorecard, "Beauty And Memorability"),
       style_alignment: getScore(draft.scorecard, "Style Alignment"),
+      objective_score: draft.objectiveScore,
+      editorial_score: draft.editorialScore,
+      weighted_score: draft.weightedScore,
+      weighted_verdict: draft.weightedVerdict,
+      recommended_focus: draft.recommendedFocus,
     },
     [
       "# Evaluation Snapshot",
@@ -5314,6 +5531,10 @@ function renderChapterEvaluationContent(root: string, draft: ChapterEvaluationDr
       `- Chapter summary present: ${draft.chapterData.metadata.summary ? "yes" : "no"}`,
       `- Paragraph summaries missing: ${draft.missingParagraphSummaries}`,
       `- Paragraph viewpoints missing: ${draft.missingParagraphViewpoints}`,
+      `- Objective score: ${draft.objectiveScore}/10`,
+      `- Editorial score: ${draft.editorialScore}/10`,
+      `- Weighted verdict: ${draft.weightedScore}/10 (${draft.weightedVerdict})`,
+      `- Recommended focus: ${draft.recommendedFocus}`,
       "",
       "# Scorecard",
       "",
@@ -5322,6 +5543,22 @@ function renderChapterEvaluationContent(root: string, draft: ChapterEvaluationDr
       "# Style Context",
       "",
       ...renderStyleContextLines(root, draft.styleContext),
+      "",
+      "# Editorial Reading",
+      "",
+      ...renderBulletSection(draft.editorialStrengths, "No clear editorial strength was detected beyond the objective scorecard yet."),
+      "",
+      ...renderBulletSection(draft.editorialConcerns, "No major editorial concern was detected beyond the heuristic checks."),
+      "",
+      "# Canon Coherence",
+      "",
+      ...renderBulletSection(draft.canonStrengths, "No canon coherence strength was detected yet."),
+      "",
+      ...renderBulletSection(draft.canonConcerns, "No canon coherence concern was detected yet."),
+      "",
+      "# Why the weighted verdict landed here",
+      "",
+      ...weightedVerdictExplanation,
       "",
       "# What Works",
       "",
@@ -5347,8 +5584,12 @@ function renderChapterEvaluationContent(root: string, draft: ChapterEvaluationDr
         `- Reader readability: ${getScore(paragraph.scorecard, "Reader Readability")}/10`,
         `- Beauty and memorability: ${getScore(paragraph.scorecard, "Beauty And Memorability")}/10`,
         `- Style alignment: ${getScore(paragraph.scorecard, "Style Alignment")}/10`,
+        `- Objective score: ${paragraph.objectiveScore}/10`,
+        `- Editorial score: ${paragraph.editorialScore}/10`,
         `- What works: ${paragraph.strengths.join("; ") || "No specific strength detected yet."}`,
         `- What to revise: ${paragraph.concerns.join("; ") || "No specific concern detected yet."}`,
+        `- Canon coherence strengths: ${paragraph.canonStrengths.join("; ") || "No canon coherence strength detected yet."}`,
+        `- Canon coherence concerns: ${paragraph.canonConcerns.join("; ") || "No canon coherence concern detected yet."}`,
         `- Next step: ${paragraph.nextSteps.join("; ") || "No next step generated."}`,
         "",
       ]),
@@ -5372,6 +5613,20 @@ function renderParagraphEvaluationContent(
   draft: ChapterEvaluationDraft,
   paragraph: ParagraphEvaluationInsight,
 ): string {
+  const weightedVerdictExplanation = buildWeightedVerdictExplanation({
+    objectiveScore: paragraph.objectiveScore,
+    editorialScore: paragraph.editorialScore,
+    weightedScore: paragraph.weightedScore,
+    weightedVerdict: paragraph.weightedVerdict,
+    recommendedFocus: paragraph.recommendedFocus,
+    objectiveStrengths: paragraph.strengths,
+    objectiveConcerns: paragraph.concerns,
+    editorialStrengths: paragraph.editorialStrengths,
+    editorialConcerns: paragraph.editorialConcerns,
+    canonStrengths: paragraph.canonStrengths,
+    canonConcerns: paragraph.canonConcerns,
+  });
+
   return renderMarkdown(
     {
       type: "evaluation",
@@ -5383,6 +5638,11 @@ function renderParagraphEvaluationContent(
       readability: getScore(paragraph.scorecard, "Reader Readability"),
       beauty: getScore(paragraph.scorecard, "Beauty And Memorability"),
       style_alignment: getScore(paragraph.scorecard, "Style Alignment"),
+      objective_score: paragraph.objectiveScore,
+      editorial_score: paragraph.editorialScore,
+      weighted_score: paragraph.weightedScore,
+      weighted_verdict: paragraph.weightedVerdict,
+      recommended_focus: paragraph.recommendedFocus,
     },
     [
       "# Paragraph Evaluation",
@@ -5395,6 +5655,10 @@ function renderParagraphEvaluationContent(
       `- Dialogue ratio: ${paragraph.dialogueRatio}`,
       `- Sensory cues: ${paragraph.sensoryCueCount}`,
       `- Telling cues: ${paragraph.tellingCueCount}`,
+      `- Objective score: ${paragraph.objectiveScore}/10`,
+      `- Editorial score: ${paragraph.editorialScore}/10`,
+      `- Weighted verdict: ${paragraph.weightedScore}/10 (${paragraph.weightedVerdict})`,
+      `- Recommended focus: ${paragraph.recommendedFocus}`,
       "",
       "# Scorecard",
       "",
@@ -5403,6 +5667,22 @@ function renderParagraphEvaluationContent(
       "# Style Context",
       "",
       ...renderStyleContextLines(root, draft.styleContext),
+      "",
+      "# Editorial Reading",
+      "",
+      ...renderBulletSection(paragraph.editorialStrengths, "No clear editorial strength was detected beyond the scorecard yet."),
+      "",
+      ...renderBulletSection(paragraph.editorialConcerns, "No major editorial concern was detected beyond the heuristic checks."),
+      "",
+      "# Canon Coherence",
+      "",
+      ...renderBulletSection(paragraph.canonStrengths, "No canon coherence strength was detected yet."),
+      "",
+      ...renderBulletSection(paragraph.canonConcerns, "No canon coherence concern was detected yet."),
+      "",
+      "# Why the weighted verdict landed here",
+      "",
+      ...weightedVerdictExplanation,
       "",
       "# What Works",
       "",
@@ -5540,13 +5820,9 @@ function buildChapterScorecard(
   const styleStrengths: string[] = [];
   const styleConcerns: string[] = [];
   let styleAlignment = paragraphStyle || 5;
-  if (styleContext.coreGuidelines.length > 0 || styleContext.referencedGuidelines.length > 0) {
+  if (styleContext.globalWritingStyle || styleContext.chapterWritingStyle || styleContext.draftWritingStyle) {
     styleAlignment += 1;
-    styleStrengths.push("The evaluation has explicit guideline material to check against.");
-  }
-  if (styleContext.unresolvedRefs.length > 0) {
-    styleAlignment -= 2;
-    styleConcerns.push(`Some style references could not be resolved: ${styleContext.unresolvedRefs.join(", ")}.`);
+    styleStrengths.push("The evaluation has explicit writing-style material to check against.");
   }
   if (styleContext.showDontTell) {
     if (chapterAnalysis.sensoryCueCount >= chapterAnalysis.tellingCueCount) {
@@ -5666,9 +5942,9 @@ function buildParagraphScorecard(
   const styleStrengths: string[] = [];
   const styleConcerns: string[] = [];
   let styleAlignment = 6;
-  if (styleContext.coreGuidelines.length > 0 || styleContext.referencedGuidelines.length > 0) {
+  if (styleContext.globalWritingStyle || styleContext.chapterWritingStyle || styleContext.draftWritingStyle) {
     styleAlignment += 1;
-    styleStrengths.push("The scene can be checked against explicit style guidance.");
+    styleStrengths.push("The scene can be checked against explicit writing-style guidance.");
   }
   if (styleContext.showDontTell) {
     if (analysis.sensoryCueCount >= analysis.tellingCueCount) {
@@ -5678,10 +5954,6 @@ function buildParagraphScorecard(
       styleAlignment -= 2;
       styleConcerns.push("Show, don't tell is active, but the scene still explains too much directly.");
     }
-  }
-  if (styleContext.unresolvedRefs.length > 0) {
-    styleAlignment -= 2;
-    styleConcerns.push(`Some style references could not be resolved: ${styleContext.unresolvedRefs.join(", ")}.`);
   }
   styleAlignment += computeStyleExpectationAdjustment(analysis, expectationText);
 
@@ -5713,6 +5985,395 @@ function buildParagraphScorecard(
     buildScorecardEntry("Style Alignment", styleAlignment, styleStrengths, styleConcerns),
     buildScorecardEntry("Chapter Fit", chapterFit, fitStrengths, fitConcerns),
   ];
+}
+
+function buildParagraphEditorialAssessment(
+  chapterData: ChapterReadResult,
+  paragraph: ChapterParagraph,
+  analysis: TextAnalysis,
+  styleContext: EvaluationStyleContext,
+): { strengths: string[]; concerns: string[]; nextSteps: string[] } {
+  const strengths: string[] = [];
+  const concerns: string[] = [];
+  const nextSteps: string[] = [];
+  const movementCueCount = countPatternMatches(analysis.plainText, MOVEMENT_PATTERNS);
+  const objectCueCount = countPatternMatches(analysis.plainText, OBJECT_PATTERNS);
+
+  if (styleContext.valuesControlledProse) {
+    if (analysis.avgSentenceWords <= 22) {
+      strengths.push("Sentence control stays close to the book's controlled writing-style contract.");
+    } else {
+      concerns.push("The paragraph drifts away from the book's controlled prose contract with sentences that run too long.");
+      nextSteps.push(`Tighten sentence control in ${path.basename(paragraph.path, ".md")} so the prose feels more disciplined.`);
+    }
+  }
+
+  if (styleContext.valuesPhysicality) {
+    if (movementCueCount > 0) {
+      strengths.push("The paragraph uses physical movement instead of leaving tension entirely abstract.");
+    } else {
+      concerns.push("The writing style asks for purposeful physicality, but this paragraph stays mostly static.");
+      nextSteps.push(`Add one purposeful physical beat to ${path.basename(paragraph.path, ".md")} that reveals tension or pressure.`);
+    }
+  }
+
+  if (styleContext.valuesActiveSpace) {
+    if (movementCueCount >= 2) {
+      strengths.push("Blocking and distance cues help the scene use space actively.");
+    } else {
+      concerns.push("The writing style expects active space, but the scene does not yet make distance or blocking carry enough meaning.");
+      nextSteps.push(`Clarify how bodies move or resist space inside ${path.basename(paragraph.path, ".md")}.`);
+    }
+  }
+
+  if (styleContext.valuesObjectFunction) {
+    if (objectCueCount > 0) {
+      strengths.push("Objects or surfaces participate in the paragraph instead of staying decorative.");
+    } else {
+      concerns.push("The writing style values functional objects, but this paragraph does not yet make props or surfaces do narrative work.");
+      nextSteps.push(`Let at least one object or surface in ${path.basename(paragraph.path, ".md")} carry pressure, status, or subtext.`);
+    }
+  }
+
+  if (styleContext.valuesSubtext) {
+    if (analysis.dialogueRatio > 0 && analysis.tellingCueCount <= analysis.sensoryCueCount + 1) {
+      strengths.push("Dialogue and visible detail leave room for subtext instead of over-explaining it.");
+    } else {
+      concerns.push("The paragraph explains too much directly for a style that asks subtext to carry more weight.");
+      nextSteps.push(`Reduce explicit explanation in ${path.basename(paragraph.path, ".md")} so action, silence, or contradiction can carry subtext.`);
+    }
+  }
+
+  if (styleContext.valuesDialogue && analysis.dialogueRatio < 0.08) {
+    concerns.push("The current style emphasizes dialogue pressure, but the paragraph has relatively little spoken friction on the page.");
+  }
+
+  return {
+    strengths: uniqueValues(strengths).slice(0, 4),
+    concerns: uniqueValues(concerns).slice(0, 4),
+    nextSteps: uniqueValues(nextSteps).slice(0, 4),
+  };
+}
+
+function buildChapterEditorialAssessment(
+  chapterData: ChapterReadResult,
+  chapterAnalysis: TextAnalysis,
+  paragraphInsights: ParagraphEvaluationInsight[],
+  styleContext: EvaluationStyleContext,
+): { strengths: string[]; concerns: string[]; nextSteps: string[] } {
+  const strengths: string[] = [];
+  const concerns: string[] = [];
+  const nextSteps: string[] = [];
+  const movementCueCount = countPatternMatches(chapterAnalysis.plainText, MOVEMENT_PATTERNS);
+  const objectCueCount = countPatternMatches(chapterAnalysis.plainText, OBJECT_PATTERNS);
+
+  if (styleContext.valuesControlledProse) {
+    if (chapterAnalysis.avgSentenceWords <= 22) {
+      strengths.push("Chapter-level sentence control fits the book's controlled prose contract.");
+    } else {
+      concerns.push("Chapter-level prose runs looser than the active writing-style contract expects.");
+      nextSteps.push(`Tighten long chapter sentences in ${chapterData.metadata.id} so the prose stays controlled.`);
+    }
+  }
+
+  if (styleContext.valuesPhysicality && movementCueCount >= Math.max(2, chapterData.paragraphs.length)) {
+    strengths.push("The chapter gives physical beats enough presence to keep tension embodied.");
+  } else if (styleContext.valuesPhysicality) {
+    concerns.push("The chapter-level writing style asks for purposeful physicality, but the chapter still feels under-blocked or under-bodied in places.");
+    nextSteps.push(`Review the weakest scenes in ${chapterData.metadata.id} for missing physical pressure and blocking.`);
+  }
+
+  if (styleContext.valuesObjectFunction && objectCueCount > 0) {
+    strengths.push("Objects or surfaces contribute meaningfully across the chapter.");
+  } else if (styleContext.valuesObjectFunction) {
+    concerns.push("The chapter does not yet make enough use of objects or surfaces as narrative pressure.");
+  }
+
+  if (styleContext.valuesSubtext) {
+    const weakSubtextScenes = paragraphInsights.filter((paragraph) => paragraph.editorialConcerns.some((note) => note.includes("subtext")));
+    if (weakSubtextScenes.length === 0) {
+      strengths.push("Subtext survives at scene level without being over-explained too often.");
+    } else {
+      concerns.push(`Subtext is being over-explained in ${weakSubtextScenes.map((paragraph) => paragraph.slug).join(", ")}.`);
+      nextSteps.push(`Let behavior and contradiction carry more subtext in ${weakSubtextScenes.map((paragraph) => paragraph.slug).join(", ")}.`);
+    }
+  }
+
+  return {
+    strengths: uniqueValues(strengths).slice(0, 5),
+    concerns: uniqueValues(concerns).slice(0, 5),
+    nextSteps: uniqueValues(nextSteps).slice(0, 5),
+  };
+}
+
+async function buildEvaluationCanonContext(root: string): Promise<EvaluationCanonContext> {
+  const entityKinds: EntityType[] = ["character", "location", "faction", "item", "timeline-event"];
+  const entities = (
+    await Promise.all(entityKinds.map((kind) => listEntities(root, kind)))
+  ).flatMap((entries, index) => entries.map((entry) => buildEvaluationCanonEntity(entry, entityKinds[index])));
+
+  return {
+    entities,
+    byId: new Map(entities.map((entity) => [entity.id.toLowerCase(), entity])),
+  };
+}
+
+function buildEvaluationCanonEntity(entry: CanonEntityDocument, kind: EntityType): EvaluationCanonEntity {
+  const metadata = entry.metadata as Record<string, unknown>;
+  const title =
+    typeof metadata.name === "string"
+      ? metadata.name
+      : typeof metadata.title === "string"
+        ? metadata.title
+        : entry.slug;
+  const aliases = uniqueValues(
+    [
+      title,
+      ...(Array.isArray(metadata.aliases) ? metadata.aliases.filter((value): value is string => typeof value === "string") : []),
+      ...(Array.isArray(metadata.former_names) ? metadata.former_names.filter((value): value is string => typeof value === "string") : []),
+      typeof metadata.current_identity === "string" ? metadata.current_identity : undefined,
+    ].filter((value): value is string => Boolean(value && value.trim())),
+  );
+  const coherenceHints = [
+    typeof metadata.speaking_style === "string" ? metadata.speaking_style : undefined,
+    typeof metadata.background_summary === "string" ? metadata.background_summary : undefined,
+    typeof metadata.function_in_book === "string" ? metadata.function_in_book : undefined,
+    typeof metadata.atmosphere === "string" ? metadata.atmosphere : undefined,
+    typeof metadata.mission === "string" ? metadata.mission : undefined,
+    typeof metadata.ideology === "string" ? metadata.ideology : undefined,
+    typeof metadata.purpose === "string" ? metadata.purpose : undefined,
+    typeof metadata.significance === "string" ? metadata.significance : undefined,
+    typeof metadata.significance === "string" ? metadata.significance : undefined,
+  ].filter((value): value is string => Boolean(value && value.trim()));
+
+  return {
+    kind,
+    id: String(metadata.id ?? `${kind}:${entry.slug}`),
+    title,
+    path: entry.path,
+    aliases,
+    coherenceHints,
+  };
+}
+
+function buildParagraphCanonAssessment(
+  chapterData: ChapterReadResult,
+  paragraph: ChapterParagraph,
+  analysis: TextAnalysis,
+  canonContext: EvaluationCanonContext,
+): { strengths: string[]; concerns: string[]; nextSteps: string[] } {
+  const strengths: string[] = [];
+  const concerns: string[] = [];
+  const nextSteps: string[] = [];
+  const body = analysis.plainText;
+  const mentions = findCanonMentions(body, canonContext.entities);
+  const viewpointId = paragraph.metadata.viewpoint || (chapterData.metadata.pov ?? [])[0];
+
+  if (viewpointId) {
+    const viewpoint = canonContext.byId.get(viewpointId.toLowerCase());
+    if (viewpoint) {
+      strengths.push(`Viewpoint character ${viewpoint.title} is present in canon and can be checked against the scene.`);
+    } else {
+      concerns.push(`Viewpoint reference ${viewpointId} does not resolve against canon.`);
+    }
+  }
+
+  const locationMentions = mentions.filter((mention) => mention.kind === "location");
+  const factionMentions = mentions.filter((mention) => mention.kind === "faction");
+  const itemMentions = mentions.filter((mention) => mention.kind === "item");
+  const timelineRef = chapterData.metadata.timeline_ref;
+
+  if (timelineRef) {
+    if (canonContext.byId.has(timelineRef.toLowerCase())) {
+      strengths.push(`Timeline reference ${timelineRef} anchors chronology to canon.`);
+    } else {
+      concerns.push(`Timeline reference ${timelineRef} is missing from canon.`);
+    }
+  } else {
+    concerns.push("Timeline metadata is missing, so chronology still depends on manual checking.");
+  }
+
+  if (locationMentions.length > 0) {
+    strengths.push(`The paragraph references canonical location material: ${locationMentions.map((mention) => mention.title).join(", ")}.`);
+    if (analysis.sensoryCueCount === 0) {
+      concerns.push("A canonical location is present, but the paragraph gives it little sensory embodiment.");
+      nextSteps.push(`Let the location pressure show on the page instead of naming it only in ${path.basename(paragraph.path, ".md")}.`);
+    }
+  }
+
+  if (factionMentions.length > 0) {
+    strengths.push(`Faction pressure can be checked against canon: ${factionMentions.map((mention) => mention.title).join(", ")}.`);
+  }
+
+  if (itemMentions.length > 0) {
+    strengths.push(`The paragraph uses canonical item material: ${itemMentions.map((mention) => mention.title).join(", ")}.`);
+    if (countPatternMatches(body, OBJECT_PATTERNS) === 0) {
+      concerns.push("A canonical item is present, but the paragraph does not make the object function concrete on the page.");
+    }
+  }
+
+  if (mentions.length === 0 && analysis.wordCount > 80) {
+    concerns.push("The paragraph currently has few visible canon anchors, so its place inside the broader book may feel under-connected.");
+  }
+
+  return {
+    strengths: uniqueValues(strengths).slice(0, 4),
+    concerns: uniqueValues(concerns).slice(0, 4),
+    nextSteps: uniqueValues(nextSteps).slice(0, 4),
+  };
+}
+
+function buildChapterCanonAssessment(
+  chapterData: ChapterReadResult,
+  chapterAnalysis: TextAnalysis,
+  paragraphInsights: ParagraphEvaluationInsight[],
+  canonContext: EvaluationCanonContext,
+): { strengths: string[]; concerns: string[]; nextSteps: string[] } {
+  const strengths: string[] = [];
+  const concerns: string[] = [];
+  const nextSteps: string[] = [];
+  const mentions = findCanonMentions(chapterAnalysis.plainText, canonContext.entities);
+  const kinds = new Set(mentions.map((mention) => mention.kind));
+
+  if ((chapterData.metadata.pov ?? []).length > 0) {
+    const resolvedPov = (chapterData.metadata.pov ?? []).filter((id) => canonContext.byId.has(id.toLowerCase()));
+    if (resolvedPov.length === (chapterData.metadata.pov ?? []).length) {
+      strengths.push("All chapter POV references resolve cleanly against character canon.");
+    } else {
+      concerns.push("At least one chapter POV reference does not resolve cleanly against character canon.");
+    }
+  }
+
+  if (chapterData.metadata.timeline_ref) {
+    if (canonContext.byId.has(chapterData.metadata.timeline_ref.toLowerCase())) {
+      strengths.push(`Chapter chronology is anchored by ${chapterData.metadata.timeline_ref}.`);
+    } else {
+      concerns.push(`Timeline reference ${chapterData.metadata.timeline_ref} does not resolve in canon.`);
+    }
+  } else {
+    concerns.push("The chapter has no timeline_ref, so chronology coherence is weaker than it could be.");
+  }
+
+  if (kinds.size >= 3) {
+    strengths.push("The chapter touches multiple canon layers, which helps the scene work feel grounded in the broader book.");
+  }
+
+  if (mentions.some((mention) => mention.kind === "location") && chapterAnalysis.sensoryCueCount === 0) {
+    concerns.push("Locations are named in canon, but the chapter does not yet give them enough sensory embodiment.");
+    nextSteps.push("Strengthen the chapter's location coherence by turning named places into felt spaces on the page.");
+  }
+
+  if (paragraphInsights.some((paragraph) => paragraph.canonConcerns.length > 0)) {
+    const weakCanonScenes = paragraphInsights.filter((paragraph) => paragraph.canonConcerns.length > 0).map((paragraph) => paragraph.slug);
+    concerns.push(`Canon coherence needs attention in ${weakCanonScenes.join(", ")}.`);
+    nextSteps.push(`Review canon consistency first in ${weakCanonScenes.join(", ")}.`);
+  }
+
+  return {
+    strengths: uniqueValues(strengths).slice(0, 5),
+    concerns: uniqueValues(concerns).slice(0, 5),
+    nextSteps: uniqueValues(nextSteps).slice(0, 5),
+  };
+}
+
+function findCanonMentions(text: string, entities: EvaluationCanonEntity[]): EvaluationCanonEntity[] {
+  const lower = text.toLowerCase();
+  return entities.filter((entity) => entity.aliases.some((alias) => lower.includes(alias.toLowerCase())));
+}
+
+function buildEditorialScore(
+  editorialStrengths: string[],
+  editorialConcerns: string[],
+  canonStrengths: string[],
+  canonConcerns: string[],
+): number {
+  const score = 6 + editorialStrengths.length + canonStrengths.length - editorialConcerns.length - canonConcerns.length;
+  return clampScore(score);
+}
+
+function buildWeightedEvaluationScore(objectiveScore: number, editorialScore: number): number {
+  return roundToTenths(objectiveScore * 0.4 + editorialScore * 0.6);
+}
+
+function buildWeightedVerdict(input: {
+  objectiveScore: number;
+  editorialScore: number;
+  concerns: string[];
+  editorialConcerns: string[];
+}): { verdict: string; focus: string } {
+  const weighted = buildWeightedEvaluationScore(input.objectiveScore, input.editorialScore);
+  const focus =
+    input.editorialConcerns.some((entry) => /canon|timeline|location|character|faction|item/i.test(entry))
+      ? "canon coherence"
+      : input.editorialConcerns.length > 0
+        ? "editorial alignment"
+        : input.concerns.length > 0
+          ? "objective cleanup"
+          : "maintain current direction";
+
+  if (weighted >= 8.5 && input.editorialConcerns.length === 0) {
+    return { verdict: "strong", focus };
+  }
+  if (weighted >= 7) {
+    return { verdict: "solid but refine", focus };
+  }
+  if (weighted >= 5.5) {
+    return { verdict: "needs targeted revision", focus };
+  }
+
+  return { verdict: "priority revision", focus };
+}
+
+function buildWeightedVerdictExplanation(input: WeightedVerdictExplanationInput): string[] {
+  const objectiveStrengths = input.objectiveStrengths ?? [];
+  const objectiveConcerns = input.objectiveConcerns ?? [];
+  const editorialStrengths = input.editorialStrengths ?? [];
+  const editorialConcerns = input.editorialConcerns ?? [];
+  const canonStrengths = input.canonStrengths ?? [];
+  const canonConcerns = input.canonConcerns ?? [];
+  const delta = roundToTenths(Math.abs(input.editorialScore - input.objectiveScore));
+  const strongestPositive = uniqueValues([...editorialStrengths, ...canonStrengths, ...objectiveStrengths])[0];
+  const strongestConcern = uniqueValues(
+    input.recommendedFocus === "canon coherence"
+      ? [...canonConcerns, ...editorialConcerns, ...objectiveConcerns]
+      : [...editorialConcerns, ...canonConcerns, ...objectiveConcerns],
+  )[0];
+  const lines = [
+    `- Weighted blend: ${input.weightedScore}/10, built from objective ${input.objectiveScore}/10 and editorial ${input.editorialScore}/10 with editorial carrying 60% of the result.`,
+  ];
+
+  if (delta >= 0.3) {
+    lines.push(
+      input.editorialScore > input.objectiveScore
+        ? `- Editorial reading lifts the final score by ${delta} because editorial judgment counts more than the objective pass.`
+        : `- Editorial reading lowers the final score by ${delta} because editorial judgment counts more than the objective pass.`,
+    );
+  } else {
+    lines.push("- Objective and editorial readings stay close together, so the verdict mostly confirms the same direction from both passes.");
+  }
+
+  lines.push(
+    strongestPositive
+      ? `- Strongest signal in favor: ${strongestPositive}`
+      : "- Strongest signal in favor: no single strength outweighed the combined score.",
+  );
+  lines.push(
+    strongestConcern
+      ? `- Strongest drag on the verdict: ${strongestConcern}`
+      : "- Strongest drag on the verdict: nothing substantial is pulling against the current direction.",
+  );
+
+  if (input.extraContextLines?.length) {
+    lines.push(...input.extraContextLines.map((line) => `- ${line}`));
+  }
+
+  lines.push(
+    canonConcerns.length > 0
+      ? `- That mix lands on ${input.weightedVerdict} with the focus on ${input.recommendedFocus}, and canon coherence is part of why the editorial side carries more weight here.`
+      : `- That mix lands on ${input.weightedVerdict} with the focus on ${input.recommendedFocus}.`,
+  );
+
+  return lines;
 }
 
 function buildParagraphNextSteps(
@@ -5786,9 +6447,6 @@ function buildChapterNextSteps(
   }
   if (weakStyle.length > 0) {
     steps.push(`Check style alignment first in ${weakStyle.join(", ")}.`);
-  }
-  if (styleContext.unresolvedRefs.length > 0) {
-    steps.push(`Create or fix the missing style references: ${styleContext.unresolvedRefs.join(", ")}.`);
   }
   if (!chapterAnalysis.lastSentence) {
     steps.push("Strengthen the chapter ending so the final beat leaves a clear turn or consequence.");
@@ -5981,12 +6639,18 @@ function collectEvaluationNotes(
 
 function buildStyleExpectationText(styleContext: EvaluationStyleContext): string {
   return [
-    ...styleContext.coreGuidelines.map((guideline) => guideline.body),
-    ...styleContext.referencedGuidelines.map((guideline) => guideline.body),
+    styleContext.globalWritingStyle?.body,
+    styleContext.chapterWritingStyle?.body,
+    styleContext.draftWritingStyle?.body,
     ...styleContext.metadataSignals.map((signal) => signal.value),
   ]
+    .filter((value): value is string => Boolean(value && value.trim()))
     .join("\n")
     .toLowerCase();
+}
+
+function containsAnyExpectation(expectationText: string, fragments: string[]): boolean {
+  return fragments.some((fragment) => expectationText.includes(fragment.toLowerCase()));
 }
 
 function computeStyleExpectationAdjustment(analysis: TextAnalysis, expectationText: string): number {
@@ -6034,25 +6698,23 @@ function renderBulletSection(values: string[], fallback: string): string[] {
 function renderStyleContextLines(root: string, styleContext: EvaluationStyleContext): string[] {
   const lines: string[] = [];
 
-  if (styleContext.coreGuidelines.length > 0) {
-    lines.push(
-      `- Core guidelines: ${styleContext.coreGuidelines
-        .map((guideline) => `${guideline.frontmatter.id} (${toPosixPath(path.relative(root, guideline.path))})`)
-        .join(", ")}`,
-    );
-  } else {
-    lines.push("- Core guidelines: none found.");
-  }
+  lines.push(
+    styleContext.globalWritingStyle
+      ? `- Global writing style: ${styleContext.globalWritingStyle.frontmatter.id} (${toPosixPath(path.relative(root, styleContext.globalWritingStyle.path))})`
+      : "- Global writing style: none found.",
+  );
 
-  if (styleContext.referencedGuidelines.length > 0) {
-    lines.push(
-      `- Referenced custom guidelines: ${styleContext.referencedGuidelines
-        .map((guideline) => `${guideline.frontmatter.id} (${toPosixPath(path.relative(root, guideline.path))})`)
-        .join(", ")}`,
-    );
-  } else {
-    lines.push("- Referenced custom guidelines: none resolved.");
-  }
+  lines.push(
+    styleContext.chapterWritingStyle
+      ? `- Chapter writing style: ${styleContext.chapterWritingStyle.frontmatter.id} (${toPosixPath(path.relative(root, styleContext.chapterWritingStyle.path))})`
+      : "- Chapter writing style: none.",
+  );
+
+  lines.push(
+    styleContext.draftWritingStyle
+      ? `- Draft writing style: ${styleContext.draftWritingStyle.frontmatter.id} (${toPosixPath(path.relative(root, styleContext.draftWritingStyle.path))})`
+      : "- Draft writing style: none.",
+  );
 
   if (styleContext.metadataSignals.length > 0) {
     lines.push(
@@ -6070,11 +6732,25 @@ function renderStyleContextLines(root: string, styleContext: EvaluationStyleCont
       : "- Show, don't tell check: not explicitly requested by metadata or guideline text.",
   );
 
-  if (styleContext.unresolvedRefs.length > 0) {
-    lines.push(`- Missing style references: ${styleContext.unresolvedRefs.join(", ")}`);
-  }
+  lines.push(`- Editorial expectations: ${summarizeEditorialExpectations(styleContext)}`);
 
   return lines;
+}
+
+function summarizeEditorialExpectations(styleContext: EvaluationStyleContext): string {
+  const values = [
+    styleContext.showDontTell ? "show-don't-tell" : null,
+    styleContext.valuesPhysicality ? "purposeful physicality" : null,
+    styleContext.valuesActiveSpace ? "active spatial blocking" : null,
+    styleContext.valuesObjectFunction ? "functional object use" : null,
+    styleContext.valuesSubtext ? "subtext pressure" : null,
+    styleContext.valuesDialogue ? "dialogue precision" : null,
+    styleContext.valuesControlledProse ? "controlled prose" : null,
+    styleContext.prefersShortSentences ? "tight sentence control" : null,
+    styleContext.prefersLyricalImagery ? "lyrical imagery" : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return values.join(", ") || "no special editorial emphasis detected";
 }
 
 function extractStyleRefs(metadata: Record<string, unknown>): string[] {
@@ -6279,6 +6955,16 @@ const SENSORY_PATTERNS = [
 const TELLING_PATTERNS = [
   /\b(felt|feel|thought|think|knew|know|realized|realise|noticed|notice|remembered|remember|wanted|want|wondered|wonder|seemed|seem|decided|decide|understood|understand|believed|believe)\w*\b/giu,
   /\b(sent[iì]|pens|sape|cap[iì]|nota|notav|ricord|vole|sembr|decis|cred|comprese|capiva)\w*\b/giu,
+];
+
+const MOVEMENT_PATTERNS = [
+  /\b(step|stepped|shift|shifted|lean|leaned|move|moved|approach|approached|retreat|retreated|backed|backed away|crossed|turned|reach|reached|withdrew|closed the distance|shortened the distance)\b/giu,
+  /\b(pass|passò|spost|avvicin|arretr|indietregg|inclino|gir[oò]|allung[oò]|appoggi[oò]|urt[oò]|sbatt[eé]|si mosse)\w*\b/giu,
+];
+
+const OBJECT_PATTERNS = [
+  /\b(glass|door|wall|table|chair|ring|sleeve|coat|letter|ledger|book|knife|blade|cup|window|threshold)\b/giu,
+  /\b(muro|porta|tavolo|sedia|anello|manica|tunica|lettera|registro|libro|lama|coltello|bicchiere|finestra|soglia)\w*\b/giu,
 ];
 
 export async function validateBook(rootPath: string): Promise<{
