@@ -1,5 +1,7 @@
 ---
 import type { GlossaryEntry } from "../lib/glossary";
+import { getReaderPassword } from "../lib/reader-mode.js";
+import { encryptString } from "../lib/content-crypto.js";
 
 interface Props {
   glossary: GlossaryEntry[];
@@ -8,7 +10,9 @@ interface Props {
 }
 
 const { glossary, chapters } = Astro.props;
-const glossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
+const password = getReaderPassword();
+const rawGlossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
+const glossaryEncrypted = password ? encryptString(rawGlossaryJson, password) : null;
 const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
 ---
 
@@ -144,7 +148,10 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   <div class="tts-status" data-tts-status>Speech will resume from the saved sentence when available.</div>
 </aside>
 
-<script type="application/json" id="canon-glossary-data" set:html={glossaryJson}></script>
+{glossaryEncrypted
+  ? <script type="application/json" id="canon-glossary-data" data-enc-iv={glossaryEncrypted.iv} data-enc-ct={glossaryEncrypted.ct}></script>
+  : <script type="application/json" id="canon-glossary-data" set:html={rawGlossaryJson}></script>
+}
 <script type="application/json" id="reader-chapter-data" set:html={chaptersJson}></script>
 
 <script>
@@ -160,12 +167,25 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   const ttsRateStorageKey = "narrarium-reader-tts-rate";
   const ttsProgressStorageKey = "narrarium-reader-tts-progress";
   const ttsPlayerDismissedStorageKey = "narrarium-reader-tts-player-dismissed";
-  const glossaryDataElement = document.getElementById("canon-glossary-data");
   const chapterDataElement = document.getElementById("reader-chapter-data");
-  const glossaryEntries = glossaryDataElement ? JSON.parse(glossaryDataElement.textContent || "[]") : [];
   const chapterEntries = chapterDataElement ? JSON.parse(chapterDataElement.textContent || "[]") : [];
   const currentPageChapterRaw = document.body.dataset.readerChapterNumber;
   const currentPageChapterNumber = currentPageChapterRaw ? Number(currentPageChapterRaw) : Number.NaN;
+
+  // glossaryEntries is populated after content decryption (or immediately when
+  // there is no password protection). Declared as let so _loadGlossaryAndInit
+  // can reassign before dependent initializers run.
+  // eslint-disable-next-line prefer-const
+  let glossaryEntries: any[] = [];
+
+  function _loadGlossaryAndInit() {
+    const el = document.getElementById("canon-glossary-data");
+    // Guard: skip if the element still carries encrypted attrs (not yet decrypted).
+    if (!el || el.hasAttribute("data-enc-iv")) return;
+    try { glossaryEntries = JSON.parse(el.textContent || "[]"); } catch { glossaryEntries = []; }
+    initializeCanonMentions();
+    initializeReadAloud();
+  }
 
   initializeThemeToggle();
   initializeReaderPreferences();
@@ -173,8 +193,13 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   initializeSearchOverlay();
   initializeCanonModeToggle();
   initializeReadingProgress();
-  initializeCanonMentions();
-  initializeReadAloud();
+
+  // Wait for content to be available before initializing glossary-dependent features.
+  ((window as any)._narrariumContentReady || Promise.resolve("plain")).then((state: string) => {
+    if (state !== "locked") _loadGlossaryAndInit();
+  });
+  // Re-init after manual password unlock (state was "locked" when promise resolved).
+  document.addEventListener("narrarium:content-unlocked", _loadGlossaryAndInit);
 
   function initializeThemeToggle() {
     const saved = readStorage(themeStorageKey);

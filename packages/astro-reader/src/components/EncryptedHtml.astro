@@ -1,0 +1,18 @@
+---
+import { getReaderPassword } from "../lib/reader-mode.js";
+import { encryptString } from "../lib/content-crypto.js";
+
+interface Props {
+  /** Raw HTML string to either render directly or encrypt at build time. */
+  html: string;
+}
+
+const { html } = Astro.props;
+const password = getReaderPassword();
+const encrypted = password ? encryptString(html, password) : null;
+---
+
+{encrypted
+  ? <span data-enc-html data-enc-iv={encrypted.iv} data-enc-ct={encrypted.ct} hidden></span>
+  : <Fragment set:html={html} />
+}

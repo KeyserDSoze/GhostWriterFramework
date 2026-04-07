@@ -2,6 +2,7 @@
 import path from "node:path";
 import { listEntities, pathExists } from "narrarium";
 import AssetFigure from "../../components/AssetFigure.astro";
+import EncryptedHtml from "../../components/EncryptedHtml.astro";
 import MetadataSection from "../../components/MetadataSection.astro";
 import RelatedLinks from "../../components/RelatedLinks.astro";
 import BaseLayout from "../../layouts/BaseLayout.astro";
@@ -53,7 +54,7 @@ const view = await buildCanonPageView("item", entity);
 
   {view.html && (
     <section class="section">
-      <article class="scene prose" set:html={view.html} />
+      <article class="scene prose"><EncryptedHtml html={view.html} /></article>
     </section>
   )}
 </BaseLayout>

@@ -5,7 +5,8 @@ import SiteSearch from "../components/SiteSearch.astro";
 import { listChapters } from "narrarium";
 import { getBookRoot } from "../lib/book.js";
 import { loadCanonGlossary } from "../lib/glossary.js";
-import { isFullCanonMode, getReaderPasswordHash } from "../lib/reader-mode.js";
+import { isFullCanonMode, getReaderPasswordHash, getReaderPassword } from "../lib/reader-mode.js";
+import { getBuildSaltBase64 } from "../lib/content-crypto.js";
 import { loadSearchIndex } from "../lib/search.js";
 
 interface Props {
@@ -30,6 +31,7 @@ const searchIndex = await loadSearchIndex(currentChapterNumber);
 const readerChapters = await listChapters(getBookRoot()).catch(() => []);
 const fullCanonMode = isFullCanonMode();
 const passwordHash = getReaderPasswordHash();
+const cryptoSalt = getReaderPassword() ? getBuildSaltBase64() : null;
 const isChapterPage = Number.isFinite(currentChapterNumber);
 ---
 
@@ -60,7 +62,7 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
       })();
     </script>
   </head>
-  <body class:list={[isChapterPage && "page-chapter"]} data-reader-chapter-number={currentChapterNumber} data-full-canon={fullCanonMode ? "true" : "false"} data-reader-password-hash={passwordHash ?? ""}>
+    <body class:list={[isChapterPage && "page-chapter"]} data-reader-chapter-number={currentChapterNumber} data-full-canon={fullCanonMode ? "true" : "false"} data-reader-password-hash={passwordHash ?? ""} data-crypto-salt={cryptoSalt ?? undefined}>
     <script is:inline>
       (() => {
         try {
@@ -72,15 +74,114 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
       })();
     </script>
     <script is:inline>
-      (() => {
-        const hash = document.body.dataset.readerPasswordHash;
-        if (!hash) return;
-        try {
-          if (localStorage.getItem("narrarium-reader-auth") !== hash) {
-            document.body.classList.add("reader-auth-locked");
-          }
-        } catch {
+      (function () {
+        /* ── Content-ready promise ────────────────────────────────────────────
+           Resolved values:
+             "plain"     – no encryption, content available immediately
+             "locked"    – encrypted, no stored key, waiting for user password
+             "decrypted" – encrypted, auto-decrypted from stored AES key
+        ──────────────────────────────────────────────────────────────────── */
+        var salt = document.body.dataset.cryptoSalt;
+
+        if (!salt) {
+          // No encryption configured — content is always available.
+          window._narrariumContentReady = Promise.resolve("plain");
+          return;
+        }
+
+        // ── Helpers ──────────────────────────────────────────────────────────
+        function b64ToBytes(b64) {
+          var bin = atob(b64);
+          var bytes = new Uint8Array(bin.length);
+          for (var i = 0; i < bin.length; i++) { bytes[i] = bin.charCodeAt(i); }
+          return bytes;
+        }
+
+        function aesDecrypt(cryptoKey, ivB64, ctB64) {
+          return crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: b64ToBytes(ivB64) },
+            cryptoKey,
+            b64ToBytes(ctB64)
+          ).then(function (buf) { return new TextDecoder().decode(buf); });
+        }
+
+        function decryptAllContent(cryptoKey) {
+          var tasks = [];
+
+          // Decrypt JSON script data tags
+          document.querySelectorAll('script[type="application/json"][data-enc-iv]').forEach(function (el) {
+            var iv = el.getAttribute("data-enc-iv");
+            var ct = el.getAttribute("data-enc-ct");
+            if (!iv || !ct) return;
+            tasks.push(
+              aesDecrypt(cryptoKey, iv, ct).then(function (plaintext) {
+                el.textContent = plaintext;
+                el.removeAttribute("data-enc-iv");
+                el.removeAttribute("data-enc-ct");
+              })
+            );
+          });
+
+          // Decrypt inline HTML placeholder spans
+          document.querySelectorAll("[data-enc-html]").forEach(function (el) {
+            var iv = el.getAttribute("data-enc-iv");
+            var ct = el.getAttribute("data-enc-ct");
+            if (!iv || !ct) return;
+            tasks.push(
+              aesDecrypt(cryptoKey, iv, ct).then(function (html) {
+                var tpl = document.createElement("template");
+                tpl.innerHTML = html;
+                el.parentNode.insertBefore(tpl.content, el);
+                el.parentNode.removeChild(el);
+              })
+            );
+          });
+
+          return Promise.all(tasks);
+        }
+
+        // ── Deferred promise setup ───────────────────────────────────────────
+        var _resolveReady;
+        window._narrariumContentReady = new Promise(function (res) { _resolveReady = res; });
+
+        /**
+         * Decrypt all page content with the given CryptoKey, remove the lock
+         * class, and resolve _narrariumContentReady.
+         * @param {boolean} isAutoDecrypt - true when called from stored-key path;
+         *   false (default) when called after the user submits the password form.
+         *   When false, dispatches narrarium:content-unlocked so late-init scripts
+         *   that already observed "locked" can re-initialize.
+         */
+        window._narrariumDecryptPage = function (cryptoKey, isAutoDecrypt) {
+          return decryptAllContent(cryptoKey).then(function () {
+            document.body.classList.remove("reader-auth-locked");
+            _resolveReady("decrypted");
+            if (!isAutoDecrypt) {
+              document.dispatchEvent(new CustomEvent("narrarium:content-unlocked"));
+            }
+          });
+        };
+
+        // ── Try auto-decrypt from stored AES key ─────────────────────────────
+        var storedKeyB64 = null;
+        try { storedKeyB64 = localStorage.getItem("narrarium-reader-aes-key"); } catch (_) {}
+
+        if (storedKeyB64) {
+          crypto.subtle.importKey(
+            "raw", b64ToBytes(storedKeyB64),
+            { name: "AES-GCM", length: 256 },
+            false, ["decrypt"]
+          )
+            .then(function (key) { return window._narrariumDecryptPage(key, true); })
+            .catch(function () {
+              // Stored key is stale or corrupt — clear it and show lock screen.
+              try { localStorage.removeItem("narrarium-reader-aes-key"); } catch (_) {}
+              document.body.classList.add("reader-auth-locked");
+              _resolveReady("locked");
+            });
+        } else {
           document.body.classList.add("reader-auth-locked");
+          _resolveReady("locked");
         }
       })();
     </script>
@@ -136,28 +237,67 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
           var form = document.getElementById("reader-password-form");
           var input = document.getElementById("reader-password-input");
           var errorEl = document.getElementById("reader-password-error");
-          var hash = document.body.dataset.readerPasswordHash;
-          if (!gate || !form || !hash) return;
+          var passwordHash = document.body.dataset.readerPasswordHash;
+          var cryptoSalt = document.body.dataset.cryptoSalt;
+          if (!gate || !form || !passwordHash) return;
           if (input) { input.focus(); }
+
           function buf2hex(buffer) {
             return Array.from(new Uint8Array(buffer))
               .map(function (b) { return b.toString(16).padStart(2, "0"); })
               .join("");
           }
+
+          function b64ToBytes(b64) {
+            var bin = atob(b64);
+            var bytes = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) { bytes[i] = bin.charCodeAt(i); }
+            return bytes;
+          }
+
           form.addEventListener("submit", function (event) {
             event.preventDefault();
             var password = input ? input.value : "";
             if (!password) return;
-            var data = new TextEncoder().encode(password);
-            crypto.subtle.digest("SHA-256", data).then(function (hashBuffer) {
-              var inputHash = buf2hex(hashBuffer);
-              if (inputHash === hash) {
-                try { localStorage.setItem("narrarium-reader-auth", hash); } catch {}
-                document.body.classList.remove("reader-auth-locked");
-              } else {
+
+            var encoded = new TextEncoder().encode(password);
+
+            // Quick SHA-256 check before the expensive PBKDF2 step.
+            crypto.subtle.digest("SHA-256", encoded).then(function (hashBuffer) {
+              if (buf2hex(hashBuffer) !== passwordHash) {
                 if (errorEl) { errorEl.hidden = false; }
                 if (input) { input.value = ""; input.focus(); }
+                return;
               }
+
+              // Hash matched — derive the AES-256-GCM key via PBKDF2.
+              var saltBytes = b64ToBytes(cryptoSalt);
+              crypto.subtle.importKey("raw", encoded, "PBKDF2", false, ["deriveKey"])
+                .then(function (keyMaterial) {
+                  return crypto.subtle.deriveKey(
+                    { name: "PBKDF2", salt: saltBytes, iterations: 100000, hash: "SHA-256" },
+                    keyMaterial,
+                    { name: "AES-GCM", length: 256 },
+                    true,          // extractable so we can export and store it
+                    ["decrypt"]
+                  );
+                })
+                .then(function (aesKey) {
+                  // Persist the raw key bytes so auto-decrypt works on reload.
+                  crypto.subtle.exportKey("raw", aesKey).then(function (rawBuf) {
+                    var rawBytes = new Uint8Array(rawBuf);
+                    var b64 = btoa(String.fromCharCode.apply(null, Array.from(rawBytes)));
+                    try { localStorage.setItem("narrarium-reader-aes-key", b64); } catch (_) {}
+                  });
+
+                  // Decrypt the page — passes false = manual unlock, so the
+                  // content-unlocked event will fire for late-init scripts.
+                  return window._narrariumDecryptPage(aesKey, false);
+                })
+                .catch(function () {
+                  if (errorEl) { errorEl.hidden = false; }
+                  if (input) { input.value = ""; input.focus(); }
+                });
             }).catch(function () {
               if (errorEl) { errorEl.hidden = false; }
             });

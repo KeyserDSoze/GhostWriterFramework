@@ -4,6 +4,7 @@ import path from "node:path";
 import { listChapters, pathExists } from "narrarium";
 import AssetFigure from "../../components/AssetFigure.astro";
 import ChapterPager from "../../components/ChapterPager.astro";
+import EncryptedHtml from "../../components/EncryptedHtml.astro";
 import LinkedValue from "../../components/LinkedValue.astro";
 import MetadataSection from "../../components/MetadataSection.astro";
 import RelatedLinks from "../../components/RelatedLinks.astro";
@@ -89,8 +90,9 @@ const renderedParagraphs = await Promise.all(
         data-reader-marker-scope="chapter-intro"
         data-tts-root="chapter-intro"
         data-tts-label="Chapter opening"
-        set:html={chapterHtml}
-      />
+      >
+        <EncryptedHtml html={chapterHtml} />
+      </article>
     )}
 
     {chapterFigure && <AssetFigure figure={chapterFigure} className="scene-media focus-hidden" />}
@@ -156,7 +158,9 @@ const renderedParagraphs = await Promise.all(
                 </p>
               )}
 
-              <div class="prose" data-tts-root={paragraph.anchorId} data-tts-label={paragraph.metadata.title} set:html={paragraph.html} />
+              <div class="prose" data-tts-root={paragraph.anchorId} data-tts-label={paragraph.metadata.title}>
+                <EncryptedHtml html={paragraph.html} />
+              </div>
               {paragraph.figure && <AssetFigure figure={paragraph.figure} className="scene-media focus-hidden" />}
             </article>
           ))

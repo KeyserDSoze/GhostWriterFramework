@@ -1,12 +1,16 @@
 ---
 import type { SearchEntry } from "../lib/search";
+import { getReaderPassword } from "../lib/reader-mode.js";
+import { encryptString } from "../lib/content-crypto.js";
 
 interface Props {
   entries: SearchEntry[];
 }
 
 const { entries } = Astro.props;
-const entriesJson = JSON.stringify(entries).replace(/</g, "\\u003c");
+const password = getReaderPassword();
+const rawEntriesJson = JSON.stringify(entries).replace(/</g, "\\u003c");
+const entriesEncrypted = password ? encryptString(rawEntriesJson, password) : null;
 const filters = [
   { key: "all", label: "All" },
   ...Array.from(new Map(entries.map((entry) => [entry.kindKey, entry.kind])).entries()).map(([key, label]) => ({ key, label })),
@@ -40,14 +44,25 @@ const filters = [
   </div>
 </div>
 
-<script type="application/json" id="reader-search-data" set:html={entriesJson}></script>
+{entriesEncrypted
+  ? <script type="application/json" id="reader-search-data" data-enc-iv={entriesEncrypted.iv} data-enc-ct={entriesEncrypted.ct}></script>
+  : <script type="application/json" id="reader-search-data" set:html={rawEntriesJson}></script>
+}
 
 <script is:inline>
   (() => {
     const spoilerLimitStorageKey = "narrarium-reader-spoiler-limit";
-    const searchDataElement = document.getElementById("reader-search-data");
-    const searchEntries = searchDataElement ? JSON.parse(searchDataElement.textContent || "[]") : [];
     const searchRoot = document.querySelector("[data-site-search]");
+
+    // searchEntries is populated once content is ready (after decryption when
+    // password-protected, or immediately for plain builds).
+    var searchEntries = [];
+
+    function loadSearchEntries() {
+      const el = document.getElementById("reader-search-data");
+      if (!el || el.hasAttribute("data-enc-iv")) return; // still encrypted
+      try { searchEntries = JSON.parse(el.textContent || "[]"); } catch { searchEntries = []; }
+    }
 
     if (searchRoot) {
       const input = searchRoot.querySelector("[data-search-input]");
@@ -101,6 +116,13 @@ const filters = [
         });
       });
     }
+
+    // Load search entries once content is available.
+    (window._narrariumContentReady || Promise.resolve("plain")).then(function (state) {
+      if (state !== "locked") loadSearchEntries();
+    });
+    // Re-load after manual password unlock.
+    document.addEventListener("narrarium:content-unlocked", loadSearchEntries);
 
     function getSpoilerLimit() {
       const value = Number(localStorage.getItem(spoilerLimitStorageKey) || "");
