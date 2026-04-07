@@ -85,6 +85,7 @@ The scaffold creates a local \`.env\` with the book root already filled in. Adju
 \`\`\`bash
 NARRARIUM_BOOK_ROOT=${toPosix(bookRoot)}
 # NARRARIUM_READER_CANON_MODE=full
+# NARRARIUM_READER_PASSWORD=your-secret-password
 # EPUBCHECK_CMD=epubcheck
 # EPUBCHECK_JAR=/absolute/path/to/epubcheck.jar
 \`\`\`
@@ -100,6 +101,29 @@ The dev server exports a fresh EPUB to \`public/downloads/book.epub\` before Ast
 It also watches the linked book repository, regenerates the EPUB when canon files change, and triggers a full browser reload.
 
 By default the reader uses a spoiler-safe public mode. If you want a private full-canon deployment, enable \`NARRARIUM_READER_CANON_MODE=full\` before running dev or build.
+
+## Password protection
+
+Set \`NARRARIUM_READER_PASSWORD\` to encrypt all prose content at build time using AES-256-GCM.
+Visitors must enter the correct password before any text is revealed.
+
+For local development, add the variable to your \`.env\` file:
+
+\`\`\`bash
+NARRARIUM_READER_PASSWORD=your-secret-password
+\`\`\`
+
+For GitHub Pages deployment, add it to the \`Build site\` step in \`.github/workflows/deploy-pages.yml\`:
+
+\`\`\`yaml
+- name: Build site
+  env:
+    SITE_BASE: /\${{ github.event.repository.name }}/
+    NARRARIUM_READER_PASSWORD: \${{ secrets.NARRARIUM_READER_PASSWORD }}
+  run: npm run build
+\`\`\`
+
+Store the actual password as a repository secret: **Settings → Secrets and variables → Actions → New repository secret**.
 
 ## Doctor
 
@@ -132,6 +156,7 @@ function buildReaderEnvFile(bookRoot) {
     return [
         `NARRARIUM_BOOK_ROOT=${toPosix(bookRoot)}`,
         "# NARRARIUM_READER_CANON_MODE=full",
+        "# NARRARIUM_READER_PASSWORD=your-secret-password",
         "# EPUBCHECK_CMD=epubcheck",
         "# EPUBCHECK_JAR=/absolute/path/to/epubcheck.jar",
         "",
@@ -205,6 +230,7 @@ jobs:
       - name: Build site
         env:
 ${envBlock}
+          # NARRARIUM_READER_PASSWORD: \${{ secrets.NARRARIUM_READER_PASSWORD }}
         run: npm run build
 
       - name: Upload artifact

@@ -13,6 +13,7 @@ let _buildSalt = null;
 export function getBuildSalt() {
     if (!_buildSalt) {
         _buildSalt = randomBytes(16);
+        console.info("[narrarium-reader] Content encryption enabled (AES-256-GCM).");
     }
     return _buildSalt;
 }
@@ -23,6 +24,12 @@ export function getBuildSaltBase64() {
 function deriveKey(password, salt) {
     return pbkdf2Sync(password, salt, 100_000, 32, "sha256");
 }
+/**
+ * Known plaintext embedded (encrypted) in the built HTML so the browser can
+ * verify a password by attempting decryption rather than comparing a fast hash.
+ * This forces brute-force attempts to pay the full PBKDF2 cost every time.
+ */
+export const CANARY_PLAINTEXT = "narrarium-ok";
 /**
  * Encrypt a UTF-8 string with AES-256-GCM using PBKDF2-derived key.
  *
@@ -41,5 +48,15 @@ export function encryptString(plaintext, password) {
         iv: iv.toString("base64"),
         ct: Buffer.concat([body, tag]).toString("base64"),
     };
+}
+/**
+ * Encrypt the canary plaintext with the same PBKDF2-derived build key.
+ *
+ * Embed `iv` and `ct` in the built HTML as `data-canary-iv` / `data-canary-ct`.
+ * The browser verifies the password by decrypting the canary and checking that
+ * the result equals `CANARY_PLAINTEXT` — no fast-hash oracle in the HTML.
+ */
+export function encryptCanary(password) {
+    return encryptString(CANARY_PLAINTEXT, password);
 }
 //# sourceMappingURL=content-crypto.js.map

@@ -30,6 +30,13 @@ function deriveKey(password: string, salt: Buffer): Buffer {
   return pbkdf2Sync(password, salt, 100_000, 32, "sha256");
 }
 
+/**
+ * Known plaintext embedded (encrypted) in the built HTML so the browser can
+ * verify a password by attempting decryption rather than comparing a fast hash.
+ * This forces brute-force attempts to pay the full PBKDF2 cost every time.
+ */
+export const CANARY_PLAINTEXT = "narrarium-ok";
+
 export interface EncryptedChunk {
   /** Base64-encoded 12-byte random IV. */
   iv: string;
@@ -55,4 +62,15 @@ export function encryptString(plaintext: string, password: string): EncryptedChu
     iv: iv.toString("base64"),
     ct: Buffer.concat([body, tag]).toString("base64"),
   };
+}
+
+/**
+ * Encrypt the canary plaintext with the same PBKDF2-derived build key.
+ *
+ * Embed `iv` and `ct` in the built HTML as `data-canary-iv` / `data-canary-ct`.
+ * The browser verifies the password by decrypting the canary and checking that
+ * the result equals `CANARY_PLAINTEXT` — no fast-hash oracle in the HTML.
+ */
+export function encryptCanary(password: string): EncryptedChunk {
+  return encryptString(CANARY_PLAINTEXT, password);
 }
