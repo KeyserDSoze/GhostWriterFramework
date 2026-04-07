@@ -253,11 +253,11 @@ const renderedParagraphs = await Promise.all(
 
       window.addEventListener("scroll", scheduleSceneRefresh, { passive: true });
       window.addEventListener("resize", scheduleSceneRefresh);
-      document.addEventListener("dblclick", handleFocusRailWake);
+      document.addEventListener("dblclick", handleFocusRailToggle);
       document.addEventListener("touchend", (event) => {
         const now = Date.now();
         if (now - lastTapTime < doubleTapThresholdMs) {
-          handleFocusRailWake();
+          handleFocusRailToggle();
           lastTapTime = 0;
         } else {
           lastTapTime = now;
@@ -349,7 +349,8 @@ const renderedParagraphs = await Promise.all(
         });
         if (enabled) {
           resetFocusHintSession();
-          showFocusRailTemporarily();
+          focusRail?.classList.add("is-hidden");
+          showFocusHintOnce();
         } else {
           clearFocusRailHideTimer();
           clearFocusHintHideTimer();
@@ -364,6 +365,20 @@ const renderedParagraphs = await Promise.all(
 
         if (options.allowFullscreenRequest) {
           void syncFullscreenForFocusMode(enabled);
+        }
+      }
+
+      function handleFocusRailToggle() {
+        if (!root.classList.contains("is-focus-mode")) {
+          return;
+        }
+
+        hideFocusHint();
+        if (focusRail?.classList.contains("is-hidden")) {
+          showFocusRailTemporarily();
+        } else {
+          clearFocusRailHideTimer();
+          focusRail?.classList.add("is-hidden");
         }
       }
 
