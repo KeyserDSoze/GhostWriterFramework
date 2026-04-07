@@ -550,6 +550,51 @@ type WeightedVerdictExplanationInput = {
   extraContextLines?: string[];
 };
 
+export type PrepareParagraphEvaluationResult = {
+  rootPath: string;
+  chapterSlug: string;
+  paragraphSlug: string;
+  paragraphText: string;
+  wordCount: number;
+  sentenceCount: number;
+  avgSentenceWords: number;
+  dialogueRatio: number;
+  sensoryCueCount: number;
+  tellingCueCount: number;
+  lexicalDiversity: number;
+  repeatedWordHotspots: string[];
+  firstSentence: string;
+  lastSentence: string;
+  scorecard: Array<{ label: string; score: number; strengths: string[]; concerns: string[] }>;
+  objectiveScore: number;
+  objectiveStrengths: string[];
+  objectiveConcerns: string[];
+  styleFlags: {
+    showDontTell: boolean;
+    prefersShortSentences: boolean;
+    prefersLyricalImagery: boolean;
+    valuesDialogue: boolean;
+    valuesPhysicality: boolean;
+    valuesActiveSpace: boolean;
+    valuesObjectFunction: boolean;
+    valuesSubtext: boolean;
+    valuesControlledProse: boolean;
+  };
+  styleGuidelinesText: string;
+  canonMentions: Array<{ id: string; kind: string; title: string; aliases: string[]; coherenceHints: string[] }>;
+  contextParagraphs: Array<{ slug: string; title: string; summary: string; viewpoint: string }>;
+  instructions: string;
+};
+
+export type WriteParagraphEvaluationFromLlmInput = {
+  editorialStrengths: string[];
+  editorialConcerns: string[];
+  canonStrengths: string[];
+  canonConcerns: string[];
+  nextSteps: string[];
+  verdictExplanation: string;
+};
+
 type CreateEntityInput = {
   slug?: string;
   body?: string;
@@ -5039,6 +5084,148 @@ export async function syncParagraphEvaluation(
   return { filePath, content };
 }
 
+export async function prepareParagraphEvaluation(
+  rootPath: string,
+  chapter: string,
+  paragraph: string,
+): Promise<PrepareParagraphEvaluationResult> {
+  const root = path.resolve(rootPath);
+  const chapterSlug = normalizeChapterReference(chapter);
+  const draft = await buildChapterEvaluationDraft(root, chapterSlug);
+  const paragraphInsight = findParagraphInsight(draft.paragraphInsights, paragraph);
+  const paragraphData = draft.chapterData.paragraphs.find(
+    (p) => path.basename(p.path, ".md") === paragraphInsight.slug,
+  );
+  const paragraphText = paragraphData?.body ?? "";
+  const analysis = analyzeText(paragraphText);
+  const canonContext = await buildEvaluationCanonContext(root);
+  const mentions = findCanonMentions(paragraphText, canonContext.entities);
+  const guidelinesParts = [
+    draft.styleContext.globalWritingStyle?.body,
+    draft.styleContext.chapterWritingStyle?.body,
+    draft.styleContext.draftWritingStyle?.body,
+    ...draft.styleContext.metadataSignals.map((signal) => signal.value),
+  ].filter((text): text is string => Boolean(text?.trim()));
+  const styleGuidelinesText = guidelinesParts.join("\n\n").trim();
+  const inheritedViewpoint = (draft.chapterData.metadata.pov ?? []).join(", ") || "not set";
+  const contextParagraphs = draft.chapterData.paragraphs
+    .filter((p) => path.basename(p.path, ".md") !== paragraphInsight.slug)
+    .map((p) => ({
+      slug: path.basename(p.path, ".md"),
+      title: p.metadata.title,
+      summary: p.metadata.summary ?? "No summary.",
+      viewpoint: p.metadata.viewpoint ?? inheritedViewpoint,
+    }));
+  const instructions = [
+    "You are performing a hybrid LLM+heuristic editorial evaluation of the paragraph above.",
+    "",
+    "TASK: Read the paragraph text and the objective data carefully, then call write_paragraph_evaluation with:",
+    "  - editorialStrengths: 1–4 specific editorial strengths you observe (voice, tension, imagery, pacing, subtext, etc.)",
+    "  - editorialConcerns: 1–4 specific editorial weaknesses you observe",
+    "  - canonStrengths: 0–3 ways the paragraph handles canon mentions well (skip if no canon entities appear)",
+    "  - canonConcerns: 0–3 canon coherence issues you notice (wrong characterization, timeline inconsistency, etc.)",
+    "  - nextSteps: 1–4 concrete revision actions for this paragraph",
+    "  - verdictExplanation: 2–4 sentences explaining why the combined score lands where it does",
+    "",
+    "Base your editorial reading on the styleFlags and styleGuidelinesText provided.",
+    "Do NOT invent canon facts. Only flag canonConcerns if you see a real inconsistency with the listed canonMentions.",
+  ].join("\n");
+
+  return {
+    rootPath,
+    chapterSlug,
+    paragraphSlug: paragraphInsight.slug,
+    paragraphText,
+    wordCount: analysis.wordCount,
+    sentenceCount: analysis.sentenceCount,
+    avgSentenceWords: analysis.avgSentenceWords,
+    dialogueRatio: analysis.dialogueRatio,
+    sensoryCueCount: analysis.sensoryCueCount,
+    tellingCueCount: analysis.tellingCueCount,
+    lexicalDiversity: analysis.lexicalDiversity,
+    repeatedWordHotspots: analysis.repeatedWordHotspots,
+    firstSentence: analysis.firstSentence,
+    lastSentence: analysis.lastSentence,
+    scorecard: paragraphInsight.scorecard,
+    objectiveScore: paragraphInsight.objectiveScore,
+    objectiveStrengths: paragraphInsight.strengths,
+    objectiveConcerns: paragraphInsight.concerns,
+    styleFlags: {
+      showDontTell: draft.styleContext.showDontTell,
+      prefersShortSentences: draft.styleContext.prefersShortSentences,
+      prefersLyricalImagery: draft.styleContext.prefersLyricalImagery,
+      valuesDialogue: draft.styleContext.valuesDialogue,
+      valuesPhysicality: draft.styleContext.valuesPhysicality,
+      valuesActiveSpace: draft.styleContext.valuesActiveSpace,
+      valuesObjectFunction: draft.styleContext.valuesObjectFunction,
+      valuesSubtext: draft.styleContext.valuesSubtext,
+      valuesControlledProse: draft.styleContext.valuesControlledProse,
+    },
+    styleGuidelinesText,
+    canonMentions: mentions.map((entity) => ({
+      id: entity.id,
+      kind: entity.kind,
+      title: entity.title,
+      aliases: entity.aliases,
+      coherenceHints: entity.coherenceHints,
+    })),
+    contextParagraphs,
+    instructions,
+  };
+}
+
+export async function writeParagraphEvaluationFromLlm(
+  rootPath: string,
+  chapter: string,
+  paragraph: string,
+  llmInput: WriteParagraphEvaluationFromLlmInput,
+): Promise<{ filePath: string; content: string }> {
+  const root = path.resolve(rootPath);
+  const chapterSlug = normalizeChapterReference(chapter);
+  const draft = await buildChapterEvaluationDraft(root, chapterSlug);
+  const paragraphInsight = findParagraphInsight(draft.paragraphInsights, paragraph);
+
+  const editorialScore = buildEditorialScore(
+    llmInput.editorialStrengths,
+    llmInput.editorialConcerns,
+    llmInput.canonStrengths,
+    llmInput.canonConcerns,
+  );
+  const weightedScore = buildWeightedEvaluationScore(paragraphInsight.objectiveScore, editorialScore);
+  const { verdict: weightedVerdict, focus: recommendedFocus } = buildWeightedVerdict({
+    objectiveScore: paragraphInsight.objectiveScore,
+    editorialScore,
+    concerns: [...paragraphInsight.concerns, ...llmInput.editorialConcerns, ...llmInput.canonConcerns],
+    editorialConcerns: [...llmInput.editorialConcerns, ...llmInput.canonConcerns],
+  });
+
+  const enrichedInsight: ParagraphEvaluationInsight = {
+    ...paragraphInsight,
+    editorialStrengths: llmInput.editorialStrengths,
+    editorialConcerns: llmInput.editorialConcerns,
+    canonStrengths: llmInput.canonStrengths,
+    canonConcerns: llmInput.canonConcerns,
+    nextSteps: llmInput.nextSteps.length > 0 ? llmInput.nextSteps : paragraphInsight.nextSteps,
+    editorialScore,
+    weightedScore,
+    weightedVerdict,
+    recommendedFocus,
+  };
+
+  const verdictExplanationLines = llmInput.verdictExplanation
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => (line.startsWith("-") ? line : `- ${line}`));
+
+  const filePath = path.join(root, "evaluations", "paragraphs", chapterSlug, `${enrichedInsight.slug}.md`);
+  const content = renderParagraphEvaluationContent(root, draft, enrichedInsight, { verdictExplanationLines });
+
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, content, "utf8");
+  return { filePath, content };
+}
+
 export async function syncChapterEvaluation(
   rootPath: string,
   chapter: string,
@@ -5612,8 +5799,9 @@ function renderParagraphEvaluationContent(
   root: string,
   draft: ChapterEvaluationDraft,
   paragraph: ParagraphEvaluationInsight,
+  options?: { verdictExplanationLines?: string[] },
 ): string {
-  const weightedVerdictExplanation = buildWeightedVerdictExplanation({
+  const weightedVerdictExplanation = options?.verdictExplanationLines ?? buildWeightedVerdictExplanation({
     objectiveScore: paragraph.objectiveScore,
     editorialScore: paragraph.editorialScore,
     weightedScore: paragraph.weightedScore,

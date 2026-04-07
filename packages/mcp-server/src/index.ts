@@ -31,6 +31,7 @@ import {
   findWikipediaResearchSnapshot,
   initializeBookRepo,
   listRelatedCanon,
+  prepareParagraphEvaluation,
   queryCanon,
   readStoryStateStatus,
   readAsset,
@@ -63,6 +64,7 @@ import {
   updateParagraph,
   updateParagraphDraft,
   validateBook,
+  writeParagraphEvaluationFromLlm,
   writeWikipediaResearchSnapshot,
 } from "narrarium";
 import {
@@ -2469,6 +2471,47 @@ server.tool(
   async ({ rootPath, chapter, paragraph }) => {
     const result = await syncParagraphEvaluation(rootPath, chapter, paragraph);
     return textResponse(`Synced paragraph evaluation at ${result.filePath} using the whole chapter as context.`);
+  },
+);
+
+server.tool(
+  "prepare_paragraph_evaluation",
+  "Compute objective text metrics and style context for a single paragraph and return them as structured data so the LLM can perform the editorial reading before calling write_paragraph_evaluation. Call this first, read the result carefully, then call write_paragraph_evaluation with your editorial judgment.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+  },
+  async ({ rootPath, chapter, paragraph }) => {
+    const result = await prepareParagraphEvaluation(rootPath, chapter, paragraph);
+    return textResponse(JSON.stringify(result, null, 2));
+  },
+);
+
+server.tool(
+  "write_paragraph_evaluation",
+  "Write the final paragraph evaluation file using LLM-supplied editorial strengths, concerns, canon notes, next steps, and verdict explanation combined with objective metrics recomputed from the current chapter state. Call prepare_paragraph_evaluation first to obtain the objective data before calling this tool.",
+  {
+    rootPath: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+    editorialStrengths: z.array(z.string()).describe("1–4 specific editorial strengths observed in the prose"),
+    editorialConcerns: z.array(z.string()).describe("1–4 specific editorial weaknesses observed"),
+    canonStrengths: z.array(z.string()).describe("0–3 ways the paragraph handles canon mentions well"),
+    canonConcerns: z.array(z.string()).describe("0–3 canon coherence issues observed"),
+    nextSteps: z.array(z.string()).describe("1–4 concrete revision actions for this paragraph"),
+    verdictExplanation: z.string().describe("2–4 sentences explaining why the combined score lands where it does"),
+  },
+  async ({ rootPath, chapter, paragraph, editorialStrengths, editorialConcerns, canonStrengths, canonConcerns, nextSteps, verdictExplanation }) => {
+    const result = await writeParagraphEvaluationFromLlm(rootPath, chapter, paragraph, {
+      editorialStrengths,
+      editorialConcerns,
+      canonStrengths,
+      canonConcerns,
+      nextSteps,
+      verdictExplanation,
+    });
+    return textResponse(`Wrote paragraph evaluation at ${result.filePath} using LLM editorial input combined with recomputed objective metrics.`);
   },
 );
 
