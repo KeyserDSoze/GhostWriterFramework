@@ -32,6 +32,9 @@ const readerChapters = await listChapters(getBookRoot()).catch(() => []);
 const fullCanonMode = isFullCanonMode();
 const passwordHash = getReaderPasswordHash();
 const cryptoSalt = getReaderPassword() ? getBuildSaltBase64() : null;
+if (!cryptoSalt) {
+  console.info("[narrarium-reader] NARRARIUM_READER_PASSWORD not set — building without encryption.");
+}
 const isChapterPage = Number.isFinite(currentChapterNumber);
 ---
 

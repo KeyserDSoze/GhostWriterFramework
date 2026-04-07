@@ -16,6 +16,7 @@ let _buildSalt: Buffer | null = null;
 export function getBuildSalt(): Buffer {
   if (!_buildSalt) {
     _buildSalt = randomBytes(16);
+    console.info("[narrarium-reader] Content encryption enabled (AES-256-GCM).");
   }
   return _buildSalt;
 }
