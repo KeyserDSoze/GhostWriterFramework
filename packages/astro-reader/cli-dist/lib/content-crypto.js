@@ -8,14 +8,18 @@ import { createCipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
  * with the same parameters. A public salt is fine — it only prevents rainbow
  * tables; the security comes from the password entropy.
  */
-let _buildSalt = null;
-/** Return the singleton salt for this build process, creating it on first call. */
+// Use a process-global symbol so the singleton survives Vite module re-evaluation
+// in dev mode (HMR). Without this, each Astro page request may get a fresh module
+// instance with a new random salt, making the canary and content salts diverge.
+const SALT_GLOBAL_KEY = Symbol.for("narrarium.buildSalt");
+/** Return the singleton salt for this build/dev process, creating it on first call. */
 export function getBuildSalt() {
-    if (!_buildSalt) {
-        _buildSalt = randomBytes(16);
+    const g = globalThis;
+    if (!g[SALT_GLOBAL_KEY]) {
+        g[SALT_GLOBAL_KEY] = randomBytes(16);
         console.info("[narrarium-reader] Content encryption enabled (AES-256-GCM).");
     }
-    return _buildSalt;
+    return g[SALT_GLOBAL_KEY];
 }
 /** Base64-encoded build salt, ready to embed in an HTML attribute. */
 export function getBuildSaltBase64() {

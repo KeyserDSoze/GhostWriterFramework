@@ -1,4 +1,4 @@
-/** Return the singleton salt for this build process, creating it on first call. */
+/** Return the singleton salt for this build/dev process, creating it on first call. */
 export declare function getBuildSalt(): Buffer;
 /** Base64-encoded build salt, ready to embed in an HTML attribute. */
 export declare function getBuildSaltBase64(): string;

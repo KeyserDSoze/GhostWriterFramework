@@ -10,15 +10,19 @@ import { createCipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
  * tables; the security comes from the password entropy.
  */
 
-let _buildSalt: Buffer | null = null;
+// Use a process-global symbol so the singleton survives Vite module re-evaluation
+// in dev mode (HMR). Without this, each Astro page request may get a fresh module
+// instance with a new random salt, making the canary and content salts diverge.
+const SALT_GLOBAL_KEY = Symbol.for("narrarium.buildSalt");
 
-/** Return the singleton salt for this build process, creating it on first call. */
+/** Return the singleton salt for this build/dev process, creating it on first call. */
 export function getBuildSalt(): Buffer {
-  if (!_buildSalt) {
-    _buildSalt = randomBytes(16);
+  const g = globalThis as typeof globalThis & { [key: symbol]: Buffer | undefined };
+  if (!g[SALT_GLOBAL_KEY]) {
+    g[SALT_GLOBAL_KEY] = randomBytes(16);
     console.info("[narrarium-reader] Content encryption enabled (AES-256-GCM).");
   }
-  return _buildSalt;
+  return g[SALT_GLOBAL_KEY]!;
 }
 
 /** Base64-encoded build salt, ready to embed in an HTML attribute. */
