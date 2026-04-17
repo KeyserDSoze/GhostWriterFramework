@@ -19,22 +19,30 @@ const nextChapter = currentIndex >= 0 && currentIndex < chapters.length - 1 ? ch
 ---
 
 <nav class="chapter-pager" aria-label="Chapter navigation">
-  <a class:list={["pager-link", !previousChapter && "is-disabled"]} href={previousChapter ? `chapters/${previousChapter.slug}/` : undefined} aria-disabled={!previousChapter}>
-    {previousChapter ? `Previous: ${previousChapter.metadata.title}` : "Start of book"}
+  <a class:list={["pager-link pager-link--prev", !previousChapter && "is-disabled"]} href={previousChapter ? `chapters/${previousChapter.slug}/` : undefined} aria-disabled={!previousChapter}>
+    <span class="pager-link__arrow" aria-hidden="true">←</span>
+    <span class="pager-link__body">
+      <span class="pager-link__label">Previous</span>
+      <span class="pager-link__title">{previousChapter ? previousChapter.metadata.title : "Start of book"}</span>
+    </span>
   </a>
 
   <label class="pager-jump">
-    <span class="label">Jump To</span>
+    <span class="pager-jump__label">Jump to chapter</span>
     <select onchange="if (this.value) window.location.href = this.value">
       {chapters.map((chapter) => (
         <option value={`chapters/${chapter.slug}/`} selected={chapter.slug === currentSlug}>
-          {`Chapter ${String(chapter.metadata.number).padStart(3, "0")} - ${chapter.metadata.title}`}
+          {`Chapter ${String(chapter.metadata.number).padStart(3, "0")} — ${chapter.metadata.title}`}
         </option>
       ))}
     </select>
   </label>
 
-  <a class:list={["pager-link", !nextChapter && "is-disabled"]} href={nextChapter ? `chapters/${nextChapter.slug}/` : undefined} aria-disabled={!nextChapter}>
-    {nextChapter ? `Next: ${nextChapter.metadata.title}` : "End of book"}
+  <a class:list={["pager-link pager-link--next", !nextChapter && "is-disabled"]} href={nextChapter ? `chapters/${nextChapter.slug}/` : undefined} aria-disabled={!nextChapter}>
+    <span class="pager-link__body">
+      <span class="pager-link__label">Next</span>
+      <span class="pager-link__title">{nextChapter ? nextChapter.metadata.title : "End of book"}</span>
+    </span>
+    <span class="pager-link__arrow" aria-hidden="true">→</span>
   </a>
 </nav>

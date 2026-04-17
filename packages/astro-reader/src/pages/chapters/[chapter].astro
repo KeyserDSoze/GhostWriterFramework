@@ -217,26 +217,26 @@ const renderedParagraphs = await Promise.all(
   </div>
 
   <aside class="focus-rail" aria-label="Full read controls">
-    <div class="focus-rail__meta">
-      <div>
-        <p class="eyebrow">Full read</p>
-        <div class="focus-rail__title">{chapter.metadata.title}</div>
+    <div class="focus-rail__row">
+      <div class="focus-rail__identity">
+        <span class="focus-rail__eyebrow">Full read</span>
+        <span class="focus-rail__title">{chapter.metadata.title}</span>
       </div>
-    </div>
-    <div class="focus-rail__controls">
-      <a class:list={["focus-rail__link", !previousChapter && "is-disabled"]} href={previousChapter ? `chapters/${previousChapter.slug}/` : undefined} aria-disabled={!previousChapter}>Previous</a>
-      <label class="focus-rail__jump">
-        <span class="sr-only">Jump to chapter</span>
-        <select data-reader-focus-jump aria-label="Jump to chapter">
-          {allChapters.map((entry) => (
-            <option value={entry.slug} selected={entry.slug === chapterSlug}>
-              {`Chapter ${String(entry.metadata.number).padStart(3, "0")} - ${entry.metadata.title}`}
-            </option>
-          ))}
-        </select>
-      </label>
-      <a class:list={["focus-rail__link", !nextChapter && "is-disabled"]} href={nextChapter ? `chapters/${nextChapter.slug}/` : undefined} aria-disabled={!nextChapter}>Next</a>
-      <button type="button" class="focus-rail__button" data-reader-focus-toggle>Exit</button>
+      <div class="focus-rail__controls">
+        <a class:list={["focus-rail__link", !previousChapter && "is-disabled"]} href={previousChapter ? `chapters/${previousChapter.slug}/` : undefined} aria-disabled={!previousChapter}>← Prev</a>
+        <label class="focus-rail__jump">
+          <span class="sr-only">Jump to chapter</span>
+          <select data-reader-focus-jump aria-label="Jump to chapter">
+            {allChapters.map((entry) => (
+              <option value={entry.slug} selected={entry.slug === chapterSlug}>
+                {`Chapter ${String(entry.metadata.number).padStart(3, "0")} — ${entry.metadata.title}`}
+              </option>
+            ))}
+          </select>
+        </label>
+        <a class:list={["focus-rail__link", !nextChapter && "is-disabled"]} href={nextChapter ? `chapters/${nextChapter.slug}/` : undefined} aria-disabled={!nextChapter}>Next →</a>
+        <button type="button" class="focus-rail__button" data-reader-focus-toggle>Exit</button>
+      </div>
     </div>
   </aside>
 
