@@ -1,6 +1,6 @@
 {
   "name": "narrarium-astro-reader",
-  "version": "0.1.39",
+  "version": "0.1.40",
   "type": "module",
   "description": "Astro reader and scaffolding CLI for Narrarium book repositories.",
   "license": "MIT",
