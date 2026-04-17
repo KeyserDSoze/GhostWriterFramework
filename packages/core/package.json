@@ -1,6 +1,6 @@
 {
   "name": "narrarium",
-  "version": "0.1.37",
+  "version": "0.1.38",
   "type": "module",
   "description": "Core schemas, repo scaffolding, search, validation, and export helpers for Narrarium book repositories.",
   "license": "MIT",

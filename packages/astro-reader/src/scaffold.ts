@@ -78,11 +78,11 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
   );
 
   await writeFile(path.join(targetRoot, "scripts", "book-config.mjs"), buildBookConfigScript(bookRoot), "utf8");
-  await writeFile(
-    path.join(targetRoot, ".github", "workflows", "deploy-pages.yml"),
-    buildPagesWorkflow(pagesDomain),
-    "utf8",
-  );
+  const workflowPath = path.join(targetRoot, ".github", "workflows", "deploy-pages.yml");
+  const existingWorkflow = await readFile(workflowPath, "utf8").catch(() => null);
+  if (existingWorkflow === null) {
+    await writeFile(workflowPath, buildPagesWorkflow(pagesDomain), "utf8");
+  }
 
   if (pagesDomain) {
     await writeFile(path.join(targetRoot, "public", "CNAME"), `${pagesDomain}\n`, "utf8");
