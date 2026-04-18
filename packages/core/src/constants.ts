@@ -20,6 +20,7 @@ export const BOOK_DIRECTORIES = [
   "evaluations",
   "evaluations/chapters",
   "evaluations/paragraphs",
+  "personas",
   "research",
   "research/wikipedia",
   "assets",
@@ -73,6 +74,9 @@ export const TOTAL_RESUME_FILE = "resumes/total.md";
 export const TOTAL_EVALUATION_FILE = "evaluations/total.md";
 export const STORY_STATE_STATUS_FILE = "state/status.md";
 export const STORY_STATE_CURRENT_FILE = "state/current.md";
+
+export const PERSONAS_DIRECTORY = "personas";
+export const PERSONAS_REVIEW_FILENAME = "personas-review.md";
 
 export const CONTENT_GLOB = [
   "book.md",

@@ -337,6 +337,37 @@ export const researchNoteSchema = z
   })
   .passthrough();
 
+export const personaSchema = z
+  .object({
+    type: z.literal("persona"),
+    id: z.string().min(1),
+    name: z.string().min(1),
+    /** Short archetype label, e.g. "casual reader", "literary critic", "genre fan" */
+    archetype: z.string().min(1),
+    /** Age range or description, e.g. "30s", "teenager", "retired professional" */
+    age_range: z.string().optional(),
+    /** Reading habits and preferences */
+    reading_habits: z.string().optional(),
+    /** What this persona values most in a story */
+    values: z.array(z.string()).default([]),
+    /** What this persona dislikes or finds off-putting */
+    dislikes: z.array(z.string()).default([]),
+    /** How this persona rates prose: focus areas when evaluating beauty */
+    beauty_focus: z.array(z.string()).default([]),
+    /** How this persona rates readability: focus areas when evaluating clarity */
+    readability_focus: z.array(z.string()).default([]),
+    /** Emotional triggers — what moves this persona */
+    emotional_triggers: z.array(z.string()).default([]),
+    /** Tolerance for complexity (1 = very low, 5 = very high) */
+    complexity_tolerance: z.number().int().min(1).max(5).default(3),
+    /** Tolerance for slow pacing (1 = very low, 5 = very high) */
+    pacing_tolerance: z.number().int().min(1).max(5).default(3),
+    /** Whether this is a built-in default persona */
+    builtin: z.boolean().default(false),
+    tags: z.array(z.string()).default([]),
+  })
+  .passthrough();
+
 export const entitySchemaMap = {
   character: characterSchema,
   item: itemSchema,
@@ -386,4 +417,5 @@ export type ChapterDraftFrontmatter = z.infer<typeof chapterDraftSchema>;
 export type ParagraphFrontmatter = z.infer<typeof paragraphSchema>;
 export type ParagraphDraftFrontmatter = z.infer<typeof paragraphDraftSchema>;
 export type ResearchNoteFrontmatter = z.infer<typeof researchNoteSchema>;
+export type PersonaFrontmatter = z.infer<typeof personaSchema>;
 export type EntityType = z.infer<typeof entityTypeSchema>;

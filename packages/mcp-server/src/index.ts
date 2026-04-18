@@ -24,6 +24,7 @@ import {
   createParagraph,
   createParagraphDraft,
   createParagraphFromDraft,
+  createPersona,
   createSecretProfile,
   createTimelineEventProfile,
   evaluateBook,
@@ -31,6 +32,7 @@ import {
   findWikipediaResearchSnapshot,
   initializeBookRepo,
   listRelatedCanon,
+  loadPersonas,
   prepareParagraphEvaluation,
   queryCanon,
   readStoryStateStatus,
@@ -46,6 +48,7 @@ import {
   searchBook,
   saveBookWorkItem,
   saveChapterDraftWorkItem,
+  seedDefaultPersonas,
   syncAllResumes,
   applyDialogueActionBeats,
   syncParagraphEvaluation,
@@ -64,8 +67,10 @@ import {
   updateParagraph,
   updateParagraphDraft,
   validateBook,
+  writePersonasReview,
   writeParagraphEvaluationFromLlm,
   writeWikipediaResearchSnapshot,
+  type PersonaReviewEntry,
 } from "narrarium";
 import {
   buildRepositorySpecSummary,
@@ -3449,3 +3454,132 @@ function isString(value: unknown): value is string {
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
 }
+
+// ─── Persona tools ────────────────────────────────────────────────────────────
+
+server.tool(
+  "create_persona",
+  `Create a reader persona file in personas/ of the book repository.
+Personas represent fictional reader archetypes used to review chapters from different perspectives.
+Each persona has reading habits, values, dislikes, beauty and readability focus areas, emotional triggers, and tolerance scores.
+Use seed_default_personas to populate the book with the five built-in archetypes instead of creating one manually.`,
+  {
+    rootPath: z.string().min(1).describe("Absolute path to the book repository root"),
+    name: z.string().min(1).describe("Full display name of the persona, e.g. 'The Casual Reader'"),
+    archetype: z.string().min(1).describe("Short archetype label, e.g. 'casual reader', 'literary critic'"),
+    slug: z.string().optional().describe("File slug (auto-derived from name if omitted)"),
+    ageRange: z.string().optional().describe("Age range or description, e.g. '30s', 'teenager'"),
+    readingHabits: z.string().optional().describe("How and why this persona reads"),
+    values: z.array(z.string()).default([]).describe("What this persona values most in a story"),
+    dislikes: z.array(z.string()).default([]).describe("What this persona dislikes or finds off-putting"),
+    beautyFocus: z.array(z.string()).default([]).describe("Aspects this persona focuses on when judging prose beauty"),
+    readabilityFocus: z.array(z.string()).default([]).describe("Aspects this persona focuses on when judging readability"),
+    emotionalTriggers: z.array(z.string()).default([]).describe("What emotionally moves this persona"),
+    complexityTolerance: z.number().int().min(1).max(5).default(3).describe("Tolerance for narrative complexity (1=very low, 5=very high)"),
+    pacingTolerance: z.number().int().min(1).max(5).default(3).describe("Tolerance for slow pacing (1=very low, 5=very high)"),
+    tags: z.array(z.string()).default([]),
+    body: z.string().optional().describe("Optional custom markdown body; auto-generated if omitted"),
+    overwrite: z.boolean().default(false),
+  },
+  async (inputs) => {
+    const result = await createPersona(inputs.rootPath, {
+      name: inputs.name,
+      archetype: inputs.archetype,
+      slug: inputs.slug,
+      ageRange: inputs.ageRange,
+      readingHabits: inputs.readingHabits,
+      values: inputs.values,
+      dislikes: inputs.dislikes,
+      beautyFocus: inputs.beautyFocus,
+      readabilityFocus: inputs.readabilityFocus,
+      emotionalTriggers: inputs.emotionalTriggers,
+      complexityTolerance: inputs.complexityTolerance,
+      pacingTolerance: inputs.pacingTolerance,
+      tags: inputs.tags,
+      body: inputs.body,
+      overwrite: inputs.overwrite,
+    });
+    return textResponse(`Created persona at ${result.filePath}.`);
+  },
+);
+
+server.tool(
+  "seed_default_personas",
+  `Seed the book repository with the five built-in reader personas if they do not already exist.
+The default personas are: The Casual Reader, The Literary Critic, The Genre Fan, The Empathetic Reader, The Impatient Skimmer.
+Already-existing persona files are never overwritten.
+Call this once when setting up a new book to have a ready-made panel of reviewers.`,
+  {
+    rootPath: z.string().min(1).describe("Absolute path to the book repository root"),
+  },
+  async ({ rootPath }) => {
+    const created = await seedDefaultPersonas(rootPath);
+    if (created.length === 0) {
+      return textResponse("All default personas already exist — nothing was created.");
+    }
+    return textResponse(`Seeded ${created.length} default persona(s):\n${created.map((f) => `  - ${f}`).join("\n")}`);
+  },
+);
+
+server.tool(
+  "list_personas",
+  `List all reader personas defined in the book repository's personas/ folder.
+Returns each persona's slug, name, archetype, complexity tolerance, and pacing tolerance.
+Use this before calling review_chapter_with_personas to know which personas are available.`,
+  {
+    rootPath: z.string().min(1).describe("Absolute path to the book repository root"),
+  },
+  async ({ rootPath }) => {
+    const personas = await loadPersonas(rootPath);
+    if (personas.length === 0) {
+      return textResponse("No personas found. Use seed_default_personas or create_persona to add some.");
+    }
+    const lines = personas.map((p) => {
+      const fm = p.frontmatter;
+      return `- **${fm.name}** (${fm.archetype}) — slug: \`${fm.id.replace("persona:", "")}\`, complexity: ${fm.complexity_tolerance}/5, pacing: ${fm.pacing_tolerance}/5`;
+    });
+    return textResponse(`Found ${personas.length} persona(s):\n\n${lines.join("\n")}`);
+  },
+);
+
+server.tool(
+  "review_chapter_with_personas",
+  `Review a chapter from the perspective of one or more reader personas and write the results to evaluations/chapters/<chapter>/personas-review.md.
+
+## Workflow
+1. Call list_personas (or load the persona files directly) to know which personas exist.
+2. Read the chapter prose using chapter_writing_context or by reading the chapter files directly.
+3. For each persona, simulate how that reader would experience the chapter:
+   - Assign a beauty score (1–10): how aesthetically pleasing is the prose to this persona?
+   - Assign a readability score (1–10): how easy and enjoyable is it to read for this persona?
+   - Write an overall impression (2–4 sentences in the persona's voice).
+   - List 2–4 strengths (what worked for this persona).
+   - List 2–4 concerns (what didn't work or felt off).
+   - List 1–3 concrete suggestions from this persona's point of view.
+4. Pass all reviews to this tool — it writes the consolidated personas-review.md file.
+
+The file is placed alongside the editorial evaluation in evaluations/chapters/<chapter>/personas-review.md.`,
+  {
+    rootPath: z.string().min(1).describe("Absolute path to the book repository root"),
+    chapterSlug: z.string().min(1).describe("Slug of the chapter being reviewed"),
+    reviews: z.array(
+      z.object({
+        personaSlug: z.string().min(1).describe("Slug of the persona (filename without .md)"),
+        personaName: z.string().min(1).describe("Display name of the persona"),
+        beautyScore: z.number().int().min(1).max(10).describe("Beauty score 1–10"),
+        readabilityScore: z.number().int().min(1).max(10).describe("Readability score 1–10"),
+        overallImpression: z.string().min(1).describe("2–4 sentence overall impression in the persona's voice"),
+        strengths: z.array(z.string()).min(1).describe("2–4 things that worked for this persona"),
+        concerns: z.array(z.string()).default([]).describe("2–4 things that didn't work"),
+        suggestions: z.array(z.string()).default([]).describe("1–3 concrete suggestions"),
+      }),
+    ).min(1).describe("One review entry per persona"),
+  },
+  async ({ rootPath, chapterSlug, reviews }) => {
+    const result = await writePersonasReview(rootPath, chapterSlug, {
+      chapterSlug,
+      reviews: reviews as PersonaReviewEntry[],
+    });
+    return textResponse(`Personas review written to ${result.filePath}.`);
+  },
+);

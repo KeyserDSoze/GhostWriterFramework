@@ -16,6 +16,8 @@ import {
   GUIDELINE_FILES,
   IDEAS_FILE,
   NOTES_FILE,
+  PERSONAS_DIRECTORY,
+  PERSONAS_REVIEW_FILENAME,
   PLOT_FILE,
   PROMOTED_FILE,
   SKILL_NAME,
@@ -41,6 +43,7 @@ import {
   noteSchema,
   paragraphSchema,
   paragraphDraftSchema,
+  personaSchema,
   plotSchema,
   researchNoteSchema,
   secretSchema,
@@ -59,6 +62,7 @@ import {
   type NoteFrontmatter,
   type ParagraphFrontmatter,
   type ParagraphDraftFrontmatter,
+  type PersonaFrontmatter,
   type PlotFrontmatter,
   type SecretFrontmatter,
   type TimelineEventFrontmatter,
@@ -12437,4 +12441,308 @@ function toPrefixedList(prefix: string, values: string[] | undefined): string[] 
 
 function uniqueValues(values: string[]): string[] {
   return [...new Set(values.filter((value) => value.trim().length > 0))];
+}
+
+// ─── Persona types ────────────────────────────────────────────────────────────
+
+export type CreatePersonaInput = {
+  name: string;
+  archetype: string;
+  slug?: string;
+  ageRange?: string;
+  readingHabits?: string;
+  values?: string[];
+  dislikes?: string[];
+  beautyFocus?: string[];
+  readabilityFocus?: string[];
+  emotionalTriggers?: string[];
+  complexityTolerance?: number;
+  pacingTolerance?: number;
+  builtin?: boolean;
+  tags?: string[];
+  body?: string;
+  overwrite?: boolean;
+};
+
+export type PersonaReviewInput = {
+  /** Slug of the chapter to review */
+  chapterSlug: string;
+  /** Slugs of personas to use; if empty, uses all personas in the book */
+  personaSlugs?: string[];
+  /**
+   * LLM-supplied review entries — one per persona.
+   * The caller (MCP tool) reads the chapter prose and each persona profile,
+   * then produces these structured reviews.
+   */
+  reviews: PersonaReviewEntry[];
+};
+
+export type PersonaReviewEntry = {
+  personaSlug: string;
+  personaName: string;
+  /** 1–10 beauty score from this persona's perspective */
+  beautyScore: number;
+  /** 1–10 readability score from this persona's perspective */
+  readabilityScore: number;
+  /** 2–4 sentence overall impression */
+  overallImpression: string;
+  /** What this persona loved */
+  strengths: string[];
+  /** What this persona struggled with or disliked */
+  concerns: string[];
+  /** Concrete suggestions from this persona's point of view */
+  suggestions: string[];
+};
+
+// ─── Default personas ─────────────────────────────────────────────────────────
+
+export const DEFAULT_PERSONAS: Omit<CreatePersonaInput, "overwrite">[] = [
+  {
+    name: "The Casual Reader",
+    archetype: "casual reader",
+    slug: "casual-reader",
+    ageRange: "25–45",
+    readingHabits: "Reads for entertainment, mostly on evenings and weekends. Prefers page-turners and avoids dense prose.",
+    values: ["engaging plot", "relatable characters", "emotional payoff", "clear writing"],
+    dislikes: ["slow openings", "excessive description", "confusing timelines", "too many characters at once"],
+    beautyFocus: ["vivid imagery", "memorable lines", "emotional resonance"],
+    readabilityFocus: ["sentence clarity", "paragraph flow", "easy-to-follow dialogue"],
+    emotionalTriggers: ["character in danger", "unexpected betrayal", "tender moments between characters"],
+    complexityTolerance: 2,
+    pacingTolerance: 2,
+    builtin: true,
+    tags: ["default"],
+  },
+  {
+    name: "The Literary Critic",
+    archetype: "literary critic",
+    slug: "literary-critic",
+    ageRange: "35–60",
+    readingHabits: "Reads widely across genres and periods. Values craft, subtext, and originality above entertainment.",
+    values: ["prose craft", "thematic depth", "originality", "subtext", "structural coherence"],
+    dislikes: ["clichés", "flat characters", "on-the-nose dialogue", "unearned emotional beats"],
+    beautyFocus: ["sentence rhythm", "metaphor quality", "voice distinctiveness", "tonal consistency"],
+    readabilityFocus: ["paragraph architecture", "scene transitions", "point-of-view discipline"],
+    emotionalTriggers: ["moral ambiguity", "language used as revelation", "earned catharsis"],
+    complexityTolerance: 5,
+    pacingTolerance: 5,
+    builtin: true,
+    tags: ["default"],
+  },
+  {
+    name: "The Genre Fan",
+    archetype: "genre fan",
+    slug: "genre-fan",
+    ageRange: "20–40",
+    readingHabits: "Reads heavily within a specific genre. Has strong genre expectations and notices when conventions are broken.",
+    values: ["genre conventions", "world-building consistency", "satisfying tropes", "fast pacing"],
+    dislikes: ["genre-bending without payoff", "slow world-building", "weak antagonists", "unresolved plot threads"],
+    beautyFocus: ["atmospheric description", "action clarity", "world-building detail"],
+    readabilityFocus: ["action scene pacing", "exposition balance", "chapter hooks"],
+    emotionalTriggers: ["high-stakes confrontations", "power reveals", "found-family moments"],
+    complexityTolerance: 3,
+    pacingTolerance: 2,
+    builtin: true,
+    tags: ["default"],
+  },
+  {
+    name: "The Empathetic Reader",
+    archetype: "empathetic reader",
+    slug: "empathetic-reader",
+    ageRange: "18–50",
+    readingHabits: "Reads primarily for emotional connection. Cares deeply about characters and their inner lives.",
+    values: ["emotional authenticity", "character interiority", "meaningful relationships", "vulnerability"],
+    dislikes: ["emotionally flat characters", "rushed relationships", "trauma used as decoration", "unresolved emotional arcs"],
+    beautyFocus: ["emotional language", "sensory detail tied to feeling", "authentic dialogue"],
+    readabilityFocus: ["interiority clarity", "emotional scene pacing", "relationship dynamics"],
+    emotionalTriggers: ["grief", "reconciliation", "self-discovery", "sacrifice"],
+    complexityTolerance: 3,
+    pacingTolerance: 4,
+    builtin: true,
+    tags: ["default"],
+  },
+  {
+    name: "The Impatient Skimmer",
+    archetype: "impatient skimmer",
+    slug: "impatient-skimmer",
+    ageRange: "16–30",
+    readingHabits: "Reads quickly, often skips description-heavy passages. Needs constant forward momentum to stay engaged.",
+    values: ["fast pacing", "punchy dialogue", "immediate stakes", "short chapters"],
+    dislikes: ["long descriptions", "flashbacks", "internal monologue", "slow build-up"],
+    beautyFocus: ["punchy sentences", "striking opening lines", "visual immediacy"],
+    readabilityFocus: ["sentence length variety", "white space", "dialogue-to-prose ratio"],
+    emotionalTriggers: ["immediate conflict", "cliffhangers", "snappy banter"],
+    complexityTolerance: 1,
+    pacingTolerance: 1,
+    builtin: true,
+    tags: ["default"],
+  },
+];
+
+// ─── Persona functions ────────────────────────────────────────────────────────
+
+export async function createPersona(
+  rootPath: string,
+  input: CreatePersonaInput,
+): Promise<{ filePath: string; frontmatter: PersonaFrontmatter }> {
+  const slug = input.slug ?? slugify(input.name);
+  const filePath = path.join(rootPath, PERSONAS_DIRECTORY, `${slug}.md`);
+
+  if (!input.overwrite && await pathExists(filePath)) {
+    throw new Error(`Persona already exists at ${filePath}. Use overwrite: true to replace it.`);
+  }
+
+  await mkdir(path.join(rootPath, PERSONAS_DIRECTORY), { recursive: true });
+
+  const frontmatter: Record<string, unknown> = {
+    type: "persona",
+    id: `persona:${slug}`,
+    name: input.name,
+    archetype: input.archetype,
+    age_range: input.ageRange,
+    reading_habits: input.readingHabits,
+    values: input.values ?? [],
+    dislikes: input.dislikes ?? [],
+    beauty_focus: input.beautyFocus ?? [],
+    readability_focus: input.readabilityFocus ?? [],
+    emotional_triggers: input.emotionalTriggers ?? [],
+    complexity_tolerance: input.complexityTolerance ?? 3,
+    pacing_tolerance: input.pacingTolerance ?? 3,
+    builtin: input.builtin ?? false,
+    tags: input.tags ?? [],
+  };
+
+  const body = input.body ?? buildPersonaBody(input);
+  const content = renderMarkdown(frontmatter, body);
+  await writeFile(filePath, content, "utf8");
+
+  return { filePath, frontmatter: personaSchema.parse(frontmatter) };
+}
+
+export async function loadPersonas(rootPath: string): Promise<Array<{ filePath: string; frontmatter: PersonaFrontmatter; body: string }>> {
+  const dir = path.join(rootPath, PERSONAS_DIRECTORY);
+  const exists = await pathExists(dir);
+  if (!exists) return [];
+
+  const files = await fg(`${toPosixPath(dir)}/*.md`);
+  const results: Array<{ filePath: string; frontmatter: PersonaFrontmatter; body: string }> = [];
+
+  for (const file of files.sort()) {
+    try {
+      const raw = await readFile(file, "utf8");
+      const parsed = matter(raw);
+      const fm = personaSchema.parse({ ...parsed.data });
+      results.push({ filePath: file, frontmatter: fm, body: parsed.content.trim() });
+    } catch {
+      // skip malformed files
+    }
+  }
+
+  return results;
+}
+
+export async function seedDefaultPersonas(rootPath: string): Promise<string[]> {
+  const created: string[] = [];
+  for (const persona of DEFAULT_PERSONAS) {
+    const slug = persona.slug ?? slugify(persona.name);
+    const filePath = path.join(rootPath, PERSONAS_DIRECTORY, `${slug}.md`);
+    if (await pathExists(filePath)) continue;
+    const result = await createPersona(rootPath, { ...persona, overwrite: false });
+    created.push(result.filePath);
+  }
+  return created;
+}
+
+export async function writePersonasReview(
+  rootPath: string,
+  chapterSlug: string,
+  input: PersonaReviewInput,
+): Promise<{ filePath: string }> {
+  const filePath = path.join(rootPath, "evaluations", "chapters", chapterSlug, PERSONAS_REVIEW_FILENAME);
+  await mkdir(path.dirname(filePath), { recursive: true });
+
+  const now = new Date().toISOString().slice(0, 10);
+  const lines: string[] = [
+    `---`,
+    `type: personas-review`,
+    `id: "personas-review:${chapterSlug}"`,
+    `chapter: "${chapterSlug}"`,
+    `updated_at: "${now}"`,
+    `persona_count: ${input.reviews.length}`,
+    `---`,
+    ``,
+    `# Personas Review — ${chapterSlug}`,
+    ``,
+    `*${input.reviews.length} reader persona${input.reviews.length === 1 ? "" : "s"} reviewed this chapter on ${now}.*`,
+    ``,
+  ];
+
+  for (const review of input.reviews) {
+    const beautyBar = ratingBar(review.beautyScore);
+    const readabilityBar = ratingBar(review.readabilityScore);
+    lines.push(`## ${review.personaName}`);
+    lines.push(``);
+    lines.push(`| Dimension | Score |`);
+    lines.push(`|-----------|-------|`);
+    lines.push(`| Beauty | ${beautyBar} ${review.beautyScore}/10 |`);
+    lines.push(`| Readability | ${readabilityBar} ${review.readabilityScore}/10 |`);
+    lines.push(``);
+    lines.push(`### Overall impression`);
+    lines.push(``);
+    lines.push(review.overallImpression.trim());
+    lines.push(``);
+    if (review.strengths.length > 0) {
+      lines.push(`### What worked`);
+      lines.push(``);
+      for (const s of review.strengths) lines.push(`- ${s}`);
+      lines.push(``);
+    }
+    if (review.concerns.length > 0) {
+      lines.push(`### What didn't work`);
+      lines.push(``);
+      for (const c of review.concerns) lines.push(`- ${c}`);
+      lines.push(``);
+    }
+    if (review.suggestions.length > 0) {
+      lines.push(`### Suggestions`);
+      lines.push(``);
+      for (const s of review.suggestions) lines.push(`- ${s}`);
+      lines.push(``);
+    }
+    lines.push(`---`);
+    lines.push(``);
+  }
+
+  await writeFile(filePath, lines.join("\n"), "utf8");
+  return { filePath };
+}
+
+function buildPersonaBody(input: CreatePersonaInput): string {
+  const sections: string[] = [];
+
+  if (input.readingHabits) {
+    sections.push(`## Reading habits\n\n${input.readingHabits}`);
+  }
+  if (input.values && input.values.length > 0) {
+    sections.push(`## Values\n\n${input.values.map((v) => `- ${v}`).join("\n")}`);
+  }
+  if (input.dislikes && input.dislikes.length > 0) {
+    sections.push(`## Dislikes\n\n${input.dislikes.map((d) => `- ${d}`).join("\n")}`);
+  }
+  if (input.beautyFocus && input.beautyFocus.length > 0) {
+    sections.push(`## Beauty focus\n\n${input.beautyFocus.map((b) => `- ${b}`).join("\n")}`);
+  }
+  if (input.readabilityFocus && input.readabilityFocus.length > 0) {
+    sections.push(`## Readability focus\n\n${input.readabilityFocus.map((r) => `- ${r}`).join("\n")}`);
+  }
+  if (input.emotionalTriggers && input.emotionalTriggers.length > 0) {
+    sections.push(`## Emotional triggers\n\n${input.emotionalTriggers.map((e) => `- ${e}`).join("\n")}`);
+  }
+
+  return sections.join("\n\n");
+}
+
+function ratingBar(score: number): string {
+  const filled = Math.round(Math.max(0, Math.min(10, score)));
+  return "█".repeat(filled) + "░".repeat(10 - filled);
 }
