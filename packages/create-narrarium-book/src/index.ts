@@ -14,6 +14,7 @@ import {
   createParagraph,
   initializeBookRepo,
   readBook,
+  seedDefaultPersonas,
   syncChapterEvaluation,
   syncChapterResume,
   syncTotalResume,
@@ -56,6 +57,8 @@ async function runCreate(args: ParsedArgs) {
     language: resolved.language,
     createSkills: true,
   });
+
+  await seedDefaultPersonas(targetPath);
 
   let readerPath = "";
   let readerInstalled = false;

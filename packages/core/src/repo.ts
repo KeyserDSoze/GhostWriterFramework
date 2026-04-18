@@ -1321,6 +1321,11 @@ export async function upgradeBookRepo(
 
   const migrated = await migrateLegacyStoryMarkdownLinks(root);
 
+  const seededPersonas = await seedDefaultPersonas(root);
+  for (const p of seededPersonas) {
+    created.push(p);
+  }
+
   return {
     rootPath: root,
     created,
@@ -12720,23 +12725,55 @@ export async function writePersonasReview(
 function buildPersonaBody(input: CreatePersonaInput): string {
   const sections: string[] = [];
 
+  // ── Persona profile ──────────────────────────────────────────────────────
+  // A narrative paragraph that helps an LLM understand who this reader is,
+  // what they want from a book, and what will make them put it down.
+  const profileParts: string[] = [];
+
+  if (input.archetype) {
+    profileParts.push(`**${input.name}** is a ${input.archetype}${input.ageRange ? ` (${input.ageRange})` : ""}.`);
+  }
   if (input.readingHabits) {
-    sections.push(`## Reading habits\n\n${input.readingHabits}`);
+    profileParts.push(input.readingHabits);
   }
   if (input.values && input.values.length > 0) {
-    sections.push(`## Values\n\n${input.values.map((v) => `- ${v}`).join("\n")}`);
+    profileParts.push(`They value ${input.values.join(", ")}.`);
   }
   if (input.dislikes && input.dislikes.length > 0) {
-    sections.push(`## Dislikes\n\n${input.dislikes.map((d) => `- ${d}`).join("\n")}`);
-  }
-  if (input.beautyFocus && input.beautyFocus.length > 0) {
-    sections.push(`## Beauty focus\n\n${input.beautyFocus.map((b) => `- ${b}`).join("\n")}`);
-  }
-  if (input.readabilityFocus && input.readabilityFocus.length > 0) {
-    sections.push(`## Readability focus\n\n${input.readabilityFocus.map((r) => `- ${r}`).join("\n")}`);
+    profileParts.push(`They lose patience with ${input.dislikes.join(", ")}.`);
   }
   if (input.emotionalTriggers && input.emotionalTriggers.length > 0) {
-    sections.push(`## Emotional triggers\n\n${input.emotionalTriggers.map((e) => `- ${e}`).join("\n")}`);
+    profileParts.push(`They respond strongly to ${input.emotionalTriggers.join(", ")}.`);
+  }
+
+  const complexityLabel = input.complexityTolerance != null
+    ? ["very low", "low", "moderate", "high", "very high"][Math.max(0, Math.min(4, input.complexityTolerance - 1))]
+    : null;
+  const pacingLabel = input.pacingTolerance != null
+    ? ["very low", "low", "moderate", "high", "very high"][Math.max(0, Math.min(4, input.pacingTolerance - 1))]
+    : null;
+
+  if (complexityLabel || pacingLabel) {
+    const tolerances: string[] = [];
+    if (complexityLabel) tolerances.push(`complexity tolerance is ${complexityLabel}`);
+    if (pacingLabel) tolerances.push(`pacing tolerance is ${pacingLabel}`);
+    profileParts.push(`Their ${tolerances.join(" and ")}.`);
+  }
+
+  if (profileParts.length > 0) {
+    sections.push(`## Persona profile\n\n${profileParts.join(" ")}`);
+  }
+
+  // ── Craft focus ──────────────────────────────────────────────────────────
+  const craftParts: string[] = [];
+  if (input.beautyFocus && input.beautyFocus.length > 0) {
+    craftParts.push(`**Beauty focus:** ${input.beautyFocus.join(", ")}.`);
+  }
+  if (input.readabilityFocus && input.readabilityFocus.length > 0) {
+    craftParts.push(`**Readability focus:** ${input.readabilityFocus.join(", ")}.`);
+  }
+  if (craftParts.length > 0) {
+    sections.push(`## Craft focus\n\n${craftParts.join("\n\n")}`);
   }
 
   return sections.join("\n\n");
