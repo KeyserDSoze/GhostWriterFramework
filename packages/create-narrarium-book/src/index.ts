@@ -58,7 +58,7 @@ async function runCreate(args: ParsedArgs) {
     createSkills: true,
   });
 
-  await seedDefaultPersonas(targetPath);
+  await seedDefaultPersonas(targetPath, resolved.language);
 
   let readerPath = "";
   let readerInstalled = false;

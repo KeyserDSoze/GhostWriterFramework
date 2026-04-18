@@ -1321,7 +1321,7 @@ export async function upgradeBookRepo(
 
   const migrated = await migrateLegacyStoryMarkdownLinks(root);
 
-  const seededPersonas = await seedDefaultPersonas(root);
+  const seededPersonas = await seedDefaultPersonas(root, book.frontmatter.language);
   for (const p of seededPersonas) {
     created.push(p);
   }
@@ -12466,6 +12466,8 @@ export type CreatePersonaInput = {
   builtin?: boolean;
   tags?: string[];
   body?: string;
+  /** BCP-47 language code (e.g. "en", "it", "fr"). Controls the language of the generated body prose. */
+  language?: string;
   overwrite?: boolean;
 };
 
@@ -12617,7 +12619,7 @@ export async function createPersona(
     tags: input.tags ?? [],
   };
 
-  const body = input.body ?? buildPersonaBody(input);
+  const body = input.body ?? buildPersonaBody(input, input.language);
   const content = renderMarkdown(frontmatter, body);
   await writeFile(filePath, content, "utf8");
 
@@ -12646,13 +12648,13 @@ export async function loadPersonas(rootPath: string): Promise<Array<{ filePath: 
   return results;
 }
 
-export async function seedDefaultPersonas(rootPath: string): Promise<string[]> {
+export async function seedDefaultPersonas(rootPath: string, language?: string): Promise<string[]> {
   const created: string[] = [];
   for (const persona of DEFAULT_PERSONAS) {
     const slug = persona.slug ?? slugify(persona.name);
     const filePath = path.join(rootPath, PERSONAS_DIRECTORY, `${slug}.md`);
     if (await pathExists(filePath)) continue;
-    const result = await createPersona(rootPath, { ...persona, overwrite: false });
+    const result = await createPersona(rootPath, { ...persona, language, overwrite: false });
     created.push(result.filePath);
   }
   return created;
@@ -12722,7 +12724,110 @@ export async function writePersonasReview(
   return { filePath };
 }
 
-function buildPersonaBody(input: CreatePersonaInput): string {
+type PersonaBodyStrings = {
+  personaProfileHeading: string;
+  craftFocusHeading: string;
+  isA: (name: string, archetype: string, ageRange?: string) => string;
+  theyValue: (list: string) => string;
+  theyLosePatience: (list: string) => string;
+  theyRespondTo: (list: string) => string;
+  complexityIs: (label: string) => string;
+  pacingIs: (label: string) => string;
+  toleranceLabels: [string, string, string, string, string];
+  beautyFocusLabel: string;
+  readabilityFocusLabel: string;
+};
+
+const PERSONA_BODY_STRINGS: Record<string, PersonaBodyStrings> = {
+  en: {
+    personaProfileHeading: "## Persona profile",
+    craftFocusHeading: "## Craft focus",
+    isA: (name, archetype, ageRange) =>
+      `**${name}** is a ${archetype}${ageRange ? ` (${ageRange})` : ""}.`,
+    theyValue: (list) => `They value ${list}.`,
+    theyLosePatience: (list) => `They lose patience with ${list}.`,
+    theyRespondTo: (list) => `They respond strongly to ${list}.`,
+    complexityIs: (label) => `complexity tolerance is ${label}`,
+    pacingIs: (label) => `pacing tolerance is ${label}`,
+    toleranceLabels: ["very low", "low", "moderate", "high", "very high"],
+    beautyFocusLabel: "**Beauty focus:**",
+    readabilityFocusLabel: "**Readability focus:**",
+  },
+  it: {
+    personaProfileHeading: "## Profilo della persona",
+    craftFocusHeading: "## Focus stilistico",
+    isA: (name, archetype, ageRange) =>
+      `**${name}** è un${/^[aeiouAEIOU]/.test(archetype) ? "'" : "a "}${archetype}${ageRange ? ` (${ageRange})` : ""}.`,
+    theyValue: (list) => `Apprezza ${list}.`,
+    theyLosePatience: (list) => `Perde la pazienza con ${list}.`,
+    theyRespondTo: (list) => `Reagisce con forza a ${list}.`,
+    complexityIs: (label) => `tolleranza alla complessità: ${label}`,
+    pacingIs: (label) => `tolleranza al ritmo narrativo: ${label}`,
+    toleranceLabels: ["molto bassa", "bassa", "moderata", "alta", "molto alta"],
+    beautyFocusLabel: "**Focus estetico:**",
+    readabilityFocusLabel: "**Focus sulla leggibilità:**",
+  },
+  fr: {
+    personaProfileHeading: "## Profil du persona",
+    craftFocusHeading: "## Focus stylistique",
+    isA: (name, archetype, ageRange) =>
+      `**${name}** est un${/^[aeiouAEIOU]/.test(archetype) ? "'" : " "}${archetype}${ageRange ? ` (${ageRange})` : ""}.`,
+    theyValue: (list) => `Il/elle apprécie ${list}.`,
+    theyLosePatience: (list) => `Il/elle perd patience avec ${list}.`,
+    theyRespondTo: (list) => `Il/elle réagit fortement à ${list}.`,
+    complexityIs: (label) => `tolérance à la complexité : ${label}`,
+    pacingIs: (label) => `tolérance au rythme narratif : ${label}`,
+    toleranceLabels: ["très faible", "faible", "modérée", "élevée", "très élevée"],
+    beautyFocusLabel: "**Focus esthétique :**",
+    readabilityFocusLabel: "**Focus lisibilité :**",
+  },
+  de: {
+    personaProfileHeading: "## Persona-Profil",
+    craftFocusHeading: "## Stilistischer Fokus",
+    isA: (name, archetype, ageRange) =>
+      `**${name}** ist ein ${archetype}${ageRange ? ` (${ageRange})` : ""}.`,
+    theyValue: (list) => `Sie schätzen ${list}.`,
+    theyLosePatience: (list) => `Sie verlieren die Geduld bei ${list}.`,
+    theyRespondTo: (list) => `Sie reagieren stark auf ${list}.`,
+    complexityIs: (label) => `Komplexitätstoleranz: ${label}`,
+    pacingIs: (label) => `Erzähltempotoleranz: ${label}`,
+    toleranceLabels: ["sehr niedrig", "niedrig", "moderat", "hoch", "sehr hoch"],
+    beautyFocusLabel: "**Ästhetischer Fokus:**",
+    readabilityFocusLabel: "**Lesbarkeits-Fokus:**",
+  },
+  es: {
+    personaProfileHeading: "## Perfil del persona",
+    craftFocusHeading: "## Enfoque estilístico",
+    isA: (name, archetype, ageRange) =>
+      `**${name}** es un ${archetype}${ageRange ? ` (${ageRange})` : ""}.`,
+    theyValue: (list) => `Valora ${list}.`,
+    theyLosePatience: (list) => `Pierde la paciencia con ${list}.`,
+    theyRespondTo: (list) => `Reacciona con fuerza ante ${list}.`,
+    complexityIs: (label) => `tolerancia a la complejidad: ${label}`,
+    pacingIs: (label) => `tolerancia al ritmo narrativo: ${label}`,
+    toleranceLabels: ["muy baja", "baja", "moderada", "alta", "muy alta"],
+    beautyFocusLabel: "**Enfoque estético:**",
+    readabilityFocusLabel: "**Enfoque de legibilidad:**",
+  },
+  pt: {
+    personaProfileHeading: "## Perfil da persona",
+    craftFocusHeading: "## Foco estilístico",
+    isA: (name, archetype, ageRange) =>
+      `**${name}** é um ${archetype}${ageRange ? ` (${ageRange})` : ""}.`,
+    theyValue: (list) => `Valoriza ${list}.`,
+    theyLosePatience: (list) => `Perde a paciência com ${list}.`,
+    theyRespondTo: (list) => `Reage fortemente a ${list}.`,
+    complexityIs: (label) => `tolerância à complexidade: ${label}`,
+    pacingIs: (label) => `tolerância ao ritmo narrativo: ${label}`,
+    toleranceLabels: ["muito baixa", "baixa", "moderada", "alta", "muito alta"],
+    beautyFocusLabel: "**Foco estético:**",
+    readabilityFocusLabel: "**Foco na legibilidade:**",
+  },
+};
+
+function buildPersonaBody(input: CreatePersonaInput, language?: string): string {
+  const lang = language?.toLowerCase().slice(0, 2) ?? "en";
+  const t = PERSONA_BODY_STRINGS[lang] ?? PERSONA_BODY_STRINGS["en"];
   const sections: string[] = [];
 
   // ── Persona profile ──────────────────────────────────────────────────────
@@ -12731,49 +12836,49 @@ function buildPersonaBody(input: CreatePersonaInput): string {
   const profileParts: string[] = [];
 
   if (input.archetype) {
-    profileParts.push(`**${input.name}** is a ${input.archetype}${input.ageRange ? ` (${input.ageRange})` : ""}.`);
+    profileParts.push(t.isA(input.name, input.archetype, input.ageRange));
   }
   if (input.readingHabits) {
     profileParts.push(input.readingHabits);
   }
   if (input.values && input.values.length > 0) {
-    profileParts.push(`They value ${input.values.join(", ")}.`);
+    profileParts.push(t.theyValue(input.values.join(", ")));
   }
   if (input.dislikes && input.dislikes.length > 0) {
-    profileParts.push(`They lose patience with ${input.dislikes.join(", ")}.`);
+    profileParts.push(t.theyLosePatience(input.dislikes.join(", ")));
   }
   if (input.emotionalTriggers && input.emotionalTriggers.length > 0) {
-    profileParts.push(`They respond strongly to ${input.emotionalTriggers.join(", ")}.`);
+    profileParts.push(t.theyRespondTo(input.emotionalTriggers.join(", ")));
   }
 
   const complexityLabel = input.complexityTolerance != null
-    ? ["very low", "low", "moderate", "high", "very high"][Math.max(0, Math.min(4, input.complexityTolerance - 1))]
+    ? t.toleranceLabels[Math.max(0, Math.min(4, input.complexityTolerance - 1))]
     : null;
   const pacingLabel = input.pacingTolerance != null
-    ? ["very low", "low", "moderate", "high", "very high"][Math.max(0, Math.min(4, input.pacingTolerance - 1))]
+    ? t.toleranceLabels[Math.max(0, Math.min(4, input.pacingTolerance - 1))]
     : null;
 
   if (complexityLabel || pacingLabel) {
     const tolerances: string[] = [];
-    if (complexityLabel) tolerances.push(`complexity tolerance is ${complexityLabel}`);
-    if (pacingLabel) tolerances.push(`pacing tolerance is ${pacingLabel}`);
-    profileParts.push(`Their ${tolerances.join(" and ")}.`);
+    if (complexityLabel) tolerances.push(t.complexityIs(complexityLabel));
+    if (pacingLabel) tolerances.push(t.pacingIs(pacingLabel));
+    profileParts.push(tolerances.join("; ") + ".");
   }
 
   if (profileParts.length > 0) {
-    sections.push(`## Persona profile\n\n${profileParts.join(" ")}`);
+    sections.push(`${t.personaProfileHeading}\n\n${profileParts.join(" ")}`);
   }
 
   // ── Craft focus ──────────────────────────────────────────────────────────
   const craftParts: string[] = [];
   if (input.beautyFocus && input.beautyFocus.length > 0) {
-    craftParts.push(`**Beauty focus:** ${input.beautyFocus.join(", ")}.`);
+    craftParts.push(`${t.beautyFocusLabel} ${input.beautyFocus.join(", ")}.`);
   }
   if (input.readabilityFocus && input.readabilityFocus.length > 0) {
-    craftParts.push(`**Readability focus:** ${input.readabilityFocus.join(", ")}.`);
+    craftParts.push(`${t.readabilityFocusLabel} ${input.readabilityFocus.join(", ")}.`);
   }
   if (craftParts.length > 0) {
-    sections.push(`## Craft focus\n\n${craftParts.join("\n\n")}`);
+    sections.push(`${t.craftFocusHeading}\n\n${craftParts.join("\n\n")}`);
   }
 
   return sections.join("\n\n");
