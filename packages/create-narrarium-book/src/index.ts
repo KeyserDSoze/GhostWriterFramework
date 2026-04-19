@@ -440,7 +440,9 @@ async function writeManagedRootPackageJson(targetPath: string, title: string, re
 }
 
 async function writeManagedRootPagesWorkflow(targetPath: string, readerDir: string, pagesDomain: string | undefined): Promise<void> {
-  await writeManagedFile(targetPath, path.join(".github", "workflows", "deploy-reader-pages.yml"), buildRootPagesWorkflow(readerDir, pagesDomain));
+  // Never overwrite an existing workflow — the user may have uncommented the
+  // password secret or made other manual edits that must be preserved.
+  await writeOnceFile(targetPath, path.join(".github", "workflows", "deploy-reader-pages.yml"), buildRootPagesWorkflow(readerDir, pagesDomain));
 }
 
 async function writeManagedFile(targetRoot: string, relativePath: string, content: string): Promise<void> {
@@ -450,6 +452,17 @@ async function writeManagedFile(targetRoot: string, relativePath: string, conten
     return;
   }
 
+  await mkdir(path.dirname(targetFilePath), { recursive: true });
+  await writeFile(targetFilePath, content, "utf8");
+}
+
+/** Write a file only if it does not already exist. Used for user-editable files like workflow YAMLs. */
+async function writeOnceFile(targetRoot: string, relativePath: string, content: string): Promise<void> {
+  const targetFilePath = path.join(targetRoot, relativePath);
+  const existing = await readFile(targetFilePath, "utf8").catch(() => null);
+  if (existing !== null) {
+    return;
+  }
   await mkdir(path.dirname(targetFilePath), { recursive: true });
   await writeFile(targetFilePath, content, "utf8");
 }
