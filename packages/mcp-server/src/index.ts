@@ -332,7 +332,35 @@ server.tool(
 
 server.tool(
   "setup_framework",
-  "Return the exact npx commands and setup steps to bootstrap a new Narrarium project from scratch.",
+  `Return the exact npx commands and setup steps to bootstrap a new Narrarium project from scratch, or to upgrade an existing book repo.
+
+Use this tool when the user asks how to set up the framework, how to upgrade, or how to install Narrarium.
+
+## Creating a new book
+Run from any empty folder:
+\`\`\`
+npx create-narrarium-book . --title "My Book" --language en --author "Author Name"
+\`\`\`
+Answer **y** when npx asks to install the package.
+Add \`--with-reader\` to also scaffold the Astro reader site.
+
+## Upgrading an existing book repo
+Run from the **book root** (the folder that contains \`book.md\`):
+\`\`\`
+npx create-narrarium-book . --upgrade
+\`\`\`
+Answer **y** when npx asks to install the package.
+To also upgrade the reader scaffold, add \`--with-reader\`.
+After the upgrade, install reader dependencies:
+\`\`\`
+cd reader
+npm install
+\`\`\`
+
+## Notes
+- The workflow file \`.github/workflows/deploy-reader-pages.yml\` is **never overwritten** on upgrade — your password secret and any manual edits are preserved.
+- The MCP server config (\`.vscode/mcp.json\`, \`opencode.jsonc\`) is also never overwritten.
+- Reader personas are seeded automatically on first create or upgrade if the \`personas/\` folder is empty.`,
   {
     projectName: z.string().optional(),
     title: z.string().optional(),
@@ -340,8 +368,50 @@ server.tool(
     withReader: z.boolean().default(true),
     sample: z.boolean().default(false),
     readerDir: z.string().default("reader"),
+    /** Set to true when the user is asking how to upgrade an existing repo */
+    upgrade: z.boolean().default(false),
   },
-  async ({ projectName, title, language, withReader, sample, readerDir }) => {
+  async ({ projectName, title, language, withReader, sample, readerDir, upgrade }) => {
+    if (upgrade) {
+      const upgradeCmd = withReader
+        ? `npx create-narrarium-book . --upgrade --with-reader`
+        : `npx create-narrarium-book . --upgrade`;
+
+      const lines = [
+        "## Upgrade steps",
+        "",
+        "1. Open a terminal in the **book root** (the folder that contains `book.md`).",
+        "2. Run:",
+        "   ```",
+        `   ${upgradeCmd}`,
+        "   ```",
+        "3. When npx asks **\"Ok to proceed? (y)\"** — type **y** and press Enter.",
+        "4. Wait for the upgrade to complete.",
+        ...(withReader
+          ? [
+              `5. Install reader dependencies:`,
+              "   ```",
+              `   cd ${readerDir}`,
+              "   npm install",
+              "   ```",
+            ]
+          : []),
+        "",
+        "## What the upgrade does",
+        "- Refreshes managed scaffold files (copilot instructions, OpenCode commands, plugins, skills).",
+        "- Seeds default reader personas if `personas/` is empty.",
+        "- Migrates any legacy markdown links in chapter prose to plain-text canon mentions.",
+        "- **Never overwrites** `.github/workflows/deploy-reader-pages.yml`, `.vscode/mcp.json`, or `opencode.jsonc`.",
+        "",
+        "## After the upgrade",
+        "- Reopen OpenCode in this repo so the updated commands and plugins load.",
+        "- Run `/resume-book` in a fresh session to restart from the current repo state.",
+        ...(withReader ? [`- Run \`npm run dev\` from the book root to verify the reader still works.`] : []),
+      ];
+
+      return textResponse(lines.join("\n"));
+    }
+
     return textResponse(
       buildSetupInstructions({
         projectName,
@@ -3587,90 +3657,6 @@ The file is placed alongside the editorial evaluation in evaluations/chapters/<c
       reviews: reviews as PersonaReviewEntry[],
     });
     return textResponse(`Personas review written to ${result.filePath}.`);
-  },
-);
-
-server.tool(
-  "setup_framework",
-  `Return the exact steps to bootstrap a new Narrarium book repository or upgrade an existing one.
-
-Use this tool when the user asks how to set up the framework, how to upgrade, or how to install Narrarium.
-
-## Creating a new book
-Run from any empty folder:
-\`\`\`
-npx create-narrarium-book . --title "My Book" --language en --author "Author Name"
-\`\`\`
-Answer **y** when npx asks to install the package.
-Add \`--with-reader\` to also scaffold the Astro reader site.
-
-## Upgrading an existing book repo
-Run from the **book root** (the folder that contains \`book.md\`):
-\`\`\`
-npx create-narrarium-book . --upgrade
-\`\`\`
-Answer **y** when npx asks to install the package.
-
-To also upgrade the reader scaffold, add \`--with-reader\`:
-\`\`\`
-npx create-narrarium-book . --upgrade --with-reader
-\`\`\`
-
-After the upgrade, install reader dependencies:
-\`\`\`
-cd reader
-npm install
-\`\`\`
-(Replace \`reader\` with the actual reader folder name if it differs.)
-
-## Notes
-- The workflow file \`.github/workflows/deploy-reader-pages.yml\` is **never overwritten** on upgrade — your password secret and any manual edits are preserved.
-- The MCP server config (\`.vscode/mcp.json\`, \`opencode.jsonc\`) is also never overwritten.
-- Reader personas are seeded automatically on first create or upgrade if the \`personas/\` folder is empty.`,
-  {
-    rootPath: z.string().min(1).describe("Absolute path to the book repository root (used to infer reader folder name)").optional(),
-    withReader: z.boolean().default(false).describe("Whether the repo has a reader subfolder"),
-    readerDir: z.string().default("reader").describe("Name of the reader subfolder (default: reader)"),
-  },
-  async ({ rootPath, withReader, readerDir }) => {
-    const readerFolder = readerDir ?? "reader";
-    const upgradeCmd = withReader
-      ? `npx create-narrarium-book . --upgrade --with-reader`
-      : `npx create-narrarium-book . --upgrade`;
-
-    const lines = [
-      "## Upgrade steps",
-      "",
-      "1. Open a terminal in the **book root** (the folder that contains `book.md`).",
-      "2. Run:",
-      "   ```",
-      `   ${upgradeCmd}`,
-      "   ```",
-      "3. When npx asks **\"Ok to proceed? (y)\"** — type **y** and press Enter.",
-      "4. Wait for the upgrade to complete.",
-      ...(withReader
-        ? [
-            `5. Install reader dependencies:`,
-            "   ```",
-            `   cd ${readerFolder}`,
-            "   npm install",
-            "   ```",
-          ]
-        : []),
-      "",
-      "## What the upgrade does",
-      "- Refreshes managed scaffold files (copilot instructions, OpenCode commands, plugins, skills).",
-      "- Seeds default reader personas if `personas/` is empty.",
-      "- Migrates any legacy markdown links in chapter prose to plain-text canon mentions.",
-      "- **Never overwrites** `.github/workflows/deploy-reader-pages.yml`, `.vscode/mcp.json`, or `opencode.jsonc`.",
-      "",
-      "## After the upgrade",
-      "- Reopen OpenCode in this repo so the updated commands and plugins load.",
-      "- Run `/resume-book` in a fresh session to restart from the current repo state.",
-      ...(withReader ? [`- Run \`npm run dev\` from the book root to verify the reader still works.`] : []),
-    ];
-
-    return textResponse(lines.join("\n"));
   },
 );
 
