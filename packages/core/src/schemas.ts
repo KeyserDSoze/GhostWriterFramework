@@ -419,3 +419,21 @@ export type ParagraphDraftFrontmatter = z.infer<typeof paragraphDraftSchema>;
 export type ResearchNoteFrontmatter = z.infer<typeof researchNoteSchema>;
 export type PersonaFrontmatter = z.infer<typeof personaSchema>;
 export type EntityType = z.infer<typeof entityTypeSchema>;
+
+// ─── Script schema ────────────────────────────────────────────────────────────
+
+export const scriptSchema = z
+  .object({
+    type: z.literal("script"),
+    id: z.string().min(1),
+    chapter: z.string().min(1),
+    paragraph: z.string().min(1),
+    number: z.number().int().positive(),
+    title: z.string().min(1),
+    /** Where the scene takes place — free text, maps to a location canon slug when possible */
+    location: z.string().optional(),
+    tags: z.array(z.string()).default([]),
+  })
+  .passthrough();
+
+export type ScriptFrontmatter = z.infer<typeof scriptSchema>;

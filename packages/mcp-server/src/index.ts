@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -70,6 +70,12 @@ import {
   writePersonasReview,
   writeParagraphEvaluationFromLlm,
   writeWikipediaResearchSnapshot,
+  createScript,
+  updateScript,
+  readScript,
+  scriptToParagraphContext,
+  paragraphToScriptBody,
+  SCRIPT_LEGEND,
   type PersonaReviewEntry,
 } from "narrarium";
 import {
@@ -3665,5 +3671,172 @@ npm install
     ];
 
     return textResponse(lines.join("\n"));
+  },
+);
+
+// ─── Script tools ─────────────────────────────────────────────────────────────
+
+server.tool(
+  "create_script",
+  `Create a new scene script in scripts/<chapter>/<paragraph>.md using the Narrarium script meta-language.
+
+${SCRIPT_LEGEND}
+
+## When to use
+- Before writing a paragraph from scratch: write the script first, then call \`script_to_paragraph\`.
+- When the user wants to plan a scene without committing to final prose.
+- When the user dictates a scene in shorthand and you need to store it.
+
+The script file mirrors the chapter/paragraph structure of chapters/ and drafts/.
+File path: \`scripts/<chapter-slug>/<paragraph-slug>.md\``,
+  {
+    rootPath: z.string().min(1).describe("Absolute path to the book repository root"),
+    chapter: z.string().min(1).describe("Chapter slug or id (e.g. '001-opening' or 'chapter:001-opening')"),
+    number: z.number().int().positive().describe("Paragraph number within the chapter"),
+    title: z.string().min(1).describe("Paragraph title (used to build the filename slug)"),
+    location: z.string().optional().describe("Where the scene takes place — free text or canon location slug"),
+    body: z.string().optional().describe("Full script body using the meta-language. If omitted a template is generated."),
+    tags: z.array(z.string()).default([]).describe("Optional tags"),
+    overwrite: z.boolean().default(false).describe("Overwrite if the script already exists"),
+  },
+  async ({ rootPath, chapter, number, title, location, body, tags, overwrite }) => {
+    const result = await createScript(rootPath, { chapter, number, title, location, body, tags, overwrite });
+    return textResponse(`Script created at ${result.filePath}\nScript id: ${result.scriptId}`);
+  },
+);
+
+server.tool(
+  "update_script",
+  `Update an existing scene script in scripts/<chapter>/<paragraph>.md.
+
+Use this to refine beats, add new lines, or patch frontmatter (e.g. change location or tags).
+Provide \`body\` to fully replace the script body, or \`appendBody\` to add lines at the end.
+
+${SCRIPT_LEGEND}`,
+  {
+    rootPath: z.string().min(1).describe("Absolute path to the book repository root"),
+    chapter: z.string().min(1).describe("Chapter slug or id"),
+    paragraph: z.string().min(1).describe("Paragraph slug or id (e.g. '001-arrival' or 'paragraph:001-opening:001-arrival')"),
+    body: z.string().optional().describe("New full script body — replaces existing content"),
+    appendBody: z.string().optional().describe("Lines to append to the existing script body"),
+    frontmatterPatch: z.record(z.string(), z.unknown()).default({}).describe("Frontmatter fields to patch (e.g. location, tags)"),
+  },
+  async ({ rootPath, chapter, paragraph, body, appendBody, frontmatterPatch }) => {
+    const result = await updateScript(rootPath, { chapter, paragraph, body, appendBody, frontmatterPatch });
+    return textResponse(`Script updated at ${result.filePath}`);
+  },
+);
+
+server.tool(
+  "read_script",
+  `Read an existing scene script and return its meta-language body plus the legend.
+
+Use this to inspect a script before writing prose, or to check what beats are planned.`,
+  {
+    rootPath: z.string().min(1).describe("Absolute path to the book repository root"),
+    chapter: z.string().min(1).describe("Chapter slug or id"),
+    paragraph: z.string().min(1).describe("Paragraph slug or id"),
+  },
+  async ({ rootPath, chapter, paragraph }) => {
+    const script = await readScript(rootPath, chapter, paragraph);
+    const lines = [
+      `## Script: ${script.frontmatter.title}`,
+      `**File:** ${script.filePath}`,
+      script.frontmatter.location ? `**Location:** ${script.frontmatter.location}` : "",
+      ``,
+      `### Body`,
+      "```",
+      script.body,
+      "```",
+      ``,
+      SCRIPT_LEGEND,
+    ].filter((l) => l !== undefined);
+    return textResponse(lines.join("\n"));
+  },
+);
+
+server.tool(
+  "script_to_paragraph",
+  `Assemble the full writing context needed to turn a scene script into polished prose.
+
+Returns:
+- The script body with meta-language beats
+- The script meta-language legend
+- The book writing-style guideline
+- The existing paragraph body if one already exists (revision mode)
+
+After calling this tool, write the paragraph prose following the writing-style rules and the beat order in the script, then call \`create_paragraph\` or \`update_paragraph\` with the result.`,
+  {
+    rootPath: z.string().min(1).describe("Absolute path to the book repository root"),
+    chapter: z.string().min(1).describe("Chapter slug or id"),
+    paragraph: z.string().min(1).describe("Paragraph slug or id"),
+  },
+  async ({ rootPath, chapter, paragraph }) => {
+    const ctx = await scriptToParagraphContext(rootPath, chapter, paragraph);
+    const lines = [
+      `## Script context for paragraph: ${paragraph}`,
+      ctx.location ? `**Location:** ${ctx.location}` : "",
+      ``,
+      `### Script beats`,
+      "```",
+      ctx.scriptBody,
+      "```",
+      ``,
+      ctx.legend,
+      ``,
+      ctx.writingStyleBody
+        ? `### Writing style\n\n${ctx.writingStyleBody}`
+        : "*(No writing-style guideline found — proceed with general prose craft.)*",
+      ``,
+      ctx.existingParagraphBody
+        ? `### Existing paragraph (revision mode)\n\n${ctx.existingParagraphBody}`
+        : "*(No existing paragraph — write from scratch.)*",
+    ].filter((l) => l !== undefined);
+    return textResponse(lines.join("\n"));
+  },
+);
+
+server.tool(
+  "paragraph_to_script",
+  `Reverse-engineer a scene script skeleton from an existing paragraph body.
+
+Use this when:
+- A paragraph was written without a script and you want to create one retroactively.
+- You want to analyse the structure of an existing scene.
+- You want to create a script template that mirrors what was already written.
+
+The tool returns a suggested script body. Review and refine it, then call \`create_script\` or \`update_script\` to save it.`,
+  {
+    rootPath: z.string().min(1).describe("Absolute path to the book repository root"),
+    chapter: z.string().min(1).describe("Chapter slug or id"),
+    paragraph: z.string().min(1).describe("Paragraph slug or id"),
+  },
+  async ({ rootPath, chapter, paragraph }) => {
+    const chapterSlugNorm = chapter.replace(/^chapter:/, "");
+    const paragraphSlugNorm = paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim();
+    const paraPath = path.join(rootPath, "chapters", chapterSlugNorm, `${paragraphSlugNorm}.md`);
+
+    const raw = await readFile(paraPath, "utf8").catch(() => null);
+    if (!raw) {
+      return textResponse(`No paragraph found at ${paraPath}. Write the paragraph first, then call paragraph_to_script.`);
+    }
+
+    // Strip YAML frontmatter (between first pair of --- delimiters)
+    const body = raw.replace(/^---[\s\S]*?---\s*/m, "").trim();
+    const scriptBody = paragraphToScriptBody(body);
+
+    return textResponse(
+      [
+        `## Suggested script skeleton for: ${paragraph}`,
+        ``,
+        `Review and refine the beats below, then call \`create_script\` or \`update_script\` to save.`,
+        ``,
+        "```",
+        scriptBody,
+        "```",
+        ``,
+        SCRIPT_LEGEND,
+      ].join("\n"),
+    );
   },
 );

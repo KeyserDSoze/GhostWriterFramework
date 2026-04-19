@@ -18,6 +18,7 @@ import {
   NOTES_FILE,
   PERSONAS_DIRECTORY,
   PERSONAS_REVIEW_FILENAME,
+  SCRIPTS_DIRECTORY,
   PLOT_FILE,
   PROMOTED_FILE,
   SKILL_NAME,
@@ -46,6 +47,7 @@ import {
   personaSchema,
   plotSchema,
   researchNoteSchema,
+  scriptSchema,
   secretSchema,
   workItemEntrySchema,
   type BookFrontmatter,
@@ -64,6 +66,7 @@ import {
   type ParagraphDraftFrontmatter,
   type PersonaFrontmatter,
   type PlotFrontmatter,
+  type ScriptFrontmatter,
   type SecretFrontmatter,
   type TimelineEventFrontmatter,
   type WorkItemEntryFrontmatter,
@@ -12887,4 +12890,234 @@ function buildPersonaBody(input: CreatePersonaInput, language?: string): string 
 function ratingBar(score: number): string {
   const filled = Math.round(Math.max(0, Math.min(10, score)));
   return "█".repeat(filled) + "░".repeat(10 - filled);
+}
+
+// ─── Script meta-language ─────────────────────────────────────────────────────
+//
+// A script is a lightweight scene blueprint stored in scripts/<chapter>/<paragraph>.md.
+// It uses a simple meta-language to describe the scene structure:
+//
+//   Location: <place>          — where the scene takes place
+//   [...]                      — tell beat: quick narrative summary
+//   {...}                      — emotion/state beat: character feeling or internal event
+//   (...)                      — action beat: physical action by a character
+//   «...»                      — dialogue idea: what a character should say
+//   #...                       — author comment: thematic note or reminder
+//
+// Scripts are independent from chapters/ and drafts/.
+// They serve as structured blueprints that an LLM can use to write or revise prose.
+
+export type CreateScriptInput = {
+  chapter: string;
+  number: number;
+  title: string;
+  location?: string;
+  body?: string;
+  tags?: string[];
+  overwrite?: boolean;
+};
+
+export type UpdateScriptInput = {
+  chapter: string;
+  paragraph: string;
+  body?: string;
+  appendBody?: string;
+  frontmatterPatch?: Record<string, unknown>;
+};
+
+export type ScriptFile = {
+  filePath: string;
+  frontmatter: ScriptFrontmatter;
+  body: string;
+};
+
+/** Resolve the script file path for a given chapter + paragraph slug. */
+function scriptFilePath(rootPath: string, chapter: string, paragraphSlug: string): string {
+  return path.join(rootPath, SCRIPTS_DIRECTORY, chapter, `${paragraphSlug}.md`);
+}
+
+/** Create a new script file in scripts/<chapter>/<paragraph>.md */
+export async function createScript(
+  rootPath: string,
+  input: CreateScriptInput,
+): Promise<{ filePath: string; scriptId: string }> {
+  const root = path.resolve(rootPath);
+  const chapter = normalizeChapterReference(input.chapter);
+  const fileName = paragraphFilename(input.number, input.title);
+  const slug = fileName.replace(/\.md$/i, "");
+  const filePath = scriptFilePath(root, chapter, slug);
+
+  if (!input.overwrite && (await pathExists(filePath))) {
+    throw new Error(`Script already exists: ${filePath}. Use overwrite: true to replace it.`);
+  }
+
+  await mkdir(path.dirname(filePath), { recursive: true });
+
+  const frontmatter = scriptSchema.parse({
+    type: "script",
+    id: `script:${chapter}:${slug}`,
+    chapter: `chapter:${chapter}`,
+    paragraph: `paragraph:${chapter}:${slug}`,
+    number: input.number,
+    title: input.title,
+    location: input.location,
+    tags: input.tags ?? [],
+  });
+
+  const body = input.body ?? buildDefaultScriptBody(input.location);
+  await writeFile(filePath, renderMarkdown(frontmatter, body), "utf8");
+
+  return { filePath, scriptId: `script:${chapter}:${slug}` };
+}
+
+/** Update an existing script file — replace or append body, patch frontmatter. */
+export async function updateScript(
+  rootPath: string,
+  input: UpdateScriptInput,
+): Promise<{ filePath: string }> {
+  const root = path.resolve(rootPath);
+  const chapter = normalizeChapterReference(input.chapter);
+  const paragraphSlug = input.paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim();
+  const filePath = scriptFilePath(root, chapter, paragraphSlug);
+
+  if (!(await pathExists(filePath))) {
+    throw new Error(`Script not found: ${filePath}`);
+  }
+
+  const raw = await readFile(filePath, "utf8");
+  const parsed = matter(raw);
+  const existingBody = String(parsed.content ?? "").trim();
+
+  const patchedFm = { ...parsed.data, ...(input.frontmatterPatch ?? {}) };
+
+  let newBody: string;
+  if (input.body !== undefined) {
+    newBody = input.body;
+  } else if (input.appendBody !== undefined) {
+    newBody = existingBody ? `${existingBody}\n\n${input.appendBody}` : input.appendBody;
+  } else {
+    newBody = existingBody;
+  }
+
+  await writeFile(filePath, renderMarkdown(patchedFm, newBody), "utf8");
+  return { filePath };
+}
+
+/** Read a script file and return its frontmatter + body. */
+export async function readScript(
+  rootPath: string,
+  chapter: string,
+  paragraph: string,
+): Promise<ScriptFile> {
+  const root = path.resolve(rootPath);
+  const chapterSlugNorm = normalizeChapterReference(chapter);
+  const paragraphSlug = paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim();
+  const filePath = scriptFilePath(root, chapterSlugNorm, paragraphSlug);
+
+  if (!(await pathExists(filePath))) {
+    throw new Error(`Script not found: ${filePath}`);
+  }
+
+  const raw = await readFile(filePath, "utf8");
+  const parsed = matter(raw);
+  const frontmatter = scriptSchema.parse(parsed.data);
+  return { filePath, frontmatter, body: String(parsed.content ?? "").trim() };
+}
+
+/**
+ * Build a writing context from a script file so an LLM can turn it into polished prose.
+ * Returns the script body annotated with the meta-language legend, plus the writing-style
+ * guideline content and any existing paragraph body (for revision mode).
+ */
+export async function scriptToParagraphContext(
+  rootPath: string,
+  chapter: string,
+  paragraph: string,
+): Promise<{
+  scriptFilePath: string;
+  scriptBody: string;
+  location: string | undefined;
+  writingStyleBody: string | undefined;
+  existingParagraphBody: string | undefined;
+  legend: string;
+}> {
+  const root = path.resolve(rootPath);
+  const script = await readScript(root, chapter, paragraph);
+
+  // Writing style guideline
+  const wsPath = path.join(root, "guidelines", "writing-style.md");
+  const wsRaw = await readFile(wsPath, "utf8").catch(() => null);
+  const writingStyleBody = wsRaw ? String(matter(wsRaw).content ?? "").trim() : undefined;
+
+  // Existing paragraph (if any — for revision mode)
+  const chapterSlugNorm = normalizeChapterReference(chapter);
+  const paragraphSlug = paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim();
+  const paraPath = path.join(root, "chapters", chapterSlugNorm, `${paragraphSlug}.md`);
+  const paraRaw = await readFile(paraPath, "utf8").catch(() => null);
+  const existingParagraphBody = paraRaw ? String(matter(paraRaw).content ?? "").trim() : undefined;
+
+  return {
+    scriptFilePath: script.filePath,
+    scriptBody: script.body,
+    location: script.frontmatter.location,
+    writingStyleBody,
+    existingParagraphBody,
+    legend: SCRIPT_LEGEND,
+  };
+}
+
+/**
+ * Reverse-engineer a script from an existing paragraph body.
+ * Returns a suggested script body string — the caller writes it with createScript or updateScript.
+ */
+export function paragraphToScriptBody(paragraphBody: string): string {
+  // This is a heuristic decomposition: the LLM will do the real work,
+  // but we provide a structured template with the paragraph text as a comment
+  // so the caller can see what needs to be mapped.
+  return [
+    `# Auto-generated script skeleton from existing paragraph`,
+    `# Review and replace each beat with the appropriate meta-language tag.`,
+    ``,
+    `# Original paragraph text:`,
+    ...paragraphBody.split("\n").map((line) => `# ${line}`),
+    ``,
+    `# ── Rewrite below using script meta-language ──`,
+    ``,
+    `[Scene summary — replace with a [tell beat]]`,
+    `{Character — replace with an {emotion/state beat}}`,
+    `(Action — replace with an (action beat))`,
+    `«Dialogue idea — replace with a «dialogue» beat»`,
+  ].join("\n");
+}
+
+export const SCRIPT_LEGEND = `## Script meta-language legend
+
+| Syntax       | Meaning                                                         |
+| ------------ | --------------------------------------------------------------- |
+| \`Location:\`  | Where the scene takes place (free text or canon location slug)  |
+| \`[...]\`      | **Tell beat** — quick narrative summary, shown not shown        |
+| \`{...}\`      | **Emotion/state beat** — character feeling or internal event    |
+| \`(...)\`      | **Action beat** — physical action performed by a character      |
+| \`«...»\`      | **Dialogue idea** — what a character should say (not verbatim)  |
+| \`#...\`       | **Author comment** — thematic note or reminder, not prose       |
+
+Rules:
+- One beat per line.
+- Beats are ordered as they should appear in the final prose.
+- \`Location:\` must be the first line if present.
+- \`#\` comments are never rendered into prose — they are instructions to the writer.
+- Multiple beats of the same type can appear in any order.`;
+
+function buildDefaultScriptBody(location?: string): string {
+  const lines: string[] = [];
+  if (location) {
+    lines.push(`Location: ${location}`);
+    lines.push(``);
+  }
+  lines.push(`[Scene summary]`);
+  lines.push(`{Character — emotion or state}`);
+  lines.push(`«Dialogue idea»`);
+  lines.push(`(Action)`);
+  lines.push(`# Thematic note`);
+  return lines.join("\n");
 }

@@ -11,6 +11,7 @@ export const BOOK_DIRECTORIES = [
   "secrets",
   "chapters",
   "drafts",
+  "scripts",
   "conversations",
   "conversations/sessions",
   "resumes",
@@ -78,6 +79,8 @@ export const STORY_STATE_CURRENT_FILE = "state/current.md";
 export const PERSONAS_DIRECTORY = "personas";
 export const PERSONAS_REVIEW_FILENAME = "personas-review.md";
 
+export const SCRIPTS_DIRECTORY = "scripts";
+
 export const CONTENT_GLOB = [
   "book.md",
   "context.md",
@@ -95,6 +98,7 @@ export const CONTENT_GLOB = [
   "secrets/**/*.md",
   "chapters/**/*.md",
   "drafts/**/*.md",
+  "scripts/**/*.md",
   "resumes/**/*.md",
   "state/**/*.md",
   "evaluations/**/*.md",
