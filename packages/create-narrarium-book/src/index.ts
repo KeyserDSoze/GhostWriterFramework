@@ -127,6 +127,8 @@ async function runCreate(args: ParsedArgs) {
     await syncTotalResume(targetPath);
   }
 
+  const manuscriptDepsInstalled = !resolved.skipInstall && installManuscriptDependencies(targetPath);
+
   output.write(
     [
       `Narrarium book created at ${targetPath}`,
@@ -142,6 +144,15 @@ async function runCreate(args: ParsedArgs) {
       ...(readerPath ? ["- `npm run dev` watches the book files, refreshes the EPUB, and reloads the site while you write"] : []),
       ...(readerPath ? ["- The generated reader already includes auto-EPUB export and a GitHub Pages workflow"] : []),
       ...(resolved.pagesDomain ? [`- GitHub Pages custom domain preset: https://${resolved.pagesDomain}`] : []),
+      "",
+      "Manuscript export (.docx for editors):",
+      ...(manuscriptDepsInstalled
+        ? ["- Python manuscript dependencies installed automatically"]
+        : ["- Install Python dependencies: `pip install -r scripts/requirements-manuscript.txt`"]),
+      "- Build manuscript in VS Code: Ctrl+Shift+B (default build task)",
+      "- Or run manually: `python scripts/build_manuscript.py`",
+      "- Configure export settings in `manuscript.yaml`",
+      "- Output: build/manuscript.docx (full) + build/manuscript-sample.docx (first 5 chapters)",
     ].join("\n"),
   );
 }
@@ -170,6 +181,8 @@ async function runUpgrade(args: ParsedArgs) {
     }
   }
 
+  const manuscriptDepsInstalled = !resolved.skipInstall && installManuscriptDependencies(targetPath);
+
   output.write(
     [
       `Narrarium book upgraded at ${targetPath}`,
@@ -180,11 +193,21 @@ async function runUpgrade(args: ParsedArgs) {
         : "- No legacy story prose links needed migration.",
       ...(readerPath ? [`- Reader scaffold upgraded at ${readerPath}`] : ["- Reader scaffold not touched. Pass `--with-reader` to refresh it too."]),
       ...(readerInstalled ? ["- Reader dependencies were reinstalled automatically"] : []),
+      ...(manuscriptDepsInstalled ? ["- Python manuscript dependencies installed/updated automatically"] : []),
       "",
       "Next steps:",
       "- Reopen OpenCode in this repo so the updated commands and plugins load",
       "- Run `/resume-book` in a fresh session if you want to restart from repo state",
       ...(resolved.withReader ? ["- Run `npm run dev` from the book root to verify the reader still behaves as expected"] : []),
+      "",
+      "Manuscript export (.docx for editors):",
+      ...(!manuscriptDepsInstalled
+        ? ["- Install Python dependencies: `pip install -r scripts/requirements-manuscript.txt`"]
+        : []),
+      "- Build manuscript in VS Code: Ctrl+Shift+B (default build task)",
+      "- Or run manually: `python scripts/build_manuscript.py`",
+      "- Configure export settings in `manuscript.yaml`",
+      "- Output: build/manuscript.docx (full) + build/manuscript-sample.docx (first 5 chapters)",
     ].join("\n"),
   );
 }
@@ -405,6 +428,48 @@ function getNpmInstallInvocation(): { command: string; args: string[] } {
   };
 }
 
+function installManuscriptDependencies(targetDir: string): boolean {
+  const requirementsPath = path.join(targetDir, "scripts", "requirements-manuscript.txt");
+  if (!existsSync(requirementsPath)) return false;
+
+  const pythonCmd = findPythonCommand();
+  if (!pythonCmd) {
+    output.write(
+      "\n⚠ WARNING: Python not found. Manuscript export requires Python 3.\n" +
+      "  Install Python from https://www.python.org/downloads/ and then run:\n" +
+      "  pip install -r scripts/requirements-manuscript.txt\n",
+    );
+    return false;
+  }
+
+  const pipArgs = ["-m", "pip", "install", "-r", requirementsPath, "--quiet"];
+  const result = spawnSync(pythonCmd, pipArgs, {
+    cwd: targetDir,
+    stdio: "inherit",
+  });
+
+  if (result.status !== 0) {
+    output.write(
+      "\n⚠ WARNING: Failed to install Python manuscript dependencies.\n" +
+      "  You can install them manually with:\n" +
+      "  pip install -r scripts/requirements-manuscript.txt\n",
+    );
+    return false;
+  }
+
+  return true;
+}
+
+function findPythonCommand(): string | null {
+  for (const cmd of ["python3", "python"]) {
+    const check = process.platform === "win32"
+      ? spawnSync("where", [cmd], { encoding: "utf8", stdio: "pipe" })
+      : spawnSync("which", [cmd], { encoding: "utf8", stdio: "pipe" });
+    if (check.status === 0) return cmd;
+  }
+  return null;
+}
+
 async function writeRootPackageJson(targetPath: string, title: string, readerDir: string): Promise<void> {
   await writeFile(path.join(targetPath, "package.json"), buildRootPackageJson(title, readerDir), "utf8");
 }
@@ -426,6 +491,7 @@ function buildRootPackageJson(title: string, readerDir: string): string {
         build: `npm run build --prefix ${normalizedReaderDir}`,
         preview: `npm run preview --prefix ${normalizedReaderDir}`,
         "export:epub": `npm run export:epub --prefix ${normalizedReaderDir}`,
+        "export:manuscript": "node scripts/run-manuscript.mjs",
         doctor: `npm run doctor --prefix ${normalizedReaderDir}`,
         install: `npm install --prefix ${normalizedReaderDir}`,
       },

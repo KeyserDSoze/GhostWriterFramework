@@ -1,6 +1,6 @@
 {
   "name": "narrarium-sdk",
-  "version": "0.1.41",
+  "version": "0.1.48",
   "type": "module",
   "description": "Remote GitHub and Azure DevOps SDK surface for Narrarium repositories.",
   "license": "MIT",
