@@ -1,6 +1,6 @@
 {
   "name": "create-narrarium-book",
-  "version": "0.1.49",
+  "version": "0.1.50",
   "type": "module",
   "description": "Starter CLI to scaffold a Narrarium book repository.",
   "license": "MIT",

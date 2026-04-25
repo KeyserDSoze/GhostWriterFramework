@@ -376,6 +376,34 @@ def add_title_page(doc: "Document", book: dict, word_count: int, settings: dict)
         run.font.size = Pt(settings["font_size"])
 
 
+def add_custom_frontmatter_fields(doc: "Document", metadata: dict, settings: dict):
+    """Render show_custom_* fields from settings, looking up values in metadata.
+
+    Settings like ``show_custom_date: 11`` and ``show_custom_fancyname: 10``
+    will look for ``date`` and ``fancyname`` in *metadata*, sort by numeric
+    order (10 before 11), and add an italic paragraph for each found value.
+    """
+    customs: list[tuple[int, str]] = []
+    for key, order in settings.items():
+        if key.startswith("show_custom_") and isinstance(order, (int, float)):
+            field_name = key[len("show_custom_"):]
+            customs.append((int(order), field_name))
+    if not customs:
+        return
+    customs.sort(key=lambda t: t[0])
+    for _, field_name in customs:
+        value = metadata.get(field_name)
+        if not value:
+            continue
+        p = doc.add_paragraph()
+        p.paragraph_format.first_line_indent = Inches(0)
+        p.paragraph_format.space_after = Pt(6)
+        run = p.add_run(str(value))
+        run.font.name = settings["font_name"]
+        run.font.size = Pt(settings["font_size"])
+        run.italic = True
+
+
 def add_chapter(doc: "Document", chapter: dict, settings: dict, is_first_chapter: bool = False):
     """Add a chapter with all its paragraphs to the document."""
     chapter_meta = chapter["metadata"]
@@ -414,6 +442,9 @@ def add_chapter(doc: "Document", chapter: dict, settings: dict, is_first_chapter
             run.font.size = Pt(settings["font_size"])
             run.italic = True
 
+    # Custom frontmatter fields from chapter metadata (show_custom_*)
+    add_custom_frontmatter_fields(doc, chapter_meta, settings)
+
     paragraphs = read_paragraphs(chapter["path"])
 
     for idx, para in enumerate(paragraphs):
@@ -433,6 +464,9 @@ def add_chapter(doc: "Document", chapter: dict, settings: dict, is_first_chapter
             run = scene_break.add_run(settings["scene_break"])
             run.font.name = settings["font_name"]
             run.font.size = Pt(settings["font_size"])
+
+        # Custom frontmatter fields from paragraph metadata (show_custom_*)
+        add_custom_frontmatter_fields(doc, para["metadata"], settings)
 
         # Body text
         body = para["body"]
