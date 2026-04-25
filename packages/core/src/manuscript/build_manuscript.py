@@ -159,6 +159,7 @@ DEFAULT_SETTINGS = {
     "line_spacing": 2.0,
     "margin_inches": 1.0,
     "paragraph_indent_inches": 0.5,
+    "paragraph_break_newlines": 3,
     "scene_break": "#",
     "output_dir": "build",
     "full_filename": "manuscript.docx",
@@ -438,12 +439,15 @@ def add_chapter(doc: "Document", chapter: dict, settings: dict, is_first_chapter
         if not body:
             continue
 
-        for text_para in body.split("\n\n"):
+        # Split body into paragraphs using the configured newline threshold.
+        break_nl = settings.get("paragraph_break_newlines", 3)
+        sep = "\n" * max(break_nl, 2)
+        for text_para in body.split(sep):
             text_para = text_para.strip()
             if not text_para:
                 continue
-            # Collapse single newlines within a paragraph block
-            text_para = text_para.replace("\n", " ")
+            # Collapse remaining newlines (below threshold) into spaces.
+            text_para = re.sub(r"\n+", " ", text_para)
             p = doc.add_paragraph(text_para)
             # The Normal style already has the right formatting
 
@@ -458,6 +462,23 @@ def build_manuscript(
 ):
     """Build a single .docx manuscript file."""
     doc = Document()
+
+    # Set compatibility mode to Word 2016+ (version 15) to avoid
+    # "older file type" warnings in modern Word.
+    import lxml.etree as ET
+    compat = doc.settings.element.makeelement(
+        "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}compat", {}
+    )
+    compat_setting = compat.makeelement(
+        "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}compatSetting",
+        {
+            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}name": "compatibilityMode",
+            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}uri": "http://schemas.microsoft.com/office/word",
+            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val": "15",
+        },
+    )
+    compat.append(compat_setting)
+    doc.settings.element.append(compat)
 
     configure_style(doc, settings)
 
