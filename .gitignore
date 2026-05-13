@@ -6,3 +6,5 @@ coverage/
 packages/astro-reader/public/downloads/
 bin/
 obj/
+.env.local
+.env*.local

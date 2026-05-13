@@ -1,0 +1,94 @@
+---
+import DocsLayout from "../layouts/DocsLayout.astro";
+import { getDocGroups, getMcpTools } from "../lib/docs";
+import { withBase } from "../lib/paths";
+
+const groups = await getDocGroups();
+const tools = await getMcpTools();
+const localToolCount = tools.filter((tool) => tool.surface === "local").length;
+const publicToolCount = tools.filter((tool) => tool.surface === "public").length;
+---
+
+<DocsLayout title="Home" description="GhostWriter Framework – Narrarium book-writing system" activeHref="/">
+  <section class="hero">
+    <p class="eyebrow">GhostWriter Framework</p>
+    <h1>Narrarium</h1>
+    <p class="lede">
+      An open-source framework for AI-assisted book writing. Manage your story canon, chapters, characters, locations, timelines and more — all stored as plain Markdown in a GitHub repository.
+    </p>
+  </section>
+
+  <section class="grid cards" style="margin-top: 1.5rem;">
+    <article class="card bms-card">
+      <h3>📚 Book Management System</h3>
+      <p>
+        Web app to manage your Narrarium books. Sign in with Google, connect GitHub repositories, configure Azure OpenAI, and work on your story structure — all from your browser.
+      </p>
+      <a class="pill pill-accent" href="/bms/">Open BMS →</a>
+    </article>
+    <article class="card">
+      <h3>📖 Documentation</h3>
+      <p>
+        Complete reference for the Narrarium packages, MCP server tools, repository spec, and writing guidelines. Generated directly from the repository source.
+      </p>
+      <a class="pill" href={withBase("/docs/")}>Browse docs</a>
+    </article>
+    <article class="card">
+      <h3>🔌 MCP Integration</h3>
+      <p>
+        Local and public MCP surfaces for AI agents. {localToolCount} local tools and {publicToolCount} public tools for canon search, chapter writing, and more.
+      </p>
+      <a class="pill" href={withBase("/mcp/")}>MCP reference</a>
+    </article>
+  </section>
+
+  <section style="margin-top: 2rem;">
+    <h2>How it works</h2>
+    <div class="grid cards">
+      <article class="card">
+        <h3>1. Create a book repo</h3>
+        <p>Run <code>npm create narrarium-book</code> to scaffold a new repository with the correct folder structure for chapters, characters, factions, and more.</p>
+        <a class="pill" href={withBase("/docs/create-narrarium-book/")}>Starter CLI</a>
+      </article>
+      <article class="card">
+        <h3>2. Write with AI agents</h3>
+        <p>Connect the MCP server to your AI coding agent. Tools let the model search canon, draft chapters, evaluate prose, and keep the plot consistent.</p>
+        <a class="pill" href={withBase("/mcp/")}>MCP tools</a>
+      </article>
+      <article class="card">
+        <h3>3. Manage from the BMS</h3>
+        <p>Use the Book Management System to browse your books, review chapters and paragraphs, and configure Azure OpenAI for AI writing assistance.</p>
+        <a class="pill pill-accent" href="/bms/">Open BMS →</a>
+      </article>
+    </div>
+  </section>
+
+  <section style="margin-top: 2rem;">
+    <h2>Documentation</h2>
+    <div class="grid cards">
+      {groups.map((group) => (
+        <article class="card">
+          <h3>{group.label}</h3>
+          <p>{group.docs.length} page{group.docs.length === 1 ? "" : "s"}.</p>
+          <div class="grid" style="gap: 0.45rem;">
+            {group.docs.map((doc) => (
+              <a href={withBase(doc.href)}>{doc.title}</a>
+            ))}
+          </div>
+        </article>
+      ))}
+    </div>
+  </section>
+</DocsLayout>
+
+<style>
+  .pill-accent {
+    background: var(--accent);
+    color: var(--bg);
+    font-weight: 600;
+  }
+  .bms-card {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+</style>

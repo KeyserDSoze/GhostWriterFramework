@@ -1,0 +1,73 @@
+---
+import DocsLayout from "../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Privacy Policy" description="Narrarium BMS Privacy Policy" activeHref="/privacy/">
+  <div class="doc-prose">
+    <h1>Privacy Policy</h1>
+    <p class="meta">Last updated: May 2026</p>
+
+    <h2>Overview</h2>
+    <p>
+      Narrarium BMS ("the app") is a client-side web application. It runs entirely in your browser and does not operate
+      any backend server that collects or stores your personal data. This policy describes what data is handled, where
+      it lives, and who controls it.
+    </p>
+
+    <h2>Data we handle</h2>
+    <h3>Google account information</h3>
+    <p>
+      When you sign in with Google, the app receives your name, email address, and profile picture via Google OAuth 2.0.
+      This information is stored only in your browser's <code>localStorage</code> and is never sent to any server
+      controlled by Narrarium.
+    </p>
+
+    <h3>Application settings</h3>
+    <p>
+      Your app settings — including GitHub personal access tokens and Azure OpenAI credentials — are saved in your personal
+      <strong>Google Drive appDataFolder</strong>. This is a private, app-specific folder in your own Google Drive account
+      that no other app or user can access. Narrarium has no access to any other file in your Google Drive.
+    </p>
+
+    <h3>GitHub data</h3>
+    <p>
+      The app communicates directly with the GitHub API using the personal access tokens you provide. Repository content
+      is fetched on demand and held in memory; it is not persisted on any Narrarium-controlled server.
+    </p>
+
+    <h3>Azure OpenAI</h3>
+    <p>
+      If you configure Azure OpenAI, the app sends prompts directly from your browser to your Azure OpenAI endpoint.
+      No prompt or completion data passes through Narrarium servers.
+    </p>
+
+    <h2>Cookies and local storage</h2>
+    <p>
+      The app uses <code>localStorage</code> to remember your theme preference and cached authentication state. No
+      advertising cookies or third-party tracking cookies are used.
+    </p>
+
+    <h2>Third-party services</h2>
+    <ul>
+      <li><strong>Google OAuth &amp; Drive API</strong> — governed by <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's Privacy Policy</a>.</li>
+      <li><strong>GitHub API</strong> — governed by <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener">GitHub's Privacy Statement</a>.</li>
+      <li><strong>Azure OpenAI</strong> — governed by <a href="https://privacy.microsoft.com/en-us/privacystatement" target="_blank" rel="noopener">Microsoft's Privacy Statement</a>.</li>
+    </ul>
+
+    <h2>Data retention and deletion</h2>
+    <p>
+      Because all data lives in your browser or your own Google Drive account, you are in full control:
+    </p>
+    <ul>
+      <li>Sign out of the app to clear the in-memory session.</li>
+      <li>Clear <code>localStorage</code> in your browser to remove any cached data.</li>
+      <li>Delete the settings file from your Google Drive (look for <code>narrarium-bms-settings.json</code> in the app-data folder) to remove stored credentials.</li>
+    </ul>
+
+    <h2>Contact</h2>
+    <p>
+      If you have questions about this policy, open an issue on the
+      <a href="https://github.com/narrarium/narrarium" target="_blank" rel="noopener">GitHub repository</a>.
+    </p>
+  </div>
+</DocsLayout>

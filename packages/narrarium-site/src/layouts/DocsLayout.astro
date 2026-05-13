@@ -212,6 +212,17 @@ const groups = await getDocGroups();
         background: var(--accent-soft);
       }
 
+      .nav-link-bms {
+        color: var(--accent);
+        font-weight: 600;
+        border: 1px solid var(--accent);
+      }
+
+      .nav-link-bms:hover {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
       .content {
         padding: 1.5rem clamp(1rem, 3vw, 2.4rem);
       }
@@ -333,11 +344,11 @@ const groups = await getDocGroups();
           <div class="brand-lockup">
             <img class="brand-mark" src={withBase("/favicon.svg")} alt="" width="64" height="64" />
             <div>
-              <p class="eyebrow">Narrarium</p>
-              <h1>Documentation</h1>
+              <p class="eyebrow">GhostWriter Framework</p>
+              <h1>Narrarium</h1>
             </div>
           </div>
-          <p>GitHub Pages reference site generated from the repository itself.</p>
+          <p>Open-source AI book-writing framework powered by Markdown and MCP.</p>
         </a>
 
         <div class="sidebar-tools">
@@ -350,6 +361,7 @@ const groups = await getDocGroups();
             <a class:list={["nav-link", activeHref === "/" && "active"]} href={withBase("/")}>Home</a>
             <a class:list={["nav-link", activeHref === "/docs/" && "active"]} href={withBase("/docs/")}>All Docs</a>
             <a class:list={["nav-link", activeHref === "/mcp/" && "active"]} href={withBase("/mcp/")}>MCP Integration</a>
+            <a class="nav-link nav-link-bms" href="/bms/">📚 Book Management System ↗</a>
           </div>
         </div>
 
@@ -369,6 +381,15 @@ const groups = await getDocGroups();
         <slot />
       </main>
     </div>
+
+    <footer class="site-footer">
+      <span>© {new Date().getFullYear()} Narrarium</span>
+      <span>·</span>
+      <a href={withBase("/privacy/")}>Privacy Policy</a>
+      <span>·</span>
+      <a href={withBase("/terms/")}>Terms of Service</a>
+    </footer>
+
     <script is:inline>
       (() => {
         const storageKey = "narrarium-docs-theme";
@@ -394,3 +415,23 @@ const groups = await getDocGroups();
     </script>
   </body>
 </html>
+
+<style>
+  .site-footer {
+    width: min(1400px, calc(100% - 2rem));
+    margin: 0 auto;
+    padding: 1rem 0 1.5rem;
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .site-footer a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .site-footer a:hover {
+    color: var(--accent);
+  }
+</style>

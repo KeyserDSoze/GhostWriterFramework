@@ -1,4 +1,4 @@
-name: Deploy GitHub Pages Docs
+name: Deploy Book Management System
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ on:
       - AGENTS.md
       - docs/**
       - packages/*/README.md
-      - packages/docs-site/**
+      - packages/narrarium-site/**
       - packages/mcp-server/src/index.ts
       - packages/mcp-server/src/public-http-server.ts
       - package.json
@@ -52,12 +52,12 @@ jobs:
           DOCS_SITE_URL: https://narrarium.net
           MCP_PUBLIC_URL: https://narrarium.space/mcp
           MCP_HEALTH_URL: https://narrarium.space/health
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
         run: npm run docs:build
-
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: packages/docs-site/dist
+          path: packages/narrarium-site/dist
 
   deploy:
     needs: build

@@ -1,0 +1,526 @@
+import { Octokit } from "@octokit/rest";
+import { BookStructure, Chapter, Paragraph, BookFile } from "@/types/book";
+
+export function createGitHubClient(token: string): Octokit {
+  return new Octokit({ auth: token });
+}
+
+/** Decode base64 content returned by the GitHub contents API (UTF-8 safe). */
+function decodeContent(content: string): string {
+  const binary = atob(content.replace(/\n/g, ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+/**
+ * Convert a Narrarium slug into a human-readable title.
+ * Examples:
+ *   "001-the-arrival"  → "The Arrival"
+ *   "lyra-vale"        → "Lyra Vale"
+ *   "001-at-the-gate"  → "At the Gate"
+ */
+export function slugToTitle(slug: string): string {
+  return slug
+    .replace(/^\d{3}-/, "")          // strip leading number prefix (001-)
+    .replace(/-/g, " ")              // hyphens → spaces
+    .replace(/\b\w/g, (c) => c.toUpperCase()); // Title Case
+}
+
+/** Extract a frontmatter `title` field if present, otherwise fall back to slug. */
+function titleFromFrontmatter(raw: string, fallback: string): string {
+  const match = /^---[\s\S]*?^title:\s*(.+)$/m.exec(raw);
+  return match ? match[1].trim().replace(/^["']|["']$/g, "") : fallback;
+}
+
+// ─── List user repositories ───────────────────────────────────────────────────
+
+export interface RepoSummary {
+  id: number;
+  full_name: string;
+  owner: string;
+  name: string;
+  private: boolean;
+  description: string | null;
+  html_url: string;
+  default_branch: string;
+}
+
+export async function listUserRepos(token: string): Promise<RepoSummary[]> {
+  const octokit = createGitHubClient(token);
+  const repos = await octokit.paginate(octokit.rest.repos.listForAuthenticatedUser, {
+    per_page: 100,
+    sort: "updated",
+    // Explicitly request all visibility levels and affiliations so that
+    // private repos owned by the user and org repos are included.
+    // Classic PAT needs `repo` scope; fine-grained PAT needs
+    // "All repositories" access to see private repos.
+    visibility: "all",
+    affiliation: "owner,collaborator,organization_member",
+  });
+  return repos.map((r) => ({
+    id: r.id,
+    full_name: r.full_name,
+    owner: r.owner.login,
+    name: r.name,
+    private: r.private,
+    description: r.description,
+    html_url: r.html_url,
+    default_branch: r.default_branch,
+  }));
+}
+
+// ─── Load the full book structure from a repository ──────────────────────────
+
+export async function loadBookStructure(
+  token: string,
+  owner: string,
+  repo: string,
+): Promise<BookStructure> {
+  const octokit = createGitHubClient(token);
+
+  // Fetch entire tree recursively (one API call)
+  const { data: repoData } = await octokit.rest.repos.get({ owner, repo });
+  const branch = repoData.default_branch;
+
+  const { data: treeData } = await octokit.rest.git.getTree({
+    owner,
+    repo,
+    tree_sha: branch,
+    recursive: "1",
+  });
+
+  const allPaths = treeData.tree
+    .filter((n) => n.type === "blob")
+    .map((n) => n.path ?? "");
+
+  // ── book.md ──────────────────────────────────────────────────────────────
+  let title = repo;
+  let description = "";
+  if (allPaths.includes("book.md")) {
+    try {
+      const { data } = await octokit.rest.repos.getContent({ owner, repo, path: "book.md" });
+      if ("content" in data) {
+        const raw = decodeContent(data.content);
+        title = titleFromFrontmatter(raw, repo);
+        const descMatch = /^description:\s*(.+)$/m.exec(raw);
+        description = descMatch ? descMatch[1].trim().replace(/^["']|["']$/g, "") : "";
+      }
+    } catch { /* no book.md – use defaults */ }
+  }
+
+  // ── Canon sections ────────────────────────────────────────────────────────
+  function filesUnder(prefix: string): BookFile[] {
+    return allPaths
+      .filter((p) => p.startsWith(`${prefix}/`) && p.endsWith(".md"))
+      .map((p) => ({
+        path: p,
+        sha: treeData.tree.find((n) => n.path === p)?.sha ?? "",
+        size: treeData.tree.find((n) => n.path === p)?.size ?? 0,
+      }));
+  }
+
+  // ── Chapters ─────────────────────────────────────────────────────────────
+  const chapterFolders = [
+    ...new Set(
+      allPaths
+        .filter((p) => p.startsWith("chapters/"))
+        .map((p) => p.split("/").slice(0, 2).join("/"))
+    ),
+  ].sort();
+
+  const chapters: Chapter[] = chapterFolders.map((folder) => {
+    const slug = folder.replace("chapters/", "");
+    const folderPaths = allPaths.filter((p) => p.startsWith(`${folder}/`));
+
+    const paragraphFiles = folderPaths
+      // Match 001.md OR 001-any-name.md, but not chapter.md / writing-style.md
+      .filter((p) => /\/\d{3}(?:-[^/]+)?\.md$/.test(p) && !p.includes("/drafts/"))
+      .sort();
+
+    const paragraphs: Paragraph[] = paragraphFiles.map((p) => {
+      const filename = p.split("/").pop() ?? "";
+      const num = filename.match(/^(\d{3})(?:-[^/]+)?\.md$/)?.[1] ?? "";
+      // Draft lives in the drafts/ subfolder with the same filename
+      const draftPath = `${folder}/drafts/${filename}`;
+      return {
+        number: num,
+        title: slugToTitle(filename.replace(/\.md$/, "")),
+        path: p,
+        draftPath: allPaths.includes(draftPath) ? draftPath : undefined,
+      };
+    });
+
+    const writingStylePath = folderPaths.find((p) =>
+      p.endsWith("writing-style.md")
+    );
+    const draftPath = folderPaths.find((p) => p.endsWith("draft.md"));
+
+    return {
+      slug,
+      path: folder,
+      title: slugToTitle(slug),
+      paragraphs,
+      writingStylePath,
+      draftPath,
+      hasResume: allPaths.includes(`resumes/chapters/${slug}.md`),
+      hasEvaluation: allPaths.includes(`evaluations/chapters/${slug}.md`),
+    };
+  });
+
+  return {
+    title,
+    description,
+    owner,
+    repo,
+    defaultBranch: branch,
+    chapters,
+    characters: filesUnder("characters"),
+    locations: filesUnder("locations"),
+    factions: filesUnder("factions"),
+    items: filesUnder("items"),
+    timelines: filesUnder("timelines"),
+    secrets: filesUnder("secrets"),
+    globalWritingStylePath: allPaths.find((p) =>
+      p.match(/^guidelines\/(writing-style|style)\.md$/)
+    ),
+    voicesPath: allPaths.includes("guidelines/voices.md")
+      ? "guidelines/voices.md"
+      : undefined,
+    plotPath: allPaths.includes("plot.md") ? "plot.md" : undefined,
+  };
+}
+
+// ─── Load raw markdown content of a single file ──────────────────────────────
+
+export async function loadFileContent(
+  token: string,
+  owner: string,
+  repo: string,
+  path: string,
+): Promise<string> {
+  const octokit = createGitHubClient(token);
+  const { data } = await octokit.rest.repos.getContent({ owner, repo, path });
+  if ("content" in data) return decodeContent(data.content);
+  throw new Error(`${path} is not a file`);
+}
+
+// ─── Paragraph CRUD ───────────────────────────────────────────────────────────
+
+/** UTF-8-safe base64 encoding for the GitHub API `content` field. */
+function encodeContent(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  bytes.forEach((b) => (binary += String.fromCharCode(b)));
+  return btoa(binary);
+}
+
+export interface FileContent {
+  content: string;
+  sha: string;
+}
+
+/** Read a file's text content and its current SHA (required for updates). */
+export async function readFileWithSha(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  path: string,
+): Promise<FileContent> {
+  const octokit = createGitHubClient(token);
+  const { data } = await octokit.rest.repos.getContent({ owner, repo, path, ref: branch });
+  if ("content" in data) {
+    return { content: decodeContent(data.content), sha: data.sha };
+  }
+  throw new Error(`${path} is not a file`);
+}
+
+/** Update an existing file. Returns the new blob SHA. */
+export async function updateFile(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  path: string,
+  sha: string,
+  content: string,
+  message: string,
+): Promise<string> {
+  const octokit = createGitHubClient(token);
+  const { data } = await octokit.rest.repos.createOrUpdateFileContents({
+    owner,
+    repo,
+    path,
+    message,
+    content: encodeContent(content),
+    sha,
+    branch,
+  });
+  return data.content?.sha ?? sha;
+}
+
+/** Create a new file. Returns the blob SHA. */
+export async function createFile(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  path: string,
+  content: string,
+  message: string,
+): Promise<string> {
+  const octokit = createGitHubClient(token);
+  const { data } = await octokit.rest.repos.createOrUpdateFileContents({
+    owner,
+    repo,
+    path,
+    message,
+    content: encodeContent(content),
+    branch,
+  });
+  return data.content?.sha ?? "";
+}
+
+/**
+ * Commit a reorder (and optional deletion) of chapter paragraphs atomically.
+ *
+ * - `oldParagraphs`: current paragraph list as loaded from the store
+ * - `newOrderedParagraphs`: desired order (may be shorter if a paragraph was deleted)
+ *
+ * Files are renumbered by their 1-based position in `newOrderedParagraphs`.
+ * Any paragraph in `oldParagraphs` absent from `newOrderedParagraphs` is deleted.
+ * Returns the updated `Paragraph[]` with new paths, numbers and titles.
+ */
+export async function reorderParagraphsInChapter(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  chapterPath: string,
+  oldParagraphs: Paragraph[],
+  newOrderedParagraphs: Paragraph[],
+  commitMessage = "Reorder paragraphs",
+): Promise<Paragraph[]> {
+  const octokit = createGitHubClient(token);
+
+  // Get HEAD commit and its tree
+  const { data: branchData } = await octokit.rest.repos.getBranch({
+    owner,
+    repo,
+    branch,
+  });
+  const currentCommitSha = branchData.commit.sha;
+  const currentTreeSha = branchData.commit.commit.tree.sha;
+
+  const { data: fullTree } = await octokit.rest.git.getTree({
+    owner,
+    repo,
+    tree_sha: currentTreeSha,
+    recursive: "1",
+  });
+
+  const getBlobSha = (p: string) =>
+    fullTree.tree.find((n) => n.path === p)?.sha ?? null;
+
+  type TreeEntry = {
+    path: string;
+    mode: "100644";
+    type: "blob";
+    sha: string | null;
+  };
+  const treeUpdates: TreeEntry[] = [];
+
+  // Build the new result list and compute needed renames
+  const result: Paragraph[] = [];
+  const newOriginalPaths = new Set(newOrderedParagraphs.map((p) => p.path));
+
+  for (let i = 0; i < newOrderedParagraphs.length; i++) {
+    const p = newOrderedParagraphs[i];
+    const newNumber = String(i + 1).padStart(3, "0");
+    const oldFilename = p.path.split("/").pop()!;
+    const m = oldFilename.match(/^(\d{3})(?:-(.+))?\.md$/);
+    const slugPart = m?.[2]; // undefined for bare "001.md"
+    const newFilename = slugPart
+      ? `${newNumber}-${slugPart}.md`
+      : `${newNumber}.md`;
+    const newPath = `${chapterPath}/${newFilename}`;
+
+    if (p.path !== newPath) {
+      const sha = getBlobSha(p.path);
+      if (sha) {
+        treeUpdates.push({ path: p.path, mode: "100644", type: "blob", sha: null });
+        treeUpdates.push({ path: newPath, mode: "100644", type: "blob", sha });
+      }
+    }
+
+    // Handle draft files
+    let newDraftPath: string | undefined;
+    if (p.draftPath) {
+      const draftFilename = p.draftPath.split("/").pop()!;
+      const dm = draftFilename.match(/^(\d{3})(?:-(.+))?\.md$/);
+      const draftSlug = dm?.[2];
+      const newDraftFilename = draftSlug
+        ? `${newNumber}-${draftSlug}.md`
+        : `${newNumber}.md`;
+      newDraftPath = `${chapterPath}/drafts/${newDraftFilename}`;
+
+      if (p.draftPath !== newDraftPath) {
+        const draftSha = getBlobSha(p.draftPath);
+        if (draftSha) {
+          treeUpdates.push({ path: p.draftPath, mode: "100644", type: "blob", sha: null });
+          treeUpdates.push({ path: newDraftPath, mode: "100644", type: "blob", sha: draftSha });
+        }
+      }
+    }
+
+    result.push({
+      number: newNumber,
+      title: slugToTitle(newFilename.replace(/\.md$/, "")),
+      path: newPath,
+      draftPath: newDraftPath,
+    });
+  }
+
+  // Delete paragraphs that were removed from the list
+  for (const p of oldParagraphs) {
+    if (!newOriginalPaths.has(p.path)) {
+      treeUpdates.push({ path: p.path, mode: "100644", type: "blob", sha: null });
+      if (p.draftPath) {
+        treeUpdates.push({ path: p.draftPath, mode: "100644", type: "blob", sha: null });
+      }
+    }
+  }
+
+  if (treeUpdates.length === 0) return result;
+
+  const { data: newTree } = await octokit.rest.git.createTree({
+    owner,
+    repo,
+    base_tree: currentTreeSha,
+    tree: treeUpdates,
+  });
+  const { data: newCommit } = await octokit.rest.git.createCommit({
+    owner,
+    repo,
+    message: commitMessage,
+    tree: newTree.sha,
+    parents: [currentCommitSha],
+  });
+  await octokit.rest.git.updateRef({
+    owner,
+    repo,
+    ref: `heads/${branch}`,
+    sha: newCommit.sha,
+  });
+
+  return result;
+}
+
+// ─── Dev branch management ────────────────────────────────────────────────────
+
+/**
+ * Derive a deterministic git branch name from a Google email address.
+ * "user.name+tag@gmail.com"  →  "dev-user.name-tag"
+ */
+export function emailToBranchName(email: string): string {
+  const local = email
+    .split("@")[0]
+    .toLowerCase()
+    .replace(/\+/g, "-")
+    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-|-$/g, "");
+  return `dev-${local}`;
+}
+
+/**
+ * Ensure the personal dev branch exists, creating it from `baseBranch` if needed.
+ * Returns the branch name.
+ */
+export async function ensureDevBranch(
+  token: string,
+  owner: string,
+  repo: string,
+  baseBranch: string,
+  email: string,
+): Promise<string> {
+  const octokit = createGitHubClient(token);
+  const branchName = emailToBranchName(email);
+
+  try {
+    await octokit.rest.repos.getBranch({ owner, repo, branch: branchName });
+    return branchName; // already exists
+  } catch (err: unknown) {
+    if ((err as { status?: number })?.status !== 404) throw err;
+  }
+
+  // Branch not found → create from baseBranch
+  const { data: base } = await octokit.rest.repos.getBranch({
+    owner,
+    repo,
+    branch: baseBranch,
+  });
+  await octokit.rest.git.createRef({
+    owner,
+    repo,
+    ref: `refs/heads/${branchName}`,
+    sha: base.commit.sha,
+  });
+  return branchName;
+}
+
+/**
+ * Rename a file AND update its content in one atomic commit (Git Trees API).
+ * Returns the blob SHA of the new file.
+ */
+export async function renameAndUpdateFile(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  oldPath: string,
+  newPath: string,
+  content: string,
+  message: string,
+): Promise<{ sha: string }> {
+  const octokit = createGitHubClient(token);
+
+  const { data: branchData } = await octokit.rest.repos.getBranch({
+    owner,
+    repo,
+    branch,
+  });
+  const currentCommitSha = branchData.commit.sha;
+  const currentTreeSha = branchData.commit.commit.tree.sha;
+
+  // Using `content` lets GitHub create the blob; sha: null deletes the old path
+  const { data: newTree } = await octokit.rest.git.createTree({
+    owner,
+    repo,
+    base_tree: currentTreeSha,
+    tree: [
+      { path: oldPath, mode: "100644", type: "blob", sha: null },
+      { path: newPath, mode: "100644", type: "blob", content },
+    ],
+  });
+
+  const { data: newCommit } = await octokit.rest.git.createCommit({
+    owner,
+    repo,
+    message,
+    tree: newTree.sha,
+    parents: [currentCommitSha],
+  });
+  await octokit.rest.git.updateRef({
+    owner,
+    repo,
+    ref: `heads/${branch}`,
+    sha: newCommit.sha,
+  });
+
+  const sha = newTree.tree.find((n) => n.path === newPath)?.sha ?? "";
+  return { sha };
+}
