@@ -12,7 +12,7 @@ import {
 
 /** Hook that provides load/save helpers for Google Drive settings. */
 export function useSettings() {
-  const { driveFileId, syncStatus, lastSynced } = useSettingsStore();
+  const { syncStatus, lastSynced } = useSettingsStore();
   const {
     setSettings,
     setSyncStatus,
