@@ -593,6 +593,90 @@ scope: chapter-writing-style
   }
 });
 
+test("mcp script tools sync ledger and expose parsed writing context", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-mcp-script-ledger-"));
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(packageRoot, "dist", "index.js")],
+    cwd: workspaceRoot,
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "narrarium-script-test", version: "0.1.0" });
+
+  try {
+    await client.connect(transport);
+
+    await callToolText(client, "init_book_repo", {
+      rootPath,
+      title: "Script Ledger MCP Test",
+      language: "en",
+    });
+
+    await callToolText(client, "create_chapter", {
+      rootPath,
+      number: 1,
+      title: "Hidden Child",
+    });
+
+    await callToolText(client, "create_secret", {
+      rootPath,
+      title: "The child belongs to the hidden queen",
+      functionInBook: "Protects the central bloodline reveal.",
+      stakes: "Early revelation would collapse the mystery.",
+      revealIn: "chapter:001-hidden-child",
+      knownFrom: "chapter:001-hidden-child",
+    });
+
+    const body = [
+      "Location: salt cave",
+      "@scene_goal{Save the child without naming the hidden queen.}",
+      "@pov{character:malachia}",
+      "@secret{secret:the-child-belongs-to-the-hidden-queen mode=protect}",
+      "@writer_truth{The child belongs to the hidden queen.}",
+      "@reader_surface{A nameless child survives.}",
+      "@reader_belief{The reader feels importance without genealogy.}",
+      "@allowed_clue{the name is avoided}",
+      "@forbidden_on_page{hidden queen; biological heir}",
+      "@end_secret{}",
+      "@var{reader.knows=child_is_important}",
+      "(Malachia shields the child.)",
+    ].join("\n");
+
+    const createScriptText = await callToolText(client, "create_script", {
+      rootPath,
+      chapter: "chapter:001-hidden-child",
+      number: 1,
+      title: "Cave",
+      location: "salt cave",
+      body,
+      secretRefs: ["secret:the-child-belongs-to-the-hidden-queen"],
+      revealPolicy: {
+        "secret:the-child-belongs-to-the-hidden-queen": "protect",
+      },
+    });
+    const contextText = await callToolText(client, "script_to_paragraph", {
+      rootPath,
+      chapter: "chapter:001-hidden-child",
+      paragraph: "001-cave",
+    });
+    const syncText = await callToolText(client, "sync_script_ledger", { rootPath });
+    const readText = await callToolText(client, "read_script_ledger", { rootPath });
+
+    assert.match(createScriptText, /Script ledger synced at/);
+    assert.match(createScriptText, /Checks: 0 errors, 0 warnings/);
+    assert.match(contextText, /Script directives/);
+    assert.match(contextText, /Secret context and reveal guard/);
+    assert.match(contextText, /Script variables/);
+    assert.match(contextText, /secret:the-child-belongs-to-the-hidden-queen/);
+    assert.match(syncText, /Script ledger synced at/);
+    assert.match(readText, /# Script Ledger/);
+    assert.match(readText, /# Variable Map/);
+  } finally {
+    await transport.close();
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
 async function callToolText(client, name, args) {
   const result = await client.callTool({ name, arguments: args });
   return result.content?.[0]?.text ?? "";

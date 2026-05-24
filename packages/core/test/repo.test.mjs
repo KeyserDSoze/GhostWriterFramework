@@ -18,6 +18,7 @@ import {
   createParagraphDraft,
   createParagraphFromDraft,
   createSecretProfile,
+  createScript,
   createTimelineEventProfile,
   doctorBook,
   evaluateBook,
@@ -29,8 +30,10 @@ import {
   renameEntity,
   renameParagraph,
   queryCanon,
+  parseScriptBody,
   readChapter,
   readEntity,
+  readScriptLedger,
   readTimelineMain,
   reviseChapter,
   reviewDialogueActionBeats,
@@ -38,6 +41,7 @@ import {
   saveBookWorkItem,
   saveChapterDraftWorkItem,
   syncPlot,
+  syncScriptLedger,
   syncAllResumes,
   syncStoryState,
   syncTotalResume,
@@ -315,6 +319,98 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.ok(!doctorCodes.includes("stale-story-state"));
     assert.ok(!doctorCodes.includes("stale-story-state-current"));
     assert.ok(!doctorCodes.includes("stale-story-state-chapter"));
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("script ledger tracks script secrets, variables, continuity, and prose leaks", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-script-ledger-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Script Ledger Test Book",
+      language: "en",
+    });
+
+    await createChapter(rootPath, {
+      number: 1,
+      title: "Hidden Child",
+    });
+
+    await createSecretProfile(rootPath, {
+      title: "The child belongs to the hidden queen",
+      functionInBook: "Protects the central bloodline reveal.",
+      stakes: "If the truth appears too early, the first act loses its mystery.",
+      falseBeliefs: ["The child is only a survivor."],
+      revealIn: "chapter:001-hidden-child",
+      knownFrom: "chapter:001-hidden-child",
+    });
+
+    const scriptBody = [
+      "Location: salt cave",
+      "",
+      "@scene_goal{Save the child without naming the hidden queen.}",
+      "@pov{character:malachia}",
+      "@tone{blood, exhaustion, silence}",
+      "@secret{secret:the-child-belongs-to-the-hidden-queen mode=protect}",
+      "@writer_truth{La donna e Mariamne; il bambino sara Gesu.}",
+      "@reader_surface{A nameless woman has died and a nameless child survives.}",
+      "@reader_belief{The reader should feel importance without genealogy.}",
+      "@allowed_clue{the body is protected; the name is avoided}",
+      "@forbidden_on_page{Mariamne; Gesu; biological son}",
+      "@end_secret{}",
+      "@var{reader.knows=donna_importante_non_identificata}",
+      "@set{reader.knows=donna_importante_legata_al_bambino}",
+      "(Malachia protects the child.)",
+      "@state_change{secret:the-child-belongs-to-the-hidden-queen status=protected}",
+      "@open_loop{The woman's identity remains hidden.}",
+    ].join("\n");
+
+    const parsed = parseScriptBody(scriptBody, { path: "scripts/001-hidden-child/001-cave.md" });
+    assert.equal(parsed.secrets.length, 1);
+    assert.equal(parsed.secrets[0].mode, "protect");
+    assert.equal(parsed.variables.length, 2);
+    assert.equal(parsed.checks.length, 0);
+
+    await createScript(rootPath, {
+      chapter: "chapter:001-hidden-child",
+      number: 1,
+      title: "Cave",
+      location: "salt cave",
+      body: scriptBody,
+      secretRefs: ["secret:the-child-belongs-to-the-hidden-queen"],
+      revealPolicy: {
+        "secret:the-child-belongs-to-the-hidden-queen": "protect",
+      },
+    });
+
+    await createParagraph(rootPath, {
+      chapter: "chapter:001-hidden-child",
+      number: 1,
+      title: "Cave",
+      body: "# Scene\n\nMariamne remained too visible in this draft.",
+    });
+
+    const synced = await syncScriptLedger(rootPath);
+    const ledgerFile = await readFile(synced.filePath, "utf8");
+    const readLedger = await readScriptLedger(rootPath);
+    const checkCodes = synced.ledger.checks.map((check) => check.code);
+    const doctor = await doctorBook(rootPath);
+    const doctorCodes = doctor.issues.map((issue) => issue.code);
+
+    assert.equal(synced.ledger.scripts.length, 1);
+    assert.equal(synced.ledger.secrets.length, 1);
+    assert.equal(synced.ledger.secrets[0].canonical_secret.exists, true);
+    assert.equal(synced.ledger.secrets[0].writer_truth[0], "La donna e Mariamne; il bambino sara Gesu.");
+    assert.equal(synced.ledger.variables.latest_by_name["reader.knows"].value, "donna_importante_legata_al_bambino");
+    assert.equal(synced.ledger.continuity.state_changes.length, 1);
+    assert.match(ledgerFile, /# Secret Map/);
+    assert.match(ledgerFile, /secret:the-child-belongs-to-the-hidden-queen/);
+    assert.ok(readLedger?.ledger, "expected readScriptLedger to parse ledger JSON");
+    assert.ok(checkCodes.includes("forbidden-term-in-prose"));
+    assert.ok(doctorCodes.includes("forbidden-term-in-prose"));
+    assert.ok(!doctorCodes.includes("stale-script-ledger"));
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }

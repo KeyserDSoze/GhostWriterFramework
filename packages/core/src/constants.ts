@@ -75,6 +75,7 @@ export const TOTAL_RESUME_FILE = "resumes/total.md";
 export const TOTAL_EVALUATION_FILE = "evaluations/total.md";
 export const STORY_STATE_STATUS_FILE = "state/status.md";
 export const STORY_STATE_CURRENT_FILE = "state/current.md";
+export const SCRIPT_LEDGER_FILE = "state/script-ledger.md";
 
 export const PERSONAS_DIRECTORY = "personas";
 export const PERSONAS_REVIEW_FILENAME = "personas-review.md";

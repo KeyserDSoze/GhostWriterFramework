@@ -21,6 +21,7 @@ import {
   SCRIPTS_DIRECTORY,
   PLOT_FILE,
   PROMOTED_FILE,
+  SCRIPT_LEDGER_FILE,
   SKILL_NAME,
   STORY_STATE_CURRENT_FILE,
   STORY_STATE_STATUS_FILE,
@@ -7293,6 +7294,38 @@ export async function doctorBook(rootPath: string): Promise<{
     }
   }
 
+  const currentScriptLedger = await readLooseMarkdownIfExists(path.join(root, SCRIPT_LEDGER_FILE));
+  const expectedScriptLedger = await buildScriptLedgerDocument(root, {
+    generatedAt: normalizeOptionalDateishString(currentScriptLedger?.frontmatter.generated_at) ?? new Date(0).toISOString(),
+  }).catch(() => null);
+  if (!currentScriptLedger) {
+    addDoctorIssue(issues, seen, {
+      severity: "warning",
+      code: "missing-script-ledger",
+      path: SCRIPT_LEDGER_FILE,
+      message: "state/script-ledger.md is missing. Run sync_script_ledger.",
+    });
+  } else if (
+    expectedScriptLedger &&
+    normalizeComparableMarkdown(await readFile(path.join(root, SCRIPT_LEDGER_FILE), "utf8")) !== normalizeComparableMarkdown(expectedScriptLedger.content)
+  ) {
+    addDoctorIssue(issues, seen, {
+      severity: "warning",
+      code: "stale-script-ledger",
+      path: SCRIPT_LEDGER_FILE,
+      message: "state/script-ledger.md does not match the current scripts and prose checks. Run sync_script_ledger.",
+    });
+  }
+
+  for (const check of expectedScriptLedger?.ledger.checks ?? []) {
+    addDoctorIssue(issues, seen, {
+      severity: check.severity,
+      code: check.code,
+      path: check.path,
+      message: check.line ? `Line ${check.line}: ${check.message}` : check.message,
+    });
+  }
+
   const assetFiles = await fg("assets/**/*.md", {
     cwd: root,
     absolute: true,
@@ -9960,6 +9993,14 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+function normalizeOptionalDateishString(value: unknown): string | undefined {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  return normalizeOptionalString(value);
+}
+
 function renderEpubAssetFigure(
   asset:
     | {
@@ -10297,6 +10338,11 @@ async function validateFile(root: string, filePath: string): Promise<void> {
 
   if (relativePath.startsWith("drafts/")) {
     paragraphDraftSchema.parse(data);
+    return;
+  }
+
+  if (relativePath.startsWith(`${SCRIPTS_DIRECTORY}/`) && relativePath.endsWith(".md")) {
+    scriptSchema.parse(data);
     return;
   }
 
@@ -13529,17 +13575,95 @@ function ratingBar(score: number): string {
 // ─── Script meta-language ─────────────────────────────────────────────────────
 //
 // A script is a lightweight scene blueprint stored in scripts/<chapter>/<paragraph>.md.
-// It uses a simple meta-language to describe the scene structure:
-//
-//   Location: <place>          — where the scene takes place
-//   [...]                      — tell beat: quick narrative summary
-//   {...}                      — emotion/state beat: character feeling or internal event
-//   (...)                      — action beat: physical action by a character
-//   «...»                      — dialogue idea: what a character should say
-//   #...                       — author comment: thematic note or reminder
-//
-// Scripts are independent from chapters/ and drafts/.
-// They serve as structured blueprints that an LLM can use to write or revise prose.
+// Renderable beats stay simple, while @command{...} directives are parsed into
+// state/script-ledger.md so secrets, variables, and continuity exits remain auditable.
+
+const SCRIPT_LEDGER_SCHEMA_VERSION = 1 as const;
+const SCRIPT_COMMAND_PATTERN = /^@([a-z][a-z0-9_]*)\{(.*)\}$/;
+const SCRIPT_DIRECTIVE_LEAK_PATTERN = /^@[a-z][a-z0-9_]*\{.*\}$/;
+const SCRIPT_VARIABLE_NAME_PATTERN = /^[a-z][a-z0-9_.-]*$/i;
+const SCRIPT_SECRET_MODES = ["protect", "seed", "partial", "misdirect", "reveal"] as const;
+const SCRIPT_KNOWN_COMMANDS = new Set([
+  "allowed_clue",
+  "allowed_clues",
+  "assert",
+  "blind_spot",
+  "condition_change",
+  "continuity_in",
+  "continuity_out",
+  "cost",
+  "dialogue_constraint",
+  "dialogue_hidden",
+  "dialogue_surface",
+  "distance",
+  "dramatic_question",
+  "end_secret",
+  "false_history",
+  "focus",
+  "forbidden",
+  "forbidden_on_page",
+  "inventory_change",
+  "knowledge_change",
+  "lens",
+  "location",
+  "location_change",
+  "misdirect",
+  "narration",
+  "open_loop",
+  "pace",
+  "payoff_later",
+  "payoff_now",
+  "pov",
+  "reader_belief",
+  "reader_surface",
+  "relationship_change",
+  "reveal",
+  "reveal_limit",
+  "scene_goal",
+  "secret",
+  "set",
+  "stakes",
+  "state_change",
+  "subtext",
+  "tone",
+  "track",
+  "transition_in",
+  "transition_out",
+  "turning_point",
+  "unset",
+  "var",
+  "voice",
+  "writer_truth",
+]);
+const SCRIPT_SECRET_FIELD_COMMANDS = new Set([
+  "allowed_clue",
+  "allowed_clues",
+  "dialogue_hidden",
+  "dialogue_surface",
+  "forbidden",
+  "forbidden_on_page",
+  "misdirect",
+  "reader_belief",
+  "reader_surface",
+  "reveal",
+  "reveal_limit",
+  "writer_truth",
+]);
+const SCRIPT_VARIABLE_COMMANDS = new Set(["assert", "set", "track", "unset", "var"]);
+const SCRIPT_CONTINUITY_COMMANDS = new Set([
+  "condition_change",
+  "false_history",
+  "inventory_change",
+  "knowledge_change",
+  "location_change",
+  "open_loop",
+  "payoff_later",
+  "payoff_now",
+  "relationship_change",
+  "state_change",
+]);
+
+export type ScriptSecretMode = (typeof SCRIPT_SECRET_MODES)[number];
 
 export type CreateScriptInput = {
   chapter: string;
@@ -13548,6 +13672,13 @@ export type CreateScriptInput = {
   location?: string;
   body?: string;
   tags?: string[];
+  secretRefs?: string[];
+  characterRefs?: string[];
+  locationRefs?: string[];
+  itemRefs?: string[];
+  factionRefs?: string[];
+  timelineRefs?: string[];
+  revealPolicy?: Record<string, ScriptSecretMode | string>;
   overwrite?: boolean;
 };
 
@@ -13563,6 +13694,141 @@ export type ScriptFile = {
   filePath: string;
   frontmatter: ScriptFrontmatter;
   body: string;
+};
+
+export type ScriptCommand = {
+  command: string;
+  content: string;
+  line: number;
+  raw: string;
+};
+
+export type ScriptLedgerCheck = {
+  severity: "error" | "warning";
+  code: string;
+  path: string;
+  line?: number;
+  message: string;
+};
+
+export type ParsedScriptSecretOccurrence = {
+  ref: string;
+  mode: ScriptSecretMode;
+  line: number;
+  raw: string;
+  writer_truth: string[];
+  reader_surface: string[];
+  reader_belief: string[];
+  allowed_clues: string[];
+  forbidden: string[];
+  forbidden_on_page: string[];
+  misdirect: string[];
+  reveal_limit: string[];
+  reveal: string[];
+  dialogue_surface: string[];
+  dialogue_hidden: string[];
+};
+
+export type ScriptVariableOccurrence = {
+  name: string;
+  operation: "assert" | "set" | "track" | "unset" | "var";
+  value?: string;
+  line: number;
+  raw: string;
+};
+
+export type ScriptContinuityOccurrence = {
+  kind: string;
+  target?: string;
+  fields: Record<string, string>;
+  text: string;
+  line: number;
+  raw: string;
+};
+
+export type ParsedScriptBody = {
+  commands: ScriptCommand[];
+  sceneDirectives: ScriptCommand[];
+  secrets: ParsedScriptSecretOccurrence[];
+  variables: ScriptVariableOccurrence[];
+  continuity: ScriptContinuityOccurrence[];
+  checks: ScriptLedgerCheck[];
+};
+
+export type ScriptLedgerSecretOccurrence = ParsedScriptSecretOccurrence & {
+  script_path: string;
+  chapter: string;
+  chapter_number: number | null;
+  paragraph: string;
+  paragraph_number: number;
+  title: string;
+  canonical_secret: {
+    exists: boolean;
+    path?: string;
+    title?: string;
+    known_from?: string;
+    reveal_in?: string;
+    false_beliefs?: string[];
+    reveal_strategy?: string;
+  };
+};
+
+export type ScriptLedgerVariableOccurrence = ScriptVariableOccurrence & {
+  script_path: string;
+  chapter: string;
+  chapter_number: number | null;
+  paragraph: string;
+  paragraph_number: number;
+};
+
+export type ScriptLedgerContinuityOccurrence = ScriptContinuityOccurrence & {
+  script_path: string;
+  chapter: string;
+  chapter_number: number | null;
+  paragraph: string;
+  paragraph_number: number;
+};
+
+export type ScriptLedger = {
+  schema_version: typeof SCRIPT_LEDGER_SCHEMA_VERSION;
+  generated_at: string;
+  scripts: Array<{
+    path: string;
+    chapter: string;
+    chapter_number: number | null;
+    paragraph: string;
+    paragraph_number: number;
+    title: string;
+    location?: string;
+    pov?: string;
+    scene_goal?: string;
+    commands: ScriptCommand[];
+    directives: ScriptCommand[];
+  }>;
+  secrets: ScriptLedgerSecretOccurrence[];
+  variables: {
+    timeline: ScriptLedgerVariableOccurrence[];
+    latest_by_name: Record<string, { value?: string; script_path: string; line: number }>;
+  };
+  continuity: {
+    state_changes: ScriptLedgerContinuityOccurrence[];
+    open_loops: ScriptLedgerContinuityOccurrence[];
+    payoffs_later: ScriptLedgerContinuityOccurrence[];
+    payoffs_now: ScriptLedgerContinuityOccurrence[];
+    false_history: ScriptLedgerContinuityOccurrence[];
+    other: ScriptLedgerContinuityOccurrence[];
+  };
+  checks: ScriptLedgerCheck[];
+};
+
+type CanonicalSecretInfo = {
+  ref: string;
+  path: string;
+  title: string;
+  known_from?: string;
+  reveal_in?: string;
+  false_beliefs: string[];
+  reveal_strategy?: string;
 };
 
 /** Resolve the script file path for a given chapter + paragraph slug. */
@@ -13595,6 +13861,13 @@ export async function createScript(
     number: input.number,
     title: input.title,
     location: input.location,
+    secret_refs: uniqueValues(input.secretRefs ?? []),
+    character_refs: uniqueValues(input.characterRefs ?? []),
+    location_refs: uniqueValues(input.locationRefs ?? []),
+    item_refs: uniqueValues(input.itemRefs ?? []),
+    faction_refs: uniqueValues(input.factionRefs ?? []),
+    timeline_refs: uniqueValues(input.timelineRefs ?? []),
+    reveal_policy: input.revealPolicy ?? {},
     tags: input.tags ?? [],
   });
 
@@ -13622,7 +13895,7 @@ export async function updateScript(
   const parsed = matter(raw);
   const existingBody = String(parsed.content ?? "").trim();
 
-  const patchedFm = { ...parsed.data, ...(input.frontmatterPatch ?? {}) };
+  const patchedFm = scriptSchema.parse({ ...parsed.data, ...(input.frontmatterPatch ?? {}) });
 
   let newBody: string;
   if (input.body !== undefined) {
@@ -13658,10 +13931,336 @@ export async function readScript(
   return { filePath, frontmatter, body: String(parsed.content ?? "").trim() };
 }
 
+export function parseScriptBody(body: string, options: { path?: string } = {}): ParsedScriptBody {
+  const sourcePath = options.path ?? "script";
+  const commands: ScriptCommand[] = [];
+  const sceneDirectives: ScriptCommand[] = [];
+  const secrets: ParsedScriptSecretOccurrence[] = [];
+  const variables: ScriptVariableOccurrence[] = [];
+  const continuity: ScriptContinuityOccurrence[] = [];
+  const checks: ScriptLedgerCheck[] = [];
+  let currentSecret: ParsedScriptSecretOccurrence | null = null;
+
+  for (const [index, line] of body.split(/\r?\n/).entries()) {
+    const lineNumber = index + 1;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (/^#\s*@/.test(trimmed)) {
+      addScriptCheck(checks, "error", "commented-directive", sourcePath, `Commands must use @command{...} as real lines, not comments: ${trimmed}`, lineNumber);
+      continue;
+    }
+
+    if (!trimmed.startsWith("@")) continue;
+
+    const match = trimmed.match(SCRIPT_COMMAND_PATTERN);
+    if (!match) {
+      addScriptCheck(checks, "error", "invalid-command-syntax", sourcePath, `Invalid script command syntax: ${trimmed}`, lineNumber);
+      continue;
+    }
+
+    const command = match[1].toLowerCase();
+    const content = match[2].trim();
+    const parsedCommand: ScriptCommand = { command, content, line: lineNumber, raw: trimmed };
+    commands.push(parsedCommand);
+
+    if (!SCRIPT_KNOWN_COMMANDS.has(command)) {
+      addScriptCheck(checks, "warning", "unknown-command", sourcePath, `Unknown script command @${command}.`, lineNumber);
+      sceneDirectives.push(parsedCommand);
+      continue;
+    }
+
+    if (command === "secret") {
+      const { target, fields } = parseScriptTargetFields(content);
+      const ref = normalizeOptionalString(fields.ref) ?? normalizeOptionalString(target) ?? "";
+      const modeValue = normalizeOptionalString(fields.mode);
+      let mode: ScriptSecretMode = "protect";
+
+      if (!ref) {
+        addScriptCheck(checks, "error", "missing-secret-ref", sourcePath, "@secret requires a secret:id reference.", lineNumber);
+      } else if (!/^secret:[a-z0-9-]+$/i.test(ref)) {
+        addScriptCheck(checks, "error", "invalid-secret-ref", sourcePath, `@secret reference must look like secret:slug, got ${ref}.`, lineNumber);
+      }
+
+      if (!modeValue) {
+        addScriptCheck(checks, "warning", "missing-secret-mode", sourcePath, "@secret has no mode; using protect.", lineNumber);
+      } else if (isScriptSecretMode(modeValue)) {
+        mode = modeValue;
+      } else {
+        addScriptCheck(checks, "error", "unknown-secret-mode", sourcePath, `Unknown secret mode ${modeValue}. Use protect, seed, partial, misdirect, or reveal.`, lineNumber);
+      }
+
+      currentSecret = {
+        ref,
+        mode,
+        line: lineNumber,
+        raw: trimmed,
+        writer_truth: [],
+        reader_surface: [],
+        reader_belief: [],
+        allowed_clues: [],
+        forbidden: [],
+        forbidden_on_page: [],
+        misdirect: [],
+        reveal_limit: [],
+        reveal: [],
+        dialogue_surface: [],
+        dialogue_hidden: [],
+      };
+      secrets.push(currentSecret);
+      continue;
+    }
+
+    if (command === "end_secret") {
+      if (!currentSecret) {
+        addScriptCheck(checks, "warning", "end-secret-without-secret", sourcePath, "@end_secret was used without an open @secret block.", lineNumber);
+      }
+      currentSecret = null;
+      continue;
+    }
+
+    if (SCRIPT_SECRET_FIELD_COMMANDS.has(command)) {
+      if (!currentSecret) {
+        addScriptCheck(checks, "warning", "secret-field-without-secret", sourcePath, `@${command} must follow an @secret block.`, lineNumber);
+      } else {
+        appendScriptSecretField(currentSecret, command, content);
+      }
+      continue;
+    }
+
+    if (SCRIPT_VARIABLE_COMMANDS.has(command)) {
+      const variable = parseScriptVariableCommand(command, content, parsedCommand, checks, sourcePath);
+      if (variable) variables.push(variable);
+      continue;
+    }
+
+    if (SCRIPT_CONTINUITY_COMMANDS.has(command)) {
+      const { target, fields } = parseScriptTargetFields(content);
+      continuity.push({
+        kind: command,
+        target,
+        fields,
+        text: content,
+        line: lineNumber,
+        raw: trimmed,
+      });
+      continue;
+    }
+
+    sceneDirectives.push(parsedCommand);
+  }
+
+  for (const secret of secrets) {
+    addSecretCompletenessChecks(secret, checks, sourcePath);
+  }
+
+  return { commands, sceneDirectives, secrets, variables, continuity, checks };
+}
+
+export async function buildScriptLedger(
+  rootPath: string,
+  options: { generatedAt?: string } = {},
+): Promise<ScriptLedger> {
+  const root = path.resolve(rootPath);
+  const generatedAt = options.generatedAt ?? new Date().toISOString();
+  const checks: ScriptLedgerCheck[] = [];
+  const scripts: ScriptLedger["scripts"] = [];
+  const secrets: ScriptLedgerSecretOccurrence[] = [];
+  const variableTimeline: ScriptLedgerVariableOccurrence[] = [];
+  const continuity: ScriptLedger["continuity"] = {
+    state_changes: [],
+    open_loops: [],
+    payoffs_later: [],
+    payoffs_now: [],
+    false_history: [],
+    other: [],
+  };
+  const chapters = await listChapters(root).catch(() => []);
+  const chapterLookup = new Map(chapters.map((chapter) => [`chapter:${chapter.slug}`, chapter]));
+  const chapterOrder = new Map(chapters.map((chapter) => [chapter.slug, chapter.metadata.number]));
+  const canonicalSecrets = await buildCanonicalSecretLookup(root);
+  const scriptFiles = (await fg(`${SCRIPTS_DIRECTORY}/**/*.md`, {
+    cwd: root,
+    absolute: true,
+    onlyFiles: true,
+    ignore: ["**/node_modules/**", "**/dist/**", "**/.astro/**"],
+  })).sort((left, right) => left.localeCompare(right));
+
+  for (const filePath of scriptFiles) {
+    const relativePath = toPosixPath(path.relative(root, filePath));
+    const raw = await readFile(filePath, "utf8");
+    const parsed = matter(raw);
+    let frontmatter: ScriptFrontmatter;
+
+    try {
+      frontmatter = scriptSchema.parse(parsed.data);
+    } catch (error) {
+      addScriptCheck(checks, "error", "invalid-script-frontmatter", relativePath, error instanceof Error ? error.message : String(error));
+      continue;
+    }
+
+    const body = String(parsed.content ?? "").trim();
+    const parsedBody = parseScriptBody(body, { path: relativePath });
+    checks.push(...parsedBody.checks);
+
+    const chapterRef = frontmatter.chapter;
+    const chapterSlugValue = normalizeChapterReference(chapterRef);
+    const chapterData = chapterLookup.get(`chapter:${chapterSlugValue}`);
+    const chapterNumber = chapterData?.metadata.number ?? null;
+    const paragraphRef = frontmatter.paragraph;
+    const paragraphNumber = frontmatter.number;
+    const paragraphSlug = paragraphRef.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim();
+    const paragraphBody = await readParagraphBodyIfExists(root, chapterSlugValue, paragraphSlug);
+    const povCommand = parsedBody.sceneDirectives.find((entry) => entry.command === "pov");
+    const sceneGoalCommand = parsedBody.sceneDirectives.find((entry) => entry.command === "scene_goal");
+
+    if (!povCommand) {
+      addScriptCheck(checks, "warning", "missing-pov", relativePath, "Script has no @pov directive.");
+    }
+    if (!sceneGoalCommand) {
+      addScriptCheck(checks, "warning", "missing-scene-goal", relativePath, "Script has no @scene_goal directive.");
+    }
+
+    scripts.push({
+      path: relativePath,
+      chapter: `chapter:${chapterSlugValue}`,
+      chapter_number: chapterNumber,
+      paragraph: paragraphRef,
+      paragraph_number: paragraphNumber,
+      title: frontmatter.title,
+      location: frontmatter.location,
+      pov: povCommand?.content,
+      scene_goal: sceneGoalCommand?.content,
+      commands: parsedBody.commands,
+      directives: parsedBody.sceneDirectives,
+    });
+
+    for (const parsedSecret of parsedBody.secrets) {
+      const canonical = canonicalSecrets.get(parsedSecret.ref.toLowerCase());
+      const occurrence: ScriptLedgerSecretOccurrence = {
+        ...parsedSecret,
+        script_path: relativePath,
+        chapter: `chapter:${chapterSlugValue}`,
+        chapter_number: chapterNumber,
+        paragraph: paragraphRef,
+        paragraph_number: paragraphNumber,
+        title: frontmatter.title,
+        canonical_secret: canonical
+          ? {
+              exists: true,
+              path: canonical.path,
+              title: canonical.title,
+              known_from: canonical.known_from,
+              reveal_in: canonical.reveal_in,
+              false_beliefs: canonical.false_beliefs,
+              reveal_strategy: canonical.reveal_strategy,
+            }
+          : { exists: false, path: parsedSecret.ref ? `secrets/${parsedSecret.ref.replace(/^secret:/, "")}.md` : undefined },
+      };
+      secrets.push(occurrence);
+
+      if (parsedSecret.ref && !canonical) {
+        addScriptCheck(checks, "warning", "missing-secret-ref", relativePath, `Script references missing secret: ${parsedSecret.ref}.`, parsedSecret.line);
+      }
+      if (canonical?.reveal_in && chapterNumber !== null) {
+        const revealInNumber = resolveChapterNumberFromReference(canonical.reveal_in, chapterOrder);
+        if (parsedSecret.mode === "reveal" && revealInNumber !== null && chapterNumber < revealInNumber) {
+          addScriptCheck(checks, "error", "reveal-before-reveal-in", relativePath, `${parsedSecret.ref} is revealed in chapter ${chapterNumber}, before reveal_in ${canonical.reveal_in}.`, parsedSecret.line);
+        }
+        if (parsedSecret.mode === "protect" && revealInNumber !== null && chapterNumber > revealInNumber) {
+          addScriptCheck(checks, "warning", "protect-after-reveal", relativePath, `${parsedSecret.ref} is still protected after reveal_in ${canonical.reveal_in}.`, parsedSecret.line);
+        }
+      }
+
+      if (paragraphBody) {
+        addProseLeakChecks(checks, occurrence, paragraphBody.body, paragraphBody.path);
+      }
+    }
+
+    if (paragraphBody) {
+      addDirectiveLeakChecks(checks, paragraphBody.body, paragraphBody.path);
+    }
+
+    for (const variable of parsedBody.variables) {
+      variableTimeline.push({
+        ...variable,
+        script_path: relativePath,
+        chapter: `chapter:${chapterSlugValue}`,
+        chapter_number: chapterNumber,
+        paragraph: paragraphRef,
+        paragraph_number: paragraphNumber,
+      });
+    }
+
+    for (const entry of parsedBody.continuity) {
+      const occurrence: ScriptLedgerContinuityOccurrence = {
+        ...entry,
+        script_path: relativePath,
+        chapter: `chapter:${chapterSlugValue}`,
+        chapter_number: chapterNumber,
+        paragraph: paragraphRef,
+        paragraph_number: paragraphNumber,
+      };
+      if (entry.kind === "state_change") continuity.state_changes.push(occurrence);
+      else if (entry.kind === "open_loop") continuity.open_loops.push(occurrence);
+      else if (entry.kind === "payoff_later") continuity.payoffs_later.push(occurrence);
+      else if (entry.kind === "payoff_now") continuity.payoffs_now.push(occurrence);
+      else if (entry.kind === "false_history") continuity.false_history.push(occurrence);
+      else continuity.other.push(occurrence);
+    }
+  }
+
+  scripts.sort(compareScriptLedgerScripts);
+  secrets.sort(compareScriptLedgerPosition);
+  variableTimeline.sort(compareScriptLedgerPosition);
+  for (const entries of Object.values(continuity)) {
+    entries.sort(compareScriptLedgerPosition);
+  }
+
+  addDuplicateRevealChecks(checks, secrets);
+  const latestByName = buildVariableLatestState(variableTimeline, checks);
+
+  return {
+    schema_version: SCRIPT_LEDGER_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    scripts,
+    secrets,
+    variables: {
+      timeline: variableTimeline,
+      latest_by_name: latestByName,
+    },
+    continuity,
+    checks: checks.sort(compareScriptLedgerChecks),
+  };
+}
+
+export async function syncScriptLedger(
+  rootPath: string,
+): Promise<{ filePath: string; content: string; ledger: ScriptLedger; errorCount: number; warningCount: number }> {
+  const root = path.resolve(rootPath);
+  const result = await buildScriptLedgerDocument(root, { generatedAt: new Date().toISOString() });
+  await mkdir(path.dirname(result.filePath), { recursive: true });
+  await writeFile(result.filePath, result.content, "utf8");
+  return {
+    ...result,
+    errorCount: result.ledger.checks.filter((check) => check.severity === "error").length,
+    warningCount: result.ledger.checks.filter((check) => check.severity === "warning").length,
+  };
+}
+
+export async function readScriptLedger(
+  rootPath: string,
+): Promise<{ filePath: string; content: string; ledger: ScriptLedger | null } | null> {
+  const root = path.resolve(rootPath);
+  const filePath = path.join(root, SCRIPT_LEDGER_FILE);
+  if (!(await pathExists(filePath))) return null;
+  const content = await readFile(filePath, "utf8");
+  const ledger = parseScriptLedgerJson(content);
+  return { filePath, content, ledger };
+}
+
 /**
  * Build a writing context from a script file so an LLM can turn it into polished prose.
- * Returns the script body annotated with the meta-language legend, plus the writing-style
- * guideline content and any existing paragraph body (for revision mode).
  */
 export async function scriptToParagraphContext(
   rootPath: string,
@@ -13674,16 +14273,22 @@ export async function scriptToParagraphContext(
   writingStyleBody: string | undefined;
   existingParagraphBody: string | undefined;
   legend: string;
+  directiveSummary: string;
+  secretSummary: string;
+  variableSummary: string;
+  continuitySummary: string;
+  parserCheckSummary: string;
 }> {
   const root = path.resolve(rootPath);
   const script = await readScript(root, chapter, paragraph);
+  const relativeScriptPath = toPosixPath(path.relative(root, script.filePath));
+  const parsedBody = parseScriptBody(script.body, { path: relativeScriptPath });
+  const canonicalSecrets = await buildCanonicalSecretLookup(root);
 
-  // Writing style guideline
   const wsPath = path.join(root, "guidelines", "writing-style.md");
   const wsRaw = await readFile(wsPath, "utf8").catch(() => null);
   const writingStyleBody = wsRaw ? String(matter(wsRaw).content ?? "").trim() : undefined;
 
-  // Existing paragraph (if any — for revision mode)
   const chapterSlugNorm = normalizeChapterReference(chapter);
   const paragraphSlug = paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim();
   const paraPath = path.join(root, "chapters", chapterSlugNorm, `${paragraphSlug}.md`);
@@ -13697,6 +14302,11 @@ export async function scriptToParagraphContext(
     writingStyleBody,
     existingParagraphBody,
     legend: SCRIPT_LEGEND,
+    directiveSummary: formatScriptDirectiveSummary(parsedBody),
+    secretSummary: formatScriptSecretContextSummary(parsedBody.secrets, canonicalSecrets),
+    variableSummary: formatScriptVariableSummary(parsedBody.variables),
+    continuitySummary: formatScriptContinuitySummary(parsedBody.continuity),
+    parserCheckSummary: formatScriptCheckSummary(parsedBody.checks),
   };
 }
 
@@ -13705,42 +14315,94 @@ export async function scriptToParagraphContext(
  * Returns a suggested script body string — the caller writes it with createScript or updateScript.
  */
 export function paragraphToScriptBody(paragraphBody: string): string {
-  // This is a heuristic decomposition: the LLM will do the real work,
-  // but we provide a structured template with the paragraph text as a comment
-  // so the caller can see what needs to be mapped.
   return [
     `# Auto-generated script skeleton from existing paragraph`,
     `# Review and replace each beat with the appropriate meta-language tag.`,
     ``,
+    `@scene_goal{TODO}`,
+    `@pov{TODO}`,
+    `@tone{TODO}`,
+    `@var{reader.knows=TODO}`,
+    ``,
     `# Original paragraph text:`,
     ...paragraphBody.split("\n").map((line) => `# ${line}`),
     ``,
-    `# ── Rewrite below using script meta-language ──`,
+    `# Rewrite below using script meta-language.`,
     ``,
-    `[Scene summary — replace with a [tell beat]]`,
-    `{Character — replace with an {emotion/state beat}}`,
-    `(Action — replace with an (action beat))`,
-    `«Dialogue idea — replace with a «dialogue» beat»`,
+    `[Scene summary]`,
+    `{Character - emotion or state}`,
+    `(Action)`,
+    `«Dialogue idea» [subtext: TODO; delivery: TODO]`,
+    ``,
+    `@continuity_out{TODO}`,
+    `@state_change{TODO}`,
+    `@open_loop{TODO}`,
   ].join("\n");
 }
 
 export const SCRIPT_LEGEND = `## Script meta-language legend
 
-| Syntax       | Meaning                                                         |
-| ------------ | --------------------------------------------------------------- |
-| \`Location:\`  | Where the scene takes place (free text or canon location slug)  |
-| \`[...]\`      | **Tell beat** — quick narrative summary, shown not shown        |
-| \`{...}\`      | **Emotion/state beat** — character feeling or internal event    |
-| \`(...)\`      | **Action beat** — physical action performed by a character      |
-| \`«...»\`      | **Dialogue idea** — what a character should say (not verbatim)  |
-| \`#...\`       | **Author comment** — thematic note or reminder, not prose       |
+### Renderable beats
+
+| Syntax | Meaning |
+| --- | --- |
+| \`Location: ...\` | Scene location, free text or canon location slug |
+| \`[...]\` | Tell beat to render as prose |
+| \`{...}\` | Emotion, body state, or internal state |
+| \`(...)\` | Physical action |
+| \`«...»\` | Dialogue surface or dialogue idea |
+| \`«...» [subtext: ...; delivery: ...]\` | Dialogue plus writer-only delivery notes |
+
+### Writer-only commands
+
+| Syntax | Meaning |
+| --- | --- |
+| \`@scene_goal{...}\` | Dramatic function of the scene |
+| \`@pov{character:id}\` | Viewpoint or perception filter |
+| \`@lens{...}\` | POV sensory, emotional, or cognitive lens |
+| \`@secret{secret:id mode=protect|seed|partial|misdirect|reveal}\` | Secret context block |
+| \`@writer_truth{...}\` | Truth the writer may know but must not necessarily reveal |
+| \`@reader_surface{...}\` | What may appear explicitly on page |
+| \`@reader_belief{...}\` | What the reader should believe at this point |
+| \`@allowed_clue{...}\` | Clues allowed in prose |
+| \`@forbidden_on_page{...}\` | Terms or facts forbidden in prose |
+| \`@var{name=value}\`, \`@set{name=value}\`, \`@unset{name}\`, \`@assert{name=value}\` | Track writing variables |
+| \`@state_change{target key=value}\` | Continuity delta leaving the scene |
+| \`@open_loop{...}\`, \`@payoff_later{...}\`, \`@payoff_now{...}\` | Plot loop tracking |
+| \`# ...\` | Free author comment, never parsed as a command |
 
 Rules:
-- One beat per line.
-- Beats are ordered as they should appear in the final prose.
-- \`Location:\` must be the first line if present.
-- \`#\` comments are never rendered into prose — they are instructions to the writer.
-- Multiple beats of the same type can appear in any order.`;
+- One beat or command per line.
+- Commands are real lines: \`# @secret{...}\` is invalid.
+- \`@command{...}\` lines are never rendered into prose.
+- \`{...}\` without an \`@command\` prefix remains an emotion/state beat.
+- \`[...]\` at the start of a line is a tell beat; \`[...]\` after \`«...»\` is dialogue direction.
+- Commands are parsed deterministically into \`state/script-ledger.md\`.`;
+
+async function buildScriptLedgerDocument(
+  rootPath: string,
+  options: { generatedAt: string },
+): Promise<{ filePath: string; content: string; ledger: ScriptLedger }> {
+  const root = path.resolve(rootPath);
+  const ledger = await buildScriptLedger(root, { generatedAt: options.generatedAt });
+  const filePath = path.join(root, SCRIPT_LEDGER_FILE);
+  const content = renderMarkdown(
+    {
+      type: "script-ledger",
+      id: "state:script-ledger",
+      title: "Script Ledger",
+      generated_at: ledger.generated_at,
+      source: SCRIPTS_DIRECTORY,
+      schema_version: SCRIPT_LEDGER_SCHEMA_VERSION,
+      script_count: ledger.scripts.length,
+      secret_occurrence_count: ledger.secrets.length,
+      variable_occurrence_count: ledger.variables.timeline.length,
+      check_count: ledger.checks.length,
+    },
+    buildScriptLedgerBody(ledger),
+  );
+  return { filePath, content, ledger };
+}
 
 function buildDefaultScriptBody(location?: string): string {
   const lines: string[] = [];
@@ -13748,10 +14410,441 @@ function buildDefaultScriptBody(location?: string): string {
     lines.push(`Location: ${location}`);
     lines.push(``);
   }
+  lines.push(`@scene_goal{TODO}`);
+  lines.push(`@pov{TODO}`);
+  lines.push(`@tone{TODO}`);
+  lines.push(``);
   lines.push(`[Scene summary]`);
-  lines.push(`{Character — emotion or state}`);
-  lines.push(`«Dialogue idea»`);
+  lines.push(`{Character - emotion or state}`);
+  lines.push(`«Dialogue idea» [subtext: TODO; delivery: TODO]`);
   lines.push(`(Action)`);
-  lines.push(`# Thematic note`);
+  lines.push(``);
+  lines.push(`# Free author note`);
+  lines.push(`@continuity_out{TODO}`);
   return lines.join("\n");
+}
+
+function isScriptSecretMode(value: string): value is ScriptSecretMode {
+  return (SCRIPT_SECRET_MODES as readonly string[]).includes(value);
+}
+
+function addScriptCheck(
+  checks: ScriptLedgerCheck[],
+  severity: ScriptLedgerCheck["severity"],
+  code: string,
+  pathValue: string,
+  message: string,
+  line?: number,
+): void {
+  checks.push({ severity, code, path: pathValue, message, ...(line ? { line } : {}) });
+}
+
+function parseScriptTargetFields(content: string): { target?: string; fields: Record<string, string> } {
+  const fields: Record<string, string> = {};
+  let target: string | undefined;
+
+  for (const token of content.split(/\s+/).filter(Boolean)) {
+    const equalsIndex = token.indexOf("=");
+    if (equalsIndex > 0) {
+      fields[token.slice(0, equalsIndex).trim()] = token.slice(equalsIndex + 1).trim();
+    } else if (!target) {
+      target = token.trim();
+    }
+  }
+
+  return { target, fields };
+}
+
+function parseScriptVariableCommand(
+  command: string,
+  content: string,
+  parsedCommand: ScriptCommand,
+  checks: ScriptLedgerCheck[],
+  sourcePath: string,
+): ScriptVariableOccurrence | null {
+  if (command === "unset" || command === "track") {
+    const name = content.trim();
+    if (!SCRIPT_VARIABLE_NAME_PATTERN.test(name)) {
+      addScriptCheck(checks, "error", "invalid-variable-name", sourcePath, `Invalid variable name: ${name}`, parsedCommand.line);
+      return null;
+    }
+    return { name, operation: command, line: parsedCommand.line, raw: parsedCommand.raw };
+  }
+
+  const equalsIndex = content.indexOf("=");
+  if (equalsIndex <= 0) {
+    addScriptCheck(checks, "error", "invalid-variable-assignment", sourcePath, `@${command} requires name=value.`, parsedCommand.line);
+    return null;
+  }
+
+  const name = content.slice(0, equalsIndex).trim();
+  const value = content.slice(equalsIndex + 1).trim();
+  if (!SCRIPT_VARIABLE_NAME_PATTERN.test(name)) {
+    addScriptCheck(checks, "error", "invalid-variable-name", sourcePath, `Invalid variable name: ${name}`, parsedCommand.line);
+    return null;
+  }
+  if (!value) {
+    addScriptCheck(checks, "error", "invalid-variable-assignment", sourcePath, `@${command} requires a non-empty value.`, parsedCommand.line);
+    return null;
+  }
+
+  return { name, operation: command as ScriptVariableOccurrence["operation"], value, line: parsedCommand.line, raw: parsedCommand.raw };
+}
+
+function appendScriptSecretField(secret: ParsedScriptSecretOccurrence, command: string, content: string): void {
+  switch (command) {
+    case "allowed_clue":
+    case "allowed_clues":
+      secret.allowed_clues.push(...splitScriptList(content));
+      return;
+    case "dialogue_hidden":
+      secret.dialogue_hidden.push(content);
+      return;
+    case "dialogue_surface":
+      secret.dialogue_surface.push(content);
+      return;
+    case "forbidden":
+      secret.forbidden.push(...splitScriptList(content));
+      return;
+    case "forbidden_on_page":
+      secret.forbidden_on_page.push(...splitScriptList(content));
+      return;
+    case "misdirect":
+      secret.misdirect.push(content);
+      return;
+    case "reader_belief":
+      secret.reader_belief.push(content);
+      return;
+    case "reader_surface":
+      secret.reader_surface.push(content);
+      return;
+    case "reveal":
+      secret.reveal.push(content);
+      return;
+    case "reveal_limit":
+      secret.reveal_limit.push(content);
+      return;
+    case "writer_truth":
+      secret.writer_truth.push(content);
+      return;
+  }
+}
+
+function splitScriptList(content: string): string[] {
+  return content.split(";").map((value) => value.trim()).filter(Boolean);
+}
+
+function addSecretCompletenessChecks(secret: ParsedScriptSecretOccurrence, checks: ScriptLedgerCheck[], sourcePath: string): void {
+  if (!secret.writer_truth.length) {
+    addScriptCheck(checks, "warning", "secret-block-missing-writer-truth", sourcePath, `${secret.ref || "@secret"} has no @writer_truth.`, secret.line);
+  }
+  if (!secret.reader_surface.length) {
+    addScriptCheck(checks, "warning", "secret-block-missing-reader-surface", sourcePath, `${secret.ref || "@secret"} has no @reader_surface.`, secret.line);
+  }
+  if (["protect", "seed", "misdirect"].includes(secret.mode) && secret.forbidden_on_page.length === 0 && secret.forbidden.length === 0) {
+    addScriptCheck(checks, "warning", "secret-block-missing-forbidden", sourcePath, `${secret.ref || "@secret"} has no @forbidden_on_page.`, secret.line);
+  }
+  if (secret.mode === "seed" && secret.allowed_clues.length === 0) {
+    addScriptCheck(checks, "warning", "seed-secret-missing-allowed-clue", sourcePath, `${secret.ref || "@secret"} is mode=seed but has no @allowed_clue.`, secret.line);
+  }
+  if (secret.mode === "misdirect" && secret.misdirect.length === 0) {
+    addScriptCheck(checks, "warning", "misdirect-secret-missing-misdirect", sourcePath, `${secret.ref || "@secret"} is mode=misdirect but has no @misdirect.`, secret.line);
+  }
+  if (secret.mode === "partial" && secret.reveal_limit.length === 0) {
+    addScriptCheck(checks, "warning", "partial-secret-missing-reveal-limit", sourcePath, `${secret.ref || "@secret"} is mode=partial but has no @reveal_limit.`, secret.line);
+  }
+  if (secret.mode === "reveal" && secret.reveal.length === 0) {
+    addScriptCheck(checks, "warning", "reveal-secret-missing-reveal", sourcePath, `${secret.ref || "@secret"} is mode=reveal but has no @reveal.`, secret.line);
+  }
+}
+
+async function buildCanonicalSecretLookup(root: string): Promise<Map<string, CanonicalSecretInfo>> {
+  const lookup = new Map<string, CanonicalSecretInfo>();
+  const secretDocuments = await listEntities(root, "secret").catch(() => []);
+  for (const secret of secretDocuments) {
+    const ref = String(secret.metadata.id ?? `secret:${secret.slug}`);
+    lookup.set(ref.toLowerCase(), {
+      ref,
+      path: toPosixPath(path.relative(root, secret.path)),
+      title: String(secret.metadata.title ?? ref),
+      known_from: normalizeOptionalString(secret.metadata.known_from),
+      reveal_in: normalizeOptionalString(secret.metadata.reveal_in),
+      false_beliefs: Array.isArray(secret.metadata.false_beliefs) ? secret.metadata.false_beliefs.map(String).filter(Boolean) : [],
+      reveal_strategy: normalizeOptionalString(secret.metadata.reveal_strategy),
+    });
+  }
+  return lookup;
+}
+
+async function readParagraphBodyIfExists(
+  root: string,
+  chapterSlugValue: string,
+  paragraphSlug: string,
+): Promise<{ path: string; body: string } | null> {
+  const filePath = path.join(root, "chapters", chapterSlugValue, `${paragraphSlug}.md`);
+  if (!(await pathExists(filePath))) return null;
+  const raw = await readFile(filePath, "utf8");
+  const parsed = matter(raw);
+  return { path: toPosixPath(path.relative(root, filePath)), body: String(parsed.content ?? "").trim() };
+}
+
+function addProseLeakChecks(
+  checks: ScriptLedgerCheck[],
+  secret: ScriptLedgerSecretOccurrence,
+  paragraphBody: string,
+  paragraphPath: string,
+): void {
+  for (const term of uniqueValues([...secret.forbidden_on_page, ...secret.forbidden].map((value) => value.trim()).filter(Boolean))) {
+    const match = findTermInText(paragraphBody, term);
+    if (match) {
+      addScriptCheck(checks, "error", "forbidden-term-in-prose", paragraphPath, `Forbidden term "${term}" from ${secret.ref} appears in prose: ${match.snippet}`, match.line);
+    }
+  }
+
+  for (const truth of secret.writer_truth.flatMap(splitScriptList)) {
+    if (truth.length < 12) continue;
+    const match = findTermInText(paragraphBody, truth);
+    if (match) {
+      addScriptCheck(checks, "warning", "writer-truth-leaked-into-prose", paragraphPath, `Writer truth from ${secret.ref} appears almost verbatim in prose: ${match.snippet}`, match.line);
+    }
+  }
+}
+
+function addDirectiveLeakChecks(checks: ScriptLedgerCheck[], paragraphBody: string, paragraphPath: string): void {
+  for (const [index, line] of paragraphBody.split(/\r?\n/).entries()) {
+    if (SCRIPT_DIRECTIVE_LEAK_PATTERN.test(line.trim())) {
+      addScriptCheck(checks, "error", "directive-leaked-into-prose", paragraphPath, `Script directive leaked into prose: ${line.trim()}`, index + 1);
+    }
+  }
+}
+
+function findTermInText(text: string, term: string): { line: number; snippet: string } | null {
+  const normalizedTerm = term.toLowerCase();
+  for (const [index, line] of text.split(/\r?\n/).entries()) {
+    if (line.toLowerCase().includes(normalizedTerm)) {
+      return { line: index + 1, snippet: summarizeText(line.trim(), 160) };
+    }
+  }
+  return null;
+}
+
+function addDuplicateRevealChecks(checks: ScriptLedgerCheck[], secrets: ScriptLedgerSecretOccurrence[]): void {
+  const byRef = new Map<string, ScriptLedgerSecretOccurrence[]>();
+  for (const secret of secrets) {
+    if (secret.mode !== "reveal" || !secret.ref) continue;
+    byRef.set(secret.ref, [...(byRef.get(secret.ref) ?? []), secret]);
+  }
+
+  for (const [ref, occurrences] of byRef.entries()) {
+    if (occurrences.length <= 1) continue;
+    for (const occurrence of occurrences.slice(1)) {
+      addScriptCheck(checks, "warning", "duplicate-reveal", occurrence.script_path, `${ref} has more than one mode=reveal occurrence.`, occurrence.line);
+    }
+  }
+}
+
+function buildVariableLatestState(
+  timeline: ScriptLedgerVariableOccurrence[],
+  checks: ScriptLedgerCheck[],
+): Record<string, { value?: string; script_path: string; line: number }> {
+  const latest: Record<string, { value?: string; script_path: string; line: number }> = {};
+  const initialized = new Set<string>();
+
+  for (const entry of timeline) {
+    if (entry.operation === "var") {
+      if (initialized.has(entry.name)) {
+        addScriptCheck(checks, "warning", "variable-conflict", entry.script_path, `Variable ${entry.name} is declared more than once.`, entry.line);
+      }
+      initialized.add(entry.name);
+      latest[entry.name] = { value: entry.value, script_path: entry.script_path, line: entry.line };
+      continue;
+    }
+
+    if (entry.operation === "set") {
+      if (!initialized.has(entry.name)) {
+        addScriptCheck(checks, "warning", "set-before-var", entry.script_path, `Variable ${entry.name} is set before @var declared it.`, entry.line);
+      }
+      latest[entry.name] = { value: entry.value, script_path: entry.script_path, line: entry.line };
+      continue;
+    }
+
+    if (entry.operation === "unset") {
+      if (!(entry.name in latest)) {
+        addScriptCheck(checks, "warning", "unset-before-var", entry.script_path, `Variable ${entry.name} is unset before it has a value.`, entry.line);
+      }
+      delete latest[entry.name];
+      continue;
+    }
+
+    if (entry.operation === "assert") {
+      const current = latest[entry.name];
+      if (!current || current.value !== entry.value) {
+        addScriptCheck(checks, "error", "assertion-failed", entry.script_path, `Assertion failed for ${entry.name}: expected ${entry.value}, current ${current?.value ?? "unset"}.`, entry.line);
+      }
+    }
+  }
+
+  return Object.fromEntries(Object.entries(latest).sort(([left], [right]) => left.localeCompare(right)));
+}
+
+function compareScriptLedgerScripts(left: ScriptLedger["scripts"][number], right: ScriptLedger["scripts"][number]): number {
+  return compareNullableNumber(left.chapter_number, right.chapter_number) || left.chapter.localeCompare(right.chapter) || left.paragraph_number - right.paragraph_number || left.path.localeCompare(right.path);
+}
+
+function compareScriptLedgerPosition(
+  left: { chapter_number: number | null; paragraph_number: number; line: number; script_path: string },
+  right: { chapter_number: number | null; paragraph_number: number; line: number; script_path: string },
+): number {
+  return compareNullableNumber(left.chapter_number, right.chapter_number) || left.paragraph_number - right.paragraph_number || left.line - right.line || left.script_path.localeCompare(right.script_path);
+}
+
+function compareNullableNumber(left: number | null, right: number | null): number {
+  return (left ?? Number.MAX_SAFE_INTEGER) - (right ?? Number.MAX_SAFE_INTEGER);
+}
+
+function compareScriptLedgerChecks(left: ScriptLedgerCheck, right: ScriptLedgerCheck): number {
+  const severityOrder = left.severity.localeCompare(right.severity);
+  return left.path.localeCompare(right.path) || (left.line ?? 0) - (right.line ?? 0) || severityOrder || left.code.localeCompare(right.code);
+}
+
+function buildScriptLedgerBody(ledger: ScriptLedger): string {
+  return [
+    "# Script Ledger",
+    "",
+    "Generated from `scripts/<chapter>/<paragraph>.md`. Do not edit this file by hand. Run `sync_script_ledger`.",
+    "",
+    "<!-- narrarium:script-ledger:data -->",
+    "```json",
+    JSON.stringify(ledger, null, 2),
+    "```",
+    "<!-- narrarium:script-ledger:data-end -->",
+    "",
+    "# Secret Map",
+    "",
+    ...renderScriptLedgerSecretTable(ledger.secrets),
+    "",
+    "# Variable Map",
+    "",
+    ...renderScriptLedgerVariableTable(ledger.variables.latest_by_name),
+    "",
+    "# Continuity Map",
+    "",
+    ...renderScriptLedgerContinuityTable(ledger.continuity),
+    "",
+    "# Checks",
+    "",
+    ...renderScriptLedgerCheckTable(ledger.checks),
+  ].join("\n");
+}
+
+function renderScriptLedgerSecretTable(secrets: ScriptLedgerSecretOccurrence[]): string[] {
+  if (secrets.length === 0) return ["No script secrets tracked."];
+  return [
+    "| Position | Secret | Mode | Explanation |",
+    "| --- | --- | --- | --- |",
+    ...secrets.map((secret) => {
+      const position = formatScriptLedgerPosition(secret);
+      const explanation = secret.writer_truth[0] ?? secret.canonical_secret.title ?? "No writer truth recorded.";
+      return `| ${escapeMarkdownTableCell(position)} | \`${escapeMarkdownTableCell(secret.ref)}\` | \`${secret.mode}\` | ${escapeMarkdownTableCell(summarizeText(explanation, 180))} |`;
+    }),
+  ];
+}
+
+function renderScriptLedgerVariableTable(latest: ScriptLedger["variables"]["latest_by_name"]): string[] {
+  const entries = Object.entries(latest);
+  if (entries.length === 0) return ["No script variables tracked."];
+  return [
+    "| Variable | Latest Value | Last Position |",
+    "| --- | --- | --- |",
+    ...entries.map(([name, value]) => `| \`${escapeMarkdownTableCell(name)}\` | \`${escapeMarkdownTableCell(value.value ?? "unset")}\` | ${escapeMarkdownTableCell(`${value.script_path}:${value.line}`)} |`),
+  ];
+}
+
+function renderScriptLedgerContinuityTable(continuity: ScriptLedger["continuity"]): string[] {
+  const entries = [
+    ...continuity.state_changes,
+    ...continuity.open_loops,
+    ...continuity.payoffs_later,
+    ...continuity.payoffs_now,
+    ...continuity.false_history,
+    ...continuity.other,
+  ].sort(compareScriptLedgerPosition);
+  if (entries.length === 0) return ["No script continuity directives tracked."];
+  return [
+    "| Position | Kind | Value |",
+    "| --- | --- | --- |",
+    ...entries.map((entry) => `| ${escapeMarkdownTableCell(formatScriptLedgerPosition(entry))} | \`${entry.kind}\` | ${escapeMarkdownTableCell(entry.text)} |`),
+  ];
+}
+
+function renderScriptLedgerCheckTable(checks: ScriptLedgerCheck[]): string[] {
+  if (checks.length === 0) return ["No script ledger checks reported."];
+  return [
+    "| Severity | Code | Location | Message |",
+    "| --- | --- | --- | --- |",
+    ...checks.map((check) => `| ${check.severity} | \`${escapeMarkdownTableCell(check.code)}\` | ${escapeMarkdownTableCell(`${check.path}${check.line ? `:${check.line}` : ""}`)} | ${escapeMarkdownTableCell(check.message)} |`),
+  ];
+}
+
+function formatScriptLedgerPosition(value: { chapter_number: number | null; paragraph_number: number; script_path: string; line?: number }): string {
+  const chapterLabel = value.chapter_number === null ? "Chapter ?" : `Chapter ${formatOrdinal(value.chapter_number)}`;
+  return `${chapterLabel}, paragraph ${formatOrdinal(value.paragraph_number)} (${value.script_path}${value.line ? `:${value.line}` : ""})`;
+}
+
+function escapeMarkdownTableCell(value: string): string {
+  return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+function parseScriptLedgerJson(content: string): ScriptLedger | null {
+  const match = content.match(/<!-- narrarium:script-ledger:data -->\s*```json\s*([\s\S]*?)\s*```\s*<!-- narrarium:script-ledger:data-end -->/m);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1]) as ScriptLedger;
+  } catch {
+    return null;
+  }
+}
+
+function formatScriptDirectiveSummary(parsed: ParsedScriptBody): string {
+  if (parsed.sceneDirectives.length === 0) return "No scene directives found.";
+  return parsed.sceneDirectives.map((entry) => `- line ${entry.line}: @${entry.command}{${entry.content}}`).join("\n");
+}
+
+function formatScriptSecretContextSummary(
+  secrets: ParsedScriptSecretOccurrence[],
+  canonicalSecrets: Map<string, CanonicalSecretInfo>,
+): string {
+  if (secrets.length === 0) return "No secret directives found.";
+  return secrets.flatMap((secret) => {
+    const canonical = canonicalSecrets.get(secret.ref.toLowerCase());
+    return [
+      `- line ${secret.line}: ${secret.ref} mode=${secret.mode}${canonical ? ` (${canonical.title})` : " (missing canonical secret file)"}`,
+      ...formatIndentedList("writer_truth", secret.writer_truth),
+      ...formatIndentedList("reader_surface", secret.reader_surface),
+      ...formatIndentedList("reader_belief", secret.reader_belief),
+      ...formatIndentedList("allowed_clues", secret.allowed_clues),
+      ...formatIndentedList("forbidden_on_page", [...secret.forbidden_on_page, ...secret.forbidden]),
+      ...(canonical?.reveal_in ? [`  - canonical reveal_in: ${canonical.reveal_in}`] : []),
+      ...(canonical?.false_beliefs.length ? [`  - canonical false_beliefs: ${canonical.false_beliefs.join("; ")}`] : []),
+    ];
+  }).join("\n");
+}
+
+function formatScriptVariableSummary(variables: ScriptVariableOccurrence[]): string {
+  if (variables.length === 0) return "No script variables found.";
+  return variables.map((entry) => `- line ${entry.line}: @${entry.operation}{${entry.name}${entry.value ? `=${entry.value}` : ""}}`).join("\n");
+}
+
+function formatScriptContinuitySummary(continuity: ScriptContinuityOccurrence[]): string {
+  if (continuity.length === 0) return "No continuity directives found.";
+  return continuity.map((entry) => `- line ${entry.line}: @${entry.kind}{${entry.text}}`).join("\n");
+}
+
+function formatScriptCheckSummary(checks: ScriptLedgerCheck[]): string {
+  if (checks.length === 0) return "No parser checks.";
+  return checks.map((check) => `- ${check.severity} ${check.code}${check.line ? ` line ${check.line}` : ""}: ${check.message}`).join("\n");
+}
+
+function formatIndentedList(label: string, values: string[]): string[] {
+  return values.length > 0 ? [`  - ${label}: ${values.join("; ")}`] : [];
 }

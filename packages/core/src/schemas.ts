@@ -432,6 +432,13 @@ export const scriptSchema = z
     title: z.string().min(1),
     /** Where the scene takes place — free text, maps to a location canon slug when possible */
     location: z.string().optional(),
+    secret_refs: z.array(z.string()).default([]),
+    character_refs: z.array(z.string()).default([]),
+    location_refs: z.array(z.string()).default([]),
+    item_refs: z.array(z.string()).default([]),
+    faction_refs: z.array(z.string()).default([]),
+    timeline_refs: z.array(z.string()).default([]),
+    reveal_policy: z.record(z.string(), z.string()).default({}),
     tags: z.array(z.string()).default([]),
   })
   .passthrough();

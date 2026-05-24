@@ -148,7 +148,10 @@ Repo-only helper commands:
 npm run create:book -- my-book --title "My Book" --language en --sample
 npm run dev:mcp
 npm run reader:init -- reader --book-root .. --package-name my-book-reader
+npm run sync:script-ledger -- /path/to/book
 ```
+
+`sync:script-ledger` deterministically regenerates `state/script-ledger.md` from `scripts/**/*.md`; omit the path to use the current working directory.
 
 If you want the public HTTP version locally, for Vercel-style setup and research flows:
 

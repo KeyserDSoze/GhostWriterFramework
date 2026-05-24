@@ -77,7 +77,11 @@ test("starter create and upgrade keep reader .env book roots usable for sibling 
     assert.equal(result.status, 0, result.stderr || result.stdout);
 
     const initialEnv = await readFile(path.join(readerRoot, ".env"), "utf8");
+    const rootPackageJson = JSON.parse(await readFile(path.join(bookRoot, "package.json"), "utf8"));
+    const scriptLedgerRunner = await readFile(path.join(bookRoot, "scripts", "sync-script-ledger.mjs"), "utf8");
     assert.match(initialEnv, /NARRARIUM_BOOK_ROOT=\.\.\/book-repo/);
+    assert.equal(rootPackageJson.scripts["sync:script-ledger"], "node scripts/sync-script-ledger.mjs");
+    assert.match(scriptLedgerRunner, /syncScriptLedger/);
 
     await mkdir(customBookRoot, { recursive: true });
     await writeFile(path.join(customBookRoot, "book.md"), "---\ntitle: Custom\n---\n", "utf8");

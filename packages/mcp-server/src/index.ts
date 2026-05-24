@@ -52,6 +52,7 @@ import {
   syncAllResumes,
   applyDialogueActionBeats,
   syncParagraphEvaluation,
+  syncScriptLedger,
   syncChapterEvaluation,
   syncChapterResume,
   syncPlot,
@@ -73,6 +74,7 @@ import {
   createScript,
   updateScript,
   readScript,
+  readScriptLedger,
   scriptToParagraphContext,
   paragraphToScriptBody,
   SCRIPT_LEGEND,
@@ -100,6 +102,7 @@ const entityTypeSchema = z.enum([
   "secret",
   "timeline-event",
 ]);
+const scriptSecretModeSchema = z.enum(["protect", "seed", "partial", "misdirect", "reveal"]);
 
 const imageOrientationSchema = z.enum(["portrait", "landscape", "square"]);
 const imageProviderSchema = z.enum(["openai"]);
@@ -2771,15 +2774,19 @@ function textResponse(text: string) {
 }
 
 async function appendPlotSyncNote(rootPath: string, baseText: string): Promise<string> {
-  const result = await syncPlot(rootPath);
-  return `${baseText} Plot synced at ${result.filePath}.`;
+  const [plot, scriptLedger] = await Promise.all([
+    syncPlot(rootPath),
+    syncScriptLedger(rootPath),
+  ]);
+  return `${baseText} Plot synced at ${plot.filePath}. ${formatScriptLedgerSyncNote(scriptLedger)}`;
 }
 
 async function appendStoryMaintenanceNote(rootPath: string, chapter: string, baseText: string): Promise<string> {
-  const [plot, chapterResume, totalResume] = await Promise.all([
+  const [plot, chapterResume, totalResume, scriptLedger] = await Promise.all([
     syncPlot(rootPath),
     syncChapterResume(rootPath, chapter),
     syncTotalResume(rootPath),
+    syncScriptLedger(rootPath),
   ]);
   const storyStateStatus = await readStoryStateStatus(rootPath);
 
@@ -2788,6 +2795,7 @@ async function appendStoryMaintenanceNote(rootPath: string, chapter: string, bas
     `Plot synced at ${plot.filePath}.`,
     `Chapter resume synced at ${chapterResume.filePath}.`,
     `Total resume synced at ${totalResume.filePath}.`,
+    formatScriptLedgerSyncNote(scriptLedger),
     formatStoryStateReminder(storyStateStatus),
   ]
     .filter(Boolean)
@@ -2810,6 +2818,10 @@ async function maybeAppendPlotSyncNote(rootPath: string, kind: z.infer<typeof en
   }
 
   return appendPlotSyncNote(rootPath, baseText);
+}
+
+function formatScriptLedgerSyncNote(result: Awaited<ReturnType<typeof syncScriptLedger>>): string {
+  return `Script ledger synced at ${result.filePath}. Checks: ${result.errorCount} errors, ${result.warningCount} warnings.`;
 }
 
 function formatStoryStateReminder(status: Awaited<ReturnType<typeof readStoryStateStatus>>): string {
@@ -3683,11 +3695,19 @@ File path: \`scripts/<chapter-slug>/<paragraph-slug>.md\``,
     location: z.string().optional().describe("Where the scene takes place — free text or canon location slug"),
     body: z.string().optional().describe("Full script body using the meta-language. If omitted a template is generated."),
     tags: z.array(z.string()).default([]).describe("Optional tags"),
+    secretRefs: z.array(z.string()).default([]).describe("Secret ids referenced by this script"),
+    characterRefs: z.array(z.string()).default([]).describe("Character ids referenced by this script"),
+    locationRefs: z.array(z.string()).default([]).describe("Location ids referenced by this script"),
+    itemRefs: z.array(z.string()).default([]).describe("Item ids referenced by this script"),
+    factionRefs: z.array(z.string()).default([]).describe("Faction ids referenced by this script"),
+    timelineRefs: z.array(z.string()).default([]).describe("Timeline event ids referenced by this script"),
+    revealPolicy: z.record(z.string(), scriptSecretModeSchema).default({}).describe("Reveal mode by secret id"),
     overwrite: z.boolean().default(false).describe("Overwrite if the script already exists"),
   },
-  async ({ rootPath, chapter, number, title, location, body, tags, overwrite }) => {
-    const result = await createScript(rootPath, { chapter, number, title, location, body, tags, overwrite });
-    return textResponse(`Script created at ${result.filePath}\nScript id: ${result.scriptId}`);
+  async ({ rootPath, chapter, number, title, location, body, tags, secretRefs, characterRefs, locationRefs, itemRefs, factionRefs, timelineRefs, revealPolicy, overwrite }) => {
+    const result = await createScript(rootPath, { chapter, number, title, location, body, tags, secretRefs, characterRefs, locationRefs, itemRefs, factionRefs, timelineRefs, revealPolicy, overwrite });
+    const ledger = await syncScriptLedger(rootPath);
+    return textResponse(`Script created at ${result.filePath}\nScript id: ${result.scriptId}\n${formatScriptLedgerSyncNote(ledger)}`);
   },
 );
 
@@ -3709,7 +3729,35 @@ ${SCRIPT_LEGEND}`,
   },
   async ({ rootPath, chapter, paragraph, body, appendBody, frontmatterPatch }) => {
     const result = await updateScript(rootPath, { chapter, paragraph, body, appendBody, frontmatterPatch });
-    return textResponse(`Script updated at ${result.filePath}`);
+    const ledger = await syncScriptLedger(rootPath);
+    return textResponse(`Script updated at ${result.filePath}\n${formatScriptLedgerSyncNote(ledger)}`);
+  },
+);
+
+server.tool(
+  "sync_script_ledger",
+  "Regenerate state/script-ledger.md deterministically from every script file, including secret maps, variable timelines, continuity directives, and parser/prose checks.",
+  {
+    rootPath: z.string().min(1).describe("Absolute path to the book repository root"),
+  },
+  async ({ rootPath }) => {
+    const ledger = await syncScriptLedger(rootPath);
+    return textResponse(formatScriptLedgerSyncNote(ledger));
+  },
+);
+
+server.tool(
+  "read_script_ledger",
+  "Read the generated state/script-ledger.md file, if it exists.",
+  {
+    rootPath: z.string().min(1).describe("Absolute path to the book repository root"),
+  },
+  async ({ rootPath }) => {
+    const ledger = await readScriptLedger(rootPath);
+    if (!ledger) {
+      return textResponse("No script ledger found. Run sync_script_ledger first.");
+    }
+    return textResponse(ledger.content);
   },
 );
 
@@ -3769,6 +3817,29 @@ After calling this tool, write the paragraph prose following the writing-style r
       "```",
       ``,
       ctx.legend,
+      ``,
+      `### Script directives`,
+      ctx.directiveSummary,
+      ``,
+      `### Secret context and reveal guard`,
+      ctx.secretSummary,
+      ``,
+      `### Script variables`,
+      ctx.variableSummary,
+      ``,
+      `### Continuity directives`,
+      ctx.continuitySummary,
+      ``,
+      `### Parser checks`,
+      ctx.parserCheckSummary,
+      ``,
+      `### Writing instructions`,
+      [
+        "- Render only beats, actions, states, and dialogue surfaces into prose.",
+        "- Never render @command{...} lines or # comments into prose.",
+        "- Let writer_truth influence weight, silence, and choices, but write explicit facts from reader_surface, reader_belief, and allowed_clue only.",
+        "- Treat forbidden_on_page and forbidden as hard prose constraints.",
+      ].join("\n"),
       ``,
       ctx.writingStyleBody
         ? `### Writing style\n\n${ctx.writingStyleBody}`

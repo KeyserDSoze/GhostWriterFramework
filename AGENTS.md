@@ -40,6 +40,7 @@ Narrarium MCP already auto-refreshes `plot.md` and the resume files after final 
 ## Chapter and scene updates
 
 - Use `create_chapter` and `create_paragraph` for new structure.
+- After creating or updating any file in `scripts/**/*.md`, run `sync_script_ledger` or `npm run sync:script-ledger -- <book-root>` and inspect reported errors or warnings.
 - Use `create_chapter_draft` and `create_paragraph_draft` for rough scaffolding before final prose.
 - Use `chapter_writing_context` and `paragraph_writing_context` before drafting polished prose from rough material.
 - Use `resume_book_context` when restarting work from exported conversation history or a fresh session.

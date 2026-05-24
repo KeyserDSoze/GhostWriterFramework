@@ -68,6 +68,7 @@ async function runCreate(args: ParsedArgs) {
     const readerBookRoot = path.relative(readerDir, targetPath) || ".";
     readerPath = await runReaderScaffold(readerDir, readerBookRoot, `${slugifyForPackage(resolved.title)}-reader`, resolved.pagesDomain);
     await writeRootPackageJson(targetPath, resolved.title, resolved.readerDir);
+    await writeRootScriptLedgerScript(targetPath, resolved.readerDir);
     await writeRootPagesWorkflow(targetPath, resolved.readerDir, resolved.pagesDomain);
     if (!resolved.skipInstall) {
       installNodeDependencies(readerPath);
@@ -174,6 +175,7 @@ async function runUpgrade(args: ParsedArgs) {
     const pagesDomain = resolved.pagesDomain ?? inferReaderPagesDomain(targetPath, resolved.readerDir);
     readerPath = await runReaderScaffold(readerDir, readerBookRoot, readerPackageName, pagesDomain);
     await writeManagedRootPackageJson(targetPath, book?.frontmatter.title ?? path.basename(targetPath), resolved.readerDir);
+    await writeManagedRootScriptLedgerScript(targetPath, resolved.readerDir);
     await writeManagedRootPagesWorkflow(targetPath, resolved.readerDir, pagesDomain);
     if (!resolved.skipInstall) {
       installNodeDependencies(readerPath);
@@ -474,6 +476,11 @@ async function writeRootPackageJson(targetPath: string, title: string, readerDir
   await writeFile(path.join(targetPath, "package.json"), buildRootPackageJson(title, readerDir), "utf8");
 }
 
+async function writeRootScriptLedgerScript(targetPath: string, readerDir: string): Promise<void> {
+  await mkdir(path.join(targetPath, "scripts"), { recursive: true });
+  await writeFile(path.join(targetPath, "scripts", "sync-script-ledger.mjs"), buildRootScriptLedgerScript(readerDir), "utf8");
+}
+
 async function writeRootPagesWorkflow(targetPath: string, readerDir: string, pagesDomain?: string): Promise<void> {
   const workflowDir = path.join(targetPath, ".github", "workflows");
   await mkdir(workflowDir, { recursive: true });
@@ -492,6 +499,7 @@ function buildRootPackageJson(title: string, readerDir: string): string {
         preview: `npm run preview --prefix ${normalizedReaderDir}`,
         "export:epub": `npm run export:epub --prefix ${normalizedReaderDir}`,
         "export:manuscript": "node scripts/run-manuscript.mjs",
+        "sync:script-ledger": "node scripts/sync-script-ledger.mjs",
         doctor: `npm run doctor --prefix ${normalizedReaderDir}`,
         install: `npm install --prefix ${normalizedReaderDir}`,
       },
@@ -503,6 +511,72 @@ function buildRootPackageJson(title: string, readerDir: string): string {
 
 async function writeManagedRootPackageJson(targetPath: string, title: string, readerDir: string): Promise<void> {
   await writeManagedFile(targetPath, "package.json", buildRootPackageJson(title, readerDir));
+}
+
+async function writeManagedRootScriptLedgerScript(targetPath: string, readerDir: string): Promise<void> {
+  await writeManagedFile(targetPath, path.join("scripts", "sync-script-ledger.mjs"), buildRootScriptLedgerScript(readerDir));
+}
+
+function buildRootScriptLedgerScript(readerDir: string): string {
+  const normalizedReaderDir = readerDir.split(path.sep).join("/");
+  return [
+    "#!/usr/bin/env node",
+    "",
+    'import path from "node:path";',
+    'import { pathToFileURL } from "node:url";',
+    "",
+    `const readerDir = ${JSON.stringify(normalizedReaderDir)};`,
+    "const args = process.argv.slice(2);",
+    'const helpRequested = args.includes("--help") || args.includes("-h");',
+    'const failOnError = args.includes("--fail-on-error");',
+    'const failOnWarning = args.includes("--fail-on-warning");',
+    'const rootArg = args.find((arg) => !arg.startsWith("-"));',
+    "",
+    "if (helpRequested) {",
+    "  console.log([",
+    '    "Usage: npm run sync:script-ledger -- [book-root] [--fail-on-error] [--fail-on-warning]",',
+    '    "",',
+    '    "Regenerates state/script-ledger.md from scripts/**/*.md without calling an AI.",',
+    '    "If book-root is omitted, the current working directory is used.",',
+    '  ].join("\\n"));',
+    "  process.exit(0);",
+    "}",
+    "",
+    "const rootPath = path.resolve(rootArg ?? process.cwd());",
+    "const { syncScriptLedger } = await loadNarrarium();",
+    "const result = await syncScriptLedger(rootPath);",
+    "",
+    "console.log(`Script ledger synced at ${result.filePath}.`);",
+    "console.log(`Checks: ${result.errorCount} errors, ${result.warningCount} warnings.`);",
+    "",
+    "if (result.ledger.checks.length > 0) {",
+    '  console.log("");',
+    '  console.log("Issues:");',
+    "  for (const check of result.ledger.checks) {",
+    '    const location = `${check.path}${check.line ? `:${check.line}` : ""}`;',
+    '    console.log(`- ${check.severity} ${check.code} ${location}: ${check.message}`);',
+    "  }",
+    "}",
+    "",
+    "if ((failOnError && result.errorCount > 0) || (failOnWarning && (result.errorCount > 0 || result.warningCount > 0))) {",
+    "  process.exit(1);",
+    "}",
+    "",
+    "async function loadNarrarium() {",
+    "  try {",
+    '    return await import("narrarium");',
+    "  } catch {",
+    "    // Book-root installs usually keep narrarium under the generated reader app.",
+    "  }",
+    "",
+    '  const localCore = path.join(process.cwd(), readerDir, "node_modules", "narrarium", "dist", "index.js");',
+    "  try {",
+    "    return await import(pathToFileURL(localCore).href);",
+    "  } catch (error) {",
+    "    throw new Error(`Could not load narrarium. Run npm run install first, or install narrarium in this repository. Tried: ${localCore}. ${error instanceof Error ? error.message : String(error)}`);",
+    "  }",
+    "}",
+  ].join("\n") + "\n";
 }
 
 async function writeManagedRootPagesWorkflow(targetPath: string, readerDir: string, pagesDomain: string | undefined): Promise<void> {
