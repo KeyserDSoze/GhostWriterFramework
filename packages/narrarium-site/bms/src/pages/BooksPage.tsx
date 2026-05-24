@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { BookOpen, PlusCircle, Lock, Globe, Trash2 } from "lucide-react";
 import {
   Card,
@@ -25,7 +25,6 @@ import { type BookEntry } from "@/types/settings";
 export function BooksPage() {
   const { settings, patchSettings } = useSettingsStore();
   const { save } = useSettings();
-  const navigate = useNavigate();
   const books = settings.books;
 
   const [toDelete, setToDelete] = useState<BookEntry | null>(null);
