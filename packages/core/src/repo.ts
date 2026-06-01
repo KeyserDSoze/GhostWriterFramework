@@ -1327,6 +1327,14 @@ export async function upgradeBookRepo(
       await writeFile(opencodeConfigPath, patched.content, "utf8");
       updated.push("opencode.jsonc");
     }
+    const currentConfig = patched.updated ? patched.content : existingOpencodeConfig;
+    const exaPatched = ensureOpencodeEnvExa(currentConfig);
+    if (exaPatched.updated) {
+      await writeFile(opencodeConfigPath, exaPatched.content, "utf8");
+      if (!updated.includes("opencode.jsonc")) {
+        updated.push("opencode.jsonc");
+      }
+    }
   }
 
   for (const relativePath of LEGACY_WRITING_GUIDELINE_FILES) {
@@ -10976,6 +10984,28 @@ function ensureOpencodeInstructionEntry(content: string): { content: string; upd
   }
 
   parsed.instructions = [...existingInstructions, OPENCODE_INSTRUCTION_FILE];
+  return {
+    content: `${JSON.stringify(parsed, null, 2)}\n`,
+    updated: true,
+  };
+}
+
+function ensureOpencodeEnvExa(content: string): { content: string; updated: boolean } {
+  const parsed = tryParseJsoncObject(content);
+  if (!parsed) {
+    return { content, updated: false };
+  }
+
+  const existingEnv =
+    parsed.env && typeof parsed.env === "object" && !Array.isArray(parsed.env)
+      ? (parsed.env as Record<string, unknown>)
+      : null;
+
+  if (existingEnv?.["OPENCODE_ENABLE_EXA"] === "1") {
+    return { content, updated: false };
+  }
+
+  parsed.env = { ...(existingEnv ?? {}), OPENCODE_ENABLE_EXA: "1" };
   return {
     content: `${JSON.stringify(parsed, null, 2)}\n`,
     updated: true,
