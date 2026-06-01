@@ -1,7 +1,7 @@
 {
   "name": "narrarium-framework",
   "private": true,
-  "version": "0.1.52",
+  "version": "0.1.53",
   "packageManager": "npm@11.3.0",
   "repository": {
     "type": "git",

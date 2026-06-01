@@ -23,6 +23,7 @@ import {
   PROMOTED_FILE,
   SCRIPT_LEDGER_FILE,
   SKILL_NAME,
+  DEEP_RESEARCH_SKILL_NAME,
   STORY_STATE_CURRENT_FILE,
   STORY_STATE_STATUS_FILE,
   STORY_DESIGN_FILE,
@@ -74,6 +75,20 @@ import {
 } from "./schemas.js";
 import { skillTemplate } from "./skill-template.js";
 import { defaultBodyForType, renderMarkdown } from "./templates.js";
+import {
+  CLAUDE_WEB_SEARCH_AGENT,
+  DEEP_RESEARCH_SKILL_ADD_FIELDS,
+  DEEP_RESEARCH_SKILL_ADD_ITEMS,
+  DEEP_RESEARCH_SKILL_DEEP,
+  DEEP_RESEARCH_SKILL_REPORT,
+  DEEP_RESEARCH_SKILL_RESEARCH,
+  NARRARIUM_DEEP_RESEARCH_SKILL,
+  OPENCODE_WEB_SEARCH_AGENT,
+  WEB_SEARCH_MODULE_ACADEMIC,
+  WEB_SEARCH_MODULE_GENERAL,
+  WEB_SEARCH_MODULE_GITHUB,
+  WEB_SEARCH_MODULE_STACKOVERFLOW,
+} from "./deep-research-templates.js";
 import {
   chapterSlug,
   excerptAround,
@@ -1245,6 +1260,13 @@ export async function initializeBookRepo(
     root,
     "conversations/config.json",
     JSON.stringify({ saveSessionFiles: true }, null, 2) + "\n",
+    created,
+  );
+
+  await ensureFile(
+    root,
+    "deepresearches/README.md",
+    buildDeepResearchesReadme(),
     created,
   );
 
@@ -10920,6 +10942,9 @@ function buildOpencodeProjectConfig(): string {
     '  "watcher": {',
     '    "ignore": ["conversations/sessions/**", "conversations/*.json"]',
     '  },',
+    '  "env": {',
+    '    "OPENCODE_ENABLE_EXA": "1"',
+    '  },',
     '  "mcp": {',
     '    "narrarium": {',
     '      "type": "local",',
@@ -11826,6 +11851,32 @@ function getManagedBookScaffoldFiles(createSkills: boolean): Array<{ relativePat
       ? [
           { relativePath: `.opencode/skills/${SKILL_NAME}/SKILL.md`, content: skillTemplate },
           { relativePath: `.claude/skills/${SKILL_NAME}/SKILL.md`, content: skillTemplate },
+          // Deep research skill (Narrarium wrapper)
+          { relativePath: `.opencode/skills/${DEEP_RESEARCH_SKILL_NAME}/SKILL.md`, content: NARRARIUM_DEEP_RESEARCH_SKILL },
+          { relativePath: `.claude/skills/${DEEP_RESEARCH_SKILL_NAME}/SKILL.md`, content: NARRARIUM_DEEP_RESEARCH_SKILL },
+          // Deep research phase skills (invocable via /research, /research-deep, etc.)
+          { relativePath: `.opencode/skills/research/SKILL.md`, content: DEEP_RESEARCH_SKILL_RESEARCH },
+          { relativePath: `.opencode/skills/research-add-fields/SKILL.md`, content: DEEP_RESEARCH_SKILL_ADD_FIELDS },
+          { relativePath: `.opencode/skills/research-add-items/SKILL.md`, content: DEEP_RESEARCH_SKILL_ADD_ITEMS },
+          { relativePath: `.opencode/skills/research-deep/SKILL.md`, content: DEEP_RESEARCH_SKILL_DEEP },
+          { relativePath: `.opencode/skills/research-report/SKILL.md`, content: DEEP_RESEARCH_SKILL_REPORT },
+          { relativePath: `.claude/skills/research/SKILL.md`, content: DEEP_RESEARCH_SKILL_RESEARCH },
+          { relativePath: `.claude/skills/research-add-fields/SKILL.md`, content: DEEP_RESEARCH_SKILL_ADD_FIELDS },
+          { relativePath: `.claude/skills/research-add-items/SKILL.md`, content: DEEP_RESEARCH_SKILL_ADD_ITEMS },
+          { relativePath: `.claude/skills/research-deep/SKILL.md`, content: DEEP_RESEARCH_SKILL_DEEP },
+          { relativePath: `.claude/skills/research-report/SKILL.md`, content: DEEP_RESEARCH_SKILL_REPORT },
+          // Web-search sub-agents (for OpenCode and Claude Code)
+          { relativePath: `.opencode/agents/web-search.md`, content: OPENCODE_WEB_SEARCH_AGENT },
+          { relativePath: `.claude/agents/web-search-agent.md`, content: CLAUDE_WEB_SEARCH_AGENT },
+          // Web-search strategy modules
+          { relativePath: `.opencode/agents/web-search-modules/academic-papers.md`, content: WEB_SEARCH_MODULE_ACADEMIC },
+          { relativePath: `.opencode/agents/web-search-modules/general-web.md`, content: WEB_SEARCH_MODULE_GENERAL },
+          { relativePath: `.opencode/agents/web-search-modules/github-debug.md`, content: WEB_SEARCH_MODULE_GITHUB },
+          { relativePath: `.opencode/agents/web-search-modules/stackoverflow.md`, content: WEB_SEARCH_MODULE_STACKOVERFLOW },
+          { relativePath: `.claude/agents/web-search-modules/academic-papers.md`, content: WEB_SEARCH_MODULE_ACADEMIC },
+          { relativePath: `.claude/agents/web-search-modules/general-web.md`, content: WEB_SEARCH_MODULE_GENERAL },
+          { relativePath: `.claude/agents/web-search-modules/github-debug.md`, content: WEB_SEARCH_MODULE_GITHUB },
+          { relativePath: `.claude/agents/web-search-modules/stackoverflow.md`, content: WEB_SEARCH_MODULE_STACKOVERFLOW },
         ]
       : []),
     { relativePath: ".opencode/commands/resume-book.md", content: buildResumeBookCommand() },
@@ -11846,6 +11897,44 @@ function getInitOnlyBookScaffoldFiles(): Array<{ relativePath: string; content: 
     { relativePath: ".vscode/tasks.json", content: buildVscodeTasksConfig() },
     { relativePath: "manuscript.yaml", content: buildManuscriptConfig() },
   ];
+}
+
+function buildDeepResearchesReadme(): string {
+  return [
+    "# Deep Researches",
+    "",
+    "This folder stores structured deep-research sessions run with the `/research` skill.",
+    "",
+    "## Workflow",
+    "",
+    "1. `/research <topic>` — Generate outline and field definitions in `deepresearches/<topic>/`",
+    "2. `/research-add-items` or `/research-add-fields` — Extend the outline (optional)",
+    "3. `/research-deep` — Run deep investigation (web search) for each item",
+    "4. `/research-report` — Generate final `report.md`",
+    "",
+    "## Output structure per session",
+    "",
+    "```",
+    "deepresearches/<topic>/",
+    "  ├── outline.yaml        # items list + execution config",
+    "  ├── fields.yaml         # field definitions",
+    "  ├── results/            # one JSON file per researched item",
+    "  │   └── <item>.json",
+    "  └── report.md           # final markdown report",
+    "```",
+    "",
+    "## Web search",
+    "",
+    "Web search requires `OPENCODE_ENABLE_EXA=1`, already set in `opencode.jsonc`.",
+    "For Claude Code, the `web-search-agent` sub-agent is in `.claude/agents/`.",
+    "",
+    "## Quick reference vs deep research",
+    "",
+    "For quick factual lookups use the MCP tool `wikipedia_page` or `wikipedia_search`.",
+    "Those save snapshots to `research/wikipedia/` and can be reused without re-fetching.",
+    "Use this folder (`deepresearches/`) when you need broader web sources beyond Wikipedia.",
+    "",
+  ].join("\n");
 }
 
 function buildResumeBookCommand(): string {

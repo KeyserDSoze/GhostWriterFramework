@@ -1,4 +1,5 @@
 export const SKILL_NAME = "narrarium-book";
+export const DEEP_RESEARCH_SKILL_NAME = "deep-research";
 
 export const BOOK_DIRECTORIES = [
   "guidelines",
@@ -24,6 +25,7 @@ export const BOOK_DIRECTORIES = [
   "personas",
   "research",
   "research/wikipedia",
+  "deepresearches",
   "assets",
   "assets/book",
   "assets/characters",
@@ -37,7 +39,11 @@ export const BOOK_DIRECTORIES = [
   ".opencode/skills",
   ".opencode/commands",
   ".opencode/plugins",
+  ".opencode/agents",
+  ".opencode/agents/web-search-modules",
   ".claude/skills",
+  ".claude/agents",
+  ".claude/agents/web-search-modules",
   ".vscode",
   ".github",
 ] as const;
