@@ -10950,15 +10950,15 @@ function buildOpencodeProjectConfig(): string {
     '  "watcher": {',
     '    "ignore": ["conversations/sessions/**", "conversations/*.json"]',
     '  },',
-    '  "env": {',
-    '    "OPENCODE_ENABLE_EXA": "1"',
-    '  },',
     '  "mcp": {',
     '    "narrarium": {',
     '      "type": "local",',
     '      "command": ["npx", "narrarium-mcp-server"],',
     '      "enabled": true,',
-    '      "timeout": 15000',
+    '      "timeout": 15000,',
+    '      "environment": {',
+    '        "OPENCODE_ENABLE_EXA": "1"',
+    '      }',
     '    }',
     '  }',
     '}',
@@ -10996,16 +10996,33 @@ function ensureOpencodeEnvExa(content: string): { content: string; updated: bool
     return { content, updated: false };
   }
 
+  const mcp =
+    parsed.mcp && typeof parsed.mcp === "object" && !Array.isArray(parsed.mcp)
+      ? (parsed.mcp as Record<string, unknown>)
+      : null;
+
+  const narrarium =
+    mcp?.narrarium && typeof mcp.narrarium === "object" && !Array.isArray(mcp.narrarium)
+      ? (mcp.narrarium as Record<string, unknown>)
+      : null;
+
   const existingEnv =
-    parsed.env && typeof parsed.env === "object" && !Array.isArray(parsed.env)
-      ? (parsed.env as Record<string, unknown>)
+    narrarium?.environment && typeof narrarium.environment === "object" && !Array.isArray(narrarium.environment)
+      ? (narrarium.environment as Record<string, unknown>)
       : null;
 
   if (existingEnv?.["OPENCODE_ENABLE_EXA"] === "1") {
     return { content, updated: false };
   }
 
-  parsed.env = { ...(existingEnv ?? {}), OPENCODE_ENABLE_EXA: "1" };
+  if (!mcp || !narrarium) {
+    // No narrarium MCP block — nothing to patch
+    return { content, updated: false };
+  }
+
+  narrarium.environment = { ...(existingEnv ?? {}), OPENCODE_ENABLE_EXA: "1" };
+  mcp.narrarium = narrarium;
+  parsed.mcp = mcp;
   return {
     content: `${JSON.stringify(parsed, null, 2)}\n`,
     updated: true,
