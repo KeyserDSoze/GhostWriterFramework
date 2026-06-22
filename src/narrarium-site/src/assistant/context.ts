@@ -1,0 +1,271 @@
+import type { BookStructure, Chapter, Paragraph } from "@/types/book";
+import type { AppSettings, BookEntry } from "@/types/settings";
+import { loadFileContent } from "@/github/githubClient";
+import { resolveBookToken } from "@/types/settings";
+
+export type AppRouteContext =
+  | { kind: "app-home" }
+  | { kind: "book"; bookId: string }
+  | { kind: "book-settings"; bookId: string }
+  | { kind: "canon"; bookId: string; section: string; slug: string }
+  | { kind: "chapter"; bookId: string; chapterId: string }
+  | { kind: "chapter-workspace"; bookId: string; chapterId: string; workspaceKind: string }
+  | { kind: "paragraph"; bookId: string; chapterId: string; paragraphNum: string }
+  | { kind: "paragraph-workspace"; bookId: string; chapterId: string; paragraphNum: string; workspaceKind: string }
+  | { kind: "other"; pathname: string };
+
+export interface LoadedWriterContext {
+  route: AppRouteContext;
+  book: BookEntry | null;
+  structure: BookStructure | null;
+  chapter: Chapter | null;
+  paragraph: Paragraph | null;
+  title: string;
+  summary: string;
+  relevantFiles: Array<{ path: string; content: string }>;
+  noteTargetPath: string | null;
+}
+
+export function parseAppRoute(pathname: string): AppRouteContext {
+  const clean = pathname.replace(/\/+$/, "") || "/";
+  if (clean === "/app" || clean === "/app/books") return { kind: "app-home" };
+
+  let match = /^\/app\/books\/([^/]+)\/settings$/.exec(clean);
+  if (match) return { kind: "book-settings", bookId: decodeURIComponent(match[1]) };
+
+  match = /^\/app\/books\/([^/]+)\/canon\/([^/]+)\/([^/]+)$/.exec(clean);
+  if (match) {
+    return {
+      kind: "canon",
+      bookId: decodeURIComponent(match[1]),
+      section: decodeURIComponent(match[2]),
+      slug: decodeURIComponent(match[3]),
+    };
+  }
+
+  match = /^\/app\/books\/([^/]+)\/chapters\/([^/]+)\/paragraphs\/([^/]+)\/workspace\/([^/]+)$/.exec(clean);
+  if (match) {
+    return {
+      kind: "paragraph-workspace",
+      bookId: decodeURIComponent(match[1]),
+      chapterId: decodeURIComponent(match[2]),
+      paragraphNum: decodeURIComponent(match[3]),
+      workspaceKind: decodeURIComponent(match[4]),
+    };
+  }
+
+  match = /^\/app\/books\/([^/]+)\/chapters\/([^/]+)\/workspace\/([^/]+)$/.exec(clean);
+  if (match) {
+    return {
+      kind: "chapter-workspace",
+      bookId: decodeURIComponent(match[1]),
+      chapterId: decodeURIComponent(match[2]),
+      workspaceKind: decodeURIComponent(match[3]),
+    };
+  }
+
+  match = /^\/app\/books\/([^/]+)\/chapters\/([^/]+)\/paragraphs\/([^/]+)$/.exec(clean);
+  if (match) {
+    return {
+      kind: "paragraph",
+      bookId: decodeURIComponent(match[1]),
+      chapterId: decodeURIComponent(match[2]),
+      paragraphNum: decodeURIComponent(match[3]),
+    };
+  }
+
+  match = /^\/app\/books\/([^/]+)\/chapters\/([^/]+)$/.exec(clean);
+  if (match) {
+    return {
+      kind: "chapter",
+      bookId: decodeURIComponent(match[1]),
+      chapterId: decodeURIComponent(match[2]),
+    };
+  }
+
+  match = /^\/app\/books\/([^/]+)$/.exec(clean);
+  if (match) return { kind: "book", bookId: decodeURIComponent(match[1]) };
+
+  return { kind: "other", pathname };
+}
+
+export async function loadWriterContext(
+  pathname: string,
+  settings: AppSettings,
+  books: BookEntry[],
+  structures: Record<string, BookStructure>
+): Promise<LoadedWriterContext> {
+  const route = parseAppRoute(pathname);
+  const bookId = "bookId" in route ? route.bookId : null;
+  const book = bookId ? books.find((entry) => entry.id === bookId) ?? null : null;
+  const structure = bookId ? structures[bookId] ?? null : null;
+  const chapter =
+    structure && "chapterId" in route
+      ? structure.chapters.find((entry) => entry.slug === route.chapterId) ?? null
+      : null;
+  const paragraph =
+    chapter && "paragraphNum" in route
+      ? chapter.paragraphs.find((entry) => entry.number === route.paragraphNum) ?? null
+      : null;
+
+  const token = book ? resolveBookToken(book, settings) : "";
+  const relevantFiles: Array<{ path: string; content: string }> = [];
+
+  if (book && structure && token) {
+    const pushFile = async (path: string | undefined) => {
+      if (!path) return;
+      try {
+        const content = await loadFileContent(token, book.owner, book.repo, path);
+        relevantFiles.push({ path, content });
+      } catch {
+        // Ignore missing optional files; the assistant works with what exists.
+      }
+    };
+
+    switch (route.kind) {
+      case "book":
+      case "book-settings":
+      case "app-home":
+        await pushFile("book.md");
+        await pushFile(structure.plotPath);
+        break;
+      case "chapter":
+        await pushFile(`${chapter?.path}/chapter.md`);
+        await Promise.all((chapter?.paragraphs ?? []).slice(0, 12).map((entry) => pushFile(entry.path)));
+        break;
+      case "chapter-workspace":
+        await pushFile(`${chapter?.path}/chapter.md`);
+        await pushFile(resolveWorkspacePath(chapter, null, route.workspaceKind));
+        break;
+      case "paragraph":
+        await pushFile(`${chapter?.path}/chapter.md`);
+        await pushFile(paragraph?.path);
+        break;
+      case "paragraph-workspace":
+        await pushFile(paragraph?.path);
+        await pushFile(resolveWorkspacePath(chapter, paragraph, route.workspaceKind));
+        break;
+      case "canon":
+        await pushFile(resolveCanonPath(route.section, route.slug));
+        break;
+      default:
+        break;
+    }
+  }
+
+  return {
+    route,
+    book,
+    structure,
+    chapter,
+    paragraph,
+    title: buildContextTitle(route, structure, chapter, paragraph),
+    summary: buildContextSummary(route, book, structure, chapter, paragraph),
+    relevantFiles,
+    noteTargetPath: buildNoteTargetPath(route, chapter),
+  };
+}
+
+function buildContextTitle(
+  route: AppRouteContext,
+  structure: BookStructure | null,
+  chapter: Chapter | null,
+  paragraph: Paragraph | null,
+): string {
+  switch (route.kind) {
+    case "book":
+      return structure?.title ?? "Book";
+    case "chapter":
+    case "chapter-workspace":
+      return chapter?.title ?? route.chapterId;
+    case "paragraph":
+    case "paragraph-workspace":
+      return paragraph?.title ?? route.paragraphNum;
+    case "canon":
+      return `${route.section} / ${route.slug}`;
+    case "book-settings":
+      return "Book settings";
+    case "app-home":
+      return "Library";
+    default:
+      return "Narrarium";
+  }
+}
+
+function buildContextSummary(
+  route: AppRouteContext,
+  book: BookEntry | null,
+  structure: BookStructure | null,
+  chapter: Chapter | null,
+  paragraph: Paragraph | null,
+): string {
+  switch (route.kind) {
+    case "book":
+      return `${book?.owner}/${book?.repo}\nChapters: ${structure?.chapters.length ?? 0}`;
+    case "chapter":
+      return `Chapter ${chapter?.slug ?? route.chapterId} with ${chapter?.paragraphs.length ?? 0} paragraphs.`;
+    case "paragraph":
+      return `Paragraph ${paragraph?.number ?? route.paragraphNum} in chapter ${chapter?.slug ?? route.chapterId}.`;
+    case "chapter-workspace":
+      return `Workspace ${route.workspaceKind} for chapter ${chapter?.slug ?? route.chapterId}.`;
+    case "paragraph-workspace":
+      return `Workspace ${route.workspaceKind} for paragraph ${paragraph?.number ?? route.paragraphNum}.`;
+    case "canon":
+      return `Editing canon entity ${route.slug} in ${route.section}.`;
+    case "book-settings":
+      return `Settings for ${book?.name ?? route.bookId}.`;
+    case "app-home":
+      return "Narrarium library.";
+    default:
+      return route.pathname;
+  }
+}
+
+function buildNoteTargetPath(route: AppRouteContext, chapter: Chapter | null): string | null {
+  if (route.kind === "chapter" || route.kind === "paragraph" || route.kind === "chapter-workspace" || route.kind === "paragraph-workspace") {
+    return chapter ? `drafts/${chapter.slug}/notes.md` : null;
+  }
+  if (route.kind === "book" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "app-home") {
+    return "notes.md";
+  }
+  return null;
+}
+
+function resolveCanonPath(section: string, slug: string): string | undefined {
+  switch (section) {
+    case "characters":
+      return `characters/${slug}.md`;
+    case "locations":
+      return `locations/${slug}.md`;
+    case "factions":
+      return `factions/${slug}.md`;
+    case "items":
+      return `items/${slug}.md`;
+    case "secrets":
+      return `secrets/${slug}.md`;
+    case "timelines":
+      return `timelines/events/${slug}.md`;
+    default:
+      return undefined;
+  }
+}
+
+function resolveWorkspacePath(
+  chapter: Chapter | null,
+  paragraph: Paragraph | null,
+  workspaceKind: string,
+): string | undefined {
+  if (!chapter) return undefined;
+  if (!paragraph) {
+    if (workspaceKind === "draft") return chapter.draftPath;
+    if (workspaceKind === "resume") return `resumes/chapters/${chapter.slug}.md`;
+    if (workspaceKind === "evaluation") return `evaluations/chapters/${chapter.slug}.md`;
+    return undefined;
+  }
+
+  const slug = (paragraph.path.split("/").pop() ?? "").replace(/\.md$/i, "");
+  if (workspaceKind === "draft") return paragraph.draftPath;
+  if (workspaceKind === "script") return `scripts/${chapter.slug}/${slug}.md`;
+  if (workspaceKind === "evaluation") return `evaluations/paragraphs/${chapter.slug}/${slug}.md`;
+  return undefined;
+}
