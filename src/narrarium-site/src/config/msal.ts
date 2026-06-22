@@ -1,4 +1,5 @@
 import { PublicClientApplication, type AccountInfo, type Configuration, type SilentRequest } from "@azure/msal-browser";
+import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
 
 export const MICROSOFT_SCOPES = ["User.Read", "Files.ReadWrite"];
 
@@ -31,7 +32,7 @@ export function findMicrosoftAccountByEmail(email: string | undefined): AccountI
 
 const msalConfig: Configuration = {
   auth: {
-    clientId: (import.meta.env.VITE_MICROSOFT_CLIENT_ID as string | undefined) ?? "",
+    clientId: MICROSOFT_CLIENT_ID,
     authority: "https://login.microsoftonline.com/common",
     redirectUri: redirectUri(),
   },

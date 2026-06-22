@@ -1,8 +1,12 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
+import { createRequire } from "module";
 import tailwindcss from "tailwindcss";
 import autoprefixer from "autoprefixer";
+
+const require = createRequire(import.meta.url);
+const pkg = require("./package.json") as { version: string };
 
 const repoName = process.env.GITHUB_REPOSITORY?.split("/")[1];
 const siteBase =
@@ -13,6 +17,9 @@ const siteBase =
 export default defineConfig({
   root: path.resolve(__dirname),
   base: siteBase,
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   plugins: [react()],
   css: {
     postcss: {

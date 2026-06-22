@@ -148,8 +148,8 @@ To deploy it on GitHub Pages:
 
 - enable **Settings -> Pages -> Source: GitHub Actions** in the repository
 - keep `src/narrarium-site/public/CNAME` set to the custom domain, currently `narrarium.net`
-- add the repository Actions secret `VITE_GOOGLE_CLIENT_ID` for Google Drive sign-in
-- add the repository Actions secret `VITE_MICROSOFT_CLIENT_ID` for Microsoft Entra ID / OneDrive sign-in
+- the Google and Microsoft public OAuth client IDs are built into the app; no GitHub Actions secret is required for them
+- optionally override those IDs at build time with `VITE_GOOGLE_CLIENT_ID` or `VITE_MICROSOFT_CLIENT_ID` if you create a different OAuth app registration
 - configure the Google OAuth app with `https://narrarium.net` as an authorized JavaScript origin
 - configure the Entra ID app registration with `https://narrarium.net/` as a SPA redirect URI
 - keep `SITE_BASE=/` in `.github/workflows/book-management-system.yml` for the custom domain deployment

@@ -53,8 +53,6 @@ jobs:
           SITE_URL: https://narrarium.net
           MCP_PUBLIC_URL: https://narrarium.space/mcp
           MCP_HEALTH_URL: https://narrarium.space/health
-          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
-          VITE_MICROSOFT_CLIENT_ID: ${{ secrets.VITE_MICROSOFT_CLIENT_ID }}
         run: npm run docs:build
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

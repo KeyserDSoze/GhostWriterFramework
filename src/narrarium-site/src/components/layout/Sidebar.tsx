@@ -10,6 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/store/settingsStore";
+import { APP_VERSION } from "@/config/version";
 
 interface NavItem {
   label: string;
@@ -59,6 +60,9 @@ export function Sidebar() {
         <BookOpen className="h-6 w-6 text-primary" />
         <span className="font-semibold text-base leading-tight">
           Narrarium
+        </span>
+        <span className="ml-auto rounded-full border px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+          v{APP_VERSION}
         </span>
       </div>
       <Separator />

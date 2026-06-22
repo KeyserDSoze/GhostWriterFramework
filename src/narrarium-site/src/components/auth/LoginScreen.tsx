@@ -9,6 +9,7 @@ import { useAuthStore, type GoogleUser } from "@/store/authStore";
 import { useSettings } from "@/drive/useSettings";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftSilentRequest } from "@/config/msal";
+import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
 
 export function LoginScreen() {
   const { t } = useTranslation();
@@ -19,7 +20,7 @@ export function LoginScreen() {
   const location = useLocation();
   const [loadingProvider, setLoadingProvider] = useState<"google" | "microsoft" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const microsoftClientId = import.meta.env.VITE_MICROSOFT_CLIENT_ID as string | undefined;
+  const microsoftClientId = MICROSOFT_CLIENT_ID;
 
   function returnToApp() {
     const returnTo =

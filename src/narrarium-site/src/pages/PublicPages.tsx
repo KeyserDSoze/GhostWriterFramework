@@ -18,6 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { LanguageToggle } from "@/components/layout/LanguageToggle";
 import { getDocBySlug, getDocGroups, getMcpTools } from "@/lib/docs";
+import { APP_VERSION } from "@/config/version";
 
 function PublicShell({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
@@ -55,10 +56,11 @@ function PublicShell({ children }: { children: React.ReactNode }) {
       <footer className="border-t border-border/60 bg-background/80">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-8 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
           <p>{t("public.footer")}</p>
-          <div className="flex gap-4">
+          <div className="flex items-center gap-4">
             <Link to="/terms" className="hover:text-foreground">{t("nav.terms")}</Link>
             <Link to="/privacy" className="hover:text-foreground">{t("nav.privacy")}</Link>
             <Link to="/docs" className="hover:text-foreground">{t("nav.docs")}</Link>
+            <span className="font-mono text-xs">v{APP_VERSION}</span>
           </div>
         </div>
       </footer>
