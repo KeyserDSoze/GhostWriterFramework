@@ -31,6 +31,7 @@ import {
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type Paragraph } from "@/types/book";
+import { resolveBookToken } from "@/types/settings";
 
 export function ChapterPage() {
   const { bookId, chapterId } = useParams<{
@@ -47,10 +48,7 @@ export function ChapterPage() {
   const structure = bookId ? structures[bookId] : undefined;
   const chapter = structure?.chapters.find((c) => c.slug === chapterId);
 
-  const token =
-    book?.tokenIndex == null
-      ? settings.defaultGitHubToken
-      : (settings.extraGitHubTokens[book.tokenIndex]?.token ?? "");
+  const token = book ? resolveBookToken(book, settings) : "";
 
   const { branch } = useWorkingBranch(bookId);
 

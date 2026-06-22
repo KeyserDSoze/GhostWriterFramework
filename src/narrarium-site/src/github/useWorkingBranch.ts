@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
+import { resolveBookToken } from "@/types/settings";
 import { ensureDevBranch, emailToBranchName } from "./githubClient";
 
 /**
@@ -24,9 +25,7 @@ export function useWorkingBranch(bookId: string | undefined): {
   const structure = bookId ? structures[bookId] : undefined;
 
   const token =
-    book?.tokenIndex == null
-      ? settings.defaultGitHubToken
-      : (settings.extraGitHubTokens[book.tokenIndex]?.token ?? "");
+    book ? resolveBookToken(book, settings) : "";
 
   const [ensuring, setEnsuring] = useState(false);
   const ensuredRef = useRef(false);

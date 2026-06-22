@@ -12,6 +12,7 @@ import {
   EyeOff,
   FileText,
   ChevronRight,
+  Settings,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +25,7 @@ import { useBooksStore } from "@/store/booksStore";
 import { loadBookStructure, loadFileContent, slugToTitle } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type BookFile } from "@/types/book";
+import { resolveBookToken } from "@/types/settings";
 import { useDossierStore } from "@/store/dossierStore";
 
 function useBookStructure(bookId: string) {
@@ -38,10 +40,7 @@ function useBookStructure(bookId: string) {
 
   useEffect(() => {
     if (!book || structure || loading) return;
-    const token =
-      book.tokenIndex === null
-        ? settings.defaultGitHubToken
-        : (settings.extraGitHubTokens[book.tokenIndex]?.token ?? "");
+    const token = resolveBookToken(book, settings);
 
     if (!token) {
       setError(bookId, "No GitHub token configured for this book.");
@@ -117,10 +116,7 @@ export function BookPage() {
     );
   }
 
-  const token =
-    book.tokenIndex === null
-      ? settings.defaultGitHubToken
-      : (settings.extraGitHubTokens[book.tokenIndex]?.token ?? "");
+  const token = resolveBookToken(book, settings);
 
   async function handleOpenDossier(section: string, file: BookFile) {
     if (!structure || !token) return;
@@ -155,8 +151,24 @@ export function BookPage() {
           <p className="mt-0.5 text-xs text-muted-foreground font-mono">
             {ensuring ? "Creating branch…" : branch}
           </p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Token:{" "}
+            {book.bookToken
+              ? `dedicated PAT${book.bookTokenLabel ? ` · ${book.bookTokenLabel}` : ""}`
+              : book.tokenIndex != null
+                ? settings.extraGitHubTokens[book.tokenIndex]?.label ?? "saved token"
+                : "default token"}
+          </p>
         </div>
-        {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}
+        <div className="flex items-center gap-2">
+          {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/books/${book.id}/settings`}>
+              <Settings className="mr-1 h-4 w-4" />
+              Book settings
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {error && (

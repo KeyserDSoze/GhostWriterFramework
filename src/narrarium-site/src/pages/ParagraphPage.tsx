@@ -18,6 +18,7 @@ import {
   slugToTitle,
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
+import { resolveBookToken } from "@/types/settings";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
 
@@ -103,10 +104,7 @@ export function ParagraphPage() {
   const chapter = structure?.chapters.find((c) => c.slug === chapterId);
   const paragraph = chapter?.paragraphs.find((p) => p.number === paragraphNum);
 
-  const token =
-    book?.tokenIndex == null
-      ? settings.defaultGitHubToken
-      : (settings.extraGitHubTokens[book.tokenIndex]?.token ?? "");
+  const token = book ? resolveBookToken(book, settings) : "";
 
   // ── Content state ─────────────────────────────────────────────────────────
   const [entries, setEntries] = useState<MetaEntry[]>([]);

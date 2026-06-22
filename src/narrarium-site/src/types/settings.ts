@@ -46,10 +46,32 @@ export interface BookEntry {
   name: string;
   /**
    * Index into `extraGitHubTokens` array.
-   * null means use `defaultGitHubToken`.
+   * null means use `defaultGitHubToken` (unless `bookToken` is set).
    */
   tokenIndex: number | null;
+  /**
+   * Optional repository-specific PAT, stored inline on the book.
+   * When present it takes priority over both the saved extra token and the
+   * default token, so a book can use a dedicated PAT created just for it.
+   */
+  bookToken?: string;
+  /** Optional label for the inline book PAT. */
+  bookTokenLabel?: string;
   addedAt: string; // ISO-8601
+}
+
+/**
+ * Resolve the effective GitHub token for a book, in priority order:
+ * 1. inline per-book PAT (`bookToken`)
+ * 2. a named extra token referenced by `tokenIndex`
+ * 3. the default GitHub token
+ */
+export function resolveBookToken(book: BookEntry, settings: AppSettings): string {
+  if (book.bookToken && book.bookToken.trim()) return book.bookToken.trim();
+  if (book.tokenIndex != null) {
+    return settings.extraGitHubTokens[book.tokenIndex]?.token ?? "";
+  }
+  return settings.defaultGitHubToken;
 }
 
 // ─── Root settings object stored in Google Drive ─────────────────────────────

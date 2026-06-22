@@ -26,13 +26,17 @@ export function AddBookPage() {
   const { save } = useSettings();
   const { patchSettings } = useSettingsStore();
 
-  // Token selection: "default" or index of extraGitHubTokens
+  // Token selection: "default", "custom" (inline per-book PAT), or index of extraGitHubTokens
   const [selectedToken, setSelectedToken] = useState("default");
+  const [customToken, setCustomToken] = useState("");
+  const [customTokenLabel, setCustomTokenLabel] = useState("");
 
   const activeToken =
     selectedToken === "default"
       ? settings.defaultGitHubToken
-      : settings.extraGitHubTokens[Number(selectedToken)]?.token ?? "";
+      : selectedToken === "custom"
+        ? customToken.trim()
+        : settings.extraGitHubTokens[Number(selectedToken)]?.token ?? "";
 
   const { repos, loading, error } = useRepositories(
     activeToken || undefined,
@@ -54,12 +58,18 @@ export function AddBookPage() {
 
   async function handleAdd(repo: RepoSummary) {
     setAdding(repo.full_name);
+    const usingCustom = selectedToken === "custom";
     const entry: BookEntry = {
       id: crypto.randomUUID(),
       owner: repo.owner,
       repo: repo.name,
       name: repo.name,
-      tokenIndex: selectedToken === "default" ? null : Number(selectedToken),
+      tokenIndex:
+        selectedToken === "default" || usingCustom ? null : Number(selectedToken),
+      bookToken: usingCustom ? customToken.trim() : undefined,
+      bookTokenLabel: usingCustom
+        ? customTokenLabel.trim() || `${repo.name} PAT`
+        : undefined,
       addedAt: new Date().toISOString(),
     };
     const next = [...settings.books, entry];
@@ -68,7 +78,7 @@ export function AddBookPage() {
     navigate(`/app/books/${entry.id}`);
   }
 
-  const noDefaultToken = !settings.defaultGitHubToken;
+  const noDefaultToken = !settings.defaultGitHubToken && selectedToken === "default";
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -128,8 +138,33 @@ export function AddBookPage() {
                 {t.label} (…{t.token.slice(-4)})
               </SelectItem>
             ))}
+            <SelectItem value="custom">Dedicated PAT for this book…</SelectItem>
           </SelectContent>
         </Select>
+
+        {selectedToken === "custom" && (
+          <div className="mt-2 grid gap-2 rounded-lg border border-dashed p-3">
+            <p className="text-xs text-muted-foreground">
+              Use a personal access token created specifically for this book. It
+              is stored on the book entry in your Drive settings and takes
+              priority over the default token.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-[1fr_2fr]">
+              <Input
+                placeholder="Label (optional)"
+                value={customTokenLabel}
+                onChange={(e) => setCustomTokenLabel(e.target.value)}
+              />
+              <Input
+                type="password"
+                placeholder="github_pat_…"
+                value={customToken}
+                onChange={(e) => setCustomToken(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Search */}

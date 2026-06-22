@@ -73,10 +73,10 @@ export function BooksPage() {
                         variant="outline"
                         className="ml-2 shrink-0 text-[10px]"
                       >
-                        {book.tokenIndex === null ? (
-                          <Globe className="mr-1 h-3 w-3" />
-                        ) : (
+                        {book.bookToken || book.tokenIndex !== null ? (
                           <Lock className="mr-1 h-3 w-3" />
+                        ) : (
+                          <Globe className="mr-1 h-3 w-3" />
                         )}
                         {book.owner}/{book.repo}
                       </Badge>

@@ -12,6 +12,7 @@ interface BooksState {
   setLoading: (bookId: string, loading: boolean) => void;
   setError: (bookId: string, message: string) => void;
   setWorkingBranch: (bookId: string, branch: string) => void;
+  clearBook: (bookId: string) => void;
   updateChapterParagraphs: (
     bookId: string,
     chapterSlug: string,
@@ -42,6 +43,19 @@ export const useBooksStore = create<BooksState>()((set) => ({
     set((s) => ({
       workingBranches: { ...s.workingBranches, [bookId]: branch },
     })),
+
+  clearBook: (bookId) =>
+    set((s) => {
+      const structures = { ...s.structures };
+      delete structures[bookId];
+      const errors = { ...s.errors };
+      delete errors[bookId];
+      const workingBranches = { ...s.workingBranches };
+      delete workingBranches[bookId];
+      const loadingIds = new Set(s.loadingIds);
+      loadingIds.delete(bookId);
+      return { structures, errors, workingBranches, loadingIds };
+    }),
 
   updateChapterParagraphs: (bookId, chapterSlug, paragraphs) =>
     set((s) => {
