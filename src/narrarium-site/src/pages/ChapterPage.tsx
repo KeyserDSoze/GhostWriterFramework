@@ -10,6 +10,7 @@ import {
   PenLine,
   ClipboardCheck,
   NotebookText,
+  MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,12 @@ import {
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useToast } from "@/components/ui/use-toast";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   createFile,
   reorderParagraphsInChapter,
@@ -333,18 +340,27 @@ export function ChapterPage() {
               Saving order…
             </div>
           )}
-          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterDraft()}>
-            <FileEdit className="mr-1 h-4 w-4" />
-            Draft
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/books/${bookId}/chapters/${chapterId}/workspace/draft`}>
+              <FileEdit className="mr-1 h-4 w-4" />
+              Draft
+            </Link>
           </Button>
-          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterResume()}>
-            <NotebookText className="mr-1 h-4 w-4" />
-            Resume
+          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterDraft()}>Create</Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/books/${bookId}/chapters/${chapterId}/workspace/resume`}>
+              <NotebookText className="mr-1 h-4 w-4" />
+              Resume
+            </Link>
           </Button>
-          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterEvaluation()}>
-            <ClipboardCheck className="mr-1 h-4 w-4" />
-            Evaluation
+          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterResume()}>Create</Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/books/${bookId}/chapters/${chapterId}/workspace/evaluation`}>
+              <ClipboardCheck className="mr-1 h-4 w-4" />
+              Evaluation
+            </Link>
           </Button>
+          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterEvaluation()}>Create</Button>
         </div>
       </div>
 
@@ -412,10 +428,37 @@ export function ChapterPage() {
               </Badge>
             )}
 
-            <div className="hidden items-center gap-1 lg:flex">
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px]" onClick={() => void handleCreateParagraphWorkspace("draft", p)}>Draft</Button>
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px]" onClick={() => void handleCreateParagraphWorkspace("script", p)}>Script</Button>
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px]" onClick={() => void handleCreateParagraphWorkspace("evaluation", p)}>Eval</Button>
+            <div className="flex items-center gap-1">
+              <Button asChild variant="ghost" size="sm" className="hidden h-7 px-2 text-[10px] sm:inline-flex">
+                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/draft`}>Draft</Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm" className="hidden h-7 px-2 text-[10px] sm:inline-flex">
+                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/script`}>Script</Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm" className="hidden h-7 px-2 text-[10px] sm:inline-flex">
+                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/evaluation`}>Eval</Link>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 sm:hidden">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("draft", p)}>Create draft</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("script", p)}>Create script</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("evaluation", p)}>Create evaluation</DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/draft`}>Open draft</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/script`}>Open script</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/evaluation`}>Open evaluation</Link>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
 
             {/* Delete */}
