@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   Loader2,
@@ -27,10 +27,18 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type BookFile } from "@/types/book";
 import { resolveBookToken } from "@/types/settings";
 import { useDossierStore } from "@/store/dossierStore";
+import {
+  createCanonEntity,
+  createChapter as createChapterFile,
+  formatOrdinal,
+  type EntityKind,
+} from "@/narrarium/canon";
+import { CreateChapterDialog } from "@/components/canon/CreateChapterDialog";
+import { CreateEntityDialog } from "@/components/canon/CreateEntityDialog";
 
 function useBookStructure(bookId: string) {
   const { settings } = useSettingsStore();
-  const { structures, loadingIds, errors, setStructure, setLoading, setError } =
+  const { structures, loadingIds, errors, setStructure, setLoading, setError, clearBook } =
     useBooksStore();
 
   const book = settings.books.find((b) => b.id === bookId);
@@ -38,15 +46,13 @@ function useBookStructure(bookId: string) {
   const loading = loadingIds.has(bookId);
   const error = errors[bookId];
 
-  useEffect(() => {
-    if (!book || structure || loading) return;
+  const loadStructure = useCallback(() => {
+    if (!book) return;
     const token = resolveBookToken(book, settings);
-
     if (!token) {
       setError(bookId, "No GitHub token configured for this book.");
       return;
     }
-
     setLoading(bookId, true);
     loadBookStructure(token, book.owner, book.repo)
       .then((s) => setStructure(bookId, s))
@@ -54,9 +60,19 @@ function useBookStructure(bookId: string) {
         setError(bookId, err instanceof Error ? err.message : "Load failed"),
       )
       .finally(() => setLoading(bookId, false));
-  }, [book, bookId, loading, settings, setError, setLoading, setStructure, structure]);
+  }, [book, bookId, settings, setError, setLoading, setStructure]);
 
-  return { book, structure, loading, error };
+  useEffect(() => {
+    if (!book || structure || loading) return;
+    loadStructure();
+  }, [book, structure, loading, loadStructure]);
+
+  const reload = useCallback(() => {
+    clearBook(bookId);
+    loadStructure();
+  }, [bookId, clearBook, loadStructure]);
+
+  return { book, structure, loading, error, reload };
 }
 
 function CanonList({
@@ -103,7 +119,7 @@ export function BookPage() {
   const { settings } = useSettingsStore();
   const { toast } = useToast();
   const pinDossier = useDossierStore((state) => state.pinDossier);
-  const { book, structure, loading, error } = useBookStructure(bookId ?? "");
+  const { book, structure, loading, error, reload } = useBookStructure(bookId ?? "");
   // Kick off branch creation as soon as the structure is available
   const { branch, ensuring } = useWorkingBranch(bookId);
 
@@ -132,6 +148,30 @@ export function BookPage() {
     } catch (err) {
       toast({ title: "Dossier load failed", description: String(err), variant: "destructive" });
     }
+  }
+
+  async function handleCreateChapter(input: {
+    number: number;
+    title: string;
+    summary?: string;
+  }) {
+    if (!book || !token) throw new Error("No GitHub token configured for this book.");
+    await createChapterFile(token, book.owner, book.repo, branch, input);
+    toast({ title: `Chapter ${formatOrdinal(input.number)} created` });
+    reload();
+  }
+
+  function makeCreateEntity(kind: EntityKind) {
+    return async (input: { label: string; summary?: string }) => {
+      if (!book || !token) throw new Error("No GitHub token configured for this book.");
+      await createCanonEntity(token, book.owner, book.repo, branch, {
+        kind,
+        label: input.label,
+        summary: input.summary,
+      });
+      toast({ title: `${input.label} created` });
+      reload();
+    };
   }
 
   return (
@@ -236,6 +276,16 @@ export function BookPage() {
 
           {/* ── Chapters ── */}
           <TabsContent value="chapters" className="mt-4">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                {structure.chapters.length} chapter
+                {structure.chapters.length !== 1 ? "s" : ""}
+              </p>
+              <CreateChapterDialog
+                nextNumber={structure.chapters.length + 1}
+                onCreate={handleCreateChapter}
+              />
+            </div>
             <ul className="space-y-2">
               {structure.chapters.map((ch) => (
                 <li key={ch.slug}>
@@ -269,6 +319,9 @@ export function BookPage() {
           </TabsContent>
 
           <TabsContent value="characters" className="mt-4">
+            <div className="mb-3 flex justify-end">
+              <CreateEntityDialog kind="character" onCreate={makeCreateEntity("character")} />
+            </div>
             <CanonList
               label="Characters"
               files={structure.characters}
@@ -279,6 +332,9 @@ export function BookPage() {
           </TabsContent>
 
           <TabsContent value="locations" className="mt-4">
+            <div className="mb-3 flex justify-end">
+              <CreateEntityDialog kind="location" onCreate={makeCreateEntity("location")} />
+            </div>
             <CanonList
               label="Locations"
               files={structure.locations}
@@ -289,6 +345,9 @@ export function BookPage() {
           </TabsContent>
 
           <TabsContent value="factions" className="mt-4">
+            <div className="mb-3 flex justify-end">
+              <CreateEntityDialog kind="faction" onCreate={makeCreateEntity("faction")} />
+            </div>
             <CanonList
               label="Factions"
               files={structure.factions}
@@ -299,6 +358,9 @@ export function BookPage() {
           </TabsContent>
 
           <TabsContent value="items" className="mt-4">
+            <div className="mb-3 flex justify-end">
+              <CreateEntityDialog kind="item" onCreate={makeCreateEntity("item")} />
+            </div>
             <CanonList
               label="Items"
               files={structure.items}
@@ -309,6 +371,13 @@ export function BookPage() {
           </TabsContent>
 
           <TabsContent value="timelines" className="mt-4">
+            <div className="mb-3 flex justify-end">
+              <CreateEntityDialog
+                kind="timeline-event"
+                onCreate={makeCreateEntity("timeline-event")}
+                triggerLabel="Add timeline event"
+              />
+            </div>
             <CanonList
               label="Timelines"
               files={structure.timelines}
@@ -319,6 +388,9 @@ export function BookPage() {
           </TabsContent>
 
           <TabsContent value="secrets" className="mt-4">
+            <div className="mb-3 flex justify-end">
+              <CreateEntityDialog kind="secret" onCreate={makeCreateEntity("secret")} />
+            </div>
             <CanonList
               label="Secrets"
               files={structure.secrets}

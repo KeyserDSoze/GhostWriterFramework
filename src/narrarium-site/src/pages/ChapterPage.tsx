@@ -32,6 +32,12 @@ import {
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type Paragraph } from "@/types/book";
 import { resolveBookToken } from "@/types/settings";
+import { slugify } from "@/narrarium/canon";
+import { stringify } from "yaml";
+
+function stringifyFrontmatter(frontmatter: Record<string, unknown>): string {
+  return `---\n${stringify(frontmatter).trimEnd()}\n---`;
+}
 
 export function ChapterPage() {
   const { bookId, chapterId } = useParams<{
@@ -156,15 +162,18 @@ export function ChapterPage() {
     setAdding(true);
     try {
       const nextNum = String(localParagraphs.length + 1).padStart(3, "0");
-      const slug = newTitle
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, "-")
-        .replace(/[^a-z0-9-]/g, "")
-        || "paragraph";
+      const slug = slugify(newTitle) || "paragraph";
       const filename = `${nextNum}-${slug}.md`;
       const path = `${chapter.path}/${filename}`;
-      const content = `---\ntype: paragraph\nnumber: ${localParagraphs.length + 1}\ntitle: ${newTitle.trim()}\n---\n\n`;
+      const frontmatter = {
+        type: "paragraph",
+        id: `paragraph:${chapter.slug}:${nextNum}-${slug}`,
+        chapter: `chapter:${chapter.slug}`,
+        number: localParagraphs.length + 1,
+        title: newTitle.trim(),
+        canon: "draft",
+      };
+      const content = `${stringifyFrontmatter(frontmatter)}\n\n`;
 
       await createFile(
         token,
