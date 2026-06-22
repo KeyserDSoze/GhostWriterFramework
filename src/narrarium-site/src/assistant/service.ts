@@ -1,9 +1,9 @@
 import { parseDocument, stringify } from "yaml";
-import { createFile, readFileWithSha, updateFile } from "@/github/githubClient";
+import { createFile, loadFileContent, readFileWithSha, slugToTitle, updateFile } from "@/github/githubClient";
 import type { AppSettings, BookEntry } from "@/types/settings";
 import type { LoadedWriterContext } from "@/assistant/context";
 import { completeText, resolveReviewIntegration, resolveWritingIntegration } from "@/assistant/llm";
-import type { AssistantAction, AssistantMessage } from "@/assistant/store";
+import type { AssistantAction, AssistantMessage, AssistantSession } from "@/assistant/store";
 
 export async function runAssistantPrompt(input: {
   prompt: string;
@@ -12,8 +12,11 @@ export async function runAssistantPrompt(input: {
   book: BookEntry | null;
   branch: string;
   token: string;
+  history: AssistantMessage[];
+  compactSummary: string;
+  compactedMessageCount: number;
 }): Promise<AssistantMessage> {
-  const { prompt, context, settings, book, branch, token } = input;
+  const { prompt, context, book, branch, token } = input;
   const lowered = prompt.toLowerCase();
 
   if (!book || !token) {
@@ -24,20 +27,59 @@ export async function runAssistantPrompt(input: {
     return makeAssistantMessage("assistant", "The current book structure is not loaded yet. Open the book page first so I can gather the right context.");
   }
 
+  if (looksLikeSearch(lowered)) {
+    return searchCurrentBook({ ...input, book, token });
+  }
   if (looksLikeRewrite(lowered)) {
-    return rewriteCurrentParagraph({ prompt, context, settings, book, branch, token });
+    return rewriteCurrentParagraph({ ...input, book, branch, token });
   }
   if (looksLikeNote(lowered)) {
-    return createContextNote({ prompt, context, settings, book, branch, token });
+    return createContextNote({ ...input, book, branch, token });
   }
   if (looksLikeReview(lowered)) {
-    return reviewCurrentContext({ prompt, context, settings });
+    return reviewCurrentContext(input);
   }
   if (looksLikeSummary(lowered)) {
-    return summarizeCurrentContext({ prompt, context, settings });
+    return summarizeCurrentContext(input);
   }
 
-  return answerFromContext({ prompt, context, settings });
+  return answerFromContext(input);
+}
+
+export async function compactAssistantSession(input: {
+  session: AssistantSession;
+  settings: AppSettings;
+}): Promise<AssistantSession> {
+  const { session, settings } = input;
+  if (session.messages.length <= 12) return session;
+  const targetCount = session.messages.length - 6;
+  if (targetCount <= session.compactedMessageCount) return session;
+
+  const integration = resolveWritingIntegration(settings);
+  if (!integration) return session;
+
+  const content = session.messages
+    .slice(0, targetCount)
+    .map((message) => `${message.role.toUpperCase()}: ${message.text}`)
+    .join("\n\n");
+
+  const summary = await completeText(integration, [
+    {
+      role: "system",
+      content:
+        "Summarize the conversation so far for future continuation. Keep goals, decisions, open questions, created notes, requested edits, and canon-sensitive facts. Return concise bullet points.",
+    },
+    {
+      role: "user",
+      content,
+    },
+  ]);
+
+  return {
+    ...session,
+    compactSummary: summary.trim(),
+    compactedMessageCount: targetCount,
+  };
 }
 
 export async function applyParagraphRewrite(input: {
@@ -62,11 +104,7 @@ export async function applyParagraphRewrite(input: {
   );
 }
 
-async function summarizeCurrentContext(input: {
-  prompt: string;
-  context: LoadedWriterContext;
-  settings: AppSettings;
-}): Promise<AssistantMessage> {
+async function summarizeCurrentContext(input: PromptInput): Promise<AssistantMessage> {
   const integration = resolveWritingIntegration(input.settings);
   if (!integration) return noAiMessage();
 
@@ -78,17 +116,13 @@ async function summarizeCurrentContext(input: {
     },
     {
       role: "user",
-      content: `${contextBundle(input.context)}\n\nRequest: ${input.prompt}`,
+      content: `${conversationBundle(input)}\n\nRequest: ${input.prompt}`,
     },
   ]);
   return makeAssistantMessage("assistant", answer.trim());
 }
 
-async function reviewCurrentContext(input: {
-  prompt: string;
-  context: LoadedWriterContext;
-  settings: AppSettings;
-}): Promise<AssistantMessage> {
+async function reviewCurrentContext(input: PromptInput): Promise<AssistantMessage> {
   const integration = resolveReviewIntegration(input.settings) ?? resolveWritingIntegration(input.settings);
   if (!integration) return noAiMessage();
 
@@ -100,17 +134,13 @@ async function reviewCurrentContext(input: {
     },
     {
       role: "user",
-      content: `${contextBundle(input.context)}\n\nReview request: ${input.prompt}`,
+      content: `${conversationBundle(input)}\n\nReview request: ${input.prompt}`,
     },
   ], "review");
   return makeAssistantMessage("assistant", answer.trim());
 }
 
-async function answerFromContext(input: {
-  prompt: string;
-  context: LoadedWriterContext;
-  settings: AppSettings;
-}): Promise<AssistantMessage> {
+async function answerFromContext(input: PromptInput): Promise<AssistantMessage> {
   const integration = resolveWritingIntegration(input.settings);
   if (!integration) return noAiMessage();
 
@@ -122,20 +152,13 @@ async function answerFromContext(input: {
     },
     {
       role: "user",
-      content: `${contextBundle(input.context)}\n\nUser request: ${input.prompt}`,
+      content: `${conversationBundle(input)}\n\nUser request: ${input.prompt}`,
     },
   ]);
   return makeAssistantMessage("assistant", answer.trim());
 }
 
-async function rewriteCurrentParagraph(input: {
-  prompt: string;
-  context: LoadedWriterContext;
-  settings: AppSettings;
-  book: BookEntry;
-  branch: string;
-  token: string;
-}): Promise<AssistantMessage> {
+async function rewriteCurrentParagraph(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const { context } = input;
   if (!context.paragraph || !context.chapter) {
     return makeAssistantMessage("assistant", "Paragraph rewrite works when you are inside a paragraph page. Open a paragraph first, then ask me to revise it.");
@@ -155,7 +178,7 @@ async function rewriteCurrentParagraph(input: {
     },
     {
       role: "user",
-      content: `${contextBundle(context)}\n\nCurrent paragraph body:\n${paragraphBody}\n\nRewrite request: ${input.prompt}`,
+      content: `${conversationBundle(input)}\n\nCurrent paragraph body:\n${paragraphBody}\n\nRewrite request: ${input.prompt}`,
     },
   ]);
 
@@ -173,14 +196,7 @@ async function rewriteCurrentParagraph(input: {
   };
 }
 
-async function createContextNote(input: {
-  prompt: string;
-  context: LoadedWriterContext;
-  settings: AppSettings;
-  book: BookEntry;
-  branch: string;
-  token: string;
-}): Promise<AssistantMessage> {
+async function createContextNote(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const integration = resolveWritingIntegration(input.settings);
   if (!integration) return noAiMessage();
   const targetPath = input.context.noteTargetPath;
@@ -196,7 +212,7 @@ async function createContextNote(input: {
     },
     {
       role: "user",
-      content: `${contextBundle(input.context)}\n\nCreate a note for this request: ${input.prompt}`,
+      content: `${conversationBundle(input)}\n\nCreate a note for this request: ${input.prompt}`,
     },
   ]);
 
@@ -211,6 +227,78 @@ async function createContextNote(input: {
   });
 
   return makeAssistantMessage("assistant", `I saved a note to \`${targetPath}\`.\n\n${answer.trim()}`);
+}
+
+async function searchCurrentBook(input: PromptInput & { book: BookEntry; token: string }): Promise<AssistantMessage> {
+  const { context, prompt, book, token } = input;
+  const structure = context.structure;
+  if (!structure) return makeAssistantMessage("assistant", "The book structure is not loaded yet.");
+
+  const terms = extractSearchTerms(prompt);
+  if (!terms.length) {
+    return makeAssistantMessage("assistant", "Tell me what keywords to search for, for example: 'find a character about memory and debt' or 'search paragraph gate lantern'.");
+  }
+
+  const sectionHint = detectSectionHint(prompt);
+  const results: string[] = [];
+
+  const matchText = (value: string) => {
+    const lower = value.toLowerCase();
+    return terms.every((term) => lower.includes(term));
+  };
+
+  const canonSections = [
+    ["characters", structure.characters],
+    ["locations", structure.locations],
+    ["factions", structure.factions],
+    ["items", structure.items],
+    ["secrets", structure.secrets],
+    ["timelines", structure.timelines],
+  ] as const;
+
+  if (!sectionHint || sectionHint === "characters" || sectionHint === "canon") {
+    for (const [section, files] of canonSections) {
+      if (sectionHint && sectionHint !== "canon" && sectionHint !== section) continue;
+      const matched = files.filter((file) => matchText(`${file.path} ${slugToTitle(file.path.split("/").pop()?.replace(/\.md$/, "") ?? file.path)}`));
+      for (const file of matched.slice(0, 4)) {
+        results.push(`- ${section}: ${file.path}`);
+      }
+    }
+  }
+
+  if (!sectionHint || sectionHint === "paragraphs") {
+    const paragraphCandidates = structure.chapters.flatMap((chapter) =>
+      chapter.paragraphs.map((paragraph) => ({ chapter, paragraph })),
+    );
+
+    const matchedByTitle = paragraphCandidates.filter(({ chapter, paragraph }) =>
+      matchText(`${chapter.title} ${paragraph.title} ${paragraph.path}`),
+    );
+
+    for (const hit of matchedByTitle.slice(0, 5)) {
+      results.push(`- paragraph: ${hit.chapter.slug}/${hit.paragraph.number} ${hit.paragraph.title}`);
+    }
+
+    if (matchedByTitle.length === 0) {
+      for (const hit of paragraphCandidates.slice(0, 24)) {
+        try {
+          const content = await loadFileContent(token, book.owner, book.repo, hit.paragraph.path);
+          if (matchText(content)) {
+            results.push(`- paragraph body: ${hit.chapter.slug}/${hit.paragraph.number} ${hit.paragraph.title}`);
+            if (results.length >= 5) break;
+          }
+        } catch {
+          // ignore read failures during search
+        }
+      }
+    }
+  }
+
+  if (results.length === 0) {
+    return makeAssistantMessage("assistant", `I could not find a match for: ${terms.join(", ")}. Try fewer or broader keywords.`);
+  }
+
+  return makeAssistantMessage("assistant", `Search results for **${terms.join(", ")}**:\n\n${results.join("\n")}`);
 }
 
 async function upsertNoteFile(input: {
@@ -299,15 +387,41 @@ function renderMarkdown(frontmatter: Record<string, unknown>, body: string): str
   return `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${body.replace(/^\n+/, "")}`;
 }
 
-function contextBundle(context: LoadedWriterContext): string {
-  const files = context.relevantFiles
+function conversationBundle(input: PromptInput): string {
+  const files = input.context.relevantFiles
     .map((entry) => `FILE: ${entry.path}\n${entry.content}`)
     .join("\n\n---\n\n");
+  const recentMessages = input.history
+    .slice(input.compactedMessageCount)
+    .slice(-8)
+    .map((message) => `${message.role.toUpperCase()}: ${message.text}`)
+    .join("\n\n");
+
   return [
-    `Current context: ${context.title}`,
-    context.summary,
-    files ? `\nRepository files:\n\n${files}` : "",
+    `Current context: ${input.context.title}`,
+    input.context.summary,
+    input.compactSummary ? `Conversation compact summary:\n${input.compactSummary}` : "",
+    recentMessages ? `Recent conversation:\n${recentMessages}` : "",
+    files ? `Repository files:\n\n${files}` : "",
   ].filter(Boolean).join("\n\n");
+}
+
+function extractSearchTerms(prompt: string): string[] {
+  return prompt
+    .toLowerCase()
+    .replace(/[^a-z0-9à-ÿ\s-]/gi, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 2)
+    .filter((token) => !new Set(["find", "search", "cerca", "trova", "paragraph", "paragrafo", "character", "characters", "personaggio", "personaggi", "canon", "book"]).has(token))
+    .slice(0, 5);
+}
+
+function detectSectionHint(prompt: string): "characters" | "paragraphs" | "canon" | null {
+  const lowered = prompt.toLowerCase();
+  if (/\b(character|characters|personaggio|personaggi)\b/.test(lowered)) return "characters";
+  if (/\b(paragraph|paragraphs|paragrafo|paragrafi|scene|scena)\b/.test(lowered)) return "paragraphs";
+  if (/\b(canon|entity|entities|lore)\b/.test(lowered)) return "canon";
+  return null;
 }
 
 function looksLikeSummary(prompt: string): boolean {
@@ -326,6 +440,10 @@ function looksLikeRewrite(prompt: string): boolean {
   return /\b(rewrite|revise|fix|improve|polish|sistema|riscrivi|migliora|paragrafo)\b/.test(prompt);
 }
 
+function looksLikeSearch(prompt: string): boolean {
+  return /\b(search|find|lookup|cerca|trova|keyword|keywords|search for)\b/.test(prompt);
+}
+
 function makeAssistantMessage(role: "assistant" | "system", text: string): AssistantMessage {
   return { id: crypto.randomUUID(), role, text };
 }
@@ -336,3 +454,12 @@ function noAiMessage(): AssistantMessage {
     "No AI integration is configured yet. Add an Azure OpenAI or OpenAI-compatible provider in Settings -> AI integrations.",
   );
 }
+
+type PromptInput = {
+  prompt: string;
+  context: LoadedWriterContext;
+  settings: AppSettings;
+  history: AssistantMessage[];
+  compactSummary: string;
+  compactedMessageCount: number;
+};

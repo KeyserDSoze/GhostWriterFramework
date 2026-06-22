@@ -15,24 +15,63 @@ export interface AssistantMessage {
   action?: AssistantAction;
 }
 
+export interface AssistantSessionMeta {
+  id: string;
+  fileId?: string;
+  title: string;
+  contextTitle: string;
+  updatedAt: string;
+}
+
+export interface AssistantSession extends AssistantSessionMeta {
+  messages: AssistantMessage[];
+  compactSummary: string;
+  compactedMessageCount: number;
+}
+
 interface AssistantState {
   open: boolean;
-  messages: AssistantMessage[];
   busy: boolean;
+  sessions: AssistantSessionMeta[];
+  currentSession: AssistantSession | null;
   setOpen: (open: boolean) => void;
-  addMessage: (message: AssistantMessage) => void;
-  replaceMessages: (messages: AssistantMessage[]) => void;
-  clear: () => void;
   setBusy: (busy: boolean) => void;
+  setSessions: (sessions: AssistantSessionMeta[]) => void;
+  setCurrentSession: (session: AssistantSession | null) => void;
+  updateCurrentSession: (updater: (session: AssistantSession) => AssistantSession) => void;
+  clearMessages: () => void;
 }
 
 export const useAssistantStore = create<AssistantState>((set) => ({
   open: false,
-  messages: [],
   busy: false,
+  sessions: [],
+  currentSession: null,
   setOpen: (open) => set({ open }),
-  addMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
-  replaceMessages: (messages) => set({ messages }),
-  clear: () => set({ messages: [] }),
   setBusy: (busy) => set({ busy }),
+  setSessions: (sessions) => set({ sessions }),
+  setCurrentSession: (currentSession) => set({ currentSession }),
+  updateCurrentSession: (updater) =>
+    set((state) => ({
+      currentSession: state.currentSession ? updater(state.currentSession) : state.currentSession,
+    })),
+  clearMessages: () =>
+    set((state) => ({
+      currentSession: state.currentSession
+        ? { ...state.currentSession, messages: [], compactSummary: "", compactedMessageCount: 0 }
+        : state.currentSession,
+    })),
 }));
+
+export function createEmptyAssistantSession(contextTitle: string): AssistantSession {
+  const timestamp = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    title: `${contextTitle} ${timestamp.slice(0, 16).replace("T", " ")}`,
+    contextTitle,
+    updatedAt: timestamp,
+    messages: [],
+    compactSummary: "",
+    compactedMessageCount: 0,
+  };
+}
