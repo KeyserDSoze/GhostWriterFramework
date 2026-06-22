@@ -123,7 +123,7 @@ export function AddBookPage() {
       <div className="grid gap-2">
         <Label>GitHub token to use</Label>
         <Select value={selectedToken} onValueChange={setSelectedToken}>
-          <SelectTrigger className="w-full max-w-xs">
+          <SelectTrigger className="w-full sm:max-w-xs">
             <SelectValue placeholder="Select token" />
           </SelectTrigger>
           <SelectContent>

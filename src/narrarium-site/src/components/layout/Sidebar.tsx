@@ -18,10 +18,19 @@ interface NavItem {
   icon: React.ReactNode;
 }
 
-function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+function NavLink({
+  item,
+  active,
+  onNavigate,
+}: {
+  item: NavItem;
+  active: boolean;
+  onNavigate?: () => void;
+}) {
   return (
     <Link
       to={item.href}
+      onClick={onNavigate}
       className={cn(
         "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
         active
@@ -35,7 +44,7 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   );
 }
 
-export function Sidebar() {
+function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
   const location = useLocation();
   const { settings } = useSettingsStore();
@@ -54,13 +63,10 @@ export function Sidebar() {
   ];
 
   return (
-    <aside className="flex h-full w-60 flex-col border-r bg-card">
-      {/* Brand */}
+    <>
       <div className="flex items-center gap-2 px-4 py-4">
         <BookOpen className="h-6 w-6 text-primary" />
-        <span className="font-semibold text-base leading-tight">
-          Narrarium
-        </span>
+        <span className="font-semibold text-base leading-tight">Narrarium</span>
         <span className="ml-auto rounded-full border px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
           v{APP_VERSION}
         </span>
@@ -68,18 +74,17 @@ export function Sidebar() {
       <Separator />
 
       <ScrollArea className="flex-1 py-2">
-        {/* Main nav */}
         <nav className="px-2 space-y-1">
           {topNav.map((item) => (
             <NavLink
               key={item.href}
               item={item}
               active={location.pathname === item.href}
+              onNavigate={onNavigate}
             />
           ))}
         </nav>
 
-        {/* Books list */}
         {settings.books.length > 0 && (
           <>
             <Separator className="mx-2 my-3" />
@@ -96,12 +101,29 @@ export function Sidebar() {
                     icon: <BookOpen className="h-4 w-4" />,
                   }}
                   active={location.pathname.startsWith(`/app/books/${book.id}`)}
+                  onNavigate={onNavigate}
                 />
               ))}
             </nav>
           </>
         )}
       </ScrollArea>
+    </>
+  );
+}
+
+export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <aside className="hidden h-full w-64 shrink-0 border-r bg-card lg:flex lg:flex-col">
+      <SidebarContent onNavigate={onNavigate} />
     </aside>
+  );
+}
+
+export function MobileSidebar({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <div className="flex h-full max-h-[100dvh] w-full max-w-[86vw] flex-col bg-card sm:max-w-sm">
+      <SidebarContent onNavigate={onNavigate} />
+    </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,7 +16,11 @@ import { ENTITY_LABEL, type EntityKind } from "@/narrarium/canon";
 
 interface CreateEntityDialogProps {
   kind: EntityKind;
-  onCreate: (input: { label: string; summary?: string }) => Promise<void>;
+  onCreate: (input: {
+    label: string;
+    summary?: string;
+    extraFrontmatter?: Record<string, unknown>;
+  }) => Promise<void>;
   triggerLabel?: string;
 }
 
@@ -24,15 +28,67 @@ export function CreateEntityDialog({ kind, onCreate, triggerLabel }: CreateEntit
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState("");
   const [summary, setSummary] = useState("");
+  const [fieldA, setFieldA] = useState("");
+  const [fieldB, setFieldB] = useState("");
+  const [fieldC, setFieldC] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const usesTitle = kind === "secret" || kind === "timeline-event";
   const fieldLabel = usesTitle ? "Title" : "Name";
+  const config = useMemo(() => {
+    switch (kind) {
+      case "character":
+        return {
+          a: { key: "role_tier", label: "Role tier", placeholder: "supporting" },
+          b: { key: "story_role", label: "Story role", placeholder: "ally" },
+          c: { key: "function_in_book", label: "Function in book", placeholder: "What this character does in the story" },
+        };
+      case "location":
+        return {
+          a: { key: "location_kind", label: "Location kind", placeholder: "city, room, district…" },
+          b: { key: "region", label: "Region", placeholder: "Region or territory" },
+          c: { key: "atmosphere", label: "Atmosphere", placeholder: "Mood and sensory feel" },
+        };
+      case "faction":
+        return {
+          a: { key: "faction_kind", label: "Faction kind", placeholder: "cult, guild, government…" },
+          b: { key: "mission", label: "Mission", placeholder: "What the faction wants" },
+          c: { key: "ideology", label: "Ideology", placeholder: "Beliefs and worldview" },
+        };
+      case "item":
+        return {
+          a: { key: "item_kind", label: "Item kind", placeholder: "artifact, weapon, letter…" },
+          b: { key: "purpose", label: "Purpose", placeholder: "Why this item matters" },
+          c: { key: "significance", label: "Significance", placeholder: "Story weight or symbolism" },
+        };
+      case "secret":
+        return {
+          a: { key: "secret_kind", label: "Secret kind", placeholder: "identity, event, lineage…" },
+          b: { key: "stakes", label: "Stakes", placeholder: "What happens if revealed" },
+          c: { key: "reveal_strategy", label: "Reveal strategy", placeholder: "How and when to reveal it" },
+        };
+      case "timeline-event":
+        return {
+          a: { key: "date", label: "Date", placeholder: "YYYY-MM-DD or free text" },
+          b: { key: "significance", label: "Significance", placeholder: "Why this event matters" },
+          c: { key: "function_in_book", label: "Function in book", placeholder: "Narrative role of this event" },
+        };
+      default:
+        return {
+          a: { key: "", label: "", placeholder: "" },
+          b: { key: "", label: "", placeholder: "" },
+          c: { key: "", label: "", placeholder: "" },
+        };
+    }
+  }, [kind]);
 
   function reset() {
     setLabel("");
     setSummary("");
+    setFieldA("");
+    setFieldB("");
+    setFieldC("");
     setError(null);
   }
 
@@ -41,7 +97,18 @@ export function CreateEntityDialog({ kind, onCreate, triggerLabel }: CreateEntit
     setBusy(true);
     setError(null);
     try {
-      await onCreate({ label: label.trim(), summary: summary.trim() || undefined });
+      const extraFrontmatter = Object.fromEntries(
+        [
+          config.a.key ? [config.a.key, fieldA.trim()] : null,
+          config.b.key ? [config.b.key, fieldB.trim()] : null,
+          config.c.key ? [config.c.key, fieldC.trim()] : null,
+        ].filter(Boolean) as Array<[string, string]>,
+      );
+      await onCreate({
+        label: label.trim(),
+        summary: summary.trim() || undefined,
+        extraFrontmatter,
+      });
       setOpen(false);
       reset();
     } catch (err) {
@@ -82,8 +149,26 @@ export function CreateEntityDialog({ kind, onCreate, triggerLabel }: CreateEntit
               }}
             />
           </div>
+
+          {config.a.key && (
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="grid gap-2">
+                <Label>{config.a.label}</Label>
+                <Input value={fieldA} onChange={(e) => setFieldA(e.target.value)} placeholder={config.a.placeholder} />
+              </div>
+              <div className="grid gap-2">
+                <Label>{config.b.label}</Label>
+                <Input value={fieldB} onChange={(e) => setFieldB(e.target.value)} placeholder={config.b.placeholder} />
+              </div>
+              <div className="grid gap-2">
+                <Label>{config.c.label}</Label>
+                <Input value={fieldC} onChange={(e) => setFieldC(e.target.value)} placeholder={config.c.placeholder} />
+              </div>
+            </div>
+          )}
+
           <div className="grid gap-2">
-            <Label htmlFor="entity-summary">Summary (optional)</Label>
+            <Label htmlFor="entity-summary">Summary / body (optional)</Label>
             <Textarea
               id="entity-summary"
               rows={3}

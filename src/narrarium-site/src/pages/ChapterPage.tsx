@@ -8,6 +8,8 @@ import {
   Loader2,
   FileEdit,
   PenLine,
+  ClipboardCheck,
+  NotebookText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +35,14 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type Paragraph } from "@/types/book";
 import { resolveBookToken } from "@/types/settings";
 import { slugify } from "@/narrarium/canon";
+import {
+  createChapterDraftArtifacts,
+  createChapterEvaluationArtifact,
+  createChapterResumeArtifact,
+  createParagraphDraftArtifact,
+  createParagraphEvaluationArtifact,
+  createParagraphScriptArtifact,
+} from "@/narrarium/workspace";
 import { stringify } from "yaml";
 
 function stringifyFrontmatter(frontmatter: Record<string, unknown>): string {
@@ -208,6 +218,73 @@ export function ChapterPage() {
     }
   }
 
+  async function handleCreateChapterDraft() {
+    if (!book || !chapter) return;
+    try {
+      const match = /^(\d{3})-/.exec(chapter.slug);
+      const number = Number(match?.[1] ?? 1);
+      await createChapterDraftArtifacts(token, book.owner, book.repo, branch, {
+        number,
+        title: chapter.title,
+      });
+      toast({ title: "Chapter draft created" });
+    } catch (err) {
+      toast({ title: "Chapter draft failed", description: String(err), variant: "destructive" });
+    }
+  }
+
+  async function handleCreateChapterResume() {
+    if (!book || !chapter) return;
+    try {
+      await createChapterResumeArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug });
+      toast({ title: "Chapter resume created" });
+    } catch (err) {
+      toast({ title: "Chapter resume failed", description: String(err), variant: "destructive" });
+    }
+  }
+
+  async function handleCreateChapterEvaluation() {
+    if (!book || !chapter) return;
+    try {
+      await createChapterEvaluationArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug });
+      toast({ title: "Chapter evaluation created" });
+    } catch (err) {
+      toast({ title: "Chapter evaluation failed", description: String(err), variant: "destructive" });
+    }
+  }
+
+  async function handleCreateParagraphWorkspace(
+    kind: "draft" | "script" | "evaluation",
+    paragraph: Paragraph,
+  ) {
+    if (!book || !chapter) return;
+    try {
+      if (kind === "draft") {
+        await createParagraphDraftArtifact(token, book.owner, book.repo, branch, {
+          chapterSlug: chapter.slug,
+          number: Number(paragraph.number),
+          title: paragraph.title,
+        });
+        toast({ title: `Draft created for ${paragraph.title}` });
+      } else if (kind === "script") {
+        await createParagraphScriptArtifact(token, book.owner, book.repo, branch, {
+          chapterSlug: chapter.slug,
+          number: Number(paragraph.number),
+          title: paragraph.title,
+        });
+        toast({ title: `Script created for ${paragraph.title}` });
+      } else {
+        await createParagraphEvaluationArtifact(token, book.owner, book.repo, branch, {
+          chapterSlug: chapter.slug,
+          paragraphPath: paragraph.path,
+        });
+        toast({ title: `Evaluation created for ${paragraph.title}` });
+      }
+    } catch (err) {
+      toast({ title: `Create ${kind} failed`, description: String(err), variant: "destructive" });
+    }
+  }
+
   // ── Guards ────────────────────────────────────────────────────────────────
   if (!book || !structure) {
     return (
@@ -241,7 +318,7 @@ export function ChapterPage() {
       </Button>
 
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">{chapter.title}</h1>
           <p className="text-muted-foreground text-sm">
@@ -249,12 +326,26 @@ export function ChapterPage() {
             {localParagraphs.length !== 1 ? "s" : ""}
           </p>
         </div>
-        {isSavingOrder && (
-          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Saving order…
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {isSavingOrder && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Saving order…
+            </div>
+          )}
+          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterDraft()}>
+            <FileEdit className="mr-1 h-4 w-4" />
+            Draft
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterResume()}>
+            <NotebookText className="mr-1 h-4 w-4" />
+            Resume
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterEvaluation()}>
+            <ClipboardCheck className="mr-1 h-4 w-4" />
+            Evaluation
+          </Button>
+        </div>
       </div>
 
       {/* Metadata badges */}
@@ -320,6 +411,12 @@ export function ChapterPage() {
                 draft
               </Badge>
             )}
+
+            <div className="hidden items-center gap-1 lg:flex">
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px]" onClick={() => void handleCreateParagraphWorkspace("draft", p)}>Draft</Button>
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px]" onClick={() => void handleCreateParagraphWorkspace("script", p)}>Script</Button>
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px]" onClick={() => void handleCreateParagraphWorkspace("evaluation", p)}>Eval</Button>
+            </div>
 
             {/* Delete */}
             <button

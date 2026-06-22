@@ -6,6 +6,7 @@ import { BooksPage } from "@/pages/BooksPage";
 import { AddBookPage } from "@/pages/AddBookPage";
 import { BookPage } from "@/pages/BookPage";
 import { BookSettingsPage } from "@/pages/BookSettingsPage";
+import { CanonEntityPage } from "@/pages/CanonEntityPage";
 import { ChapterPage } from "@/pages/ChapterPage";
 import { ParagraphPage } from "@/pages/ParagraphPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -51,6 +52,7 @@ export const router = createBrowserRouter([
       { path: "books/add", element: <AddBookPage /> },
       { path: "books/:bookId", element: <BookPage /> },
       { path: "books/:bookId/settings", element: <BookSettingsPage /> },
+      { path: "books/:bookId/canon/:section/:slug", element: <CanonEntityPage /> },
       {
         path: "books/:bookId/chapters/:chapterId",
         element: <ChapterPage />,

@@ -75,12 +75,18 @@ function useBookStructure(bookId: string) {
   return { book, structure, loading, error, reload };
 }
 
+function fileSlug(path: string): string {
+  return (path.split("/").pop() ?? "").replace(/\.md$/i, "");
+}
+
 function CanonList({
+  bookId,
   files,
   emptyLabel,
   section,
   onOpen,
 }: {
+  bookId: string;
   label?: string;
   files: BookFile[];
   emptyLabel: string;
@@ -102,8 +108,11 @@ function CanonList({
           <span className="font-medium">
             {slugToTitle(f.path.split("/").pop()?.replace(/\.md$/, "") ?? f.path)}
           </span>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-muted-foreground">{f.path}</span>
+          <div className="flex items-center gap-2">
+            <span className="hidden text-xs text-muted-foreground lg:inline">{f.path}</span>
+            <Button asChild variant="ghost" size="sm">
+              <Link to={`/app/books/${bookId}/canon/${section}/${fileSlug(f.path)}`}>Edit</Link>
+            </Button>
             <Button variant="ghost" size="sm" onClick={() => onOpen(section, f)}>
               Open dossier
             </Button>
@@ -162,12 +171,17 @@ export function BookPage() {
   }
 
   function makeCreateEntity(kind: EntityKind) {
-    return async (input: { label: string; summary?: string }) => {
+    return async (input: {
+      label: string;
+      summary?: string;
+      extraFrontmatter?: Record<string, unknown>;
+    }) => {
       if (!book || !token) throw new Error("No GitHub token configured for this book.");
       await createCanonEntity(token, book.owner, book.repo, branch, {
         kind,
         label: input.label,
         summary: input.summary,
+        extraFrontmatter: input.extraFrontmatter,
       });
       toast({ title: `${input.label} created` });
       reload();
@@ -177,7 +191,7 @@ export function BookPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
             {structure?.title ?? book.name}
@@ -200,7 +214,7 @@ export function BookPage() {
                 : "default token"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}
           <Button asChild variant="outline" size="sm">
             <Link to={`/app/books/${book.id}/settings`}>
@@ -276,7 +290,7 @@ export function BookPage() {
 
           {/* ── Chapters ── */}
           <TabsContent value="chapters" className="mt-4">
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted-foreground">
                 {structure.chapters.length} chapter
                 {structure.chapters.length !== 1 ? "s" : ""}
@@ -323,6 +337,7 @@ export function BookPage() {
               <CreateEntityDialog kind="character" onCreate={makeCreateEntity("character")} />
             </div>
             <CanonList
+              bookId={bookId ?? ""}
               label="Characters"
               files={structure.characters}
               emptyLabel="No characters found."
@@ -336,6 +351,7 @@ export function BookPage() {
               <CreateEntityDialog kind="location" onCreate={makeCreateEntity("location")} />
             </div>
             <CanonList
+              bookId={bookId ?? ""}
               label="Locations"
               files={structure.locations}
               emptyLabel="No locations found."
@@ -349,6 +365,7 @@ export function BookPage() {
               <CreateEntityDialog kind="faction" onCreate={makeCreateEntity("faction")} />
             </div>
             <CanonList
+              bookId={bookId ?? ""}
               label="Factions"
               files={structure.factions}
               emptyLabel="No factions found."
@@ -362,6 +379,7 @@ export function BookPage() {
               <CreateEntityDialog kind="item" onCreate={makeCreateEntity("item")} />
             </div>
             <CanonList
+              bookId={bookId ?? ""}
               label="Items"
               files={structure.items}
               emptyLabel="No items found."
@@ -379,6 +397,7 @@ export function BookPage() {
               />
             </div>
             <CanonList
+              bookId={bookId ?? ""}
               label="Timelines"
               files={structure.timelines}
               emptyLabel="No timeline files found."
@@ -392,6 +411,7 @@ export function BookPage() {
               <CreateEntityDialog kind="secret" onCreate={makeCreateEntity("secret")} />
             </div>
             <CanonList
+              bookId={bookId ?? ""}
               label="Secrets"
               files={structure.secrets}
               emptyLabel="No secrets found."

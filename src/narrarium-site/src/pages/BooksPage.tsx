@@ -41,7 +41,7 @@ export function BooksPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">My Books</h1>
           <p className="text-muted-foreground">
@@ -103,7 +103,7 @@ export function BooksPage() {
                   e.preventDefault();
                   setToDelete(book);
                 }}
-                className="absolute top-2 right-2 z-10 hidden group-hover:flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive sm:hidden sm:group-hover:flex"
                 aria-label={`Remove ${book.name}`}
               >
                 <Trash2 className="h-3.5 w-3.5" />
