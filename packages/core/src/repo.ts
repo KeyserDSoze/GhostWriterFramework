@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import fg from "fast-glob";
-import matter from "gray-matter";
+import matter from "./frontmatter.js";
 import { marked } from "marked";
 import {
   BOOK_DIRECTORIES,

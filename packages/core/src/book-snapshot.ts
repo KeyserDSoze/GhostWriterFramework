@@ -1,4 +1,4 @@
-import matter from "gray-matter";
+import matter from "./frontmatter.js";
 import {
   assetSchema,
   bookSchema,

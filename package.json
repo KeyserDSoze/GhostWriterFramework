@@ -8,12 +8,13 @@
     "url": "https://github.com/KeyserDSoze/GhostWriterFramework"
   },
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "src/*"
   ],
   "scripts": {
     "build": "npm run build -w narrarium && npm run build -w narrarium-sdk && npm run build -w narrarium-mcp-server && npm run build -w create-narrarium-book && npm run build -w narrarium-astro-reader",
-    "bms:dev": "npm run bms:dev -w narrarium-site",
-    "bms:build": "npm run bms:build -w narrarium-site",
+    "bms:dev": "npm run dev -w narrarium-site",
+    "bms:build": "npm run build -w narrarium-site",
     "create:book": "node packages/create-narrarium-book/dist/index.js",
     "docs:build": "npm run build -w narrarium-site",
     "docs:dev": "npm run dev -w narrarium-site",

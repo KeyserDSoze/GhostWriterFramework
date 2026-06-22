@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Narrarium</title>
+    <meta name="description" content="AI-assisted book writing, canon management, and documentation for Narrarium." />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <script>
+      // Prevent flash of unstyled theme on load
+      (function () {
+        try {
+          const theme = localStorage.getItem("narrarium-theme");
+          if (
+            theme === "dark" ||
+            (!theme && window.matchMedia("(prefers-color-scheme: dark)").matches)
+          ) {
+            document.documentElement.classList.add("dark");
+          }
+        } catch {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

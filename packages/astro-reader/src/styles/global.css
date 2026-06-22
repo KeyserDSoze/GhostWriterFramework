@@ -881,25 +881,25 @@ h3 {
   line-height: var(--reader-leading);
 }
 
-.prose :global(p:first-child) {
+.prose p:first-child {
   margin-top: 0;
 }
 
-.prose :global(p),
-.prose :global(ul),
-.prose :global(ol),
-.prose :global(blockquote) {
+.prose p,
+.prose ul,
+.prose ol,
+.prose blockquote {
   margin: 0 0 1.1em;
 }
 
-.prose :global(h1),
-.prose :global(h2),
-.prose :global(h3) {
+.prose h1,
+.prose h2,
+.prose h3 {
   margin: 1.5em 0 0.75em;
   font-family: var(--ui-family);
 }
 
-.prose :global(blockquote) {
+.prose blockquote {
   padding-left: 1.25em;
   border-left: 3px solid var(--line);
   color: var(--text-muted);

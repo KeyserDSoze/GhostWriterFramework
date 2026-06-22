@@ -142,6 +142,20 @@ Build the GitHub Pages documentation site locally with:
 npm run docs:build
 ```
 
+The production Narrarium site lives in `src/narrarium-site` and is now a Vite/React static app. It includes the public landing page, docs, MCP reference, legal pages, and the authenticated `/app` workspace. The docs are generated from repository Markdown at build time by `src/narrarium-site/scripts/generate-docs.mjs`.
+
+To deploy it on GitHub Pages:
+
+- enable **Settings -> Pages -> Source: GitHub Actions** in the repository
+- keep `src/narrarium-site/public/CNAME` set to the custom domain, currently `narrarium.net`
+- add the repository Actions secret `VITE_GOOGLE_CLIENT_ID` for Google Drive sign-in
+- add the repository Actions secret `VITE_MICROSOFT_CLIENT_ID` for Microsoft Entra ID / OneDrive sign-in
+- configure the Google OAuth app with `https://narrarium.net` as an authorized JavaScript origin
+- configure the Entra ID app registration with `https://narrarium.net/` as a SPA redirect URI
+- keep `SITE_BASE=/` in `.github/workflows/book-management-system.yml` for the custom domain deployment
+
+The workflow `Deploy Narrarium Site` builds `src/narrarium-site/dist` and uploads it with the official GitHub Pages artifact action. The build also writes `404.html` from `index.html`, so React Router paths such as `/docs/...` and `/app/books` survive direct refreshes on GitHub Pages.
+
 Repo-only helper commands:
 
 ```bash

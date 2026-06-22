@@ -6,6 +6,8 @@ import { defineMiddleware } from "astro:middleware";
 // restarting the server. It is a no-op during production static builds
 // because there are no cookies at build time.
 export const onRequest = defineMiddleware(async (context, next) => {
+  if (!import.meta.env.DEV) return next();
+
   const cookie = context.request.headers.get("cookie") ?? "";
   const cookieRequiresFull = cookie.split(";").some((part) => part.trim() === "narrarium-canon=full");
   const envAlreadyFull = Boolean(process.env.NARRARIUM_READER_CANON_MODE);

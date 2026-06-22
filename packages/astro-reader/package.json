@@ -50,10 +50,10 @@
     "test": "npm run build:cli && node --test test/**/*.test.mjs"
   },
   "dependencies": {
-    "narrarium": "^0.1.52",
-    "astro": "^5.14.1",
+    "astro": "^7.0.0",
     "chokidar": "^4.0.3",
-    "marked": "^16.3.0"
+    "marked": "^16.3.0",
+    "narrarium": "^0.1.52"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",

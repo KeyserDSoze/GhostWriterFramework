@@ -1,0 +1,158 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 40 33% 95%;
+    --foreground: 120 4% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 120 4% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 120 4% 12%;
+    --primary: 174 76% 24%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 120 4% 90%;
+    --secondary-foreground: 120 4% 12%;
+    --muted: 120 4% 92%;
+    --muted-foreground: 120 4% 40%;
+    --accent: 174 76% 90%;
+    --accent-foreground: 174 76% 18%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 120 4% 85%;
+    --input: 120 4% 88%;
+    --ring: 174 76% 24%;
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 186 18% 8%;
+    --foreground: 150 20% 92%;
+    --card: 186 14% 11%;
+    --card-foreground: 150 20% 92%;
+    --popover: 186 14% 10%;
+    --popover-foreground: 150 20% 92%;
+    --primary: 174 55% 60%;
+    --primary-foreground: 174 76% 12%;
+    --secondary: 186 10% 18%;
+    --secondary-foreground: 150 20% 92%;
+    --muted: 186 10% 16%;
+    --muted-foreground: 150 10% 55%;
+    --accent: 186 10% 20%;
+    --accent-foreground: 174 55% 65%;
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 0 86% 97%;
+    --border: 186 10% 20%;
+    --input: 186 10% 20%;
+    --ring: 174 55% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings:
+      "rlig" 1,
+      "calt" 1;
+  }
+}
+
+@layer components {
+  .ghost-grid {
+    background-image:
+      linear-gradient(hsl(var(--border) / 0.28) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.22) 1px, transparent 1px),
+      radial-gradient(circle at 18% 8%, hsl(var(--primary) / 0.12), transparent 34%),
+      radial-gradient(circle at 88% 18%, hsl(var(--accent-foreground) / 0.08), transparent 30%);
+    background-size: 42px 42px, 42px 42px, auto, auto;
+  }
+
+  .brand-sigil {
+    @apply flex h-11 w-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/20;
+  }
+
+  .doc-prose {
+    @apply max-w-none text-[0.98rem] leading-7 text-foreground;
+  }
+
+  .doc-prose h1,
+  .doc-prose h2,
+  .doc-prose h3,
+  .doc-prose h4 {
+    @apply scroll-m-24 font-serif font-semibold tracking-tight text-foreground;
+  }
+
+  .doc-prose h1 {
+    @apply mt-0 text-4xl;
+  }
+
+  .doc-prose h2 {
+    @apply mt-10 border-b pb-2 text-2xl;
+  }
+
+  .doc-prose h3 {
+    @apply mt-8 text-xl;
+  }
+
+  .doc-prose h4 {
+    @apply mt-6 text-lg;
+  }
+
+  .doc-prose p,
+  .doc-prose ul,
+  .doc-prose ol,
+  .doc-prose blockquote,
+  .doc-prose pre,
+  .doc-prose table {
+    @apply mt-4;
+  }
+
+  .doc-prose a {
+    @apply text-primary underline underline-offset-4;
+  }
+
+  .doc-prose ul {
+    @apply list-disc pl-6;
+  }
+
+  .doc-prose ol {
+    @apply list-decimal pl-6;
+  }
+
+  .doc-prose li {
+    @apply mt-2;
+  }
+
+  .doc-prose code {
+    @apply rounded-md bg-muted px-1.5 py-0.5 font-mono text-sm text-foreground;
+  }
+
+  .doc-prose pre {
+    @apply overflow-x-auto rounded-2xl border bg-slate-950 p-4 text-slate-100;
+  }
+
+  .doc-prose pre code {
+    @apply bg-transparent p-0 text-slate-100;
+  }
+
+  .doc-prose table {
+    @apply w-full border-collapse overflow-hidden rounded-2xl text-sm;
+  }
+
+  .doc-prose th,
+  .doc-prose td {
+    @apply border px-3 py-2 align-top;
+  }
+
+  .doc-prose th {
+    @apply bg-muted text-left font-semibold;
+  }
+
+  .doc-prose blockquote {
+    @apply border-l-4 border-primary/50 pl-4 text-muted-foreground;
+  }
+}
