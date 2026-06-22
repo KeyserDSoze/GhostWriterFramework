@@ -14,6 +14,11 @@ export type AppRouteContext =
   | { kind: "paragraph-workspace"; bookId: string; chapterId: string; paragraphNum: string; workspaceKind: string }
   | { kind: "other"; pathname: string };
 
+export interface AvailableFile {
+  path: string;
+  role: string;
+}
+
 export interface LoadedWriterContext {
   route: AppRouteContext;
   book: BookEntry | null;
@@ -22,7 +27,9 @@ export interface LoadedWriterContext {
   paragraph: Paragraph | null;
   title: string;
   summary: string;
+  availableFiles: AvailableFile[];
   relevantFiles: Array<{ path: string; content: string }>;
+  loadedFilePaths: string[];
   noteTargetPath: string | null;
 }
 
@@ -109,18 +116,31 @@ export async function loadWriterContext(
       : null;
 
   const token = book ? resolveBookToken(book, settings) : "";
+  const availableFiles = structure ? buildAvailableFileManifest(structure) : [];
   const relevantFiles: Array<{ path: string; content: string }> = [];
+  const loaded = new Set<string>();
 
   if (book && structure && token) {
     const pushFile = async (path: string | undefined) => {
-      if (!path) return;
+      if (!path || loaded.has(path)) return;
       try {
         const content = await loadFileContent(token, book.owner, book.repo, path);
         relevantFiles.push({ path, content });
+        loaded.add(path);
       } catch {
         // Ignore missing optional files; the assistant works with what exists.
       }
     };
+
+    await pushFile(structure.globalWritingStylePath);
+    await pushFile(structure.voicesPath);
+    await pushFile(structure.plotPath);
+
+    if (chapter) {
+      await pushFile(chapter.writingStylePath);
+      await pushFile(`resumes/chapters/${chapter.slug}.md`);
+      await pushFile(`evaluations/chapters/${chapter.slug}.md`);
+    }
 
     switch (route.kind) {
       case "book":
@@ -161,7 +181,9 @@ export async function loadWriterContext(
     paragraph,
     title: buildContextTitle(route, structure, chapter, paragraph),
     summary: buildContextSummary(route, book, structure, chapter, paragraph),
+    availableFiles,
     relevantFiles,
+    loadedFilePaths: [...loaded],
     noteTargetPath: buildNoteTargetPath(route, chapter),
   };
 }
@@ -268,4 +290,44 @@ function resolveWorkspacePath(
   if (workspaceKind === "script") return `scripts/${chapter.slug}/${slug}.md`;
   if (workspaceKind === "evaluation") return `evaluations/paragraphs/${chapter.slug}/${slug}.md`;
   return undefined;
+}
+
+
+function buildAvailableFileManifest(structure: BookStructure): AvailableFile[] {
+  const files: AvailableFile[] = [];
+  const add = (path: string | undefined, role: string) => {
+    if (path) files.push({ path, role });
+  };
+
+  add("book.md", "book metadata");
+  add(structure.plotPath, "plot");
+  add(structure.globalWritingStylePath, "global writing style");
+  add(structure.voicesPath, "voices/style reference");
+
+  for (const chapter of structure.chapters) {
+    add(`${chapter.path}/chapter.md`, "chapter metadata/body");
+    add(chapter.writingStylePath, "chapter writing style");
+    add(chapter.draftPath, "chapter draft");
+    add(`resumes/chapters/${chapter.slug}.md`, "chapter resume");
+    add(`evaluations/chapters/${chapter.slug}.md`, "chapter evaluation");
+    for (const paragraph of chapter.paragraphs) {
+      add(paragraph.path, "paragraph");
+      add(paragraph.draftPath, "paragraph draft");
+      const slug = (paragraph.path.split("/").pop() ?? "").replace(/\.md$/i, "");
+      add(`scripts/${chapter.slug}/${slug}.md`, "scene script");
+      add(`evaluations/paragraphs/${chapter.slug}/${slug}.md`, "paragraph evaluation");
+    }
+  }
+
+  const canon = [
+    ...structure.characters.map((file) => ({ path: file.path, role: "character" })),
+    ...structure.locations.map((file) => ({ path: file.path, role: "location" })),
+    ...structure.factions.map((file) => ({ path: file.path, role: "faction" })),
+    ...structure.items.map((file) => ({ path: file.path, role: "item" })),
+    ...structure.secrets.map((file) => ({ path: file.path, role: "secret" })),
+    ...structure.timelines.map((file) => ({ path: file.path, role: "timeline event" })),
+  ];
+  files.push(...canon);
+
+  return files.sort((a, b) => a.path.localeCompare(b.path));
 }

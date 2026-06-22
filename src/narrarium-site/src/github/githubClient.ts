@@ -524,3 +524,86 @@ export async function renameAndUpdateFile(
   const sha = newTree.tree.find((n) => n.path === newPath)?.sha ?? "";
   return { sha };
 }
+
+export interface BranchDiffFile {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch?: string;
+  previousFilename?: string;
+}
+
+export async function compareBranches(
+  token: string,
+  owner: string,
+  repo: string,
+  base: string,
+  head: string,
+): Promise<BranchDiffFile[]> {
+  const octokit = createGitHubClient(token);
+  const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner,
+    repo,
+    basehead: `${base}...${head}`,
+  });
+  return (data.files ?? []).map((file) => ({
+    filename: file.filename,
+    status: file.status,
+    additions: file.additions,
+    deletions: file.deletions,
+    changes: file.changes,
+    patch: file.patch,
+    previousFilename: file.previous_filename,
+  }));
+}
+
+export async function deleteFile(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  path: string,
+  sha: string,
+  message: string,
+): Promise<void> {
+  const octokit = createGitHubClient(token);
+  await octokit.rest.repos.deleteFile({
+    owner,
+    repo,
+    path,
+    message,
+    sha,
+    branch,
+  });
+}
+
+export async function revertFileToRef(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  path: string,
+  baseRef: string,
+): Promise<void> {
+  const current = await readFileWithSha(token, owner, repo, branch, path).catch(() => null);
+  const base = await readFileWithSha(token, owner, repo, baseRef, path).catch(() => null);
+
+  if (base && current) {
+    await updateFile(token, owner, repo, branch, path, current.sha, base.content, `Revert ${path} to ${baseRef}`);
+    return;
+  }
+
+  if (base && !current) {
+    await createFile(token, owner, repo, branch, path, base.content, `Restore ${path} from ${baseRef}`);
+    return;
+  }
+
+  if (!base && current) {
+    await deleteFile(token, owner, repo, branch, path, current.sha, `Remove ${path}`);
+    return;
+  }
+
+  throw new Error(`No file content found for ${path} on ${branch} or ${baseRef}.`);
+}

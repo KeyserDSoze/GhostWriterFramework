@@ -1,12 +1,30 @@
 import { create } from "zustand";
 
-export interface AssistantAction {
-  kind: "apply-paragraph-rewrite";
-  bookId: string;
-  chapterSlug: string;
-  paragraphPath: string;
-  proposedBody: string;
+export interface AssistantFileUpdate {
+  path: string;
+  content: string;
+  reason?: string;
+  previousContent?: string | null;
 }
+
+export type AssistantAction =
+  | {
+      kind: "apply-paragraph-rewrite";
+      bookId: string;
+      chapterSlug: string;
+      paragraphPath: string;
+      proposedBody: string;
+    }
+  | {
+      kind: "apply-file-updates";
+      bookId: string;
+      updates: AssistantFileUpdate[];
+    }
+  | {
+      kind: "undo-file-updates";
+      bookId: string;
+      updates: AssistantFileUpdate[];
+    };
 
 export interface AssistantMessage {
   id: string;
@@ -39,6 +57,7 @@ interface AssistantState {
   setSessions: (sessions: AssistantSessionMeta[]) => void;
   setCurrentSession: (session: AssistantSession | null) => void;
   updateCurrentSession: (updater: (session: AssistantSession) => AssistantSession) => void;
+  updateMessage: (messageId: string, patch: Partial<AssistantMessage>) => void;
   clearMessages: () => void;
 }
 
@@ -54,6 +73,17 @@ export const useAssistantStore = create<AssistantState>((set) => ({
   updateCurrentSession: (updater) =>
     set((state) => ({
       currentSession: state.currentSession ? updater(state.currentSession) : state.currentSession,
+    })),
+  updateMessage: (messageId, patch) =>
+    set((state) => ({
+      currentSession: state.currentSession
+        ? {
+            ...state.currentSession,
+            messages: state.currentSession.messages.map((message) =>
+              message.id === messageId ? { ...message, ...patch } : message,
+            ),
+          }
+        : state.currentSession,
     })),
   clearMessages: () =>
     set((state) => ({
