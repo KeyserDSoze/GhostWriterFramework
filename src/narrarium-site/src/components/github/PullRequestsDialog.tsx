@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ExternalLink, GitPullRequest, Loader2, Plus } from "lucide-react";
+import { ExternalLink, GitPullRequest, Loader2, Merge, Plus, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -12,7 +12,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
-import { createPullRequest, listOpenPullRequests, type PullRequestSummary } from "@/github/githubClient";
+import {
+  closePullRequest,
+  createPullRequest,
+  listOpenPullRequests,
+  mergePullRequest,
+  type PullRequestSummary,
+} from "@/github/githubClient";
 
 export function PullRequestsDialog(props: {
   token: string;
@@ -27,19 +33,27 @@ export function PullRequestsDialog(props: {
   const [pulls, setPulls] = useState<PullRequestSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [actingNumber, setActingNumber] = useState<number | null>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
 
+  async function loadPulls() {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const items = await listOpenPullRequests(token, owner, repo, head);
+      setPulls(items);
+    } catch (err) {
+      toast({ title: "Failed to load PRs", description: String(err), variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (!open || !token) return;
-    setLoading(true);
-    void listOpenPullRequests(token, owner, repo, head)
-      .then(setPulls)
-      .catch((err) => {
-        toast({ title: "Failed to load PRs", description: String(err), variant: "destructive" });
-      })
-      .finally(() => setLoading(false));
-  }, [open, token, owner, repo, head, toast]);
+    void loadPulls();
+  }, [open, token, owner, repo, head]);
 
   async function handleCreate() {
     if (!title.trim()) return;
@@ -59,6 +73,32 @@ export function PullRequestsDialog(props: {
       toast({ title: "Create PR failed", description: String(err), variant: "destructive" });
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function handleClose(pr: PullRequestSummary) {
+    setActingNumber(pr.number);
+    try {
+      await closePullRequest(token, owner, repo, pr.number);
+      setPulls((current) => current.filter((entry) => entry.number !== pr.number));
+      toast({ title: `PR #${pr.number} closed` });
+    } catch (err) {
+      toast({ title: "Close PR failed", description: String(err), variant: "destructive" });
+    } finally {
+      setActingNumber(null);
+    }
+  }
+
+  async function handleMerge(pr: PullRequestSummary) {
+    setActingNumber(pr.number);
+    try {
+      await mergePullRequest(token, owner, repo, pr.number, pr.title);
+      setPulls((current) => current.filter((entry) => entry.number !== pr.number));
+      toast({ title: `PR #${pr.number} merged` });
+    } catch (err) {
+      toast({ title: "Merge PR failed", description: String(err), variant: "destructive" });
+    } finally {
+      setActingNumber(null);
     }
   }
 
@@ -95,16 +135,28 @@ export function PullRequestsDialog(props: {
             ) : (
               <div className="space-y-2">
                 {pulls.map((pr) => (
-                  <div key={pr.number} className="flex items-center justify-between rounded-lg border p-3 text-sm">
-                    <div>
-                      <p className="font-medium">#{pr.number} {pr.title}</p>
-                      <p className="text-xs text-muted-foreground">{pr.head} -&gt; {pr.base}</p>
+                  <div key={pr.number} className="rounded-lg border p-3 text-sm space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium">#{pr.number} {pr.title}</p>
+                        <p className="text-xs text-muted-foreground">{pr.head} -&gt; {pr.base}</p>
+                      </div>
+                      <Button asChild size="sm" variant="ghost">
+                        <a href={pr.htmlUrl} target="_blank" rel="noopener noreferrer">
+                          <ExternalLink className="mr-1 h-4 w-4" />Open
+                        </a>
+                      </Button>
                     </div>
-                    <Button asChild size="sm" variant="ghost">
-                      <a href={pr.htmlUrl} target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="mr-1 h-4 w-4" />Open
-                      </a>
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" variant="outline" onClick={() => void handleMerge(pr)} disabled={actingNumber === pr.number}>
+                        {actingNumber === pr.number ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Merge className="mr-1 h-4 w-4" />}
+                        Merge
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => void handleClose(pr)} disabled={actingNumber === pr.number}>
+                        {actingNumber === pr.number ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <XCircle className="mr-1 h-4 w-4" />}
+                        Close
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>

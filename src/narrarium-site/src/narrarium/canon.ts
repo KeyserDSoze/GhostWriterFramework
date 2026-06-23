@@ -1,8 +1,6 @@
 import { stringify } from "yaml";
 import { createFile } from "@/github/githubClient";
 
-// ─── Slug / id helpers (mirror packages/core utils) ──────────────────────────
-
 export function slugify(value: string): string {
   return value
     .normalize("NFKD")
@@ -21,7 +19,9 @@ export function chapterSlug(number: number, title: string): string {
   return `${formatOrdinal(number)}-${slugify(title)}`;
 }
 
-// ─── Canon entity kinds ──────────────────────────────────────────────────────
+export function paragraphSlug(number: number, title: string): string {
+  return `${formatOrdinal(number)}-${slugify(title)}`;
+}
 
 export type EntityKind =
   | "character"
@@ -49,14 +49,12 @@ export const ENTITY_LABEL: Record<EntityKind, string> = {
   "timeline-event": "Timeline event",
 };
 
-/** Build a markdown document from frontmatter + body. */
 function renderMarkdown(frontmatter: Record<string, unknown>, body: string): string {
   const yaml = stringify(frontmatter).trimEnd();
   const trimmedBody = body.replace(/^\n+/, "");
   return `---\n${yaml}\n---\n\n${trimmedBody}\n`;
 }
 
-/** Remove undefined/empty values so frontmatter stays clean. */
 function clean(frontmatter: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(frontmatter)) {
@@ -68,13 +66,11 @@ function clean(frontmatter: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-// ─── Entity creation ─────────────────────────────────────────────────────────
-
 export interface CreateEntityInput {
   kind: EntityKind;
-  /** Name (character/item/location/faction) or title (secret/timeline-event). */
   label: string;
   summary?: string;
+  body?: string;
   extraFrontmatter?: Record<string, unknown>;
 }
 
@@ -111,20 +107,13 @@ export async function createCanonEntity(
     ...(input.extraFrontmatter ?? {}),
   });
 
-  const body = input.summary?.trim()
-    ? `${input.summary.trim()}\n`
-    : defaultEntityBody(input.kind, input.label);
+  const body = input.body?.trim()
+    ? `${input.body.trim()}\n`
+    : input.summary?.trim()
+      ? `${input.summary.trim()}\n`
+      : defaultEntityBody(input.kind, input.label);
 
-  await createFile(
-    token,
-    owner,
-    repo,
-    branch,
-    path,
-    renderMarkdown(frontmatter, body),
-    `Add ${input.kind} ${input.label}`,
-  );
-
+  await createFile(token, owner, repo, branch, path, renderMarkdown(frontmatter, body), `Add ${input.kind} ${input.label}`);
   return { path, id, slug };
 }
 
@@ -145,13 +134,12 @@ function defaultEntityBody(kind: EntityKind, label: string): string {
   }
 }
 
-// ─── Chapter creation ────────────────────────────────────────────────────────
-
 export interface CreateChapterInput {
   number: number;
   title: string;
   summary?: string;
   pov?: string[];
+  body?: string;
 }
 
 export interface CreatedChapter {
@@ -181,44 +169,52 @@ export async function createChapter(
     pov: input.pov,
   });
 
-  const body = `# ${input.title}\n\nStart the chapter here.\n`;
+  const body = input.body?.trim()
+    ? `${input.body.trim()}\n`
+    : `# ${input.title}\n\nStart the chapter here.\n`;
 
-  await createFile(
-    token,
-    owner,
-    repo,
-    branch,
-    chapterFilePath,
-    renderMarkdown(frontmatter, body),
-    `Add chapter ${formatOrdinal(input.number)}: ${input.title}`,
-  );
-
-  // Paired resume + evaluation stubs, mirroring the MCP createChapter behaviour.
-  await createFile(
-    token,
-    owner,
-    repo,
-    branch,
-    `resumes/chapters/${slug}.md`,
-    renderMarkdown(
-      { type: "resume", id: `resume:chapter:${slug}`, title: `Resume ${slug}` },
-      "# Summary\n\nSummarize the chapter here.\n",
-    ),
-    `Add resume for chapter ${slug}`,
-  ).catch(() => undefined);
-
-  await createFile(
-    token,
-    owner,
-    repo,
-    branch,
-    `evaluations/chapters/${slug}.md`,
-    renderMarkdown(
-      { type: "evaluation", id: `evaluation:chapter:${slug}`, title: `Evaluation ${slug}` },
-      "# Evaluation\n\nEvaluate the chapter here.\n",
-    ),
-    `Add evaluation for chapter ${slug}`,
-  ).catch(() => undefined);
-
+  await createFile(token, owner, repo, branch, chapterFilePath, renderMarkdown(frontmatter, body), `Add chapter ${formatOrdinal(input.number)}: ${input.title}`);
+  await createFile(token, owner, repo, branch, `resumes/chapters/${slug}.md`, renderMarkdown({ type: "resume", id: `resume:chapter:${slug}`, title: `Resume ${slug}` }, "# Summary\n\nSummarize the chapter here.\n"), `Add resume for chapter ${slug}`).catch(() => undefined);
+  await createFile(token, owner, repo, branch, `evaluations/chapters/${slug}.md`, renderMarkdown({ type: "evaluation", id: `evaluation:chapter:${slug}`, title: `Evaluation ${slug}` }, "# Evaluation\n\nEvaluate the chapter here.\n"), `Add evaluation for chapter ${slug}`).catch(() => undefined);
   return { slug, id, chapterFilePath };
+}
+
+export interface CreateParagraphInput {
+  chapterSlug: string;
+  number: number;
+  title: string;
+  body?: string;
+  summary?: string;
+}
+
+export interface CreatedParagraph {
+  slug: string;
+  id: string;
+  paragraphFilePath: string;
+}
+
+export async function createParagraphDocument(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  input: CreateParagraphInput,
+): Promise<CreatedParagraph> {
+  const slug = paragraphSlug(input.number, input.title);
+  const id = `paragraph:${input.chapterSlug}:${slug}`;
+  const paragraphFilePath = `chapters/${input.chapterSlug}/${slug}.md`;
+  const frontmatter = clean({
+    type: "paragraph",
+    id,
+    chapter: `chapter:${input.chapterSlug}`,
+    number: input.number,
+    title: input.title,
+    canon: "draft",
+    summary: input.summary,
+  });
+  const body = input.body?.trim()
+    ? `${input.body.trim()}\n`
+    : `# ${input.title}\n\nStart the paragraph here.\n`;
+  await createFile(token, owner, repo, branch, paragraphFilePath, renderMarkdown(frontmatter, body), `Add paragraph ${slug}`);
+  return { slug, id, paragraphFilePath };
 }

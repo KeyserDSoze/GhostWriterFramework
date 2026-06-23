@@ -36,6 +36,7 @@ import {
 import { CreateChapterDialog } from "@/components/canon/CreateChapterDialog";
 import { CreateEntityDialog } from "@/components/canon/CreateEntityDialog";
 import { PullRequestsDialog } from "@/components/github/PullRequestsDialog";
+import { CommitHistoryDialog } from "@/components/github/CommitHistoryDialog";
 
 function useBookStructure(bookId: string) {
   const { settings } = useSettingsStore();
@@ -219,6 +220,12 @@ export function BookPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}
+          <CommitHistoryDialog
+            token={token}
+            owner={book.owner}
+            repo={book.repo}
+            branch={branch}
+          />
           <PullRequestsDialog
             token={token}
             owner={book.owner}

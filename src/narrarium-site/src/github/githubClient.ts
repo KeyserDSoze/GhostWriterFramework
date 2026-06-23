@@ -719,3 +719,60 @@ export async function getDefaultBranch(
   const { data } = await octokit.rest.repos.get({ owner, repo });
   return data.default_branch;
 }
+
+export interface BranchCommitSummary {
+  sha: string;
+  message: string;
+  authorName: string;
+  authoredAt: string;
+  url: string;
+}
+
+export async function listBranchCommits(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+): Promise<BranchCommitSummary[]> {
+  const octokit = createGitHubClient(token);
+  const commits = await octokit.paginate(octokit.rest.repos.listCommits, {
+    owner,
+    repo,
+    sha: branch,
+    per_page: 30,
+  });
+  return commits.map((commit) => ({
+    sha: commit.sha,
+    message: commit.commit.message.split("\n")[0] ?? commit.sha,
+    authorName: commit.commit.author?.name ?? commit.author?.login ?? "Unknown",
+    authoredAt: commit.commit.author?.date ?? new Date().toISOString(),
+    url: commit.html_url,
+  }));
+}
+
+export async function closePullRequest(
+  token: string,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<void> {
+  const octokit = createGitHubClient(token);
+  await octokit.rest.pulls.update({ owner, repo, pull_number: number, state: "closed" });
+}
+
+export async function mergePullRequest(
+  token: string,
+  owner: string,
+  repo: string,
+  number: number,
+  commitTitle?: string,
+): Promise<void> {
+  const octokit = createGitHubClient(token);
+  await octokit.rest.pulls.merge({
+    owner,
+    repo,
+    pull_number: number,
+    commit_title: commitTitle,
+    merge_method: "merge",
+  });
+}
