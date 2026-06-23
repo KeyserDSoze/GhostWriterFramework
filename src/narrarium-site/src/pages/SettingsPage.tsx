@@ -293,6 +293,18 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
           <Label>{t("settings.chatModel")}</Label>
           <Input value={integration.modelWriting ?? ""} onChange={(e) => onChange({ modelWriting: e.target.value })} placeholder="gpt-4o" disabled={integration.provider === "m365_copilot"} />
         </div>
+        {integration.provider !== "m365_copilot" && (
+          <>
+            <div className="grid gap-2">
+              <Label>STT model</Label>
+              <Input value={integration.modelSpeechToText ?? ""} onChange={(e) => onChange({ modelSpeechToText: e.target.value })} placeholder="whisper-1 or deployment" />
+            </div>
+            <div className="grid gap-2">
+              <Label>TTS model</Label>
+              <Input value={integration.modelTextToSpeech ?? ""} onChange={(e) => onChange({ modelTextToSpeech: e.target.value })} placeholder="tts-1 or deployment" />
+            </div>
+          </>
+        )}
         {integration.provider === "azure_openai" && (
           <div className="grid gap-2">
             <Label>{t("settings.apiVersion")}</Label>
@@ -314,6 +326,8 @@ function createBlankIntegration(): AIIntegration {
     apiKey: "",
     modelWriting: "gpt-4o",
     modelReview: "gpt-4o",
+    modelSpeechToText: "",
+    modelTextToSpeech: "",
     apiVersion: "2024-10-21",
   };
 }

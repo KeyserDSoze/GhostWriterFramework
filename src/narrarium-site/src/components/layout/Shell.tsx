@@ -1,24 +1,58 @@
 import { Outlet, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Loader2 } from "lucide-react";
 import { Sidebar, MobileSidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { DossierDock } from "./DossierDock";
 import { AssistantPanel } from "@/components/assistant/AssistantPanel";
 import { useSettings } from "@/drive/useSettings";
+import { useSettingsStore } from "@/store/settingsStore";
+import { useTokenRefresh } from "@/hooks/useTokenRefresh";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 export function Shell() {
   const { load } = useSettings();
+  const { i18n } = useTranslation();
+  const { cloudLoaded, syncStatus, settings } = useSettingsStore();
   const location = useLocation();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useTokenRefresh();
 
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
+    if (cloudLoaded && settings.ui.language && i18n.resolvedLanguage !== settings.ui.language) {
+      void i18n.changeLanguage(settings.ui.language);
+    }
+  }, [cloudLoaded, i18n, settings.ui.language]);
+
+  useEffect(() => {
     setMobileNavOpen(false);
   }, [location.pathname]);
+
+  if (!cloudLoaded) {
+    return (
+      <div className="flex h-[100dvh] flex-col items-center justify-center gap-4 bg-background p-6 text-center">
+        {syncStatus === "error" ? (
+          <>
+            <p className="font-semibold">Impossibile caricare le impostazioni dal Drive.</p>
+            <p className="max-w-md text-sm text-muted-foreground">Se il token è scaduto verrai riportato alla login. Altrimenti riprova il caricamento.</p>
+            <Button onClick={() => void load()}>Riprova</Button>
+          </>
+        ) : (
+          <>
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">Caricamento impostazioni e libri…</p>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-[100dvh] overflow-hidden bg-background">

@@ -11,18 +11,23 @@ export function useSettings() {
     setSyncStatus,
     setDriveFileId,
     setLastSynced,
+    setCloudLoaded,
   } = useSettingsStore();
 
   const load = useCallback(async () => {
     // Read token at call time to avoid stale closure (e.g. called right after setAuth)
     const { accessToken, user, invalidateToken } = useAuthStore.getState();
-    if (!accessToken || !user) return;
+    if (!accessToken || !user) {
+      setCloudLoaded(false);
+      return;
+    }
     setSyncStatus("loading");
     try {
       const result = await loadCloudSettings(user.provider, accessToken);
       setDriveFileId(result.fileId);
       setSettings(result.settings);
       setLastSynced(new Date().toISOString());
+      setCloudLoaded(true);
       setSyncStatus("idle");
     } catch (err) {
       if (err instanceof TokenExpiredError) {
@@ -33,7 +38,7 @@ export function useSettings() {
       console.error("Drive load error:", err);
       setSyncStatus("error");
     }
-  }, [setDriveFileId, setLastSynced, setSettings, setSyncStatus]);
+  }, [setCloudLoaded, setDriveFileId, setLastSynced, setSettings, setSyncStatus]);
 
   const save = useCallback(async () => {
     // Read token at call time to avoid stale closure

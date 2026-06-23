@@ -1,4 +1,4 @@
-import { LogOut, Menu } from "lucide-react";
+import { LogOut, Menu, Volume2 } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { LanguageToggle } from "./LanguageToggle";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,10 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuthStore } from "@/store/authStore";
 import { useNavigate } from "react-router-dom";
+import { useRef } from "react";
+import { useSettingsStore } from "@/store/settingsStore";
+import { speakText, type SpeechController } from "@/assistant/speech";
+import { useToast } from "@/components/ui/use-toast";
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -26,11 +30,29 @@ function initials(name: string | undefined): string {
 
 export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { user, clearAuth } = useAuthStore();
+  const { settings } = useSettingsStore();
+  const { toast } = useToast();
   const navigate = useNavigate();
+  const speechRef = useRef<SpeechController | null>(null);
 
   function handleSignOut() {
     clearAuth();
     navigate("/login");
+  }
+
+  async function handleReadPage() {
+    try {
+      if (speechRef.current) {
+        speechRef.current.stop();
+        speechRef.current = null;
+        return;
+      }
+      const main = document.querySelector("main");
+      const text = main?.textContent?.trim() ?? document.body.textContent?.trim() ?? "";
+      speechRef.current = await speakText(text, settings);
+    } catch (err) {
+      toast({ title: "TTS failed", description: String(err), variant: "destructive" });
+    }
   }
 
   return (
@@ -48,6 +70,9 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       </div>
 
       <div className="ml-auto flex items-center gap-1 sm:gap-2">
+        <Button variant="ghost" size="icon" aria-label="Read page" onClick={() => void handleReadPage()}>
+          <Volume2 className="h-4 w-4" />
+        </Button>
         <ThemeToggle />
         <LanguageToggle />
 

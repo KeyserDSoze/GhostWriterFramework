@@ -2,16 +2,21 @@ import { Languages } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { SUPPORTED_LANGUAGES } from "@/i18n";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useSettings } from "@/drive/useSettings";
+import { useSettingsStore } from "@/store/settingsStore";
 
 export function LanguageToggle() {
   const { i18n } = useTranslation();
-  const current = i18n.resolvedLanguage?.split("-")[0] ?? "en";
+  const { settings, patchSettings } = useSettingsStore();
+  const { save } = useSettings();
+  const current = i18n.resolvedLanguage?.split("-")[0] ?? settings.ui.language ?? "en";
+
+  async function changeLanguage(code: "en" | "it") {
+    await i18n.changeLanguage(code);
+    patchSettings({ ui: { ...settings.ui, language: code } });
+    await save();
+  }
 
   return (
     <DropdownMenu>
@@ -22,11 +27,7 @@ export function LanguageToggle() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {SUPPORTED_LANGUAGES.map((language) => (
-          <DropdownMenuItem
-            key={language.code}
-            onClick={() => void i18n.changeLanguage(language.code)}
-            className={current === language.code ? "font-semibold" : undefined}
-          >
+          <DropdownMenuItem key={language.code} onClick={() => void changeLanguage(language.code)} className={current === language.code ? "font-semibold" : undefined}>
             {language.label}
           </DropdownMenuItem>
         ))}

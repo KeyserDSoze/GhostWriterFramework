@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 import {
   Bot,
   GitBranch,
   Loader2,
+  Maximize2,
+  Mic,
+  Minimize2,
   Paperclip,
   Send,
   Sparkles,
+  Square,
   Trash2,
   Wand2,
   X,
@@ -44,6 +49,7 @@ import {
   type BranchDiffFile,
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
+import { speakText, type SpeechController } from "@/assistant/speech";
 
 const ATTACHMENT_TARGETS = [
   { value: "paragraph", label: "Import as paragraph" },
@@ -62,6 +68,7 @@ const ATTACHMENT_TARGETS = [
 type AttachmentTarget = (typeof ATTACHMENT_TARGETS)[number]["value"];
 
 export function AssistantPanel() {
+  const { t } = useTranslation();
   const location = useLocation();
   const route = useMemo(() => parseAppRoute(location.pathname), [location.pathname]);
   const bookId = "bookId" in route ? route.bookId : undefined;
@@ -94,6 +101,10 @@ export function AssistantPanel() {
   const [diffFiles, setDiffFiles] = useState<BranchDiffFile[]>([]);
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [attachmentTarget, setAttachmentTarget] = useState<AttachmentTarget>("paragraph");
+  const [fullScreen, setFullScreen] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [autoSend, setAutoSend] = useState(false);
+  const [speechController, setSpeechController] = useState<SpeechController | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -193,6 +204,52 @@ export function AssistantPanel() {
     }));
   }
 
+  function appendDraftText(text: string) {
+    setDraft((current) => current ? current + " " + text : text);
+  }
+
+  function startSpeechToText() {
+    const SpeechRecognition = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toast({ title: "STT non disponibile", description: "Il browser non supporta SpeechRecognition.", variant: "destructive" });
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.lang = settings.ui.language === "it" ? "it-IT" : "en-US";
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    setListening(true);
+    recognition.onresult = (event: any) => {
+      const transcript = Array.from(event.results).map((result: any) => result[0]?.transcript ?? "").join(" ").trim();
+      if (transcript) {
+        if (autoSend) void sendPrompt(transcript);
+        else appendDraftText(transcript);
+      }
+    };
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
+    recognition.start();
+  }
+
+  function stopReading() {
+    speechController?.stop();
+    setSpeechController(null);
+  }
+
+  async function readText(text: string) {
+    stopReading();
+    try {
+      const controller = await speakText(text, settings);
+      setSpeechController(controller);
+    } catch (err) {
+      toast({ title: "TTS failed", description: String(err), variant: "destructive" });
+    }
+  }
+
+  function readCurrentContext() {
+    const text = [contextLabel, contextSummary, ...contextFiles].join("\n");
+    void readText(text);
+  }
   async function sendPrompt(prompt: string) {
     const trimmed = prompt.trim();
     if (!trimmed || busy) return;
@@ -448,23 +505,23 @@ export function AssistantPanel() {
         <div>
           <div className="flex items-center gap-2">
             <Bot className="h-4 w-4 text-primary" />
-            <p className="font-semibold">Writer Copilot</p>
+            <p className="font-semibold">{t("assistant.title")}</p>
           </div>
           <p className="text-xs text-muted-foreground">{contextLabel}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={newChat}>New</Button>
-          <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Close</Button>
+          <Button variant="ghost" size="sm" onClick={newChat}>{t("assistant.new")}</Button>
+          <Button variant="ghost" size="sm" onClick={() => setFullScreen((value) => !value)}>{fullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}</Button><Button variant="ghost" size="sm" onClick={() => setOpen(false)}>{t("assistant.close")}</Button>
         </div>
       </div>
 
       <div className="border-b px-4 py-3 space-y-3">
         <div className="text-xs text-muted-foreground">{contextSummary || "Context follows the current route and repository files."}</div>
         <details className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
-          <summary className="cursor-pointer font-medium">Context inspector</summary>
+          <summary className="cursor-pointer font-medium">{t("assistant.contextInspector")}</summary>
           <div className="mt-2 space-y-2">
-            <p>{availableCount} files in manifest.</p>
-            <p>Loaded now:</p>
+            <p>{availableCount} {t("assistant.filesInManifest")}.</p>
+            <p>{t("assistant.loadedNow")}:</p>
             <div className="space-y-1">
               {contextFiles.length ? contextFiles.map((path) => <div key={path} className="font-mono">{path}</div>) : <div>none</div>}
             </div>
@@ -472,9 +529,9 @@ export function AssistantPanel() {
         </details>
         <div className="flex items-center gap-2">
           <Select value={currentSession?.fileId ?? currentSession?.id ?? ""} onValueChange={(value) => { if (value === "__new__") newChat(); else void openSession(value); }}>
-            <SelectTrigger className="h-8 flex-1"><SelectValue placeholder={loadingSessions ? "Loading chats…" : "Open a saved chat"} /></SelectTrigger>
+            <SelectTrigger className="h-8 flex-1"><SelectValue placeholder={loadingSessions ? t("assistant.loadingChats") : t("assistant.savedChat")} /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="__new__">New chat</SelectItem>
+              <SelectItem value="__new__">{t("assistant.new")}</SelectItem>
               {sessions.map((session) => <SelectItem key={session.fileId ?? session.id} value={session.fileId ?? session.id}>{session.title}</SelectItem>)}
             </SelectContent>
           </Select>
@@ -493,20 +550,20 @@ export function AssistantPanel() {
       </div>
 
       <div className="flex flex-wrap gap-2 border-b px-4 py-3">
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Create a concise summary of where I am and what matters next.")}><Sparkles className="mr-1 h-4 w-4" />Summary</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Review what I am looking at and tell me strengths, risks, and next actions.")}>Review</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Write or refresh the resume for the current chapter.")}>Resume</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Write or refresh the evaluation for what I am looking at.")}>Evaluation</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Update plot.md for the current book.")}>Plot</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Create a writer note from the current context and save it.")}>Save note</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Search the current book for relevant characters, paragraphs, or canon keywords.")}>Search</Button>
-        <Button variant="outline" size="sm" onClick={() => void loadBranchDiff()} disabled={loadingDiff}>Sync diff</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Improve the current paragraph while preserving all facts.")}><Wand2 className="mr-1 h-4 w-4" />Fix paragraph</Button>
+        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Create a concise summary of where I am and what matters next.")}><Sparkles className="mr-1 h-4 w-4" />{t("assistant.summary")}</Button>
+        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Review what I am looking at and tell me strengths, risks, and next actions.")}>{t("assistant.review")}</Button>
+        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Write or refresh the resume for the current chapter.")}>{t("assistant.resume")}</Button>
+        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Write or refresh the evaluation for what I am looking at.")}>{t("assistant.evaluation")}</Button>
+        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Update plot.md for the current book.")}>{t("assistant.plot")}</Button>
+        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Create a writer note from the current context and save it.")}>{t("assistant.saveNote")}</Button>
+        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Search the current book for relevant characters, paragraphs, or canon keywords.")}>{t("assistant.search")}</Button>
+        <Button variant="outline" size="sm" onClick={() => void loadBranchDiff()} disabled={loadingDiff}>{t("assistant.syncDiff")}</Button><Button variant="outline" size="sm" onClick={readCurrentContext}>{speechController ? t("assistant.stopReading") : t("assistant.readContext")}</Button>
+        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Improve the current paragraph while preserving all facts.")}><Wand2 className="mr-1 h-4 w-4" />{t("assistant.fixParagraph")}</Button>
       </div>
 
       <ScrollArea className="min-h-0 flex-1 px-4 py-3">
         <div className="space-y-3">
-          {currentSession?.messages.length ? null : <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">Ask for summaries, reviews, resume, evaluation, plot updates, searches, branch actions, file edits, or paragraph rewrites. You can also attach PDF, DOCX, markdown, text, PNG and JPG files.</div>}
+          {currentSession?.messages.length ? null : <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">{t("assistant.empty")}</div>}
           {(currentSession?.messages ?? []).map((message, index) => (
             <div key={message.id} className={message.role === "user" ? "ml-8" : "mr-8"}>
               <div className={message.role === "user" ? "rounded-2xl bg-primary px-4 py-3 text-sm text-primary-foreground" : "rounded-2xl border bg-background px-4 py-3 text-sm whitespace-pre-wrap"}>{message.text}</div>
@@ -538,13 +595,13 @@ export function AssistantPanel() {
               {message.action?.kind === "apply-paragraph-rewrite" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">Paragraph rewrite ready</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy}>Apply to paragraph</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>Open chapter</Link></Button></div>}
             </div>
           ))}
-          {busy && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Thinking…</div>}
+          {busy && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("assistant.thinking")}</div>}
         </div>
       </ScrollArea>
 
       <div className="border-t p-4">
         <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void sendPrompt(draft); }}>
-          <Textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Ask the assistant to create, import, summarize, review, switch branch, or edit files…" className="min-h-[100px] resize-none" />
+          <Textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={t("assistant.placeholder")} className="min-h-[100px] resize-none" />
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap gap-2">
               <Select value={attachmentTarget} onValueChange={(value) => setAttachmentTarget(value as AttachmentTarget)}>
@@ -554,17 +611,28 @@ export function AssistantPanel() {
                 </SelectContent>
               </Select>
               <Button type="button" variant="outline" size="sm" onClick={() => void handleImportAttachments()} disabled={busy || !(currentSession?.attachments.length)}>
-                Import attachments
+                {t("assistant.importAttachments")}
               </Button>
             </div>
-            <div className="flex items-center justify-between gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
-                <Paperclip className="mr-1 h-4 w-4" />Attach files
-              </Button>
-              <div className="flex items-center gap-2">
-                <Button type="button" variant="ghost" size="sm" onClick={() => setDraft("")}>Clear</Button>
-                <Button type="submit" disabled={!draft.trim() || busy}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Send className="mr-1 h-4 w-4" />}Send</Button>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={listening ? undefined : startSpeechToText} disabled={busy || listening}>
+                  {listening ? <Square className="mr-1 h-4 w-4" /> : <Mic className="mr-1 h-4 w-4" />}
+                  {listening ? t("assistant.stopMic") : t("assistant.microphone")}
+                </Button>
+                <Button type="button" variant={autoSend ? "default" : "outline"} size="sm" onClick={() => setAutoSend((value) => !value)}>
+                  {t("assistant.autoSend")}
+                </Button>
               </div>
+              <div className="flex items-center gap-2">
+                <Button type="button" variant="ghost" size="sm" onClick={() => setDraft("")}>{t("assistant.clear")}</Button>
+                <Button type="submit" disabled={!draft.trim() || busy}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Send className="mr-1 h-4 w-4" />}{t("assistant.send")}</Button>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+                <Paperclip className="mr-1 h-4 w-4" />{t("assistant.attachFiles")}
+              </Button>
             </div>
           </div>
         </form>
@@ -578,7 +646,7 @@ export function AssistantPanel() {
         <Bot className="mr-2 h-4 w-4" />Copilot
       </Button>
       <Dialog open={syncOpen} onOpenChange={setSyncOpen}><DialogContent className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[920px]">{syncPanel}</DialogContent></Dialog>
-      <Dialog open={open} onOpenChange={setOpen}><DialogContent className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[720px] lg:right-6 lg:left-auto lg:top-auto lg:bottom-6 lg:h-[80dvh] lg:w-[420px] lg:max-w-[420px] lg:translate-x-0 lg:translate-y-0">{panel}</DialogContent></Dialog>
+      <Dialog open={open} onOpenChange={setOpen}><DialogContent className={fullScreen ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0" : "left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[720px] lg:right-6 lg:left-auto lg:top-auto lg:bottom-6 lg:h-[80dvh] lg:w-[420px] lg:max-w-[420px] lg:translate-x-0 lg:translate-y-0"}>{panel}</DialogContent></Dialog>
     </>
   );
 }

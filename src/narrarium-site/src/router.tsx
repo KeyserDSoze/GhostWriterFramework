@@ -11,6 +11,7 @@ import { ChapterPage } from "@/pages/ChapterPage";
 import { ParagraphPage } from "@/pages/ParagraphPage";
 import { WorkspaceDocPage } from "@/pages/WorkspaceDocPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { AssistantChatsPage } from "@/pages/AssistantChatsPage";
 import {
   DocPage,
   DocsIndexPage,
@@ -51,6 +52,7 @@ export const router = createBrowserRouter([
       { index: true, element: <Navigate to="books" replace /> },
       { path: "books", element: <BooksPage /> },
       { path: "books/add", element: <AddBookPage /> },
+      { path: "chats", element: <AssistantChatsPage /> },
       { path: "books/:bookId", element: <BookPage /> },
       { path: "books/:bookId/settings", element: <BookSettingsPage /> },
       { path: "books/:bookId/canon/:section/:slug", element: <CanonEntityPage /> },

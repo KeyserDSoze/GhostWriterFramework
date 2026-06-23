@@ -21,6 +21,10 @@ export interface AIIntegration {
   modelWriting?: string;
   /** Review/evaluation deployment or model. */
   modelReview?: string;
+  /** Speech-to-text deployment/model, used when browser STT is not enough. */
+  modelSpeechToText?: string;
+  /** Text-to-speech deployment/model. */
+  modelTextToSpeech?: string;
   /** Azure API version when provider is azure_openai. */
   apiVersion?: string;
 }
