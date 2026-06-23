@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Bot, Cloud, CloudOff, Github, Loader2, Plus, Trash2 } from "lucide-react";
+import { Bot, Cloud, CloudOff, Github, Loader2, Mic, Plus, Trash2, Volume2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -130,6 +130,44 @@ export function SettingsPage() {
           {t("settings.lastSynced")}: {new Date(lastSynced).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
         </p>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Volume2 className="h-4 w-4" />Speech</CardTitle>
+          <CardDescription>Choose browser or configured AI models for speech-to-text and text-to-speech.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-2">
+            <Label>Speech-to-text</Label>
+            <Select value={settings.speech.sttProvider} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, sttProvider: value as "browser" | "ai" } })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="browser">Browser microphone</SelectItem>
+                <SelectItem value="ai">AI transcription model</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label>Text-to-speech</Label>
+            <Select value={settings.speech.ttsProvider} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, ttsProvider: value as "browser" | "ai" } })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="browser">Browser voice</SelectItem>
+                <SelectItem value="ai">AI TTS model</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label>Voice</Label>
+            <Input value={settings.speech.ttsVoice} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsVoice: e.target.value } })} placeholder="nova or browser voice name" />
+          </div>
+          <div className="grid gap-2">
+            <Label>Browser TTS speed</Label>
+            <Input type="number" min="0.5" max="1.5" step="0.05" value={settings.speech.ttsRate} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsRate: Number(e.target.value) || 0.95 } })} />
+          </div>
+          <p className="text-xs text-muted-foreground sm:col-span-2"><Mic className="mr-1 inline h-3 w-3" />AI STT/TTS uses the STT/TTS model fields configured on the default writing integration. Copilot/M365 does not provide STT/TTS.</p>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

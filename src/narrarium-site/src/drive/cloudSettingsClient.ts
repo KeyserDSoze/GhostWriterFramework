@@ -224,6 +224,10 @@ function migrateSettings(raw: unknown): AppSettings {
       ...DEFAULT_SETTINGS.ui,
       ...(typeof source.ui === "object" && source.ui ? source.ui : {}),
     },
+    speech: {
+      ...DEFAULT_SETTINGS.speech,
+      ...(typeof source.speech === "object" && source.speech ? source.speech : {}),
+    },
     books: Array.isArray(source.books) ? source.books : [],
   };
 }

@@ -49,7 +49,7 @@ import {
   type BranchDiffFile,
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
-import { speakText, type SpeechController } from "@/assistant/speech";
+import { speakText, transcribeAudio, type SpeechController } from "@/assistant/speech";
 
 const ATTACHMENT_TARGETS = [
   { value: "paragraph", label: "Import as paragraph" },
@@ -79,6 +79,8 @@ export function AssistantPanel() {
   const { user, accessToken } = useAuthStore();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const {
     open,
     setOpen,
@@ -208,7 +210,45 @@ export function AssistantPanel() {
     setDraft((current) => current ? current + " " + text : text);
   }
 
-  function startSpeechToText() {
+  async function startSpeechToText() {
+    if (listening && mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      return;
+    }
+
+    if (settings.speech.sttProvider === "ai") {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const recorder = new MediaRecorder(stream);
+        audioChunksRef.current = [];
+        mediaRecorderRef.current = recorder;
+        setListening(true);
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) audioChunksRef.current.push(event.data);
+        };
+        recorder.onstop = async () => {
+          stream.getTracks().forEach((track) => track.stop());
+          setListening(false);
+          mediaRecorderRef.current = null;
+          try {
+            const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+            const transcript = (await transcribeAudio(blob, settings)).trim();
+            if (transcript) {
+              if (autoSend) void sendPrompt(transcript);
+              else appendDraftText(transcript);
+            }
+          } catch (err) {
+            toast({ title: "AI STT failed", description: String(err), variant: "destructive" });
+          }
+        };
+        recorder.start();
+      } catch (err) {
+        setListening(false);
+        toast({ title: "Microfono non disponibile", description: String(err), variant: "destructive" });
+      }
+      return;
+    }
+
     const SpeechRecognition = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       toast({ title: "STT non disponibile", description: "Il browser non supporta SpeechRecognition.", variant: "destructive" });
@@ -557,7 +597,7 @@ export function AssistantPanel() {
         <Button variant="outline" size="sm" onClick={() => void sendPrompt("Update plot.md for the current book.")}>{t("assistant.plot")}</Button>
         <Button variant="outline" size="sm" onClick={() => void sendPrompt("Create a writer note from the current context and save it.")}>{t("assistant.saveNote")}</Button>
         <Button variant="outline" size="sm" onClick={() => void sendPrompt("Search the current book for relevant characters, paragraphs, or canon keywords.")}>{t("assistant.search")}</Button>
-        <Button variant="outline" size="sm" onClick={() => void loadBranchDiff()} disabled={loadingDiff}>{t("assistant.syncDiff")}</Button><Button variant="outline" size="sm" onClick={readCurrentContext}>{speechController ? t("assistant.stopReading") : t("assistant.readContext")}</Button>
+        <Button variant="outline" size="sm" onClick={() => void loadBranchDiff()} disabled={loadingDiff}>{t("assistant.syncDiff")}</Button><Button variant="outline" size="sm" onClick={speechController ? stopReading : readCurrentContext}>{speechController ? t("assistant.stopReading") : t("assistant.readContext")}</Button>
         <Button variant="outline" size="sm" onClick={() => void sendPrompt("Improve the current paragraph while preserving all facts.")}><Wand2 className="mr-1 h-4 w-4" />{t("assistant.fixParagraph")}</Button>
       </div>
 
@@ -616,7 +656,7 @@ export function AssistantPanel() {
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={listening ? undefined : startSpeechToText} disabled={busy || listening}>
+                <Button type="button" variant="outline" size="sm" onClick={() => void startSpeechToText()} disabled={busy}>
                   {listening ? <Square className="mr-1 h-4 w-4" /> : <Mic className="mr-1 h-4 w-4" />}
                   {listening ? t("assistant.stopMic") : t("assistant.microphone")}
                 </Button>

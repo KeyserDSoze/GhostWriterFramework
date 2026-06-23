@@ -60,16 +60,39 @@ export function splitSpeechText(text: string): string[] {
   return chunks;
 }
 
-export async function speakText(text: string, settings: AppSettings): Promise<SpeechController> {
+export function getSpeechIntegration(settings: AppSettings): AIIntegration | null {
   const integration = resolveWritingIntegration(settings);
-  const ttsModel = integration?.modelTextToSpeech?.trim();
-  if (integration && ttsModel && integration.provider !== "m365_copilot" && integration.apiKey) {
-    return speakWithOpenAICompatible(text, integration, ttsModel);
-  }
-  return speakWithBrowser(text);
+  if (!integration || integration.provider === "m365_copilot") return null;
+  if (!integration.apiKey) return null;
+  return integration;
 }
 
-async function speakWithBrowser(text: string): Promise<SpeechController> {
+export async function transcribeAudio(blob: Blob, settings: AppSettings): Promise<string> {
+  const integration = getSpeechIntegration(settings);
+  const model = integration?.modelSpeechToText?.trim();
+  if (!integration || !model) throw new Error("No AI speech-to-text model is configured.");
+  const file = new File([blob], "speech.webm", { type: blob.type || "audio/webm" });
+  const client = createAudioClient(integration);
+  const response = await client.audio.transcriptions.create({ file, model });
+  return response.text ?? "";
+}
+
+export async function speakText(text: string, settings: AppSettings): Promise<SpeechController> {
+  const integration = getSpeechIntegration(settings);
+  const ttsModel = integration?.modelTextToSpeech?.trim();
+  if (settings.speech.ttsProvider === "ai" && integration && ttsModel) {
+    return speakWithOpenAICompatible(text, integration, ttsModel, settings.speech.ttsVoice || "nova");
+  }
+  return speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate);
+}
+
+function createAudioClient(integration: AIIntegration): AzureOpenAI | OpenAI {
+  return integration.provider === "azure_openai"
+    ? new AzureOpenAI({ endpoint: integration.endpoint ?? "", apiKey: integration.apiKey, apiVersion: integration.apiVersion || "2024-10-21", dangerouslyAllowBrowser: true })
+    : new OpenAI({ apiKey: integration.apiKey, baseURL: integration.endpoint || "https://api.openai.com/v1", dangerouslyAllowBrowser: true });
+}
+
+async function speakWithBrowser(text: string, voiceName: string, rate: number): Promise<SpeechController> {
   const chunks = splitSpeechText(text);
   let stopped = false;
   window.speechSynthesis.cancel();
@@ -77,7 +100,10 @@ async function speakWithBrowser(text: string): Promise<SpeechController> {
   const play = (index: number) => {
     if (stopped || index >= chunks.length) return;
     const utterance = new SpeechSynthesisUtterance(chunks[index]);
-    utterance.rate = 0.95;
+    const voices = window.speechSynthesis.getVoices();
+    const voice = voices.find((entry) => entry.name === voiceName || entry.lang.toLowerCase().startsWith(voiceName.toLowerCase()));
+    if (voice) utterance.voice = voice;
+    utterance.rate = Number.isFinite(rate) ? rate : 0.95;
     utterance.onend = () => play(index + 1);
     window.speechSynthesis.speak(utterance);
   };
@@ -90,16 +116,16 @@ async function speakWithBrowser(text: string): Promise<SpeechController> {
   };
 }
 
-async function speakWithOpenAICompatible(text: string, integration: AIIntegration, model: string): Promise<SpeechController> {
+async function speakWithOpenAICompatible(text: string, integration: AIIntegration, model: string, voice: string): Promise<SpeechController> {
   const chunks = splitSpeechText(text);
   let stopped = false;
   let audio: HTMLAudioElement | null = null;
-  let nextPromise: Promise<string> | null = chunks[0] ? synthesizeChunk(chunks[0], integration, model) : null;
+  let nextPromise: Promise<string> | null = chunks[0] ? synthesizeChunk(chunks[0], integration, model, voice) : null;
 
   const playNext = async (index: number): Promise<void> => {
     if (stopped || index >= chunks.length || !nextPromise) return;
     const url = await nextPromise;
-    nextPromise = chunks[index + 1] ? synthesizeChunk(chunks[index + 1], integration, model) : null;
+    nextPromise = chunks[index + 1] ? synthesizeChunk(chunks[index + 1], integration, model, voice) : null;
     if (stopped) return;
     audio = new Audio(url);
     audio.onended = () => {
@@ -119,11 +145,9 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
   };
 }
 
-async function synthesizeChunk(text: string, integration: AIIntegration, model: string): Promise<string> {
-  const client = integration.provider === "azure_openai"
-    ? new AzureOpenAI({ endpoint: integration.endpoint ?? "", apiKey: integration.apiKey, apiVersion: integration.apiVersion || "2024-10-21", dangerouslyAllowBrowser: true })
-    : new OpenAI({ apiKey: integration.apiKey, baseURL: integration.endpoint || "https://api.openai.com/v1", dangerouslyAllowBrowser: true });
-  const response = await client.audio.speech.create({ model, voice: "nova", input: text, response_format: "mp3" });
+async function synthesizeChunk(text: string, integration: AIIntegration, model: string, voice: string): Promise<string> {
+  const client = createAudioClient(integration);
+  const response = await client.audio.speech.create({ model, voice: voice || "nova", input: text, response_format: "mp3" } as never);
   const blob = new Blob([await response.arrayBuffer()], { type: "audio/mpeg" });
   return URL.createObjectURL(blob);
 }

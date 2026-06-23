@@ -82,6 +82,15 @@ export function resolveBookToken(book: BookEntry, settings: AppSettings): string
 
 // ─── Root settings object stored in Google Drive ─────────────────────────────
 
+export type SpeechProvider = "browser" | "ai";
+
+export interface SpeechSettings {
+  sttProvider: SpeechProvider;
+  ttsProvider: SpeechProvider;
+  ttsVoice: string;
+  ttsRate: number;
+}
+
 export interface AppSettings {
   /** Schema version for future migrations */
   version: 2;
@@ -95,6 +104,7 @@ export interface AppSettings {
     language: "en" | "it";
     theme: "light" | "dark" | "system";
   };
+  speech: SpeechSettings;
   books: BookEntry[];
 }
 
@@ -116,6 +126,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ui: {
     language: "en",
     theme: "system",
+  },
+  speech: {
+    sttProvider: "browser",
+    ttsProvider: "browser",
+    ttsVoice: "nova",
+    ttsRate: 0.95,
   },
   books: [],
 };
