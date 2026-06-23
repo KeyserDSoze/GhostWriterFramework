@@ -35,16 +35,18 @@ import {
 } from "@/narrarium/canon";
 import { CreateChapterDialog } from "@/components/canon/CreateChapterDialog";
 import { CreateEntityDialog } from "@/components/canon/CreateEntityDialog";
+import { PullRequestsDialog } from "@/components/github/PullRequestsDialog";
 
 function useBookStructure(bookId: string) {
   const { settings } = useSettingsStore();
-  const { structures, loadingIds, errors, setStructure, setLoading, setError, clearBook } =
+  const { structures, loadingIds, errors, workingBranches, setStructure, setLoading, setError, clearBook } =
     useBooksStore();
 
   const book = settings.books.find((b) => b.id === bookId);
   const structure = structures[bookId];
   const loading = loadingIds.has(bookId);
   const error = errors[bookId];
+  const readBranch = book?.activeBranch ?? workingBranches[bookId] ?? undefined;
 
   const loadStructure = useCallback(() => {
     if (!book) return;
@@ -54,18 +56,19 @@ function useBookStructure(bookId: string) {
       return;
     }
     setLoading(bookId, true);
-    loadBookStructure(token, book.owner, book.repo)
+    loadBookStructure(token, book.owner, book.repo, readBranch)
       .then((s) => setStructure(bookId, s))
       .catch((err: unknown) =>
         setError(bookId, err instanceof Error ? err.message : "Load failed"),
       )
       .finally(() => setLoading(bookId, false));
-  }, [book, bookId, settings, setError, setLoading, setStructure]);
+  }, [book, bookId, readBranch, settings, setError, setLoading, setStructure]);
 
   useEffect(() => {
-    if (!book || structure || loading) return;
+    if (!book || loading) return;
+    if (structure && (!readBranch || structure.loadedBranch === readBranch)) return;
     loadStructure();
-  }, [book, structure, loading, loadStructure]);
+  }, [book, structure, loading, readBranch, loadStructure]);
 
   const reload = useCallback(() => {
     clearBook(bookId);
@@ -146,7 +149,7 @@ export function BookPage() {
   async function handleOpenDossier(section: string, file: BookFile) {
     if (!structure || !token) return;
     try {
-      const content = await loadFileContent(token, book!.owner, book!.repo, file.path);
+      const content = await loadFileContent(token, book!.owner, book!.repo, file.path, branch);
       pinDossier({
         id: file.path,
         title: slugToTitle(file.path.split("/").pop()?.replace(/\.md$/, "") ?? file.path),
@@ -216,6 +219,13 @@ export function BookPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}
+          <PullRequestsDialog
+            token={token}
+            owner={book.owner}
+            repo={book.repo}
+            head={branch}
+            base={structure?.defaultBranch ?? "main"}
+          />
           <Button asChild variant="outline" size="sm">
             <Link to={`/app/books/${book.id}/settings`}>
               <Settings className="mr-1 h-4 w-4" />

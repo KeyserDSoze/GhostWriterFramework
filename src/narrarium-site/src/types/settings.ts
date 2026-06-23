@@ -57,6 +57,8 @@ export interface BookEntry {
   bookToken?: string;
   /** Optional label for the inline book PAT. */
   bookTokenLabel?: string;
+  /** Optional active branch selected for this book. Undefined = use the personal dev branch. */
+  activeBranch?: string;
   addedAt: string; // ISO-8601
 }
 

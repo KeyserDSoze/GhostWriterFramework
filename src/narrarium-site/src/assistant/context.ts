@@ -100,7 +100,8 @@ export async function loadWriterContext(
   pathname: string,
   settings: AppSettings,
   books: BookEntry[],
-  structures: Record<string, BookStructure>
+  structures: Record<string, BookStructure>,
+  workingBranches: Record<string, string>,
 ): Promise<LoadedWriterContext> {
   const route = parseAppRoute(pathname);
   const bookId = "bookId" in route ? route.bookId : null;
@@ -116,6 +117,7 @@ export async function loadWriterContext(
       : null;
 
   const token = book ? resolveBookToken(book, settings) : "";
+  const readBranch = bookId ? (book?.activeBranch ?? workingBranches[bookId] ?? structure?.defaultBranch) : undefined;
   const availableFiles = structure ? buildAvailableFileManifest(structure) : [];
   const relevantFiles: Array<{ path: string; content: string }> = [];
   const loaded = new Set<string>();
@@ -124,7 +126,7 @@ export async function loadWriterContext(
     const pushFile = async (path: string | undefined) => {
       if (!path || loaded.has(path)) return;
       try {
-        const content = await loadFileContent(token, book.owner, book.repo, path);
+        const content = await loadFileContent(token, book.owner, book.repo, path, readBranch);
         relevantFiles.push({ path, content });
         loaded.add(path);
       } catch {

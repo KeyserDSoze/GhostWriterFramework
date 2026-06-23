@@ -32,10 +32,12 @@ export function useWorkingBranch(bookId: string | undefined): {
 
   // Compute the branch name immediately (deterministic, no async needed)
   const derivedBranch =
-    user?.email ? emailToBranchName(user.email) : structure?.defaultBranch ?? "main";
+    book?.activeBranch ??
+    (user?.email ? emailToBranchName(user.email) : structure?.defaultBranch ?? "main");
 
   useEffect(() => {
     if (!bookId || !book || !structure || !token || !user?.email) return;
+    if (book.activeBranch) return;
     // Already resolved this session
     if (workingBranches[bookId]) return;
     if (ensuredRef.current) return;

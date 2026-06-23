@@ -2,8 +2,29 @@ import { parseDocument, stringify } from "yaml";
 import { createFile, loadFileContent, readFileWithSha, slugToTitle, updateFile } from "@/github/githubClient";
 import type { AppSettings, BookEntry } from "@/types/settings";
 import type { LoadedWriterContext } from "@/assistant/context";
-import { completeText, resolveReviewIntegration, resolveWritingIntegration, type LlmContentPart, type LlmMessage } from "@/assistant/llm";
-import type { AssistantAction, AssistantAttachment, AssistantMessage, AssistantSession } from "@/assistant/store";
+import {
+  completeText,
+  resolveReviewIntegration,
+  resolveWritingIntegration,
+  type LlmContentPart,
+  type LlmMessage,
+} from "@/assistant/llm";
+import type {
+  AssistantAction,
+  AssistantAttachment,
+  AssistantMessage,
+  AssistantSession,
+} from "@/assistant/store";
+
+type PromptInput = {
+  prompt: string;
+  context: LoadedWriterContext;
+  settings: AppSettings;
+  history: AssistantMessage[];
+  compactSummary: string;
+  compactedMessageCount: number;
+  attachments: AssistantAttachment[];
+};
 
 export async function runAssistantPrompt(input: {
   prompt: string;
@@ -17,24 +38,27 @@ export async function runAssistantPrompt(input: {
   compactedMessageCount: number;
   attachments: AssistantAttachment[];
 }): Promise<AssistantMessage> {
-  const { prompt, context, book, branch, token } = input;
+  const { prompt, context, settings, book, branch, token, history, compactSummary, compactedMessageCount, attachments } = input;
   const lowered = prompt.toLowerCase();
+  const promptInput: PromptInput = { prompt, context, settings, history, compactSummary, compactedMessageCount, attachments };
 
   if (!book || !token) {
     return makeAssistantMessage("assistant", "No GitHub token is configured for the current book, so I cannot read or write repository files from this context.");
   }
-
   if (!context.structure) {
     return makeAssistantMessage("assistant", "The current book structure is not loaded yet. Open the book page first so I can gather the right context.");
   }
 
-  if (looksLikeSearch(lowered)) return searchCurrentBook({ ...input, book, token });
-  if (looksLikeMultiFileEdit(lowered)) return proposeMultiFileUpdates({ ...input, book, token });
-  if (looksLikeRewrite(lowered)) return rewriteCurrentParagraph({ ...input, book, branch, token });
-  if (looksLikeNote(lowered)) return createContextNote({ ...input, book, branch, token });
-  if (looksLikeReview(lowered)) return reviewCurrentContext(input);
-  if (looksLikeSummary(lowered)) return summarizeCurrentContext(input);
-  return answerFromContext(input);
+  if (looksLikeSearch(lowered)) return searchCurrentBook({ ...promptInput, book, token });
+  if (looksLikeUpdatePlot(lowered)) return writePlotUpdate({ ...promptInput, book, branch, token });
+  if (looksLikeWriteResume(lowered)) return writeResume({ ...promptInput, book, branch, token });
+  if (looksLikeWriteEvaluation(lowered)) return writeEvaluation({ ...promptInput, book, branch, token });
+  if (looksLikeMultiFileEdit(lowered)) return proposeMultiFileUpdates({ ...promptInput, book, token });
+  if (looksLikeRewrite(lowered)) return rewriteCurrentParagraph({ ...promptInput, book, branch, token });
+  if (looksLikeNote(lowered)) return createContextNote({ ...promptInput, book, branch, token });
+  if (looksLikeReview(lowered)) return reviewCurrentContext(promptInput);
+  if (looksLikeSummary(lowered)) return summarizeCurrentContext(promptInput);
+  return answerFromContext(promptInput);
 }
 
 export async function compactAssistantSession(input: {
@@ -45,6 +69,7 @@ export async function compactAssistantSession(input: {
   if (session.messages.length <= 12) return session;
   const targetCount = session.messages.length - 6;
   if (targetCount <= session.compactedMessageCount) return session;
+
   const integration = resolveWritingIntegration(settings);
   if (!integration) return session;
 
@@ -108,6 +133,104 @@ async function answerFromContext(input: PromptInput): Promise<AssistantMessage> 
   return makeAssistantMessage("assistant", answer.trim());
 }
 
+async function writeResume(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const chapter = input.context.chapter;
+  if (!chapter) {
+    return makeAssistantMessage("assistant", "Resume writing works when you are inside a chapter or one of its paragraph/workspace pages.");
+  }
+  const integration = resolveWritingIntegration(input.settings);
+  if (!integration) return noAiMessage();
+  const targetPath = `resumes/chapters/${chapter.slug}.md`;
+  const answer = await completeText(integration, [
+    buildSystemMessage(input, "Write a chapter resume suitable for the chapter resume file. Preserve chronology and visible canon. Return only the markdown body, no frontmatter."),
+    buildUserMessage(input, `Write or refresh the resume for chapter ${chapter.slug}. Request: ${input.prompt}`),
+  ]);
+  await upsertStructuredMarkdownFile({
+    token: input.token,
+    owner: input.book.owner,
+    repo: input.book.repo,
+    branch: input.branch,
+    path: targetPath,
+    frontmatter: { type: "resume", id: `resume:chapter:${chapter.slug}`, title: `Resume ${chapter.slug}` },
+    body: answer.trim(),
+    message: `Update chapter resume ${chapter.slug}`,
+  });
+  return makeAssistantMessage("assistant", `I wrote the chapter resume to \`${targetPath}\`.\n\n${answer.trim()}`);
+}
+
+async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const integration = resolveReviewIntegration(input.settings) ?? resolveWritingIntegration(input.settings);
+  if (!integration) return noAiMessage();
+
+  if (input.context.paragraph && input.context.chapter) {
+    const paragraphSlug = input.context.paragraph.path.split("/").pop()?.replace(/\.md$/i, "") ?? input.context.paragraph.number;
+    const targetPath = `evaluations/paragraphs/${input.context.chapter.slug}/${paragraphSlug}.md`;
+    const answer = await completeText(integration, [
+      buildSystemMessage(input, "Write a paragraph evaluation suitable for the paragraph evaluation file. Use markdown headings and concise bullet points. Return only the body, no frontmatter."),
+      buildUserMessage(input, `Write or refresh the evaluation for paragraph ${paragraphSlug}. Request: ${input.prompt}`),
+    ], "review");
+    await upsertStructuredMarkdownFile({
+      token: input.token,
+      owner: input.book.owner,
+      repo: input.book.repo,
+      branch: input.branch,
+      path: targetPath,
+      frontmatter: {
+        type: "evaluation",
+        id: `evaluation:paragraph:${input.context.chapter.slug}:${paragraphSlug}`,
+        title: `Evaluation ${input.context.chapter.slug} ${paragraphSlug}`,
+        chapter: `chapter:${input.context.chapter.slug}`,
+        paragraph: `paragraph:${input.context.chapter.slug}:${paragraphSlug}`,
+      },
+      body: answer.trim(),
+      message: `Update paragraph evaluation ${paragraphSlug}`,
+    });
+    return makeAssistantMessage("assistant", `I wrote the paragraph evaluation to \`${targetPath}\`.\n\n${answer.trim()}`);
+  }
+
+  const chapter = input.context.chapter;
+  if (!chapter) {
+    return makeAssistantMessage("assistant", "Evaluation writing works from a chapter or paragraph context.");
+  }
+  const targetPath = `evaluations/chapters/${chapter.slug}.md`;
+  const answer = await completeText(integration, [
+    buildSystemMessage(input, "Write a chapter evaluation suitable for the chapter evaluation file. Use markdown headings and concise bullet points. Return only the body, no frontmatter."),
+    buildUserMessage(input, `Write or refresh the evaluation for chapter ${chapter.slug}. Request: ${input.prompt}`),
+  ], "review");
+  await upsertStructuredMarkdownFile({
+    token: input.token,
+    owner: input.book.owner,
+    repo: input.book.repo,
+    branch: input.branch,
+    path: targetPath,
+    frontmatter: { type: "evaluation", id: `evaluation:chapter:${chapter.slug}`, title: `Evaluation ${chapter.slug}` },
+    body: answer.trim(),
+    message: `Update chapter evaluation ${chapter.slug}`,
+  });
+  return makeAssistantMessage("assistant", `I wrote the chapter evaluation to \`${targetPath}\`.\n\n${answer.trim()}`);
+}
+
+async function writePlotUpdate(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const integration = resolveWritingIntegration(input.settings);
+  if (!integration) return noAiMessage();
+  const targetPath = "plot.md";
+  const answer = await completeText(integration, [
+    buildSystemMessage(input, "Update the book plot document in markdown. Keep it concise, structural, and consistent with the loaded canon. Return only the body, no frontmatter."),
+    buildUserMessage(input, `Refresh plot.md for this book. Request: ${input.prompt}`),
+  ]);
+  await upsertStructuredMarkdownFile({
+    token: input.token,
+    owner: input.book.owner,
+    repo: input.book.repo,
+    branch: input.branch,
+    path: targetPath,
+    frontmatter: { type: "plot", id: "plot:main", title: "Plot" },
+    body: answer.trim(),
+    message: "Update plot.md",
+  });
+  return makeAssistantMessage("assistant", `I updated \`${targetPath}\`.\n\n${answer.trim()}`);
+}
+
 async function rewriteCurrentParagraph(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const { context } = input;
   if (!context.paragraph || !context.chapter) {
@@ -125,7 +248,13 @@ async function rewriteCurrentParagraph(input: PromptInput & { book: BookEntry; b
     id: crypto.randomUUID(),
     role: "assistant",
     text: `I prepared a revised version of the current paragraph. Review it below and apply it if you want.\n\n${answer.trim()}`,
-    action: { kind: "apply-paragraph-rewrite", bookId: input.book.id, chapterSlug: context.chapter.slug, paragraphPath: context.paragraph.path, proposedBody: answer.trim() },
+    action: {
+      kind: "apply-paragraph-rewrite",
+      bookId: input.book.id,
+      chapterSlug: context.chapter.slug,
+      paragraphPath: context.paragraph.path,
+      proposedBody: answer.trim(),
+    },
   };
 }
 
@@ -199,7 +328,7 @@ async function searchCurrentBook(input: PromptInput & { book: BookEntry; token: 
     if (matchedByTitle.length === 0) {
       for (const hit of paragraphCandidates.slice(0, 24)) {
         try {
-          const content = await loadFileContent(token, book.owner, book.repo, hit.paragraph.path);
+          const content = await loadFileContent(token, book.owner, book.repo, hit.paragraph.path, input.context.structure?.loadedBranch);
           if (matchText(content)) {
             results.push(`- paragraph body: ${hit.chapter.slug}/${hit.paragraph.number} ${hit.paragraph.title}`);
             if (results.length >= 5) break;
@@ -212,6 +341,25 @@ async function searchCurrentBook(input: PromptInput & { book: BookEntry; token: 
   }
   if (results.length === 0) return makeAssistantMessage("assistant", `I could not find a match for: ${terms.join(", ")}. Try fewer or broader keywords.`);
   return makeAssistantMessage("assistant", `Search results for **${terms.join(", ")}**:\n\n${results.join("\n")}`);
+}
+
+async function upsertStructuredMarkdownFile(input: {
+  token: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  path: string;
+  frontmatter: Record<string, unknown>;
+  body: string;
+  message: string;
+}) {
+  try {
+    const existing = await readFileWithSha(input.token, input.owner, input.repo, input.branch, input.path);
+    await updateFile(input.token, input.owner, input.repo, input.branch, input.path, existing.sha, renderMarkdown(input.frontmatter, `${input.body.trim()}\n`), input.message);
+    return;
+  } catch {
+    await createFile(input.token, input.owner, input.repo, input.branch, input.path, renderMarkdown(input.frontmatter, `${input.body.trim()}\n`), input.message);
+  }
 }
 
 async function upsertNoteFile(input: { token: string; owner: string; repo: string; branch: string; path: string; title: string; noteBody: string }) {
@@ -232,10 +380,7 @@ async function upsertNoteFile(input: { token: string; owner: string; repo: strin
 }
 
 function buildSystemMessage(input: PromptInput, instruction: string): LlmMessage {
-  return {
-    role: "system",
-    content: `${instruction}\n\n${systemContextBundle(input)}`,
-  };
+  return { role: "system", content: `${instruction}\n\n${systemContextBundle(input)}` };
 }
 
 function buildUserMessage(input: PromptInput, requestText: string): LlmMessage {
@@ -277,21 +422,28 @@ function chapterDraftNoteFrontmatter(path: string, title: string) {
   const chapterSlug = match?.[1] ?? "unknown";
   return { type: "note", id: `note:chapter-draft:notes:${chapterSlug}`, title, scope: "chapter-draft", bucket: "notes", chapter: `chapter:${chapterSlug}`, entries: [] };
 }
+
 function defaultNoteTitle(path: string): string {
   if (path === "notes.md") return "Book Notes";
   const match = /^drafts\/([^/]+)\/notes\.md$/.exec(path);
   return `Chapter Draft Notes ${match?.[1] ?? "unknown"}`;
 }
+
 function parseMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
   if (!match) return { frontmatter: {}, body: raw };
   const doc = parseDocument(match[1]);
   return { frontmatter: (doc.toJSON() as Record<string, unknown>) ?? {}, body: match[2] };
 }
-function renderMarkdown(frontmatter: Record<string, unknown>, body: string): string { return `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${body.replace(/^\n+/, "")}`; }
+
+function renderMarkdown(frontmatter: Record<string, unknown>, body: string): string {
+  return `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${body.replace(/^\n+/, "")}`;
+}
+
 function extractSearchTerms(prompt: string): string[] {
   return prompt.toLowerCase().replace(/[^a-z0-9à-ÿ\s-]/gi, " ").split(/\s+/).filter((token) => token.length > 2).filter((token) => !new Set(["find", "search", "cerca", "trova", "paragraph", "paragrafo", "character", "characters", "personaggio", "personaggi", "canon", "book"]).has(token)).slice(0, 5);
 }
+
 function detectSectionHint(prompt: string): "characters" | "paragraphs" | "canon" | null {
   const lowered = prompt.toLowerCase();
   if (/\b(character|characters|personaggio|personaggi)\b/.test(lowered)) return "characters";
@@ -299,26 +451,35 @@ function detectSectionHint(prompt: string): "characters" | "paragraphs" | "canon
   if (/\b(canon|entity|entities|lore)\b/.test(lowered)) return "canon";
   return null;
 }
+
 function looksLikeSummary(prompt: string): boolean { return /\b(summary|summar|riassunt|recap|overview)\b/.test(prompt); }
+function looksLikeWriteResume(prompt: string): boolean { return /\b(resume|riassunto)\b/.test(prompt) && /\b(write|save|refresh|aggiorna|scrivi|salva|crea)\b/.test(prompt); }
+function looksLikeWriteEvaluation(prompt: string): boolean { return /\b(evaluation|evaluate|review file|valutazione)\b/.test(prompt) && /\b(write|save|refresh|aggiorna|scrivi|salva|crea)\b/.test(prompt); }
+function looksLikeUpdatePlot(prompt: string): boolean { return /\b(plot)\b/.test(prompt) && /\b(update|refresh|aggiorna|scrivi|salva|sync)\b/.test(prompt); }
 function looksLikeReview(prompt: string): boolean { return /\b(review|critique|feedback|editorial|analy[sz]e|valuta|reviewa)\b/.test(prompt); }
 function looksLikeNote(prompt: string): boolean { return /\b(note|notes|appunto|appunti|memo)\b/.test(prompt); }
 function looksLikeRewrite(prompt: string): boolean { return /\b(rewrite|revise|fix|improve|polish|sistema|riscrivi|migliora|paragrafo)\b/.test(prompt); }
 function looksLikeSearch(prompt: string): boolean { return /\b(search|find|lookup|cerca|trova|keyword|keywords|search for)\b/.test(prompt); }
 function looksLikeMultiFileEdit(prompt: string): boolean { return /\b(multi[- ]?file|piu file|più file|several files|update files|modifica.*file|aggiorna.*file|attachment|allegat)\b/.test(prompt); }
+
 function parseJsonObject(value: string): Record<string, unknown> | null {
   const trimmed = value.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
-  try { const parsed = JSON.parse(trimmed); return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; } catch { return null; }
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
 }
-function isSafeRelativePath(path: string): boolean { return !path.startsWith("/") && !path.includes("..") && path.endsWith(".md"); }
-function makeAssistantMessage(role: "assistant" | "system", text: string): AssistantMessage { return { id: crypto.randomUUID(), role, text }; }
-function noAiMessage(): AssistantMessage { return makeAssistantMessage("assistant", "No AI integration is configured yet. Add an Azure OpenAI or OpenAI-compatible provider in Settings -> AI integrations."); }
 
-type PromptInput = {
-  prompt: string;
-  context: LoadedWriterContext;
-  settings: AppSettings;
-  history: AssistantMessage[];
-  compactSummary: string;
-  compactedMessageCount: number;
-  attachments: AssistantAttachment[];
-};
+function isSafeRelativePath(path: string): boolean {
+  return !path.startsWith("/") && !path.includes("..") && path.endsWith(".md");
+}
+
+function makeAssistantMessage(role: "assistant" | "system", text: string): AssistantMessage {
+  return { id: crypto.randomUUID(), role, text };
+}
+
+function noAiMessage(): AssistantMessage {
+  return makeAssistantMessage("assistant", "No AI integration is configured yet. Add an Azure OpenAI or OpenAI-compatible provider in Settings -> AI integrations.");
+}

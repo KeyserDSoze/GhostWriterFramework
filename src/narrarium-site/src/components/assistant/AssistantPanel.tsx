@@ -26,7 +26,7 @@ export function AssistantPanel() {
   const bookId = "bookId" in route ? route.bookId : undefined;
   const { branch } = useWorkingBranch(bookId);
   const { settings } = useSettingsStore();
-  const { structures } = useBooksStore();
+  const { structures, workingBranches } = useBooksStore();
   const { user, accessToken } = useAuthStore();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -51,7 +51,7 @@ export function AssistantPanel() {
 
   useEffect(() => {
     let active = true;
-    void loadWriterContext(location.pathname, settings, settings.books, structures).then((ctx) => {
+    void loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches).then((ctx) => {
       if (!active) return;
       setContextLabel(ctx.title);
       setContextSummary(ctx.summary);
@@ -144,7 +144,7 @@ export function AssistantPanel() {
   async function sendPrompt(prompt: string) {
     const trimmed = prompt.trim();
     if (!trimmed || busy) return;
-    const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures);
+    const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches);
     const book = routeContext.book;
     const token = book ? resolveBookToken(book, settings) : "";
     const session = ensureSession();

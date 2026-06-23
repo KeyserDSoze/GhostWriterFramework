@@ -78,12 +78,14 @@ export async function loadBookStructure(
   token: string,
   owner: string,
   repo: string,
+  ref?: string,
 ): Promise<BookStructure> {
   const octokit = createGitHubClient(token);
 
   // Fetch entire tree recursively (one API call)
   const { data: repoData } = await octokit.rest.repos.get({ owner, repo });
-  const branch = repoData.default_branch;
+  const defaultBranch = repoData.default_branch;
+  const branch = ref || defaultBranch;
 
   const { data: treeData } = await octokit.rest.git.getTree({
     owner,
@@ -101,7 +103,7 @@ export async function loadBookStructure(
   let description = "";
   if (allPaths.includes("book.md")) {
     try {
-      const { data } = await octokit.rest.repos.getContent({ owner, repo, path: "book.md" });
+      const { data } = await octokit.rest.repos.getContent({ owner, repo, path: "book.md", ref: branch });
       if ("content" in data) {
         const raw = decodeContent(data.content);
         title = titleFromFrontmatter(raw, repo);
@@ -175,7 +177,8 @@ export async function loadBookStructure(
     description,
     owner,
     repo,
-    defaultBranch: branch,
+    defaultBranch,
+    loadedBranch: branch,
     chapters,
     characters: filesUnder("characters"),
     locations: filesUnder("locations"),
@@ -200,9 +203,11 @@ export async function loadFileContent(
   owner: string,
   repo: string,
   path: string,
+  ref?: string,
 ): Promise<string> {
   const octokit = createGitHubClient(token);
-  const { data } = await octokit.rest.repos.getContent({ owner, repo, path });
+  const params = ref ? { owner, repo, path, ref } : { owner, repo, path };
+  const { data } = await octokit.rest.repos.getContent(params);
   if ("content" in data) return decodeContent(data.content);
   throw new Error(`${path} is not a file`);
 }
@@ -606,4 +611,111 @@ export async function revertFileToRef(
   }
 
   throw new Error(`No file content found for ${path} on ${branch} or ${baseRef}.`);
+}
+
+export interface BranchSummary {
+  name: string;
+  protected: boolean;
+}
+
+export async function listBranches(
+  token: string,
+  owner: string,
+  repo: string,
+): Promise<BranchSummary[]> {
+  const octokit = createGitHubClient(token);
+  const branches = await octokit.paginate(octokit.rest.repos.listBranches, {
+    owner,
+    repo,
+    per_page: 100,
+  });
+  return branches
+    .map((branch) => ({ name: branch.name, protected: branch.protected }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export async function createBranchFromBase(
+  token: string,
+  owner: string,
+  repo: string,
+  baseBranch: string,
+  newBranch: string,
+): Promise<string> {
+  const octokit = createGitHubClient(token);
+  const { data: base } = await octokit.rest.repos.getBranch({ owner, repo, branch: baseBranch });
+  await octokit.rest.git.createRef({
+    owner,
+    repo,
+    ref: `refs/heads/${newBranch}`,
+    sha: base.commit.sha,
+  });
+  return newBranch;
+}
+
+export interface PullRequestSummary {
+  number: number;
+  title: string;
+  state: string;
+  htmlUrl: string;
+  head: string;
+  base: string;
+}
+
+export async function listOpenPullRequests(
+  token: string,
+  owner: string,
+  repo: string,
+  head?: string,
+): Promise<PullRequestSummary[]> {
+  const octokit = createGitHubClient(token);
+  const pulls = await octokit.paginate(octokit.rest.pulls.list, {
+    owner,
+    repo,
+    state: "open",
+    head: head ? `${owner}:${head}` : undefined,
+    per_page: 100,
+  });
+  return pulls.map((pull) => ({
+    number: pull.number,
+    title: pull.title,
+    state: pull.state,
+    htmlUrl: pull.html_url,
+    head: pull.head.ref,
+    base: pull.base.ref,
+  }));
+}
+
+export async function createPullRequest(
+  token: string,
+  owner: string,
+  repo: string,
+  input: { title: string; body?: string; head: string; base: string },
+): Promise<PullRequestSummary> {
+  const octokit = createGitHubClient(token);
+  const { data } = await octokit.rest.pulls.create({
+    owner,
+    repo,
+    title: input.title,
+    body: input.body,
+    head: input.head,
+    base: input.base,
+  });
+  return {
+    number: data.number,
+    title: data.title,
+    state: data.state,
+    htmlUrl: data.html_url,
+    head: data.head.ref,
+    base: data.base.ref,
+  };
+}
+
+export async function getDefaultBranch(
+  token: string,
+  owner: string,
+  repo: string,
+): Promise<string> {
+  const octokit = createGitHubClient(token);
+  const { data } = await octokit.rest.repos.get({ owner, repo });
+  return data.default_branch;
 }

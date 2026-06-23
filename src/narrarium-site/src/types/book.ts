@@ -59,6 +59,7 @@ export interface BookStructure {
   owner: string;
   repo: string;
   defaultBranch: string;
+  loadedBranch: string;
   chapters: Chapter[];
   characters: BookFile[];
   locations: BookFile[];
