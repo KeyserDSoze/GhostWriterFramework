@@ -2,8 +2,8 @@ import { parseDocument, stringify } from "yaml";
 import { createFile, loadFileContent, readFileWithSha, slugToTitle, updateFile } from "@/github/githubClient";
 import type { AppSettings, BookEntry } from "@/types/settings";
 import type { LoadedWriterContext } from "@/assistant/context";
-import { completeText, resolveReviewIntegration, resolveWritingIntegration } from "@/assistant/llm";
-import type { AssistantAction, AssistantMessage, AssistantSession } from "@/assistant/store";
+import { completeText, resolveReviewIntegration, resolveWritingIntegration, type LlmContentPart, type LlmMessage } from "@/assistant/llm";
+import type { AssistantAction, AssistantAttachment, AssistantMessage, AssistantSession } from "@/assistant/store";
 
 export async function runAssistantPrompt(input: {
   prompt: string;
@@ -15,6 +15,7 @@ export async function runAssistantPrompt(input: {
   history: AssistantMessage[];
   compactSummary: string;
   compactedMessageCount: number;
+  attachments: AssistantAttachment[];
 }): Promise<AssistantMessage> {
   const { prompt, context, book, branch, token } = input;
   const lowered = prompt.toLowerCase();
@@ -27,25 +28,12 @@ export async function runAssistantPrompt(input: {
     return makeAssistantMessage("assistant", "The current book structure is not loaded yet. Open the book page first so I can gather the right context.");
   }
 
-  if (looksLikeSearch(lowered)) {
-    return searchCurrentBook({ ...input, book, token });
-  }
-  if (looksLikeMultiFileEdit(lowered)) {
-    return proposeMultiFileUpdates({ ...input, book, token });
-  }
-  if (looksLikeRewrite(lowered)) {
-    return rewriteCurrentParagraph({ ...input, book, branch, token });
-  }
-  if (looksLikeNote(lowered)) {
-    return createContextNote({ ...input, book, branch, token });
-  }
-  if (looksLikeReview(lowered)) {
-    return reviewCurrentContext(input);
-  }
-  if (looksLikeSummary(lowered)) {
-    return summarizeCurrentContext(input);
-  }
-
+  if (looksLikeSearch(lowered)) return searchCurrentBook({ ...input, book, token });
+  if (looksLikeMultiFileEdit(lowered)) return proposeMultiFileUpdates({ ...input, book, token });
+  if (looksLikeRewrite(lowered)) return rewriteCurrentParagraph({ ...input, book, branch, token });
+  if (looksLikeNote(lowered)) return createContextNote({ ...input, book, branch, token });
+  if (looksLikeReview(lowered)) return reviewCurrentContext(input);
+  if (looksLikeSummary(lowered)) return summarizeCurrentContext(input);
   return answerFromContext(input);
 }
 
@@ -57,7 +45,6 @@ export async function compactAssistantSession(input: {
   if (session.messages.length <= 12) return session;
   const targetCount = session.messages.length - 6;
   if (targetCount <= session.compactedMessageCount) return session;
-
   const integration = resolveWritingIntegration(settings);
   if (!integration) return session;
 
@@ -95,8 +82,8 @@ async function summarizeCurrentContext(input: PromptInput): Promise<AssistantMes
   const integration = resolveWritingIntegration(input.settings);
   if (!integration) return noAiMessage();
   const answer = await completeText(integration, [
-    { role: "system", content: "You are Narrarium's writing assistant. Summarize the current context clearly and concretely. Use compact paragraphs and bullet points when useful." },
-    { role: "user", content: `${conversationBundle(input)}\n\nRequest: ${input.prompt}` },
+    buildSystemMessage(input, "You are Narrarium's writing assistant. Summarize the current context clearly and concretely. Use compact paragraphs and bullet points when useful."),
+    buildUserMessage(input, `Request: ${input.prompt}`),
   ]);
   return makeAssistantMessage("assistant", answer.trim());
 }
@@ -105,8 +92,8 @@ async function reviewCurrentContext(input: PromptInput): Promise<AssistantMessag
   const integration = resolveReviewIntegration(input.settings) ?? resolveWritingIntegration(input.settings);
   if (!integration) return noAiMessage();
   const answer = await completeText(integration, [
-    { role: "system", content: "You are Narrarium's editorial reviewer. Review the current context with concrete strengths, issues, and specific next actions. Preserve facts; do not invent canon." },
-    { role: "user", content: `${conversationBundle(input)}\n\nReview request: ${input.prompt}` },
+    buildSystemMessage(input, "You are Narrarium's editorial reviewer. Review the current context with concrete strengths, issues, and specific next actions. Preserve facts; do not invent canon."),
+    buildUserMessage(input, `Review request: ${input.prompt}`),
   ], "review");
   return makeAssistantMessage("assistant", answer.trim());
 }
@@ -115,8 +102,8 @@ async function answerFromContext(input: PromptInput): Promise<AssistantMessage> 
   const integration = resolveWritingIntegration(input.settings);
   if (!integration) return noAiMessage();
   const answer = await completeText(integration, [
-    { role: "system", content: "You are Narrarium's contextual writing copilot. Answer only from the provided repository context and current location. The manifest lists available files; only LOADED FILE contents are available in full. If needed content is not loaded, say which file you need." },
-    { role: "user", content: `${conversationBundle(input)}\n\nUser request: ${input.prompt}` },
+    buildSystemMessage(input, "You are Narrarium's contextual writing copilot. Answer only from the provided repository context and current location. The manifest lists available files; only LOADED FILE contents are available in full. If needed content is not loaded, say which file you need."),
+    buildUserMessage(input, `User request: ${input.prompt}`),
   ]);
   return makeAssistantMessage("assistant", answer.trim());
 }
@@ -131,8 +118,8 @@ async function rewriteCurrentParagraph(input: PromptInput & { book: BookEntry; b
   const paragraphFile = context.relevantFiles.find((entry) => entry.path === context.paragraph?.path);
   const paragraphBody = paragraphFile ? parseMarkdown(paragraphFile.content).body : "";
   const answer = await completeText(integration, [
-    { role: "system", content: "You are Narrarium's prose editor. Rewrite only the paragraph body. Preserve facts, chronology, names, and visible canon. Return only the revised paragraph body, no markdown fences, no commentary. Use the loaded writing-style files if present." },
-    { role: "user", content: `${conversationBundle(input)}\n\nCurrent paragraph body:\n${paragraphBody}\n\nRewrite request: ${input.prompt}` },
+    buildSystemMessage(input, "You are Narrarium's prose editor. Rewrite only the paragraph body. Preserve facts, chronology, names, and visible canon. Return only the revised paragraph body, no markdown fences, no commentary. Use any loaded writing-style files if present."),
+    buildUserMessage(input, `Current paragraph body:\n${paragraphBody}\n\nRewrite request: ${input.prompt}`),
   ]);
   return {
     id: crypto.randomUUID(),
@@ -146,17 +133,12 @@ async function proposeMultiFileUpdates(input: PromptInput & { book: BookEntry; t
   const integration = resolveWritingIntegration(input.settings);
   if (!integration) return noAiMessage();
   const answer = await completeText(integration, [
-    {
-      role: "system",
-      content: "You are Narrarium file editor. Propose multi-file changes only for files in the available manifest or obvious notes/workspace files. Return ONLY JSON: {\"summary\":\"...\",\"updates\":[{\"path\":\"relative/path.md\",\"content\":\"FULL NEW FILE CONTENT\",\"reason\":\"...\"}]}. Do not wrap in markdown.",
-    },
-    { role: "user", content: `${conversationBundle(input)}\n\nUser multi-file request: ${input.prompt}` },
+    buildSystemMessage(input, 'You are Narrarium file editor. Propose multi-file changes only for files in the available manifest or obvious notes/workspace files. Return ONLY JSON: {"summary":"...","updates":[{"path":"relative/path.md","content":"FULL NEW FILE CONTENT","reason":"..."}]}. Do not wrap in markdown.'),
+    buildUserMessage(input, `User multi-file request: ${input.prompt}`),
   ]);
   const parsed = parseJsonObject(answer);
   const updates = Array.isArray(parsed?.updates)
-    ? parsed.updates
-        .filter((entry): entry is { path: string; content: string; reason?: string } => typeof entry?.path === "string" && typeof entry?.content === "string" && isSafeRelativePath(entry.path))
-        .slice(0, 8)
+    ? parsed.updates.filter((entry): entry is { path: string; content: string; reason?: string } => typeof entry?.path === "string" && typeof entry?.content === "string" && isSafeRelativePath(entry.path)).slice(0, 8)
     : [];
   if (!updates.length) {
     return makeAssistantMessage("assistant", `I could not extract a safe multi-file update plan from the model response. Raw response:\n\n${answer.trim()}`);
@@ -176,8 +158,8 @@ async function createContextNote(input: PromptInput & { book: BookEntry; branch:
   const targetPath = input.context.noteTargetPath;
   if (!targetPath) return makeAssistantMessage("assistant", "I could not determine where to save a note from the current screen.");
   const answer = await completeText(integration, [
-    { role: "system", content: "You create concise writer notes for the current context. Return only the note body in markdown, no frontmatter and no wrapping commentary." },
-    { role: "user", content: `${conversationBundle(input)}\n\nCreate a note for this request: ${input.prompt}` },
+    buildSystemMessage(input, "You create concise writer notes for the current context. Return only the note body in markdown, no frontmatter and no wrapping commentary."),
+    buildUserMessage(input, `Create a note for this request: ${input.prompt}`),
   ]);
   await upsertNoteFile({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, path: targetPath, title: defaultNoteTitle(targetPath), noteBody: answer.trim() });
   return makeAssistantMessage("assistant", `I saved a note to \`${targetPath}\`.\n\n${answer.trim()}`);
@@ -249,6 +231,47 @@ async function upsertNoteFile(input: { token: string; owner: string; repo: strin
   }
 }
 
+function buildSystemMessage(input: PromptInput, instruction: string): LlmMessage {
+  return {
+    role: "system",
+    content: `${instruction}\n\n${systemContextBundle(input)}`,
+  };
+}
+
+function buildUserMessage(input: PromptInput, requestText: string): LlmMessage {
+  const parts: LlmContentPart[] = [
+    { type: "text", text: `${userContextBundle(input)}\n\n${requestText}` },
+    ...input.attachments.filter((attachment) => attachment.kind === "image" && attachment.imageDataUrl).map((attachment) => ({ type: "image" as const, dataUrl: attachment.imageDataUrl! })),
+  ];
+  return { role: "user", content: parts };
+}
+
+function systemContextBundle(input: PromptInput): string {
+  const available = input.context.availableFiles.slice(0, 200).map((entry) => `- ${entry.path} (${entry.role})`).join("\n");
+  const loadedList = input.context.loadedFilePaths.length ? input.context.loadedFilePaths.map((path) => `- ${path}`).join("\n") : "- none";
+  return [
+    `Current route title: ${input.context.title}`,
+    `Current route summary: ${input.context.summary}`,
+    `Available repository files (manifest only):\n${available || "- none"}`,
+    `Loaded files available in full this turn:\n${loadedList}`,
+    input.context.noteTargetPath ? `Default note target: ${input.context.noteTargetPath}` : "",
+  ].filter(Boolean).join("\n\n");
+}
+
+function userContextBundle(input: PromptInput): string {
+  const files = input.context.relevantFiles.map((entry) => `LOADED FILE: ${entry.path}\n${entry.content}`).join("\n\n---\n\n");
+  const recentMessages = input.history.slice(input.compactedMessageCount).slice(-8).map((message) => `${message.role.toUpperCase()}: ${message.text}`).join("\n\n");
+  const textAttachments = input.attachments.filter((attachment) => attachment.kind === "text" && attachment.textContent).map((attachment) => `ATTACHMENT: ${attachment.name}\n${attachment.textContent}`).join("\n\n---\n\n");
+  const imageAttachments = input.attachments.filter((attachment) => attachment.kind === "image").map((attachment) => `IMAGE ATTACHMENT: ${attachment.name} (${attachment.mimeType})`).join("\n");
+  return [
+    input.compactSummary ? `Conversation compact summary (does not preserve full file contents):\n${input.compactSummary}` : "",
+    recentMessages ? `Recent conversation:\n${recentMessages}` : "",
+    files ? `Loaded repository file contents:\n\n${files}` : "",
+    textAttachments ? `Extracted attachment text:\n\n${textAttachments}` : "",
+    imageAttachments ? `Image attachments included separately in this request:\n${imageAttachments}` : "",
+  ].filter(Boolean).join("\n\n");
+}
+
 function chapterDraftNoteFrontmatter(path: string, title: string) {
   const match = /^drafts\/([^/]+)\/notes\.md$/.exec(path);
   const chapterSlug = match?.[1] ?? "unknown";
@@ -265,24 +288,7 @@ function parseMarkdown(raw: string): { frontmatter: Record<string, unknown>; bod
   const doc = parseDocument(match[1]);
   return { frontmatter: (doc.toJSON() as Record<string, unknown>) ?? {}, body: match[2] };
 }
-function renderMarkdown(frontmatter: Record<string, unknown>, body: string): string {
-  return `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${body.replace(/^\n+/, "")}`;
-}
-function conversationBundle(input: PromptInput): string {
-  const available = input.context.availableFiles.slice(0, 160).map((entry) => `- ${entry.path} (${entry.role})`).join("\n");
-  const loadedList = input.context.loadedFilePaths.length ? input.context.loadedFilePaths.map((path) => `- ${path}`).join("\n") : "- none";
-  const files = input.context.relevantFiles.map((entry) => `LOADED FILE: ${entry.path}\n${entry.content}`).join("\n\n---\n\n");
-  const recentMessages = input.history.slice(input.compactedMessageCount).slice(-8).map((message) => `${message.role.toUpperCase()}: ${message.text}`).join("\n\n");
-  return [
-    `Current context: ${input.context.title}`,
-    input.context.summary,
-    `Available repository files (manifest, not necessarily loaded):\n${available || "- none"}`,
-    `Files loaded in this prompt turn (full contents below only for these):\n${loadedList}`,
-    input.compactSummary ? `Conversation compact summary (does not contain full file contents):\n${input.compactSummary}` : "",
-    recentMessages ? `Recent conversation:\n${recentMessages}` : "",
-    files ? `Loaded repository file contents:\n\n${files}` : "",
-  ].filter(Boolean).join("\n\n");
-}
+function renderMarkdown(frontmatter: Record<string, unknown>, body: string): string { return `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${body.replace(/^\n+/, "")}`; }
 function extractSearchTerms(prompt: string): string[] {
   return prompt.toLowerCase().replace(/[^a-z0-9à-ÿ\s-]/gi, " ").split(/\s+/).filter((token) => token.length > 2).filter((token) => !new Set(["find", "search", "cerca", "trova", "paragraph", "paragrafo", "character", "characters", "personaggio", "personaggi", "canon", "book"]).has(token)).slice(0, 5);
 }
@@ -298,18 +304,21 @@ function looksLikeReview(prompt: string): boolean { return /\b(review|critique|f
 function looksLikeNote(prompt: string): boolean { return /\b(note|notes|appunto|appunti|memo)\b/.test(prompt); }
 function looksLikeRewrite(prompt: string): boolean { return /\b(rewrite|revise|fix|improve|polish|sistema|riscrivi|migliora|paragrafo)\b/.test(prompt); }
 function looksLikeSearch(prompt: string): boolean { return /\b(search|find|lookup|cerca|trova|keyword|keywords|search for)\b/.test(prompt); }
-function looksLikeMultiFileEdit(prompt: string): boolean { return /\b(multi[- ]?file|piu file|più file|several files|update files|modifica.*file|aggiorna.*file)\b/.test(prompt); }
+function looksLikeMultiFileEdit(prompt: string): boolean { return /\b(multi[- ]?file|piu file|più file|several files|update files|modifica.*file|aggiorna.*file|attachment|allegat)\b/.test(prompt); }
 function parseJsonObject(value: string): Record<string, unknown> | null {
   const trimmed = value.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
-  try {
-    const parsed = JSON.parse(trimmed);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
-  } catch { return null; }
+  try { const parsed = JSON.parse(trimmed); return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; } catch { return null; }
 }
-function isSafeRelativePath(path: string): boolean {
-  return !path.startsWith("/") && !path.includes("..") && path.endsWith(".md");
-}
+function isSafeRelativePath(path: string): boolean { return !path.startsWith("/") && !path.includes("..") && path.endsWith(".md"); }
 function makeAssistantMessage(role: "assistant" | "system", text: string): AssistantMessage { return { id: crypto.randomUUID(), role, text }; }
 function noAiMessage(): AssistantMessage { return makeAssistantMessage("assistant", "No AI integration is configured yet. Add an Azure OpenAI or OpenAI-compatible provider in Settings -> AI integrations."); }
 
-type PromptInput = { prompt: string; context: LoadedWriterContext; settings: AppSettings; history: AssistantMessage[]; compactSummary: string; compactedMessageCount: number };
+type PromptInput = {
+  prompt: string;
+  context: LoadedWriterContext;
+  settings: AppSettings;
+  history: AssistantMessage[];
+  compactSummary: string;
+  compactedMessageCount: number;
+  attachments: AssistantAttachment[];
+};

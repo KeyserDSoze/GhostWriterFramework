@@ -1,5 +1,15 @@
 import { create } from "zustand";
 
+export interface AssistantAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  kind: "text" | "image";
+  sizeBytes: number;
+  textContent?: string;
+  imageDataUrl?: string;
+}
+
 export interface AssistantFileUpdate {
   path: string;
   content: string;
@@ -43,6 +53,7 @@ export interface AssistantSessionMeta {
 
 export interface AssistantSession extends AssistantSessionMeta {
   messages: AssistantMessage[];
+  attachments: AssistantAttachment[];
   compactSummary: string;
   compactedMessageCount: number;
 }
@@ -101,6 +112,7 @@ export function createEmptyAssistantSession(contextTitle: string): AssistantSess
     contextTitle,
     updatedAt: timestamp,
     messages: [],
+    attachments: [],
     compactSummary: "",
     compactedMessageCount: 0,
   };

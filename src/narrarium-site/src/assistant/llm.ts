@@ -1,9 +1,13 @@
 import OpenAI, { AzureOpenAI } from "openai";
 import type { AIIntegration, AppSettings } from "@/types/settings";
 
+export type LlmContentPart =
+  | { type: "text"; text: string }
+  | { type: "image"; dataUrl: string };
+
 export interface LlmMessage {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: string | LlmContentPart[];
 }
 
 export function resolveWritingIntegration(settings: AppSettings): AIIntegration | null {
@@ -27,6 +31,17 @@ export async function completeText(
     ? integration.modelReview || integration.modelWriting || "gpt-4o"
     : integration.modelWriting || integration.modelReview || "gpt-4o";
 
+  const normalizedMessages = messages.map((message) => ({
+    role: message.role,
+    content: Array.isArray(message.content)
+      ? message.content.map((part) =>
+          part.type === "text"
+            ? { type: "text", text: part.text }
+            : { type: "image_url", image_url: { url: part.dataUrl } },
+        )
+      : message.content,
+  }));
+
   if (integration.provider === "azure_openai") {
     const client = new AzureOpenAI({
       endpoint: integration.endpoint ?? "",
@@ -34,7 +49,7 @@ export async function completeText(
       apiVersion: integration.apiVersion || "2024-10-21",
       dangerouslyAllowBrowser: true,
     });
-    const response = await client.chat.completions.create({ model, messages });
+    const response = await client.chat.completions.create({ model, messages: normalizedMessages as never });
     return response.choices[0]?.message?.content ?? "";
   }
 
@@ -44,7 +59,7 @@ export async function completeText(
       baseURL: integration.endpoint || "https://api.openai.com/v1",
       dangerouslyAllowBrowser: true,
     });
-    const response = await client.chat.completions.create({ model, messages });
+    const response = await client.chat.completions.create({ model, messages: normalizedMessages as never });
     return response.choices[0]?.message?.content ?? "";
   }
 
