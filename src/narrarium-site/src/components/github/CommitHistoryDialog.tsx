@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ExternalLink, GitCommit, Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,6 +19,7 @@ export function CommitHistoryDialog(props: {
   branch: string;
 }) {
   const { token, owner, repo, branch } = props;
+  const { t } = useTranslation();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -29,7 +31,7 @@ export function CommitHistoryDialog(props: {
     void listBranchCommits(token, owner, repo, branch)
       .then(setCommits)
       .catch((err) => {
-        toast({ title: "Failed to load commits", description: String(err), variant: "destructive" });
+        toast({ title: t("git.loadCommitsFailed"), description: String(err), variant: "destructive" });
       })
       .finally(() => setLoading(false));
   }, [open, token, owner, repo, branch, toast]);
@@ -39,17 +41,17 @@ export function CommitHistoryDialog(props: {
       <DialogTrigger asChild>
         <Button variant="outline" size="sm">
           <GitCommit className="mr-1 h-4 w-4" />
-          Commits
+          {t("git.commits")}
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Branch commits</DialogTitle>
+          <DialogTitle>{t("git.branchCommits")}</DialogTitle>
         </DialogHeader>
         {loading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading…</div>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("git.loading")}</div>
         ) : commits.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No commits found for {branch}.</p>
+          <p className="text-sm text-muted-foreground">{t("git.noCommits", { branch })}</p>
         ) : (
           <div className="space-y-2">
             {commits.map((commit) => (
@@ -62,7 +64,7 @@ export function CommitHistoryDialog(props: {
                   </div>
                   <Button asChild size="sm" variant="ghost">
                     <a href={commit.url} target="_blank" rel="noopener noreferrer">
-                      <ExternalLink className="mr-1 h-4 w-4" />Open
+                      <ExternalLink className="mr-1 h-4 w-4" />{t("git.open")}
                     </a>
                   </Button>
                 </div>

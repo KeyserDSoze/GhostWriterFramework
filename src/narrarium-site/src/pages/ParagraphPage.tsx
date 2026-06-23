@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { parseDocument, stringify } from "yaml";
 import { ArrowLeft, Save, Loader2, Plus, X, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -94,6 +95,7 @@ export function ParagraphPage() {
     paragraphNum: string;
   }>();
   const { toast } = useToast();
+  const { t } = useTranslation();
 
   const { settings } = useSettingsStore();
   const { structures, updateChapterParagraphs } = useBooksStore();
@@ -144,7 +146,7 @@ export function ParagraphPage() {
         setSha(fileSha);
       })
       .catch((err) =>
-        toast({ title: "Failed to load", description: String(err), variant: "destructive" }),
+        toast({ title: t("paragraph.loadFailed"), description: String(err), variant: "destructive" }),
       )
       .finally(() => setLoading(false));
   }, [paragraph, book, token, branch, toast]);
@@ -251,9 +253,9 @@ export function ParagraphPage() {
       setSha(newSha);
       setSavedEntries(finalEntries);
       setSavedBody(body);
-      toast({ title: "Saved" });
+      toast({ title: t("common.saved") });
     } catch (err) {
-      toast({ title: "Save failed", description: String(err), variant: "destructive" });
+      toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -264,9 +266,9 @@ export function ParagraphPage() {
     return (
       <Alert variant="destructive">
         <AlertDescription>
-          Book not loaded.{" "}
+          {t("paragraph.bookNotLoaded")}{" "}
           <Link to={`/app/books/${bookId}`} className="underline">
-            Load the book first.
+            {t("paragraph.loadBookFirst")}
           </Link>
         </AlertDescription>
       </Alert>
@@ -276,9 +278,9 @@ export function ParagraphPage() {
     return (
       <Alert variant="destructive">
         <AlertDescription>
-          Paragraph not found.{" "}
+          {t("paragraph.notFound")}{" "}
           <Link to={`/app/books/${bookId}/chapters/${chapterId}`} className="underline">
-            Back to chapter.
+            {t("paragraph.backToChapter")}
           </Link>
         </AlertDescription>
       </Alert>
@@ -306,7 +308,7 @@ export function ParagraphPage() {
             {branch}
           </Badge>
           {isDirty && !saving && (
-            <span className="text-xs text-muted-foreground">Unsaved</span>
+            <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>
           )}
           <Button
             size="sm"
@@ -318,7 +320,7 @@ export function ParagraphPage() {
             ) : (
               <Save className="mr-1 h-4 w-4" />
             )}
-            Save
+            {t("common.save")}
           </Button>
         </div>
       </div>
@@ -326,7 +328,7 @@ export function ParagraphPage() {
       {/* Metadata section */}
       <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-2 text-sm">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          Metadata
+          {t("common.metadata")}
         </p>
 
         {loading ? (
@@ -352,7 +354,7 @@ export function ParagraphPage() {
             {/* Title (editable) */}
             <div className="flex items-center gap-3">
               <span className="w-20 shrink-0 font-mono text-[11px] font-medium">
-                title
+                {t("paragraph.titleField")}
               </span>
               <Input
                 value={titleValue}
@@ -384,7 +386,7 @@ export function ParagraphPage() {
                 <button
                   onClick={() => removeEntry(e.key)}
                   className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                  aria-label={`Remove ${e.key}`}
+                  aria-label={t("canon.removeAria", { key: e.key })}
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -396,13 +398,13 @@ export function ParagraphPage() {
               <div className="flex items-center gap-2 pt-1">
                 <Input
                   autoFocus
-                  placeholder="key"
+                  placeholder={t("common.keyPlaceholder")}
                   value={newKey}
                   onChange={(e) => setNewKey(e.target.value)}
                   className="h-7 w-28 text-xs font-mono"
                 />
                 <Input
-                  placeholder="value (or val1, val2 for array)"
+                  placeholder={t("common.valuePlaceholder")}
                   value={newVal}
                   onChange={(e) => setNewVal(e.target.value)}
                   onKeyDown={(e) => {
@@ -412,7 +414,7 @@ export function ParagraphPage() {
                   className="h-7 flex-1 text-xs font-mono"
                 />
                 <Button size="sm" className="h-7" onClick={addEntry} disabled={!newKey.trim()}>
-                  Add
+                  {t("common.add")}
                 </Button>
                 <Button
                   size="sm"
@@ -420,7 +422,7 @@ export function ParagraphPage() {
                   className="h-7"
                   onClick={() => { setShowAddMeta(false); setNewKey(""); setNewVal(""); }}
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </Button>
               </div>
             ) : (
@@ -429,7 +431,7 @@ export function ParagraphPage() {
                 className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Plus className="h-3 w-3" />
-                Add field
+                {t("common.addField")}
               </button>
             )}
           </>
@@ -448,7 +450,7 @@ export function ParagraphPage() {
           value={body}
           onChange={(e) => setBody(e.target.value)}
           className="min-h-[55vh] font-mono text-sm resize-none"
-          placeholder="Start writing…"
+          placeholder={t("paragraph.writePlaceholder")}
           spellCheck={false}
         />
       )}

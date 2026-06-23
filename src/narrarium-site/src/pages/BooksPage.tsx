@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { BookOpen, PlusCircle, Lock, Globe, Trash2 } from "lucide-react";
 import {
   Card,
@@ -23,6 +24,7 @@ import { useSettings } from "@/drive/useSettings";
 import { type BookEntry } from "@/types/settings";
 
 export function BooksPage() {
+  const { t } = useTranslation();
   const { settings, patchSettings } = useSettingsStore();
   const { save } = useSettings();
   const books = settings.books;
@@ -43,15 +45,15 @@ export function BooksPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">My Books</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t("books.title")}</h1>
           <p className="text-muted-foreground">
-            Manage your Narrarium books from GitHub repositories.
+            {t("books.subtitle")}
           </p>
         </div>
         <Button asChild>
           <Link to="/app/books/add">
             <PlusCircle className="mr-2 h-4 w-4" />
-            Add Book
+            {t("books.addBook")}
           </Link>
         </Button>
       </div>
@@ -87,7 +89,7 @@ export function BooksPage() {
                   </CardHeader>
                   <CardContent>
                     <p className="text-xs text-muted-foreground">
-                      Added{" "}
+                      {t("books.added")}{" "}
                       {new Date(book.addedAt).toLocaleDateString(undefined, {
                         year: "numeric",
                         month: "short",
@@ -104,7 +106,7 @@ export function BooksPage() {
                   setToDelete(book);
                 }}
                 className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive sm:hidden sm:group-hover:flex"
-                aria-label={`Remove ${book.name}`}
+                aria-label={t("books.removeAria", { name: book.name })}
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
@@ -117,16 +119,15 @@ export function BooksPage() {
       <Dialog open={!!toDelete} onOpenChange={(open) => { if (!open) setToDelete(null); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Remove book?</DialogTitle>
+            <DialogTitle>{t("books.removeBook")}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            <strong>{toDelete?.name}</strong> ({toDelete?.owner}/{toDelete?.repo}) will be
-            removed from your list. The GitHub repository is not affected.
+            {t("books.removeBookDescription", { name: toDelete?.name })}
           </p>
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline" disabled={deleting}>
-                Cancel
+                {t("common.cancel")}
               </Button>
             </DialogClose>
             <Button
@@ -134,7 +135,7 @@ export function BooksPage() {
               onClick={() => void confirmDelete()}
               disabled={deleting}
             >
-              {deleting ? "Removing…" : "Remove"}
+              {deleting ? t("books.removing") : t("books.remove")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -144,17 +145,18 @@ export function BooksPage() {
 }
 
 function EmptyState() {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-border py-20 text-center">
       <BookOpen className="mb-4 h-12 w-12 text-muted-foreground" />
-      <h2 className="text-lg font-semibold">No books yet</h2>
+      <h2 className="text-lg font-semibold">{t("books.emptyTitle")}</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        Connect a GitHub repository to start managing your Narrarium book.
+        {t("books.emptyDescription")}
       </p>
       <Button asChild className="mt-4">
         <Link to="/app/books/add">
           <PlusCircle className="mr-2 h-4 w-4" />
-          Add your first book
+          {t("books.addFirst")}
         </Link>
       </Button>
     </div>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
   Loader2,
   AlertCircle,
@@ -39,6 +40,7 @@ import { PullRequestsDialog } from "@/components/github/PullRequestsDialog";
 import { CommitHistoryDialog } from "@/components/github/CommitHistoryDialog";
 
 function useBookStructure(bookId: string) {
+  const { t } = useTranslation();
   const { settings } = useSettingsStore();
   const { structures, loadingIds, errors, workingBranches, setStructure, setLoading, setError, clearBook } =
     useBooksStore();
@@ -53,7 +55,7 @@ function useBookStructure(bookId: string) {
     if (!book) return;
     const token = resolveBookToken(book, settings);
     if (!token) {
-      setError(bookId, "No GitHub token configured for this book.");
+      setError(bookId, t("bookPage.noTokenConfigured"));
       return;
     }
     setLoading(bookId, true);
@@ -63,7 +65,7 @@ function useBookStructure(bookId: string) {
         setError(bookId, err instanceof Error ? err.message : "Load failed"),
       )
       .finally(() => setLoading(bookId, false));
-  }, [book, bookId, readBranch, settings, setError, setLoading, setStructure]);
+  }, [book, bookId, readBranch, settings, setError, setLoading, setStructure, t]);
 
   useEffect(() => {
     if (!book || loading) return;
@@ -97,6 +99,7 @@ function CanonList({
   section: string;
   onOpen: (section: string, file: BookFile) => void;
 }) {
+  const { t } = useTranslation();
   if (files.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-4">{emptyLabel}</p>
@@ -115,10 +118,10 @@ function CanonList({
           <div className="flex items-center gap-2">
             <span className="hidden text-xs text-muted-foreground lg:inline">{f.path}</span>
             <Button asChild variant="ghost" size="sm">
-              <Link to={`/app/books/${bookId}/canon/${section}/${fileSlug(f.path)}`}>Edit</Link>
+              <Link to={`/app/books/${bookId}/canon/${section}/${fileSlug(f.path)}`}>{t("common.edit")}</Link>
             </Button>
             <Button variant="ghost" size="sm" onClick={() => onOpen(section, f)}>
-              Open dossier
+              {t("common.openDossier")}
             </Button>
           </div>
         </li>
@@ -128,6 +131,7 @@ function CanonList({
 }
 
 export function BookPage() {
+  const { t } = useTranslation();
   const { bookId } = useParams<{ bookId: string }>();
   const { settings } = useSettingsStore();
   const { toast } = useToast();
@@ -140,7 +144,7 @@ export function BookPage() {
     return (
       <Alert variant="destructive">
         <AlertCircle className="h-4 w-4" />
-        <AlertDescription>Book not found.</AlertDescription>
+        <AlertDescription>{t("bookPage.notFound")}</AlertDescription>
       </Alert>
     );
   }
@@ -159,7 +163,7 @@ export function BookPage() {
         content,
       });
     } catch (err) {
-      toast({ title: "Dossier load failed", description: String(err), variant: "destructive" });
+      toast({ title: t("bookPage.dossierLoadFailed"), description: String(err), variant: "destructive" });
     }
   }
 
@@ -168,9 +172,9 @@ export function BookPage() {
     title: string;
     summary?: string;
   }) {
-    if (!book || !token) throw new Error("No GitHub token configured for this book.");
+    if (!book || !token) throw new Error(t("bookPage.noTokenConfigured"));
     await createChapterFile(token, book.owner, book.repo, branch, input);
-    toast({ title: `Chapter ${formatOrdinal(input.number)} created` });
+    toast({ title: t("bookPage.chapterCreated", { number: formatOrdinal(input.number) }) });
     reload();
   }
 
@@ -180,14 +184,14 @@ export function BookPage() {
       summary?: string;
       extraFrontmatter?: Record<string, unknown>;
     }) => {
-      if (!book || !token) throw new Error("No GitHub token configured for this book.");
+      if (!book || !token) throw new Error(t("bookPage.noTokenConfigured"));
       await createCanonEntity(token, book.owner, book.repo, branch, {
         kind,
         label: input.label,
         summary: input.summary,
         extraFrontmatter: input.extraFrontmatter,
       });
-      toast({ title: `${input.label} created` });
+      toast({ title: t("bookPage.created", { label: input.label }) });
       reload();
     };
   }
@@ -207,15 +211,15 @@ export function BookPage() {
             {book.owner}/{book.repo}
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground font-mono">
-            {ensuring ? "Creating branch…" : branch}
+            {ensuring ? t("bookPage.creatingBranch") : branch}
           </p>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Token:{" "}
+            {t("bookPage.token")}{" "}
             {book.bookToken
-              ? `dedicated PAT${book.bookTokenLabel ? ` · ${book.bookTokenLabel}` : ""}`
+              ? `${t("bookPage.dedicatedPatLabel")}${book.bookTokenLabel ? ` · ${book.bookTokenLabel}` : ""}`
               : book.tokenIndex != null
-                ? settings.extraGitHubTokens[book.tokenIndex]?.label ?? "saved token"
-                : "default token"}
+                ? settings.extraGitHubTokens[book.tokenIndex]?.label ?? t("bookPage.savedToken")
+                : t("bookPage.defaultToken")}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -236,7 +240,7 @@ export function BookPage() {
           <Button asChild variant="outline" size="sm">
             <Link to={`/app/books/${book.id}/settings`}>
               <Settings className="mr-1 h-4 w-4" />
-              Book settings
+              {t("bookPage.bookSettings")}
             </Link>
           </Button>
         </div>
@@ -256,49 +260,49 @@ export function BookPage() {
           <TabsList className="flex-wrap h-auto gap-1">
             <TabsTrigger value="chapters">
               <BookOpen className="mr-1 h-3 w-3" />
-              Chapters
+              {t("bookPage.chapters")}
               <Badge variant="secondary" className="ml-1.5 text-[10px]">
                 {structure.chapters.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="characters">
               <Users className="mr-1 h-3 w-3" />
-              Characters
+              {t("bookPage.characters")}
               <Badge variant="secondary" className="ml-1.5 text-[10px]">
                 {structure.characters.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="locations">
               <MapPin className="mr-1 h-3 w-3" />
-              Locations
+              {t("bookPage.locations")}
               <Badge variant="secondary" className="ml-1.5 text-[10px]">
                 {structure.locations.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="factions">
               <Shield className="mr-1 h-3 w-3" />
-              Factions
+              {t("bookPage.factions")}
               <Badge variant="secondary" className="ml-1.5 text-[10px]">
                 {structure.factions.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="items">
               <Package className="mr-1 h-3 w-3" />
-              Items
+              {t("bookPage.items")}
               <Badge variant="secondary" className="ml-1.5 text-[10px]">
                 {structure.items.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="timelines">
               <Clock className="mr-1 h-3 w-3" />
-              Timelines
+              {t("bookPage.timelines")}
               <Badge variant="secondary" className="ml-1.5 text-[10px]">
                 {structure.timelines.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="secrets">
               <EyeOff className="mr-1 h-3 w-3" />
-              Secrets
+              {t("bookPage.secrets")}
               <Badge variant="secondary" className="ml-1.5 text-[10px]">
                 {structure.secrets.length}
               </Badge>
@@ -331,9 +335,9 @@ export function BookPage() {
                         <p className="text-xs text-muted-foreground">
                           {ch.paragraphs.length} paragraph
                           {ch.paragraphs.length !== 1 ? "s" : ""}
-                          {ch.draftPath && " · draft"}
-                          {ch.hasResume && " · resume"}
-                          {ch.hasEvaluation && " · eval"}
+                          {ch.draftPath && ` · ${t("bookPage.draft")}`}
+                          {ch.hasResume && ` · ${t("bookPage.resume")}`}
+                          {ch.hasEvaluation && ` · ${t("bookPage.eval")}`}
                         </p>
                       </div>
                     </div>
@@ -344,7 +348,7 @@ export function BookPage() {
             </ul>
             {structure.chapters.length === 0 && (
               <p className="text-sm text-muted-foreground py-4">
-                No chapters found in this repository.
+                {t("bookPage.noChapters")}
               </p>
             )}
           </TabsContent>
@@ -357,7 +361,7 @@ export function BookPage() {
               bookId={bookId ?? ""}
               label="Characters"
               files={structure.characters}
-              emptyLabel="No characters found."
+              emptyLabel={t("bookPage.noCharacters")}
               section="characters"
               onOpen={handleOpenDossier}
             />
@@ -371,7 +375,7 @@ export function BookPage() {
               bookId={bookId ?? ""}
               label="Locations"
               files={structure.locations}
-              emptyLabel="No locations found."
+              emptyLabel={t("bookPage.noLocations")}
               section="locations"
               onOpen={handleOpenDossier}
             />
@@ -385,7 +389,7 @@ export function BookPage() {
               bookId={bookId ?? ""}
               label="Factions"
               files={structure.factions}
-              emptyLabel="No factions found."
+              emptyLabel={t("bookPage.noFactions")}
               section="factions"
               onOpen={handleOpenDossier}
             />
@@ -399,7 +403,7 @@ export function BookPage() {
               bookId={bookId ?? ""}
               label="Items"
               files={structure.items}
-              emptyLabel="No items found."
+              emptyLabel={t("bookPage.noItems")}
               section="items"
               onOpen={handleOpenDossier}
             />
@@ -410,14 +414,14 @@ export function BookPage() {
               <CreateEntityDialog
                 kind="timeline-event"
                 onCreate={makeCreateEntity("timeline-event")}
-                triggerLabel="Add timeline event"
+                triggerLabel={t("bookPage.addTimelineEvent")}
               />
             </div>
             <CanonList
               bookId={bookId ?? ""}
               label="Timelines"
               files={structure.timelines}
-              emptyLabel="No timeline files found."
+              emptyLabel={t("bookPage.noTimeline")}
               section="timelines"
               onOpen={handleOpenDossier}
             />
@@ -431,7 +435,7 @@ export function BookPage() {
               bookId={bookId ?? ""}
               label="Secrets"
               files={structure.secrets}
-              emptyLabel="No secrets found."
+              emptyLabel={t("bookPage.noSecrets")}
               section="secrets"
               onOpen={handleOpenDossier}
             />

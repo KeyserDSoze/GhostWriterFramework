@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ExternalLink, GitPullRequest, Loader2, Merge, Plus, XCircle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -28,6 +29,7 @@ export function PullRequestsDialog(props: {
   base: string;
 }) {
   const { token, owner, repo, head, base } = props;
+  const { t } = useTranslation();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [pulls, setPulls] = useState<PullRequestSummary[]>([]);
@@ -44,7 +46,7 @@ export function PullRequestsDialog(props: {
       const items = await listOpenPullRequests(token, owner, repo, head);
       setPulls(items);
     } catch (err) {
-      toast({ title: "Failed to load PRs", description: String(err), variant: "destructive" });
+      toast({ title: t("git.loadPrsFailed"), description: String(err), variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -68,9 +70,9 @@ export function PullRequestsDialog(props: {
       setPulls((current) => [pr, ...current]);
       setTitle("");
       setBody("");
-      toast({ title: `PR #${pr.number} created` });
+      toast({ title: t("git.prCreated", { number: pr.number }) });
     } catch (err) {
-      toast({ title: "Create PR failed", description: String(err), variant: "destructive" });
+      toast({ title: t("git.createPrFailed"), description: String(err), variant: "destructive" });
     } finally {
       setCreating(false);
     }
@@ -81,9 +83,9 @@ export function PullRequestsDialog(props: {
     try {
       await closePullRequest(token, owner, repo, pr.number);
       setPulls((current) => current.filter((entry) => entry.number !== pr.number));
-      toast({ title: `PR #${pr.number} closed` });
+      toast({ title: t("git.prClosed", { number: pr.number }) });
     } catch (err) {
-      toast({ title: "Close PR failed", description: String(err), variant: "destructive" });
+      toast({ title: t("git.closePrFailed"), description: String(err), variant: "destructive" });
     } finally {
       setActingNumber(null);
     }
@@ -94,9 +96,9 @@ export function PullRequestsDialog(props: {
     try {
       await mergePullRequest(token, owner, repo, pr.number, pr.title);
       setPulls((current) => current.filter((entry) => entry.number !== pr.number));
-      toast({ title: `PR #${pr.number} merged` });
+      toast({ title: t("git.prMerged", { number: pr.number }) });
     } catch (err) {
-      toast({ title: "Merge PR failed", description: String(err), variant: "destructive" });
+      toast({ title: t("git.mergePrFailed"), description: String(err), variant: "destructive" });
     } finally {
       setActingNumber(null);
     }
@@ -107,31 +109,31 @@ export function PullRequestsDialog(props: {
       <DialogTrigger asChild>
         <Button variant="outline" size="sm">
           <GitPullRequest className="mr-1 h-4 w-4" />
-          PRs
+          {t("git.prs")}
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Pull requests</DialogTitle>
+          <DialogTitle>{t("git.pullRequests")}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
           <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
-            Current branch: <strong>{head}</strong><br />
-            Base branch: <strong>{base}</strong>
+            {t("git.currentBranch")} <strong>{head}</strong><br />
+            {t("git.baseBranch")} <strong>{base}</strong>
           </div>
 
           <div className="space-y-2">
-            <Input placeholder="PR title" value={title} onChange={(e) => setTitle(e.target.value)} />
-            <Textarea placeholder="Description (optional)" rows={4} value={body} onChange={(e) => setBody(e.target.value)} />
+            <Input placeholder={t("git.prTitlePlaceholder")} value={title} onChange={(e) => setTitle(e.target.value)} />
+            <Textarea placeholder={t("git.prDescriptionPlaceholder")} rows={4} value={body} onChange={(e) => setBody(e.target.value)} />
           </div>
 
           <div className="space-y-2">
-            <p className="text-sm font-medium">Open PRs for this branch</p>
+            <p className="text-sm font-medium">{t("git.openPrs")}</p>
             {loading ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading…</div>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("git.loading")}</div>
             ) : pulls.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No open PRs for {head}.</p>
+              <p className="text-sm text-muted-foreground">{t("git.noPrs", { head })}</p>
             ) : (
               <div className="space-y-2">
                 {pulls.map((pr) => (
@@ -143,18 +145,18 @@ export function PullRequestsDialog(props: {
                       </div>
                       <Button asChild size="sm" variant="ghost">
                         <a href={pr.htmlUrl} target="_blank" rel="noopener noreferrer">
-                          <ExternalLink className="mr-1 h-4 w-4" />Open
+                          <ExternalLink className="mr-1 h-4 w-4" />{t("git.open")}
                         </a>
                       </Button>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant="outline" onClick={() => void handleMerge(pr)} disabled={actingNumber === pr.number}>
                         {actingNumber === pr.number ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Merge className="mr-1 h-4 w-4" />}
-                        Merge
+                        {t("git.merge")}
                       </Button>
                       <Button size="sm" variant="outline" onClick={() => void handleClose(pr)} disabled={actingNumber === pr.number}>
                         {actingNumber === pr.number ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <XCircle className="mr-1 h-4 w-4" />}
-                        Close
+                        {t("git.close")}
                       </Button>
                     </div>
                   </div>
@@ -165,10 +167,10 @@ export function PullRequestsDialog(props: {
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)}>Close</Button>
+          <Button variant="outline" onClick={() => setOpen(false)}>{t("git.close")}</Button>
           <Button onClick={() => void handleCreate()} disabled={creating || !title.trim() || head === base}>
             {creating ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Plus className="mr-1 h-4 w-4" />}
-            Create PR
+            {t("git.createPr")}
           </Button>
         </DialogFooter>
       </DialogContent>

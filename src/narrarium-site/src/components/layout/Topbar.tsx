@@ -1,4 +1,5 @@
 import { LogOut, Menu, Volume2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { ThemeToggle } from "./ThemeToggle";
 import { LanguageToggle } from "./LanguageToggle";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ function initials(name: string | undefined): string {
 }
 
 export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
+  const { t } = useTranslation();
   const { user, clearAuth } = useAuthStore();
   const { settings } = useSettingsStore();
   const { toast } = useToast();
@@ -51,7 +53,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       const text = main?.textContent?.trim() ?? document.body.textContent?.trim() ?? "";
       speechRef.current = await speakText(text, settings);
     } catch (err) {
-      toast({ title: "TTS failed", description: String(err), variant: "destructive" });
+      toast({ title: t("shell.ttsFailed"), description: String(err), variant: "destructive" });
     }
   }
 
@@ -61,7 +63,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         <Button
           variant="ghost"
           size="icon"
-          aria-label="Open navigation menu"
+          aria-label={t("shell.openNav")}
           onClick={onOpenMobileNav}
         >
           <Menu className="h-5 w-5" />
@@ -70,7 +72,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       </div>
 
       <div className="ml-auto flex items-center gap-1 sm:gap-2">
-        <Button variant="ghost" size="icon" aria-label="Read page" onClick={() => void handleReadPage()}>
+        <Button variant="ghost" size="icon" aria-label={t("shell.readPage")} onClick={() => void handleReadPage()}>
           <Volume2 className="h-4 w-4" />
         </Button>
         <ThemeToggle />
@@ -100,7 +102,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
             )}
             <DropdownMenuItem onClick={handleSignOut}>
               <LogOut className="mr-2 h-4 w-4" />
-              Sign out
+              {t("shell.signOut")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

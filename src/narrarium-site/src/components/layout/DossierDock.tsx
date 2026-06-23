@@ -14,7 +14,7 @@ export function DossierDock() {
     <aside className="hidden w-96 shrink-0 border-l bg-card/92 xl:flex xl:flex-col">
       <div className="border-b p-4">
         <p className="text-xs uppercase tracking-[0.22em] text-primary">{t("dossier.pinned")}</p>
-        <p className="mt-1 text-sm text-muted-foreground">Canon context stays open while you edit.</p>
+        <p className="mt-1 text-sm text-muted-foreground">{t("dossier.stayOpen")}</p>
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-3 p-4">

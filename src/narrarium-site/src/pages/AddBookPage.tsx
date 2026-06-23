@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Search, Loader2, Github, Lock, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +22,7 @@ import { type RepoSummary } from "@/github/githubClient";
 import { type BookEntry } from "@/types/settings";
 
 export function AddBookPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { settings } = useSettingsStore();
   const { save } = useSettings();
@@ -83,20 +85,20 @@ export function AddBookPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Add a Book</h1>
+        <h1 className="text-2xl font-bold tracking-tight">{t("addBook.title")}</h1>
         <p className="text-muted-foreground">
-          Pick a GitHub repository that follows the Narrarium structure.
+          {t("addBook.subtitle")}
         </p>
       </div>
 
       {noDefaultToken && (
         <Alert variant="destructive">
           <AlertDescription>
-            No default GitHub token configured.{" "}
+            {t("addBook.noDefaultToken")}{" "}
             <Link className="underline" to="/app/settings">
-              Go to Settings
+              {t("addBook.goToSettings")}
             </Link>{" "}
-            to add one.
+            {t("addBook.toAddOne")}
           </AlertDescription>
         </Alert>
       )}
@@ -105,15 +107,14 @@ export function AddBookPage() {
         <Alert>
           <Lock className="h-4 w-4" />
           <AlertDescription>
-            Only public repositories are visible. Private repositories require
-            a token with the{" "}
+            {t("addBook.privateHint1")}{" "}
             <strong>
               <code>repo</code>
             </strong>{" "}
-            scope (classic PAT) or a fine-grained PAT set to{" "}
-            <strong>All repositories</strong>.{" "}
+            {t("addBook.privateHint2")}{" "}
+            <strong>{t("addBook.allRepositories")}</strong>.{" "}
             <Link className="underline" to="/app/settings">
-              Update your token in Settings.
+              {t("addBook.updateToken")}
             </Link>
           </AlertDescription>
         </Alert>
@@ -121,37 +122,35 @@ export function AddBookPage() {
 
       {/* Token picker */}
       <div className="grid gap-2">
-        <Label>GitHub token to use</Label>
+        <Label>{t("addBook.tokenToUse")}</Label>
         <Select value={selectedToken} onValueChange={setSelectedToken}>
           <SelectTrigger className="w-full sm:max-w-xs">
-            <SelectValue placeholder="Select token" />
+            <SelectValue placeholder={t("addBook.selectToken")} />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="default">
-              Default token
+              {t("addBook.defaultToken")}
               {settings.defaultGitHubToken
                 ? ` (…${settings.defaultGitHubToken.slice(-4)})`
-                : " (not set)"}
+                : t("addBook.notSet")}
             </SelectItem>
             {settings.extraGitHubTokens.map((t, i) => (
               <SelectItem key={i} value={String(i)}>
                 {t.label} (…{t.token.slice(-4)})
               </SelectItem>
             ))}
-            <SelectItem value="custom">Dedicated PAT for this book…</SelectItem>
+            <SelectItem value="custom">{t("addBook.dedicatedPat")}</SelectItem>
           </SelectContent>
         </Select>
 
         {selectedToken === "custom" && (
           <div className="mt-2 grid gap-2 rounded-lg border border-dashed p-3">
             <p className="text-xs text-muted-foreground">
-              Use a personal access token created specifically for this book. It
-              is stored on the book entry in your Drive settings and takes
-              priority over the default token.
+              {t("addBook.dedicatedHint")}
             </p>
             <div className="grid gap-2 sm:grid-cols-[1fr_2fr]">
               <Input
-                placeholder="Label (optional)"
+                placeholder={t("addBook.labelOptional")}
                 value={customTokenLabel}
                 onChange={(e) => setCustomTokenLabel(e.target.value)}
               />
@@ -172,7 +171,7 @@ export function AddBookPage() {
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           className="pl-9"
-          placeholder="Filter repositories…"
+          placeholder={t("addBook.filterRepos")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           disabled={!activeToken}
@@ -183,7 +182,7 @@ export function AddBookPage() {
       {loading && (
         <div className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Loading repositories…
+          {t("addBook.loadingRepos")}
         </div>
       )}
 
@@ -195,7 +194,7 @@ export function AddBookPage() {
 
       {!loading && !error && filtered.length === 0 && activeToken && (
         <p className="text-sm text-muted-foreground">
-          No repositories found. Try a different filter.
+          {t("addBook.noRepos")}
         </p>
       )}
 
@@ -223,7 +222,7 @@ export function AddBookPage() {
                 )}
               </CardHeader>
               {alreadyAdded ? (
-                <Badge variant="secondary">Added</Badge>
+                <Badge variant="secondary">{t("addBook.added")}</Badge>
               ) : (
                 <Button
                   size="sm"
@@ -233,7 +232,7 @@ export function AddBookPage() {
                   {adding === repo.full_name ? (
                     <Loader2 className="mr-2 h-3 w-3 animate-spin" />
                   ) : null}
-                  Add
+                  {t("addBook.add")}
                 </Button>
               )}
             </Card>

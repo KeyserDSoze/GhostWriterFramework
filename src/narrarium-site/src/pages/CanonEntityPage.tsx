@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { ArrowLeft, Lock, Plus, Save, X } from "lucide-react";
 import { parseDocument, stringify } from "yaml";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -76,6 +77,7 @@ export function CanonEntityPage() {
   const { toast } = useToast();
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
+  const { t } = useTranslation();
 
   const book = settings.books.find((entry) => entry.id === bookId);
   const token = book ? resolveBookToken(book, settings) : "";
@@ -133,7 +135,7 @@ export function CanonEntityPage() {
         setSha(fileSha);
       })
       .catch((err) =>
-        toast({ title: "Failed to load canon file", description: String(err), variant: "destructive" }),
+        toast({ title: t("canon.loadFailed"), description: String(err), variant: "destructive" }),
       )
       .finally(() => setLoading(false));
   }, [book, token, branch, path, toast]);
@@ -142,7 +144,7 @@ export function CanonEntityPage() {
     return (
       <Alert variant="destructive">
         <AlertDescription>
-          Canon file not found. <Link to={`/app/books/${bookId}`} className="underline">Back to book</Link>
+          {t("canon.notFound")} <Link to={`/app/books/${bookId}`} className="underline">{t("canon.backToBook")}</Link>
         </AlertDescription>
       </Alert>
     );
@@ -187,9 +189,9 @@ export function CanonEntityPage() {
       setSha(newSha);
       setSavedEntries(entries);
       setSavedBody(body);
-      toast({ title: "Saved" });
+      toast({ title: t("common.saved") });
     } catch (err) {
-      toast({ title: "Save failed", description: String(err), variant: "destructive" });
+      toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -204,21 +206,21 @@ export function CanonEntityPage() {
         <Button asChild variant="ghost" size="sm" className="-ml-2 w-fit">
           <Link to={`/app/books/${bookId}`}>
             <ArrowLeft className="mr-1 h-4 w-4" />
-            Back to book
+            {t("canon.backToBook")}
           </Link>
         </Button>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="font-mono text-xs">{branch}</Badge>
-          {isDirty && !saving && <span className="text-xs text-muted-foreground">Unsaved</span>}
+          {isDirty && !saving && <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>}
           <Button size="sm" onClick={() => void handleSave()} disabled={!isDirty || saving}>
             {saving ? <Save className="mr-1 h-4 w-4 animate-pulse" /> : <Save className="mr-1 h-4 w-4" />}
-            Save
+            {t("common.save")}
           </Button>
         </div>
       </div>
 
       <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-2 text-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Metadata</p>
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{t("common.metadata")}</p>
         {loading ? (
           <div className="space-y-1.5">
             <Skeleton className="h-4 w-3/4" />
@@ -256,7 +258,7 @@ export function CanonEntityPage() {
                 <button
                   onClick={() => removeEntry(entry.key)}
                   className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                  aria-label={`Remove ${entry.key}`}
+                  aria-label={t("canon.removeAria", { key: entry.key })}
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -267,13 +269,13 @@ export function CanonEntityPage() {
               <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:items-center">
                 <Input
                   autoFocus
-                  placeholder="key"
+                  placeholder={t("common.keyPlaceholder")}
                   value={newKey}
                   onChange={(e) => setNewKey(e.target.value)}
                   className="h-8 w-full text-xs font-mono sm:w-32"
                 />
                 <Input
-                  placeholder="value (or val1, val2 for array)"
+                  placeholder={t("common.valuePlaceholder")}
                   value={newVal}
                   onChange={(e) => setNewVal(e.target.value)}
                   onKeyDown={(e) => {
@@ -287,7 +289,7 @@ export function CanonEntityPage() {
                   className="h-8 flex-1 text-xs font-mono"
                 />
                 <Button size="sm" className="h-8" onClick={addEntry} disabled={!newKey.trim()}>
-                  Add
+                  {t("common.add")}
                 </Button>
               </div>
             ) : (
@@ -296,7 +298,7 @@ export function CanonEntityPage() {
                 className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
               >
                 <Plus className="h-3 w-3" />
-                Add field
+                {t("common.addField")}
               </button>
             )}
           </>
@@ -314,7 +316,7 @@ export function CanonEntityPage() {
           value={body}
           onChange={(e) => setBody(e.target.value)}
           className="min-h-[55vh] font-mono text-sm resize-none"
-          placeholder="Write the canon body…"
+          placeholder={t("canon.writeBodyPlaceholder")}
           spellCheck={false}
         />
       )}

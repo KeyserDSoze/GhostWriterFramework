@@ -96,35 +96,35 @@ export function HomePage() {
               </Button>
             </div>
             <div className="mt-8 grid max-w-xl grid-cols-3 gap-3 text-sm text-muted-foreground">
-              <div className="rounded-2xl border bg-card/70 p-3"><strong className="block text-foreground">GitHub</strong>books as repos</div>
-              <div className="rounded-2xl border bg-card/70 p-3"><strong className="block text-foreground">Drive</strong>settings per user</div>
-              <div className="rounded-2xl border bg-card/70 p-3"><strong className="block text-foreground">AI</strong>Azure or Copilot</div>
+              <div className="rounded-2xl border bg-card/70 p-3"><strong className="block text-foreground">{t("homePage.github")}</strong>{t("homePage.booksAsRepos")}</div>
+              <div className="rounded-2xl border bg-card/70 p-3"><strong className="block text-foreground">{t("homePage.drive")}</strong>{t("homePage.settingsPerUser")}</div>
+              <div className="rounded-2xl border bg-card/70 p-3"><strong className="block text-foreground">{t("homePage.ai")}</strong>{t("homePage.azureOrCopilot")}</div>
             </div>
           </div>
           <div className="relative min-h-[520px]">
             <div className="absolute left-4 top-8 w-[78%] rotate-[-3deg] rounded-[2rem] border bg-card/92 p-5 shadow-2xl shadow-primary/10 backdrop-blur">
               <div className="mb-4 flex items-center justify-between">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.28em] text-primary">manuscript</p>
-                  <h2 className="font-serif text-2xl font-semibold">Chapter 012</h2>
+                  <p className="text-xs uppercase tracking-[0.28em] text-primary">{t("homePage.manuscript")}</p>
+                  <h2 className="font-serif text-2xl font-semibold">{t("homePage.chapterSample")}</h2>
                 </div>
-                <Badge variant="outline">dev-alessandro</Badge>
+                <Badge variant="outline">{t("homePage.branchSample")}</Badge>
               </div>
               <div className="space-y-3 text-sm text-muted-foreground">
-                <p className="rounded-2xl bg-muted/60 p-4 text-foreground">The name in the margin was not a name at all. It was a door.</p>
-                <p className="rounded-2xl border border-dashed p-4">AI suggestion: tighten the reveal and seed the secret through an object beat.</p>
+                <p className="rounded-2xl bg-muted/60 p-4 text-foreground">{t("homePage.proseSample")}</p>
+                <p className="rounded-2xl border border-dashed p-4">{t("homePage.aiSuggestion")}</p>
               </div>
             </div>
             <div className="absolute bottom-14 right-0 w-[70%] rotate-[4deg] rounded-[2rem] border bg-card/95 p-5 shadow-2xl shadow-black/10">
               <div className="mb-3 flex items-center gap-2 text-primary">
                 <Sparkles className="h-4 w-4" />
-                <p className="text-xs uppercase tracking-[0.28em]">pinned dossier</p>
+                <p className="text-xs uppercase tracking-[0.28em]">{t("homePage.pinnedDossier")}</p>
               </div>
-              <h3 className="font-serif text-2xl font-semibold">Mara Vale</h3>
-              <p className="mt-2 text-sm text-muted-foreground">Alias, role, voice, secrets, relationships and every canonical mention stay one click away while drafting.</p>
+              <h3 className="font-serif text-2xl font-semibold">{t("homePage.characterSample")}</h3>
+              <p className="mt-2 text-sm text-muted-foreground">{t("homePage.dossierSample")}</p>
             </div>
             <div className="absolute bottom-0 left-2 rounded-full border bg-background/80 px-4 py-2 text-sm text-muted-foreground shadow-lg backdrop-blur">
-              Click a name. Pin the character. Keep writing.
+              {t("homePage.pinHint")}
             </div>
           </div>
         </div>
@@ -132,10 +132,10 @@ export function HomePage() {
 
       <section className="mx-auto grid w-full max-w-7xl gap-4 px-4 pb-20 sm:px-6 md:grid-cols-2 lg:grid-cols-4 lg:px-8">
         {[
-          { icon: <Library className="h-5 w-5" />, title: "Book workspaces", text: "Connect GitHub repositories, branch safely, and commit structured edits." },
-          { icon: <Boxes className="h-5 w-5" />, title: "Canon atlas", text: "Browse characters, locations, factions, items, secrets, and timeline events." },
-          { icon: <Bot className="h-5 w-5" />, title: "AI writing help", text: "Prepare for Azure OpenAI, OpenAI-compatible providers, and Microsoft 365 Copilot." },
-          { icon: <Braces className="h-5 w-5" />, title: "MCP native", text: `${localToolCount} local tools and ${publicToolCount} public tools documented from source.` },
+          { icon: <Library className="h-5 w-5" />, title: t("homePage.featureWorkspacesTitle"), text: t("homePage.featureWorkspacesText") },
+          { icon: <Boxes className="h-5 w-5" />, title: t("homePage.featureCanonTitle"), text: t("homePage.featureCanonText") },
+          { icon: <Bot className="h-5 w-5" />, title: t("homePage.featureAiTitle"), text: t("homePage.featureAiText") },
+          { icon: <Braces className="h-5 w-5" />, title: t("homePage.featureMcpTitle"), text: t("homePage.featureMcpText", { local: localToolCount, public: publicToolCount }) },
         ].map((feature) => (
           <Card key={feature.title} className="bg-card/74 backdrop-blur">
             <CardHeader>
@@ -155,13 +155,13 @@ export function DocsIndexPage() {
   const groups = getDocGroups();
   return (
     <PublicShell>
-      <PageHero eyebrow="Documentation" title={t("public.docsTitle")} text={t("public.docsText")} />
+      <PageHero eyebrow={t("docsPage.documentation")} title={t("public.docsTitle")} text={t("public.docsText")} />
       <section className="mx-auto grid w-full max-w-7xl gap-4 px-4 pb-16 sm:px-6 lg:grid-cols-3 lg:px-8">
         {groups.map((group) => (
           <Card key={group.key} className="bg-card/80">
             <CardHeader>
               <CardTitle>{group.label}</CardTitle>
-              <CardDescription>{group.docs.length} page{group.docs.length === 1 ? "" : "s"}</CardDescription>
+              <CardDescription>{group.docs.length} {group.docs.length === 1 ? t("docsPage.page") : t("docsPage.pages")}</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-2">
               {group.docs.map((doc) => (
@@ -179,6 +179,7 @@ export function DocsIndexPage() {
 }
 
 export function DocPage() {
+  const { t } = useTranslation();
   const params = useParams();
   const slug = params["*"]?.replace(/^\/+|\/+$/g, "") || undefined;
   const doc = getDocBySlug(slug);
@@ -191,7 +192,7 @@ export function DocPage() {
       <section className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-[280px_minmax(0,1fr)] lg:px-8">
         <aside className="hidden lg:block">
           <div className="sticky top-24 rounded-3xl border bg-card/80 p-4">
-            <p className="mb-3 text-xs uppercase tracking-[0.22em] text-muted-foreground">Docs</p>
+            <p className="mb-3 text-xs uppercase tracking-[0.22em] text-muted-foreground">{t("docsPage.docs")}</p>
             <nav className="grid gap-1">
               {getDocGroups().flatMap((group) => group.docs).map((entry) => (
                 <Link key={entry.slug} to={entry.href} className={entry.slug === doc.slug ? "rounded-xl bg-primary px-3 py-2 text-sm text-primary-foreground" : "rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"}>
@@ -206,7 +207,7 @@ export function DocPage() {
             <Badge variant="secondary">{doc.groupLabel}</Badge>
             <h1 className="mt-4 font-serif text-4xl font-semibold tracking-tight sm:text-5xl">{doc.title}</h1>
             <p className="mt-3 max-w-3xl text-muted-foreground">{doc.summary}</p>
-            <p className="mt-3 text-xs text-muted-foreground">Source: <code>{doc.sourcePath}</code></p>
+            <p className="mt-3 text-xs text-muted-foreground">{t("docsPage.source")} <code>{doc.sourcePath}</code></p>
           </div>
           <div className="doc-prose" dangerouslySetInnerHTML={{ __html: html }} />
         </article>
@@ -226,67 +227,67 @@ export function McpPage() {
 
   return (
     <PublicShell>
-      <PageHero eyebrow="Integration" title={t("public.mcpTitle")} text={t("public.mcpText")} />
+      <PageHero eyebrow={t("mcpPageContent.integration")} title={t("public.mcpTitle")} text={t("public.mcpText")} />
       <section className="mx-auto grid w-full max-w-7xl gap-4 px-4 pb-10 sm:px-6 lg:grid-cols-2 lg:px-8">
         <Card>
           <CardHeader>
-            <CardTitle>Local stdio MCP</CardTitle>
-            <CardDescription>Use it for repository mutations, canon creation, chapter writing, resumes, evaluation and EPUB export.</CardDescription>
+            <CardTitle>{t("mcpPageContent.localTitle")}</CardTitle>
+            <CardDescription>{t("mcpPageContent.localText")}</CardDescription>
           </CardHeader>
           <CardContent><pre><code>npx narrarium-mcp-server</code></pre></CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>Public HTTP MCP</CardTitle>
-            <CardDescription>Use it for setup guidance, repository spec help and Wikipedia research.</CardDescription>
+            <CardTitle>{t("mcpPageContent.publicTitle")}</CardTitle>
+            <CardDescription>{t("mcpPageContent.publicText")}</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2"><pre><code>{publicMcpUrl}</code></pre><p className="text-sm text-muted-foreground">Health: <code>{publicHealthUrl}</code></p></CardContent>
+          <CardContent className="space-y-2"><pre><code>{publicMcpUrl}</code></pre><p className="text-sm text-muted-foreground">{t("mcpPageContent.health")} <code>{publicHealthUrl}</code></p></CardContent>
         </Card>
       </section>
       <section className="mx-auto grid w-full max-w-7xl gap-6 px-4 pb-16 sm:px-6 lg:px-8">
         {localCategories.map((category) => (
           <ToolTable key={category} title={category} tools={localTools.filter((tool) => tool.category === category)} />
         ))}
-        <ToolTable title="Public HTTP tools" tools={publicTools} />
+        <ToolTable title={t("mcpPageContent.publicTools")} tools={publicTools} />
       </section>
     </PublicShell>
   );
 }
 
 export function PrivacyPage() {
+  const { t } = useTranslation();
   return (
     <PublicShell>
-      <LegalArticle title="Privacy Policy">
-        <p>Narrarium is a client-side web application. It runs in your browser and does not operate a backend server that stores your book content, prompts, tokens, or AI credentials.</p>
-        <h2>Data handled by the app</h2>
-        <p>When you sign in with Google or Microsoft Entra ID, the app receives your profile information and an access token for the selected cloud drive provider.</p>
-        <p>Application settings, book configurations, GitHub personal access tokens, and AI provider settings are saved in files and folders in your own Google Drive or OneDrive account, depending on the identity you used to sign in.</p>
-        <p>Book content is stored in GitHub repositories that you connect with a personal access token. Narrarium reads and writes Markdown files through the GitHub API from your browser.</p>
-        <h2>Third-party services</h2>
+      <LegalArticle title={t("legal.privacyTitle")}>
+        <p>{t("legal.privacyIntro")}</p>
+        <h2>{t("legal.dataHandled")}</h2>
+        <p>{t("legal.dataHandledText")}</p>
+        <h2>{t("legal.thirdParty")}</h2>
         <ul>
-          <li>Google OAuth and Google Drive API</li>
-          <li>Microsoft Entra ID and Microsoft Graph / OneDrive</li>
-          <li>GitHub API</li>
-          <li>Azure OpenAI, OpenAI-compatible endpoints, or Microsoft 365 Copilot when configured by you</li>
+          <li>{t("legal.thirdPartyGoogle")}</li>
+          <li>{t("legal.thirdPartyMicrosoft")}</li>
+          <li>{t("legal.thirdPartyGithub")}</li>
+          <li>{t("legal.thirdPartyAi")}</li>
         </ul>
-        <h2>Storage and deletion</h2>
-        <p>You control the data because it lives in your browser, your cloud drive, and your GitHub repositories. Delete the Narrarium folder from Drive/OneDrive or clear browser site data to remove local state.</p>
+        <h2>{t("legal.storageDeletion")}</h2>
+        <p>{t("legal.storageDeletionText")}</p>
       </LegalArticle>
     </PublicShell>
   );
 }
 
 export function TermsPage() {
+  const { t } = useTranslation();
   return (
     <PublicShell>
-      <LegalArticle title="Terms of Service">
-        <p>Narrarium is provided as a client-side, open-source writing tool for managing book projects stored in GitHub repositories.</p>
-        <h2>Your credentials and repositories</h2>
-        <p>You are responsible for the GitHub personal access tokens, cloud drive access, and AI provider credentials you configure. Use tokens with the minimum permissions needed for your books.</p>
-        <h2>AI providers</h2>
-        <p>When you use AI features, prompts and context are sent directly from your browser to the provider you configured, such as Azure OpenAI or Microsoft 365 Copilot.</p>
-        <h2>Disclaimer</h2>
-        <p>The app is provided as-is without warranties. You are responsible for your manuscripts, backups, repository permissions, and provider usage costs.</p>
+      <LegalArticle title={t("legal.termsTitle")}>
+        <p>{t("legal.termsIntro")}</p>
+        <h2>{t("legal.credentials")}</h2>
+        <p>{t("legal.credentialsText")}</p>
+        <h2>{t("legal.aiProviders")}</h2>
+        <p>{t("legal.aiProvidersText")}</p>
+        <h2>{t("legal.disclaimer")}</h2>
+        <p>{t("legal.disclaimerText")}</p>
       </LegalArticle>
     </PublicShell>
   );
@@ -317,16 +318,17 @@ function PageHero({ eyebrow, title, text }: { eyebrow: string; title: string; te
 }
 
 function ToolTable({ title, tools }: { title: string; tools: Array<{ name: string; description: string }> }) {
+  const { t } = useTranslation();
   return (
     <Card>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
-        <CardDescription>{tools.length} tool{tools.length === 1 ? "" : "s"}</CardDescription>
+        <CardDescription>{tools.length} {t("mcpPageContent.toolSuffix")}{tools.length === 1 ? "" : "s"}</CardDescription>
       </CardHeader>
       <CardContent className="overflow-x-auto">
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="text-xs uppercase tracking-wide text-muted-foreground">
-            <tr><th className="border-b py-2 pr-4">Tool</th><th className="border-b py-2">Description</th></tr>
+            <tr><th className="border-b py-2 pr-4">{t("mcpPageContent.tool")}</th><th className="border-b py-2">{t("mcpPageContent.description")}</th></tr>
           </thead>
           <tbody>
             {tools.map((tool) => (
@@ -343,12 +345,13 @@ function ToolTable({ title, tools }: { title: string; tools: Array<{ name: strin
 }
 
 function LegalArticle({ title, children }: { title: string; children: React.ReactNode }) {
+  const { t } = useTranslation();
   return (
     <article className="mx-auto w-full max-w-4xl px-4 py-14 sm:px-6 lg:px-8">
       <div className="rounded-[2rem] border bg-card/86 p-6 shadow-xl shadow-black/5 sm:p-10">
-        <p className="mb-2 text-xs uppercase tracking-[0.24em] text-primary">Narrarium</p>
+        <p className="mb-2 text-xs uppercase tracking-[0.24em] text-primary">{t("app.brand")}</p>
         <h1 className="font-serif text-4xl font-semibold">{title}</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Last updated: June 2026</p>
+        <p className="mt-2 text-sm text-muted-foreground">{t("legal.lastUpdated")}</p>
         <div className="doc-prose mt-8">{children}</div>
       </div>
     </article>

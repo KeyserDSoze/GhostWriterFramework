@@ -68,13 +68,13 @@ export function LoginScreen() {
         await load();
         returnToApp();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Login failed");
+        setError(err instanceof Error ? err.message : t("login.failed"));
       } finally {
         setLoadingProvider(null);
       }
     },
     onError: (err) => {
-      setError(err.error_description ?? "Google sign-in failed");
+      setError(err.error_description ?? t("login.googleFailed"));
     },
   });
 
@@ -107,7 +107,7 @@ export function LoginScreen() {
         userPrincipalName?: string;
       };
       const email = profile.mail ?? profile.userPrincipalName ?? "";
-      const name = profile.displayName ?? (email || "Microsoft user");
+      const name = profile.displayName ?? (email || t("login.microsoftUser"));
       const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
       const expiresIn = Math.max(120, Math.round((expiresAt - Date.now()) / 1000));
 
@@ -124,7 +124,7 @@ export function LoginScreen() {
       await load();
       returnToApp();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Microsoft sign-in failed");
+      setError(err instanceof Error ? err.message : t("login.microsoftFailed"));
     } finally {
       setLoadingProvider(null);
     }

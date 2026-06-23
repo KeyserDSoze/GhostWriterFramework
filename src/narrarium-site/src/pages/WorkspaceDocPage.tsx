@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { ArrowLeft, Lock, Plus, Save, X } from "lucide-react";
 import { parseDocument, stringify } from "yaml";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -82,6 +83,7 @@ export function WorkspaceDocPage() {
   const { settings } = useSettingsStore();
   const { structures } = useBooksStore();
   const { branch } = useWorkingBranch(bookId);
+  const { t } = useTranslation();
 
   const book = settings.books.find((entry) => entry.id === bookId);
   const structure = bookId ? structures[bookId] : undefined;
@@ -103,7 +105,9 @@ export function WorkspaceDocPage() {
 
   const resolved = resolveWorkspacePath(chapter, paragraph, workspaceKind);
   const path = resolved?.path ?? null;
-  const title = resolved?.title ?? "Workspace document";
+  const title = resolved
+    ? t(resolved.titleKey, resolved.titleParams)
+    : t("workspace.document");
   const backHref = paragraph
     ? `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}`
     : `/app/books/${bookId}/chapters/${chapterId}`;
@@ -124,7 +128,7 @@ export function WorkspaceDocPage() {
         setSha(fileSha);
       })
       .catch((err) =>
-        toast({ title: "Failed to load workspace document", description: String(err), variant: "destructive" }),
+        toast({ title: t("workspace.loadFailed"), description: String(err), variant: "destructive" }),
       )
       .finally(() => setLoading(false));
   }, [book, token, branch, path, toast]);
@@ -133,7 +137,7 @@ export function WorkspaceDocPage() {
     return (
       <Alert variant="destructive">
         <AlertDescription>
-          Workspace document not found. <Link to={`/app/books/${bookId}`} className="underline">Back to book</Link>
+          {t("workspace.notFound")} <Link to={`/app/books/${bookId}`} className="underline">{t("workspace.backToBook")}</Link>
         </AlertDescription>
       </Alert>
     );
@@ -178,9 +182,9 @@ export function WorkspaceDocPage() {
       setSha(newSha);
       setSavedEntries(entries);
       setSavedBody(body);
-      toast({ title: "Saved" });
+      toast({ title: t("common.saved") });
     } catch (err) {
-      toast({ title: "Save failed", description: String(err), variant: "destructive" });
+      toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -195,15 +199,15 @@ export function WorkspaceDocPage() {
         <Button asChild variant="ghost" size="sm" className="-ml-2 w-fit">
           <Link to={backHref}>
             <ArrowLeft className="mr-1 h-4 w-4" />
-            Back
+            {t("common.back")}
           </Link>
         </Button>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="font-mono text-xs">{branch}</Badge>
-          {isDirty && !saving && <span className="text-xs text-muted-foreground">Unsaved</span>}
+          {isDirty && !saving && <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>}
           <Button size="sm" onClick={() => void handleSave()} disabled={!isDirty || saving}>
             <Save className="mr-1 h-4 w-4" />
-            Save
+            {t("common.save")}
           </Button>
         </div>
       </div>
@@ -214,7 +218,7 @@ export function WorkspaceDocPage() {
       </div>
 
       <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-2 text-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Metadata</p>
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{t("common.metadata")}</p>
         {loading ? (
           <div className="space-y-1.5">
             <Skeleton className="h-4 w-3/4" />
@@ -252,7 +256,7 @@ export function WorkspaceDocPage() {
                 <button
                   onClick={() => removeEntry(entry.key)}
                   className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                  aria-label={`Remove ${entry.key}`}
+                  aria-label={t("canon.removeAria", { key: entry.key })}
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -263,13 +267,13 @@ export function WorkspaceDocPage() {
               <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:items-center">
                 <Input
                   autoFocus
-                  placeholder="key"
+                  placeholder={t("common.keyPlaceholder")}
                   value={newKey}
                   onChange={(e) => setNewKey(e.target.value)}
                   className="h-8 w-full text-xs font-mono sm:w-32"
                 />
                 <Input
-                  placeholder="value (or val1, val2 for array)"
+                  placeholder={t("common.valuePlaceholder")}
                   value={newVal}
                   onChange={(e) => setNewVal(e.target.value)}
                   onKeyDown={(e) => {
@@ -283,7 +287,7 @@ export function WorkspaceDocPage() {
                   className="h-8 flex-1 text-xs font-mono"
                 />
                 <Button size="sm" className="h-8" onClick={addEntry} disabled={!newKey.trim()}>
-                  Add
+                  {t("common.add")}
                 </Button>
               </div>
             ) : (
@@ -292,7 +296,7 @@ export function WorkspaceDocPage() {
                 className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
               >
                 <Plus className="h-3 w-3" />
-                Add field
+                {t("common.addField")}
               </button>
             )}
           </>
@@ -310,7 +314,7 @@ export function WorkspaceDocPage() {
           value={body}
           onChange={(e) => setBody(e.target.value)}
           className="min-h-[55vh] font-mono text-sm resize-none"
-          placeholder="Write the document body…"
+          placeholder={t("workspace.writeBodyPlaceholder")}
           spellCheck={false}
         />
       )}
@@ -327,30 +331,30 @@ function resolveWorkspacePath(
       }
     | undefined,
   kind: string | undefined,
-): { path: string; title: string } | null {
+): { path: string; titleKey: string; titleParams: Record<string, string> } | null {
   if (!chapter || !kind) return null;
   if (!paragraph) {
     if (kind === "draft" && chapter.draftPath) {
-      return { path: chapter.draftPath, title: `Chapter draft ${chapter.slug}` };
+      return { path: chapter.draftPath, titleKey: "workspace.chapterDraft", titleParams: { slug: chapter.slug } };
     }
     if (kind === "resume") {
-      return { path: `resumes/chapters/${chapter.slug}.md`, title: `Chapter resume ${chapter.slug}` };
+      return { path: `resumes/chapters/${chapter.slug}.md`, titleKey: "workspace.chapterResume", titleParams: { slug: chapter.slug } };
     }
     if (kind === "evaluation") {
-      return { path: `evaluations/chapters/${chapter.slug}.md`, title: `Chapter evaluation ${chapter.slug}` };
+      return { path: `evaluations/chapters/${chapter.slug}.md`, titleKey: "workspace.chapterEvaluation", titleParams: { slug: chapter.slug } };
     }
     return null;
   }
 
   const slug = paragraphSlug(paragraph.path);
   if (kind === "draft" && paragraph.draftPath) {
-    return { path: paragraph.draftPath, title: `Paragraph draft ${slug}` };
+    return { path: paragraph.draftPath, titleKey: "workspace.paragraphDraft", titleParams: { slug } };
   }
   if (kind === "script") {
-    return { path: `scripts/${chapter.slug}/${slug}.md`, title: `Script ${slug}` };
+    return { path: `scripts/${chapter.slug}/${slug}.md`, titleKey: "workspace.script", titleParams: { slug } };
   }
   if (kind === "evaluation") {
-    return { path: `evaluations/paragraphs/${chapter.slug}/${slug}.md`, title: `Paragraph evaluation ${slug}` };
+    return { path: `evaluations/paragraphs/${chapter.slug}/${slug}.md`, titleKey: "workspace.paragraphEvaluation", titleParams: { slug } };
   }
   return null;
 }

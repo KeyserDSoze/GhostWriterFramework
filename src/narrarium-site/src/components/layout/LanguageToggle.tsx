@@ -7,7 +7,7 @@ import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 
 export function LanguageToggle() {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { settings, patchSettings } = useSettingsStore();
   const { save } = useSettings();
   const current = i18n.resolvedLanguage?.split("-")[0] ?? settings.ui.language ?? "en";
@@ -21,7 +21,7 @@ export function LanguageToggle() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label="Change language">
+        <Button variant="ghost" size="icon" aria-label={t("common.changeLanguage")}>
           <Languages className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>

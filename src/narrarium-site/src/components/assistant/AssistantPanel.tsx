@@ -50,19 +50,20 @@ import {
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { speakText, transcribeAudio, type SpeechController } from "@/assistant/speech";
+import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
 
 const ATTACHMENT_TARGETS = [
-  { value: "paragraph", label: "Import as paragraph" },
-  { value: "chapter", label: "Import as chapter" },
-  { value: "note", label: "Import as note" },
-  { value: "character", label: "Import as character" },
-  { value: "location", label: "Import as location" },
-  { value: "faction", label: "Import as faction" },
-  { value: "item", label: "Import as item" },
-  { value: "secret", label: "Import as secret" },
-  { value: "timeline", label: "Import as timeline event" },
-  { value: "script", label: "Import as script" },
-  { value: "draft", label: "Import as draft" },
+  { value: "paragraph", labelKey: "assistant.importParagraph" },
+  { value: "chapter", labelKey: "assistant.importChapter" },
+  { value: "note", labelKey: "assistant.importNote" },
+  { value: "character", labelKey: "assistant.importCharacter" },
+  { value: "location", labelKey: "assistant.importLocation" },
+  { value: "faction", labelKey: "assistant.importFaction" },
+  { value: "item", labelKey: "assistant.importItem" },
+  { value: "secret", labelKey: "assistant.importSecret" },
+  { value: "timeline", labelKey: "assistant.importTimeline" },
+  { value: "script", labelKey: "assistant.importScript" },
+  { value: "draft", labelKey: "assistant.importDraft" },
 ] as const;
 
 type AttachmentTarget = (typeof ATTACHMENT_TARGETS)[number]["value"];
@@ -109,6 +110,9 @@ export function AssistantPanel() {
   const [listening, setListening] = useState(false);
   const [autoSend, setAutoSend] = useState(false);
   const [speechController, setSpeechController] = useState<SpeechController | null>(null);
+  const [diffMode, setDiffMode] = useState<Record<string, boolean>>({});
+  const [previousContents, setPreviousContents] = useState<Record<string, string>>({});
+  const [loadingDiffPath, setLoadingDiffPath] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -129,7 +133,7 @@ export function AssistantPanel() {
     setLoadingSessions(true);
     void listAssistantSessions(user.provider, accessToken)
       .then((items) => setSessions(items))
-      .catch((err) => toast({ title: "Failed to load chats", description: String(err), variant: "destructive" }))
+      .catch((err) => toast({ title: t("assistant.toastLoadChatsFailed"), description: String(err), variant: "destructive" }))
       .finally(() => setLoadingSessions(false));
   }, [open, user, accessToken, setSessions, toast]);
 
@@ -151,7 +155,7 @@ export function AssistantPanel() {
             ...sessions.filter((session) => session.fileId !== fileId && session.id !== savedSession.id),
           ]);
         })
-        .catch((err) => toast({ title: "Failed to save chat", description: String(err), variant: "destructive" }));
+        .catch((err) => toast({ title: t("assistant.toastSaveChatFailed"), description: String(err), variant: "destructive" }));
     }, 300);
     return () => clearTimeout(timer);
   }, [currentSession, user, accessToken, setCurrentSession, setSessions, sessions, toast]);
@@ -201,7 +205,7 @@ export function AssistantPanel() {
       }));
       if (!session.messages.length) setOpen(true);
     } catch (err) {
-      toast({ title: "Attachment failed", description: String(err), variant: "destructive" });
+      toast({ title: t("assistant.toastAttachFailed"), description: String(err), variant: "destructive" });
     } finally {
       setBusy(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -298,21 +302,21 @@ export function AssistantPanel() {
               else appendDraftText(transcript);
             }
           } catch (err) {
-            toast({ title: "AI STT failed", description: String(err), variant: "destructive" });
+            toast({ title: t("assistant.toastSttFailed"), description: String(err), variant: "destructive" });
           }
         };
         recorder.start();
       } catch (err) {
         stopSilenceMonitor();
         setListening(false);
-        toast({ title: "Microfono non disponibile", description: String(err), variant: "destructive" });
+        toast({ title: t("assistant.toastMicUnavailable"), description: String(err), variant: "destructive" });
       }
       return;
     }
 
     const SpeechRecognition = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      toast({ title: "STT non disponibile", description: "Il browser non supporta SpeechRecognition.", variant: "destructive" });
+      toast({ title: t("assistant.toastSttUnavailable"), description: t("assistant.sttBrowserUnsupported"), variant: "destructive" });
       return;
     }
     const recognition = new SpeechRecognition();
@@ -343,7 +347,7 @@ export function AssistantPanel() {
       const controller = await speakText(text, settings);
       setSpeechController(controller);
     } catch (err) {
-      toast({ title: "TTS failed", description: String(err), variant: "destructive" });
+      toast({ title: t("assistant.toastTtsFailed"), description: String(err), variant: "destructive" });
     }
   }
 
@@ -381,7 +385,7 @@ export function AssistantPanel() {
       updateCurrentSession((current) => ({
         ...current,
         updatedAt: new Date().toISOString(),
-        messages: [...current.messages, { id: crypto.randomUUID(), role: "assistant", text: err instanceof Error ? err.message : "Assistant request failed." }],
+        messages: [...current.messages, { id: crypto.randomUUID(), role: "assistant", text: err instanceof Error ? err.message : t("assistant.requestFailed") }],
       }));
     } finally {
       setBusy(false);
@@ -389,13 +393,14 @@ export function AssistantPanel() {
   }
 
   function buildAttachmentImportPrompt(): string {
-    const label = ATTACHMENT_TARGETS.find((entry) => entry.value === attachmentTarget)?.label ?? attachmentTarget;
-    return `Use the attached files as source material and ${label.toLowerCase()} in the current book context.`;
+    const entry = ATTACHMENT_TARGETS.find((entry) => entry.value === attachmentTarget);
+    const label = (entry ? t(entry.labelKey) : attachmentTarget).toLowerCase();
+    return `Use the attached files as source material and ${label} in the current book context.`;
   }
 
   async function handleImportAttachments() {
     if (!(currentSession?.attachments.length ?? 0)) {
-      toast({ title: "No attachments", description: "Attach at least one file first." });
+      toast({ title: t("assistant.toastNoAttachments"), description: t("assistant.attachFirst") });
       return;
     }
     await sendPrompt(buildAttachmentImportPrompt());
@@ -409,7 +414,7 @@ export function AssistantPanel() {
       setCurrentSession(session);
       setOpen(true);
     } catch (err) {
-      toast({ title: "Failed to open chat", description: String(err), variant: "destructive" });
+      toast({ title: t("assistant.toastOpenChatFailed"), description: String(err), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -422,7 +427,7 @@ export function AssistantPanel() {
       setSessions(sessions.filter((session) => session.fileId !== currentSession.fileId));
       setCurrentSession(null);
     } catch (err) {
-      toast({ title: "Failed to delete chat", description: String(err), variant: "destructive" });
+      toast({ title: t("assistant.toastDeleteChatFailed"), description: String(err), variant: "destructive" });
     }
   }
 
@@ -436,10 +441,10 @@ export function AssistantPanel() {
     setBusy(true);
     try {
       await applyParagraphRewrite({ action, book, branch, token });
-      toast({ title: "Paragraph updated" });
+      toast({ title: t("assistant.toastParagraphUpdated") });
       window.location.reload();
     } catch (err) {
-      toast({ title: "Apply rewrite failed", description: String(err), variant: "destructive" });
+      toast({ title: t("assistant.toastRewriteFailed"), description: String(err), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -465,12 +470,12 @@ export function AssistantPanel() {
         else await createFile(token, book.owner, book.repo, branch, update.path, update.content, `Add ${update.path}`);
       }
       useAssistantStore.getState().updateMessage(message.id, {
-        text: `${message.text}\n\nApplied ${updates.length} file change${updates.length === 1 ? "" : "s"}. You can undo this assistant change if needed.`,
+        text: `${message.text}\n\n${t("assistant.appliedFileChanges", { count: updates.length })}`,
         action: { kind: "undo-file-updates", bookId: action.bookId, updates: undoUpdates },
       });
-      toast({ title: "File updates applied" });
+      toast({ title: t("assistant.toastFileUpdatesApplied") });
     } catch (err) {
-      toast({ title: "Apply file updates failed", description: String(err), variant: "destructive" });
+      toast({ title: t("assistant.toastFileUpdatesFailed"), description: String(err), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -495,10 +500,10 @@ export function AssistantPanel() {
       });
       await save();
       clearBook(book.id);
-      toast({ title: `Switched to branch ${action.branchName}` });
+      toast({ title: t("assistant.toastBranchSwitched", { branch: action.branchName }) });
       window.location.reload();
     } catch (err) {
-      toast({ title: "Branch switch failed", description: String(err), variant: "destructive" });
+      toast({ title: t("assistant.toastBranchSwitchFailed"), description: String(err), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -523,10 +528,10 @@ export function AssistantPanel() {
           await createFile(token, book.owner, book.repo, branch, update.path, update.previousContent, `Undo delete ${update.path}`);
         }
       }
-      useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\nUndo applied.` });
-      toast({ title: "Undo applied" });
+      useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("assistant.undoApplied")}` });
+      toast({ title: t("assistant.toastUndoApplied") });
     } catch (err) {
-      toast({ title: "Undo failed", description: String(err), variant: "destructive" });
+      toast({ title: t("assistant.toastUndoFailed"), description: String(err), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -544,7 +549,7 @@ export function AssistantPanel() {
       setDiffFiles(files);
       setSyncOpen(true);
     } catch (err) {
-      toast({ title: "Failed to load branch diff", description: String(err), variant: "destructive" });
+      toast({ title: t("assistant.toastBranchDiffFailed"), description: String(err), variant: "destructive" });
     } finally {
       setLoadingDiff(false);
     }
@@ -559,27 +564,51 @@ export function AssistantPanel() {
     setBusy(true);
     try {
       await revertFileToRef(token, book.owner, book.repo, branch, file.filename, structure.defaultBranch);
-      toast({ title: `Reverted ${file.filename}` });
+      toast({ title: t("assistant.toastReverted", { file: file.filename }) });
       await loadBranchDiff();
     } catch (err) {
-      toast({ title: "Revert failed", description: String(err), variant: "destructive" });
+      toast({ title: t("assistant.toastRevertFailed"), description: String(err), variant: "destructive" });
     } finally {
       setBusy(false);
     }
+  }
+
+  async function toggleDiff(messageId: string, update: AssistantFileUpdate) {
+    const key = `${messageId}::${update.path}`;
+    if (diffMode[key]) {
+      setDiffMode((current) => ({ ...current, [key]: false }));
+      return;
+    }
+    if (previousContents[key] === undefined) {
+      const book = bookId ? settings.books.find((entry) => entry.id === bookId) : undefined;
+      const token = book ? resolveBookToken(book, settings) : "";
+      if (book && token) {
+        setLoadingDiffPath(key);
+        try {
+          const existing = await readFileWithSha(token, book.owner, book.repo, branch, update.path).catch(() => null);
+          setPreviousContents((current) => ({ ...current, [key]: existing?.content ?? update.previousContent ?? "" }));
+        } finally {
+          setLoadingDiffPath(null);
+        }
+      } else {
+        setPreviousContents((current) => ({ ...current, [key]: update.previousContent ?? "" }));
+      }
+    }
+    setDiffMode((current) => ({ ...current, [key]: true }));
   }
 
   const syncPanel = (
     <div className="flex h-full min-h-0 flex-col bg-card">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div>
-          <p className="font-semibold">Branch diff / Sync</p>
-          <p className="text-xs text-muted-foreground">Compare working branch with default branch</p>
+          <p className="font-semibold">{t("assistant.syncTitle")}</p>
+          <p className="text-xs text-muted-foreground">{t("assistant.syncSubtitle")}</p>
         </div>
-        <Button variant="ghost" size="sm" onClick={() => setSyncOpen(false)}>Close</Button>
+        <Button variant="ghost" size="sm" onClick={() => setSyncOpen(false)}>{t("assistant.close")}</Button>
       </div>
       <ScrollArea className="min-h-0 flex-1 p-4">
         {diffFiles.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No branch differences found.</p>
+          <p className="text-sm text-muted-foreground">{t("assistant.noBranchDiff")}</p>
         ) : (
           <div className="space-y-3">
             {diffFiles.map((file) => (
@@ -589,9 +618,9 @@ export function AssistantPanel() {
                     <p className="font-mono text-xs">{file.filename}</p>
                     <p className="text-xs text-muted-foreground">{file.status} · +{file.additions} -{file.deletions}</p>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => void revertDiffFile(file)} disabled={busy}>Revert file</Button>
+                  <Button variant="outline" size="sm" onClick={() => void revertDiffFile(file)} disabled={busy}>{t("assistant.revertFile")}</Button>
                 </div>
-                {file.patch && <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded bg-muted/50 p-2 text-[11px]">{file.patch}</pre>}
+                {file.patch && <PatchDiff patch={file.patch} className="max-h-64" />}
               </div>
             ))}
           </div>
@@ -617,14 +646,14 @@ export function AssistantPanel() {
       </div>
 
       <div className="border-b px-4 py-3 space-y-3">
-        <div className="text-xs text-muted-foreground">{contextSummary || "Context follows the current route and repository files."}</div>
+        <div className="text-xs text-muted-foreground">{contextSummary || t("assistant.contextFollows")}</div>
         <details className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer font-medium">{t("assistant.contextInspector")}</summary>
           <div className="mt-2 space-y-2">
             <p>{availableCount} {t("assistant.filesInManifest")}.</p>
             <p>{t("assistant.loadedNow")}:</p>
             <div className="space-y-1">
-              {contextFiles.length ? contextFiles.map((path) => <div key={path} className="font-mono">{path}</div>) : <div>none</div>}
+              {contextFiles.length ? contextFiles.map((path) => <div key={path} className="font-mono">{path}</div>) : <div>{t("assistant.none")}</div>}
             </div>
           </div>
         </details>
@@ -647,7 +676,7 @@ export function AssistantPanel() {
             </Badge>
           ))}
         </div>
-        {currentSession?.compactSummary && <div className="rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground whitespace-pre-wrap"><p className="mb-1 font-medium text-foreground">Compaction summary</p>{currentSession.compactSummary}</div>}
+        {currentSession?.compactSummary && <div className="rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground whitespace-pre-wrap"><p className="mb-1 font-medium text-foreground">{t("assistant.compactionSummary")}</p>{currentSession.compactSummary}</div>}
       </div>
 
       <div className="flex flex-wrap gap-2 border-b px-4 py-3">
@@ -670,30 +699,42 @@ export function AssistantPanel() {
               <div className={message.role === "user" ? "rounded-2xl bg-primary px-4 py-3 text-sm text-primary-foreground" : "rounded-2xl border bg-background px-4 py-3 text-sm whitespace-pre-wrap"}>{message.text}</div>
               {message.action?.kind === "switch-book-branch" && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary">Branch action ready</Badge>
-                  <Button size="sm" onClick={() => void applyBranchSwitch(index)} disabled={busy}><GitBranch className="mr-1 h-4 w-4" />Apply branch</Button>
+                  <Badge variant="secondary">{t("assistant.branchActionReady")}</Badge>
+                  <Button size="sm" onClick={() => void applyBranchSwitch(index)} disabled={busy}><GitBranch className="mr-1 h-4 w-4" />{t("assistant.applyBranch")}</Button>
                 </div>
               )}
               {message.action?.kind === "apply-file-updates" && (
                 <div className="mt-2 rounded-xl border bg-muted/30 p-3 text-xs">
-                  <p className="mb-2 font-medium">Proposed multi-file changes</p>
+                  <p className="mb-2 font-medium">{t("assistant.proposedChanges")}</p>
                   <div className="space-y-2">
-                    {message.action.updates.map((update) => (
-                      <details key={update.path} className="rounded border bg-background p-2">
-                        <summary className="cursor-pointer font-mono">{update.path}</summary>
-                        {update.reason && <p className="mt-2 text-muted-foreground">{update.reason}</p>}
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          <Button size="sm" variant="outline" onClick={() => void applySelectedFileUpdates(index, [update.path])} disabled={busy}>Apply only this file</Button>
-                        </div>
-                        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-[11px]">{update.content}</pre>
-                      </details>
-                    ))}
+                    {message.action.updates.map((update) => {
+                      const diffKey = `${message.id}::${update.path}`;
+                      const showDiff = diffMode[diffKey];
+                      return (
+                        <details key={update.path} className="rounded border bg-background p-2">
+                          <summary className="cursor-pointer font-mono">{update.path}</summary>
+                          {update.reason && <p className="mt-2 text-muted-foreground">{update.reason}</p>}
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Button size="sm" variant="outline" onClick={() => void toggleDiff(message.id, update)} disabled={loadingDiffPath === diffKey}>
+                              {loadingDiffPath === diffKey ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                              {showDiff ? t("assistant.hideDiff") : t("assistant.showDiff")}
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => void applySelectedFileUpdates(index, [update.path])} disabled={busy}>{t("assistant.applyThisFile")}</Button>
+                          </div>
+                          {showDiff ? (
+                            <FileDiff previous={previousContents[diffKey] ?? ""} next={update.content} className="mt-2 max-h-64" />
+                          ) : (
+                            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-[11px]">{update.content}</pre>
+                          )}
+                        </details>
+                      );
+                    })}
                   </div>
-                  <Button className="mt-2" size="sm" onClick={() => void applySelectedFileUpdates(index)} disabled={busy}>Apply all file updates</Button>
+                  <Button className="mt-2" size="sm" onClick={() => void applySelectedFileUpdates(index)} disabled={busy}>{t("assistant.applyAllFiles")}</Button>
                 </div>
               )}
-              {message.action?.kind === "undo-file-updates" && <div className="mt-2 flex items-center gap-2"><Badge variant="secondary">Assistant changes applied</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy}>Undo assistant changes</Button></div>}
-              {message.action?.kind === "apply-paragraph-rewrite" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">Paragraph rewrite ready</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy}>Apply to paragraph</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>Open chapter</Link></Button></div>}
+              {message.action?.kind === "undo-file-updates" && <div className="mt-2 flex items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy}>{t("assistant.undoChanges")}</Button></div>}
+              {message.action?.kind === "apply-paragraph-rewrite" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.rewriteReady")}</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy}>{t("assistant.applyToParagraph")}</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>{t("assistant.openChapter")}</Link></Button></div>}
             </div>
           ))}
           {busy && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("assistant.thinking")}</div>}
@@ -708,7 +749,7 @@ export function AssistantPanel() {
               <Select value={attachmentTarget} onValueChange={(value) => setAttachmentTarget(value as AttachmentTarget)}>
                 <SelectTrigger className="h-9 w-full sm:w-[220px]"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {ATTACHMENT_TARGETS.map((target) => <SelectItem key={target.value} value={target.value}>{target.label}</SelectItem>)}
+                  {ATTACHMENT_TARGETS.map((target) => <SelectItem key={target.value} value={target.value}>{t(target.labelKey)}</SelectItem>)}
                 </SelectContent>
               </Select>
               <Button type="button" variant="outline" size="sm" onClick={() => void handleImportAttachments()} disabled={busy || !(currentSession?.attachments.length)}>
@@ -744,7 +785,7 @@ export function AssistantPanel() {
   return (
     <>
       <Button type="button" className="fixed bottom-4 right-4 z-40 rounded-full shadow-lg lg:bottom-6 lg:right-6" onClick={() => setOpen(true)}>
-        <Bot className="mr-2 h-4 w-4" />Copilot
+        <Bot className="mr-2 h-4 w-4" />{t("assistant.floatingButton")}
       </Button>
       <Dialog open={syncOpen} onOpenChange={setSyncOpen}><DialogContent className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[920px]">{syncPanel}</DialogContent></Dialog>
       <Dialog open={open} onOpenChange={setOpen}><DialogContent className={fullScreen ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0" : "left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[720px] lg:right-6 lg:left-auto lg:top-auto lg:bottom-6 lg:h-[80dvh] lg:w-[420px] lg:max-w-[420px] lg:translate-x-0 lg:translate-y-0"}>{panel}</DialogContent></Dialog>

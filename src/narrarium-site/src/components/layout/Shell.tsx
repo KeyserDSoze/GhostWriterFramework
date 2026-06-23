@@ -17,7 +17,7 @@ const AssistantPanel = lazy(() =>
 
 export function Shell() {
   const { load } = useSettings();
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { cloudLoaded, syncStatus, settings } = useSettingsStore();
   const location = useLocation();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -43,14 +43,14 @@ export function Shell() {
       <div className="flex h-[100dvh] flex-col items-center justify-center gap-4 bg-background p-6 text-center">
         {syncStatus === "error" ? (
           <>
-            <p className="font-semibold">Impossibile caricare le impostazioni dal Drive.</p>
-            <p className="max-w-md text-sm text-muted-foreground">Se il token è scaduto verrai riportato alla login. Altrimenti riprova il caricamento.</p>
-            <Button onClick={() => void load()}>Riprova</Button>
+            <p className="font-semibold">{t("shell.loadError")}</p>
+            <p className="max-w-md text-sm text-muted-foreground">{t("shell.loadErrorHint")}</p>
+            <Button onClick={() => void load()}>{t("shell.retry")}</Button>
           </>
         ) : (
           <>
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-sm text-muted-foreground">Caricamento impostazioni e libri…</p>
+            <p className="text-sm text-muted-foreground">{t("shell.loadingSettings")}</p>
           </>
         )}
       </div>

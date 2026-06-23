@@ -66,16 +66,16 @@ export function BookSettingsPage() {
         setBaseBranch(defaultBranch);
       })
       .catch((err) => {
-        toast({ title: "Failed to load branches", description: String(err), variant: "destructive" });
+        toast({ title: t("bookSettings.loadBranchesFailed"), description: String(err), variant: "destructive" });
       })
       .finally(() => setLoadingBranches(false));
-  }, [book, settings, toast]);
+  }, [book, settings, toast, t]);
 
   if (!book) {
     return (
       <Alert variant="destructive">
         <AlertDescription>
-          Book not found. <Link to="/app/books" className="underline">Back to books</Link>
+          {t("bookSettings.notFound")} <Link to="/app/books" className="underline">{t("bookSettings.backToBooks")}</Link>
         </AlertDescription>
       </Alert>
     );
@@ -100,7 +100,7 @@ export function BookSettingsPage() {
     patchSettings({ books: settings.books.map((entry) => (entry.id === currentBook.id ? updated : entry)) });
     await save();
     clearBook(currentBook.id);
-    toast({ title: "Book settings saved" });
+    toast({ title: t("bookSettings.settingsSaved") });
     navigate(`/app/books/${currentBook.id}`);
   }
 
@@ -108,7 +108,7 @@ export function BookSettingsPage() {
     if (!newBranchName.trim()) return;
     const token = resolveBookToken(currentBook, settings);
     if (!token) {
-      toast({ title: "Missing token", description: "Configure a GitHub token first.", variant: "destructive" });
+      toast({ title: t("bookSettings.missingToken"), description: t("bookSettings.configureTokenFirst"), variant: "destructive" });
       return;
     }
     setCreatingBranch(true);
@@ -118,9 +118,9 @@ export function BookSettingsPage() {
       setBranches((prev) => [...prev, nextBranch].sort());
       setActiveBranch(nextBranch);
       setNewBranchName("");
-      toast({ title: `Branch ${nextBranch} created` });
+      toast({ title: t("bookSettings.branchCreated", { branch: nextBranch }) });
     } catch (err) {
-      toast({ title: "Branch create failed", description: String(err), variant: "destructive" });
+      toast({ title: t("bookSettings.branchCreateFailed"), description: String(err), variant: "destructive" });
     } finally {
       setCreatingBranch(false);
     }
@@ -136,18 +136,18 @@ export function BookSettingsPage() {
       </Button>
 
       <div>
-        <h1 className="font-serif text-3xl font-semibold tracking-tight">Book settings</h1>
+        <h1 className="font-serif text-3xl font-semibold tracking-tight">{t("bookSettings.title")}</h1>
         <p className="text-muted-foreground">{currentBook.owner}/{currentBook.repo}</p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>General</CardTitle>
-          <CardDescription>Display name shown in your library.</CardDescription>
+          <CardTitle>{t("bookSettings.general")}</CardTitle>
+          <CardDescription>{t("bookSettings.generalDescription")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-2">
-            <Label htmlFor="book-name">Name</Label>
+            <Label htmlFor="book-name">{t("bookSettings.name")}</Label>
             <Input id="book-name" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
         </CardContent>
@@ -155,33 +155,33 @@ export function BookSettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><GitBranch className="h-4 w-4" />Branch workspace</CardTitle>
+          <CardTitle className="flex items-center gap-2"><GitBranch className="h-4 w-4" />{t("bookSettings.branchWorkspace")}</CardTitle>
           <CardDescription>
-            Choose which branch this book reads and writes. Auto keeps using the personal dev branch.
+            {t("bookSettings.branchDescription")}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-2">
-            <Label>Active branch</Label>
+            <Label>{t("bookSettings.activeBranch")}</Label>
             <Select value={activeBranch} onValueChange={setActiveBranch} disabled={loadingBranches}>
               <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="__auto__">Auto dev branch ({currentAutoBranch})</SelectItem>
+                <SelectItem value="__auto__">{t("bookSettings.autoDevBranch", { branch: currentAutoBranch })}</SelectItem>
                 {branches.map((branch) => (
                   <SelectItem key={branch} value={branch}>{branch}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">Default branch: {baseBranch}</p>
+            <p className="text-xs text-muted-foreground">{t("bookSettings.defaultBranch")} {baseBranch}</p>
           </div>
 
           <div className="grid gap-2 rounded-lg border border-dashed p-3">
-            <p className="text-xs text-muted-foreground">Create a new branch from {baseBranch} and switch this book to it.</p>
+            <p className="text-xs text-muted-foreground">{t("bookSettings.createBranchHint", { base: baseBranch })}</p>
             <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
               <Input placeholder="feature/new-arc" value={newBranchName} onChange={(e) => setNewBranchName(e.target.value)} />
               <Button onClick={() => void handleCreateBranch()} disabled={creatingBranch || !newBranchName.trim()}>
                 {creatingBranch ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Plus className="mr-1 h-4 w-4" />}
-                Create branch
+                {t("bookSettings.createBranch")}
               </Button>
             </div>
           </div>
@@ -190,37 +190,37 @@ export function BookSettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><KeyRound className="h-4 w-4" />GitHub access for this book</CardTitle>
+          <CardTitle className="flex items-center gap-2"><KeyRound className="h-4 w-4" />{t("bookSettings.githubAccess")}</CardTitle>
           <CardDescription>
-            Choose which token this book uses. A dedicated PAT lets you scope access to just this repository, even when a default token exists.
+            {t("bookSettings.githubAccessDescription")}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-2">
-            <Label>Token</Label>
+            <Label>{t("bookSettings.token")}</Label>
             <Select value={mode} onValueChange={setMode}>
               <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="default">Default token{settings.defaultGitHubToken ? ` (…${settings.defaultGitHubToken.slice(-4)})` : " (not set)"}</SelectItem>
+                <SelectItem value="default">{t("bookSettings.defaultTokenOption")}{settings.defaultGitHubToken ? ` (…${settings.defaultGitHubToken.slice(-4)})` : t("bookSettings.notSet")}</SelectItem>
                 {settings.extraGitHubTokens.map((token, i) => <SelectItem key={i} value={String(i)}>{token.label} (…{token.token.slice(-4)})</SelectItem>)}
-                <SelectItem value="custom">Dedicated PAT for this book…</SelectItem>
+                <SelectItem value="custom">{t("bookSettings.dedicatedPat")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           {mode === "custom" && (
             <div className="grid gap-2 rounded-lg border border-dashed p-3">
-              <p className="text-xs text-muted-foreground">This PAT is stored on the book entry in your Drive settings and overrides the default token for all reads and writes to this book.</p>
+              <p className="text-xs text-muted-foreground">{t("bookSettings.dedicatedHint")}</p>
               <div className="grid gap-2 sm:grid-cols-[1fr_2fr]">
-                <Input placeholder="Label (optional)" value={customTokenLabel} onChange={(e) => setCustomTokenLabel(e.target.value)} />
+                <Input placeholder={t("bookSettings.labelOptional")} value={customTokenLabel} onChange={(e) => setCustomTokenLabel(e.target.value)} />
                 <Input type="password" placeholder="github_pat_…" value={customToken} onChange={(e) => setCustomToken(e.target.value)} autoComplete="off" />
               </div>
-              <p className="text-[11px] text-muted-foreground">Create one at <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener noreferrer" className="underline">github.com/settings/tokens</a> with Contents read &amp; write and Metadata read on this repository.</p>
+              <p className="text-[11px] text-muted-foreground">{t("bookSettings.createOneAt")} <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener noreferrer" className="underline">github.com/settings/tokens</a> {t("bookSettings.withPermissions")}</p>
             </div>
           )}
 
           {!currentToken && mode !== "custom" && (
-            <Alert variant="destructive"><AlertDescription>No token is configured for this selection. The book will not load until a token is available.</AlertDescription></Alert>
+            <Alert variant="destructive"><AlertDescription>{t("bookSettings.noTokenWarning")}</AlertDescription></Alert>
           )}
         </CardContent>
       </Card>

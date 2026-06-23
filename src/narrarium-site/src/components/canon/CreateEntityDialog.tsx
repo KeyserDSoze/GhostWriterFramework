@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +26,7 @@ interface CreateEntityDialogProps {
 }
 
 export function CreateEntityDialog({ kind, onCreate, triggerLabel }: CreateEntityDialogProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState("");
   const [summary, setSummary] = useState("");
@@ -112,7 +114,7 @@ export function CreateEntityDialog({ kind, onCreate, triggerLabel }: CreateEntit
       setOpen(false);
       reset();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create entry");
+      setError(err instanceof Error ? err.message : t("createDialogs.createEntryFailed"));
     } finally {
       setBusy(false);
     }
@@ -129,12 +131,12 @@ export function CreateEntityDialog({ kind, onCreate, triggerLabel }: CreateEntit
       <DialogTrigger asChild>
         <Button size="sm" variant="outline">
           <Plus className="mr-1 h-4 w-4" />
-          {triggerLabel ?? `Add ${ENTITY_LABEL[kind].toLowerCase()}`}
+          {triggerLabel ?? t("createDialogs.addEntity", { kind: ENTITY_LABEL[kind].toLowerCase() })}
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New {ENTITY_LABEL[kind].toLowerCase()}</DialogTitle>
+          <DialogTitle>{t("createDialogs.newEntity", { kind: ENTITY_LABEL[kind].toLowerCase() })}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid gap-2">
@@ -168,11 +170,11 @@ export function CreateEntityDialog({ kind, onCreate, triggerLabel }: CreateEntit
           )}
 
           <div className="grid gap-2">
-            <Label htmlFor="entity-summary">Summary / body (optional)</Label>
+            <Label htmlFor="entity-summary">{t("createDialogs.summaryBodyOptional")}</Label>
             <Textarea
               id="entity-summary"
               rows={3}
-              placeholder="A short description used as the file body."
+              placeholder={t("createDialogs.bodyPlaceholder")}
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
             />
@@ -181,11 +183,11 @@ export function CreateEntityDialog({ kind, onCreate, triggerLabel }: CreateEntit
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button onClick={() => void submit()} disabled={busy || !label.trim()}>
             {busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-            Create
+            {t("common.create")}
           </Button>
         </DialogFooter>
       </DialogContent>

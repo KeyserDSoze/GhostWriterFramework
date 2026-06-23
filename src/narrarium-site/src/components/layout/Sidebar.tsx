@@ -51,7 +51,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { settings } = useSettingsStore();
   const topNav: NavItem[] = [
     { label: t("nav.books"), href: "/app/books", icon: <Library className="h-4 w-4" /> },
-    { label: "Chat", href: "/app/chats", icon: <MessagesSquare className="h-4 w-4" /> },
+    { label: t("chats.title"), href: "/app/chats", icon: <MessagesSquare className="h-4 w-4" /> },
     {
       label: t("nav.addBook"),
       href: "/app/books/add",

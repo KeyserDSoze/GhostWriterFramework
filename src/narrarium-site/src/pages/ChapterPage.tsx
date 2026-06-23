@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
   GripVertical,
@@ -63,6 +64,7 @@ export function ChapterPage() {
   }>();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { t } = useTranslation();
 
   const { settings } = useSettingsStore();
   const { structures, updateChapterParagraphs } = useBooksStore();
@@ -126,7 +128,7 @@ export function ChapterPage() {
       updateChapterParagraphs(bookId!, chapterId!, updated);
     } catch (err) {
       toast({
-        title: "Reorder failed",
+        title: t("chapter.reorderFailed"),
         description: String(err),
         variant: "destructive",
       });
@@ -160,7 +162,7 @@ export function ChapterPage() {
       setToDelete(null);
     } catch (err) {
       toast({
-        title: "Delete failed",
+        title: t("chapter.deleteFailed"),
         description: String(err),
         variant: "destructive",
       });
@@ -216,7 +218,7 @@ export function ChapterPage() {
       navigate(`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${nextNum}`);
     } catch (err) {
       toast({
-        title: "Failed to create paragraph",
+        title: t("chapter.createParagraphFailed"),
         description: String(err),
         variant: "destructive",
       });
@@ -234,9 +236,9 @@ export function ChapterPage() {
         number,
         title: chapter.title,
       });
-      toast({ title: "Chapter draft created" });
+      toast({ title: t("chapter.draftCreated") });
     } catch (err) {
-      toast({ title: "Chapter draft failed", description: String(err), variant: "destructive" });
+      toast({ title: t("chapter.draftFailed"), description: String(err), variant: "destructive" });
     }
   }
 
@@ -244,9 +246,9 @@ export function ChapterPage() {
     if (!book || !chapter) return;
     try {
       await createChapterResumeArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug });
-      toast({ title: "Chapter resume created" });
+      toast({ title: t("chapter.resumeCreated") });
     } catch (err) {
-      toast({ title: "Chapter resume failed", description: String(err), variant: "destructive" });
+      toast({ title: t("chapter.resumeFailed"), description: String(err), variant: "destructive" });
     }
   }
 
@@ -254,9 +256,9 @@ export function ChapterPage() {
     if (!book || !chapter) return;
     try {
       await createChapterEvaluationArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug });
-      toast({ title: "Chapter evaluation created" });
+      toast({ title: t("chapter.evaluationCreated") });
     } catch (err) {
-      toast({ title: "Chapter evaluation failed", description: String(err), variant: "destructive" });
+      toast({ title: t("chapter.evaluationFailed"), description: String(err), variant: "destructive" });
     }
   }
 
@@ -272,23 +274,23 @@ export function ChapterPage() {
           number: Number(paragraph.number),
           title: paragraph.title,
         });
-        toast({ title: `Draft created for ${paragraph.title}` });
+        toast({ title: t("chapter.draftCreatedFor", { title: paragraph.title }) });
       } else if (kind === "script") {
         await createParagraphScriptArtifact(token, book.owner, book.repo, branch, {
           chapterSlug: chapter.slug,
           number: Number(paragraph.number),
           title: paragraph.title,
         });
-        toast({ title: `Script created for ${paragraph.title}` });
+        toast({ title: t("chapter.scriptCreatedFor", { title: paragraph.title }) });
       } else {
         await createParagraphEvaluationArtifact(token, book.owner, book.repo, branch, {
           chapterSlug: chapter.slug,
           paragraphPath: paragraph.path,
         });
-        toast({ title: `Evaluation created for ${paragraph.title}` });
+        toast({ title: t("chapter.evaluationCreatedFor", { title: paragraph.title }) });
       }
     } catch (err) {
-      toast({ title: `Create ${kind} failed`, description: String(err), variant: "destructive" });
+      toast({ title: t("chapter.createKindFailed", { kind }), description: String(err), variant: "destructive" });
     }
   }
 
@@ -297,11 +299,11 @@ export function ChapterPage() {
     return (
       <Alert variant="destructive">
         <AlertDescription>
-          Book not loaded yet.{" "}
+          {t("chapter.bookNotLoaded")}{" "}
           <Link to={`/app/books/${bookId}`} className="underline">
-            Go back to the book
+            {t("chapter.goBackToBook")}
           </Link>{" "}
-          to load its structure first.
+          {t("chapter.toLoadStructure")}
         </AlertDescription>
       </Alert>
     );
@@ -309,7 +311,7 @@ export function ChapterPage() {
   if (!chapter) {
     return (
       <Alert variant="destructive">
-        <AlertDescription>Chapter "{chapterId}" not found.</AlertDescription>
+        <AlertDescription>{t("chapter.notFound", { id: chapterId })}</AlertDescription>
       </Alert>
     );
   }
@@ -320,7 +322,7 @@ export function ChapterPage() {
       <Button asChild variant="ghost" size="sm" className="-ml-2">
         <Link to={`/app/books/${bookId}`}>
           <ArrowLeft className="mr-1 h-4 w-4" />
-          Back to book
+          {t("chapter.backToBook")}
         </Link>
       </Button>
 
@@ -337,30 +339,30 @@ export function ChapterPage() {
           {isSavingOrder && (
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Saving order…
+              {t("chapter.savingOrder")}
             </div>
           )}
           <Button asChild variant="outline" size="sm">
             <Link to={`/app/books/${bookId}/chapters/${chapterId}/workspace/draft`}>
               <FileEdit className="mr-1 h-4 w-4" />
-              Draft
+              {t("chapter.draft")}
             </Link>
           </Button>
-          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterDraft()}>Create</Button>
+          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterDraft()}>{t("chapter.create")}</Button>
           <Button asChild variant="outline" size="sm">
             <Link to={`/app/books/${bookId}/chapters/${chapterId}/workspace/resume`}>
               <NotebookText className="mr-1 h-4 w-4" />
-              Resume
+              {t("chapter.resume")}
             </Link>
           </Button>
-          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterResume()}>Create</Button>
+          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterResume()}>{t("chapter.create")}</Button>
           <Button asChild variant="outline" size="sm">
             <Link to={`/app/books/${bookId}/chapters/${chapterId}/workspace/evaluation`}>
               <ClipboardCheck className="mr-1 h-4 w-4" />
-              Evaluation
+              {t("chapter.evaluation")}
             </Link>
           </Button>
-          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterEvaluation()}>Create</Button>
+          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterEvaluation()}>{t("chapter.create")}</Button>
         </div>
       </div>
 
@@ -369,17 +371,17 @@ export function ChapterPage() {
         {chapter.draftPath && (
           <Badge variant="secondary">
             <FileEdit className="mr-1 h-3 w-3" />
-            Has draft
+            {t("chapter.hasDraft")}
           </Badge>
         )}
         {chapter.writingStylePath && (
           <Badge variant="secondary">
             <PenLine className="mr-1 h-3 w-3" />
-            Writing style
+            {t("chapter.writingStyle")}
           </Badge>
         )}
-        {chapter.hasResume && <Badge variant="secondary">Resume</Badge>}
-        {chapter.hasEvaluation && <Badge variant="secondary">Evaluation</Badge>}
+        {chapter.hasResume && <Badge variant="secondary">{t("chapter.resume")}</Badge>}
+        {chapter.hasEvaluation && <Badge variant="secondary">{t("chapter.evaluation")}</Badge>}
       </div>
 
       {/* Paragraph list */}
@@ -424,19 +426,19 @@ export function ChapterPage() {
 
             {p.draftPath && (
               <Badge variant="secondary" className="shrink-0 text-[10px]">
-                draft
+                {t("chapter.draft")}
               </Badge>
             )}
 
             <div className="flex items-center gap-1">
               <Button asChild variant="ghost" size="sm" className="hidden h-7 px-2 text-[10px] sm:inline-flex">
-                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/draft`}>Draft</Link>
+                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/draft`}>{t("chapter.draft")}</Link>
               </Button>
               <Button asChild variant="ghost" size="sm" className="hidden h-7 px-2 text-[10px] sm:inline-flex">
-                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/script`}>Script</Link>
+                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/script`}>{t("chapter.script")}</Link>
               </Button>
               <Button asChild variant="ghost" size="sm" className="hidden h-7 px-2 text-[10px] sm:inline-flex">
-                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/evaluation`}>Eval</Link>
+                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/evaluation`}>{t("chapter.eval")}</Link>
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -445,17 +447,17 @@ export function ChapterPage() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("draft", p)}>Create draft</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("script", p)}>Create script</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("evaluation", p)}>Create evaluation</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("draft", p)}>{t("chapter.createDraft")}</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("script", p)}>{t("chapter.createScript")}</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("evaluation", p)}>{t("chapter.createEvaluation")}</DropdownMenuItem>
                   <DropdownMenuItem asChild>
-                    <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/draft`}>Open draft</Link>
+                    <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/draft`}>{t("chapter.openDraft")}</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
-                    <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/script`}>Open script</Link>
+                    <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/script`}>{t("chapter.openScript")}</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
-                    <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/evaluation`}>Open evaluation</Link>
+                    <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/evaluation`}>{t("chapter.openEvaluation")}</Link>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -465,7 +467,7 @@ export function ChapterPage() {
             <button
               onClick={() => setToDelete(p)}
               className="ml-1 shrink-0 rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-              aria-label={`Delete paragraph ${p.number}`}
+              aria-label={t("chapter.deleteParagraphAria", { number: p.number })}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
@@ -474,7 +476,7 @@ export function ChapterPage() {
 
         {localParagraphs.length === 0 && !showAddForm && (
           <p className="py-4 text-sm text-muted-foreground">
-            No paragraphs yet. Add the first one below.
+            {t("chapter.noParagraphs")}
           </p>
         )}
       </div>
@@ -484,7 +486,7 @@ export function ChapterPage() {
         <div className="flex items-center gap-2">
           <Input
             autoFocus
-            placeholder="Paragraph title (e.g. At the Gate)"
+            placeholder={t("chapter.paragraphPlaceholder")}
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             onKeyDown={(e) => {
@@ -497,7 +499,7 @@ export function ChapterPage() {
             disabled={adding}
           />
           <Button onClick={() => void handleAdd()} disabled={adding || !newTitle.trim()}>
-            {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+            {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : t("common.add")}
           </Button>
           <Button
             variant="ghost"
@@ -507,7 +509,7 @@ export function ChapterPage() {
             }}
             disabled={adding}
           >
-            Cancel
+            {t("common.cancel")}
           </Button>
         </div>
       ) : (
@@ -517,7 +519,7 @@ export function ChapterPage() {
           onClick={() => setShowAddForm(true)}
         >
           <Plus className="mr-1 h-4 w-4" />
-          Add Paragraph
+          {t("chapter.addParagraph")}
         </Button>
       )}
 
@@ -530,19 +532,17 @@ export function ChapterPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete paragraph?</DialogTitle>
+            <DialogTitle>{t("chapter.deleteParagraph")}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            <strong>
-              {toDelete?.number} — {toDelete?.title}
-            </strong>{" "}
-            will be permanently deleted from GitHub and the remaining paragraphs
-            will be renumbered.
+            {t("chapter.deleteParagraphDescription", {
+              title: `${toDelete?.number} — ${toDelete?.title}`,
+            })}
           </p>
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline" disabled={deleting}>
-                Cancel
+                {t("common.cancel")}
               </Button>
             </DialogClose>
             <Button
@@ -551,7 +551,7 @@ export function ChapterPage() {
               disabled={deleting}
             >
               {deleting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-              Delete
+              {t("common.delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

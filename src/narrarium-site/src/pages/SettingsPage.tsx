@@ -156,7 +156,7 @@ export function SettingsPage() {
           <div className="grid gap-2">
             <Label htmlFor="default-token">{t("settings.defaultGithubToken")}</Label>
             <Input id="default-token" type="password" placeholder="github_pat_..." value={defaultToken} onChange={(e) => setDefaultToken(e.target.value)} autoComplete="off" />
-            <p className="text-xs text-muted-foreground">PAT with Contents read/write and Metadata read permissions is recommended.</p>
+            <p className="text-xs text-muted-foreground">{t("settingsExtra.patRecommended")}</p>
           </div>
 
           <Separator />
@@ -175,7 +175,7 @@ export function SettingsPage() {
               </div>
             ))}
             <div className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
-              <Input placeholder="Label" value={newTokenLabel} onChange={(e) => setNewTokenLabel(e.target.value)} />
+              <Input placeholder={t("settingsExtra.label")} value={newTokenLabel} onChange={(e) => setNewTokenLabel(e.target.value)} />
               <Input type="password" placeholder="github_pat_..." value={newToken} onChange={(e) => setNewToken(e.target.value)} autoComplete="off" />
               <Button variant="outline" size="icon" onClick={addExtraToken} disabled={!newTokenLabel || !newToken}>
                 <Plus className="h-4 w-4" />
@@ -228,6 +228,7 @@ export function SettingsPage() {
 }
 
 function SpeechCard({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
+  const { t } = useTranslation();
   const browserVoices = useBrowserVoices();
   const useBrowserVoice = settings.speech.ttsProvider === "browser";
 
@@ -244,36 +245,36 @@ function SpeechCard({ settings, patchSettings }: { settings: AppSettings; patchS
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><Volume2 className="h-4 w-4" />Speech</CardTitle>
-        <CardDescription>Choose browser or configured AI models for speech-to-text and text-to-speech.</CardDescription>
+        <CardTitle className="flex items-center gap-2"><Volume2 className="h-4 w-4" />{t("speech.title")}</CardTitle>
+        <CardDescription>{t("speech.description")}</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-2">
-          <Label>Speech-to-text</Label>
+          <Label>{t("speech.stt")}</Label>
           <Select value={settings.speech.sttProvider} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, sttProvider: value as "browser" | "ai" } })}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="browser">Browser microphone</SelectItem>
-              <SelectItem value="ai">AI transcription model</SelectItem>
+              <SelectItem value="browser">{t("speech.browserMic")}</SelectItem>
+              <SelectItem value="ai">{t("speech.aiTranscription")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
         <div className="grid gap-2">
-          <Label>Text-to-speech</Label>
+          <Label>{t("speech.tts")}</Label>
           <Select value={settings.speech.ttsProvider} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, ttsProvider: value as "browser" | "ai" } })}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="browser">Browser voice</SelectItem>
-              <SelectItem value="ai">AI TTS model</SelectItem>
+              <SelectItem value="browser">{t("speech.browserVoice")}</SelectItem>
+              <SelectItem value="ai">{t("speech.aiTts")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
         <div className="grid gap-2">
-          <Label>Voice</Label>
+          <Label>{t("speech.voice")}</Label>
           {useBrowserVoice && browserVoices.length > 0 ? (
             <div className="flex gap-2">
               <Select value={settings.speech.ttsVoice} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, ttsVoice: value } })}>
-                <SelectTrigger className="flex-1"><SelectValue placeholder="Select voice" /></SelectTrigger>
+                <SelectTrigger className="flex-1"><SelectValue placeholder={t("speech.selectVoice")} /></SelectTrigger>
                 <SelectContent>
                   {browserVoices.map((voice) => (
                     <SelectItem key={`${voice.name}-${voice.lang}`} value={voice.name}>{voice.name} ({voice.lang})</SelectItem>
@@ -283,7 +284,7 @@ function SpeechCard({ settings, patchSettings }: { settings: AppSettings; patchS
               <Button type="button" variant="outline" size="icon" onClick={preview}><Volume2 className="h-4 w-4" /></Button>
             </div>
           ) : useBrowserVoice ? (
-            <Input value={settings.speech.ttsVoice} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsVoice: e.target.value } })} placeholder="Browser voice name" />
+            <Input value={settings.speech.ttsVoice} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsVoice: e.target.value } })} placeholder={t("speech.browserVoiceName")} />
           ) : (
             <Select value={settings.speech.ttsVoice} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, ttsVoice: value } })}>
               <SelectTrigger><SelectValue placeholder="nova" /></SelectTrigger>
@@ -294,10 +295,10 @@ function SpeechCard({ settings, patchSettings }: { settings: AppSettings; patchS
           )}
         </div>
         <div className="grid gap-2">
-          <Label>Browser TTS speed</Label>
+          <Label>{t("speech.browserTtsSpeed")}</Label>
           <Input type="number" min="0.5" max="1.5" step="0.05" value={settings.speech.ttsRate} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsRate: Number(e.target.value) || 0.95 } })} />
         </div>
-        <p className="text-xs text-muted-foreground sm:col-span-2"><Mic className="mr-1 inline h-3 w-3" />AI STT/TTS uses the STT/TTS model fields configured on the default writing integration. Copilot/M365 does not provide STT/TTS.</p>
+        <p className="text-xs text-muted-foreground sm:col-span-2"><Mic className="mr-1 inline h-3 w-3" />{t("speech.sttTtsHint")}</p>
       </CardContent>
     </Card>
   );
@@ -388,11 +389,11 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
         {integration.provider !== "m365_copilot" && (
           <>
             <div className="grid gap-2">
-              <Label>STT model</Label>
+              <Label>{t("speech.sttModel")}</Label>
               <Input value={integration.modelSpeechToText ?? ""} onChange={(e) => onChange({ modelSpeechToText: e.target.value })} placeholder="whisper-1 or deployment" />
             </div>
             <div className="grid gap-2">
-              <Label>TTS model</Label>
+              <Label>{t("speech.ttsModel")}</Label>
               <Input value={integration.modelTextToSpeech ?? ""} onChange={(e) => onChange({ modelTextToSpeech: e.target.value })} placeholder="tts-1 or deployment" />
             </div>
           </>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +20,7 @@ interface CreateChapterDialogProps {
 }
 
 export function CreateChapterDialog({ nextNumber, onCreate }: CreateChapterDialogProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [number, setNumber] = useState(nextNumber);
   const [title, setTitle] = useState("");
@@ -42,7 +44,7 @@ export function CreateChapterDialog({ nextNumber, onCreate }: CreateChapterDialo
       setOpen(false);
       reset();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create chapter");
+      setError(err instanceof Error ? err.message : t("createDialogs.createChapterFailed"));
     } finally {
       setBusy(false);
     }
@@ -59,17 +61,17 @@ export function CreateChapterDialog({ nextNumber, onCreate }: CreateChapterDialo
       <DialogTrigger asChild>
         <Button size="sm">
           <Plus className="mr-1 h-4 w-4" />
-          Add chapter
+          {t("createDialogs.addChapter")}
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New chapter</DialogTitle>
+          <DialogTitle>{t("createDialogs.newChapter")}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid grid-cols-[100px_1fr] gap-3">
             <div className="grid gap-2">
-              <Label htmlFor="chapter-number">Number</Label>
+              <Label htmlFor="chapter-number">{t("createDialogs.number")}</Label>
               <Input
                 id="chapter-number"
                 type="number"
@@ -79,11 +81,11 @@ export function CreateChapterDialog({ nextNumber, onCreate }: CreateChapterDialo
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="chapter-title">Title</Label>
+              <Label htmlFor="chapter-title">{t("createDialogs.title")}</Label>
               <Input
                 id="chapter-title"
                 autoFocus
-                placeholder="The Arrival"
+                placeholder={t("createDialogs.titlePlaceholder")}
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 onKeyDown={(e) => {
@@ -93,11 +95,11 @@ export function CreateChapterDialog({ nextNumber, onCreate }: CreateChapterDialo
             </div>
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="chapter-summary">Summary (optional)</Label>
+            <Label htmlFor="chapter-summary">{t("createDialogs.summaryOptional")}</Label>
             <Textarea
               id="chapter-summary"
               rows={3}
-              placeholder="One or two sentences describing the chapter."
+              placeholder={t("createDialogs.summaryPlaceholder")}
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
             />
@@ -106,11 +108,11 @@ export function CreateChapterDialog({ nextNumber, onCreate }: CreateChapterDialo
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button onClick={() => void submit()} disabled={busy || !title.trim()}>
             {busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-            Create
+            {t("common.create")}
           </Button>
         </DialogFooter>
       </DialogContent>
