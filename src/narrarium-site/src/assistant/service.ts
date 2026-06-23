@@ -92,6 +92,7 @@ export async function runAssistantPrompt(input: {
   }
 
   if (looksLikeSearch(lowered)) return searchCurrentBook({ ...promptInput, book, token });
+  if (looksLikeBranchSwitch(lowered)) return switchBookBranchFromPrompt({ ...promptInput, book, branch, token });
   if (looksLikeImportAttachment(lowered)) return importAttachmentsIntoBook({ ...promptInput, book, branch, token });
   if (looksLikeCreateChapter(lowered)) return createChapterFromPrompt({ ...promptInput, book, branch, token });
   if (looksLikeCreateParagraph(lowered)) return createParagraphFromPrompt({ ...promptInput, book, branch, token });
@@ -188,6 +189,30 @@ async function answerFromContext(input: PromptInput): Promise<AssistantMessage> 
     buildUserMessage(input, `User request: ${input.prompt}`),
   ]);
   return makeAssistantMessage("assistant", answer.trim());
+}
+
+
+async function switchBookBranchFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const branchName = extractBranchName(input.prompt);
+  if (!branchName) {
+    return makeAssistantMessage("assistant", "Tell me the branch name, for example: switch to branch feature/new-ending or create branch fix/chapter-7.");
+  }
+  const createIfMissing = /\b(create|new|crea|nuovo)\b/.test(input.prompt.toLowerCase());
+  const baseBranch = input.context.structure?.defaultBranch ?? "main";
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    text: createIfMissing
+      ? "I can create branch `" + branchName + "` from `" + baseBranch + "` and switch this book to it."
+      : "I can switch this book to branch `" + branchName + "`." ,
+    action: {
+      kind: "switch-book-branch",
+      bookId: input.book.id,
+      branchName,
+      createIfMissing,
+      baseBranch,
+    },
+  };
 }
 
 async function createChapterFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -536,6 +561,7 @@ function detectSectionHint(prompt: string): "characters" | "paragraphs" | "canon
 }
 
 function looksLikeSummary(prompt: string): boolean { return /\b(summary|summar|riassunt|recap|overview)\b/.test(prompt); }
+function looksLikeBranchSwitch(prompt: string): boolean { return /\b(branch)\b/.test(prompt) && /\b(switch|checkout|go to|usa il branch|vai sul branch|cambia branch|create|crea|new)\b/.test(prompt); }
 function looksLikeWriteResume(prompt: string): boolean { return /\b(resume|riassunto)\b/.test(prompt) && /\b(write|save|refresh|aggiorna|scrivi|salva|crea)\b/.test(prompt); }
 function looksLikeWriteEvaluation(prompt: string): boolean { return /\b(evaluation|evaluate|review file|valutazione)\b/.test(prompt) && /\b(write|save|refresh|aggiorna|scrivi|salva|crea)\b/.test(prompt); }
 function looksLikeUpdatePlot(prompt: string): boolean { return /\b(plot)\b/.test(prompt) && /\b(update|refresh|aggiorna|scrivi|salva|sync)\b/.test(prompt); }
@@ -559,6 +585,11 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function extractBranchName(prompt: string): string | null {
+  const match = /(?:branch\s+)([A-Za-z0-9._/-]+)/i.exec(prompt);
+  return match?.[1] ?? null;
 }
 
 function isSafeRelativePath(path: string): boolean {

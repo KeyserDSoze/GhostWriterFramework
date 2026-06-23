@@ -34,6 +34,13 @@ export type AssistantAction =
       kind: "undo-file-updates";
       bookId: string;
       updates: AssistantFileUpdate[];
+    }
+  | {
+      kind: "switch-book-branch";
+      bookId: string;
+      branchName: string;
+      createIfMissing?: boolean;
+      baseBranch?: string;
     };
 
 export interface AssistantMessage {

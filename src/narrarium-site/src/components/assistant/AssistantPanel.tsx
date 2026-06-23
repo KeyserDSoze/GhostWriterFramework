@@ -1,11 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Bot, Loader2, Paperclip, Send, Sparkles, Trash2, Wand2, X } from "lucide-react";
-import { createEmptyAssistantSession, useAssistantStore, type AssistantAttachment, type AssistantFileUpdate } from "@/assistant/store";
+import {
+  Bot,
+  GitBranch,
+  Loader2,
+  Paperclip,
+  Send,
+  Sparkles,
+  Trash2,
+  Wand2,
+  X,
+} from "lucide-react";
+import {
+  createEmptyAssistantSession,
+  useAssistantStore,
+  type AssistantAttachment,
+  type AssistantFileUpdate,
+} from "@/assistant/store";
 import { applyParagraphRewrite, compactAssistantSession, runAssistantPrompt } from "@/assistant/service";
 import { loadWriterContext, parseAppRoute } from "@/assistant/context";
 import { deleteAssistantSession, listAssistantSessions, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
 import { parseAttachment } from "@/assistant/attachments";
+import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useAuthStore } from "@/store/authStore";
@@ -17,16 +33,42 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { resolveBookToken } from "@/types/settings";
-import { compareBranches, createFile, deleteFile, readFileWithSha, revertFileToRef, updateFile, type BranchDiffFile } from "@/github/githubClient";
+import {
+  compareBranches,
+  createBranchFromBase,
+  createFile,
+  deleteFile,
+  readFileWithSha,
+  revertFileToRef,
+  updateFile,
+  type BranchDiffFile,
+} from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
+
+const ATTACHMENT_TARGETS = [
+  { value: "paragraph", label: "Import as paragraph" },
+  { value: "chapter", label: "Import as chapter" },
+  { value: "note", label: "Import as note" },
+  { value: "character", label: "Import as character" },
+  { value: "location", label: "Import as location" },
+  { value: "faction", label: "Import as faction" },
+  { value: "item", label: "Import as item" },
+  { value: "secret", label: "Import as secret" },
+  { value: "timeline", label: "Import as timeline event" },
+  { value: "script", label: "Import as script" },
+  { value: "draft", label: "Import as draft" },
+] as const;
+
+type AttachmentTarget = (typeof ATTACHMENT_TARGETS)[number]["value"];
 
 export function AssistantPanel() {
   const location = useLocation();
   const route = useMemo(() => parseAppRoute(location.pathname), [location.pathname]);
   const bookId = "bookId" in route ? route.bookId : undefined;
   const { branch } = useWorkingBranch(bookId);
-  const { settings } = useSettingsStore();
-  const { structures, workingBranches } = useBooksStore();
+  const { settings, patchSettings } = useSettingsStore();
+  const { structures, workingBranches, clearBook } = useBooksStore();
+  const { save } = useSettings();
   const { user, accessToken } = useAuthStore();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -41,13 +83,17 @@ export function AssistantPanel() {
     busy,
     setBusy,
   } = useAssistantStore();
+
   const [draft, setDraft] = useState("");
   const [contextLabel, setContextLabel] = useState("Narrarium");
   const [contextSummary, setContextSummary] = useState("");
+  const [contextFiles, setContextFiles] = useState<string[]>([]);
+  const [availableCount, setAvailableCount] = useState(0);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [diffFiles, setDiffFiles] = useState<BranchDiffFile[]>([]);
   const [loadingDiff, setLoadingDiff] = useState(false);
+  const [attachmentTarget, setAttachmentTarget] = useState<AttachmentTarget>("paragraph");
 
   useEffect(() => {
     let active = true;
@@ -55,11 +101,13 @@ export function AssistantPanel() {
       if (!active) return;
       setContextLabel(ctx.title);
       setContextSummary(ctx.summary);
+      setContextFiles(ctx.loadedFilePaths);
+      setAvailableCount(ctx.availableFiles.length);
     });
     return () => {
       active = false;
     };
-  }, [location.pathname, settings, structures]);
+  }, [location.pathname, settings, structures, workingBranches]);
 
   useEffect(() => {
     if (!open || !user || !accessToken) return;
@@ -78,7 +126,13 @@ export function AssistantPanel() {
           const savedSession = currentSession.fileId === fileId ? currentSession : { ...currentSession, fileId };
           if (currentSession.fileId !== fileId) setCurrentSession(savedSession);
           setSessions([
-            { id: savedSession.id, fileId, title: savedSession.title, contextTitle: savedSession.contextTitle, updatedAt: savedSession.updatedAt },
+            {
+              id: savedSession.id,
+              fileId,
+              title: savedSession.title,
+              contextTitle: savedSession.contextTitle,
+              updatedAt: savedSession.updatedAt,
+            },
             ...sessions.filter((session) => session.fileId !== fileId && session.id !== savedSession.id),
           ]);
         })
@@ -116,9 +170,7 @@ export function AssistantPanel() {
     setBusy(true);
     try {
       const parsed: AssistantAttachment[] = [];
-      for (const file of Array.from(files)) {
-        parsed.push(await parseAttachment(file));
-      }
+      for (const file of Array.from(files)) parsed.push(await parseAttachment(file));
       updateCurrentSession((current) => ({
         ...current,
         updatedAt: new Date().toISOString(),
@@ -178,6 +230,19 @@ export function AssistantPanel() {
     }
   }
 
+  function buildAttachmentImportPrompt(): string {
+    const label = ATTACHMENT_TARGETS.find((entry) => entry.value === attachmentTarget)?.label ?? attachmentTarget;
+    return `Use the attached files as source material and ${label.toLowerCase()} in the current book context.`;
+  }
+
+  async function handleImportAttachments() {
+    if (!(currentSession?.attachments.length ?? 0)) {
+      toast({ title: "No attachments", description: "Attach at least one file first." });
+      return;
+    }
+    await sendPrompt(buildAttachmentImportPrompt());
+  }
+
   async function openSession(fileId: string) {
     if (!user || !accessToken) return;
     setBusy(true);
@@ -206,12 +271,13 @@ export function AssistantPanel() {
   async function applyRewrite(messageIndex: number) {
     const message = currentSession?.messages[messageIndex];
     if (!message?.action || message.action.kind !== "apply-paragraph-rewrite" || !bookId) return;
-    const book = settings.books.find((entry) => entry.id === message.action?.bookId);
+    const action = message.action;
+    const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
     setBusy(true);
     try {
-      await applyParagraphRewrite({ action: message.action, book, branch, token });
+      await applyParagraphRewrite({ action, book, branch, token });
       toast({ title: "Paragraph updated" });
       window.location.reload();
     } catch (err) {
@@ -221,29 +287,60 @@ export function AssistantPanel() {
     }
   }
 
-  async function applyFileUpdates(messageIndex: number) {
+  async function applySelectedFileUpdates(messageIndex: number, selectedPaths?: string[]) {
     const message = currentSession?.messages[messageIndex];
     if (!message?.action || message.action.kind !== "apply-file-updates") return;
     const action = message.action;
+    const updates = selectedPaths?.length
+      ? action.updates.filter((update) => selectedPaths.includes(update.path))
+      : action.updates;
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
-    if (!book || !token) return;
+    if (!book || !token || updates.length === 0) return;
     setBusy(true);
     try {
       const undoUpdates: AssistantFileUpdate[] = [];
-      for (const update of action.updates) {
+      for (const update of updates) {
         const existing = await readFileWithSha(token, book.owner, book.repo, branch, update.path).catch(() => null);
         undoUpdates.push({ ...update, previousContent: existing?.content ?? null });
         if (existing) await updateFile(token, book.owner, book.repo, branch, update.path, existing.sha, update.content, `Update ${update.path}`);
         else await createFile(token, book.owner, book.repo, branch, update.path, update.content, `Add ${update.path}`);
       }
       useAssistantStore.getState().updateMessage(message.id, {
-        text: `${message.text}\n\nApplied. You can undo this assistant change if needed.`,
+        text: `${message.text}\n\nApplied ${updates.length} file change${updates.length === 1 ? "" : "s"}. You can undo this assistant change if needed.`,
         action: { kind: "undo-file-updates", bookId: action.bookId, updates: undoUpdates },
       });
       toast({ title: "File updates applied" });
     } catch (err) {
       toast({ title: "Apply file updates failed", description: String(err), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyBranchSwitch(messageIndex: number) {
+    const message = currentSession?.messages[messageIndex];
+    if (!message?.action || message.action.kind !== "switch-book-branch") return;
+    const action = message.action;
+    const book = settings.books.find((entry) => entry.id === action.bookId);
+    const token = book ? resolveBookToken(book, settings) : "";
+    if (!book || !token) return;
+    setBusy(true);
+    try {
+      if (action.createIfMissing) {
+        await createBranchFromBase(token, book.owner, book.repo, action.baseBranch ?? "main", action.branchName);
+      }
+      patchSettings({
+        books: settings.books.map((entry) =>
+          entry.id === book.id ? { ...entry, activeBranch: action.branchName } : entry,
+        ),
+      });
+      await save();
+      clearBook(book.id);
+      toast({ title: `Switched to branch ${action.branchName}` });
+      window.location.reload();
+    } catch (err) {
+      toast({ title: "Branch switch failed", description: String(err), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -363,6 +460,16 @@ export function AssistantPanel() {
 
       <div className="border-b px-4 py-3 space-y-3">
         <div className="text-xs text-muted-foreground">{contextSummary || "Context follows the current route and repository files."}</div>
+        <details className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
+          <summary className="cursor-pointer font-medium">Context inspector</summary>
+          <div className="mt-2 space-y-2">
+            <p>{availableCount} files in manifest.</p>
+            <p>Loaded now:</p>
+            <div className="space-y-1">
+              {contextFiles.length ? contextFiles.map((path) => <div key={path} className="font-mono">{path}</div>) : <div>none</div>}
+            </div>
+          </div>
+        </details>
         <div className="flex items-center gap-2">
           <Select value={currentSession?.fileId ?? currentSession?.id ?? ""} onValueChange={(value) => { if (value === "__new__") newChat(); else void openSession(value); }}>
             <SelectTrigger className="h-8 flex-1"><SelectValue placeholder={loadingSessions ? "Loading chats…" : "Open a saved chat"} /></SelectTrigger>
@@ -375,13 +482,10 @@ export function AssistantPanel() {
         </div>
         <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(event) => void attachFiles(event.target.files)} accept=".pdf,.docx,.md,.markdown,.txt,image/png,image/jpeg,.jpg,.jpeg" />
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}><Paperclip className="mr-1 h-4 w-4" />Attach files</Button>
           {(currentSession?.attachments ?? []).map((attachment) => (
             <Badge key={attachment.id} variant="secondary" className="gap-1 pr-1">
               {attachment.name}
-              <button type="button" onClick={() => removeAttachment(attachment.id)} className="rounded p-0.5 hover:bg-black/10">
-                <X className="h-3 w-3" />
-              </button>
+              <button type="button" onClick={() => removeAttachment(attachment.id)} className="rounded p-0.5 hover:bg-black/10"><X className="h-3 w-3" /></button>
             </Badge>
           ))}
         </div>
@@ -391,6 +495,9 @@ export function AssistantPanel() {
       <div className="flex flex-wrap gap-2 border-b px-4 py-3">
         <Button variant="outline" size="sm" onClick={() => void sendPrompt("Create a concise summary of where I am and what matters next.")}><Sparkles className="mr-1 h-4 w-4" />Summary</Button>
         <Button variant="outline" size="sm" onClick={() => void sendPrompt("Review what I am looking at and tell me strengths, risks, and next actions.")}>Review</Button>
+        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Write or refresh the resume for the current chapter.")}>Resume</Button>
+        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Write or refresh the evaluation for what I am looking at.")}>Evaluation</Button>
+        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Update plot.md for the current book.")}>Plot</Button>
         <Button variant="outline" size="sm" onClick={() => void sendPrompt("Create a writer note from the current context and save it.")}>Save note</Button>
         <Button variant="outline" size="sm" onClick={() => void sendPrompt("Search the current book for relevant characters, paragraphs, or canon keywords.")}>Search</Button>
         <Button variant="outline" size="sm" onClick={() => void loadBranchDiff()} disabled={loadingDiff}>Sync diff</Button>
@@ -399,11 +506,34 @@ export function AssistantPanel() {
 
       <ScrollArea className="min-h-0 flex-1 px-4 py-3">
         <div className="space-y-3">
-          {currentSession?.messages.length ? null : <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">Ask for a summary, review, saved note, keyword search, branch diff, file edits, or a paragraph rewrite. Attach PDFs, DOCX, markdown, text files, PNG and JPG images.</div>}
+          {currentSession?.messages.length ? null : <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">Ask for summaries, reviews, resume, evaluation, plot updates, searches, branch actions, file edits, or paragraph rewrites. You can also attach PDF, DOCX, markdown, text, PNG and JPG files.</div>}
           {(currentSession?.messages ?? []).map((message, index) => (
             <div key={message.id} className={message.role === "user" ? "ml-8" : "mr-8"}>
               <div className={message.role === "user" ? "rounded-2xl bg-primary px-4 py-3 text-sm text-primary-foreground" : "rounded-2xl border bg-background px-4 py-3 text-sm whitespace-pre-wrap"}>{message.text}</div>
-              {message.action?.kind === "apply-file-updates" && <div className="mt-2 rounded-xl border bg-muted/30 p-3 text-xs"><p className="mb-2 font-medium">Proposed multi-file changes</p><div className="space-y-2">{message.action.updates.map((update) => <details key={update.path} className="rounded border bg-background p-2"><summary className="cursor-pointer font-mono">{update.path}</summary>{update.reason && <p className="mt-2 text-muted-foreground">{update.reason}</p>}<pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-[11px]">{update.content}</pre></details>)}</div><Button className="mt-2" size="sm" onClick={() => void applyFileUpdates(index)} disabled={busy}>Apply file updates</Button></div>}
+              {message.action?.kind === "switch-book-branch" && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary">Branch action ready</Badge>
+                  <Button size="sm" onClick={() => void applyBranchSwitch(index)} disabled={busy}><GitBranch className="mr-1 h-4 w-4" />Apply branch</Button>
+                </div>
+              )}
+              {message.action?.kind === "apply-file-updates" && (
+                <div className="mt-2 rounded-xl border bg-muted/30 p-3 text-xs">
+                  <p className="mb-2 font-medium">Proposed multi-file changes</p>
+                  <div className="space-y-2">
+                    {message.action.updates.map((update) => (
+                      <details key={update.path} className="rounded border bg-background p-2">
+                        <summary className="cursor-pointer font-mono">{update.path}</summary>
+                        {update.reason && <p className="mt-2 text-muted-foreground">{update.reason}</p>}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <Button size="sm" variant="outline" onClick={() => void applySelectedFileUpdates(index, [update.path])} disabled={busy}>Apply only this file</Button>
+                        </div>
+                        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-[11px]">{update.content}</pre>
+                      </details>
+                    ))}
+                  </div>
+                  <Button className="mt-2" size="sm" onClick={() => void applySelectedFileUpdates(index)} disabled={busy}>Apply all file updates</Button>
+                </div>
+              )}
               {message.action?.kind === "undo-file-updates" && <div className="mt-2 flex items-center gap-2"><Badge variant="secondary">Assistant changes applied</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy}>Undo assistant changes</Button></div>}
               {message.action?.kind === "apply-paragraph-rewrite" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">Paragraph rewrite ready</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy}>Apply to paragraph</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>Open chapter</Link></Button></div>}
             </div>
@@ -414,8 +544,29 @@ export function AssistantPanel() {
 
       <div className="border-t p-4">
         <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void sendPrompt(draft); }}>
-          <Textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Ask the assistant to summarize, review, search, create notes, read attachments, or edit files…" className="min-h-[100px] resize-none" />
-          <div className="flex justify-end"><Button type="submit" disabled={!draft.trim() || busy}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Send className="mr-1 h-4 w-4" />}Send</Button></div>
+          <Textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Ask the assistant to create, import, summarize, review, switch branch, or edit files…" className="min-h-[100px] resize-none" />
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap gap-2">
+              <Select value={attachmentTarget} onValueChange={(value) => setAttachmentTarget(value as AttachmentTarget)}>
+                <SelectTrigger className="h-9 w-full sm:w-[220px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {ATTACHMENT_TARGETS.map((target) => <SelectItem key={target.value} value={target.value}>{target.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Button type="button" variant="outline" size="sm" onClick={() => void handleImportAttachments()} disabled={busy || !(currentSession?.attachments.length)}>
+                Import attachments
+              </Button>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+                <Paperclip className="mr-1 h-4 w-4" />Attach files
+              </Button>
+              <div className="flex items-center gap-2">
+                <Button type="button" variant="ghost" size="sm" onClick={() => setDraft("")}>Clear</Button>
+                <Button type="submit" disabled={!draft.trim() || busy}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Send className="mr-1 h-4 w-4" />}Send</Button>
+              </div>
+            </div>
+          </div>
         </form>
       </div>
     </div>
