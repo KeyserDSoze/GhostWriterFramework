@@ -109,6 +109,11 @@ const it = {
     read: "Leggi",
     stopReading: "Ferma lettura",
     readContext: "Leggi contesto"
+  },
+  chats: {
+    searchPlaceholder: "Cerca chat per titolo o contesto...",
+    noResults: "Nessuna chat corrisponde alla ricerca",
+    noResultsDescription: "Prova con un'altra parola chiave o svuota la ricerca.",
   }
 };
 

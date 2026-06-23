@@ -1,16 +1,19 @@
 import { Outlet, useLocation } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { Sidebar, MobileSidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { DossierDock } from "./DossierDock";
-import { AssistantPanel } from "@/components/assistant/AssistantPanel";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useTokenRefresh } from "@/hooks/useTokenRefresh";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+
+const AssistantPanel = lazy(() =>
+  import("@/components/assistant/AssistantPanel").then((module) => ({ default: module.AssistantPanel })),
+);
 
 export function Shell() {
   const { load } = useSettings();
@@ -64,7 +67,9 @@ export function Shell() {
         </main>
       </div>
       <DossierDock />
-      <AssistantPanel />
+      <Suspense fallback={null}>
+        <AssistantPanel />
+      </Suspense>
 
       <Dialog open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
         <DialogContent className="left-0 top-0 h-[100dvh] max-w-none translate-x-0 translate-y-0 rounded-none border-r p-0 data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:left-0 sm:top-0 sm:max-w-sm sm:translate-x-0 sm:translate-y-0 sm:rounded-none">

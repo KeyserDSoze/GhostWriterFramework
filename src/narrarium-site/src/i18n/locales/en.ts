@@ -109,6 +109,11 @@ const en = {
     read: "Read",
     stopReading: "Stop reading",
     readContext: "Read context"
+  },
+  chats: {
+    searchPlaceholder: "Search chats by title or context...",
+    noResults: "No chats match your search",
+    noResultsDescription: "Try a different keyword or clear the search.",
   }
 };
 

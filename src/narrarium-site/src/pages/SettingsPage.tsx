@@ -19,6 +19,20 @@ const PROVIDERS: Array<{ value: AIProviderType; label: string }> = [
   { value: "m365_copilot", label: "Microsoft 365 Copilot" },
 ];
 
+const AI_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"];
+
+function useBrowserVoices(): SpeechSynthesisVoice[] {
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    const sync = () => setVoices(window.speechSynthesis.getVoices());
+    sync();
+    window.speechSynthesis.addEventListener("voiceschanged", sync);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", sync);
+  }, []);
+  return voices;
+}
+
 export function SettingsPage() {
   const { t } = useTranslation();
   const { settings, patchSettings } = useSettingsStore();
@@ -131,43 +145,7 @@ export function SettingsPage() {
         </p>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Volume2 className="h-4 w-4" />Speech</CardTitle>
-          <CardDescription>Choose browser or configured AI models for speech-to-text and text-to-speech.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <div className="grid gap-2">
-            <Label>Speech-to-text</Label>
-            <Select value={settings.speech.sttProvider} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, sttProvider: value as "browser" | "ai" } })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="browser">Browser microphone</SelectItem>
-                <SelectItem value="ai">AI transcription model</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid gap-2">
-            <Label>Text-to-speech</Label>
-            <Select value={settings.speech.ttsProvider} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, ttsProvider: value as "browser" | "ai" } })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="browser">Browser voice</SelectItem>
-                <SelectItem value="ai">AI TTS model</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid gap-2">
-            <Label>Voice</Label>
-            <Input value={settings.speech.ttsVoice} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsVoice: e.target.value } })} placeholder="nova or browser voice name" />
-          </div>
-          <div className="grid gap-2">
-            <Label>Browser TTS speed</Label>
-            <Input type="number" min="0.5" max="1.5" step="0.05" value={settings.speech.ttsRate} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsRate: Number(e.target.value) || 0.95 } })} />
-          </div>
-          <p className="text-xs text-muted-foreground sm:col-span-2"><Mic className="mr-1 inline h-3 w-3" />AI STT/TTS uses the STT/TTS model fields configured on the default writing integration. Copilot/M365 does not provide STT/TTS.</p>
-        </CardContent>
-      </Card>
+      <SpeechCard settings={settings} patchSettings={patchSettings} />
 
       <Card>
         <CardHeader>
@@ -246,6 +224,82 @@ export function SettingsPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function SpeechCard({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
+  const browserVoices = useBrowserVoices();
+  const useBrowserVoice = settings.speech.ttsProvider === "browser";
+
+  function preview() {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance("Narrarium voice preview.");
+    const voice = browserVoices.find((entry) => entry.name === settings.speech.ttsVoice);
+    if (voice) utterance.voice = voice;
+    utterance.rate = Number.isFinite(settings.speech.ttsRate) ? settings.speech.ttsRate : 0.95;
+    window.speechSynthesis.speak(utterance);
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><Volume2 className="h-4 w-4" />Speech</CardTitle>
+        <CardDescription>Choose browser or configured AI models for speech-to-text and text-to-speech.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-2">
+          <Label>Speech-to-text</Label>
+          <Select value={settings.speech.sttProvider} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, sttProvider: value as "browser" | "ai" } })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="browser">Browser microphone</SelectItem>
+              <SelectItem value="ai">AI transcription model</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-2">
+          <Label>Text-to-speech</Label>
+          <Select value={settings.speech.ttsProvider} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, ttsProvider: value as "browser" | "ai" } })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="browser">Browser voice</SelectItem>
+              <SelectItem value="ai">AI TTS model</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-2">
+          <Label>Voice</Label>
+          {useBrowserVoice && browserVoices.length > 0 ? (
+            <div className="flex gap-2">
+              <Select value={settings.speech.ttsVoice} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, ttsVoice: value } })}>
+                <SelectTrigger className="flex-1"><SelectValue placeholder="Select voice" /></SelectTrigger>
+                <SelectContent>
+                  {browserVoices.map((voice) => (
+                    <SelectItem key={`${voice.name}-${voice.lang}`} value={voice.name}>{voice.name} ({voice.lang})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button type="button" variant="outline" size="icon" onClick={preview}><Volume2 className="h-4 w-4" /></Button>
+            </div>
+          ) : useBrowserVoice ? (
+            <Input value={settings.speech.ttsVoice} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsVoice: e.target.value } })} placeholder="Browser voice name" />
+          ) : (
+            <Select value={settings.speech.ttsVoice} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, ttsVoice: value } })}>
+              <SelectTrigger><SelectValue placeholder="nova" /></SelectTrigger>
+              <SelectContent>
+                {AI_VOICES.map((voice) => <SelectItem key={voice} value={voice}>{voice}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+        <div className="grid gap-2">
+          <Label>Browser TTS speed</Label>
+          <Input type="number" min="0.5" max="1.5" step="0.05" value={settings.speech.ttsRate} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsRate: Number(e.target.value) || 0.95 } })} />
+        </div>
+        <p className="text-xs text-muted-foreground sm:col-span-2"><Mic className="mr-1 inline h-3 w-3" />AI STT/TTS uses the STT/TTS model fields configured on the default writing integration. Copilot/M365 does not provide STT/TTS.</p>
+      </CardContent>
+    </Card>
   );
 }
 

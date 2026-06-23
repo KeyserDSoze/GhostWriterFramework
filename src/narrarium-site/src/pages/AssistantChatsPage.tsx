@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
-import { Bot, Loader2, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Bot, Loader2, Search, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import { useAuthStore } from "@/store/authStore";
 import { createEmptyAssistantSession, useAssistantStore, type AssistantSessionMeta } from "@/assistant/store";
@@ -16,6 +17,15 @@ export function AssistantChatsPage() {
   const [sessions, setSessions] = useState<AssistantSessionMeta[]>([]);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  const filteredSessions = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    if (!term) return sessions;
+    return sessions.filter((session) =>
+      [session.title, session.contextTitle].filter(Boolean).some((value) => value!.toLowerCase().includes(term)),
+    );
+  }, [sessions, query]);
 
   async function loadSessions() {
     if (!user || !accessToken) return;
@@ -77,6 +87,13 @@ export function AssistantChatsPage() {
         </Button>
       </div>
 
+      {sessions.length > 0 && (
+        <div className="relative max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("chats.searchPlaceholder")} className="pl-9" />
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Caricamento chat…</div>
       ) : sessions.length === 0 ? (
@@ -86,9 +103,16 @@ export function AssistantChatsPage() {
             <CardDescription>Apri il Copilot e inizia una nuova conversazione.</CardDescription>
           </CardHeader>
         </Card>
+      ) : filteredSessions.length === 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>{t("chats.noResults")}</CardTitle>
+            <CardDescription>{t("chats.noResultsDescription")}</CardDescription>
+          </CardHeader>
+        </Card>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {sessions.map((session) => (
+          {filteredSessions.map((session) => (
             <Card key={session.fileId ?? session.id}>
               <CardHeader>
                 <CardTitle className="line-clamp-2 text-base">{session.title}</CardTitle>

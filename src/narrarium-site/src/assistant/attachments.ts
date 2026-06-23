@@ -1,9 +1,4 @@
-import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
-import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
-import mammoth from "mammoth";
 import type { AssistantAttachment } from "@/assistant/store";
-
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 const MAX_TEXT_LENGTH = 60_000;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -71,6 +66,11 @@ async function parseImageAttachment(file: File): Promise<AssistantAttachment> {
 }
 
 async function extractPdfText(file: File): Promise<string> {
+  const [pdfjs, workerModule] = await Promise.all([
+    import("pdfjs-dist/legacy/build/pdf.mjs"),
+    import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"),
+  ]);
+  pdfjs.GlobalWorkerOptions.workerSrc = workerModule.default;
   const bytes = new Uint8Array(await file.arrayBuffer());
   const document = await pdfjs.getDocument({ data: bytes }).promise;
   const pages: string[] = [];
@@ -89,6 +89,7 @@ async function extractPdfText(file: File): Promise<string> {
 }
 
 async function extractDocxText(file: File): Promise<string> {
+  const { default: mammoth } = await import("mammoth");
   const arrayBuffer = await file.arrayBuffer();
   const result = await mammoth.extractRawText({ arrayBuffer });
   return result.value;

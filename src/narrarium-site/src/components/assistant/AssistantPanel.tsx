@@ -81,6 +81,8 @@ export function AssistantPanel() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const silenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const {
     open,
     setOpen,
@@ -165,6 +167,14 @@ export function AssistantPanel() {
     return () => { active = false; };
   }, [currentSession, settings, setCurrentSession, busy, setBusy]);
 
+  useEffect(() => {
+    return () => {
+      if (silenceTimerRef.current) clearInterval(silenceTimerRef.current);
+      if (audioContextRef.current) void audioContextRef.current.close().catch(() => undefined);
+      if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+    };
+  }, []);
+
   function ensureSession() {
     if (currentSession) return currentSession;
     const next = createEmptyAssistantSession(contextLabel);
@@ -210,6 +220,54 @@ export function AssistantPanel() {
     setDraft((current) => current ? current + " " + text : text);
   }
 
+  function stopSilenceMonitor() {
+    if (silenceTimerRef.current) {
+      clearInterval(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (audioContextRef.current) {
+      void audioContextRef.current.close().catch(() => undefined);
+      audioContextRef.current = null;
+    }
+  }
+
+  function monitorSilence(stream: MediaStream) {
+    const AudioContextCtor = window.AudioContext ?? (window as any).webkitAudioContext;
+    if (!AudioContextCtor) return;
+    const context: AudioContext = new AudioContextCtor();
+    audioContextRef.current = context;
+    const source = context.createMediaStreamSource(stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 2048;
+    source.connect(analyser);
+    const buffer = new Uint8Array(analyser.frequencyBinCount);
+
+    const SILENCE_THRESHOLD = 0.012;
+    const SILENCE_MS = 1800;
+    let hasSpoken = false;
+    let silenceStart = 0;
+
+    silenceTimerRef.current = setInterval(() => {
+      analyser.getByteTimeDomainData(buffer);
+      let sumSquares = 0;
+      for (const value of buffer) {
+        const normalized = (value - 128) / 128;
+        sumSquares += normalized * normalized;
+      }
+      const rms = Math.sqrt(sumSquares / buffer.length);
+      const now = Date.now();
+      if (rms >= SILENCE_THRESHOLD) {
+        hasSpoken = true;
+        silenceStart = now;
+      } else if (hasSpoken) {
+        if (!silenceStart) silenceStart = now;
+        if (now - silenceStart >= SILENCE_MS && mediaRecorderRef.current?.state === "recording") {
+          mediaRecorderRef.current.stop();
+        }
+      }
+    }, 150);
+  }
+
   async function startSpeechToText() {
     if (listening && mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
@@ -223,10 +281,12 @@ export function AssistantPanel() {
         audioChunksRef.current = [];
         mediaRecorderRef.current = recorder;
         setListening(true);
+        monitorSilence(stream);
         recorder.ondataavailable = (event) => {
           if (event.data.size > 0) audioChunksRef.current.push(event.data);
         };
         recorder.onstop = async () => {
+          stopSilenceMonitor();
           stream.getTracks().forEach((track) => track.stop());
           setListening(false);
           mediaRecorderRef.current = null;
@@ -243,6 +303,7 @@ export function AssistantPanel() {
         };
         recorder.start();
       } catch (err) {
+        stopSilenceMonitor();
         setListening(false);
         toast({ title: "Microfono non disponibile", description: String(err), variant: "destructive" });
       }
