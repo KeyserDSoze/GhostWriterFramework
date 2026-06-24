@@ -103,6 +103,10 @@ export async function loadBookStructure(
     .filter((n) => n.type === "blob")
     .map((n) => n.path ?? "");
 
+  const imageExtensions = ["png", "jpg", "jpeg", "webp", "gif"];
+  const firstExistingImage = (basePath: string): string | undefined =>
+    imageExtensions.map((extension) => `${basePath}.${extension}`).find((candidate) => allPaths.includes(candidate));
+
   // ── book.md ──────────────────────────────────────────────────────────────
   let title = repo;
   let description = "";
@@ -150,13 +154,21 @@ export async function loadBookStructure(
     const paragraphs: Paragraph[] = paragraphFiles.map((p) => {
       const filename = p.split("/").pop() ?? "";
       const num = filename.match(/^(\d{3})(?:-[^/]+)?\.md$/)?.[1] ?? "";
+      const paragraphSlug = filename.replace(/\.md$/i, "");
       // Draft lives in the drafts/ subfolder with the same filename
       const draftPath = `${folder}/drafts/${filename}`;
+      const scriptPath = `scripts/${slug}/${paragraphSlug}.md`;
+      const evaluationPath = `evaluations/paragraphs/${slug}/${paragraphSlug}.md`;
+      const imagePromptPath = `assets/chapters/${slug}/paragraphs/${paragraphSlug}/primary.md`;
       return {
         number: num,
         title: slugToTitle(filename.replace(/\.md$/, "")),
         path: p,
         draftPath: allPaths.includes(draftPath) ? draftPath : undefined,
+        scriptPath: allPaths.includes(scriptPath) ? scriptPath : undefined,
+        evaluationPath: allPaths.includes(evaluationPath) ? evaluationPath : undefined,
+        imagePromptPath: allPaths.includes(imagePromptPath) ? imagePromptPath : undefined,
+        imagePath: firstExistingImage(`assets/chapters/${slug}/paragraphs/${paragraphSlug}/primary`),
       };
     });
 
@@ -164,6 +176,7 @@ export async function loadBookStructure(
       p.endsWith("writing-style.md")
     );
     const draftPath = folderPaths.find((p) => p.endsWith("draft.md"));
+    const imagePromptPath = `assets/chapters/${slug}/primary.md`;
 
     return {
       slug,
@@ -172,6 +185,8 @@ export async function loadBookStructure(
       paragraphs,
       writingStylePath,
       draftPath,
+      imagePromptPath: allPaths.includes(imagePromptPath) ? imagePromptPath : undefined,
+      imagePath: firstExistingImage(`assets/chapters/${slug}/primary`),
       hasResume: allPaths.includes(`resumes/chapters/${slug}.md`),
       hasEvaluation: allPaths.includes(`evaluations/chapters/${slug}.md`),
     };
@@ -184,6 +199,8 @@ export async function loadBookStructure(
     repo,
     defaultBranch,
     loadedBranch: branch,
+    bookCoverPromptPath: allPaths.includes("assets/book/cover.md") ? "assets/book/cover.md" : undefined,
+    bookCoverPath: firstExistingImage("assets/book/cover"),
     chapters,
     characters: filesUnder("characters"),
     locations: filesUnder("locations"),

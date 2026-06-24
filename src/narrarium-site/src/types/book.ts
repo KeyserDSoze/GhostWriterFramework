@@ -35,6 +35,10 @@ export interface Paragraph {
   title: string;
   path: string;
   draftPath?: string;
+  scriptPath?: string;
+  evaluationPath?: string;
+  imagePath?: string;
+  imagePromptPath?: string;
   body?: string;
 }
 
@@ -48,6 +52,8 @@ export interface Chapter {
   /** Path to the chapter-level writing style file, if present */
   writingStylePath?: string;
   draftPath?: string;
+  imagePath?: string;
+  imagePromptPath?: string;
   hasResume: boolean;
   hasEvaluation: boolean;
 }
@@ -60,6 +66,8 @@ export interface BookStructure {
   repo: string;
   defaultBranch: string;
   loadedBranch: string;
+  bookCoverPath?: string;
+  bookCoverPromptPath?: string;
   chapters: Chapter[];
   characters: BookFile[];
   locations: BookFile[];
