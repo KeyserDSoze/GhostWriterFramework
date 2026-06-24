@@ -1,7 +1,7 @@
 import { parseDocument } from "yaml";
 import type { BookStructure, Chapter } from "@/types/book";
 import type { BookEntry, BookExportScope, BookExportSettings } from "@/types/settings";
-import { loadFileContent } from "@/github/githubClient";
+import { loadBinaryFileContent, loadFileContent } from "@/github/githubClient";
 import { slugify } from "@/narrarium/canon";
 
 const PARAGRAPH_BREAK_NEWLINES = 3;
@@ -11,6 +11,7 @@ interface ExportParagraph {
   title: string;
   summary?: string;
   body: string;
+  asset?: ExportAsset;
 }
 
 interface ExportChapter {
@@ -20,6 +21,16 @@ interface ExportChapter {
   summary?: string;
   body: string;
   paragraphs: ExportParagraph[];
+  asset?: ExportAsset;
+}
+
+interface ExportAsset {
+  path: string;
+  altText?: string;
+  caption?: string;
+  bytes: Uint8Array;
+  mimeType: string;
+  extension: string;
 }
 
 interface ExportBookSnapshot {
@@ -29,6 +40,7 @@ interface ExportBookSnapshot {
   description?: string;
   chapters: ExportChapter[];
   wordCount: number;
+  coverAsset?: ExportAsset;
 }
 
 export interface BookExportArtifact {
@@ -52,6 +64,42 @@ function asString(value: unknown, fallback = ""): string {
 
 function asNumber(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+async function loadAsset(input: {
+  token: string;
+  book: BookEntry;
+  branch: string;
+  markdownPath: string;
+}): Promise<ExportAsset | undefined> {
+  const { token, book, branch, markdownPath } = input;
+  const raw = await loadFileContent(token, book.owner, book.repo, markdownPath, branch).catch(() => null);
+  if (!raw) return undefined;
+  const document = parseFrontmatter(raw);
+  const imagePath = asString(document.frontmatter.path);
+  if (!imagePath) return undefined;
+  const bytes = await loadBinaryFileContent(token, book.owner, book.repo, imagePath, branch).catch(() => null);
+  if (!bytes) return undefined;
+  const extension = imagePath.split(".").pop()?.toLowerCase() || "png";
+  return {
+    path: imagePath,
+    altText: asString(document.frontmatter.alt_text) || undefined,
+    caption: asString(document.frontmatter.caption) || undefined,
+    bytes,
+    mimeType: imageMimeType(extension),
+    extension,
+  };
+}
+
+function imageMimeType(extension: string): string {
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "webp") return "image/webp";
+  if (extension === "gif") return "image/gif";
+  return "image/png";
+}
+
+function paragraphSlugFromPath(path: string): string {
+  return path.split("/").pop()?.replace(/\.md$/i, "") ?? path;
 }
 
 function scopeChapters(chapters: Chapter[], scope: BookExportScope, sampleChapters: number): Chapter[] {
@@ -118,6 +166,12 @@ export async function loadBookExportSnapshot(input: {
             title: asString(doc.frontmatter.title, paragraph.title),
             summary: asString(doc.frontmatter.summary) || undefined,
             body: doc.body,
+            asset: await loadAsset({
+              token,
+              book,
+              branch,
+              markdownPath: `assets/chapters/${chapter.slug}/paragraphs/${paragraphSlugFromPath(paragraph.path)}/primary.md`,
+            }),
           } satisfies ExportParagraph;
         }),
       );
@@ -128,6 +182,7 @@ export async function loadBookExportSnapshot(input: {
         summary: asString(chapterDoc.frontmatter.summary) || undefined,
         body: chapterDoc.body,
         paragraphs,
+        asset: await loadAsset({ token, book, branch, markdownPath: `assets/chapters/${chapter.slug}/primary.md` }),
       } satisfies ExportChapter;
     }),
   );
@@ -139,6 +194,7 @@ export async function loadBookExportSnapshot(input: {
     description: asString(bookDoc.frontmatter.description) || undefined,
     chapters,
     wordCount: 0,
+    coverAsset: await loadAsset({ token, book, branch, markdownPath: "assets/book/cover.md" }),
   };
   snapshot.wordCount = countWords(chapters);
   return snapshot;
@@ -358,20 +414,34 @@ async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExport
 
   const oebps = zip.folder("OEBPS");
   if (!oebps) throw new Error("Failed to create EPUB archive.");
-  oebps.file("styles.css", "body { font-family: serif; line-height: 1.55; } h1, h2 { font-family: serif; } article { margin: 0 auto; max-width: 40rem; } nav ol { padding-left: 1.2rem; }");
+  oebps.file("styles.css", "body { font-family: serif; line-height: 1.55; } h1, h2 { font-family: serif; } article { margin: 0 auto; max-width: 40rem; } nav ol { padding-left: 1.2rem; } figure { margin: 2rem 0; text-align: center; page-break-inside: avoid; } figure img { max-width: 100%; height: auto; } figcaption { color: #555; font-size: 0.9em; margin-top: 0.5rem; }");
+  oebps.folder("images");
+
+  const imageItems: Array<{ id: string; fileName: string; mimeType: string }> = [];
+  const addImage = (id: string, fileName: string, asset: ExportAsset): string => {
+    const imagePath = `images/${fileName}.${asset.extension}`;
+    oebps.file(imagePath, asset.bytes);
+    imageItems.push({ id, fileName: imagePath, mimeType: asset.mimeType });
+    return imagePath;
+  };
+
+  const coverPath = snapshot.coverAsset ? addImage("cover-image", "book-cover", snapshot.coverAsset) : undefined;
+  oebps.file("opening.xhtml", wrapXhtml("Opening", `<article><h1>${escapeHtml(snapshot.title)}</h1><p><em>${escapeHtml(snapshot.author)}</em></p>${coverPath ? renderEpubFigure(coverPath, snapshot.coverAsset, `${snapshot.title} cover`) : ""}</article>`));
 
   const chapterFiles = snapshot.chapters.map((chapter, index) => {
     const fileName = `chapter-${index + 1}.xhtml`;
+    const chapterImagePath = chapter.asset ? addImage(`chapter-${index + 1}-image`, `chapter-${index + 1}`, chapter.asset) : undefined;
     const sceneIndex = chapter.paragraphs.length > 0
       ? `<nav><h2>Scenes</h2><ol>${chapter.paragraphs.map((paragraph, sceneIndex) => `<li><a href="#scene-${sceneIndex + 1}">${escapeHtml(paragraph.title)}</a></li>`).join("")}</ol></nav>`
       : "";
     const paragraphsHtml = chapter.paragraphs.map((paragraph, sceneIndex) => {
+      const paragraphImagePath = paragraph.asset ? addImage(`chapter-${index + 1}-scene-${sceneIndex + 1}-image`, `chapter-${index + 1}-scene-${sceneIndex + 1}`, paragraph.asset) : undefined;
       const summary = paragraph.summary ? `<p><em>${escapeHtml(paragraph.summary)}</em></p>` : "";
-      return `<section id="scene-${sceneIndex + 1}"><h2>${escapeHtml(paragraph.title)}</h2>${summary}${marked.parse(paragraph.body, { async: false })}</section>`;
+      return `<section id="scene-${sceneIndex + 1}"><h2>${escapeHtml(paragraph.title)}</h2>${summary}${marked.parse(paragraph.body, { async: false })}${paragraphImagePath ? renderEpubFigure(paragraphImagePath, paragraph.asset, `${paragraph.title} illustration`) : ""}</section>`;
     }).join("\n");
     const summary = chapter.summary ? `<p><em>${escapeHtml(chapter.summary)}</em></p>` : "";
     const body = chapter.body ? marked.parse(chapter.body, { async: false }) : "";
-    const xhtml = wrapXhtml(chapter.title, `<article><h1>${escapeHtml(chapter.title)}</h1>${summary}${body}${sceneIndex}${paragraphsHtml}</article>`);
+    const xhtml = wrapXhtml(chapter.title, `<article><h1>${escapeHtml(chapter.title)}</h1>${summary}${body}${chapterImagePath ? renderEpubFigure(chapterImagePath, chapter.asset, `${chapter.title} illustration`) : ""}${sceneIndex}${paragraphsHtml}</article>`);
     oebps.file(fileName, xhtml);
     return { fileName, title: chapter.title };
   });
@@ -379,7 +449,7 @@ async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExport
   const navXhtml = wrapXhtml("Contents", `<nav epub:type="toc" id="toc"><h1>Contents</h1><ol>${chapterFiles.map((chapter) => `<li><a href="${chapter.fileName}">${escapeHtml(chapter.title)}</a></li>`).join("")}</ol></nav>`);
   oebps.file("nav.xhtml", navXhtml);
   oebps.file("toc.ncx", buildTocNcx(snapshot, chapterFiles));
-  oebps.file("content.opf", buildContentOpf(snapshot, chapterFiles));
+  oebps.file("content.opf", buildContentOpf(snapshot, chapterFiles, imageItems));
 
   const blob = await zip.generateAsync({ type: "blob", mimeType: "application/epub+zip" });
   return {
@@ -390,14 +460,16 @@ async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExport
   };
 }
 
-function buildContentOpf(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fileName: string; title: string }>): string {
+function buildContentOpf(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fileName: string; title: string }>, imageItems: Array<{ id: string; fileName: string; mimeType: string }>): string {
   const manifest = [
     `<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`,
     `<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>`,
     `<item id="css" href="styles.css" media-type="text/css"/>`,
+    `<item id="opening" href="opening.xhtml" media-type="application/xhtml+xml"/>`,
     ...chapterFiles.map((chapter, index) => `<item id="chapter-${index + 1}" href="${chapter.fileName}" media-type="application/xhtml+xml"/>`),
+    ...imageItems.map((image) => `<item id="${image.id}" href="${image.fileName}" media-type="${image.mimeType}"/>`),
   ].join("\n    ");
-  const spine = chapterFiles.map((_, index) => `<itemref idref="chapter-${index + 1}"/>`).join("\n    ");
+  const spine = [`<itemref idref="opening"/>`, ...chapterFiles.map((_, index) => `<itemref idref="chapter-${index + 1}"/>`)].join("\n    ");
   return `<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0">\n  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n    <dc:identifier id="bookid">urn:narrarium:${slugify(snapshot.title) || "book"}</dc:identifier>\n    <dc:title>${escapeXml(snapshot.title)}</dc:title>\n    <dc:creator>${escapeXml(snapshot.author)}</dc:creator>\n    <dc:language>${escapeXml(snapshot.language)}</dc:language>\n  </metadata>\n  <manifest>\n    ${manifest}\n  </manifest>\n  <spine toc="ncx">\n    ${spine}\n  </spine>\n</package>`;
 }
 
@@ -410,6 +482,13 @@ function buildTocNcx(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fileNam
 
 function wrapXhtml(title: string, bodyHtml: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">\n  <head>\n    <title>${escapeXml(title)}</title>\n    <link rel="stylesheet" type="text/css" href="styles.css"/>\n  </head>\n  <body>${bodyHtml}</body>\n</html>`;
+}
+
+function renderEpubFigure(imagePath: string, asset: ExportAsset | undefined, fallbackAlt: string): string {
+  if (!asset) return "";
+  const alt = asset.altText?.trim() || fallbackAlt;
+  const caption = asset.caption?.trim() ? `<figcaption>${escapeHtml(asset.caption)}</figcaption>` : "";
+  return `<figure class="epub-figure"><img src="${escapeHtml(imagePath)}" alt="${escapeHtml(alt)}"/>${caption}</figure>`;
 }
 
 function escapeHtml(value: string): string {

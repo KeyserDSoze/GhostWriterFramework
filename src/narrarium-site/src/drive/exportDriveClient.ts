@@ -45,6 +45,19 @@ export async function listGoogleDriveFolders(accessToken: string, parentId = "ro
   return (data.files ?? []).map((entry) => ({ id: entry.id, name: entry.name }));
 }
 
+export async function listMicrosoftDriveFolders(accessToken: string, folderPath = ""): Promise<DriveFolderEntry[]> {
+  const normalized = folderPath.split("/").filter(Boolean).join("/");
+  const endpoint = normalized ? `${GRAPH_DRIVE_API}/root:/${normalized}:/children` : `${GRAPH_DRIVE_API}/root/children`;
+  const response = await fetch(endpoint, {
+    headers: authHeaders(accessToken),
+  });
+  assertOk(response, "OneDrive folder list");
+  const data = (await response.json()) as { value?: Array<{ id: string; name: string; folder?: Record<string, unknown> }> };
+  return (data.value ?? [])
+    .filter((entry) => Boolean(entry.folder))
+    .map((entry) => ({ id: entry.id, name: entry.name }));
+}
+
 export async function uploadGoogleDriveFile(
   accessToken: string,
   folderId: string,

@@ -38,6 +38,7 @@ import { CreateEntityDialog } from "@/components/canon/CreateEntityDialog";
 import { PullRequestsDialog } from "@/components/github/PullRequestsDialog";
 import { CommitHistoryDialog } from "@/components/github/CommitHistoryDialog";
 import { BookExportDialog } from "@/components/book/BookExportDialog";
+import { AssetImageDialog } from "@/components/book/AssetImageDialog";
 
 function fileSlug(path: string): string {
   return (path.split("/").pop() ?? "").replace(/\.md$/i, "");
@@ -195,6 +196,7 @@ export function BookPage() {
             head={branch}
             base={structure?.defaultBranch ?? "main"}
           />
+          {structure && token && <AssetImageDialog book={book} branch={branch} token={token} kind="book" title={structure.title ?? book.name} textPath="book.md" resumePath="resumes/total.md" />}
           {structure && token && <BookExportDialog book={book} structure={structure} branch={branch} token={token} />}
           <Button asChild variant="outline" size="sm">
             <Link to={`/app/books/${book.id}/settings`}>

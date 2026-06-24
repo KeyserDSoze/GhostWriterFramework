@@ -19,10 +19,11 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
-import { resolveBookExportSettings, resolveBookToken, type BookEntry, type BookExportSettings } from "@/types/settings";
+import { resolveBookExportProfiles, resolveBookExportSettings, resolveBookToken, type BookEntry, type BookExportProfile, type BookExportSettings } from "@/types/settings";
 import { createBranchFromBase, getDefaultBranch, listBranches } from "@/github/githubClient";
 import { useAuthStore } from "@/store/authStore";
 import { GoogleDriveFolderDialog } from "@/components/book/GoogleDriveFolderDialog";
+import { OneDriveFolderDialog } from "@/components/book/OneDriveFolderDialog";
 import type { DriveFolderEntry } from "@/drive/exportDriveClient";
 
 type TokenMode = "default" | "custom" | string;
@@ -56,23 +57,65 @@ export function BookSettingsPage() {
   const [baseBranch, setBaseBranch] = useState(structure?.defaultBranch ?? "main");
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [creatingBranch, setCreatingBranch] = useState(false);
-  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
-  const [exportSettings, setExportSettings] = useState<BookExportSettings>(() => resolveBookExportSettings(book ?? {
+  const [googleFolderDialogOpen, setGoogleFolderDialogOpen] = useState(false);
+  const [oneDriveFolderDialogOpen, setOneDriveFolderDialogOpen] = useState(false);
+  const fallbackBook = book ?? {
     id: "",
     owner: "",
     repo: "",
     name: "",
     tokenIndex: null,
     addedAt: "",
-  }));
+  };
+  const [exportProfiles, setExportProfiles] = useState<BookExportProfile[]>(() => resolveBookExportProfiles(fallbackBook));
+  const [selectedExportProfileId, setSelectedExportProfileId] = useState(() => book?.defaultExportProfileId ?? resolveBookExportProfiles(fallbackBook)[0]?.id ?? "default");
+  const [newPresetName, setNewPresetName] = useState("");
+  const [exportSettings, setExportSettings] = useState<BookExportSettings>(() => resolveBookExportSettings(fallbackBook));
 
   useEffect(() => {
     if (!book) return;
-    setExportSettings(resolveBookExportSettings(book));
+    const profiles = resolveBookExportProfiles(book);
+    const selectedId = book.defaultExportProfileId ?? profiles[0]?.id ?? "default";
+    setExportProfiles(profiles);
+    setSelectedExportProfileId(selectedId);
+    setExportSettings(resolveBookExportSettings(book, selectedId));
   }, [book]);
 
+  useEffect(() => {
+    if (!book) return;
+    const selected = exportProfiles.find((profile) => profile.id === selectedExportProfileId) ?? exportProfiles[0];
+    if (!selected) return;
+    setExportSettings(resolveBookExportSettings({ ...book, exportProfiles }, selected.id));
+  }, [book, exportProfiles, selectedExportProfileId]);
+
   function patchExportSettings(patch: Partial<BookExportSettings>) {
-    setExportSettings((current) => ({ ...current, ...patch }));
+    setExportSettings((current) => {
+      const next = { ...current, ...patch };
+      setExportProfiles((profiles) =>
+        profiles.map((profile) =>
+          profile.id === selectedExportProfileId ? { ...profile, settings: next } : profile,
+        ),
+      );
+      return next;
+    });
+  }
+
+  function addExportPreset() {
+    const name = newPresetName.trim();
+    if (!name) return;
+    const preset: BookExportProfile = { id: crypto.randomUUID(), name, settings: { ...exportSettings } };
+    setExportProfiles((current) => [...current, preset]);
+    setSelectedExportProfileId(preset.id);
+    setNewPresetName("");
+  }
+
+  function removeCurrentExportPreset() {
+    if (exportProfiles.length <= 1) return;
+    const remaining = exportProfiles.filter((profile) => profile.id !== selectedExportProfileId);
+    const nextSelected = remaining[0]?.id ?? "default";
+    setExportProfiles(remaining);
+    setSelectedExportProfileId(nextSelected);
+    setExportSettings(resolveBookExportSettings({ ...fallbackBook, exportProfiles: remaining, defaultExportProfileId: nextSelected }, nextSelected));
   }
 
   useEffect(() => {
@@ -114,12 +157,14 @@ export function BookSettingsPage() {
       const updated: BookEntry = {
         ...currentBook,
         name: name.trim() || currentBook.repo,
-        tokenIndex: mode === "default" || usingCustom ? null : Number(mode),
-        bookToken: usingCustom ? customToken.trim() || undefined : undefined,
-        bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${currentBook.repo} PAT` : undefined,
-        activeBranch: activeBranch === "__auto__" ? undefined : activeBranch,
-        exportSettings,
-      };
+      tokenIndex: mode === "default" || usingCustom ? null : Number(mode),
+      bookToken: usingCustom ? customToken.trim() || undefined : undefined,
+      bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${currentBook.repo} PAT` : undefined,
+      activeBranch: activeBranch === "__auto__" ? undefined : activeBranch,
+      exportSettings,
+      exportProfiles,
+      defaultExportProfileId: selectedExportProfileId,
+    };
 
     patchSettings({ books: settings.books.map((entry) => (entry.id === currentBook.id ? updated : entry)) });
     await save();
@@ -255,6 +300,32 @@ export function BookSettingsPage() {
           <CardDescription>{t("export.settingsDescription")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="grid gap-3 rounded-lg border border-dashed p-3">
+            <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+              <div className="grid gap-2">
+                <Label>{t("export.preset")}</Label>
+                <Select value={selectedExportProfileId} onValueChange={setSelectedExportProfileId}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {exportProfiles.map((profile) => <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label>{t("export.presetName")}</Label>
+                <Input value={exportProfiles.find((profile) => profile.id === selectedExportProfileId)?.name ?? ""} onChange={(e) => setExportProfiles((current) => current.map((profile) => profile.id === selectedExportProfileId ? { ...profile, name: e.target.value } : profile))} />
+              </div>
+              <div className="flex items-end gap-2">
+                <Button type="button" variant="outline" onClick={addExportPreset} disabled={!newPresetName.trim()}>{t("export.addPreset")}</Button>
+                <Button type="button" variant="ghost" onClick={removeCurrentExportPreset} disabled={exportProfiles.length <= 1}>{t("export.removePreset")}</Button>
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+              <Input placeholder={t("export.newPresetPlaceholder")} value={newPresetName} onChange={(e) => setNewPresetName(e.target.value)} />
+              <Button type="button" variant="outline" onClick={addExportPreset} disabled={!newPresetName.trim()}>{t("export.addPreset")}</Button>
+            </div>
+          </div>
+
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label>{t("export.defaultScope")}</Label>
@@ -346,15 +417,21 @@ export function BookSettingsPage() {
                 <p className="text-xs text-muted-foreground">{t("export.googleFolder")}</p>
                 <p className="font-medium">{exportSettings.googleDriveFolderName ?? t("export.noFolderSelected")}</p>
               </div>
-              <Button type="button" variant="outline" size="sm" onClick={() => setFolderDialogOpen(true)} disabled={!accessToken}>
+              <Button type="button" variant="outline" size="sm" onClick={() => setGoogleFolderDialogOpen(true)} disabled={!accessToken}>
                 <FolderOpen className="mr-1 h-4 w-4" />
                 {t("export.chooseFolder")}
               </Button>
             </div>
           ) : user?.provider === "microsoft" ? (
-            <div className="grid gap-2">
-              <Label>{t("export.microsoftFolderPath")}</Label>
-              <Input value={exportSettings.microsoftDriveFolderPath ?? ""} onChange={(e) => patchExportSettings({ microsoftDriveFolderPath: e.target.value })} placeholder="Apps/Narrarium/Exports" />
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/20 px-3 py-2">
+              <div>
+                <p className="text-xs text-muted-foreground">{t("export.microsoftFolderPath")}</p>
+                <p className="font-medium">{exportSettings.microsoftDriveFolderPath ?? t("export.noFolderSelected")}</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={() => setOneDriveFolderDialogOpen(true)} disabled={!accessToken}>
+                <FolderOpen className="mr-1 h-4 w-4" />
+                {t("export.chooseFolder")}
+              </Button>
             </div>
           ) : null}
         </CardContent>
@@ -369,10 +446,18 @@ export function BookSettingsPage() {
 
       {accessToken && (
         <GoogleDriveFolderDialog
-          open={folderDialogOpen}
-          onOpenChange={setFolderDialogOpen}
+          open={googleFolderDialogOpen}
+          onOpenChange={setGoogleFolderDialogOpen}
           accessToken={accessToken}
           onSelect={(folder: DriveFolderEntry) => patchExportSettings({ googleDriveFolderId: folder.id, googleDriveFolderName: folder.name })}
+        />
+      )}
+      {accessToken && (
+        <OneDriveFolderDialog
+          open={oneDriveFolderDialogOpen}
+          onOpenChange={setOneDriveFolderDialogOpen}
+          accessToken={accessToken}
+          onSelect={(folderPath) => patchExportSettings({ microsoftDriveFolderPath: folderPath })}
         />
       )}
     </div>

@@ -25,6 +25,8 @@ export interface AIIntegration {
   modelSpeechToText?: string;
   /** Text-to-speech deployment/model. */
   modelTextToSpeech?: string;
+  /** Image generation deployment/model. */
+  modelImageGeneration?: string;
   /** Azure API version when provider is azure_openai. */
   apiVersion?: string;
 }
@@ -58,6 +60,12 @@ export interface BookExportSettings {
   googleDriveFolderId?: string;
   googleDriveFolderName?: string;
   microsoftDriveFolderPath?: string;
+}
+
+export interface BookExportProfile {
+  id: string;
+  name: string;
+  settings: Partial<BookExportSettings>;
 }
 
 export const DEFAULT_BOOK_EXPORT_SETTINGS: BookExportSettings = {
@@ -104,11 +112,22 @@ export interface BookEntry {
   activeBranch?: string;
   /** Optional export settings and saved Drive target for this book. */
   exportSettings?: Partial<BookExportSettings>;
+  /** Optional named export presets for this book. */
+  exportProfiles?: BookExportProfile[];
+  /** Optional default preset id for export dialogs. */
+  defaultExportProfileId?: string;
   addedAt: string; // ISO-8601
 }
 
-export function resolveBookExportSettings(book: BookEntry): BookExportSettings {
-  return { ...DEFAULT_BOOK_EXPORT_SETTINGS, ...(book.exportSettings ?? {}) };
+export function resolveBookExportProfiles(book: BookEntry): BookExportProfile[] {
+  if (book.exportProfiles?.length) return book.exportProfiles;
+  return [{ id: "default", name: "Default", settings: book.exportSettings ?? {} }];
+}
+
+export function resolveBookExportSettings(book: BookEntry, profileId?: string): BookExportSettings {
+  const profiles = resolveBookExportProfiles(book);
+  const selected = profiles.find((entry) => entry.id === (profileId ?? book.defaultExportProfileId)) ?? profiles[0];
+  return { ...DEFAULT_BOOK_EXPORT_SETTINGS, ...(selected?.settings ?? book.exportSettings ?? {}) };
 }
 
 /**

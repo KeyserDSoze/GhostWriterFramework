@@ -492,6 +492,32 @@ const it = {
     sttModel: "Modello STT",
     ttsModel: "Modello TTS"
   },
+  images: {
+    title: "Immagine",
+    titleFor: "Immagine per {{title}}",
+    imageModel: "Modello immagini",
+    promptSource: "Sorgente prompt",
+    sourceCustom: "Prompt custom",
+    sourceText: "Testo diretto",
+    sourceResume: "Resume / riepilogo",
+    composePrompt: "Crea prompt da sorgente",
+    prompt: "Prompt",
+    altText: "Alt text",
+    caption: "Caption",
+    orientation: "Orientamento",
+    portrait: "Verticale",
+    landscape: "Orizzontale",
+    square: "Quadrata",
+    aspectRatio: "Aspect ratio",
+    savePrompt: "Salva prompt",
+    uploadImage: "Carica immagine",
+    generateImage: "Genera immagine",
+    promptSaved: "Prompt immagine salvato",
+    imageSaved: "Immagine salvata",
+    imageGenerated: "Immagine generata e salvata",
+    saveFailed: "Salvataggio immagine non riuscito",
+    generationFailed: "Generazione immagine non riuscita"
+  },
   settingsExtra: {
     patRecommended: "Consigliato un PAT con permessi Contents read/write e Metadata read.",
     label: "Etichetta"
@@ -591,8 +617,10 @@ const it = {
     noFolderSelected: "Nessuna cartella selezionata",
     chooseFolder: "Scegli cartella",
     chooseGoogleFolder: "Scegli cartella Google Drive",
+    chooseOneDriveFolder: "Scegli cartella OneDrive",
     currentFolder: "Cartella corrente",
     myDrive: "Il mio Drive",
+    oneDriveRoot: "OneDrive",
     up: "Su",
     useThisFolder: "Usa questa cartella",
     noFolders: "Nessuna sottocartella trovata qui.",
@@ -612,7 +640,12 @@ const it = {
     start: "Esporta ora",
     success: "Export completato ({{count}} file)",
     failed: "Export non riuscito",
-    savedFolder: "Cartella salvata"
+    savedFolder: "Cartella salvata",
+    preset: "Preset",
+    presetName: "Nome preset",
+    addPreset: "Aggiungi preset",
+    removePreset: "Rimuovi preset",
+    newPresetPlaceholder: "Nuovo preset (es. Mondadori)"
   }
 };
 

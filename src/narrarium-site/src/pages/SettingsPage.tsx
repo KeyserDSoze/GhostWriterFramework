@@ -396,6 +396,10 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
               <Label>{t("speech.ttsModel")}</Label>
               <Input value={integration.modelTextToSpeech ?? ""} onChange={(e) => onChange({ modelTextToSpeech: e.target.value })} placeholder="tts-1 or deployment" />
             </div>
+            <div className="grid gap-2">
+              <Label>{t("images.imageModel")}</Label>
+              <Input value={integration.modelImageGeneration ?? ""} onChange={(e) => onChange({ modelImageGeneration: e.target.value })} placeholder="gpt-image-1 or deployment" />
+            </div>
           </>
         )}
         {integration.provider === "azure_openai" && (
@@ -421,13 +425,14 @@ function createBlankIntegration(): AIIntegration {
     modelReview: "gpt-4o",
     modelSpeechToText: "",
     modelTextToSpeech: "",
+    modelImageGeneration: "gpt-image-1",
     apiVersion: "2024-10-21",
   };
 }
 
 function normalizeIntegration(integration: AIIntegration): AIIntegration {
   if (integration.provider === "m365_copilot") {
-    return { ...integration, endpoint: "", apiKey: "", modelWriting: "", modelReview: "", apiVersion: "" };
+    return { ...integration, endpoint: "", apiKey: "", modelWriting: "", modelReview: "", modelImageGeneration: "", apiVersion: "" };
   }
   if (integration.provider === "openai") {
     return { ...integration, apiVersion: "" };

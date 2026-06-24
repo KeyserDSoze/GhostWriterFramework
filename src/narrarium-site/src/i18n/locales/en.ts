@@ -492,6 +492,32 @@ const en = {
     sttModel: "STT model",
     ttsModel: "TTS model"
   },
+  images: {
+    title: "Image",
+    titleFor: "Image for {{title}}",
+    imageModel: "Image model",
+    promptSource: "Prompt source",
+    sourceCustom: "Custom prompt",
+    sourceText: "Direct text",
+    sourceResume: "Resume / summary",
+    composePrompt: "Create prompt from source",
+    prompt: "Prompt",
+    altText: "Alt text",
+    caption: "Caption",
+    orientation: "Orientation",
+    portrait: "Portrait",
+    landscape: "Landscape",
+    square: "Square",
+    aspectRatio: "Aspect ratio",
+    savePrompt: "Save prompt",
+    uploadImage: "Upload image",
+    generateImage: "Generate image",
+    promptSaved: "Image prompt saved",
+    imageSaved: "Image saved",
+    imageGenerated: "Image generated and saved",
+    saveFailed: "Image save failed",
+    generationFailed: "Image generation failed"
+  },
   settingsExtra: {
     patRecommended: "PAT with Contents read/write and Metadata read permissions is recommended.",
     label: "Label"
@@ -591,8 +617,10 @@ const en = {
     noFolderSelected: "No folder selected",
     chooseFolder: "Choose folder",
     chooseGoogleFolder: "Choose Google Drive folder",
+    chooseOneDriveFolder: "Choose OneDrive folder",
     currentFolder: "Current folder",
     myDrive: "My Drive",
+    oneDriveRoot: "OneDrive",
     up: "Up",
     useThisFolder: "Use this folder",
     noFolders: "No subfolders found here.",
@@ -612,7 +640,12 @@ const en = {
     start: "Export now",
     success: "Export completed ({{count}} files)",
     failed: "Export failed",
-    savedFolder: "Saved folder"
+    savedFolder: "Saved folder",
+    preset: "Preset",
+    presetName: "Preset name",
+    addPreset: "Add preset",
+    removePreset: "Remove preset",
+    newPresetPlaceholder: "New preset (e.g. Generic publisher)"
   }
 };
 

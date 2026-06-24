@@ -3,7 +3,7 @@ import { Download, FolderOpen, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { BookStructure } from "@/types/book";
 import type { BookEntry, BookExportScope } from "@/types/settings";
-import { resolveBookExportSettings } from "@/types/settings";
+import { resolveBookExportProfiles, resolveBookExportSettings } from "@/types/settings";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,7 @@ import { useAuthStore } from "@/store/authStore";
 import { buildBookExportArtifacts, loadBookExportSnapshot } from "@/export/bookExport";
 import { uploadDriveFile, type DriveFolderEntry } from "@/drive/exportDriveClient";
 import { GoogleDriveFolderDialog } from "@/components/book/GoogleDriveFolderDialog";
+import { OneDriveFolderDialog } from "@/components/book/OneDriveFolderDialog";
 
 const FORMATS: Array<{ value: "docx" | "pdf" | "epub"; labelKey: string }> = [
   { value: "docx", labelKey: "export.docx" },
@@ -31,7 +32,9 @@ export function BookExportDialog(props: {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { user, accessToken } = useAuthStore();
-  const savedSettings = resolveBookExportSettings(book);
+  const profiles = resolveBookExportProfiles(book);
+  const [selectedProfileId, setSelectedProfileId] = useState(book.defaultExportProfileId ?? profiles[0]?.id ?? "default");
+  const savedSettings = resolveBookExportSettings(book, selectedProfileId);
   const [open, setOpen] = useState(false);
   const [formats, setFormats] = useState<Array<"docx" | "pdf" | "epub">>(["docx"]);
   const [scope, setScope] = useState<BookExportScope>(savedSettings.defaultScope);
@@ -42,14 +45,16 @@ export function BookExportDialog(props: {
     ? { id: savedSettings.googleDriveFolderId, name: savedSettings.googleDriveFolderName || t("export.savedFolder") }
     : null);
   const [microsoftFolderPath, setMicrosoftFolderPath] = useState(savedSettings.microsoftDriveFolderPath ?? "Apps/Narrarium/Exports");
-  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [googleFolderDialogOpen, setGoogleFolderDialogOpen] = useState(false);
+  const [oneDriveFolderDialogOpen, setOneDriveFolderDialogOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
+    setSelectedProfileId(book.defaultExportProfileId ?? profiles[0]?.id ?? "default");
     setScope(savedSettings.defaultScope);
     setGoogleFolder(savedSettings.googleDriveFolderId ? { id: savedSettings.googleDriveFolderId, name: savedSettings.googleDriveFolderName || t("export.savedFolder") } : null);
     setMicrosoftFolderPath(savedSettings.microsoftDriveFolderPath ?? "Apps/Narrarium/Exports");
-  }, [open, savedSettings.defaultScope, savedSettings.googleDriveFolderId, savedSettings.googleDriveFolderName, savedSettings.microsoftDriveFolderPath, t]);
+  }, [book.defaultExportProfileId, open, profiles, savedSettings.defaultScope, savedSettings.googleDriveFolderId, savedSettings.googleDriveFolderName, savedSettings.microsoftDriveFolderPath, t]);
 
   function toggleFormat(format: "docx" | "pdf" | "epub") {
     setFormats((current) => {
@@ -142,6 +147,19 @@ export function BookExportDialog(props: {
             <DialogTitle>{t("export.title")}</DialogTitle>
           </DialogHeader>
           <div className="space-y-5">
+            {profiles.length > 1 && (
+              <div className="grid gap-2">
+                <Label>{t("export.preset")}</Label>
+                <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {profiles.map((profile) => (
+                      <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="grid gap-2">
               <Label>{t("export.formats")}</Label>
               <div className="flex flex-wrap gap-2">
@@ -188,21 +206,22 @@ export function BookExportDialog(props: {
                     <p className="text-xs text-muted-foreground">{t("export.googleFolder")}</p>
                     <p className="font-medium">{googleFolder?.name ?? t("export.noFolderSelected")}</p>
                   </div>
-                  <Button type="button" variant="outline" size="sm" onClick={() => setFolderDialogOpen(true)} disabled={!accessToken}>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setGoogleFolderDialogOpen(true)} disabled={!accessToken}>
                     <FolderOpen className="mr-1 h-4 w-4" />
                     {t("export.chooseFolder")}
                   </Button>
                 </div>
               )}
               {uploadToDrive && user?.provider === "microsoft" && (
-                <div className="grid gap-2">
-                  <Label>{t("export.microsoftFolderPath")}</Label>
-                  <input
-                    value={microsoftFolderPath}
-                    onChange={(event) => setMicrosoftFolderPath(event.target.value)}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    placeholder="Apps/Narrarium/Exports"
-                  />
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
+                  <div>
+                    <p className="text-xs text-muted-foreground">{t("export.microsoftFolderPath")}</p>
+                    <p className="font-medium">{microsoftFolderPath || t("export.noFolderSelected")}</p>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setOneDriveFolderDialogOpen(true)} disabled={!accessToken}>
+                    <FolderOpen className="mr-1 h-4 w-4" />
+                    {t("export.chooseFolder")}
+                  </Button>
                 </div>
               )}
             </div>
@@ -218,10 +237,18 @@ export function BookExportDialog(props: {
       </Dialog>
       {accessToken && (
         <GoogleDriveFolderDialog
-          open={folderDialogOpen}
-          onOpenChange={setFolderDialogOpen}
+          open={googleFolderDialogOpen}
+          onOpenChange={setGoogleFolderDialogOpen}
           accessToken={accessToken}
           onSelect={setGoogleFolder}
+        />
+      )}
+      {accessToken && (
+        <OneDriveFolderDialog
+          open={oneDriveFolderDialogOpen}
+          onOpenChange={setOneDriveFolderDialogOpen}
+          accessToken={accessToken}
+          onSelect={setMicrosoftFolderPath}
         />
       )}
     </>

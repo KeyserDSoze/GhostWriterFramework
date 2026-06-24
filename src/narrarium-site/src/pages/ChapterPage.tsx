@@ -44,6 +44,7 @@ import { type Paragraph } from "@/types/book";
 import { resolveBookToken } from "@/types/settings";
 import { slugify } from "@/narrarium/canon";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { AssetImageDialog } from "@/components/book/AssetImageDialog";
 import {
   createChapterDraftArtifacts,
   createChapterEvaluationArtifact,
@@ -357,6 +358,7 @@ export function ChapterPage() {
               {t("chapter.savingOrder")}
             </div>
           )}
+          {book && token && <AssetImageDialog book={book} branch={branch} token={token} kind="chapter" title={chapter.title} chapterSlug={chapter.slug} textPath={`${chapter.path}/chapter.md`} resumePath={`resumes/chapters/${chapter.slug}.md`} />}
           <Button asChild variant="outline" size="sm">
             <Link to={`/app/books/${bookId}/chapters/${chapterId}/workspace/draft`}>
               <FileEdit className="mr-1 h-4 w-4" />

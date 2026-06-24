@@ -21,6 +21,7 @@ import {
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { resolveBookToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { AssetImageDialog } from "@/components/book/AssetImageDialog";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
 
@@ -322,6 +323,18 @@ export function ParagraphPage() {
           <Badge variant="outline" className="font-mono text-xs">
             {branch}
           </Badge>
+          {book && token && (
+            <AssetImageDialog
+              book={book}
+              branch={branch}
+              token={token}
+              kind="paragraph"
+              title={titleValue || paragraph.title}
+              chapterSlug={chapter.slug}
+              paragraphSlug={paragraph.path.split("/").pop()?.replace(/\.md$/i, "")}
+              textPath={paragraph.path}
+            />
+          )}
           {isDirty && !saving && (
             <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>
           )}

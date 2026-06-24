@@ -7,12 +7,17 @@ export function createGitHubClient(token: string): Octokit {
 
 /** Decode base64 content returned by the GitHub contents API (UTF-8 safe). */
 function decodeContent(content: string): string {
+  const bytes = decodeBytes(content);
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+function decodeBytes(content: string): Uint8Array {
   const binary = atob(content.replace(/\n/g, ""));
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
-  return new TextDecoder("utf-8").decode(bytes);
+  return bytes;
 }
 
 /**
@@ -212,11 +217,29 @@ export async function loadFileContent(
   throw new Error(`${path} is not a file`);
 }
 
+export async function loadBinaryFileContent(
+  token: string,
+  owner: string,
+  repo: string,
+  path: string,
+  ref?: string,
+): Promise<Uint8Array> {
+  const octokit = createGitHubClient(token);
+  const params = ref ? { owner, repo, path, ref } : { owner, repo, path };
+  const { data } = await octokit.rest.repos.getContent(params);
+  if ("content" in data) return decodeBytes(data.content);
+  throw new Error(`${path} is not a file`);
+}
+
 // ─── Paragraph CRUD ───────────────────────────────────────────────────────────
 
 /** UTF-8-safe base64 encoding for the GitHub API `content` field. */
 function encodeContent(text: string): string {
   const bytes = new TextEncoder().encode(text);
+  return encodeBytes(bytes);
+}
+
+function encodeBytes(bytes: Uint8Array): string {
   let binary = "";
   bytes.forEach((b) => (binary += String.fromCharCode(b)));
   return btoa(binary);
@@ -265,6 +288,29 @@ export async function updateFile(
     branch,
   });
   return data.content?.sha ?? sha;
+}
+
+export async function createOrUpdateBinaryFile(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  path: string,
+  bytes: Uint8Array,
+  message: string,
+): Promise<string> {
+  const octokit = createGitHubClient(token);
+  const existing = await readFileWithSha(token, owner, repo, branch, path).catch(() => null);
+  const { data } = await octokit.rest.repos.createOrUpdateFileContents({
+    owner,
+    repo,
+    path,
+    message,
+    content: encodeBytes(bytes),
+    sha: existing?.sha,
+    branch,
+  });
+  return data.content?.sha ?? existing?.sha ?? "";
 }
 
 /** Create a new file. Returns the blob SHA. */
