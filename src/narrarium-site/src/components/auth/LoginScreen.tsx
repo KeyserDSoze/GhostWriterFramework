@@ -10,6 +10,7 @@ import { useSettings } from "@/drive/useSettings";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftSilentRequest } from "@/config/msal";
 import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
+import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 
 export function LoginScreen() {
   const { t } = useTranslation();
@@ -29,13 +30,7 @@ export function LoginScreen() {
   }
 
   const login = useGoogleLogin({
-    scope: [
-      "https://www.googleapis.com/auth/drive.appdata",
-      "https://www.googleapis.com/auth/drive.file",
-      "openid",
-      "profile",
-      "email",
-    ].join(" "),
+    scope: GOOGLE_DRIVE_SCOPES,
     onSuccess: async (tokenResponse) => {
       setLoadingProvider("google");
       setError(null);

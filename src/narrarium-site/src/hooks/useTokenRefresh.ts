@@ -4,15 +4,9 @@ import { useMsal } from "@azure/msal-react";
 import { InteractionRequiredAuthError } from "@azure/msal-browser";
 import { useAuthStore } from "@/store/authStore";
 import { findMicrosoftAccountByEmail, microsoftSilentRequest } from "@/config/msal";
+import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 
 const REFRESH_BEFORE_MS = 5 * 60 * 1000;
-const GOOGLE_SCOPES = [
-  "https://www.googleapis.com/auth/drive.appdata",
-  "https://www.googleapis.com/auth/drive.file",
-  "openid",
-  "profile",
-  "email",
-].join(" ");
 
 export function useTokenRefresh() {
   const user = useAuthStore((state) => state.user);
@@ -21,7 +15,7 @@ export function useTokenRefresh() {
   const { instance } = useMsal();
 
   const refreshGoogle = useGoogleLogin({
-    scope: GOOGLE_SCOPES,
+    scope: GOOGLE_DRIVE_SCOPES,
     prompt: "none",
     hint: user?.email,
     onSuccess: (tokenResponse) => {

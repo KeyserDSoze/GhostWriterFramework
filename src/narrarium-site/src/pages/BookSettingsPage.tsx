@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, GitBranch, KeyRound, Loader2, Plus, Save } from "lucide-react";
+import { ArrowLeft, FolderOpen, GitBranch, KeyRound, Loader2, Plus, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -14,12 +14,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
-import { resolveBookToken, type BookEntry } from "@/types/settings";
+import { resolveBookExportSettings, resolveBookToken, type BookEntry, type BookExportSettings } from "@/types/settings";
 import { createBranchFromBase, getDefaultBranch, listBranches } from "@/github/githubClient";
+import { useAuthStore } from "@/store/authStore";
+import { GoogleDriveFolderDialog } from "@/components/book/GoogleDriveFolderDialog";
+import type { DriveFolderEntry } from "@/drive/exportDriveClient";
 
 type TokenMode = "default" | "custom" | string;
 
@@ -37,6 +41,7 @@ export function BookSettingsPage() {
   const { settings, patchSettings } = useSettingsStore();
   const { save, syncStatus } = useSettings();
   const { clearBook, structures, workingBranches } = useBooksStore();
+  const { user, accessToken } = useAuthStore();
 
   const book = settings.books.find((entry) => entry.id === bookId);
   const structure = bookId ? structures[bookId] : undefined;
@@ -51,6 +56,24 @@ export function BookSettingsPage() {
   const [baseBranch, setBaseBranch] = useState(structure?.defaultBranch ?? "main");
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [creatingBranch, setCreatingBranch] = useState(false);
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [exportSettings, setExportSettings] = useState<BookExportSettings>(() => resolveBookExportSettings(book ?? {
+    id: "",
+    owner: "",
+    repo: "",
+    name: "",
+    tokenIndex: null,
+    addedAt: "",
+  }));
+
+  useEffect(() => {
+    if (!book) return;
+    setExportSettings(resolveBookExportSettings(book));
+  }, [book]);
+
+  function patchExportSettings(patch: Partial<BookExportSettings>) {
+    setExportSettings((current) => ({ ...current, ...patch }));
+  }
 
   useEffect(() => {
     if (!book) return;
@@ -88,14 +111,15 @@ export function BookSettingsPage() {
 
   async function handleSave() {
     const usingCustom = mode === "custom";
-    const updated: BookEntry = {
-      ...currentBook,
-      name: name.trim() || currentBook.repo,
-      tokenIndex: mode === "default" || usingCustom ? null : Number(mode),
-      bookToken: usingCustom ? customToken.trim() || undefined : undefined,
-      bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${currentBook.repo} PAT` : undefined,
-      activeBranch: activeBranch === "__auto__" ? undefined : activeBranch,
-    };
+      const updated: BookEntry = {
+        ...currentBook,
+        name: name.trim() || currentBook.repo,
+        tokenIndex: mode === "default" || usingCustom ? null : Number(mode),
+        bookToken: usingCustom ? customToken.trim() || undefined : undefined,
+        bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${currentBook.repo} PAT` : undefined,
+        activeBranch: activeBranch === "__auto__" ? undefined : activeBranch,
+        exportSettings,
+      };
 
     patchSettings({ books: settings.books.map((entry) => (entry.id === currentBook.id ? updated : entry)) });
     await save();
@@ -225,12 +249,132 @@ export function BookSettingsPage() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("export.settingsTitle")}</CardTitle>
+          <CardDescription>{t("export.settingsDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label>{t("export.defaultScope")}</Label>
+              <Select value={exportSettings.defaultScope} onValueChange={(value) => patchExportSettings({ defaultScope: value as "full" | "draft" })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="draft">{t("export.publisherDraft", { count: exportSettings.sampleChapters })}</SelectItem>
+                  <SelectItem value="full">{t("export.fullBook")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>{t("export.sampleChapters")}</Label>
+              <Input type="number" min="1" value={exportSettings.sampleChapters} onChange={(e) => patchExportSettings({ sampleChapters: Math.max(1, Number(e.target.value) || 1) })} />
+            </div>
+            <div className="grid gap-2">
+              <Label>{t("export.fontName")}</Label>
+              <Input value={exportSettings.fontName} onChange={(e) => patchExportSettings({ fontName: e.target.value })} />
+            </div>
+            <div className="grid gap-2">
+              <Label>{t("export.fontSize")}</Label>
+              <Input type="number" min="8" max="18" value={exportSettings.fontSize} onChange={(e) => patchExportSettings({ fontSize: Math.max(8, Number(e.target.value) || 12) })} />
+            </div>
+            <div className="grid gap-2">
+              <Label>{t("export.lineSpacing")}</Label>
+              <Input type="number" min="1" max="3" step="0.1" value={exportSettings.lineSpacing} onChange={(e) => patchExportSettings({ lineSpacing: Number(e.target.value) || 2 })} />
+            </div>
+            <div className="grid gap-2">
+              <Label>{t("export.marginInches")}</Label>
+              <Input type="number" min="0.5" max="2" step="0.1" value={exportSettings.marginInches} onChange={(e) => patchExportSettings({ marginInches: Number(e.target.value) || 1 })} />
+            </div>
+            <div className="grid gap-2">
+              <Label>{t("export.indentInches")}</Label>
+              <Input type="number" min="0" max="1" step="0.1" value={exportSettings.paragraphIndentInches} onChange={(e) => patchExportSettings({ paragraphIndentInches: Math.max(0, Number(e.target.value) || 0) })} />
+            </div>
+            <div className="grid gap-2">
+              <Label>{t("export.pageSize")}</Label>
+              <Select value={exportSettings.pageSize} onValueChange={(value) => patchExportSettings({ pageSize: value as "letter" | "a4" })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="letter">Letter</SelectItem>
+                  <SelectItem value="a4">A4</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>{t("export.alignment")}</Label>
+              <Select value={exportSettings.paragraphAlignment} onValueChange={(value) => patchExportSettings({ paragraphAlignment: value as "left" | "justified" })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="left">{t("export.alignLeft")}</SelectItem>
+                  <SelectItem value="justified">{t("export.alignJustified")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2 sm:col-span-2">
+              <Label>{t("export.sceneBreak")}</Label>
+              <Input value={exportSettings.sceneBreak} onChange={(e) => patchExportSettings({ sceneBreak: e.target.value || "#" })} />
+            </div>
+          </div>
+
+          <div className="grid gap-3 rounded-lg border border-dashed p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-medium">{t("export.includeTitlePage")}</p>
+                <p className="text-xs text-muted-foreground">{t("export.includeTitlePageHint")}</p>
+              </div>
+              <Switch checked={exportSettings.includeTitlePage} onCheckedChange={(checked) => patchExportSettings({ includeTitlePage: checked })} />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-medium">{t("export.showParagraphTitles")}</p>
+                <p className="text-xs text-muted-foreground">{t("export.showParagraphTitlesHint")}</p>
+              </div>
+              <Switch checked={exportSettings.showParagraphTitles} onCheckedChange={(checked) => patchExportSettings({ showParagraphTitles: checked })} />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-medium">{t("export.showChapterSummary")}</p>
+                <p className="text-xs text-muted-foreground">{t("export.showChapterSummaryHint")}</p>
+              </div>
+              <Switch checked={exportSettings.showChapterSummary} onCheckedChange={(checked) => patchExportSettings({ showChapterSummary: checked })} />
+            </div>
+          </div>
+
+          {user?.provider === "google" ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/20 px-3 py-2">
+              <div>
+                <p className="text-xs text-muted-foreground">{t("export.googleFolder")}</p>
+                <p className="font-medium">{exportSettings.googleDriveFolderName ?? t("export.noFolderSelected")}</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={() => setFolderDialogOpen(true)} disabled={!accessToken}>
+                <FolderOpen className="mr-1 h-4 w-4" />
+                {t("export.chooseFolder")}
+              </Button>
+            </div>
+          ) : user?.provider === "microsoft" ? (
+            <div className="grid gap-2">
+              <Label>{t("export.microsoftFolderPath")}</Label>
+              <Input value={exportSettings.microsoftDriveFolderPath ?? ""} onChange={(e) => patchExportSettings({ microsoftDriveFolderPath: e.target.value })} placeholder="Apps/Narrarium/Exports" />
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
       <div className="flex justify-end">
         <Button onClick={() => void handleSave()} disabled={isSaving}>
           {isSaving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}
           {t("settings.save")}
         </Button>
       </div>
+
+      {accessToken && (
+        <GoogleDriveFolderDialog
+          open={folderDialogOpen}
+          onOpenChange={setFolderDialogOpen}
+          accessToken={accessToken}
+          onSelect={(folder: DriveFolderEntry) => patchExportSettings({ googleDriveFolderId: folder.id, googleDriveFolderName: folder.name })}
+        />
+      )}
     </div>
   );
 }

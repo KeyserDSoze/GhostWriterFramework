@@ -5,6 +5,7 @@ import { useMsal } from "@azure/msal-react";
 import { Loader2 } from "lucide-react";
 import { useAuthStore, type GoogleUser } from "@/store/authStore";
 import { ensureMsalInitialized, findMicrosoftAccountByEmail, microsoftSilentRequest } from "@/config/msal";
+import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -21,13 +22,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const didTryRef = useRef(false);
 
   const silentLogin = useGoogleLogin({
-    scope: [
-      "https://www.googleapis.com/auth/drive.appdata",
-      "https://www.googleapis.com/auth/drive.file",
-      "openid",
-      "profile",
-      "email",
-    ].join(" "),
+    scope: GOOGLE_DRIVE_SCOPES,
     // prompt: "none" → no UI, returns immediately; fails with interaction_required
     // if the Google session has expired → we fall through to /login
     prompt: "none",

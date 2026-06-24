@@ -37,6 +37,45 @@ export interface GitHubToken {
   token: string;
 }
 
+export type BookExportScope = "full" | "draft";
+export type BookExportPageSize = "letter" | "a4";
+export type BookExportAlignment = "left" | "justified";
+
+export interface BookExportSettings {
+  defaultScope: BookExportScope;
+  sampleChapters: number;
+  includeTitlePage: boolean;
+  showParagraphTitles: boolean;
+  showChapterSummary: boolean;
+  fontName: string;
+  fontSize: number;
+  lineSpacing: number;
+  marginInches: number;
+  paragraphIndentInches: number;
+  pageSize: BookExportPageSize;
+  paragraphAlignment: BookExportAlignment;
+  sceneBreak: string;
+  googleDriveFolderId?: string;
+  googleDriveFolderName?: string;
+  microsoftDriveFolderPath?: string;
+}
+
+export const DEFAULT_BOOK_EXPORT_SETTINGS: BookExportSettings = {
+  defaultScope: "draft",
+  sampleChapters: 5,
+  includeTitlePage: true,
+  showParagraphTitles: false,
+  showChapterSummary: false,
+  fontName: "Times New Roman",
+  fontSize: 12,
+  lineSpacing: 2,
+  marginInches: 1,
+  paragraphIndentInches: 0.5,
+  pageSize: "letter",
+  paragraphAlignment: "left",
+  sceneBreak: "#",
+};
+
 // ─── Book entry (one GitHub repository = one book) ───────────────────────────
 
 export interface BookEntry {
@@ -63,7 +102,13 @@ export interface BookEntry {
   bookTokenLabel?: string;
   /** Optional active branch selected for this book. Undefined = use the personal dev branch. */
   activeBranch?: string;
+  /** Optional export settings and saved Drive target for this book. */
+  exportSettings?: Partial<BookExportSettings>;
   addedAt: string; // ISO-8601
+}
+
+export function resolveBookExportSettings(book: BookEntry): BookExportSettings {
+  return { ...DEFAULT_BOOK_EXPORT_SETTINGS, ...(book.exportSettings ?? {}) };
 }
 
 /**

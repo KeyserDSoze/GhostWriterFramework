@@ -1,0 +1,432 @@
+import { parseDocument } from "yaml";
+import type { BookStructure, Chapter } from "@/types/book";
+import type { BookEntry, BookExportScope, BookExportSettings } from "@/types/settings";
+import { loadFileContent } from "@/github/githubClient";
+import { slugify } from "@/narrarium/canon";
+
+const PARAGRAPH_BREAK_NEWLINES = 3;
+
+interface ExportParagraph {
+  number: string;
+  title: string;
+  summary?: string;
+  body: string;
+}
+
+interface ExportChapter {
+  slug: string;
+  number: number;
+  title: string;
+  summary?: string;
+  body: string;
+  paragraphs: ExportParagraph[];
+}
+
+interface ExportBookSnapshot {
+  title: string;
+  author: string;
+  language: string;
+  description?: string;
+  chapters: ExportChapter[];
+  wordCount: number;
+}
+
+export interface BookExportArtifact {
+  format: "docx" | "pdf" | "epub";
+  fileName: string;
+  mimeType: string;
+  blob: Blob;
+}
+
+function parseFrontmatter(raw: string): { frontmatter: Record<string, unknown>; body: string } {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
+  if (!match) return { frontmatter: {}, body: raw.trim() };
+  const doc = parseDocument(match[1]);
+  const frontmatter = (doc.toJSON() as Record<string, unknown> | null) ?? {};
+  return { frontmatter, body: match[2].trim() };
+}
+
+function asString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function scopeChapters(chapters: Chapter[], scope: BookExportScope, sampleChapters: number): Chapter[] {
+  if (scope === "full") return chapters;
+  return chapters.slice(0, Math.max(1, sampleChapters));
+}
+
+function stripMarkdownInline(value: string): string {
+  return value
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/!\[([^\]]*)\]\([^\)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^[>#]+\s*/gm, "")
+    .replace(/^[-*+]\s+/gm, "")
+    .replace(/^\d+\.\s+/gm, "")
+    .replace(/[*_~]/g, "")
+    .trim();
+}
+
+function markdownToPlainParagraphs(markdown: string): string[] {
+  const text = stripMarkdownInline(markdown).replace(/\r\n/g, "\n");
+  const separator = new RegExp(`\n{${Math.max(PARAGRAPH_BREAK_NEWLINES, 2)},}`, "g");
+  return text
+    .split(separator)
+    .map((paragraph) => paragraph.replace(/\n+/g, " ").trim())
+    .filter(Boolean);
+}
+
+function countWords(chapters: ExportChapter[]): number {
+  return chapters.reduce((total, chapter) => {
+    return total + chapter.paragraphs.reduce((chapterTotal, paragraph) => chapterTotal + paragraph.body.split(/\s+/).filter(Boolean).length, 0);
+  }, 0);
+}
+
+function outputBaseName(snapshot: ExportBookSnapshot, scope: BookExportScope): string {
+  const base = slugify(snapshot.title || "book") || "book";
+  return scope === "draft" ? `${base}-draft` : base;
+}
+
+export async function loadBookExportSnapshot(input: {
+  token: string;
+  book: BookEntry;
+  branch: string;
+  structure: BookStructure;
+  scope: BookExportScope;
+  exportSettings: BookExportSettings;
+}): Promise<ExportBookSnapshot> {
+  const { token, book, branch, structure, scope, exportSettings } = input;
+  const selectedChapters = scopeChapters(structure.chapters, scope, exportSettings.sampleChapters);
+  if (selectedChapters.length === 0) throw new Error("No chapters available to export.");
+
+  const bookRaw = await loadFileContent(token, book.owner, book.repo, "book.md", branch).catch(() => "");
+  const bookDoc = parseFrontmatter(bookRaw);
+
+  const chapters = await Promise.all(
+    selectedChapters.map(async (chapter) => {
+      const chapterDoc = parseFrontmatter(await loadFileContent(token, book.owner, book.repo, `${chapter.path}/chapter.md`, branch));
+      const paragraphs = await Promise.all(
+        chapter.paragraphs.map(async (paragraph) => {
+          const doc = parseFrontmatter(await loadFileContent(token, book.owner, book.repo, paragraph.path, branch));
+          return {
+            number: paragraph.number,
+            title: asString(doc.frontmatter.title, paragraph.title),
+            summary: asString(doc.frontmatter.summary) || undefined,
+            body: doc.body,
+          } satisfies ExportParagraph;
+        }),
+      );
+      return {
+        slug: chapter.slug,
+        number: asNumber(chapterDoc.frontmatter.number, Number(chapter.slug.slice(0, 3)) || 0),
+        title: asString(chapterDoc.frontmatter.title, chapter.title),
+        summary: asString(chapterDoc.frontmatter.summary) || undefined,
+        body: chapterDoc.body,
+        paragraphs,
+      } satisfies ExportChapter;
+    }),
+  );
+
+  const snapshot: ExportBookSnapshot = {
+    title: asString(bookDoc.frontmatter.title, structure.title || book.name || book.repo),
+    author: asString(bookDoc.frontmatter.author, "Unknown Author"),
+    language: asString(bookDoc.frontmatter.language, "en"),
+    description: asString(bookDoc.frontmatter.description) || undefined,
+    chapters,
+    wordCount: 0,
+  };
+  snapshot.wordCount = countWords(chapters);
+  return snapshot;
+}
+
+export async function buildBookExportArtifacts(input: {
+  snapshot: ExportBookSnapshot;
+  scope: BookExportScope;
+  settings: BookExportSettings;
+  formats: Array<"docx" | "pdf" | "epub">;
+}): Promise<BookExportArtifact[]> {
+  const { snapshot, scope, settings, formats } = input;
+  const artifacts: BookExportArtifact[] = [];
+  for (const format of formats) {
+    if (format === "docx") artifacts.push(await buildDocxArtifact(snapshot, scope, settings));
+    if (format === "pdf") artifacts.push(await buildPdfArtifact(snapshot, scope, settings));
+    if (format === "epub") artifacts.push(await buildEpubArtifact(snapshot, scope));
+  }
+  return artifacts;
+}
+
+async function buildDocxArtifact(snapshot: ExportBookSnapshot, scope: BookExportScope, settings: BookExportSettings): Promise<BookExportArtifact> {
+  const docx = await import("docx");
+  const {
+    AlignmentType,
+    Document,
+    Header,
+    Packer,
+    PageNumber,
+    Paragraph,
+    TextRun,
+    convertInchesToTwip,
+  } = docx;
+
+  const children: InstanceType<typeof Paragraph>[] = [];
+
+  if (settings.includeTitlePage) {
+    children.push(new Paragraph({ alignment: AlignmentType.LEFT, children: [new TextRun({ text: snapshot.author, font: settings.fontName, size: settings.fontSize * 2 })] }));
+    children.push(new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `Approx. ${roundWordCount(snapshot.wordCount)} words`, font: settings.fontName, size: settings.fontSize * 2 })] }));
+    for (let i = 0; i < 8; i++) children.push(new Paragraph({}));
+    children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: snapshot.title, font: settings.fontName, size: settings.fontSize * 2, bold: true })] }));
+    children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `by ${snapshot.author}`, font: settings.fontName, size: settings.fontSize * 2 })] }));
+    children.push(new Paragraph({ pageBreakBefore: true }));
+  }
+
+  snapshot.chapters.forEach((chapter, chapterIndex) => {
+    if (chapterIndex > 0 || !settings.includeTitlePage) {
+      children.push(new Paragraph({ pageBreakBefore: true }));
+    }
+    const chapterHeading = chapter.number ? `Chapter ${chapter.number}` : chapter.title;
+    children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: chapterHeading, font: settings.fontName, size: settings.fontSize * 2, bold: true })] }));
+    if (chapter.number && chapter.title !== chapterHeading) {
+      children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: chapter.title, font: settings.fontName, size: settings.fontSize * 2, italics: true })] }));
+    }
+    if (settings.showChapterSummary && chapter.summary) {
+      children.push(new Paragraph({ children: [new TextRun({ text: chapter.summary, font: settings.fontName, size: settings.fontSize * 2, italics: true })], spacing: { after: 240 } }));
+    }
+    chapter.paragraphs.forEach((paragraph, paragraphIndex) => {
+      if (settings.showParagraphTitles && paragraph.title) {
+        children.push(new Paragraph({ children: [new TextRun({ text: paragraph.title, font: settings.fontName, size: settings.fontSize * 2, bold: true })], spacing: { before: 240, after: 120 } }));
+      } else if (paragraphIndex > 0) {
+        children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: settings.sceneBreak, font: settings.fontName, size: settings.fontSize * 2 })], spacing: { before: 240, after: 240 } }));
+      }
+      for (const plainParagraph of markdownToPlainParagraphs(paragraph.body)) {
+        children.push(new Paragraph({
+          children: [new TextRun({ text: plainParagraph, font: settings.fontName, size: settings.fontSize * 2 })],
+          alignment: settings.paragraphAlignment === "justified" ? AlignmentType.JUSTIFIED : AlignmentType.LEFT,
+          spacing: { line: Math.round(settings.fontSize * 20 * settings.lineSpacing) },
+          indent: { firstLine: convertInchesToTwip(settings.paragraphIndentInches) },
+        }));
+      }
+    });
+  });
+
+  const authorLast = snapshot.author.split(/\s+/).filter(Boolean).pop() ?? "AUTHOR";
+  const shortTitle = snapshot.title.length > 30 ? snapshot.title.slice(0, 30).toUpperCase() : snapshot.title.toUpperCase();
+  const header = new Header({
+    children: [
+      new Paragraph({
+        alignment: AlignmentType.RIGHT,
+        children: [
+          new TextRun({ children: [`${authorLast} / ${shortTitle} / `, PageNumber.CURRENT], font: settings.fontName, size: settings.fontSize * 2 }),
+        ],
+      }),
+    ],
+  });
+
+  const document = new Document({
+    sections: [{
+      properties: {
+        page: {
+          margin: {
+            top: convertInchesToTwip(settings.marginInches),
+            right: convertInchesToTwip(settings.marginInches),
+            bottom: convertInchesToTwip(settings.marginInches),
+            left: convertInchesToTwip(settings.marginInches),
+          },
+          size: settings.pageSize === "a4"
+            ? { width: convertInchesToTwip(8.27), height: convertInchesToTwip(11.69) }
+            : { width: convertInchesToTwip(8.5), height: convertInchesToTwip(11) },
+        },
+        titlePage: settings.includeTitlePage,
+      },
+      headers: { default: header },
+      children,
+    }],
+  });
+
+  const buffer = await Packer.toBlob(document);
+  return {
+    format: "docx",
+    fileName: `${outputBaseName(snapshot, scope)}.docx`,
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    blob: buffer,
+  };
+}
+
+async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportScope, settings: BookExportSettings): Promise<BookExportArtifact> {
+  const { jsPDF } = await import("jspdf");
+  const doc = new jsPDF({ unit: "pt", format: settings.pageSize === "a4" ? "a4" : "letter" });
+  const width = doc.internal.pageSize.getWidth();
+  const height = doc.internal.pageSize.getHeight();
+  const margin = settings.marginInches * 72;
+  const contentWidth = width - margin * 2;
+  const lineHeight = settings.fontSize * settings.lineSpacing;
+
+  let pageNumber = 1;
+  let y = margin;
+  const baseFont = mapPdfFont(settings.fontName);
+  doc.setFont(baseFont, "normal");
+  doc.setFontSize(settings.fontSize);
+
+  function drawHeader() {
+    if (settings.includeTitlePage && pageNumber === 1) return;
+    const authorLast = snapshot.author.split(/\s+/).filter(Boolean).pop() ?? "AUTHOR";
+    const shortTitle = snapshot.title.length > 30 ? snapshot.title.slice(0, 30).toUpperCase() : snapshot.title.toUpperCase();
+    doc.setFont(baseFont, "normal");
+    doc.text(`${authorLast} / ${shortTitle} / ${pageNumber}`, width - margin, margin * 0.6, { align: "right" });
+  }
+
+  function newPage() {
+    doc.addPage(settings.pageSize === "a4" ? "a4" : "letter");
+    pageNumber += 1;
+    y = margin;
+    drawHeader();
+  }
+
+  function ensureSpace(lines = 1) {
+    if (y + lines * lineHeight > height - margin) newPage();
+  }
+
+  function writeBlock(text: string, options?: { align?: "left" | "center"; italic?: boolean; bold?: boolean; firstLineIndent?: number }) {
+    const indent = options?.firstLineIndent ?? 0;
+    const lines = doc.splitTextToSize(text, contentWidth - indent);
+    ensureSpace(lines.length + 1);
+    doc.setFont(baseFont, options?.bold ? "bold" : options?.italic ? "italic" : "normal");
+    if (options?.align === "center") {
+      lines.forEach((line: string) => {
+        doc.text(line, width / 2, y, { align: "center" });
+        y += lineHeight;
+      });
+    } else {
+      lines.forEach((line: string, index: number) => {
+        doc.text(line, margin + (index === 0 ? indent : 0), y);
+        y += lineHeight;
+      });
+    }
+  }
+
+  if (settings.includeTitlePage) {
+    writeBlock(snapshot.author);
+    writeBlock(`Approx. ${roundWordCount(snapshot.wordCount)} words`, { align: "center" });
+    y += lineHeight * 6;
+    writeBlock(snapshot.title, { align: "center", bold: true });
+    writeBlock(`by ${snapshot.author}`, { align: "center" });
+    newPage();
+  } else {
+    drawHeader();
+  }
+
+  snapshot.chapters.forEach((chapter, chapterIndex) => {
+    if (chapterIndex > 0 || !settings.includeTitlePage) {
+      if (chapterIndex > 0 || y > margin) newPage();
+    }
+    const heading = chapter.number ? `Chapter ${chapter.number}` : chapter.title;
+    writeBlock(heading, { align: "center", bold: true });
+    if (chapter.number && chapter.title !== heading) writeBlock(chapter.title, { align: "center", italic: true });
+    if (settings.showChapterSummary && chapter.summary) writeBlock(chapter.summary, { italic: true });
+    chapter.paragraphs.forEach((paragraph, paragraphIndex) => {
+      if (settings.showParagraphTitles && paragraph.title) {
+        y += lineHeight * 0.5;
+        writeBlock(paragraph.title, { bold: true });
+      } else if (paragraphIndex > 0) {
+        y += lineHeight * 0.5;
+        writeBlock(settings.sceneBreak, { align: "center" });
+      }
+      for (const plainParagraph of markdownToPlainParagraphs(paragraph.body)) {
+        writeBlock(plainParagraph, { firstLineIndent: settings.paragraphIndentInches * 72 });
+      }
+    });
+  });
+
+  const blob = doc.output("blob");
+  return {
+    format: "pdf",
+    fileName: `${outputBaseName(snapshot, scope)}.pdf`,
+    mimeType: "application/pdf",
+    blob,
+  };
+}
+
+async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExportScope): Promise<BookExportArtifact> {
+  const [{ marked }, { default: JSZip }] = await Promise.all([import("marked"), import("jszip")]);
+  const zip = new JSZip();
+  zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
+  zip.folder("META-INF")?.file("container.xml", `<?xml version="1.0" encoding="UTF-8"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n  <rootfiles>\n    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>\n  </rootfiles>\n</container>`);
+
+  const oebps = zip.folder("OEBPS");
+  if (!oebps) throw new Error("Failed to create EPUB archive.");
+  oebps.file("styles.css", "body { font-family: serif; line-height: 1.55; } h1, h2 { font-family: serif; } article { margin: 0 auto; max-width: 40rem; } nav ol { padding-left: 1.2rem; }");
+
+  const chapterFiles = snapshot.chapters.map((chapter, index) => {
+    const fileName = `chapter-${index + 1}.xhtml`;
+    const sceneIndex = chapter.paragraphs.length > 0
+      ? `<nav><h2>Scenes</h2><ol>${chapter.paragraphs.map((paragraph, sceneIndex) => `<li><a href="#scene-${sceneIndex + 1}">${escapeHtml(paragraph.title)}</a></li>`).join("")}</ol></nav>`
+      : "";
+    const paragraphsHtml = chapter.paragraphs.map((paragraph, sceneIndex) => {
+      const summary = paragraph.summary ? `<p><em>${escapeHtml(paragraph.summary)}</em></p>` : "";
+      return `<section id="scene-${sceneIndex + 1}"><h2>${escapeHtml(paragraph.title)}</h2>${summary}${marked.parse(paragraph.body, { async: false })}</section>`;
+    }).join("\n");
+    const summary = chapter.summary ? `<p><em>${escapeHtml(chapter.summary)}</em></p>` : "";
+    const body = chapter.body ? marked.parse(chapter.body, { async: false }) : "";
+    const xhtml = wrapXhtml(chapter.title, `<article><h1>${escapeHtml(chapter.title)}</h1>${summary}${body}${sceneIndex}${paragraphsHtml}</article>`);
+    oebps.file(fileName, xhtml);
+    return { fileName, title: chapter.title };
+  });
+
+  const navXhtml = wrapXhtml("Contents", `<nav epub:type="toc" id="toc"><h1>Contents</h1><ol>${chapterFiles.map((chapter) => `<li><a href="${chapter.fileName}">${escapeHtml(chapter.title)}</a></li>`).join("")}</ol></nav>`);
+  oebps.file("nav.xhtml", navXhtml);
+  oebps.file("toc.ncx", buildTocNcx(snapshot, chapterFiles));
+  oebps.file("content.opf", buildContentOpf(snapshot, chapterFiles));
+
+  const blob = await zip.generateAsync({ type: "blob", mimeType: "application/epub+zip" });
+  return {
+    format: "epub",
+    fileName: `${outputBaseName(snapshot, scope)}.epub`,
+    mimeType: "application/epub+zip",
+    blob,
+  };
+}
+
+function buildContentOpf(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fileName: string; title: string }>): string {
+  const manifest = [
+    `<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`,
+    `<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>`,
+    `<item id="css" href="styles.css" media-type="text/css"/>`,
+    ...chapterFiles.map((chapter, index) => `<item id="chapter-${index + 1}" href="${chapter.fileName}" media-type="application/xhtml+xml"/>`),
+  ].join("\n    ");
+  const spine = chapterFiles.map((_, index) => `<itemref idref="chapter-${index + 1}"/>`).join("\n    ");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0">\n  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n    <dc:identifier id="bookid">urn:narrarium:${slugify(snapshot.title) || "book"}</dc:identifier>\n    <dc:title>${escapeXml(snapshot.title)}</dc:title>\n    <dc:creator>${escapeXml(snapshot.author)}</dc:creator>\n    <dc:language>${escapeXml(snapshot.language)}</dc:language>\n  </metadata>\n  <manifest>\n    ${manifest}\n  </manifest>\n  <spine toc="ncx">\n    ${spine}\n  </spine>\n</package>`;
+}
+
+function buildTocNcx(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fileName: string; title: string }>): string {
+  const navPoints = chapterFiles
+    .map((chapter, index) => `    <navPoint id="navPoint-${index + 1}" playOrder="${index + 1}">\n      <navLabel><text>${escapeXml(chapter.title)}</text></navLabel>\n      <content src="${chapter.fileName}"/>\n    </navPoint>`)
+    .join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">\n  <head><meta name="dtb:uid" content="urn:narrarium:${slugify(snapshot.title) || "book"}"/></head>\n  <docTitle><text>${escapeXml(snapshot.title)}</text></docTitle>\n  <navMap>\n${navPoints}\n  </navMap>\n</ncx>`;
+}
+
+function wrapXhtml(title: string, bodyHtml: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">\n  <head>\n    <title>${escapeXml(title)}</title>\n    <link rel="stylesheet" type="text/css" href="styles.css"/>\n  </head>\n  <body>${bodyHtml}</body>\n</html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function escapeXml(value: string): string {
+  return escapeHtml(value).replace(/'/g, "&apos;");
+}
+
+function roundWordCount(value: number): number {
+  return value > 500 ? Math.round(value / 100) * 100 : value;
+}
+
+function mapPdfFont(fontName: string): "times" | "courier" | "helvetica" {
+  const normalized = fontName.trim().toLowerCase();
+  if (normalized.includes("courier")) return "courier";
+  if (normalized.includes("helvetica") || normalized.includes("arial")) return "helvetica";
+  return "times";
+}
