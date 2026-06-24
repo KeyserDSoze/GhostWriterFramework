@@ -13,8 +13,8 @@ import { useToast } from "@/components/ui/use-toast";
 import { readFileWithSha, updateFile } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
-import { useBooksStore } from "@/store/booksStore";
 import { resolveBookToken } from "@/types/settings";
+import { useBookStructure } from "@/hooks/useBookStructure";
 
 interface MetaEntry {
   key: string;
@@ -81,12 +81,10 @@ export function WorkspaceDocPage() {
   }>();
   const { toast } = useToast();
   const { settings } = useSettingsStore();
-  const { structures } = useBooksStore();
   const { branch } = useWorkingBranch(bookId);
   const { t } = useTranslation();
 
-  const book = settings.books.find((entry) => entry.id === bookId);
-  const structure = bookId ? structures[bookId] : undefined;
+  const { book, structure, loading: structureLoading, error: structureError, reload } = useBookStructure(bookId);
   const chapter = structure?.chapters.find((entry) => entry.slug === chapterId);
   const paragraph = chapter?.paragraphs.find((entry) => entry.number === paragraphNum);
   const token = book ? resolveBookToken(book, settings) : "";
@@ -101,9 +99,9 @@ export function WorkspaceDocPage() {
   const [showAddMeta, setShowAddMeta] = useState(false);
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
-  const loadedRef = useRef(false);
+  const loadedTargetRef = useRef<string | null>(null);
 
-  const resolved = resolveWorkspacePath(chapter, paragraph, workspaceKind);
+  const resolved = resolveWorkspacePath(chapter, paragraph, workspaceKind, !!paragraphNum);
   const path = resolved?.path ?? null;
   const title = resolved
     ? t(resolved.titleKey, resolved.titleParams)
@@ -115,8 +113,9 @@ export function WorkspaceDocPage() {
   const isDirty = body !== savedBody || JSON.stringify(entries) !== JSON.stringify(savedEntries);
 
   useEffect(() => {
-    if (!book || !token || !path || loadedRef.current) return;
-    loadedRef.current = true;
+    const targetKey = book && path ? `${branch}:${path}` : null;
+    if (!book || !token || !path || !targetKey || loadedTargetRef.current === targetKey) return;
+    loadedTargetRef.current = targetKey;
     setLoading(true);
     readFileWithSha(token, book.owner, book.repo, branch, path)
       .then(({ content, sha: fileSha }) => {
@@ -127,13 +126,39 @@ export function WorkspaceDocPage() {
         setSavedBody(parsed.body);
         setSha(fileSha);
       })
-      .catch((err) =>
-        toast({ title: t("workspace.loadFailed"), description: String(err), variant: "destructive" }),
-      )
+      .catch((err) => {
+        loadedTargetRef.current = null;
+        toast({ title: t("workspace.loadFailed"), description: String(err), variant: "destructive" });
+      })
       .finally(() => setLoading(false));
-  }, [book, token, branch, path, toast]);
+  }, [book, token, branch, path, t, toast]);
 
-  if (!book || !chapter || !path) {
+  if (!book) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription>{t("bookPage.notFound")}</AlertDescription>
+      </Alert>
+    );
+  }
+  if (structureLoading && !structure) {
+    return (
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-muted-foreground">
+        <Skeleton className="h-5 w-56" />
+        <Skeleton className="h-4 w-40" />
+      </div>
+    );
+  }
+  if (structureError && !structure) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription className="flex flex-wrap items-center gap-3">
+          <span>{structureError}</span>
+          <Button size="sm" variant="outline" onClick={() => reload()}>{t("common.reloadBook")}</Button>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  if (!chapter || !path) {
     return (
       <Alert variant="destructive">
         <AlertDescription>
@@ -331,8 +356,10 @@ function resolveWorkspacePath(
       }
     | undefined,
   kind: string | undefined,
+  expectsParagraph: boolean,
 ): { path: string; titleKey: string; titleParams: Record<string, string> } | null {
   if (!chapter || !kind) return null;
+  if (expectsParagraph && !paragraph) return null;
   if (!paragraph) {
     if (kind === "draft" && chapter.draftPath) {
       return { path: chapter.draftPath, titleKey: "workspace.chapterDraft", titleParams: { slug: chapter.slug } };

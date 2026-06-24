@@ -183,6 +183,9 @@ const it = {
   common: {
     save: "Salva",
     saving: "Salvataggio…",
+    retry: "Riprova",
+    reloadBook: "Ricarica libro",
+    loadFailed: "Caricamento non riuscito",
     cancel: "Annulla",
     create: "Crea",
     creating: "Creazione…",

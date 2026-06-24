@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -43,6 +43,7 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type Paragraph } from "@/types/book";
 import { resolveBookToken } from "@/types/settings";
 import { slugify } from "@/narrarium/canon";
+import { useBookStructure } from "@/hooks/useBookStructure";
 import {
   createChapterDraftArtifacts,
   createChapterEvaluationArtifact,
@@ -67,10 +68,8 @@ export function ChapterPage() {
   const { t } = useTranslation();
 
   const { settings } = useSettingsStore();
-  const { structures, updateChapterParagraphs } = useBooksStore();
-
-  const book = settings.books.find((b) => b.id === bookId);
-  const structure = bookId ? structures[bookId] : undefined;
+  const { updateChapterParagraphs } = useBooksStore();
+  const { book, structure, loading: structureLoading, error: structureError, reload } = useBookStructure(bookId);
   const chapter = structure?.chapters.find((c) => c.slug === chapterId);
 
   const token = book ? resolveBookToken(book, settings) : "";
@@ -81,6 +80,10 @@ export function ChapterPage() {
   const [localParagraphs, setLocalParagraphs] = useState<Paragraph[]>(
     () => chapter?.paragraphs ?? [],
   );
+
+  useEffect(() => {
+    setLocalParagraphs(chapter?.paragraphs ?? []);
+  }, [chapter?.paragraphs]);
 
   // ── Drag & drop state ─────────────────────────────────────────────────────
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
@@ -295,15 +298,27 @@ export function ChapterPage() {
   }
 
   // ── Guards ────────────────────────────────────────────────────────────────
-  if (!book || !structure) {
+  if (!book) {
     return (
       <Alert variant="destructive">
-        <AlertDescription>
-          {t("chapter.bookNotLoaded")}{" "}
-          <Link to={`/app/books/${bookId}`} className="underline">
-            {t("chapter.goBackToBook")}
-          </Link>{" "}
-          {t("chapter.toLoadStructure")}
+        <AlertDescription>{t("bookPage.notFound")}</AlertDescription>
+      </Alert>
+    );
+  }
+  if (structureLoading && !structure) {
+    return (
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-muted-foreground">
+        <Loader2 className="h-6 w-6 animate-spin" />
+        <p className="text-sm">{t("common.loading")}</p>
+      </div>
+    );
+  }
+  if (structureError && !structure) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription className="flex flex-wrap items-center gap-3">
+          <span>{structureError}</span>
+          <Button size="sm" variant="outline" onClick={() => reload()}>{t("common.reloadBook")}</Button>
         </AlertDescription>
       </Alert>
     );

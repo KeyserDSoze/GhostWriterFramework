@@ -183,6 +183,9 @@ const en = {
   common: {
     save: "Save",
     saving: "Saving…",
+    retry: "Retry",
+    reloadBook: "Reload book",
+    loadFailed: "Load failed",
     cancel: "Cancel",
     create: "Create",
     creating: "Creating…",

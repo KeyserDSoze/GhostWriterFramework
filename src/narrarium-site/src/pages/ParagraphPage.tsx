@@ -20,6 +20,7 @@ import {
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { resolveBookToken } from "@/types/settings";
+import { useBookStructure } from "@/hooks/useBookStructure";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
 
@@ -98,11 +99,10 @@ export function ParagraphPage() {
   const { t } = useTranslation();
 
   const { settings } = useSettingsStore();
-  const { structures, updateChapterParagraphs } = useBooksStore();
+  const { updateChapterParagraphs } = useBooksStore();
+  const { book, structure, loading: structureLoading, error: structureError, reload } = useBookStructure(bookId);
   const { branch } = useWorkingBranch(bookId);
 
-  const book = settings.books.find((b) => b.id === bookId);
-  const structure = bookId ? structures[bookId] : undefined;
   const chapter = structure?.chapters.find((c) => c.slug === chapterId);
   const paragraph = chapter?.paragraphs.find((p) => p.number === paragraphNum);
 
@@ -119,7 +119,7 @@ export function ParagraphPage() {
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const loadedRef = useRef(false);
+  const loadedTargetRef = useRef<string | null>(null);
 
   // Add-field form
   const [showAddMeta, setShowAddMeta] = useState(false);
@@ -132,8 +132,9 @@ export function ParagraphPage() {
 
   // ── Load ──────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!paragraph || !book || loadedRef.current) return;
-    loadedRef.current = true;
+    const targetKey = paragraph && book ? `${branch}:${paragraph.path}` : null;
+    if (!paragraph || !book || !targetKey || loadedTargetRef.current === targetKey) return;
+    loadedTargetRef.current = targetKey;
     setLoading(true);
 
     readFileWithSha(token, book.owner, book.repo, branch, paragraph.path)
@@ -145,11 +146,12 @@ export function ParagraphPage() {
         setSavedBody(b);
         setSha(fileSha);
       })
-      .catch((err) =>
-        toast({ title: t("paragraph.loadFailed"), description: String(err), variant: "destructive" }),
-      )
+      .catch((err) => {
+        loadedTargetRef.current = null;
+        toast({ title: t("paragraph.loadFailed"), description: String(err), variant: "destructive" });
+      })
       .finally(() => setLoading(false));
-  }, [paragraph, book, token, branch, toast]);
+  }, [paragraph, book, token, branch, toast, t]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const titleEntry = entries.find((e) => e.key === "title");
@@ -262,14 +264,27 @@ export function ParagraphPage() {
   }
 
   // ── Guards ────────────────────────────────────────────────────────────────
-  if (!book || !structure) {
+  if (!book) {
     return (
       <Alert variant="destructive">
-        <AlertDescription>
-          {t("paragraph.bookNotLoaded")}{" "}
-          <Link to={`/app/books/${bookId}`} className="underline">
-            {t("paragraph.loadBookFirst")}
-          </Link>
+        <AlertDescription>{t("bookPage.notFound")}</AlertDescription>
+      </Alert>
+    );
+  }
+  if (structureLoading && !structure) {
+    return (
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-muted-foreground">
+        <Loader2 className="h-6 w-6 animate-spin" />
+        <p className="text-sm">{t("common.loading")}</p>
+      </div>
+    );
+  }
+  if (structureError && !structure) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription className="flex flex-wrap items-center gap-3">
+          <span>{structureError}</span>
+          <Button size="sm" variant="outline" onClick={() => reload()}>{t("common.reloadBook")}</Button>
         </AlertDescription>
       </Alert>
     );

@@ -1,4 +1,3 @@
-import { useCallback, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -22,12 +21,12 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
-import { useBooksStore } from "@/store/booksStore";
-import { loadBookStructure, loadFileContent, slugToTitle } from "@/github/githubClient";
+import { loadFileContent, slugToTitle } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type BookFile } from "@/types/book";
 import { resolveBookToken } from "@/types/settings";
 import { useDossierStore } from "@/store/dossierStore";
+import { useBookStructure } from "@/hooks/useBookStructure";
 import {
   createCanonEntity,
   createChapter as createChapterFile,
@@ -38,48 +37,6 @@ import { CreateChapterDialog } from "@/components/canon/CreateChapterDialog";
 import { CreateEntityDialog } from "@/components/canon/CreateEntityDialog";
 import { PullRequestsDialog } from "@/components/github/PullRequestsDialog";
 import { CommitHistoryDialog } from "@/components/github/CommitHistoryDialog";
-
-function useBookStructure(bookId: string) {
-  const { t } = useTranslation();
-  const { settings } = useSettingsStore();
-  const { structures, loadingIds, errors, workingBranches, setStructure, setLoading, setError, clearBook } =
-    useBooksStore();
-
-  const book = settings.books.find((b) => b.id === bookId);
-  const structure = structures[bookId];
-  const loading = loadingIds.has(bookId);
-  const error = errors[bookId];
-  const readBranch = book?.activeBranch ?? workingBranches[bookId] ?? undefined;
-
-  const loadStructure = useCallback(() => {
-    if (!book) return;
-    const token = resolveBookToken(book, settings);
-    if (!token) {
-      setError(bookId, t("bookPage.noTokenConfigured"));
-      return;
-    }
-    setLoading(bookId, true);
-    loadBookStructure(token, book.owner, book.repo, readBranch)
-      .then((s) => setStructure(bookId, s))
-      .catch((err: unknown) =>
-        setError(bookId, err instanceof Error ? err.message : "Load failed"),
-      )
-      .finally(() => setLoading(bookId, false));
-  }, [book, bookId, readBranch, settings, setError, setLoading, setStructure, t]);
-
-  useEffect(() => {
-    if (!book || loading) return;
-    if (structure && (!readBranch || structure.loadedBranch === readBranch)) return;
-    loadStructure();
-  }, [book, structure, loading, readBranch, loadStructure]);
-
-  const reload = useCallback(() => {
-    clearBook(bookId);
-    loadStructure();
-  }, [bookId, clearBook, loadStructure]);
-
-  return { book, structure, loading, error, reload };
-}
 
 function fileSlug(path: string): string {
   return (path.split("/").pop() ?? "").replace(/\.md$/i, "");
@@ -249,7 +206,12 @@ export function BookPage() {
       {error && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription className="flex flex-wrap items-center gap-3">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => reload()}>
+              {t("common.reloadBook")}
+            </Button>
+          </AlertDescription>
         </Alert>
       )}
 
