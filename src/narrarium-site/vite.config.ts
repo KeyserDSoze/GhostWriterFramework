@@ -37,5 +37,24 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, "dist"),
     emptyOutDir: true,
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (id.includes("react-router-dom") || id.includes("@remix-run") || id.includes("react") || id.includes("scheduler")) {
+            return "framework-vendor";
+          }
+          if (id.includes("@azure/msal") || id.includes("@react-oauth/google")) return "auth-vendor";
+          if (id.includes("@octokit")) return "github-vendor";
+          if (id.includes("pdfjs-dist")) return "pdf-vendor";
+          if (id.includes("jszip")) return "zip-vendor";
+          if (id.includes("mammoth")) return "docx-vendor";
+          if (id.includes("openai") || id.includes("@azure/openai")) return "ai-vendor";
+          if (id.includes("marked")) return "docs-vendor";
+          return undefined;
+        },
+      },
+    },
   },
 });

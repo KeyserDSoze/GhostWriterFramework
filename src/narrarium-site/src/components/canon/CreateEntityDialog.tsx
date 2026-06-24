@@ -37,44 +37,44 @@ export function CreateEntityDialog({ kind, onCreate, triggerLabel }: CreateEntit
   const [error, setError] = useState<string | null>(null);
 
   const usesTitle = kind === "secret" || kind === "timeline-event";
-  const fieldLabel = usesTitle ? "Title" : "Name";
+  const fieldLabel = usesTitle ? t("createDialogs.entityTitleLabel") : t("createDialogs.entityNameLabel");
   const config = useMemo(() => {
     switch (kind) {
       case "character":
         return {
-          a: { key: "role_tier", label: "Role tier", placeholder: "supporting" },
-          b: { key: "story_role", label: "Story role", placeholder: "ally" },
-          c: { key: "function_in_book", label: "Function in book", placeholder: "What this character does in the story" },
+          a: { key: "role_tier", label: t("createDialogs.characterRoleTierLabel"), placeholder: t("createDialogs.characterRoleTierPlaceholder") },
+          b: { key: "story_role", label: t("createDialogs.characterStoryRoleLabel"), placeholder: t("createDialogs.characterStoryRolePlaceholder") },
+          c: { key: "function_in_book", label: t("createDialogs.characterFunctionLabel"), placeholder: t("createDialogs.characterFunctionPlaceholder") },
         };
       case "location":
         return {
-          a: { key: "location_kind", label: "Location kind", placeholder: "city, room, district…" },
-          b: { key: "region", label: "Region", placeholder: "Region or territory" },
-          c: { key: "atmosphere", label: "Atmosphere", placeholder: "Mood and sensory feel" },
+          a: { key: "location_kind", label: t("createDialogs.locationKindLabel"), placeholder: t("createDialogs.locationKindPlaceholder") },
+          b: { key: "region", label: t("createDialogs.locationRegionLabel"), placeholder: t("createDialogs.locationRegionPlaceholder") },
+          c: { key: "atmosphere", label: t("createDialogs.locationAtmosphereLabel"), placeholder: t("createDialogs.locationAtmospherePlaceholder") },
         };
       case "faction":
         return {
-          a: { key: "faction_kind", label: "Faction kind", placeholder: "cult, guild, government…" },
-          b: { key: "mission", label: "Mission", placeholder: "What the faction wants" },
-          c: { key: "ideology", label: "Ideology", placeholder: "Beliefs and worldview" },
+          a: { key: "faction_kind", label: t("createDialogs.factionKindLabel"), placeholder: t("createDialogs.factionKindPlaceholder") },
+          b: { key: "mission", label: t("createDialogs.factionMissionLabel"), placeholder: t("createDialogs.factionMissionPlaceholder") },
+          c: { key: "ideology", label: t("createDialogs.factionIdeologyLabel"), placeholder: t("createDialogs.factionIdeologyPlaceholder") },
         };
       case "item":
         return {
-          a: { key: "item_kind", label: "Item kind", placeholder: "artifact, weapon, letter…" },
-          b: { key: "purpose", label: "Purpose", placeholder: "Why this item matters" },
-          c: { key: "significance", label: "Significance", placeholder: "Story weight or symbolism" },
+          a: { key: "item_kind", label: t("createDialogs.itemKindLabel"), placeholder: t("createDialogs.itemKindPlaceholder") },
+          b: { key: "purpose", label: t("createDialogs.itemPurposeLabel"), placeholder: t("createDialogs.itemPurposePlaceholder") },
+          c: { key: "significance", label: t("createDialogs.itemSignificanceLabel"), placeholder: t("createDialogs.itemSignificancePlaceholder") },
         };
       case "secret":
         return {
-          a: { key: "secret_kind", label: "Secret kind", placeholder: "identity, event, lineage…" },
-          b: { key: "stakes", label: "Stakes", placeholder: "What happens if revealed" },
-          c: { key: "reveal_strategy", label: "Reveal strategy", placeholder: "How and when to reveal it" },
+          a: { key: "secret_kind", label: t("createDialogs.secretKindLabel"), placeholder: t("createDialogs.secretKindPlaceholder") },
+          b: { key: "stakes", label: t("createDialogs.secretStakesLabel"), placeholder: t("createDialogs.secretStakesPlaceholder") },
+          c: { key: "reveal_strategy", label: t("createDialogs.secretRevealStrategyLabel"), placeholder: t("createDialogs.secretRevealStrategyPlaceholder") },
         };
       case "timeline-event":
         return {
-          a: { key: "date", label: "Date", placeholder: "YYYY-MM-DD or free text" },
-          b: { key: "significance", label: "Significance", placeholder: "Why this event matters" },
-          c: { key: "function_in_book", label: "Function in book", placeholder: "Narrative role of this event" },
+          a: { key: "date", label: t("createDialogs.timelineDateLabel"), placeholder: t("createDialogs.timelineDatePlaceholder") },
+          b: { key: "significance", label: t("createDialogs.timelineSignificanceLabel"), placeholder: t("createDialogs.timelineSignificancePlaceholder") },
+          c: { key: "function_in_book", label: t("createDialogs.timelineFunctionLabel"), placeholder: t("createDialogs.timelineFunctionPlaceholder") },
         };
       default:
         return {
@@ -83,7 +83,7 @@ export function CreateEntityDialog({ kind, onCreate, triggerLabel }: CreateEntit
           c: { key: "", label: "", placeholder: "" },
         };
     }
-  }, [kind]);
+  }, [kind, t]);
 
   function reset() {
     setLabel("");

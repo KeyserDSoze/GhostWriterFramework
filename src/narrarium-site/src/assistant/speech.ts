@@ -13,6 +13,8 @@ export function markdownToSpeechText(markdown: string): string {
   const out: string[] = [];
   let inFence = false;
   let tableOmitted = false;
+  const tableBorderPattern = /^\|.*\|$/;
+  const tableDividerPattern = /^(?:-|:|\||\s)+$/;
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -21,7 +23,7 @@ export function markdownToSpeechText(markdown: string): string {
       continue;
     }
     if (inFence) continue;
-    if (/^\|.*\|$/.test(trimmed) || /^[-:|\s]+$/.test(trimmed)) {
+    if (tableBorderPattern.test(trimmed) || tableDividerPattern.test(trimmed)) {
       if (!tableOmitted) {
         out.push("Tabella omessa.");
         tableOmitted = true;

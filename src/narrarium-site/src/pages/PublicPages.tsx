@@ -1,7 +1,6 @@
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { marked } from "marked";
 import {
   ArrowRight,
   Bot,
@@ -359,5 +358,18 @@ function LegalArticle({ title, children }: { title: string; children: React.Reac
 }
 
 function useMarkdownHtml(markdown: string): string {
-  return useMemo(() => marked.parse(markdown, { async: false }) as string, [markdown]);
+  const [html, setHtml] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void import("marked").then(({ marked }) => {
+      if (!active) return;
+      setHtml(marked.parse(markdown, { async: false }) as string);
+    });
+    return () => {
+      active = false;
+    };
+  }, [markdown]);
+
+  return html;
 }

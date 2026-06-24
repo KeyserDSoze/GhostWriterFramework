@@ -8,6 +8,7 @@ export default {
   darkMode: ["class"],
   content: [
     path.join(__dirname, "./src/**/*.{ts,tsx}"),
+    `!${path.join(__dirname, "./src/lib/generated-docs.ts")}`,
     path.join(__dirname, "./index.html"),
   ],
   theme: {
