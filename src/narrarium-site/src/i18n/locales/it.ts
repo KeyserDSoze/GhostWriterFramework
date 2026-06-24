@@ -555,6 +555,25 @@ const it = {
     generationFailed: "Generazione immagine non riuscita",
     preview: "Anteprima immagine"
   },
+  assets: {
+    title: "Asset",
+    description: "Sfoglia cover, immagini capitolo e immagini paragrafo del libro.",
+    all: "Tutti",
+    missing: "Mancanti",
+    book: "Libro",
+    chapter: "Capitoli",
+    paragraph: "Paragrafi",
+    ready: "Pronto",
+    noAsset: "Nessun asset ancora"
+  },
+  reader: {
+    title: "Reader",
+    description: "Leggi il libro come lettore, senza strumenti editoriali o frontmatter.",
+    allChapters: "Tutti i capitoli",
+    paper: "Carta",
+    sepia: "Seppia",
+    dark: "Scuro"
+  },
   settingsExtra: {
     patRecommended: "Consigliato un PAT con permessi Contents read/write e Metadata read.",
     label: "Etichetta"
@@ -666,6 +685,7 @@ const it = {
     docx: "Word (.docx)",
     pdf: "PDF (.pdf)",
     epub: "EPUB (.epub)",
+    submissionPackage: "Submission package (.zip)",
     scope: "Contenuto da esportare",
     downloadToDevice: "Scarica sul dispositivo",
     downloadHint: "Scarica i file direttamente sul computer locale.",

@@ -11,15 +11,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
 import { useAuthStore } from "@/store/authStore";
-import { buildBookExportArtifacts, loadBookExportSnapshot } from "@/export/bookExport";
+import { buildBookExportArtifacts, loadBookExportSnapshot, type BookExportFormat } from "@/export/bookExport";
 import { uploadDriveFile, type DriveFolderEntry } from "@/drive/exportDriveClient";
 import { GoogleDriveFolderDialog } from "@/components/book/GoogleDriveFolderDialog";
 import { OneDriveFolderDialog } from "@/components/book/OneDriveFolderDialog";
 
-const FORMATS: Array<{ value: "docx" | "pdf" | "epub"; labelKey: string }> = [
+const FORMATS: Array<{ value: BookExportFormat; labelKey: string }> = [
   { value: "docx", labelKey: "export.docx" },
   { value: "pdf", labelKey: "export.pdf" },
   { value: "epub", labelKey: "export.epub" },
+  { value: "package", labelKey: "export.submissionPackage" },
 ];
 
 export function BookExportDialog(props: {
@@ -36,7 +37,7 @@ export function BookExportDialog(props: {
   const [selectedProfileId, setSelectedProfileId] = useState(book.defaultExportProfileId ?? profiles[0]?.id ?? "default");
   const savedSettings = resolveBookExportSettings(book, selectedProfileId);
   const [open, setOpen] = useState(false);
-  const [formats, setFormats] = useState<Array<"docx" | "pdf" | "epub">>(["docx"]);
+  const [formats, setFormats] = useState<BookExportFormat[]>(["docx"]);
   const [scope, setScope] = useState<BookExportScope>(savedSettings.defaultScope);
   const [downloadToDevice, setDownloadToDevice] = useState(true);
   const [uploadToDrive, setUploadToDrive] = useState(false);
@@ -56,7 +57,7 @@ export function BookExportDialog(props: {
     setMicrosoftFolderPath(savedSettings.microsoftDriveFolderPath ?? "Apps/Narrarium/Exports");
   }, [book.defaultExportProfileId, open, profiles, savedSettings.defaultScope, savedSettings.googleDriveFolderId, savedSettings.googleDriveFolderName, savedSettings.microsoftDriveFolderPath, t]);
 
-  function toggleFormat(format: "docx" | "pdf" | "epub") {
+  function toggleFormat(format: BookExportFormat) {
     setFormats((current) => {
       if (current.includes(format)) return current.filter((entry) => entry !== format);
       return [...current, format];

@@ -46,11 +46,13 @@ interface ExportBookSnapshot {
 }
 
 export interface BookExportArtifact {
-  format: "docx" | "pdf" | "epub";
+  format: BookExportFormat;
   fileName: string;
   mimeType: string;
   blob: Blob;
 }
+
+export type BookExportFormat = "docx" | "pdf" | "epub" | "package";
 
 function parseFrontmatter(raw: string): { frontmatter: Record<string, unknown>; body: string } {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
@@ -208,7 +210,7 @@ export async function buildBookExportArtifacts(input: {
   snapshot: ExportBookSnapshot;
   scope: BookExportScope;
   settings: BookExportSettings;
-  formats: Array<"docx" | "pdf" | "epub">;
+  formats: BookExportFormat[];
 }): Promise<BookExportArtifact[]> {
   const { snapshot, scope, settings, formats } = input;
   const artifacts: BookExportArtifact[] = [];
@@ -216,8 +218,49 @@ export async function buildBookExportArtifacts(input: {
     if (format === "docx") artifacts.push(await buildDocxArtifact(snapshot, scope, settings));
     if (format === "pdf") artifacts.push(await buildPdfArtifact(snapshot, scope, settings));
     if (format === "epub") artifacts.push(await buildEpubArtifact(snapshot, scope));
+    if (format === "package") artifacts.push(await buildSubmissionPackageArtifact(snapshot, scope, settings, input.formats.includes("epub")));
   }
   return artifacts;
+}
+
+async function buildSubmissionPackageArtifact(snapshot: ExportBookSnapshot, scope: BookExportScope, settings: BookExportSettings, includeEpub: boolean): Promise<BookExportArtifact> {
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+  const manuscript = zip.folder("manuscript");
+  const editorial = zip.folder("editorial");
+  const assets = zip.folder("assets");
+  if (!manuscript || !editorial || !assets) throw new Error("Failed to create submission package.");
+
+  const docx = await buildDocxArtifact(snapshot, scope, settings);
+  const pdf = await buildPdfArtifact(snapshot, scope, settings);
+  manuscript.file(docx.fileName, await docx.blob.arrayBuffer());
+  manuscript.file(pdf.fileName, await pdf.blob.arrayBuffer());
+  if (includeEpub) {
+    const epub = await buildEpubArtifact(snapshot, scope);
+    manuscript.file(epub.fileName, await epub.blob.arrayBuffer());
+  }
+
+  editorial.file("synopsis.md", buildSynopsis(snapshot, scope));
+  editorial.file("pitch-letter.md", buildPitchLetter(snapshot, scope));
+  editorial.file("author-bio.md", buildAuthorBio(snapshot));
+  editorial.file("metadata.json", JSON.stringify(buildSubmissionMetadata(snapshot, scope), null, 2));
+  editorial.file("readiness-report.md", buildSubmissionReadiness(snapshot));
+
+  if (snapshot.coverAsset) assets.file(`cover.${snapshot.coverAsset.extension}`, snapshot.coverAsset.bytes);
+  snapshot.chapters.forEach((chapter, index) => {
+    if (chapter.asset) assets.file(`chapter-${index + 1}.${chapter.asset.extension}`, chapter.asset.bytes);
+    chapter.paragraphs.forEach((paragraph, paragraphIndex) => {
+      if (paragraph.asset) assets.file(`chapter-${index + 1}-scene-${paragraphIndex + 1}.${paragraph.asset.extension}`, paragraph.asset.bytes);
+    });
+  });
+
+  const blob = await zip.generateAsync({ type: "blob", mimeType: "application/zip" });
+  return {
+    format: "package",
+    fileName: `${outputBaseName(snapshot, scope)}-submission-package.zip`,
+    mimeType: "application/zip",
+    blob,
+  };
 }
 
 async function buildDocxArtifact(snapshot: ExportBookSnapshot, scope: BookExportScope, settings: BookExportSettings): Promise<BookExportArtifact> {
@@ -547,6 +590,71 @@ function mapPdfFont(fontName: string): "times" | "courier" | "helvetica" {
   if (normalized.includes("courier")) return "courier";
   if (normalized.includes("helvetica") || normalized.includes("arial")) return "helvetica";
   return "times";
+}
+
+function buildSynopsis(snapshot: ExportBookSnapshot, scope: BookExportScope): string {
+  const chapters = snapshot.chapters.map((chapter) => {
+    const summary = chapter.summary || chapter.paragraphs.map((paragraph) => paragraph.summary).filter(Boolean).join(" ") || "Summary to be completed.";
+    return `## ${chapter.title}\n\n${summary}`;
+  }).join("\n\n");
+  return [`# Synopsis`, "", `Title: ${snapshot.title}`, `Author: ${snapshot.author}`, `Submission scope: ${scope}`, `Approx. word count: ${roundWordCount(snapshot.wordCount)}`, "", snapshot.description ?? "", "", chapters].join("\n").trim() + "\n";
+}
+
+function buildPitchLetter(snapshot: ExportBookSnapshot, scope: BookExportScope): string {
+  return [
+    "# Pitch Letter",
+    "",
+    "Dear Editor,",
+    "",
+    `Please find attached ${scope === "draft" ? "a sample submission package" : "the complete manuscript package"} for **${snapshot.title}** by ${snapshot.author}.`,
+    "",
+    snapshot.description || "[Add a concise hook or back-cover style paragraph here.]",
+    "",
+    `The included manuscript is approximately ${roundWordCount(snapshot.wordCount)} words in this export scope.`,
+    "",
+    "Thank you for your time and consideration.",
+    "",
+    "Sincerely,",
+    snapshot.author,
+  ].join("\n") + "\n";
+}
+
+function buildAuthorBio(snapshot: ExportBookSnapshot): string {
+  return [`# Author Bio`, "", `${snapshot.author}`, "", "[Add author biography, publication history, platform, and contact details here.]"].join("\n") + "\n";
+}
+
+function buildSubmissionMetadata(snapshot: ExportBookSnapshot, scope: BookExportScope) {
+  return {
+    title: snapshot.title,
+    author: snapshot.author,
+    language: snapshot.language,
+    description: snapshot.description,
+    scope,
+    wordCount: snapshot.wordCount,
+    roundedWordCount: roundWordCount(snapshot.wordCount),
+    chapterCount: snapshot.chapters.length,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function buildSubmissionReadiness(snapshot: ExportBookSnapshot): string {
+  const chapterImages = snapshot.chapters.filter((chapter) => chapter.asset).length;
+  const paragraphCount = snapshot.chapters.reduce((sum, chapter) => sum + chapter.paragraphs.length, 0);
+  const paragraphImages = snapshot.chapters.reduce((sum, chapter) => sum + chapter.paragraphs.filter((paragraph) => paragraph.asset).length, 0);
+  return [
+    "# Readiness Report",
+    "",
+    `- Title: ${snapshot.title}`,
+    `- Author: ${snapshot.author}`,
+    `- Chapters included: ${snapshot.chapters.length}`,
+    `- Paragraphs included: ${paragraphCount}`,
+    `- Approx. word count: ${roundWordCount(snapshot.wordCount)}`,
+    `- Cover image: ${snapshot.coverAsset ? "yes" : "no"}`,
+    `- Chapter images: ${chapterImages}/${snapshot.chapters.length}`,
+    `- Paragraph images: ${paragraphImages}/${paragraphCount}`,
+    "",
+    "Generated by Narrarium.",
+  ].join("\n") + "\n";
 }
 
 function parseAspectRatio(value: string | undefined): number {

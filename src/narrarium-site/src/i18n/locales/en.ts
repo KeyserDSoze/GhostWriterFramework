@@ -555,6 +555,25 @@ const en = {
     generationFailed: "Image generation failed",
     preview: "Image preview"
   },
+  assets: {
+    title: "Assets",
+    description: "Browse book cover, chapter images, and paragraph images.",
+    all: "All",
+    missing: "Missing",
+    book: "Book",
+    chapter: "Chapters",
+    paragraph: "Paragraphs",
+    ready: "Ready",
+    noAsset: "No asset yet"
+  },
+  reader: {
+    title: "Reader",
+    description: "Read the book like a reader, without editorial tools or frontmatter.",
+    allChapters: "All chapters",
+    paper: "Paper",
+    sepia: "Sepia",
+    dark: "Dark"
+  },
   settingsExtra: {
     patRecommended: "PAT with Contents read/write and Metadata read permissions is recommended.",
     label: "Label"
@@ -666,6 +685,7 @@ const en = {
     docx: "Word (.docx)",
     pdf: "PDF (.pdf)",
     epub: "EPUB (.epub)",
+    submissionPackage: "Submission package (.zip)",
     scope: "What to export",
     downloadToDevice: "Download to device",
     downloadHint: "Download the exported files directly to this computer.",

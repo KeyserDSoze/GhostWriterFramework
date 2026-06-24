@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Settings,
   LayoutDashboard,
+  Images,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -201,6 +202,18 @@ export function BookPage() {
             <Link to={`/app/books/${book.id}/dashboard`}>
               <LayoutDashboard className="mr-1 h-4 w-4" />
               {t("dashboard.title")}
+            </Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/books/${book.id}/assets`}>
+              <Images className="mr-1 h-4 w-4" />
+              {t("assets.title")}
+            </Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/books/${book.id}/reader`}>
+              <BookOpen className="mr-1 h-4 w-4" />
+              {t("reader.title")}
             </Link>
           </Button>
           {structure && token && <AssetImageDialog book={book} branch={branch} token={token} kind="book" title={structure.title ?? book.name} textPath="book.md" resumePath="resumes/total.md" />}
