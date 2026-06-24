@@ -1,8 +1,8 @@
 import OpenAI, { AzureOpenAI } from "openai";
-import { stringify } from "yaml";
+import { parseDocument, stringify } from "yaml";
 import type { AIIntegration, AppSettings } from "@/types/settings";
-import { createFile, createOrUpdateBinaryFile, readFileWithSha, updateFile } from "@/github/githubClient";
-import { resolveWritingIntegration } from "@/assistant/llm";
+import { createFile, createOrUpdateBinaryFile, loadBinaryFileContent, readFileWithSha, updateFile } from "@/github/githubClient";
+import { completeText, resolveWritingIntegration } from "@/assistant/llm";
 
 export type AssetSubjectKind = "book" | "chapter" | "paragraph";
 export type AssetPromptSource = "custom" | "text" | "resume";
@@ -15,6 +15,17 @@ export interface AssetTarget {
   directory: string;
   markdownPath: string;
   imagePath: string;
+}
+
+export interface ExistingAssetImage {
+  prompt: string;
+  altText: string;
+  caption: string;
+  orientation: AssetOrientation;
+  aspectRatio: string;
+  imagePath?: string;
+  imageBytes?: Uint8Array;
+  mimeType?: string;
 }
 
 export function buildAssetTarget(input: {
@@ -112,6 +123,52 @@ export async function saveAssetImage(input: {
   await createOrUpdateBinaryFile(input.token, input.owner, input.repo, input.branch, input.path, input.bytes, `Update asset image ${input.path}`);
 }
 
+export async function loadExistingAssetImage(input: {
+  token: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  target: AssetTarget;
+}): Promise<ExistingAssetImage | null> {
+  const existing = await readFileWithSha(input.token, input.owner, input.repo, input.branch, input.target.markdownPath).catch(() => null);
+  if (!existing) return null;
+  const parsed = parseAssetMarkdown(existing.content);
+  const imagePath = parsed.path || input.target.imagePath;
+  const extension = imagePath.split(".").pop()?.toLowerCase() || "png";
+  const bytes = await loadBinaryFileContent(input.token, input.owner, input.repo, imagePath, input.branch).catch(() => null);
+  return {
+    prompt: parsed.body,
+    altText: parsed.altText,
+    caption: parsed.caption,
+    orientation: parsed.orientation,
+    aspectRatio: parsed.aspectRatio,
+    imagePath,
+    imageBytes: bytes ?? undefined,
+    mimeType: imageMimeType(extension),
+  };
+}
+
+export async function composeAssetPromptWithAI(input: {
+  settings: AppSettings;
+  kind: AssetSubjectKind;
+  title: string;
+  sourceText: string;
+}): Promise<string | null> {
+  const integration = resolveWritingIntegration(input.settings);
+  if (!integration || integration.provider === "m365_copilot" || !integration.apiKey) return null;
+  const answer = await completeText(integration, [
+    {
+      role: "system",
+      content: "Write a single polished image-generation prompt for a Narrarium book asset. Return only markdown with a '# Prompt' heading and the prompt text. Include visual subject, mood, composition, continuity notes, orientation, and aspect ratio. Do not mention hidden spoilers unless present in the source text.",
+    },
+    {
+      role: "user",
+      content: `Asset kind: ${input.kind}\nTitle: ${input.title}\nSource text:\n${input.sourceText.slice(0, 6000)}`,
+    },
+  ]);
+  return answer.trim() || null;
+}
+
 export async function generateAssetImage(input: {
   settings: AppSettings;
   prompt: string;
@@ -144,6 +201,34 @@ function createImageClient(integration: AIIntegration): AzureOpenAI | OpenAI {
   return integration.provider === "azure_openai"
     ? new AzureOpenAI({ endpoint: integration.endpoint ?? "", apiKey: integration.apiKey, apiVersion: integration.apiVersion || "2024-10-21", dangerouslyAllowBrowser: true })
     : new OpenAI({ apiKey: integration.apiKey, baseURL: integration.endpoint || "https://api.openai.com/v1", dangerouslyAllowBrowser: true });
+}
+
+function parseAssetMarkdown(raw: string): {
+  body: string;
+  path: string;
+  altText: string;
+  caption: string;
+  orientation: AssetOrientation;
+  aspectRatio: string;
+} {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
+  const frontmatter = match ? ((parseDocument(match[1]).toJSON() as Record<string, unknown> | null) ?? {}) : {};
+  const body = (match ? match[2] : raw).trim();
+  return {
+    body,
+    path: typeof frontmatter.path === "string" ? frontmatter.path : "",
+    altText: typeof frontmatter.alt_text === "string" ? frontmatter.alt_text : "",
+    caption: typeof frontmatter.caption === "string" ? frontmatter.caption : "",
+    orientation: frontmatter.orientation === "landscape" || frontmatter.orientation === "square" ? frontmatter.orientation : "portrait",
+    aspectRatio: typeof frontmatter.aspect_ratio === "string" ? frontmatter.aspect_ratio : "2:3",
+  };
+}
+
+function imageMimeType(extension: string): string {
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "webp") return "image/webp";
+  if (extension === "gif") return "image/gif";
+  return "image/png";
 }
 
 function imageSize(orientation: AssetOrientation): "1024x1024" | "1536x1024" | "1024x1536" {

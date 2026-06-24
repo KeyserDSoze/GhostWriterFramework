@@ -516,7 +516,8 @@ const en = {
     imageSaved: "Image saved",
     imageGenerated: "Image generated and saved",
     saveFailed: "Image save failed",
-    generationFailed: "Image generation failed"
+    generationFailed: "Image generation failed",
+    preview: "Image preview"
   },
   settingsExtra: {
     patRecommended: "PAT with Contents read/write and Metadata read permissions is recommended.",

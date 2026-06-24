@@ -1,9 +1,9 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Image, Loader2, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { BookEntry } from "@/types/settings";
 import type { AssetOrientation, AssetPromptSource, AssetSubjectKind } from "@/assets/assetImages";
-import { buildAssetTarget, generateAssetImage, renderAssetMarkdown, saveAssetImage, saveAssetMarkdown } from "@/assets/assetImages";
+import { buildAssetTarget, composeAssetPromptWithAI, generateAssetImage, loadExistingAssetImage, renderAssetMarkdown, saveAssetImage, saveAssetMarkdown } from "@/assets/assetImages";
 import { loadFileContent } from "@/github/githubClient";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -38,6 +38,36 @@ export function AssetImageDialog(props: {
   const [orientation, setOrientation] = useState<AssetOrientation>(kind === "book" ? "portrait" : "portrait");
   const [aspectRatio, setAspectRatio] = useState(kind === "book" ? "2:3" : "2:3");
   const [busy, setBusy] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [existingImagePath, setExistingImagePath] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    let objectUrl: string | null = null;
+    const target = buildAssetTarget({ kind, chapterSlug, paragraphSlug });
+    setExistingImagePath(null);
+    setPreviewUrl(null);
+    void loadExistingAssetImage({ token, owner: book.owner, repo: book.repo, branch, target })
+      .then((asset) => {
+        if (!active || !asset) return;
+        if (asset.prompt) setPrompt(asset.prompt);
+        setAltText(asset.altText);
+        setCaption(asset.caption);
+        setOrientation(asset.orientation);
+        setAspectRatio(asset.aspectRatio);
+        setExistingImagePath(asset.imagePath ?? null);
+        if (asset.imageBytes && asset.mimeType) {
+          objectUrl = URL.createObjectURL(new Blob([bytesToArrayBuffer(asset.imageBytes)], { type: asset.mimeType }));
+          setPreviewUrl(objectUrl);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [book.owner, book.repo, branch, chapterSlug, kind, open, paragraphSlug, token]);
 
   async function loadSourceText(): Promise<string> {
     const path = source === "resume" ? resumePath : source === "text" ? textPath : undefined;
@@ -49,7 +79,8 @@ export function AssetImageDialog(props: {
     setBusy(true);
     try {
       const sourceText = await loadSourceText();
-      setPrompt(defaultPrompt(kind, title, sourceText));
+      const aiPrompt = await composeAssetPromptWithAI({ settings, kind, title, sourceText }).catch(() => null);
+      setPrompt(aiPrompt ?? defaultPrompt(kind, title, sourceText));
     } finally {
       setBusy(false);
     }
@@ -103,8 +134,9 @@ export function AssetImageDialog(props: {
         path: target.imagePath,
         bytes: new Uint8Array(await file.arrayBuffer()),
       });
+      setExistingImagePath(target.imagePath);
+      setPreviewUrl(URL.createObjectURL(file));
       toast({ title: t("images.imageSaved") });
-      setOpen(false);
     } catch (err) {
       toast({ title: t("images.saveFailed"), description: String(err), variant: "destructive" });
     } finally {
@@ -119,8 +151,9 @@ export function AssetImageDialog(props: {
       const generated = await generateAssetImage({ settings, prompt, orientation });
       const target = await savePrompt(generated.provider, generated.model, "png");
       await saveAssetImage({ token, owner: book.owner, repo: book.repo, branch, path: target.imagePath, bytes: generated.bytes });
+      setExistingImagePath(target.imagePath);
+      setPreviewUrl(URL.createObjectURL(new Blob([bytesToArrayBuffer(generated.bytes)], { type: "image/png" })));
       toast({ title: t("images.imageGenerated") });
-      setOpen(false);
     } catch (err) {
       toast({ title: t("images.generationFailed"), description: String(err), variant: "destructive" });
     } finally {
@@ -140,7 +173,13 @@ export function AssetImageDialog(props: {
         <DialogHeader>
           <DialogTitle>{t("images.titleFor", { title })}</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-4">
+          <div className="grid gap-4">
+          {previewUrl && (
+            <div className="rounded-xl border bg-muted/20 p-3">
+              <p className="mb-2 text-xs text-muted-foreground">{existingImagePath ?? t("images.preview")}</p>
+              <img src={previewUrl} alt={altText || title} className="max-h-80 w-full rounded-lg object-contain" />
+            </div>
+          )}
           <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
             <div className="grid gap-2">
               <Label>{t("images.promptSource")}</Label>
@@ -208,4 +247,8 @@ function defaultPrompt(kind: AssetSubjectKind, title: string, sourceText: string
     return `# Prompt\n\nChapter-opening illustration for ${title}, showing the core dramatic image, location, mood, portrait orientation, 2:3 ratio, cinematic composition, visually aligned with the rest of the book.${clipped ? `\n\nSource context: ${clipped}` : ""}`;
   }
   return `# Prompt\n\nScene illustration for ${title}, characters present, action, location, emotional beat, portrait orientation, 2:3 ratio, preserve continuity with existing character and location assets.${clipped ? `\n\nSource context: ${clipped}` : ""}`;
+}
+
+function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }

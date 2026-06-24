@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Download, FolderOpen, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { BookStructure } from "@/types/book";
@@ -32,7 +32,7 @@ export function BookExportDialog(props: {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { user, accessToken } = useAuthStore();
-  const profiles = resolveBookExportProfiles(book);
+  const profiles = useMemo(() => resolveBookExportProfiles(book), [book]);
   const [selectedProfileId, setSelectedProfileId] = useState(book.defaultExportProfileId ?? profiles[0]?.id ?? "default");
   const savedSettings = resolveBookExportSettings(book, selectedProfileId);
   const [open, setOpen] = useState(false);

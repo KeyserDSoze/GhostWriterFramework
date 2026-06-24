@@ -28,6 +28,8 @@ interface ExportAsset {
   path: string;
   altText?: string;
   caption?: string;
+  orientation?: string;
+  aspectRatio?: string;
   bytes: Uint8Array;
   mimeType: string;
   extension: string;
@@ -85,6 +87,8 @@ async function loadAsset(input: {
     path: imagePath,
     altText: asString(document.frontmatter.alt_text) || undefined,
     caption: asString(document.frontmatter.caption) || undefined,
+    orientation: asString(document.frontmatter.orientation) || undefined,
+    aspectRatio: asString(document.frontmatter.aspect_ratio) || undefined,
     bytes,
     mimeType: imageMimeType(extension),
     extension,
@@ -222,6 +226,7 @@ async function buildDocxArtifact(snapshot: ExportBookSnapshot, scope: BookExport
     AlignmentType,
     Document,
     Header,
+    ImageRun,
     Packer,
     PageNumber,
     Paragraph,
@@ -231,12 +236,27 @@ async function buildDocxArtifact(snapshot: ExportBookSnapshot, scope: BookExport
 
   const children: InstanceType<typeof Paragraph>[] = [];
 
+  const pushImage = (asset: ExportAsset | undefined, fallbackAlt: string) => {
+    const type = docxImageType(asset?.extension);
+    if (!asset || !type) return;
+    const dimensions = fittedImageDimensions(asset, 432, 520);
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 240, after: asset.caption ? 60 : 240 },
+      children: [new ImageRun({ type, data: asset.bytes, transformation: dimensions, altText: { name: fallbackAlt, title: asset.altText || fallbackAlt, description: asset.altText || fallbackAlt } })],
+    }));
+    if (asset.caption) {
+      children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: asset.caption, font: settings.fontName, size: Math.max(16, settings.fontSize * 2 - 2), italics: true })], spacing: { after: 240 } }));
+    }
+  };
+
   if (settings.includeTitlePage) {
     children.push(new Paragraph({ alignment: AlignmentType.LEFT, children: [new TextRun({ text: snapshot.author, font: settings.fontName, size: settings.fontSize * 2 })] }));
     children.push(new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `Approx. ${roundWordCount(snapshot.wordCount)} words`, font: settings.fontName, size: settings.fontSize * 2 })] }));
     for (let i = 0; i < 8; i++) children.push(new Paragraph({}));
     children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: snapshot.title, font: settings.fontName, size: settings.fontSize * 2, bold: true })] }));
     children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `by ${snapshot.author}`, font: settings.fontName, size: settings.fontSize * 2 })] }));
+    pushImage(snapshot.coverAsset, `${snapshot.title} cover`);
     children.push(new Paragraph({ pageBreakBefore: true }));
   }
 
@@ -252,6 +272,7 @@ async function buildDocxArtifact(snapshot: ExportBookSnapshot, scope: BookExport
     if (settings.showChapterSummary && chapter.summary) {
       children.push(new Paragraph({ children: [new TextRun({ text: chapter.summary, font: settings.fontName, size: settings.fontSize * 2, italics: true })], spacing: { after: 240 } }));
     }
+    pushImage(chapter.asset, `${chapter.title} illustration`);
     chapter.paragraphs.forEach((paragraph, paragraphIndex) => {
       if (settings.showParagraphTitles && paragraph.title) {
         children.push(new Paragraph({ children: [new TextRun({ text: paragraph.title, font: settings.fontName, size: settings.fontSize * 2, bold: true })], spacing: { before: 240, after: 120 } }));
@@ -266,6 +287,7 @@ async function buildDocxArtifact(snapshot: ExportBookSnapshot, scope: BookExport
           indent: { firstLine: convertInchesToTwip(settings.paragraphIndentInches) },
         }));
       }
+      pushImage(paragraph.asset, `${paragraph.title} illustration`);
     });
   });
 
@@ -364,12 +386,26 @@ async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportS
     }
   }
 
+  function writeImage(asset: ExportAsset | undefined, fallbackAlt: string) {
+    if (!asset) return;
+    const format = pdfImageFormat(asset.extension);
+    if (!format) return;
+    const dimensions = fittedImageDimensions(asset, contentWidth, 360);
+    ensureSpace(Math.ceil(dimensions.height / lineHeight) + (asset.caption ? 2 : 1));
+    const x = margin + (contentWidth - dimensions.width) / 2;
+    const dataUrl = bytesToDataUrl(asset.bytes, asset.mimeType);
+    doc.addImage(dataUrl, format, x, y, dimensions.width, dimensions.height, fallbackAlt);
+    y += dimensions.height + lineHeight * 0.6;
+    if (asset.caption) writeBlock(asset.caption, { align: "center", italic: true });
+  }
+
   if (settings.includeTitlePage) {
     writeBlock(snapshot.author);
     writeBlock(`Approx. ${roundWordCount(snapshot.wordCount)} words`, { align: "center" });
     y += lineHeight * 6;
     writeBlock(snapshot.title, { align: "center", bold: true });
     writeBlock(`by ${snapshot.author}`, { align: "center" });
+    writeImage(snapshot.coverAsset, `${snapshot.title} cover`);
     newPage();
   } else {
     drawHeader();
@@ -383,6 +419,7 @@ async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportS
     writeBlock(heading, { align: "center", bold: true });
     if (chapter.number && chapter.title !== heading) writeBlock(chapter.title, { align: "center", italic: true });
     if (settings.showChapterSummary && chapter.summary) writeBlock(chapter.summary, { italic: true });
+    writeImage(chapter.asset, `${chapter.title} illustration`);
     chapter.paragraphs.forEach((paragraph, paragraphIndex) => {
       if (settings.showParagraphTitles && paragraph.title) {
         y += lineHeight * 0.5;
@@ -394,6 +431,7 @@ async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportS
       for (const plainParagraph of markdownToPlainParagraphs(paragraph.body)) {
         writeBlock(plainParagraph, { firstLineIndent: settings.paragraphIndentInches * 72 });
       }
+      writeImage(paragraph.asset, `${paragraph.title} illustration`);
     });
   });
 
@@ -417,11 +455,11 @@ async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExport
   oebps.file("styles.css", "body { font-family: serif; line-height: 1.55; } h1, h2 { font-family: serif; } article { margin: 0 auto; max-width: 40rem; } nav ol { padding-left: 1.2rem; } figure { margin: 2rem 0; text-align: center; page-break-inside: avoid; } figure img { max-width: 100%; height: auto; } figcaption { color: #555; font-size: 0.9em; margin-top: 0.5rem; }");
   oebps.folder("images");
 
-  const imageItems: Array<{ id: string; fileName: string; mimeType: string }> = [];
+  const imageItems: Array<{ id: string; fileName: string; mimeType: string; properties?: string }> = [];
   const addImage = (id: string, fileName: string, asset: ExportAsset): string => {
     const imagePath = `images/${fileName}.${asset.extension}`;
     oebps.file(imagePath, asset.bytes);
-    imageItems.push({ id, fileName: imagePath, mimeType: asset.mimeType });
+    imageItems.push({ id, fileName: imagePath, mimeType: asset.mimeType, properties: id === "cover-image" ? "cover-image" : undefined });
     return imagePath;
   };
 
@@ -460,17 +498,18 @@ async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExport
   };
 }
 
-function buildContentOpf(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fileName: string; title: string }>, imageItems: Array<{ id: string; fileName: string; mimeType: string }>): string {
+function buildContentOpf(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fileName: string; title: string }>, imageItems: Array<{ id: string; fileName: string; mimeType: string; properties?: string }>): string {
   const manifest = [
     `<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`,
     `<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>`,
     `<item id="css" href="styles.css" media-type="text/css"/>`,
     `<item id="opening" href="opening.xhtml" media-type="application/xhtml+xml"/>`,
     ...chapterFiles.map((chapter, index) => `<item id="chapter-${index + 1}" href="${chapter.fileName}" media-type="application/xhtml+xml"/>`),
-    ...imageItems.map((image) => `<item id="${image.id}" href="${image.fileName}" media-type="${image.mimeType}"/>`),
+    ...imageItems.map((image) => `<item id="${image.id}" href="${image.fileName}" media-type="${image.mimeType}"${image.properties ? ` properties="${image.properties}"` : ""}/>`),
   ].join("\n    ");
   const spine = [`<itemref idref="opening"/>`, ...chapterFiles.map((_, index) => `<itemref idref="chapter-${index + 1}"/>`)].join("\n    ");
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0">\n  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n    <dc:identifier id="bookid">urn:narrarium:${slugify(snapshot.title) || "book"}</dc:identifier>\n    <dc:title>${escapeXml(snapshot.title)}</dc:title>\n    <dc:creator>${escapeXml(snapshot.author)}</dc:creator>\n    <dc:language>${escapeXml(snapshot.language)}</dc:language>\n  </metadata>\n  <manifest>\n    ${manifest}\n  </manifest>\n  <spine toc="ncx">\n    ${spine}\n  </spine>\n</package>`;
+  const coverMeta = imageItems.some((image) => image.id === "cover-image") ? `\n    <meta name="cover" content="cover-image"/>` : "";
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0">\n  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n    <dc:identifier id="bookid">urn:narrarium:${slugify(snapshot.title) || "book"}</dc:identifier>\n    <dc:title>${escapeXml(snapshot.title)}</dc:title>\n    <dc:creator>${escapeXml(snapshot.author)}</dc:creator>\n    <dc:language>${escapeXml(snapshot.language)}</dc:language>${coverMeta}\n  </metadata>\n  <manifest>\n    ${manifest}\n  </manifest>\n  <spine toc="ncx">\n    ${spine}\n  </spine>\n</package>`;
 }
 
 function buildTocNcx(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fileName: string; title: string }>): string {
@@ -508,4 +547,43 @@ function mapPdfFont(fontName: string): "times" | "courier" | "helvetica" {
   if (normalized.includes("courier")) return "courier";
   if (normalized.includes("helvetica") || normalized.includes("arial")) return "helvetica";
   return "times";
+}
+
+function parseAspectRatio(value: string | undefined): number {
+  const match = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(value ?? "");
+  if (!match) return 2 / 3;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!width || !height) return 2 / 3;
+  return width / height;
+}
+
+function fittedImageDimensions(asset: ExportAsset, maxWidth: number, maxHeight: number): { width: number; height: number } {
+  const ratio = parseAspectRatio(asset.aspectRatio);
+  let width = maxWidth;
+  let height = width / ratio;
+  if (height > maxHeight) {
+    height = maxHeight;
+    width = height * ratio;
+  }
+  return { width: Math.round(width), height: Math.round(height) };
+}
+
+function docxImageType(extension: string | undefined): "jpg" | "png" | "gif" | "bmp" | null {
+  if (extension === "jpg" || extension === "jpeg") return "jpg";
+  if (extension === "png" || extension === "gif" || extension === "bmp") return extension;
+  return null;
+}
+
+function pdfImageFormat(extension: string | undefined): "PNG" | "JPEG" | "WEBP" | null {
+  if (extension === "jpg" || extension === "jpeg") return "JPEG";
+  if (extension === "png") return "PNG";
+  if (extension === "webp") return "WEBP";
+  return null;
+}
+
+function bytesToDataUrl(bytes: Uint8Array, mimeType: string): string {
+  let binary = "";
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return `data:${mimeType};base64,${btoa(binary)}`;
 }

@@ -516,7 +516,8 @@ const it = {
     imageSaved: "Immagine salvata",
     imageGenerated: "Immagine generata e salvata",
     saveFailed: "Salvataggio immagine non riuscito",
-    generationFailed: "Generazione immagine non riuscita"
+    generationFailed: "Generazione immagine non riuscita",
+    preview: "Anteprima immagine"
   },
   settingsExtra: {
     patRecommended: "Consigliato un PAT con permessi Contents read/write e Metadata read.",
