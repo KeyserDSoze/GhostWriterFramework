@@ -107,6 +107,15 @@ const it = {
     microphone: "Microfono",
     stopMic: "Ferma microfono",
     autoSend: "Invia automatico",
+    liveVoice: "Voce live",
+    liveOn: "Live attivo",
+    talk: "Parla",
+    voiceStatus: {
+      idle: "Premi Parla, fai una domanda e io risponderò a voce.",
+      listening: "Ti sto ascoltando. Fermati quando hai finito: partirò da solo.",
+      thinking: "Sto preparando la risposta e le eventuali azioni.",
+      speaking: "Sto rispondendo a voce. Puoi fermarmi quando vuoi."
+    },
     read: "Leggi",
     stopReading: "Ferma lettura",
     readContext: "Leggi contesto",

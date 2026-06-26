@@ -6,6 +6,7 @@ const MAX_TTS_CHARS = 1200;
 
 export interface SpeechController {
   stop: () => void;
+  done: Promise<void>;
 }
 
 export function markdownToSpeechText(markdown: string): string {
@@ -98,9 +99,14 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number): 
   const chunks = splitSpeechText(text);
   let stopped = false;
   window.speechSynthesis.cancel();
+  let resolveDone: () => void = () => undefined;
+  const done = new Promise<void>((resolve) => { resolveDone = resolve; });
 
   const play = (index: number) => {
-    if (stopped || index >= chunks.length) return;
+    if (stopped || index >= chunks.length) {
+      resolveDone();
+      return;
+    }
     const utterance = new SpeechSynthesisUtterance(chunks[index]);
     const voices = window.speechSynthesis.getVoices();
     const voice = voices.find((entry) => entry.name === voiceName || entry.lang.toLowerCase().startsWith(voiceName.toLowerCase()));
@@ -112,9 +118,11 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number): 
   play(0);
   return {
     stop: () => {
-      stopped = true;
-      window.speechSynthesis.cancel();
+    stopped = true;
+    window.speechSynthesis.cancel();
+    resolveDone();
     },
+    done,
   };
 }
 
@@ -123,9 +131,14 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
   let stopped = false;
   let audio: HTMLAudioElement | null = null;
   let nextPromise: Promise<string> | null = chunks[0] ? synthesizeChunk(chunks[0], integration, model, voice) : null;
+  let resolveDone: () => void = () => undefined;
+  const done = new Promise<void>((resolve) => { resolveDone = resolve; });
 
   const playNext = async (index: number): Promise<void> => {
-    if (stopped || index >= chunks.length || !nextPromise) return;
+    if (stopped || index >= chunks.length || !nextPromise) {
+      resolveDone();
+      return;
+    }
     const url = await nextPromise;
     nextPromise = chunks[index + 1] ? synthesizeChunk(chunks[index + 1], integration, model, voice) : null;
     if (stopped) return;
@@ -143,7 +156,9 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
       stopped = true;
       if (audio) audio.pause();
       window.speechSynthesis.cancel();
+      resolveDone();
     },
+    done,
   };
 }
 

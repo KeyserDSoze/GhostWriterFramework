@@ -41,6 +41,7 @@ type PromptInput = {
   compactSummary: string;
   compactedMessageCount: number;
   attachments: AssistantAttachment[];
+  spokenMode?: boolean;
 };
 
 export async function runAssistantPrompt(input: {
@@ -54,6 +55,7 @@ export async function runAssistantPrompt(input: {
   compactSummary: string;
   compactedMessageCount: number;
   attachments: AssistantAttachment[];
+  spokenMode?: boolean;
 }): Promise<AssistantMessage> {
   const {
     prompt,
@@ -66,6 +68,7 @@ export async function runAssistantPrompt(input: {
     compactSummary,
     compactedMessageCount,
     attachments,
+    spokenMode,
   } = input;
   const lowered = prompt.toLowerCase();
   const promptInput: PromptInput = {
@@ -76,6 +79,7 @@ export async function runAssistantPrompt(input: {
     compactSummary,
     compactedMessageCount,
     attachments,
+    spokenMode,
   };
 
   if (!book || !token) {
@@ -477,7 +481,10 @@ async function upsertNoteFile(input: { token: string; owner: string; repo: strin
 }
 
 function buildSystemMessage(input: PromptInput, instruction: string): LlmMessage {
-  return { role: "system", content: `${instruction}\n\n${systemContextBundle(input)}` };
+  const spokenInstruction = input.spokenMode
+    ? "\n\nThis answer will be read aloud. Be conversational, direct, and natural. Use short spoken paragraphs. Avoid tables, dense markdown, long lists, code blocks, and anything that is hard to understand through audio. If you need to list things, use a few concise spoken points."
+    : "";
+  return { role: "system", content: `${instruction}${spokenInstruction}\n\n${systemContextBundle(input)}` };
 }
 
 function buildUserMessage(input: PromptInput, requestText: string): LlmMessage {

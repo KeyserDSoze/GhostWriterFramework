@@ -107,6 +107,15 @@ const en = {
     microphone: "Microphone",
     stopMic: "Stop microphone",
     autoSend: "Auto-send",
+    liveVoice: "Live voice",
+    liveOn: "Live on",
+    talk: "Talk",
+    voiceStatus: {
+      idle: "Press Talk, ask a question, and I will answer aloud.",
+      listening: "I am listening. Stop when you are done and I will start automatically.",
+      thinking: "I am preparing the answer and any actions.",
+      speaking: "I am answering aloud. You can stop me whenever you want."
+    },
     read: "Read",
     stopReading: "Stop reading",
     readContext: "Read context",

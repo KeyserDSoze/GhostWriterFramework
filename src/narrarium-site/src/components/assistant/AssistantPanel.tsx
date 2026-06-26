@@ -21,6 +21,7 @@ import {
   useAssistantStore,
   type AssistantAttachment,
   type AssistantFileUpdate,
+  type AssistantMessage,
 } from "@/assistant/store";
 import { applyParagraphRewrite, compactAssistantSession, runAssistantPrompt } from "@/assistant/service";
 import { loadWriterContext, parseAppRoute } from "@/assistant/context";
@@ -84,6 +85,7 @@ export function AssistantPanel() {
   const audioChunksRef = useRef<Blob[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const voiceModeRef = useRef(false);
   const {
     open,
     setOpen,
@@ -110,9 +112,15 @@ export function AssistantPanel() {
   const [listening, setListening] = useState(false);
   const [autoSend, setAutoSend] = useState(false);
   const [speechController, setSpeechController] = useState<SpeechController | null>(null);
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<"idle" | "listening" | "thinking" | "speaking">("idle");
   const [diffMode, setDiffMode] = useState<Record<string, boolean>>({});
   const [previousContents, setPreviousContents] = useState<Record<string, string>>({});
   const [loadingDiffPath, setLoadingDiffPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    voiceModeRef.current = voiceMode;
+  }, [voiceMode]);
 
   useEffect(() => {
     let active = true;
@@ -285,6 +293,7 @@ export function AssistantPanel() {
         audioChunksRef.current = [];
         mediaRecorderRef.current = recorder;
         setListening(true);
+        if (voiceModeRef.current) setVoiceStatus("listening");
         monitorSilence(stream);
         recorder.ondataavailable = (event) => {
           if (event.data.size > 0) audioChunksRef.current.push(event.data);
@@ -298,8 +307,11 @@ export function AssistantPanel() {
             const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
             const transcript = (await transcribeAudio(blob, settings)).trim();
             if (transcript) {
-              if (autoSend) void sendPrompt(transcript);
+              if (voiceModeRef.current) void handleVoiceTranscript(transcript);
+              else if (autoSend) void sendPrompt(transcript);
               else appendDraftText(transcript);
+            } else if (voiceModeRef.current) {
+              setVoiceStatus("idle");
             }
           } catch (err) {
             toast({ title: t("assistant.toastSttFailed"), description: String(err), variant: "destructive" });
@@ -324,15 +336,20 @@ export function AssistantPanel() {
     recognition.continuous = false;
     recognition.interimResults = false;
     setListening(true);
+    if (voiceModeRef.current) setVoiceStatus("listening");
     recognition.onresult = (event: any) => {
       const transcript = Array.from(event.results).map((result: any) => result[0]?.transcript ?? "").join(" ").trim();
       if (transcript) {
-        if (autoSend) void sendPrompt(transcript);
+        if (voiceModeRef.current) void handleVoiceTranscript(transcript);
+        else if (autoSend) void sendPrompt(transcript);
         else appendDraftText(transcript);
       }
     };
     recognition.onerror = () => setListening(false);
-    recognition.onend = () => setListening(false);
+    recognition.onend = () => {
+      setListening(false);
+      if (voiceModeRef.current && voiceStatus === "listening") setVoiceStatus("idle");
+    };
     recognition.start();
   }
 
@@ -341,13 +358,16 @@ export function AssistantPanel() {
     setSpeechController(null);
   }
 
-  async function readText(text: string) {
+  async function readText(text: string): Promise<SpeechController | null> {
     stopReading();
     try {
       const controller = await speakText(text, settings);
       setSpeechController(controller);
+      void controller.done.finally(() => setSpeechController((current) => current === controller ? null : current));
+      return controller;
     } catch (err) {
       toast({ title: t("assistant.toastTtsFailed"), description: String(err), variant: "destructive" });
+      return null;
     }
   }
 
@@ -355,9 +375,45 @@ export function AssistantPanel() {
     const text = [contextLabel, contextSummary, ...contextFiles].join("\n");
     void readText(text);
   }
-  async function sendPrompt(prompt: string) {
+  async function handleVoiceTranscript(transcript: string) {
+    setVoiceStatus("thinking");
+    const reply = await sendPrompt(transcript, { spokenMode: true });
+    if (!voiceModeRef.current) return;
+    if (reply?.text) {
+      setVoiceStatus("speaking");
+      const controller = await readText(reply.text);
+      await controller?.done.catch(() => undefined);
+    }
+    if (voiceModeRef.current) setVoiceStatus("idle");
+  }
+
+  function toggleVoiceMode() {
+    setVoiceMode((enabled) => {
+      const next = !enabled;
+      voiceModeRef.current = next;
+      if (!next) {
+        if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+        stopReading();
+        setVoiceStatus("idle");
+      } else {
+        setOpen(true);
+        setVoiceStatus("idle");
+      }
+      return next;
+    });
+  }
+
+  async function startVoiceTurn() {
+    if (!voiceModeRef.current) {
+      setVoiceMode(true);
+      voiceModeRef.current = true;
+    }
+    await startSpeechToText();
+  }
+
+  async function sendPrompt(prompt: string, options?: { spokenMode?: boolean }): Promise<AssistantMessage | null> {
     const trimmed = prompt.trim();
-    if (!trimmed || busy) return;
+    if (!trimmed || busy) return null;
     const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches);
     const book = routeContext.book;
     const token = book ? resolveBookToken(book, settings) : "";
@@ -378,15 +434,19 @@ export function AssistantPanel() {
         compactSummary: session.compactSummary,
         compactedMessageCount: session.compactedMessageCount,
         attachments: session.attachments,
+        spokenMode: options?.spokenMode,
       });
       updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, reply] }));
       setOpen(true);
+      return reply;
     } catch (err) {
+      const errorMessage = { id: crypto.randomUUID(), role: "assistant" as const, text: err instanceof Error ? err.message : t("assistant.requestFailed") };
       updateCurrentSession((current) => ({
         ...current,
         updatedAt: new Date().toISOString(),
-        messages: [...current.messages, { id: crypto.randomUUID(), role: "assistant", text: err instanceof Error ? err.message : t("assistant.requestFailed") }],
+        messages: [...current.messages, errorMessage],
       }));
+      return errorMessage;
     } finally {
       setBusy(false);
     }
@@ -640,13 +700,30 @@ export function AssistantPanel() {
           <p className="text-xs text-muted-foreground">{contextLabel}</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant={voiceMode ? "default" : "ghost"} size="sm" onClick={toggleVoiceMode}>{voiceMode ? t("assistant.liveOn") : t("assistant.liveVoice")}</Button>
           <Button variant="ghost" size="sm" onClick={newChat}>{t("assistant.new")}</Button>
-          <Button variant="ghost" size="sm" onClick={() => setFullScreen((value) => !value)}>{fullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}</Button><Button variant="ghost" size="sm" onClick={() => setOpen(false)}>{t("assistant.close")}</Button>
+          <Button variant="ghost" size="sm" onClick={() => setFullScreen((value) => !value)}>{fullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}</Button>
+          <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>{t("assistant.close")}</Button>
         </div>
       </div>
 
       <div className="border-b px-4 py-3 space-y-3">
         <div className="text-xs text-muted-foreground">{contextSummary || t("assistant.contextFollows")}</div>
+        {voiceMode && (
+          <div className="flex items-center gap-3 rounded-2xl border bg-primary/5 p-3">
+            <div className={voiceStatus === "speaking" ? "flex h-12 w-12 animate-pulse items-center justify-center rounded-full bg-primary text-primary-foreground" : "flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground"}>
+              <Bot className="h-6 w-6" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">{t("assistant.liveVoice")}</p>
+              <p className="text-xs text-muted-foreground">{t(`assistant.voiceStatus.${voiceStatus}`)}</p>
+            </div>
+            <Button size="sm" onClick={() => void startVoiceTurn()} disabled={busy || voiceStatus === "speaking"}>
+              {listening ? <Square className="mr-1 h-4 w-4" /> : <Mic className="mr-1 h-4 w-4" />}
+              {listening ? t("assistant.stopMic") : t("assistant.talk")}
+            </Button>
+          </div>
+        )}
         <details className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer font-medium">{t("assistant.contextInspector")}</summary>
           <div className="mt-2 space-y-2">
@@ -758,7 +835,7 @@ export function AssistantPanel() {
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => void startSpeechToText()} disabled={busy}>
+                <Button type="button" variant="outline" size="sm" onClick={() => void startSpeechToText()} disabled={busy || voiceMode}>
                   {listening ? <Square className="mr-1 h-4 w-4" /> : <Mic className="mr-1 h-4 w-4" />}
                   {listening ? t("assistant.stopMic") : t("assistant.microphone")}
                 </Button>
@@ -787,8 +864,8 @@ export function AssistantPanel() {
       <Button type="button" className="fixed bottom-4 right-4 z-40 rounded-full shadow-lg lg:bottom-6 lg:right-6" onClick={() => setOpen(true)}>
         <Bot className="mr-2 h-4 w-4" />{t("assistant.floatingButton")}
       </Button>
-      <Dialog open={syncOpen} onOpenChange={setSyncOpen}><DialogContent className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[920px]">{syncPanel}</DialogContent></Dialog>
-      <Dialog open={open} onOpenChange={setOpen}><DialogContent className={fullScreen ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0" : "left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[720px] lg:right-6 lg:left-auto lg:top-auto lg:bottom-6 lg:h-[80dvh] lg:w-[420px] lg:max-w-[420px] lg:translate-x-0 lg:translate-y-0"}>{panel}</DialogContent></Dialog>
+      <Dialog open={syncOpen} onOpenChange={setSyncOpen}><DialogContent hideCloseButton className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[920px]">{syncPanel}</DialogContent></Dialog>
+      <Dialog open={open} onOpenChange={setOpen}><DialogContent hideCloseButton className={fullScreen ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0" : "left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[720px] lg:right-6 lg:left-auto lg:top-auto lg:bottom-6 lg:h-[80dvh] lg:w-[420px] lg:max-w-[420px] lg:translate-x-0 lg:translate-y-0"}>{panel}</DialogContent></Dialog>
     </>
   );
 }
