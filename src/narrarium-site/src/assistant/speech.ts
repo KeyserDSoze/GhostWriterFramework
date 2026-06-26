@@ -113,6 +113,7 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number): 
     if (voice) utterance.voice = voice;
     utterance.rate = Number.isFinite(rate) ? rate : 0.95;
     utterance.onend = () => play(index + 1);
+    utterance.onerror = () => play(index + 1);
     window.speechSynthesis.speak(utterance);
   };
   play(0);
@@ -141,13 +142,20 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
     }
     const url = await nextPromise;
     nextPromise = chunks[index + 1] ? synthesizeChunk(chunks[index + 1], integration, model, voice) : null;
-    if (stopped) return;
+    if (stopped) {
+      URL.revokeObjectURL(url);
+      resolveDone();
+      return;
+    }
     audio = new Audio(url);
     audio.onended = () => {
       URL.revokeObjectURL(url);
       void playNext(index + 1);
     };
-    await audio.play();
+    await audio.play().catch(() => {
+      URL.revokeObjectURL(url);
+      void playNext(index + 1);
+    });
   };
 
   void playNext(0);

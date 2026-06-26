@@ -84,6 +84,8 @@ export function AssistantPanel() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const speechRecognitionRef = useRef<any>(null);
+  const speechRecognitionTranscriptRef = useRef("");
+  const speechRecognitionSentRef = useRef(false);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -342,6 +344,7 @@ export function AssistantPanel() {
           stream.getTracks().forEach((track) => track.stop());
           setListening(false);
           mediaRecorderRef.current = null;
+          if (voiceModeRef.current) setVoiceStatus("thinking");
           try {
             const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
             const transcript = (await transcribeAudio(blob, settings)).trim();
@@ -353,6 +356,7 @@ export function AssistantPanel() {
               setVoiceStatus("idle");
             }
           } catch (err) {
+            if (voiceModeRef.current) setVoiceStatus("idle");
             toast({ title: t("assistant.toastSttFailed"), description: String(err), variant: "destructive" });
           }
         };
@@ -372,24 +376,46 @@ export function AssistantPanel() {
     }
     const recognition = new SpeechRecognition();
     speechRecognitionRef.current = recognition;
+    speechRecognitionTranscriptRef.current = "";
+    speechRecognitionSentRef.current = false;
     recognition.lang = settings.ui.language === "it" ? "it-IT" : "en-US";
     recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.interimResults = voiceModeRef.current;
     setListening(true);
     if (voiceModeRef.current) setVoiceStatus("listening");
     recognition.onresult = (event: any) => {
-      const transcript = Array.from(event.results).map((result: any) => result[0]?.transcript ?? "").join(" ").trim();
+      let hasFinal = false;
+      const transcript = Array.from(event.results).map((result: any) => {
+        if (result.isFinal) hasFinal = true;
+        return result[0]?.transcript ?? "";
+      }).join(" ").trim();
+      if (transcript) speechRecognitionTranscriptRef.current = transcript;
       if (transcript) {
-        if (voiceModeRef.current) void handleVoiceTranscript(transcript);
+        if (voiceModeRef.current && hasFinal && !speechRecognitionSentRef.current) {
+          speechRecognitionSentRef.current = true;
+          try { recognition.stop(); } catch {}
+          void handleVoiceTranscript(transcript);
+        }
         else if (autoSend) void sendPrompt(transcript);
-        else appendDraftText(transcript);
+        else if (!voiceModeRef.current) appendDraftText(transcript);
       }
     };
-    recognition.onerror = () => setListening(false);
+    recognition.onerror = () => {
+      speechRecognitionRef.current = null;
+      speechRecognitionTranscriptRef.current = "";
+      setListening(false);
+      if (voiceModeRef.current) setVoiceStatus("idle");
+    };
     recognition.onend = () => {
       speechRecognitionRef.current = null;
       setListening(false);
-      if (voiceModeRef.current && voiceStatus === "listening") setVoiceStatus("idle");
+      const transcript = speechRecognitionTranscriptRef.current.trim();
+      if (voiceModeRef.current && transcript && !speechRecognitionSentRef.current) {
+        speechRecognitionSentRef.current = true;
+        void handleVoiceTranscript(transcript);
+        return;
+      }
+      if (voiceModeRef.current) setVoiceStatus("idle");
     };
     recognition.start();
   }
