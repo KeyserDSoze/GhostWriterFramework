@@ -12,6 +12,7 @@ interface AuthGuardProps {
 }
 
 type Status = "checking" | "ok" | "unauthenticated";
+const SILENT_AUTH_TIMEOUT_MS = 8000;
 
 export function AuthGuard({ children }: AuthGuardProps) {
   const { accessToken, accessTokenExpiry, user, setAuth, clearAuth } =
@@ -20,6 +21,22 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const location = useLocation();
   const [status, setStatus] = useState<Status>("checking");
   const lastAttemptKeyRef = useRef("");
+  const silentAuthTimeoutRef = useRef<number | null>(null);
+
+  function clearSilentAuthTimeout() {
+    if (silentAuthTimeoutRef.current != null) {
+      window.clearTimeout(silentAuthTimeoutRef.current);
+      silentAuthTimeoutRef.current = null;
+    }
+  }
+
+  function startSilentAuthTimeout() {
+    clearSilentAuthTimeout();
+    silentAuthTimeoutRef.current = window.setTimeout(() => {
+      clearAuth();
+      setStatus("unauthenticated");
+    }, SILENT_AUTH_TIMEOUT_MS);
+  }
 
   const silentLogin = useGoogleLogin({
     scope: GOOGLE_DRIVE_SCOPES,
@@ -28,6 +45,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
     prompt: "none",
     hint: user?.email,
     onSuccess: (tokenResponse) => {
+      clearSilentAuthTimeout();
       fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
         headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
       })
@@ -55,6 +73,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
     },
     onError: () => {
       // Silent reauth failed (session expired) → force manual login
+      clearSilentAuthTimeout();
       clearAuth();
       setStatus("unauthenticated");
     },
@@ -74,9 +93,11 @@ export function AuthGuard({ children }: AuthGuardProps) {
         if (result.account) instance.setActiveAccount(result.account);
         const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
         const expiresIn = Math.max(120, Math.round((expiresAt - Date.now()) / 1000));
+        clearSilentAuthTimeout();
         setAuth(result.accessToken, user!, expiresIn);
         setStatus("ok");
       } catch {
+        clearSilentAuthTimeout();
         clearAuth();
         setStatus("unauthenticated");
       }
@@ -88,6 +109,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
       Date.now() < accessTokenExpiry;
 
     if (tokenValid) {
+      clearSilentAuthTimeout();
       setStatus("ok");
     } else if (user?.provider === "google") {
       // Known user, but token missing/expired → try silent re-auth
@@ -95,16 +117,20 @@ export function AuthGuard({ children }: AuthGuardProps) {
       if (lastAttemptKeyRef.current === attemptKey) return;
       lastAttemptKeyRef.current = attemptKey;
       setStatus("checking");
+      startSilentAuthTimeout();
       silentLogin();
     } else if (user?.provider === "microsoft") {
       const attemptKey = `microsoft:${user.email}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
       if (lastAttemptKeyRef.current === attemptKey) return;
       lastAttemptKeyRef.current = attemptKey;
       setStatus("checking");
+      startSilentAuthTimeout();
       void tryMicrosoftSilentLogin();
     } else {
+      clearSilentAuthTimeout();
       setStatus("unauthenticated");
     }
+    return () => clearSilentAuthTimeout();
   }, [accessToken, accessTokenExpiry, clearAuth, instance, setAuth, silentLogin, user]);
 
   if (status === "checking") {
