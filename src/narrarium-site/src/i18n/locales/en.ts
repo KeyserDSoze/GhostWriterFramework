@@ -115,17 +115,22 @@ const en = {
     liveReady: "I am ready",
     bigTalkHint: "Press the big button and talk. When you stop, I can start automatically; press again to send immediately.",
     interruptHint: "Press the big button to interrupt the request or audio.",
+    noSpeechHeard: "I did not hear any text. Try again.",
+    readingTarget: "Sure, I will read {{title}} to you.",
+    readTargetEmpty: "I found the text, but it seems empty.",
     voiceStatusTitle: {
       idle: "I am ready",
       listening: "I am listening",
       thinking: "Thinking",
-      speaking: "Speaking"
+      speaking: "Speaking",
+      "not-heard": "I did not hear that"
     },
     voiceStatus: {
       idle: "Press Talk, ask a question, and I will answer aloud.",
       listening: "I am listening. Stop when you are done and I will start automatically.",
       thinking: "I am preparing the answer and any actions.",
-      speaking: "I am answering aloud. You can stop me whenever you want."
+      speaking: "I am answering aloud. You can stop me whenever you want.",
+      "not-heard": "I did not receive usable speech text. Press and try again."
     },
     read: "Read",
     stopReading: "Stop reading",

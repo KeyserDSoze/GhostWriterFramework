@@ -115,17 +115,22 @@ const it = {
     liveReady: "Sono pronto",
     bigTalkHint: "Premi il pulsante grande e parla. Quando ti fermi, posso partire da solo; se vuoi inviare subito, premi di nuovo.",
     interruptHint: "Premi il pulsante grande per interrompere richiesta o audio.",
+    noSpeechHeard: "Non ho sentito testo. Riprova.",
+    readingTarget: "Certo, ti leggo {{title}}.",
+    readTargetEmpty: "Ho trovato il testo, ma sembra vuoto.",
     voiceStatusTitle: {
       idle: "Sono pronto",
       listening: "Ti ascolto",
       thinking: "Ci sto pensando",
-      speaking: "Ti sto rispondendo"
+      speaking: "Ti sto rispondendo",
+      "not-heard": "Non ho sentito"
     },
     voiceStatus: {
       idle: "Premi Parla, fai una domanda e io risponderò a voce.",
       listening: "Ti sto ascoltando. Fermati quando hai finito: partirò da solo.",
       thinking: "Sto preparando la risposta e le eventuali azioni.",
-      speaking: "Sto rispondendo a voce. Puoi fermarmi quando vuoi."
+      speaking: "Sto rispondendo a voce. Puoi fermarmi quando vuoi.",
+      "not-heard": "Non ho ricevuto una trascrizione utilizzabile. Premi e riprova."
     },
     read: "Leggi",
     stopReading: "Ferma lettura",

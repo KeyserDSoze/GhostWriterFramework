@@ -45,6 +45,7 @@ import {
   createBranchFromBase,
   createFile,
   deleteFile,
+  loadFileContent,
   readFileWithSha,
   revertFileToRef,
   updateFile,
@@ -92,6 +93,8 @@ export function AssistantPanel() {
   const voiceModeRef = useRef(false);
   const liveAbortRef = useRef<AbortController | null>(null);
   const waitingToneTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const localAudioHandledRef = useRef(false);
+  const localAudioDoneRef = useRef<Promise<void> | null>(null);
   const {
     open,
     setOpen,
@@ -119,7 +122,7 @@ export function AssistantPanel() {
   const [autoSend, setAutoSend] = useState(false);
   const [speechController, setSpeechController] = useState<SpeechController | null>(null);
   const [voiceMode, setVoiceMode] = useState(false);
-  const [voiceStatus, setVoiceStatus] = useState<"idle" | "listening" | "thinking" | "speaking">("idle");
+  const [voiceStatus, setVoiceStatus] = useState<"idle" | "listening" | "thinking" | "speaking" | "not-heard">("idle");
   const [lastVoiceTranscript, setLastVoiceTranscript] = useState("");
   const [diffMode, setDiffMode] = useState<Record<string, boolean>>({});
   const [previousContents, setPreviousContents] = useState<Record<string, string>>({});
@@ -353,6 +356,7 @@ export function AssistantPanel() {
               else if (autoSend) void sendPrompt(transcript);
               else appendDraftText(transcript);
             } else if (voiceModeRef.current) {
+              setLastVoiceTranscript(t("assistant.noSpeechHeard"));
               setVoiceStatus("idle");
             }
           } catch (err) {
@@ -415,7 +419,13 @@ export function AssistantPanel() {
         void handleVoiceTranscript(transcript);
         return;
       }
-      if (voiceModeRef.current) setVoiceStatus("idle");
+      if (voiceModeRef.current) {
+        setLastVoiceTranscript(t("assistant.noSpeechHeard"));
+        setVoiceStatus("not-heard");
+        window.setTimeout(() => {
+          if (voiceModeRef.current) setVoiceStatus("idle");
+        }, 1800);
+      }
     };
     recognition.start();
   }
@@ -453,11 +463,19 @@ export function AssistantPanel() {
     if (abortController.signal.aborted) return;
     liveAbortRef.current = null;
     if (!voiceModeRef.current) return;
-    if (reply?.text) {
+    if (localAudioHandledRef.current) {
+      await localAudioDoneRef.current?.catch(() => undefined);
+      localAudioHandledRef.current = false;
+      localAudioDoneRef.current = null;
+      if (voiceModeRef.current) setVoiceStatus("idle");
+      return;
+    }
+    if (reply?.text && !localAudioHandledRef.current) {
       setVoiceStatus("speaking");
       const controller = await readText(reply.text);
       await controller?.done.catch(() => undefined);
     }
+    localAudioHandledRef.current = false;
     if (voiceModeRef.current) setVoiceStatus("idle");
   }
 
@@ -496,6 +514,8 @@ export function AssistantPanel() {
   function interruptLiveVoice() {
     liveAbortRef.current?.abort();
     liveAbortRef.current = null;
+    localAudioHandledRef.current = false;
+    localAudioDoneRef.current = null;
     stopWaitingTone();
     if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
     speechRecognitionRef.current?.stop?.();
@@ -508,6 +528,7 @@ export function AssistantPanel() {
   async function sendPrompt(prompt: string, options?: { spokenMode?: boolean; signal?: AbortSignal }): Promise<AssistantMessage | null> {
     const trimmed = prompt.trim();
     if (!trimmed || busy) return null;
+    localAudioHandledRef.current = false;
     const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches);
     const book = routeContext.book;
     const token = book ? resolveBookToken(book, settings) : "";
@@ -517,6 +538,12 @@ export function AssistantPanel() {
     setDraft("");
     setBusy(true);
     try {
+      const localReply = await tryHandleLocalVoiceTool(trimmed, { context: routeContext, book, token, spokenMode: options?.spokenMode });
+      if (localReply) {
+        updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, localReply] }));
+        setOpen(true);
+        return localReply;
+      }
       const reply = await runAssistantPrompt({
         prompt: trimmed,
         context: routeContext,
@@ -546,6 +573,89 @@ export function AssistantPanel() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function tryHandleLocalVoiceTool(
+    prompt: string,
+    input: {
+      context: Awaited<ReturnType<typeof loadWriterContext>>;
+      book: Awaited<ReturnType<typeof loadWriterContext>>["book"];
+      token: string;
+      spokenMode?: boolean;
+    },
+  ): Promise<AssistantMessage | null> {
+    const readTarget = resolveReadTarget(prompt, input.context);
+    if (!readTarget || !input.book || !input.token || !input.context.structure) return null;
+    const text = await loadReadTargetText(readTarget, input.book, input.token, input.context.structure.loadedBranch);
+    if (!text.trim()) return makeAssistantReply(t("assistant.readTargetEmpty"));
+    const title = readTarget.kind === "chapter" ? readTarget.chapter.title : readTarget.paragraph.title;
+    const reply = makeAssistantReply(t("assistant.readingTarget", { title }));
+    localAudioHandledRef.current = true;
+    setVoiceStatus("speaking");
+    const controller = await readText(text);
+    localAudioDoneRef.current = controller?.done ?? Promise.resolve();
+    return reply;
+  }
+
+  function makeAssistantReply(text: string): AssistantMessage {
+    return { id: crypto.randomUUID(), role: "assistant", text };
+  }
+
+  function resolveReadTarget(prompt: string, context: Awaited<ReturnType<typeof loadWriterContext>>):
+    | { kind: "chapter"; chapter: NonNullable<typeof context.chapter> }
+    | { kind: "paragraph"; chapter: NonNullable<typeof context.chapter>; paragraph: NonNullable<typeof context.paragraph> }
+    | null {
+    const lower = prompt.toLowerCase();
+    if (!/\b(leggi|leggimi|riproduci|ascolta|read|play)\b/.test(lower)) return null;
+    const structure = context.structure;
+    if (!structure) return null;
+    const paragraphThenChapterMatch = lower.match(/(?:paragrafo|paragraph|scena|scene)\s+(\d+).*?(?:capitolo|chapter)\s+(\d+)/);
+    const chapterThenParagraphMatch = lower.match(/(?:capitolo|chapter)\s+(\d+).*?(?:paragrafo|paragraph|scena|scene)\s+(\d+)/);
+    if (paragraphThenChapterMatch || chapterThenParagraphMatch) {
+      const paragraphNumber = (paragraphThenChapterMatch?.[1] ?? chapterThenParagraphMatch?.[2] ?? "").padStart(3, "0");
+      const chapterNumber = (paragraphThenChapterMatch?.[2] ?? chapterThenParagraphMatch?.[1] ?? "").padStart(3, "0");
+      const chapter = structure.chapters.find((entry) => entry.slug.startsWith(`${chapterNumber}-`));
+      const paragraph = chapter?.paragraphs.find((entry) => entry.number === paragraphNumber);
+      if (chapter && paragraph) return { kind: "paragraph", chapter, paragraph };
+    }
+    const paragraphMatch = lower.match(/(?:questo\s+)?(?:paragrafo|paragraph|scena|scene)\s*(\d+)?/);
+    if (paragraphMatch && context.chapter) {
+      const paragraphNumber = paragraphMatch[1]?.padStart(3, "0");
+      const paragraph = paragraphNumber
+        ? context.chapter.paragraphs.find((entry) => entry.number === paragraphNumber)
+        : context.paragraph;
+      if (paragraph) return { kind: "paragraph", chapter: context.chapter, paragraph };
+    }
+    const chapterMatch = lower.match(/(?:questo\s+)?(?:capitolo|chapter)\s*(\d+)?/);
+    if (chapterMatch) {
+      const chapterNumber = chapterMatch[1]?.padStart(3, "0");
+      const chapter = chapterNumber
+        ? structure.chapters.find((entry) => entry.slug.startsWith(`${chapterNumber}-`))
+        : context.chapter;
+      if (chapter) return { kind: "chapter", chapter };
+    }
+    return null;
+  }
+
+  async function loadReadTargetText(
+    target: { kind: "chapter"; chapter: Awaited<ReturnType<typeof loadWriterContext>>["chapter"] } | { kind: "paragraph"; chapter: Awaited<ReturnType<typeof loadWriterContext>>["chapter"]; paragraph: Awaited<ReturnType<typeof loadWriterContext>>["paragraph"] },
+    book: NonNullable<Awaited<ReturnType<typeof loadWriterContext>>["book"]>,
+    token: string,
+    readBranch: string,
+  ): Promise<string> {
+    if (target.kind === "paragraph" && target.paragraph) {
+      return stripFrontmatterForSpeech(await loadFileContent(token, book.owner, book.repo, target.paragraph.path, readBranch));
+    }
+    if (target.kind === "chapter" && target.chapter) {
+      const chapterIntro = await loadFileContent(token, book.owner, book.repo, `${target.chapter.path}/chapter.md`, readBranch).catch(() => "");
+      const paragraphs = await Promise.all(target.chapter.paragraphs.map((paragraph) => loadFileContent(token, book.owner, book.repo, paragraph.path, readBranch).catch(() => "")));
+      return [`# ${target.chapter.title}`, stripFrontmatterForSpeech(chapterIntro), ...paragraphs.map(stripFrontmatterForSpeech)].filter(Boolean).join("\n\n");
+    }
+    return "";
+  }
+
+  function stripFrontmatterForSpeech(raw: string): string {
+    return raw.replace(/^---[\s\S]*?---\s*/, "").trim();
   }
 
   function buildAttachmentImportPrompt(): string {
@@ -985,14 +1095,14 @@ export function AssistantPanel() {
         <button
           type="button"
           onClick={() => void startVoiceTurn()}
-          className={voiceStatus === "idle" ? "flex h-36 w-36 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44" : "flex h-36 w-36 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44"}
+          className={voiceStatus === "idle" || voiceStatus === "not-heard" ? "flex h-36 w-36 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44" : "flex h-36 w-36 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44"}
         >
-          {voiceStatus === "idle" ? <Mic className="h-14 w-14" /> : <Square className="h-14 w-14" />}
-          <span className="sr-only">{voiceStatus === "idle" ? t("assistant.talk") : t("assistant.interrupt")}</span>
+          {voiceStatus === "idle" || voiceStatus === "not-heard" ? <Mic className="h-14 w-14" /> : <Square className="h-14 w-14" />}
+          <span className="sr-only">{voiceStatus === "idle" || voiceStatus === "not-heard" ? t("assistant.talk") : t("assistant.interrupt")}</span>
         </button>
 
         <div className="text-xs text-muted-foreground">
-          {voiceStatus === "idle" ? t("assistant.bigTalkHint") : t("assistant.interruptHint")}
+          {voiceStatus === "idle" || voiceStatus === "not-heard" ? t("assistant.bigTalkHint") : t("assistant.interruptHint")}
         </div>
       </div>
     </div>
