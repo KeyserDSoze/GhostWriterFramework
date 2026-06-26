@@ -26,6 +26,7 @@ export async function completeText(
   integration: AIIntegration,
   messages: LlmMessage[],
   purpose: "writing" | "review" = "writing",
+  options?: { signal?: AbortSignal },
 ): Promise<string> {
   const model = purpose === "review"
     ? integration.modelReview || integration.modelWriting || "gpt-4o"
@@ -49,7 +50,7 @@ export async function completeText(
       apiVersion: integration.apiVersion || "2024-10-21",
       dangerouslyAllowBrowser: true,
     });
-    const response = await client.chat.completions.create({ model, messages: normalizedMessages as never });
+    const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
     return response.choices[0]?.message?.content ?? "";
   }
 
@@ -59,7 +60,7 @@ export async function completeText(
       baseURL: integration.endpoint || "https://api.openai.com/v1",
       dangerouslyAllowBrowser: true,
     });
-    const response = await client.chat.completions.create({ model, messages: normalizedMessages as never });
+    const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
     return response.choices[0]?.message?.content ?? "";
   }
 

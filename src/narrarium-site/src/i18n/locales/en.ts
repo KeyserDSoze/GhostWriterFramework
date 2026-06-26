@@ -110,6 +110,17 @@ const en = {
     liveVoice: "Live voice",
     liveOn: "Live on",
     talk: "Talk",
+    interrupt: "Interrupt",
+    backToChat: "Back to chat",
+    liveReady: "I am ready",
+    bigTalkHint: "Press the big button and talk. When you stop, I can start automatically; press again to send immediately.",
+    interruptHint: "Press the big button to interrupt the request or audio.",
+    voiceStatusTitle: {
+      idle: "I am ready",
+      listening: "I am listening",
+      thinking: "Thinking",
+      speaking: "Speaking"
+    },
     voiceStatus: {
       idle: "Press Talk, ask a question, and I will answer aloud.",
       listening: "I am listening. Stop when you are done and I will start automatically.",

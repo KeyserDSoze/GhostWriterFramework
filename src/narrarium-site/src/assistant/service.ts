@@ -42,6 +42,7 @@ type PromptInput = {
   compactedMessageCount: number;
   attachments: AssistantAttachment[];
   spokenMode?: boolean;
+  signal?: AbortSignal;
 };
 
 export async function runAssistantPrompt(input: {
@@ -56,6 +57,7 @@ export async function runAssistantPrompt(input: {
   compactedMessageCount: number;
   attachments: AssistantAttachment[];
   spokenMode?: boolean;
+  signal?: AbortSignal;
 }): Promise<AssistantMessage> {
   const {
     prompt,
@@ -69,6 +71,7 @@ export async function runAssistantPrompt(input: {
     compactedMessageCount,
     attachments,
     spokenMode,
+    signal,
   } = input;
   const lowered = prompt.toLowerCase();
   const promptInput: PromptInput = {
@@ -80,6 +83,7 @@ export async function runAssistantPrompt(input: {
     compactedMessageCount,
     attachments,
     spokenMode,
+    signal,
   };
 
   if (!book || !token) {
@@ -171,7 +175,7 @@ async function summarizeCurrentContext(input: PromptInput): Promise<AssistantMes
   const answer = await completeText(integration, [
     buildSystemMessage(input, "You are Narrarium's writing assistant. Summarize the current context clearly and concretely. Use compact paragraphs and bullet points when useful."),
     buildUserMessage(input, `Request: ${input.prompt}`),
-  ]);
+  ], "writing", { signal: input.signal });
   return makeAssistantMessage("assistant", answer.trim());
 }
 
@@ -181,7 +185,7 @@ async function reviewCurrentContext(input: PromptInput): Promise<AssistantMessag
   const answer = await completeText(integration, [
     buildSystemMessage(input, "You are Narrarium's editorial reviewer. Review the current context with concrete strengths, issues, and specific next actions. Preserve facts; do not invent canon."),
     buildUserMessage(input, `Review request: ${input.prompt}`),
-  ], "review");
+  ], "review", { signal: input.signal });
   return makeAssistantMessage("assistant", answer.trim());
 }
 
@@ -191,7 +195,7 @@ async function answerFromContext(input: PromptInput): Promise<AssistantMessage> 
   const answer = await completeText(integration, [
     buildSystemMessage(input, "You are Narrarium's contextual writing copilot. Answer only from the provided repository context and current location. The manifest lists available files; only LOADED FILE contents are available in full. If needed content is not loaded, say which file you need."),
     buildUserMessage(input, `User request: ${input.prompt}`),
-  ]);
+  ], "writing", { signal: input.signal });
   return makeAssistantMessage("assistant", answer.trim());
 }
 

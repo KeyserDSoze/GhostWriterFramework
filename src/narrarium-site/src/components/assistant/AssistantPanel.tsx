@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 import {
   Bot,
+  Ghost,
   GitBranch,
   Loader2,
   Maximize2,
@@ -82,10 +83,13 @@ export function AssistantPanel() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const speechRecognitionRef = useRef<any>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const voiceModeRef = useRef(false);
+  const liveAbortRef = useRef<AbortController | null>(null);
+  const waitingToneTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const {
     open,
     setOpen,
@@ -114,6 +118,7 @@ export function AssistantPanel() {
   const [speechController, setSpeechController] = useState<SpeechController | null>(null);
   const [voiceMode, setVoiceMode] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<"idle" | "listening" | "thinking" | "speaking">("idle");
+  const [lastVoiceTranscript, setLastVoiceTranscript] = useState("");
   const [diffMode, setDiffMode] = useState<Record<string, boolean>>({});
   const [previousContents, setPreviousContents] = useState<Record<string, string>>({});
   const [loadingDiffPath, setLoadingDiffPath] = useState<string | null>(null);
@@ -182,10 +187,44 @@ export function AssistantPanel() {
   useEffect(() => {
     return () => {
       if (silenceTimerRef.current) clearInterval(silenceTimerRef.current);
+      if (waitingToneTimerRef.current) clearInterval(waitingToneTimerRef.current);
+      liveAbortRef.current?.abort();
       if (audioContextRef.current) void audioContextRef.current.close().catch(() => undefined);
       if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
     };
   }, []);
+
+  function playWaitTick() {
+    try {
+      const context = new AudioContext();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.frequency.value = 660;
+      gain.gain.value = 0.035;
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      window.setTimeout(() => {
+        oscillator.stop();
+        void context.close().catch(() => undefined);
+      }, 120);
+    } catch {
+      // Audio cues are best-effort only.
+    }
+  }
+
+  function startWaitingTone() {
+    stopWaitingTone();
+    playWaitTick();
+    waitingToneTimerRef.current = setInterval(playWaitTick, 1500);
+  }
+
+  function stopWaitingTone() {
+    if (waitingToneTimerRef.current) {
+      clearInterval(waitingToneTimerRef.current);
+      waitingToneTimerRef.current = null;
+    }
+  }
 
   function ensureSession() {
     if (currentSession) return currentSession;
@@ -332,6 +371,7 @@ export function AssistantPanel() {
       return;
     }
     const recognition = new SpeechRecognition();
+    speechRecognitionRef.current = recognition;
     recognition.lang = settings.ui.language === "it" ? "it-IT" : "en-US";
     recognition.continuous = false;
     recognition.interimResults = false;
@@ -347,6 +387,7 @@ export function AssistantPanel() {
     };
     recognition.onerror = () => setListening(false);
     recognition.onend = () => {
+      speechRecognitionRef.current = null;
       setListening(false);
       if (voiceModeRef.current && voiceStatus === "listening") setVoiceStatus("idle");
     };
@@ -376,8 +417,15 @@ export function AssistantPanel() {
     void readText(text);
   }
   async function handleVoiceTranscript(transcript: string) {
+    setLastVoiceTranscript(transcript);
     setVoiceStatus("thinking");
-    const reply = await sendPrompt(transcript, { spokenMode: true });
+    startWaitingTone();
+    const abortController = new AbortController();
+    liveAbortRef.current = abortController;
+    const reply = await sendPrompt(transcript, { spokenMode: true, signal: abortController.signal });
+    stopWaitingTone();
+    if (abortController.signal.aborted) return;
+    liveAbortRef.current = null;
     if (!voiceModeRef.current) return;
     if (reply?.text) {
       setVoiceStatus("speaking");
@@ -392,8 +440,7 @@ export function AssistantPanel() {
       const next = !enabled;
       voiceModeRef.current = next;
       if (!next) {
-        if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
-        stopReading();
+        interruptLiveVoice();
         setVoiceStatus("idle");
       } else {
         setOpen(true);
@@ -404,6 +451,15 @@ export function AssistantPanel() {
   }
 
   async function startVoiceTurn() {
+    if (listening) {
+      if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+      speechRecognitionRef.current?.stop?.();
+      return;
+    }
+    if (voiceStatus === "thinking" || voiceStatus === "speaking") {
+      interruptLiveVoice();
+      return;
+    }
     if (!voiceModeRef.current) {
       setVoiceMode(true);
       voiceModeRef.current = true;
@@ -411,7 +467,19 @@ export function AssistantPanel() {
     await startSpeechToText();
   }
 
-  async function sendPrompt(prompt: string, options?: { spokenMode?: boolean }): Promise<AssistantMessage | null> {
+  function interruptLiveVoice() {
+    liveAbortRef.current?.abort();
+    liveAbortRef.current = null;
+    stopWaitingTone();
+    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+    speechRecognitionRef.current?.stop?.();
+    speechRecognitionRef.current = null;
+    stopReading();
+    setListening(false);
+    setVoiceStatus("idle");
+  }
+
+  async function sendPrompt(prompt: string, options?: { spokenMode?: boolean; signal?: AbortSignal }): Promise<AssistantMessage | null> {
     const trimmed = prompt.trim();
     if (!trimmed || busy) return null;
     const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches);
@@ -435,11 +503,13 @@ export function AssistantPanel() {
         compactedMessageCount: session.compactedMessageCount,
         attachments: session.attachments,
         spokenMode: options?.spokenMode,
+        signal: options?.signal,
       });
       updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, reply] }));
       setOpen(true);
       return reply;
     } catch (err) {
+      if (options?.signal?.aborted) return null;
       const errorMessage = { id: crypto.randomUUID(), role: "assistant" as const, text: err instanceof Error ? err.message : t("assistant.requestFailed") };
       updateCurrentSession((current) => ({
         ...current,
@@ -859,13 +929,56 @@ export function AssistantPanel() {
     </div>
   );
 
+  const liveVoicePanel = (
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_50%_20%,hsl(var(--primary)/0.18),transparent_34%),linear-gradient(180deg,hsl(var(--card)),hsl(var(--background)))]">
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <div>
+          <p className="font-semibold">{t("assistant.liveVoice")}</p>
+          <p className="text-xs text-muted-foreground">{contextLabel}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => { interruptLiveVoice(); voiceModeRef.current = false; setVoiceMode(false); }}>{t("assistant.backToChat")}</Button>
+          <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>{t("assistant.close")}</Button>
+        </div>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 px-6 py-8 text-center">
+        <div className="relative">
+          <div className={voiceStatus === "speaking" ? "absolute inset-0 animate-ping rounded-full bg-primary/20" : "absolute inset-0 rounded-full bg-primary/10"} />
+          <div className="relative flex h-44 w-44 items-center justify-center rounded-full border bg-background/80 shadow-2xl backdrop-blur sm:h-56 sm:w-56">
+            <Ghost className={voiceStatus === "listening" ? "h-24 w-24 animate-pulse text-primary sm:h-32 sm:w-32" : "h-24 w-24 text-primary sm:h-32 sm:w-32"} />
+          </div>
+        </div>
+
+        <div className="max-w-lg space-y-2">
+          <p className="text-2xl font-semibold tracking-tight">{voiceStatus === "idle" ? t("assistant.liveReady") : t(`assistant.voiceStatusTitle.${voiceStatus}`)}</p>
+          <p className="text-sm leading-6 text-muted-foreground">{t(`assistant.voiceStatus.${voiceStatus}`)}</p>
+          {lastVoiceTranscript && <p className="rounded-2xl border bg-background/70 px-4 py-3 text-sm text-muted-foreground">“{lastVoiceTranscript}”</p>}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => void startVoiceTurn()}
+          className={voiceStatus === "idle" ? "flex h-36 w-36 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44" : "flex h-36 w-36 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44"}
+        >
+          {voiceStatus === "idle" ? <Mic className="h-14 w-14" /> : <Square className="h-14 w-14" />}
+          <span className="sr-only">{voiceStatus === "idle" ? t("assistant.talk") : t("assistant.interrupt")}</span>
+        </button>
+
+        <div className="text-xs text-muted-foreground">
+          {voiceStatus === "idle" ? t("assistant.bigTalkHint") : t("assistant.interruptHint")}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <>
       <Button type="button" className="fixed bottom-4 right-4 z-40 rounded-full shadow-lg lg:bottom-6 lg:right-6" onClick={() => setOpen(true)}>
         <Bot className="mr-2 h-4 w-4" />{t("assistant.floatingButton")}
       </Button>
       <Dialog open={syncOpen} onOpenChange={setSyncOpen}><DialogContent hideCloseButton className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[920px]">{syncPanel}</DialogContent></Dialog>
-      <Dialog open={open} onOpenChange={setOpen}><DialogContent hideCloseButton className={fullScreen ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0" : "left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[720px] lg:right-6 lg:left-auto lg:top-auto lg:bottom-6 lg:h-[80dvh] lg:w-[420px] lg:max-w-[420px] lg:translate-x-0 lg:translate-y-0"}>{panel}</DialogContent></Dialog>
+      <Dialog open={open} onOpenChange={(next) => { if (!next) interruptLiveVoice(); setOpen(next); }}><DialogContent hideCloseButton className={voiceMode || fullScreen ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0" : "left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[720px] lg:right-6 lg:left-auto lg:top-auto lg:bottom-6 lg:h-[80dvh] lg:w-[420px] lg:max-w-[420px] lg:translate-x-0 lg:translate-y-0"}>{voiceMode ? liveVoicePanel : panel}</DialogContent></Dialog>
     </>
   );
 }

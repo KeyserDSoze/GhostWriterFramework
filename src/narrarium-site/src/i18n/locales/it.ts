@@ -110,6 +110,17 @@ const it = {
     liveVoice: "Voce live",
     liveOn: "Live attivo",
     talk: "Parla",
+    interrupt: "Interrompi",
+    backToChat: "Torna alla chat",
+    liveReady: "Sono pronto",
+    bigTalkHint: "Premi il pulsante grande e parla. Quando ti fermi, posso partire da solo; se vuoi inviare subito, premi di nuovo.",
+    interruptHint: "Premi il pulsante grande per interrompere richiesta o audio.",
+    voiceStatusTitle: {
+      idle: "Sono pronto",
+      listening: "Ti ascolto",
+      thinking: "Ci sto pensando",
+      speaking: "Ti sto rispondendo"
+    },
     voiceStatus: {
       idle: "Premi Parla, fai una domanda e io risponderò a voce.",
       listening: "Ti sto ascoltando. Fermati quando hai finito: partirò da solo.",
