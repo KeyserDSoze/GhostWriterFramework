@@ -25,7 +25,10 @@ export function LoginScreen() {
 
   function returnToApp() {
     const returnTo =
-      (location.state as { returnTo?: string } | null)?.returnTo ?? "/app/books";
+      (location.state as { returnTo?: string } | null)?.returnTo
+      ?? sessionStorage.getItem("narrarium-return-to")
+      ?? "/app/books";
+    sessionStorage.removeItem("narrarium-return-to");
     navigate(returnTo, { replace: true });
   }
 

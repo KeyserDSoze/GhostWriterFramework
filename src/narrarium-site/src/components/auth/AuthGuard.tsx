@@ -19,7 +19,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const { instance } = useMsal();
   const location = useLocation();
   const [status, setStatus] = useState<Status>("checking");
-  const didTryRef = useRef(false);
+  const lastAttemptKeyRef = useRef("");
 
   const silentLogin = useGoogleLogin({
     scope: GOOGLE_DRIVE_SCOPES,
@@ -61,9 +61,6 @@ export function AuthGuard({ children }: AuthGuardProps) {
   });
 
   useEffect(() => {
-    if (didTryRef.current) return;
-    didTryRef.current = true;
-
     async function tryMicrosoftSilentLogin() {
       try {
         await ensureMsalInitialized();
@@ -94,14 +91,21 @@ export function AuthGuard({ children }: AuthGuardProps) {
       setStatus("ok");
     } else if (user?.provider === "google") {
       // Known user, but token missing/expired → try silent re-auth
+      const attemptKey = `google:${user.email}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
+      if (lastAttemptKeyRef.current === attemptKey) return;
+      lastAttemptKeyRef.current = attemptKey;
+      setStatus("checking");
       silentLogin();
     } else if (user?.provider === "microsoft") {
+      const attemptKey = `microsoft:${user.email}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
+      if (lastAttemptKeyRef.current === attemptKey) return;
+      lastAttemptKeyRef.current = attemptKey;
+      setStatus("checking");
       void tryMicrosoftSilentLogin();
     } else {
       setStatus("unauthenticated");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [accessToken, accessTokenExpiry, clearAuth, instance, setAuth, silentLogin, user]);
 
   if (status === "checking") {
     return (
@@ -112,10 +116,11 @@ export function AuthGuard({ children }: AuthGuardProps) {
   }
 
   if (status === "unauthenticated" || !accessToken) {
+    sessionStorage.setItem("narrarium-return-to", `${location.pathname}${location.search}${location.hash}`);
     return (
       <Navigate
         to="/login"
-        state={{ returnTo: location.pathname }}
+        state={{ returnTo: `${location.pathname}${location.search}${location.hash}` }}
         replace
       />
     );

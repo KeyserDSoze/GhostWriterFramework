@@ -220,6 +220,11 @@ const en = {
     signOut: "Sign out",
     ttsFailed: "TTS failed"
   },
+  pwa: {
+    updateTitle: "New version available",
+    updateDescription: "Narrarium has been updated. Reload to use the latest version.",
+    updateNow: "Update now"
+  },
   git: {
     commits: "Commits",
     branchCommits: "Branch commits",

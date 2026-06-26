@@ -220,6 +220,11 @@ const it = {
     signOut: "Esci",
     ttsFailed: "TTS non riuscito"
   },
+  pwa: {
+    updateTitle: "Nuova versione disponibile",
+    updateDescription: "Narrarium è stato aggiornato. Ricarica per usare l'ultima versione.",
+    updateNow: "Aggiorna ora"
+  },
   git: {
     commits: "Commit",
     branchCommits: "Commit del branch",
