@@ -3,17 +3,26 @@ import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 import {
   Bot,
+  BookOpen,
+  ChevronDown,
+  ClipboardCheck,
+  FileText,
   Ghost,
   GitBranch,
+  History,
   Loader2,
   Maximize2,
+  MessageSquarePlus,
   Mic,
   Minimize2,
   Paperclip,
+  Search,
   Send,
   Sparkles,
   Square,
   Trash2,
+  Users,
+  Volume2,
   Wand2,
   X,
 } from "lucide-react";
@@ -38,7 +47,15 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { resolveBookToken } from "@/types/settings";
 import {
   compareBranches,
@@ -70,6 +87,14 @@ const ATTACHMENT_TARGETS = [
 ] as const;
 
 type AttachmentTarget = (typeof ATTACHMENT_TARGETS)[number]["value"];
+
+type QuickAction = {
+  id: string;
+  labelKey: string;
+  icon: typeof Sparkles;
+  run: () => void;
+  disabled?: boolean;
+};
 
 export function AssistantPanel() {
   const { t } = useTranslation();
@@ -127,6 +152,20 @@ export function AssistantPanel() {
   const [diffMode, setDiffMode] = useState<Record<string, boolean>>({});
   const [previousContents, setPreviousContents] = useState<Record<string, string>>({});
   const [loadingDiffPath, setLoadingDiffPath] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"chat" | "history">("chat");
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 1023px)");
+    const update = () => setIsMobile(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    if (open && isMobile) setFullScreen(true);
+  }, [open, isMobile]);
 
   useEffect(() => {
     voiceModeRef.current = voiceMode;
@@ -686,12 +725,13 @@ export function AssistantPanel() {
     }
   }
 
-  async function deleteCurrentSession() {
-    if (!user || !accessToken || !currentSession?.fileId) return;
+  async function deleteSavedSession(fileId: string) {
+    if (!user || !accessToken) return;
     try {
-      await deleteAssistantSession(user.provider, accessToken, currentSession.fileId);
-      setSessions(sessions.filter((session) => session.fileId !== currentSession.fileId));
-      setCurrentSession(null);
+      await deleteAssistantSession(user.provider, accessToken, fileId);
+      setSessions(sessions.filter((session) => session.fileId !== fileId));
+      if (currentSession?.fileId === fileId) setCurrentSession(null);
+      toast({ title: t("assistant.toastChatDeleted") });
     } catch (err) {
       toast({ title: t("assistant.toastDeleteChatFailed"), description: String(err), variant: "destructive" });
     }
@@ -863,6 +903,55 @@ export function AssistantPanel() {
     setDiffMode((current) => ({ ...current, [key]: true }));
   }
 
+  const contextActions = useMemo<QuickAction[]>(() => {
+    const actions: QuickAction[] = [];
+    const ask = (prompt: string) => () => void sendPrompt(prompt);
+    const canonSection = route.kind === "canon" ? route.section : undefined;
+
+    if (route.kind === "paragraph" || route.kind === "paragraph-workspace") {
+      actions.push({ id: "fix", labelKey: "assistant.actions.fixParagraph", icon: Wand2, run: ask("Improve the current paragraph while preserving all facts.") });
+      actions.push({ id: "review", labelKey: "assistant.actions.review", icon: Sparkles, run: ask("Review this paragraph and give strengths, risks, and concrete next actions.") });
+      actions.push({ id: "evaluation", labelKey: "assistant.actions.evaluation", icon: ClipboardCheck, run: ask("Write or refresh the evaluation for this paragraph.") });
+      actions.push({ id: "resume", labelKey: "assistant.actions.resume", icon: FileText, run: ask("Write or refresh the resume for the current chapter.") });
+    } else if (route.kind === "chapter" || route.kind === "chapter-workspace") {
+      actions.push({ id: "summary", labelKey: "assistant.actions.summary", icon: Sparkles, run: ask("Summarize this chapter: what happens, who is present, and what matters next.") });
+      actions.push({ id: "review", labelKey: "assistant.actions.review", icon: Sparkles, run: ask("Review this chapter and give strengths, risks, and concrete next actions.") });
+      actions.push({ id: "resume", labelKey: "assistant.actions.resume", icon: FileText, run: ask("Write or refresh the resume for this chapter.") });
+      actions.push({ id: "evaluation", labelKey: "assistant.actions.evaluation", icon: ClipboardCheck, run: ask("Write or refresh the evaluation for this chapter.") });
+    } else if (canonSection === "characters") {
+      actions.push({ id: "enrich", labelKey: "assistant.actions.enrichCharacter", icon: Users, run: ask("Enrich this character sheet: deepen motivation, voice, relationships, and arc while preserving canon.") });
+      actions.push({ id: "consistency", labelKey: "assistant.actions.checkConsistency", icon: Sparkles, run: ask("Check this character against the loaded canon and flag contradictions or gaps.") });
+      actions.push({ id: "appearances", labelKey: "assistant.actions.findAppearances", icon: Search, run: ask("Search the book for scenes and chapters where this character appears or is mentioned.") });
+    } else if (canonSection === "locations") {
+      actions.push({ id: "enrich", labelKey: "assistant.actions.enrichLocation", icon: BookOpen, run: ask("Enrich this location: atmosphere, sensory detail, story function, and risks, preserving canon.") });
+      actions.push({ id: "consistency", labelKey: "assistant.actions.checkConsistency", icon: Sparkles, run: ask("Check this location against the loaded canon and flag contradictions or gaps.") });
+      actions.push({ id: "appearances", labelKey: "assistant.actions.findAppearances", icon: Search, run: ask("Search the book for scenes set in or referencing this location.") });
+    } else if (canonSection === "factions") {
+      actions.push({ id: "enrich", labelKey: "assistant.actions.enrichFaction", icon: Users, run: ask("Enrich this faction: mission, ideology, methods, and alliances, preserving canon.") });
+      actions.push({ id: "consistency", labelKey: "assistant.actions.checkConsistency", icon: Sparkles, run: ask("Check this faction against the loaded canon and flag contradictions or gaps.") });
+      actions.push({ id: "appearances", labelKey: "assistant.actions.findAppearances", icon: Search, run: ask("Search the book for scenes and characters tied to this faction.") });
+    } else if (canonSection === "items") {
+      actions.push({ id: "enrich", labelKey: "assistant.actions.enrichItem", icon: BookOpen, run: ask("Enrich this item: appearance, purpose, significance, and limitations, preserving canon.") });
+      actions.push({ id: "consistency", labelKey: "assistant.actions.checkConsistency", icon: Sparkles, run: ask("Check this item against the loaded canon and flag contradictions or gaps.") });
+      actions.push({ id: "appearances", labelKey: "assistant.actions.findAppearances", icon: Search, run: ask("Search the book for scenes where this item appears or matters.") });
+    } else if (canonSection === "secrets") {
+      actions.push({ id: "reveal", labelKey: "assistant.actions.reviewReveal", icon: Sparkles, run: ask("Review this secret: holders, stakes, protection, and reveal timing, and flag leak risks.") });
+      actions.push({ id: "consistency", labelKey: "assistant.actions.checkConsistency", icon: Sparkles, run: ask("Check this secret against the loaded canon and flag premature reveals or contradictions.") });
+    } else if (canonSection === "timelines") {
+      actions.push({ id: "enrich", labelKey: "assistant.actions.enrichTimeline", icon: BookOpen, run: ask("Enrich this timeline event: participants, significance, and consequences, preserving canon.") });
+      actions.push({ id: "consistency", labelKey: "assistant.actions.checkConsistency", icon: Sparkles, run: ask("Check this event against the loaded canon and flag chronology contradictions.") });
+    } else {
+      actions.push({ id: "summary", labelKey: "assistant.actions.summary", icon: Sparkles, run: ask("Create a concise summary of where I am in this book and what matters next.") });
+      actions.push({ id: "plot", labelKey: "assistant.actions.plot", icon: FileText, run: ask("Update plot.md for the current book.") });
+      actions.push({ id: "search", labelKey: "assistant.actions.search", icon: Search, run: ask("Search the current book for relevant characters, paragraphs, or canon keywords.") });
+    }
+
+    actions.push({ id: "note", labelKey: "assistant.actions.saveNote", icon: FileText, run: ask("Create a writer note from the current context and save it.") });
+    if (bookId) actions.push({ id: "diff", labelKey: "assistant.actions.syncDiff", icon: GitBranch, run: () => void loadBranchDiff(), disabled: loadingDiff });
+    return actions;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route, bookId, loadingDiff]);
+
   const syncPanel = (
     <div className="flex h-full min-h-0 flex-col bg-card">
       <div className="flex items-center justify-between border-b px-4 py-3">
@@ -895,173 +984,211 @@ export function AssistantPanel() {
     </div>
   );
 
+  const messagesView = (
+    <div className="space-y-4">
+      {currentSession?.messages.length ? null : (
+        <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">{t("assistant.empty")}</div>
+      )}
+      {(currentSession?.messages ?? []).map((message, index) => (
+        <div key={message.id} className={message.role === "user" ? "flex justify-end" : "flex justify-start"}>
+          <div className={message.role === "user" ? "max-w-[85%]" : "w-full max-w-[92%]"}>
+            <div className={message.role === "user" ? "rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm leading-6 text-primary-foreground shadow-sm" : "rounded-2xl rounded-bl-sm border bg-background px-4 py-3 text-sm leading-7 whitespace-pre-wrap shadow-sm"}>{message.text}</div>
+            {message.action?.kind === "switch-book-branch" && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">{t("assistant.branchActionReady")}</Badge>
+                <Button size="sm" onClick={() => void applyBranchSwitch(index)} disabled={busy}><GitBranch className="mr-1 h-4 w-4" />{t("assistant.applyBranch")}</Button>
+              </div>
+            )}
+            {message.action?.kind === "apply-file-updates" && (
+              <div className="mt-2 rounded-xl border bg-muted/30 p-3 text-xs">
+                <p className="mb-2 font-medium">{t("assistant.proposedChanges")}</p>
+                <div className="space-y-2">
+                  {message.action.updates.map((update) => {
+                    const diffKey = `${message.id}::${update.path}`;
+                    const showDiff = diffMode[diffKey];
+                    return (
+                      <details key={update.path} className="rounded border bg-background p-2">
+                        <summary className="cursor-pointer font-mono">{update.path}</summary>
+                        {update.reason && <p className="mt-2 text-muted-foreground">{update.reason}</p>}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <Button size="sm" variant="outline" onClick={() => void toggleDiff(message.id, update)} disabled={loadingDiffPath === diffKey}>
+                            {loadingDiffPath === diffKey ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                            {showDiff ? t("assistant.hideDiff") : t("assistant.showDiff")}
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => void applySelectedFileUpdates(index, [update.path])} disabled={busy}>{t("assistant.applyThisFile")}</Button>
+                        </div>
+                        {showDiff ? (
+                          <FileDiff previous={previousContents[diffKey] ?? ""} next={update.content} className="mt-2 max-h-64" />
+                        ) : (
+                          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-[11px]">{update.content}</pre>
+                        )}
+                      </details>
+                    );
+                  })}
+                </div>
+                <Button className="mt-2" size="sm" onClick={() => void applySelectedFileUpdates(index)} disabled={busy}>{t("assistant.applyAllFiles")}</Button>
+              </div>
+            )}
+            {message.action?.kind === "undo-file-updates" && <div className="mt-2 flex items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy}>{t("assistant.undoChanges")}</Button></div>}
+            {message.action?.kind === "apply-paragraph-rewrite" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.rewriteReady")}</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy}>{t("assistant.applyToParagraph")}</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>{t("assistant.openChapter")}</Link></Button></div>}
+          </div>
+        </div>
+      ))}
+      {busy && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("assistant.thinking")}</div>}
+    </div>
+  );
+
+  const historyView = (
+    <div className="space-y-2">
+      <Button variant="outline" size="sm" className="w-full justify-start" onClick={newChat}>
+        <MessageSquarePlus className="mr-2 h-4 w-4" />{t("assistant.newChat")}
+      </Button>
+      {loadingSessions && <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("assistant.loadingChats")}</div>}
+      {!loadingSessions && sessions.length === 0 && <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">{t("assistant.noSavedChats")}</p>}
+      {sessions.map((session) => {
+        const id = session.fileId ?? session.id;
+        const active = (currentSession?.fileId ?? currentSession?.id) === id;
+        return (
+          <div key={id} className={active ? "flex items-center gap-2 rounded-xl border bg-primary/5 p-2" : "flex items-center gap-2 rounded-xl border p-2 hover:bg-muted/40"}>
+            <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { void openSession(id); setActiveTab("chat"); }}>
+              <p className="truncate text-sm font-medium">{session.title || t("assistant.untitledChat")}</p>
+              <p className="truncate text-xs text-muted-foreground">{session.contextTitle || t("assistant.title")}</p>
+            </button>
+            {session.fileId && (
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => void deleteSavedSession(session.fileId!)}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
   const panel = (
     <div className="flex h-full min-h-0 flex-col bg-card">
-      <div className="flex items-center justify-between border-b px-4 py-3 gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <Bot className="h-4 w-4 text-primary" />
-            <p className="font-semibold">{t("assistant.title")}</p>
+      <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><Ghost className="h-4 w-4" /></div>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold leading-tight">{t("assistant.title")}</p>
+            <p className="truncate text-xs text-muted-foreground leading-tight">{contextLabel}</p>
           </div>
-          <p className="text-xs text-muted-foreground">{contextLabel}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant={voiceMode ? "default" : "ghost"} size="sm" onClick={toggleVoiceMode}>{voiceMode ? t("assistant.liveOn") : t("assistant.liveVoice")}</Button>
-          <Button variant="ghost" size="sm" onClick={newChat}>{t("assistant.new")}</Button>
-          <Button variant="ghost" size="sm" onClick={() => setFullScreen((value) => !value)}>{fullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}</Button>
-          <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>{t("assistant.close")}</Button>
+        <div className="flex items-center gap-1">
+          <Button variant={voiceMode ? "default" : "ghost"} size="icon" className="h-8 w-8" title={t("assistant.liveVoice")} onClick={toggleVoiceMode}><Mic className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" title={fullScreen ? t("assistant.exitFullscreen") : t("assistant.fullscreen")} onClick={() => setFullScreen((value) => !value)}>{fullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}</Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" title={t("assistant.close")} onClick={() => setOpen(false)}><X className="h-4 w-4" /></Button>
         </div>
       </div>
 
-      <div className="border-b px-4 py-3 space-y-3">
-        <div className="text-xs text-muted-foreground">{contextSummary || t("assistant.contextFollows")}</div>
-        {voiceMode && (
-          <div className="flex items-center gap-3 rounded-2xl border bg-primary/5 p-3">
-            <div className={voiceStatus === "speaking" ? "flex h-12 w-12 animate-pulse items-center justify-center rounded-full bg-primary text-primary-foreground" : "flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground"}>
-              <Bot className="h-6 w-6" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">{t("assistant.liveVoice")}</p>
-              <p className="text-xs text-muted-foreground">{t(`assistant.voiceStatus.${voiceStatus}`)}</p>
-            </div>
-            <Button size="sm" onClick={() => void startVoiceTurn()} disabled={busy || voiceStatus === "speaking"}>
-              {listening ? <Square className="mr-1 h-4 w-4" /> : <Mic className="mr-1 h-4 w-4" />}
-              {listening ? t("assistant.stopMic") : t("assistant.talk")}
-            </Button>
-          </div>
-        )}
-        <details className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
-          <summary className="cursor-pointer font-medium">{t("assistant.contextInspector")}</summary>
-          <div className="mt-2 space-y-2">
-            <p>{availableCount} {t("assistant.filesInManifest")}.</p>
-            <p>{t("assistant.loadedNow")}:</p>
-            <div className="space-y-1">
-              {contextFiles.length ? contextFiles.map((path) => <div key={path} className="font-mono">{path}</div>) : <div>{t("assistant.none")}</div>}
-            </div>
-          </div>
-        </details>
-        <div className="flex items-center gap-2">
-          <Select value={currentSession?.fileId ?? currentSession?.id ?? ""} onValueChange={(value) => { if (value === "__new__") newChat(); else void openSession(value); }}>
-            <SelectTrigger className="h-8 flex-1"><SelectValue placeholder={loadingSessions ? t("assistant.loadingChats") : t("assistant.savedChat")} /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__new__">{t("assistant.new")}</SelectItem>
-              {sessions.map((session) => <SelectItem key={session.fileId ?? session.id} value={session.fileId ?? session.id}>{session.title}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Button variant="outline" size="icon" onClick={() => void deleteCurrentSession()} disabled={!currentSession?.fileId}><Trash2 className="h-4 w-4" /></Button>
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "chat" | "history")} className="flex min-h-0 flex-1 flex-col">
+        <div className="border-b px-3 py-2">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="chat"><Bot className="mr-1.5 h-3.5 w-3.5" />{t("assistant.tabChat")}</TabsTrigger>
+            <TabsTrigger value="history"><History className="mr-1.5 h-3.5 w-3.5" />{t("assistant.tabHistory")}</TabsTrigger>
+          </TabsList>
         </div>
-        <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(event) => void attachFiles(event.target.files)} accept=".pdf,.docx,.md,.markdown,.txt,image/png,image/jpeg,.jpg,.jpeg" />
-        <div className="flex flex-wrap gap-2">
-          {(currentSession?.attachments ?? []).map((attachment) => (
-            <Badge key={attachment.id} variant="secondary" className="gap-1 pr-1">
-              {attachment.name}
-              <button type="button" onClick={() => removeAttachment(attachment.id)} className="rounded p-0.5 hover:bg-black/10"><X className="h-3 w-3" /></button>
-            </Badge>
-          ))}
-        </div>
-        {currentSession?.compactSummary && <div className="rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground whitespace-pre-wrap"><p className="mb-1 font-medium text-foreground">{t("assistant.compactionSummary")}</p>{currentSession.compactSummary}</div>}
-      </div>
 
-      <div className="flex flex-wrap gap-2 border-b px-4 py-3">
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Create a concise summary of where I am and what matters next.")}><Sparkles className="mr-1 h-4 w-4" />{t("assistant.summary")}</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Review what I am looking at and tell me strengths, risks, and next actions.")}>{t("assistant.review")}</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Write or refresh the resume for the current chapter.")}>{t("assistant.resume")}</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Write or refresh the evaluation for what I am looking at.")}>{t("assistant.evaluation")}</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Update plot.md for the current book.")}>{t("assistant.plot")}</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Create a writer note from the current context and save it.")}>{t("assistant.saveNote")}</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Search the current book for relevant characters, paragraphs, or canon keywords.")}>{t("assistant.search")}</Button>
-        <Button variant="outline" size="sm" onClick={() => void loadBranchDiff()} disabled={loadingDiff}>{t("assistant.syncDiff")}</Button><Button variant="outline" size="sm" onClick={speechController ? stopReading : readCurrentContext}>{speechController ? t("assistant.stopReading") : t("assistant.readContext")}</Button>
-        <Button variant="outline" size="sm" onClick={() => void sendPrompt("Improve the current paragraph while preserving all facts.")}><Wand2 className="mr-1 h-4 w-4" />{t("assistant.fixParagraph")}</Button>
-      </div>
-
-      <ScrollArea className="min-h-0 flex-1 px-4 py-3">
-        <div className="space-y-3">
-          {currentSession?.messages.length ? null : <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">{t("assistant.empty")}</div>}
-          {(currentSession?.messages ?? []).map((message, index) => (
-            <div key={message.id} className={message.role === "user" ? "ml-8" : "mr-8"}>
-              <div className={message.role === "user" ? "rounded-2xl bg-primary px-4 py-3 text-sm text-primary-foreground" : "rounded-2xl border bg-background px-4 py-3 text-sm whitespace-pre-wrap"}>{message.text}</div>
-              {message.action?.kind === "switch-book-branch" && (
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary">{t("assistant.branchActionReady")}</Badge>
-                  <Button size="sm" onClick={() => void applyBranchSwitch(index)} disabled={busy}><GitBranch className="mr-1 h-4 w-4" />{t("assistant.applyBranch")}</Button>
-                </div>
-              )}
-              {message.action?.kind === "apply-file-updates" && (
-                <div className="mt-2 rounded-xl border bg-muted/30 p-3 text-xs">
-                  <p className="mb-2 font-medium">{t("assistant.proposedChanges")}</p>
-                  <div className="space-y-2">
-                    {message.action.updates.map((update) => {
-                      const diffKey = `${message.id}::${update.path}`;
-                      const showDiff = diffMode[diffKey];
-                      return (
-                        <details key={update.path} className="rounded border bg-background p-2">
-                          <summary className="cursor-pointer font-mono">{update.path}</summary>
-                          {update.reason && <p className="mt-2 text-muted-foreground">{update.reason}</p>}
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <Button size="sm" variant="outline" onClick={() => void toggleDiff(message.id, update)} disabled={loadingDiffPath === diffKey}>
-                              {loadingDiffPath === diffKey ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
-                              {showDiff ? t("assistant.hideDiff") : t("assistant.showDiff")}
-                            </Button>
-                            <Button size="sm" variant="outline" onClick={() => void applySelectedFileUpdates(index, [update.path])} disabled={busy}>{t("assistant.applyThisFile")}</Button>
-                          </div>
-                          {showDiff ? (
-                            <FileDiff previous={previousContents[diffKey] ?? ""} next={update.content} className="mt-2 max-h-64" />
-                          ) : (
-                            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-[11px]">{update.content}</pre>
-                          )}
-                        </details>
-                      );
-                    })}
+        {activeTab === "history" ? (
+          <ScrollArea className="min-h-0 flex-1 px-3 py-3">{historyView}</ScrollArea>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 border-b px-3 py-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-8 gap-1">
+                    <Sparkles className="h-4 w-4" />{t("assistant.quickActions")}<ChevronDown className="h-3.5 w-3.5 opacity-70" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-64">
+                  <DropdownMenuLabel className="text-xs">{contextLabel}</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {contextActions.map((action) => {
+                    const Icon = action.icon;
+                    return (
+                      <DropdownMenuItem key={action.id} disabled={action.disabled} onSelect={() => action.run()}>
+                        <Icon className="mr-2 h-4 w-4" />{t(action.labelKey)}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button variant="outline" size="sm" className="h-8 gap-1" onClick={speechController ? stopReading : readCurrentContext}>
+                {speechController ? <Square className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                <span className="hidden sm:inline">{speechController ? t("assistant.stopReading") : t("assistant.readContext")}</span>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="ml-auto h-8 text-xs text-muted-foreground">{t("assistant.contextInspector")}</Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-72">
+                  <DropdownMenuLabel className="text-xs">{contextSummary || t("assistant.contextFollows")}</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <div className="max-h-60 space-y-1 overflow-auto px-2 py-1 text-xs text-muted-foreground">
+                    <p>{t("assistant.filesInManifestCount", { count: availableCount })}</p>
+                    <p className="font-medium text-foreground">{t("assistant.loadedNow")}</p>
+                    {contextFiles.length ? contextFiles.map((path) => <div key={path} className="truncate font-mono">{path}</div>) : <div>{t("assistant.none")}</div>}
                   </div>
-                  <Button className="mt-2" size="sm" onClick={() => void applySelectedFileUpdates(index)} disabled={busy}>{t("assistant.applyAllFiles")}</Button>
-                </div>
-              )}
-              {message.action?.kind === "undo-file-updates" && <div className="mt-2 flex items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy}>{t("assistant.undoChanges")}</Button></div>}
-              {message.action?.kind === "apply-paragraph-rewrite" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.rewriteReady")}</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy}>{t("assistant.applyToParagraph")}</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>{t("assistant.openChapter")}</Link></Button></div>}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
-          ))}
-          {busy && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("assistant.thinking")}</div>}
-        </div>
-      </ScrollArea>
 
-      <div className="border-t p-4">
-        <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void sendPrompt(draft); }}>
-          <Textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={t("assistant.placeholder")} className="min-h-[100px] resize-none" />
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap gap-2">
-              <Select value={attachmentTarget} onValueChange={(value) => setAttachmentTarget(value as AttachmentTarget)}>
-                <SelectTrigger className="h-9 w-full sm:w-[220px]"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {ATTACHMENT_TARGETS.map((target) => <SelectItem key={target.value} value={target.value}>{t(target.labelKey)}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Button type="button" variant="outline" size="sm" onClick={() => void handleImportAttachments()} disabled={busy || !(currentSession?.attachments.length)}>
-                {t("assistant.importAttachments")}
-              </Button>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => void startSpeechToText()} disabled={busy || voiceMode}>
-                  {listening ? <Square className="mr-1 h-4 w-4" /> : <Mic className="mr-1 h-4 w-4" />}
-                  {listening ? t("assistant.stopMic") : t("assistant.microphone")}
-                </Button>
-                <Button type="button" variant={autoSend ? "default" : "outline"} size="sm" onClick={() => setAutoSend((value) => !value)}>
-                  {t("assistant.autoSend")}
-                </Button>
+            {currentSession?.attachments.length ? (
+              <div className="flex flex-wrap gap-2 border-b px-3 py-2">
+                {currentSession.attachments.map((attachment) => (
+                  <Badge key={attachment.id} variant="secondary" className="gap-1 pr-1">
+                    {attachment.name}
+                    <button type="button" onClick={() => removeAttachment(attachment.id)} className="rounded p-0.5 hover:bg-black/10"><X className="h-3 w-3" /></button>
+                  </Badge>
+                ))}
               </div>
-              <div className="flex items-center gap-2">
-                <Button type="button" variant="ghost" size="sm" onClick={() => setDraft("")}>{t("assistant.clear")}</Button>
-                <Button type="submit" disabled={!draft.trim() || busy}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Send className="mr-1 h-4 w-4" />}{t("assistant.send")}</Button>
-              </div>
+            ) : null}
+
+            <ScrollArea className="min-h-0 flex-1 px-3 py-4">
+              {currentSession?.compactSummary && <div className="mb-3 rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground whitespace-pre-wrap"><p className="mb-1 font-medium text-foreground">{t("assistant.compactionSummary")}</p>{currentSession.compactSummary}</div>}
+              {messagesView}
+            </ScrollArea>
+
+            <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(event) => void attachFiles(event.target.files)} accept=".pdf,.docx,.md,.markdown,.txt,image/png,image/jpeg,.jpg,.jpeg" />
+            <div className="border-t p-3">
+              <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void sendPrompt(draft); }}>
+                <Textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={t("assistant.placeholder")} className="min-h-[76px] resize-none" />
+                <div className="flex items-center gap-1.5">
+                  <Button type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0" title={t("assistant.attachFiles")} onClick={() => fileInputRef.current?.click()}><Paperclip className="h-4 w-4" /></Button>
+                  <Button type="button" variant={listening ? "default" : "ghost"} size="icon" className="h-9 w-9 shrink-0" title={listening ? t("assistant.stopMic") : t("assistant.microphone")} onClick={() => void startSpeechToText()} disabled={busy || voiceMode}>
+                    {listening ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0" title={t("assistant.more")}><ChevronDown className="h-4 w-4" /></Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-64">
+                      <DropdownMenuLabel className="text-xs">{t("assistant.importAttachments")}</DropdownMenuLabel>
+                      {ATTACHMENT_TARGETS.map((target) => (
+                        <DropdownMenuItem key={target.value} onSelect={() => setAttachmentTarget(target.value)}>
+                          <span className={attachmentTarget === target.value ? "font-medium text-foreground" : ""}>{t(target.labelKey)}</span>
+                        </DropdownMenuItem>
+                      ))}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem disabled={busy || !(currentSession?.attachments.length)} onSelect={() => void handleImportAttachments()}>
+                        <Paperclip className="mr-2 h-4 w-4" />{t("assistant.importSelected", { target: t(ATTACHMENT_TARGETS.find((entry) => entry.value === attachmentTarget)?.labelKey ?? "assistant.importParagraph") })}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setAutoSend((value) => !value)}>
+                        <Mic className="mr-2 h-4 w-4" />{autoSend ? t("assistant.autoSendOn") : t("assistant.autoSendOff")}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <div className="ml-auto flex items-center gap-1.5">
+                    {draft.trim() && <Button type="button" variant="ghost" size="sm" className="h-9" onClick={() => setDraft("")}>{t("assistant.clear")}</Button>}
+                    <Button type="submit" size="sm" className="h-9" disabled={!draft.trim() || busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}<span className="ml-1.5 hidden sm:inline">{t("assistant.send")}</span></Button>
+                  </div>
+                </div>
+              </form>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
-                <Paperclip className="mr-1 h-4 w-4" />{t("assistant.attachFiles")}
-              </Button>
-            </div>
-          </div>
-        </form>
-      </div>
+          </>
+        )}
+      </Tabs>
     </div>
   );
 

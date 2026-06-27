@@ -86,7 +86,7 @@ export async function speakText(text: string, settings: AppSettings): Promise<Sp
   if (settings.speech.ttsProvider === "ai" && integration && ttsModel) {
     return speakWithOpenAICompatible(text, integration, ttsModel, settings.speech.ttsVoice || "nova");
   }
-  return speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate);
+  return speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language);
 }
 
 function createAudioClient(integration: AIIntegration): AzureOpenAI | OpenAI {
@@ -95,8 +95,51 @@ function createAudioClient(integration: AIIntegration): AzureOpenAI | OpenAI {
     : new OpenAI({ apiKey: integration.apiKey, baseURL: integration.endpoint || "https://api.openai.com/v1", dangerouslyAllowBrowser: true });
 }
 
-async function speakWithBrowser(text: string, voiceName: string, rate: number): Promise<SpeechController> {
+function detectSpeechLang(text: string, uiLanguage: string): string {
+  const sample = text.slice(0, 600).toLowerCase();
+  const italianHints = /\b(che|non|più|perché|gli|della|sono|questo|quando|anche|già|però|cosa|essere|nella|sulla|tra|fra|verso)\b/g;
+  const englishHints = /\b(the|and|that|with|this|from|have|which|would|there|about|their|because|into|been)\b/g;
+  const italianScore = (sample.match(italianHints) ?? []).length + (sample.match(/[àèéìòù]/g) ?? []).length;
+  const englishScore = (sample.match(englishHints) ?? []).length;
+  if (italianScore > englishScore) return "it-IT";
+  if (englishScore > italianScore) return "en-US";
+  return uiLanguage === "it" ? "it-IT" : "en-US";
+}
+
+async function loadVoices(): Promise<SpeechSynthesisVoice[]> {
+  const existing = window.speechSynthesis.getVoices();
+  if (existing.length) return existing;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve(window.speechSynthesis.getVoices());
+    };
+    window.speechSynthesis.onvoiceschanged = finish;
+    window.setTimeout(finish, 500);
+  });
+}
+
+function pickVoice(voices: SpeechSynthesisVoice[], voiceName: string, lang: string): SpeechSynthesisVoice | undefined {
+  const langPrefix = lang.slice(0, 2).toLowerCase();
+  const wanted = voiceName?.trim().toLowerCase();
+  const byExactName = wanted ? voices.find((entry) => entry.name.toLowerCase() === wanted) : undefined;
+  if (byExactName && byExactName.lang.toLowerCase().startsWith(langPrefix)) return byExactName;
+  const byNameInLang = wanted ? voices.find((entry) => entry.name.toLowerCase().includes(wanted) && entry.lang.toLowerCase().startsWith(langPrefix)) : undefined;
+  if (byNameInLang) return byNameInLang;
+  const googleInLang = voices.find((entry) => entry.lang.toLowerCase().startsWith(langPrefix) && entry.name.toLowerCase().includes("google"));
+  if (googleInLang) return googleInLang;
+  const anyInLang = voices.find((entry) => entry.lang.toLowerCase().startsWith(langPrefix));
+  if (anyInLang) return anyInLang;
+  return byExactName;
+}
+
+async function speakWithBrowser(text: string, voiceName: string, rate: number, uiLanguage: string): Promise<SpeechController> {
   const chunks = splitSpeechText(text);
+  const lang = detectSpeechLang(text, uiLanguage);
+  const voices = await loadVoices();
+  const voice = pickVoice(voices, voiceName, lang);
   let stopped = false;
   window.speechSynthesis.cancel();
   let resolveDone: () => void = () => undefined;
@@ -108,9 +151,8 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number): 
       return;
     }
     const utterance = new SpeechSynthesisUtterance(chunks[index]);
-    const voices = window.speechSynthesis.getVoices();
-    const voice = voices.find((entry) => entry.name === voiceName || entry.lang.toLowerCase().startsWith(voiceName.toLowerCase()));
     if (voice) utterance.voice = voice;
+    utterance.lang = voice?.lang ?? lang;
     utterance.rate = Number.isFinite(rate) ? rate : 0.95;
     utterance.onend = () => play(index + 1);
     utterance.onerror = () => play(index + 1);

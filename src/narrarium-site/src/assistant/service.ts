@@ -488,7 +488,12 @@ function buildSystemMessage(input: PromptInput, instruction: string): LlmMessage
   const spokenInstruction = input.spokenMode
     ? "\n\nThis answer will be read aloud. Be conversational, direct, and natural. Use short spoken paragraphs. Avoid tables, dense markdown, long lists, code blocks, and anything that is hard to understand through audio. If you need to list things, use a few concise spoken points."
     : "";
-  return { role: "system", content: `${instruction}${spokenInstruction}\n\n${systemContextBundle(input)}` };
+  return { role: "system", content: `${instruction}${spokenInstruction}${languageInstruction(input)}\n\n${systemContextBundle(input)}` };
+}
+
+function languageInstruction(input: PromptInput): string {
+  const language = input.settings.ui.language === "it" ? "Italian" : "English";
+  return `\n\nAlways write your reply to the user in ${language}, regardless of the language of the repository files or this prompt. Quoted prose from the book must keep its original language.`;
 }
 
 function buildUserMessage(input: PromptInput, requestText: string): LlmMessage {
