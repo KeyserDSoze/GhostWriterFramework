@@ -18,7 +18,8 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { GeneratePreviewDialog } from "@/components/book/GeneratePreviewDialog";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { ScriptEditor } from "@/components/script/ScriptEditor";
-import { TextContextMenu } from "@/components/editor/TextContextMenu";
+import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
+import { useProseAssist } from "@/components/editor/useProseAssist";
 import { parseScript, serializeScript, type ScriptDoc } from "@/narrarium/script/model";
 import { proseToScript, refineProse, scriptToProse, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
 
@@ -114,6 +115,19 @@ export function WorkspaceDocPage() {
   const [pipelineGw, setPipelineGw] = useState("");
   const [scriptDoc, setScriptDoc] = useState<ScriptDoc>({ nodes: [] });
   const [scriptGenLoading, setScriptGenLoading] = useState(false);
+
+  const proseAssist = useProseAssist({
+    textareaRef: bodyRef,
+    getBody: () => body,
+    setBody,
+    ghostwriter: (entries.find((e) => e.key === "ghostwriter")?.value as string) || "",
+    buildSource: () => (book && structure && chapter && token ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter } : null),
+  });
+  useRegisterProseEditor(bodyRef, {
+    improve: (s) => proseAssist.improve(s),
+    synonym: (s) => proseAssist.synonym(s),
+    enabled: workspaceKind !== "script",
+  });
 
   const resolved = resolveWorkspacePath(chapter, paragraph, workspaceKind, !!paragraphNum);
   const path = resolved?.path ?? null;
@@ -476,7 +490,7 @@ export function WorkspaceDocPage() {
           spellCheck={false}
         />
       )}
-      {workspaceKind !== "script" && <TextContextMenu targetRef={bodyRef} getValue={() => body} setValue={setBody} />}
+      {workspaceKind !== "script" && proseAssist.dialogs}
       <GeneratePreviewDialog
         open={pipelineOpen}
         title={pipelineMode === "toDraft" ? t("pipeline.scriptToDraft") : t("pipeline.draftToFinal")}

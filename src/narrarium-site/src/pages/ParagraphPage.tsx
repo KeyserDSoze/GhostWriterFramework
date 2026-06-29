@@ -25,7 +25,7 @@ import { resolveBookToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { improveProse, synonymsFor, type PipelineSource } from "@/narrarium/pipeline";
-import { TextContextMenu } from "@/components/editor/TextContextMenu";
+import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
 
@@ -145,6 +145,12 @@ export function ParagraphPage() {
   const [synonymWord, setSynonymWord] = useState("");
   const [synonymOptions, setSynonymOptions] = useState<string[]>([]);
   const [synonymSeen, setSynonymSeen] = useState<string[]>([]);
+
+  const proseHandlersRef = useRef<{ improve: (s: string | null) => void; synonym: (s: string) => void }>({ improve: () => undefined, synonym: () => undefined });
+  useRegisterProseEditor(bodyRef, {
+    improve: (s) => proseHandlersRef.current.improve(s),
+    synonym: (s) => proseHandlersRef.current.synonym(s),
+  });
 
   const isDirty =
     body !== savedBody ||
@@ -431,6 +437,7 @@ export function ParagraphPage() {
   }
 
   const readonlyEntries = entries.filter((e) => READONLY_KEYS.has(e.key));
+  proseHandlersRef.current = { improve: () => void startImprove(), synonym: (s) => void openSynonyms(s) };
   const editableEntries = entries.filter(
     (e) => !READONLY_KEYS.has(e.key) && e.key !== "title" && e.key !== "ghostwriter",
   );
@@ -603,12 +610,6 @@ export function ParagraphPage() {
           spellCheck={false}
         />
       )}
-      <TextContextMenu
-        targetRef={bodyRef}
-        getValue={() => body}
-        setValue={setBody}
-        improve={{ improveSelection: () => void startImprove(), synonym: (sel) => void openSynonyms(sel) }}
-      />
 
       <p className="text-[11px] text-muted-foreground truncate">{paragraph.path}</p>
 

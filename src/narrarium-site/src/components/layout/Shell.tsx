@@ -6,6 +6,7 @@ import { Sidebar, MobileSidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { DossierDock } from "./DossierDock";
 import { FloatingActions } from "./FloatingActions";
+import { GlobalContextMenu } from "@/components/editor/GlobalContextMenu";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useTokenRefresh } from "@/hooks/useTokenRefresh";
@@ -82,6 +83,7 @@ export function Shell() {
       </div>
       <DossierDock />
       <FloatingActions />
+      <GlobalContextMenu />
       <Suspense fallback={null}>
         <AssistantPanel />
       </Suspense>
