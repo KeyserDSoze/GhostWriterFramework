@@ -21,6 +21,9 @@ const en = {
     chapterOverview: "Chapter overview",
     currentParagraph: "Current paragraph",
     paragraphOverview: "Paragraph overview",
+    app: "Narrarium",
+    draftsIndex: "Drafts",
+    scriptsIndex: "Scripts",
   },
   public: {
     heroBadge: "AI-assisted book writing",
@@ -477,6 +480,8 @@ const en = {
     createDraft: "Create draft",
     createScript: "Create script",
     createEvaluation: "Create evaluation",
+    createResume: "Create resume",
+    openResume: "Open resume",
     openDraft: "Open draft",
     openScript: "Open script",
     openEvaluation: "Open evaluation",
@@ -549,6 +554,9 @@ const en = {
     created: "Created {{path}}",
     failed: "Operation failed"
   },
+  bookActions: {
+    title: "Actions"
+  },
   writingStyle: {
     title: "Writing style",
     chapterTitle: "Chapter style {{slug}}",
@@ -556,6 +564,17 @@ const en = {
     intro: "The always-on writing contract: narration, dialogue, rhythm, what to preserve and what to improve.",
     chapterIntro: "Style exception for this chapter, layered on top of the global style.",
     placeholder: "Write the style rules here…"
+  },
+  stageIndex: {
+    draftsIntro: "All chapter drafts, mirroring the paragraph structure. Connects script, draft and final paragraph.",
+    scriptsIntro: "All chapter scripts, mirroring the paragraph structure. Connects script, draft and final paragraph.",
+    final: "Final",
+    noScript: "No script",
+    noDraft: "No draft",
+    genScript: "Generate script",
+    genScriptDesc: "Reconstruct the script beats from the draft or final paragraph.",
+    genDraft: "Generate draft",
+    genFinal: "Generate final"
   },
   canon: {
     notFound: "Canon file not found.",

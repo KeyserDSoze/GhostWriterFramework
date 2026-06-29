@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Lock, Plus, Save, Wand2, X } from "lucide-react";
+import { ArrowLeft, FileEdit, FileText, Lock, Network, Plus, Save, Wand2, X } from "lucide-react";
 import { parseDocument, stringify } from "yaml";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -292,13 +292,32 @@ export function WorkspaceDocPage() {
             {t("common.back")}
           </Link>
         </Button>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" className="font-mono text-xs">{branch}</Badge>
+          {paragraph && (
+            <>
+              <Button asChild size="sm" variant="ghost">
+                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}`}><FileText className="mr-1 h-4 w-4" />{t("stageIndex.final")}</Link>
+              </Button>
+              {workspaceKind === "script" && (
+                <Button asChild size="sm" variant="ghost">
+                  <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}/workspace/draft`}><FileEdit className="mr-1 h-4 w-4" />{t("chapter.draft")}</Link>
+                </Button>
+              )}
+              {workspaceKind === "draft" && (
+                <Button asChild size="sm" variant="ghost">
+                  <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}/workspace/script`}><Network className="mr-1 h-4 w-4" />{t("chapter.script")}</Link>
+                </Button>
+              )}
+            </>
+          )}
           {paraSlug && workspaceKind === "script" && (
             <Button size="sm" variant="outline" onClick={() => void startPipeline("toDraft")}><Wand2 className="mr-1 h-4 w-4" />{t("pipeline.scriptToDraft")}</Button>
           )}
           {paraSlug && workspaceKind === "draft" && (
-            <Button size="sm" variant="outline" onClick={() => void startPipeline("toFinal")}><Wand2 className="mr-1 h-4 w-4" />{t("pipeline.draftToFinal")}</Button>
+            <>
+              <Button size="sm" variant="outline" onClick={() => void startPipeline("toFinal")}><Wand2 className="mr-1 h-4 w-4" />{t("pipeline.draftToFinal")}</Button>
+            </>
           )}
           {isDirty && !saving && <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>}
           <Button size="sm" onClick={() => void handleSave()} disabled={!isDirty || saving}>

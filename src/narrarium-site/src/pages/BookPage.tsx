@@ -13,9 +13,8 @@ import {
   EyeOff,
   FileText,
   ChevronRight,
-  Settings,
-  LayoutDashboard,
-  Images,
+  ChevronDown,
+  Sparkles,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -194,57 +193,18 @@ export function BookPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}
-          <CommitHistoryDialog
-            token={token}
-            owner={book.owner}
-            repo={book.repo}
-            branch={branch}
-          />
-          <PullRequestsDialog
-            token={token}
-            owner={book.owner}
-            repo={book.repo}
-            head={branch}
-            base={structure?.defaultBranch ?? "main"}
-          />
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/app/books/${book.id}/dashboard`}>
-              <LayoutDashboard className="mr-1 h-4 w-4" />
-              {t("dashboard.title")}
-            </Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/app/books/${book.id}/assets`}>
-              <Images className="mr-1 h-4 w-4" />
-              {t("assets.title")}
-            </Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/app/books/${book.id}/reader`}>
-              <BookOpen className="mr-1 h-4 w-4" />
-              {t("reader.title")}
-            </Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/app/books/${book.id}/ghostwriters`}>
-              <Users className="mr-1 h-4 w-4" />
-              {t("ghostwriters.title")}
-            </Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/app/books/${book.id}/writing-style`}>
-              <FileText className="mr-1 h-4 w-4" />
-              {t("writingStyle.title")}
-            </Link>
-          </Button>
-          {structure && token && <AssetImageDialog book={book} branch={branch} token={token} kind="book" title={structure.title ?? book.name} textPath="book.md" resumePath="resumes/total.md" />}
-          {structure && token && <BookExportDialog book={book} structure={structure} branch={branch} token={token} />}
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/app/books/${book.id}/settings`}>
-              <Settings className="mr-1 h-4 w-4" />
-              {t("bookPage.bookSettings")}
-            </Link>
-          </Button>
+          <details className="group relative">
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-sm font-medium hover:bg-accent">
+              <Sparkles className="h-4 w-4" />{t("bookActions.title")}
+              <ChevronDown className="h-3.5 w-3.5 opacity-70 transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="absolute right-0 z-20 mt-2 flex w-60 flex-col gap-1 rounded-xl border bg-card p-2 shadow-lg">
+              <CommitHistoryDialog token={token} owner={book.owner} repo={book.repo} branch={branch} />
+              <PullRequestsDialog token={token} owner={book.owner} repo={book.repo} head={branch} base={structure?.defaultBranch ?? "main"} />
+              {structure && token && <AssetImageDialog book={book} branch={branch} token={token} kind="book" title={structure.title ?? book.name} textPath="book.md" resumePath="resumes/total.md" />}
+              {structure && token && <BookExportDialog book={book} structure={structure} branch={branch} token={token} />}
+            </div>
+          </details>
         </div>
       </div>
 

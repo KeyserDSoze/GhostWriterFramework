@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseDocument, stringify } from "yaml";
-import { ArrowLeft, Save, Loader2, Plus, X, Lock, Wand2 } from "lucide-react";
+import { ArrowLeft, Save, Loader2, Plus, X, Lock, Wand2, Network, FileEdit } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
@@ -26,6 +26,7 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { AssetImageDialog } from "@/components/book/AssetImageDialog";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { improveProse, type PipelineSource } from "@/narrarium/pipeline";
+import { createParagraphDraftArtifact, createParagraphScriptArtifact } from "@/narrarium/workspace";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
 
@@ -102,6 +103,7 @@ export function ParagraphPage() {
   }>();
   const { toast } = useToast();
   const { t } = useTranslation();
+  const navigate = useNavigate();
 
   const { settings } = useSettingsStore();
   const { updateChapterParagraphs } = useBooksStore();
@@ -363,6 +365,32 @@ export function ParagraphPage() {
     setImproveOpen(false);
   }
 
+  async function openOrCreateDraft() {
+    const target = `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph!.number}/workspace/draft`;
+    if (!paragraph!.draftPath && book && token) {
+      try {
+        await createParagraphDraftArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter!.slug, number: Number(paragraph!.number), title: paragraph!.title });
+      } catch (err) {
+        toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
+        return;
+      }
+    }
+    navigate(target);
+  }
+
+  async function openOrCreateScript() {
+    const target = `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph!.number}/workspace/script`;
+    if (!paragraph!.scriptPath && book && token) {
+      try {
+        await createParagraphScriptArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter!.slug, number: Number(paragraph!.number), title: paragraph!.title });
+      } catch (err) {
+        toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
+        return;
+      }
+    }
+    navigate(target);
+  }
+
   const readonlyEntries = entries.filter((e) => READONLY_KEYS.has(e.key));
   const editableEntries = entries.filter(
     (e) => !READONLY_KEYS.has(e.key) && e.key !== "title" && e.key !== "ghostwriter",
@@ -394,6 +422,12 @@ export function ParagraphPage() {
               textPath={paragraph.path}
             />
           )}
+          <Button size="sm" variant="outline" onClick={() => void openOrCreateScript()}>
+            <Network className="mr-1 h-4 w-4" />{paragraph.scriptPath ? t("chapter.openScript") : t("chapter.createScript")}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void openOrCreateDraft()}>
+            <FileEdit className="mr-1 h-4 w-4" />{paragraph.draftPath ? t("chapter.openDraft") : t("chapter.createDraft")}
+          </Button>
           <Button size="sm" variant="outline" onClick={() => void startImprove()} disabled={!body.trim()}>
             <Wand2 className="mr-1 h-4 w-4" />{t("paragraph.improve")}
           </Button>

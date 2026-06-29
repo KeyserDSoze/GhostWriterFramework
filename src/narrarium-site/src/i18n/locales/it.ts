@@ -21,6 +21,9 @@ const it = {
     chapterOverview: "Panoramica capitolo",
     currentParagraph: "Paragrafo corrente",
     paragraphOverview: "Panoramica paragrafo",
+    app: "Narrarium",
+    draftsIndex: "Bozze",
+    scriptsIndex: "Script",
   },
   public: {
     heroBadge: "Scrittura libri assistita dall'AI",
@@ -477,6 +480,8 @@ const it = {
     createDraft: "Crea bozza",
     createScript: "Crea script",
     createEvaluation: "Crea valutazione",
+    createResume: "Crea resume",
+    openResume: "Apri resume",
     openDraft: "Apri bozza",
     openScript: "Apri script",
     openEvaluation: "Apri valutazione",
@@ -549,6 +554,9 @@ const it = {
     created: "Creato {{path}}",
     failed: "Operazione non riuscita"
   },
+  bookActions: {
+    title: "Azioni"
+  },
   writingStyle: {
     title: "Stile di scrittura",
     chapterTitle: "Stile capitolo {{slug}}",
@@ -556,6 +564,17 @@ const it = {
     intro: "Lo stile sempre attivo del libro: narrazione, dialoghi, ritmo, cosa preservare e cosa migliorare.",
     chapterIntro: "Eccezione di stile per questo capitolo, applicata sopra lo stile globale.",
     placeholder: "Scrivi qui le regole di stile…"
+  },
+  stageIndex: {
+    draftsIntro: "Tutte le bozze del capitolo, con la stessa struttura dei paragrafi. Collega script, bozza e paragrafo finale.",
+    scriptsIntro: "Tutti gli script del capitolo, con la stessa struttura dei paragrafi. Collega script, bozza e paragrafo finale.",
+    final: "Finale",
+    noScript: "Nessuno script",
+    noDraft: "Nessuna bozza",
+    genScript: "Genera script",
+    genScriptDesc: "Ricostruisci lo script dai beat partendo dalla bozza o dal paragrafo.",
+    genDraft: "Genera bozza",
+    genFinal: "Genera finale"
   },
   canon: {
     notFound: "File canone non trovato.",

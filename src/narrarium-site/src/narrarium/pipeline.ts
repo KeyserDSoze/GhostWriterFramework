@@ -103,5 +103,22 @@ export async function improveProse(
   return (await completeText(integration, messages)).trim();
 }
 
+/** Reverse-engineer a Narrarium scene script (one beat per line) from finished or draft prose. */
+export async function proseToScript(src: PipelineSource, prose: string, ghostwriterSlug?: string): Promise<string> {
+  const integration = resolveWritingIntegration(src.settings);
+  if (!integration) throw new Error("No AI integration configured.");
+  const { style, story } = await buildContext(src, ghostwriterSlug);
+  const legend = [
+    "Script meta-language: one beat per line.",
+    "[...] tell beat to render as prose; {...} emotion/state; (...) physical action; «...» dialogue; Location: ... for the setting.",
+    "Writer-only lines start with @ (e.g. @scene_goal{...}, @pov{character:id}). Do not invent canon ids.",
+  ].join("\n");
+  const messages: LlmMessage[] = [
+    { role: "system", content: `You convert prose into a Narrarium scene script: a compact, ordered sequence of beats that captures the scene's structure. Return ONLY the script body, no commentary. Keep notes in ${LANG(src.settings)} but preserve dialogue text in its original language.\n\n${legend}\n\n${style}` },
+    { role: "user", content: `${story}\n\nPROSE:\n${prose}\n\nWrite the scene script that reconstructs this scene beat by beat.` },
+  ];
+  return (await completeText(integration, messages)).trim();
+}
+
 export type { PipelineSource };
 export type { Paragraph };

@@ -116,7 +116,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const chapterNav: NavItem[] = bookId && chapterId
     ? [
         { label: t("nav.chapterOverview"), href: `/app/books/${bookId}/chapters/${chapterId}`, icon: <FileText className="h-4 w-4" /> },
-        { label: t("chapter.draft"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/draft`, icon: <FileEdit className="h-4 w-4" /> },
+        { label: t("nav.draftsIndex"), href: `/app/books/${bookId}/chapters/${chapterId}/drafts`, icon: <FileEdit className="h-4 w-4" /> },
+        { label: t("nav.scriptsIndex"), href: `/app/books/${bookId}/chapters/${chapterId}/scripts`, icon: <Network className="h-4 w-4" /> },
         { label: t("chapter.resume"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/resume`, icon: <NotebookText className="h-4 w-4" /> },
         { label: t("chapter.evaluation"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/evaluation`, icon: <ClipboardCheck className="h-4 w-4" /> },
         { label: t("writingStyle.chapterButton"), href: `/app/books/${bookId}/chapters/${chapterId}/writing-style`, icon: <PenLine className="h-4 w-4" /> },
@@ -144,20 +145,31 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <Separator />
 
       <ScrollArea className="flex-1 py-2">
-        <nav className="px-2 space-y-1">
-          {topNav.map((item) => (
-            <NavLink
-              key={item.href}
-              item={item}
-              active={location.pathname === item.href}
-              onNavigate={onNavigate}
-            />
-          ))}
-        </nav>
+        {paragraphNav.length > 0 && (
+          <>
+            <NavGroup label={paragraph?.title ?? t("nav.currentParagraph")} first />
+            <nav className="px-2 space-y-1">
+              {paragraphNav.map((item) => (
+                <NavLink key={item.href} item={item} active={location.pathname === item.href} onNavigate={onNavigate} />
+              ))}
+            </nav>
+          </>
+        )}
+
+        {chapterNav.length > 0 && (
+          <>
+            <NavGroup label={chapter?.title ?? t("nav.currentChapter")} first={paragraphNav.length === 0} />
+            <nav className="px-2 space-y-1">
+              {chapterNav.map((item) => (
+                <NavLink key={item.href} item={item} active={location.pathname === item.href} onNavigate={onNavigate} />
+              ))}
+            </nav>
+          </>
+        )}
 
         {bookId && (
           <>
-            <NavGroup label={book?.name ?? t("nav.currentBook")} />
+            <NavGroup label={book?.name ?? t("nav.currentBook")} first={paragraphNav.length === 0 && chapterNav.length === 0} />
             <nav className="px-2 space-y-1">
               {bookNav.map((item) => (
                 <NavLink key={item.href} item={item} active={location.pathname === item.href} onNavigate={onNavigate} />
@@ -172,27 +184,17 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </>
         )}
 
-        {chapterNav.length > 0 && (
-          <>
-            <NavGroup label={chapter?.title ?? t("nav.currentChapter")} />
-            <nav className="px-2 space-y-1">
-              {chapterNav.map((item) => (
-                <NavLink key={item.href} item={item} active={location.pathname === item.href} onNavigate={onNavigate} />
-              ))}
-            </nav>
-          </>
-        )}
-
-        {paragraphNav.length > 0 && (
-          <>
-            <NavGroup label={paragraph?.title ?? t("nav.currentParagraph")} />
-            <nav className="px-2 space-y-1">
-              {paragraphNav.map((item) => (
-                <NavLink key={item.href} item={item} active={location.pathname === item.href} onNavigate={onNavigate} />
-              ))}
-            </nav>
-          </>
-        )}
+        <NavGroup label={t("nav.app")} first={!bookId} />
+        <nav className="px-2 space-y-1">
+          {topNav.map((item) => (
+            <NavLink
+              key={item.href}
+              item={item}
+              active={location.pathname === item.href}
+              onNavigate={onNavigate}
+            />
+          ))}
+        </nav>
 
         {settings.books.length > 0 && (
           <>
@@ -218,10 +220,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-function NavGroup({ label }: { label: string }) {
+function NavGroup({ label, first }: { label: string; first?: boolean }) {
   return (
     <>
-      <Separator className="mx-2 my-3" />
+      {!first && <Separator className="mx-2 my-3" />}
       <p className="truncate px-4 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
     </>
   );
