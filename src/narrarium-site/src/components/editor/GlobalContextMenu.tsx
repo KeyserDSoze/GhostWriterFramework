@@ -61,24 +61,53 @@ export function GlobalContextMenu() {
       const opened = openAt(e.clientX, e.clientY, e.target);
       if (opened) { e.preventDefault(); e.stopPropagation(); }
     };
+
+    let startX = 0;
+    let startY = 0;
+    let moved = false;
+    const LONG_PRESS_MS = 800;
+    const MOVE_TOLERANCE = 10;
+
+    const hasActiveSelection = () => {
+      const sel = window.getSelection();
+      return !!sel && !sel.isCollapsed && (sel.toString().trim().length > 0);
+    };
+
     const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length > 1) { cancel(); return; }
       const target = e.target;
       const touch = e.touches[0];
-      const x = touch.clientX;
-      const y = touch.clientY;
+      startX = touch.clientX;
+      startY = touch.clientY;
+      moved = false;
+      // If the user already has a text selection (dragging handles), don't hijack the gesture.
+      if (hasActiveSelection()) return;
       if (longPress.current) clearTimeout(longPress.current);
-      longPress.current = setTimeout(() => openAt(x, y, target), 500);
+      longPress.current = setTimeout(() => {
+        if (!moved) openAt(startX, startY, target);
+      }, LONG_PRESS_MS);
     };
-    const cancel = () => { if (longPress.current) clearTimeout(longPress.current); };
+    const onTouchMove = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      if (!touch) return;
+      if (Math.abs(touch.clientX - startX) > MOVE_TOLERANCE || Math.abs(touch.clientY - startY) > MOVE_TOLERANCE) {
+        moved = true;
+        cancel();
+      }
+    };
+    function cancel() { if (longPress.current) { clearTimeout(longPress.current); longPress.current = null; } }
+
     document.addEventListener("contextmenu", onContextMenu, true);
     document.addEventListener("touchstart", onTouchStart, { passive: true });
     document.addEventListener("touchend", cancel);
-    document.addEventListener("touchmove", cancel, { passive: true });
+    document.addEventListener("touchcancel", cancel);
+    document.addEventListener("touchmove", onTouchMove, { passive: true });
     return () => {
       document.removeEventListener("contextmenu", onContextMenu, true);
       document.removeEventListener("touchstart", onTouchStart);
       document.removeEventListener("touchend", cancel);
-      document.removeEventListener("touchmove", cancel);
+      document.removeEventListener("touchcancel", cancel);
+      document.removeEventListener("touchmove", onTouchMove);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

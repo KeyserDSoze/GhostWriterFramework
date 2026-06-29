@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseDocument, stringify } from "yaml";
-import { ArrowLeft, Save, Loader2, Plus, X, Lock, Wand2 } from "lucide-react";
+import { ArrowLeft, Save, Loader2, Plus, X, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
@@ -466,9 +466,6 @@ export function ParagraphPage() {
           <Badge variant="outline" className="font-mono text-xs">
             {branch}
           </Badge>
-          <Button size="sm" variant="outline" onClick={() => void startImprove()} disabled={!body.trim()}>
-            <Wand2 className="mr-1 h-4 w-4" />{t("paragraph.improve")}
-          </Button>
           {isDirty && !saving && (
             <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>
           )}
