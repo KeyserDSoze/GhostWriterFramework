@@ -616,6 +616,11 @@ const en = {
     generateHint: "Reconstructs the script beats from the draft or final paragraph.",
     generated: "Script generated",
     noProse: "There is no prose to generate from yet. Write the draft or paragraph first.",
+    newCharacter: "New character",
+    newLocation: "New location",
+    newTimeline: "New timeline event",
+    canonName: "Name",
+    canonCreated: "Created and linked: {{name}}",
     type: {
       tell: "Telling",
       action: "Action",

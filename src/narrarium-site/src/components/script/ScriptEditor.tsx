@@ -16,6 +16,7 @@ import {
 import type { BookStructure } from "@/types/book";
 import { nanoid } from "@/narrarium/script/id";
 import type { InnerBlock, ScriptBlock, ScriptDoc } from "@/narrarium/script/model";
+import { CreateCanonInlineDialog } from "@/components/script/CreateCanonInlineDialog";
 
 function slugsFrom(files: { path: string }[], prefix: string): { id: string; label: string }[] {
   return files.map((f) => {
@@ -24,11 +25,11 @@ function slugsFrom(files: { path: string }[], prefix: string): { id: string; lab
   });
 }
 
-export function ScriptEditor({ doc, structure, onChange }: { doc: ScriptDoc; structure: BookStructure | undefined; onChange: (next: ScriptDoc) => void }) {
+export function ScriptEditor({ doc, structure, bookId, onChange }: { doc: ScriptDoc; structure: BookStructure | undefined; bookId: string | undefined; onChange: (next: ScriptDoc) => void }) {
   const { t } = useTranslation();
   const characters = useMemo(() => slugsFrom(structure?.characters ?? [], "character"), [structure]);
   const locations = useMemo(() => slugsFrom(structure?.locations ?? [], "location"), [structure]);
-  const timelines = useMemo(() => slugsFrom(structure?.timelines ?? [], "event"), [structure]);
+  const timelines = useMemo(() => slugsFrom(structure?.timelines ?? [], "timeline-event"), [structure]);
 
   function patch(p: Partial<ScriptDoc>) { onChange({ ...doc, ...p }); }
   function setBlocks(blocks: ScriptBlock[]) { onChange({ ...doc, blocks }); }
@@ -82,13 +83,16 @@ export function ScriptEditor({ doc, structure, onChange }: { doc: ScriptDoc; str
           </div>
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground">{t("script.pov")}</label>
-            <Select value={doc.povRef || "__none__"} onValueChange={(v) => patch({ pov: v === "__none__" ? undefined : v, povRef: v === "__none__" ? undefined : v })}>
-              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("script.none")} /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">{t("script.none")}</SelectItem>
-                {characters.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <div className="flex gap-2">
+              <Select value={doc.povRef || "__none__"} onValueChange={(v) => patch({ pov: v === "__none__" ? undefined : v, povRef: v === "__none__" ? undefined : v })}>
+                <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("script.none")} /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">{t("script.none")}</SelectItem>
+                  {characters.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <CreateCanonInlineDialog bookId={bookId} kind="character" onCreated={(id) => patch({ pov: id, povRef: id })} />
+            </div>
           </div>
           <div className="space-y-1 sm:col-span-2">
             <label className="text-xs text-muted-foreground">{t("script.sceneLocation")}</label>
@@ -101,6 +105,7 @@ export function ScriptEditor({ doc, structure, onChange }: { doc: ScriptDoc; str
                   {locations.map((l) => <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>)}
                 </SelectContent>
               </Select>
+              <CreateCanonInlineDialog bookId={bookId} kind="location" onCreated={(id) => patch({ locationRef: id })} />
             </div>
           </div>
         </div>
@@ -113,6 +118,7 @@ export function ScriptEditor({ doc, structure, onChange }: { doc: ScriptDoc; str
             block={block}
             first={idx === 0}
             last={idx === doc.blocks.length - 1}
+            bookId={bookId}
             characters={characters}
             locations={locations}
             timelines={timelines}
@@ -131,11 +137,12 @@ export function ScriptEditor({ doc, structure, onChange }: { doc: ScriptDoc; str
 }
 
 function BlockCard({
-  block, first, last, characters, locations, timelines, onUp, onDown, onRemove, onChange,
+  block, first, last, bookId, characters, locations, timelines, onUp, onDown, onRemove, onChange,
 }: {
   block: ScriptBlock;
   first: boolean;
   last: boolean;
+  bookId: string | undefined;
   characters: { id: string; label: string }[];
   locations: { id: string; label: string }[];
   timelines: { id: string; label: string }[];
@@ -158,15 +165,16 @@ function BlockCard({
           <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onRemove}><Trash2 className="h-4 w-4" /></Button>
         </div>
       </div>
-      <BlockBody block={block} characters={characters} locations={locations} timelines={timelines} onChange={onChange} />
+      <BlockBody block={block} bookId={bookId} characters={characters} locations={locations} timelines={timelines} onChange={onChange} />
     </div>
   );
 }
 
 function BlockBody({
-  block, characters, locations, timelines, onChange,
+  block, bookId, characters, locations, timelines, onChange,
 }: {
   block: ScriptBlock;
+  bookId: string | undefined;
   characters: { id: string; label: string }[];
   locations: { id: string; label: string }[];
   timelines: { id: string; label: string }[];
@@ -182,13 +190,16 @@ function BlockBody({
     function removeChild(id: string) { setChildren(dlg.children.filter((c) => c.id !== id)); }
     return (
       <div className="space-y-2">
-        <Select value={dlg.characterRef || "__none__"} onValueChange={(v) => onChange({ characterRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
-          <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("script.speaker")} /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none__">{t("script.speakerNone")}</SelectItem>
-            {characters.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <div className="flex gap-2">
+          <Select value={dlg.characterRef || "__none__"} onValueChange={(v) => onChange({ characterRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
+            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("script.speaker")} /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">{t("script.speakerNone")}</SelectItem>
+              {characters.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <CreateCanonInlineDialog bookId={bookId} kind="character" onCreated={(id) => onChange({ characterRef: id } as Partial<ScriptBlock>)} />
+        </div>
         <div className="space-y-2 border-l-2 border-primary/30 pl-3">
           {dlg.children.map((child) => (
             <div key={child.id} className="rounded-lg border bg-background p-2">
@@ -222,13 +233,16 @@ function BlockBody({
   if (block.type === "line") {
     return (
       <div className="space-y-1">
-        <Select value={block.characterRef || "__none__"} onValueChange={(v) => onChange({ characterRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
-          <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("script.speaker")} /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none__">{t("script.speakerNone")}</SelectItem>
-            {characters.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <div className="flex gap-2">
+          <Select value={block.characterRef || "__none__"} onValueChange={(v) => onChange({ characterRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
+            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("script.speaker")} /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">{t("script.speakerNone")}</SelectItem>
+              {characters.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <CreateCanonInlineDialog bookId={bookId} kind="character" onCreated={(id) => onChange({ characterRef: id } as Partial<ScriptBlock>)} />
+        </div>
         <AutoTextarea value={block.text} onChange={(e) => onChange({ text: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.linePlaceholder")} className="text-sm" minRows={1} />
       </div>
     );
@@ -245,6 +259,7 @@ function BlockBody({
             {locations.map((l) => <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>)}
           </SelectContent>
         </Select>
+        <CreateCanonInlineDialog bookId={bookId} kind="location" onCreated={(id) => onChange({ locationRef: id } as Partial<ScriptBlock>)} />
       </div>
     );
   }
@@ -252,13 +267,16 @@ function BlockBody({
   if (block.type === "character") {
     return (
       <div className="space-y-1">
-        <Select value={block.characterRef || "__none__"} onValueChange={(v) => onChange({ characterRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
-          <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("script.character")} /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none__">{t("script.none")}</SelectItem>
-            {characters.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <div className="flex gap-2">
+          <Select value={block.characterRef || "__none__"} onValueChange={(v) => onChange({ characterRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
+            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("script.character")} /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">{t("script.none")}</SelectItem>
+              {characters.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <CreateCanonInlineDialog bookId={bookId} kind="character" onCreated={(id) => onChange({ characterRef: id } as Partial<ScriptBlock>)} />
+        </div>
         <Input value={block.text} onChange={(e) => onChange({ text: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.characterNote")} className="h-8 text-sm" />
       </div>
     );
@@ -275,7 +293,8 @@ function BlockBody({
               {timelines.map((tl) => <SelectItem key={tl.id} value={tl.id}>{tl.label}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Input value={block.date ?? ""} onChange={(e) => onChange({ date: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.date")} className="h-8 w-40 text-sm" />
+          <Input value={block.date ?? ""} onChange={(e) => onChange({ date: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.date")} className="h-8 w-32 text-sm" />
+          <CreateCanonInlineDialog bookId={bookId} kind="timeline-event" onCreated={(id) => onChange({ timelineRef: id } as Partial<ScriptBlock>)} />
         </div>
         <Input value={block.text} onChange={(e) => onChange({ text: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.timelineNote")} className="h-8 text-sm" />
       </div>

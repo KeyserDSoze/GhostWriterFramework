@@ -158,7 +158,7 @@ export function parseScript(body: string): ScriptDoc {
       }
       if (line.startsWith("@track{")) {
         const parts = line.slice(7, -1).split("|").map((p) => p.trim());
-        const ref = parts.find((p) => p.startsWith("timeline:") || p.startsWith("event:"));
+        const ref = parts.find((p) => p.startsWith("timeline-event:") || p.startsWith("timeline:") || p.startsWith("event:"));
         const date = parts.find((p) => /\d/.test(p) && p !== ref);
         const text = parts.filter((p) => p !== ref && p !== date).join(" ");
         doc.blocks.push({ id: nanoid(), type: "timeline", text, date, timelineRef: ref });

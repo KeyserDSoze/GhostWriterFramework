@@ -616,6 +616,11 @@ const it = {
     generateHint: "Ricostruisce lo script dai beat partendo dalla bozza o dal paragrafo.",
     generated: "Script generato",
     noProse: "Non c'è ancora prosa da cui generare. Scrivi prima bozza o paragrafo.",
+    newCharacter: "Nuovo personaggio",
+    newLocation: "Nuovo luogo",
+    newTimeline: "Nuovo evento timeline",
+    canonName: "Nome",
+    canonCreated: "Creato e collegato: {{name}}",
     type: {
       tell: "Narrazione",
       action: "Azione",

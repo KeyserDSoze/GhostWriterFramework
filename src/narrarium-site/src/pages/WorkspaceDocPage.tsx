@@ -462,7 +462,7 @@ export function WorkspaceDocPage() {
             </Button>
             <span className="text-xs text-muted-foreground">{t("script.generateHint")}</span>
           </div>
-          <ScriptEditor doc={scriptDoc} structure={structure ?? undefined} onChange={(next) => { setScriptDoc(next); setBody(serializeScript(next)); }} />
+          <ScriptEditor doc={scriptDoc} structure={structure ?? undefined} bookId={bookId} onChange={(next) => { setScriptDoc(next); setBody(serializeScript(next)); }} />
         </div>
       ) : (
         <AutoTextarea
