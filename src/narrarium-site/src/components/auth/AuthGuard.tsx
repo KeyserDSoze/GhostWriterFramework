@@ -89,7 +89,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
           setStatus("unauthenticated");
           return;
         }
-        const result = await instance.acquireTokenSilent(microsoftSilentRequest(account));
+        const result = await instance.acquireTokenSilent({ ...microsoftSilentRequest(account), forceRefresh: true });
         if (result.account) instance.setActiveAccount(result.account);
         const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
         const expiresIn = Math.max(120, Math.round((expiresAt - Date.now()) / 1000));
