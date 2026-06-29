@@ -2,15 +2,31 @@ import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   BookOpen,
-  Settings,
-  PlusCircle,
+  ClipboardCheck,
+  Clock,
+  EyeOff,
+  FileEdit,
+  FileText,
+  Images,
+  LayoutDashboard,
   Library,
+  MapPin,
   MessagesSquare,
+  Network,
+  NotebookText,
+  Package,
+  PenLine,
+  PlusCircle,
+  Settings,
+  Shield,
+  Users,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useBooksStore } from "@/store/booksStore";
+import { parseAppRoute } from "@/assistant/context";
 import { APP_VERSION } from "@/config/version";
 
 interface NavItem {
@@ -49,6 +65,16 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
   const location = useLocation();
   const { settings } = useSettingsStore();
+  const { structures } = useBooksStore();
+  const route = parseAppRoute(location.pathname);
+  const bookId = "bookId" in route ? route.bookId : undefined;
+  const chapterId = "chapterId" in route ? route.chapterId : undefined;
+  const paragraphNum = "paragraphNum" in route ? route.paragraphNum : undefined;
+  const structure = bookId ? structures[bookId] : undefined;
+  const chapter = chapterId && structure ? structure.chapters.find((c) => c.slug === chapterId) : undefined;
+  const paragraph = paragraphNum && chapter ? chapter.paragraphs.find((p) => p.number === paragraphNum) : undefined;
+  const book = bookId ? settings.books.find((b) => b.id === bookId) : undefined;
+
   const topNav: NavItem[] = [
     { label: t("nav.books"), href: "/app/books", icon: <Library className="h-4 w-4" /> },
     { label: t("chats.title"), href: "/app/chats", icon: <MessagesSquare className="h-4 w-4" /> },
@@ -63,6 +89,48 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       icon: <Settings className="h-4 w-4" />,
     },
   ];
+
+  const bookNav: NavItem[] = bookId
+    ? [
+        { label: t("nav.bookOverview"), href: `/app/books/${bookId}`, icon: <BookOpen className="h-4 w-4" /> },
+        { label: t("dashboard.title"), href: `/app/books/${bookId}/dashboard`, icon: <LayoutDashboard className="h-4 w-4" /> },
+        { label: t("ghostwriters.title"), href: `/app/books/${bookId}/ghostwriters`, icon: <Users className="h-4 w-4" /> },
+        { label: t("writingStyle.title"), href: `/app/books/${bookId}/writing-style`, icon: <FileText className="h-4 w-4" /> },
+        { label: t("assets.title"), href: `/app/books/${bookId}/assets`, icon: <Images className="h-4 w-4" /> },
+        { label: t("reader.title"), href: `/app/books/${bookId}/reader`, icon: <BookOpen className="h-4 w-4" /> },
+        { label: t("bookPage.bookSettings"), href: `/app/books/${bookId}/settings`, icon: <Settings className="h-4 w-4" /> },
+      ]
+    : [];
+
+  const canonNav: NavItem[] = bookId
+    ? [
+        { label: t("bookPage.characters"), href: `/app/books/${bookId}#characters`, icon: <Users className="h-4 w-4" /> },
+        { label: t("bookPage.locations"), href: `/app/books/${bookId}#locations`, icon: <MapPin className="h-4 w-4" /> },
+        { label: t("bookPage.factions"), href: `/app/books/${bookId}#factions`, icon: <Shield className="h-4 w-4" /> },
+        { label: t("bookPage.items"), href: `/app/books/${bookId}#items`, icon: <Package className="h-4 w-4" /> },
+        { label: t("bookPage.timelines"), href: `/app/books/${bookId}#timelines`, icon: <Clock className="h-4 w-4" /> },
+        { label: t("bookPage.secrets"), href: `/app/books/${bookId}#secrets`, icon: <EyeOff className="h-4 w-4" /> },
+      ]
+    : [];
+
+  const chapterNav: NavItem[] = bookId && chapterId
+    ? [
+        { label: t("nav.chapterOverview"), href: `/app/books/${bookId}/chapters/${chapterId}`, icon: <FileText className="h-4 w-4" /> },
+        { label: t("chapter.draft"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/draft`, icon: <FileEdit className="h-4 w-4" /> },
+        { label: t("chapter.resume"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/resume`, icon: <NotebookText className="h-4 w-4" /> },
+        { label: t("chapter.evaluation"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/evaluation`, icon: <ClipboardCheck className="h-4 w-4" /> },
+        { label: t("writingStyle.chapterButton"), href: `/app/books/${bookId}/chapters/${chapterId}/writing-style`, icon: <PenLine className="h-4 w-4" /> },
+      ]
+    : [];
+
+  const paragraphNav: NavItem[] = bookId && chapterId && paragraphNum
+    ? [
+        { label: t("nav.paragraphOverview"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}`, icon: <FileText className="h-4 w-4" /> },
+        { label: t("chapter.script"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/workspace/script`, icon: <Network className="h-4 w-4" /> },
+        { label: t("chapter.draft"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/workspace/draft`, icon: <FileEdit className="h-4 w-4" /> },
+        { label: t("chapter.evaluation"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/workspace/evaluation`, icon: <ClipboardCheck className="h-4 w-4" /> },
+      ]
+    : [];
 
   return (
     <>
@@ -87,22 +155,58 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           ))}
         </nav>
 
+        {bookId && (
+          <>
+            <NavGroup label={book?.name ?? t("nav.currentBook")} />
+            <nav className="px-2 space-y-1">
+              {bookNav.map((item) => (
+                <NavLink key={item.href} item={item} active={location.pathname === item.href} onNavigate={onNavigate} />
+              ))}
+            </nav>
+            <NavGroup label={t("nav.canon")} />
+            <nav className="px-2 space-y-1">
+              {canonNav.map((item) => (
+                <NavLink key={item.href} item={item} active={false} onNavigate={onNavigate} />
+              ))}
+            </nav>
+          </>
+        )}
+
+        {chapterNav.length > 0 && (
+          <>
+            <NavGroup label={chapter?.title ?? t("nav.currentChapter")} />
+            <nav className="px-2 space-y-1">
+              {chapterNav.map((item) => (
+                <NavLink key={item.href} item={item} active={location.pathname === item.href} onNavigate={onNavigate} />
+              ))}
+            </nav>
+          </>
+        )}
+
+        {paragraphNav.length > 0 && (
+          <>
+            <NavGroup label={paragraph?.title ?? t("nav.currentParagraph")} />
+            <nav className="px-2 space-y-1">
+              {paragraphNav.map((item) => (
+                <NavLink key={item.href} item={item} active={location.pathname === item.href} onNavigate={onNavigate} />
+              ))}
+            </nav>
+          </>
+        )}
+
         {settings.books.length > 0 && (
           <>
-            <Separator className="mx-2 my-3" />
-            <p className="px-4 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {t("nav.myBooks")}
-            </p>
+            <NavGroup label={t("nav.myBooks")} />
             <nav className="px-2 space-y-1">
-              {settings.books.map((book) => (
+              {settings.books.map((entry) => (
                 <NavLink
-                  key={book.id}
+                  key={entry.id}
                   item={{
-                    label: book.name,
-                    href: `/app/books/${book.id}`,
+                    label: entry.name,
+                    href: `/app/books/${entry.id}`,
                     icon: <BookOpen className="h-4 w-4" />,
                   }}
-                  active={location.pathname.startsWith(`/app/books/${book.id}`)}
+                  active={location.pathname === `/app/books/${entry.id}`}
                   onNavigate={onNavigate}
                 />
               ))}
@@ -110,6 +214,15 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </>
         )}
       </ScrollArea>
+    </>
+  );
+}
+
+function NavGroup({ label }: { label: string }) {
+  return (
+    <>
+      <Separator className="mx-2 my-3" />
+      <p className="truncate px-4 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
     </>
   );
 }

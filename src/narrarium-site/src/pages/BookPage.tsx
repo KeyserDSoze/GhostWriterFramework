@@ -1,4 +1,5 @@
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Loader2,
@@ -94,6 +95,14 @@ function CanonList({
 export function BookPage() {
   const { t } = useTranslation();
   const { bookId } = useParams<{ bookId: string }>();
+  const location = useLocation();
+  const SECTIONS = ["chapters", "characters", "locations", "factions", "items", "timelines", "secrets"];
+  const [section, setSection] = useState("chapters");
+  useEffect(() => {
+    const hash = location.hash.replace(/^#/, "");
+    if (hash && SECTIONS.includes(hash)) setSection(hash);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.hash]);
   const { settings } = useSettingsStore();
   const { toast } = useToast();
   const pinDossier = useDossierStore((state) => state.pinDossier);
@@ -254,7 +263,7 @@ export function BookPage() {
       {loading && !structure && <BookSkeleton />}
 
       {structure && (
-        <Tabs defaultValue="chapters">
+        <Tabs value={section} onValueChange={setSection}>
           <TabsList className="flex-wrap h-auto gap-1">
             <TabsTrigger value="chapters">
               <BookOpen className="mr-1 h-3 w-3" />

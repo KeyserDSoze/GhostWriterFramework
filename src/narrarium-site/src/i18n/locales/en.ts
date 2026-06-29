@@ -14,6 +14,13 @@ const en = {
     addBook: "Add Book",
     settings: "Settings",
     myBooks: "My Books",
+    currentBook: "Current book",
+    bookOverview: "Book overview",
+    canon: "Canon",
+    currentChapter: "Current chapter",
+    chapterOverview: "Chapter overview",
+    currentParagraph: "Current paragraph",
+    paragraphOverview: "Paragraph overview",
   },
   public: {
     heroBadge: "AI-assisted book writing",

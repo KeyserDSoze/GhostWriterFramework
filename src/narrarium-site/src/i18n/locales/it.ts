@@ -14,6 +14,13 @@ const it = {
     addBook: "Aggiungi libro",
     settings: "Impostazioni",
     myBooks: "I miei libri",
+    currentBook: "Libro corrente",
+    bookOverview: "Panoramica libro",
+    canon: "Canone",
+    currentChapter: "Capitolo corrente",
+    chapterOverview: "Panoramica capitolo",
+    currentParagraph: "Paragrafo corrente",
+    paragraphOverview: "Panoramica paragrafo",
   },
   public: {
     heroBadge: "Scrittura libri assistita dall'AI",
