@@ -216,6 +216,12 @@ export function BookPage() {
               {t("reader.title")}
             </Link>
           </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/books/${book.id}/ghostwriters`}>
+              <Users className="mr-1 h-4 w-4" />
+              {t("ghostwriters.title")}
+            </Link>
+          </Button>
           {structure && token && <AssetImageDialog book={book} branch={branch} token={token} kind="book" title={structure.title ?? book.name} textPath="book.md" resumePath="resumes/total.md" />}
           {structure && token && <BookExportDialog book={book} structure={structure} branch={branch} token={token} />}
           <Button asChild variant="outline" size="sm">

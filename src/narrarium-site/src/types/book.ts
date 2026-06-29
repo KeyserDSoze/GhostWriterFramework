@@ -9,6 +9,12 @@ export interface BookFile {
   content?: string;
 }
 
+export interface Ghostwriter {
+  slug: string;
+  path: string;
+  name: string;
+}
+
 export type CanonSection =
   | "characters"
   | "locations"
@@ -80,4 +86,6 @@ export interface BookStructure {
   /** guidelines/voices.md */
   voicesPath?: string;
   plotPath?: string;
+  /** ghostwriters/<slug>.md profiles */
+  ghostwriters: Ghostwriter[];
 }

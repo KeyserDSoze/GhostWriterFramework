@@ -2,13 +2,15 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseDocument, stringify } from "yaml";
-import { ArrowLeft, Save, Loader2, Plus, X, Lock } from "lucide-react";
+import { ArrowLeft, Save, Loader2, Plus, X, Lock, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { FileDiff } from "@/components/diff/DiffView";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useToast } from "@/components/ui/use-toast";
@@ -22,6 +24,7 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { resolveBookToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { AssetImageDialog } from "@/components/book/AssetImageDialog";
+import { improveProse, type PipelineSource } from "@/narrarium/pipeline";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
 
@@ -126,6 +129,14 @@ export function ParagraphPage() {
   const [showAddMeta, setShowAddMeta] = useState(false);
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
+
+  // Improve
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const selectionRef = useRef<{ start: number; end: number } | null>(null);
+  const [improveOpen, setImproveOpen] = useState(false);
+  const [improveLoading, setImproveLoading] = useState(false);
+  const [improveNew, setImproveNew] = useState("");
+  const [improveSelection, setImproveSelection] = useState<string | null>(null);
 
   const isDirty =
     body !== savedBody ||
@@ -304,6 +315,46 @@ export function ParagraphPage() {
   }
 
   // Separate entries by role
+  const currentGhostwriter = (() => {
+    const v = entries.find((e) => e.key === "ghostwriter")?.value;
+    return typeof v === "string" ? v : "";
+  })();
+
+  async function startImprove() {
+    if (!book || !token || !structure || !chapter) return;
+    const node = bodyRef.current;
+    let selection: string | null = null;
+    if (node && node.selectionEnd > node.selectionStart) {
+      selectionRef.current = { start: node.selectionStart, end: node.selectionEnd };
+      selection = body.slice(node.selectionStart, node.selectionEnd);
+    } else {
+      selectionRef.current = null;
+    }
+    setImproveSelection(selection);
+    setImproveNew("");
+    setImproveOpen(true);
+    setImproveLoading(true);
+    try {
+      const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter };
+      setImproveNew(await improveProse(src, body, selection, currentGhostwriter));
+    } catch (err) {
+      toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
+      setImproveOpen(false);
+    } finally {
+      setImproveLoading(false);
+    }
+  }
+
+  function applyImprove() {
+    if (improveSelection && selectionRef.current) {
+      const { start, end } = selectionRef.current;
+      setBody(body.slice(0, start) + improveNew + body.slice(end));
+    } else {
+      setBody(improveNew);
+    }
+    setImproveOpen(false);
+  }
+
   const readonlyEntries = entries.filter((e) => READONLY_KEYS.has(e.key));
   const editableEntries = entries.filter(
     (e) => !READONLY_KEYS.has(e.key) && e.key !== "title",
@@ -335,6 +386,9 @@ export function ParagraphPage() {
               textPath={paragraph.path}
             />
           )}
+          <Button size="sm" variant="outline" onClick={() => void startImprove()} disabled={!body.trim()}>
+            <Wand2 className="mr-1 h-4 w-4" />{t("paragraph.improve")}
+          </Button>
           {isDirty && !saving && (
             <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>
           )}
@@ -475,6 +529,7 @@ export function ParagraphPage() {
         </div>
       ) : (
         <AutoTextarea
+          ref={bodyRef}
           value={body}
           onChange={(e) => setBody(e.target.value)}
           className="min-h-[55vh] font-mono text-sm leading-7"
@@ -484,6 +539,26 @@ export function ParagraphPage() {
       )}
 
       <p className="text-[11px] text-muted-foreground truncate">{paragraph.path}</p>
+
+      <Dialog open={improveOpen} onOpenChange={(next) => { if (!next) setImproveOpen(false); }}>
+        <DialogContent className="left-1/2 top-1/2 flex h-[88dvh] max-h-[88dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 flex-col p-0 sm:w-[820px]">
+          <div className="border-b px-4 py-3">
+            <p className="font-semibold">{improveSelection ? t("paragraph.improveSelection") : t("paragraph.improveAll")}</p>
+            <p className="text-xs text-muted-foreground">{currentGhostwriter ? t("paragraph.improveWith", { name: currentGhostwriter }) : t("pipeline.defaultStyle")}</p>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto p-4">
+            {improveLoading ? (
+              <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("pipeline.generating")}</div>
+            ) : (
+              <FileDiff previous={improveSelection ?? body} next={improveNew} />
+            )}
+          </div>
+          <div className="flex justify-end gap-2 border-t px-4 py-3">
+            <Button variant="ghost" onClick={() => setImproveOpen(false)}>{t("common.cancel")}</Button>
+            <Button onClick={applyImprove} disabled={improveLoading || !improveNew.trim()}>{t("pipeline.apply")}</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

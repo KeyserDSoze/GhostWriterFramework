@@ -13,6 +13,7 @@ import { CanonEntityPage } from "@/pages/CanonEntityPage";
 import { ChapterPage } from "@/pages/ChapterPage";
 import { ParagraphPage } from "@/pages/ParagraphPage";
 import { WorkspaceDocPage } from "@/pages/WorkspaceDocPage";
+import { GhostwritersPage } from "@/pages/GhostwritersPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { AssistantChatsPage } from "@/pages/AssistantChatsPage";
 import {
@@ -60,6 +61,7 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/dashboard", element: <BookDashboardPage /> },
       { path: "books/:bookId/assets", element: <AssetGalleryPage /> },
       { path: "books/:bookId/reader", element: <ReaderPreviewPage /> },
+      { path: "books/:bookId/ghostwriters", element: <GhostwritersPage /> },
       { path: "books/:bookId/settings", element: <BookSettingsPage /> },
       { path: "books/:bookId/canon/:section/:slug", element: <CanonEntityPage /> },
       { path: "books/:bookId/chapters/:chapterId/workspace/:workspaceKind", element: <WorkspaceDocPage /> },

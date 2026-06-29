@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Lock, Plus, Save, X } from "lucide-react";
+import { ArrowLeft, Lock, Plus, Save, Wand2, X } from "lucide-react";
 import { parseDocument, stringify } from "yaml";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -10,11 +10,13 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { useToast } from "@/components/ui/use-toast";
-import { readFileWithSha, updateFile } from "@/github/githubClient";
+import { createOrUpdateTextFile, readFileWithSha, updateFile } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
 import { resolveBookToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { GeneratePreviewDialog } from "@/components/book/GeneratePreviewDialog";
+import { refineProse, scriptToProse, type PipelineSource } from "@/narrarium/pipeline";
 
 interface MetaEntry {
   key: string;
@@ -100,6 +102,11 @@ export function WorkspaceDocPage() {
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
   const loadedTargetRef = useRef<string | null>(null);
+  const [pipelineOpen, setPipelineOpen] = useState(false);
+  const [pipelineMode, setPipelineMode] = useState<"toDraft" | "toFinal">("toDraft");
+  const [pipelineText, setPipelineText] = useState("");
+  const [pipelineLoading, setPipelineLoading] = useState(false);
+  const [pipelineGw, setPipelineGw] = useState("");
 
   const resolved = resolveWorkspacePath(chapter, paragraph, workspaceKind, !!paragraphNum);
   const path = resolved?.path ?? null;
@@ -218,6 +225,56 @@ export function WorkspaceDocPage() {
   const readonlyEntries = entries.filter((entry) => READONLY_KEYS.has(entry.key));
   const editableEntries = entries.filter((entry) => !READONLY_KEYS.has(entry.key));
 
+  const currentGhostwriter = (() => {
+    const value = entries.find((entry) => entry.key === "ghostwriter")?.value;
+    return typeof value === "string" ? value : "";
+  })();
+  const paraSlug = paragraph ? paragraphSlug(paragraph.path) : null;
+
+  async function startPipeline(mode: "toDraft" | "toFinal") {
+    if (!book || !token || !structure || !chapter || !paraSlug) return;
+    setPipelineMode(mode);
+    setPipelineGw(currentGhostwriter);
+    setPipelineOpen(true);
+    await runPipeline(mode, currentGhostwriter);
+  }
+
+  async function runPipeline(mode: "toDraft" | "toFinal", gw: string) {
+    if (!book || !structure || !chapter) return;
+    setPipelineLoading(true);
+    try {
+      const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter };
+      const text = mode === "toDraft" ? await scriptToProse(src, body, gw) : await refineProse(src, body, gw);
+      setPipelineText(text);
+    } catch (err) {
+      toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
+    } finally {
+      setPipelineLoading(false);
+    }
+  }
+
+  async function applyPipeline() {
+    if (!book || !chapter || !paraSlug) return;
+    const targetPath = pipelineMode === "toDraft"
+      ? `${chapter.path}/drafts/${paraSlug}.md`
+      : `${chapter.path}/${paraSlug}.md`;
+    const number = Number(paraSlug.match(/^(\d{3})/)?.[1] ?? "1");
+    const titleText = (entries.find((e) => e.key === "title")?.value as string) || paraSlug;
+    const fm: Record<string, unknown> = pipelineMode === "toDraft"
+      ? { type: "paragraph-draft", id: `draft:paragraph:${chapter.slug}:${paraSlug}`, paragraph: `paragraph:${chapter.slug}:${paraSlug}`, chapter: `chapter:${chapter.slug}`, number, title: titleText, canon: "draft" }
+      : { type: "paragraph", id: `paragraph:${chapter.slug}:${paraSlug}`, chapter: `chapter:${chapter.slug}`, number, title: titleText };
+    if (pipelineGw) fm.ghostwriter = pipelineGw;
+    const content = `---\n${stringify(fm).trim()}\n---\n\n${pipelineText.trim()}\n`;
+    try {
+      await createOrUpdateTextFile(token, book.owner, book.repo, branch, targetPath, content, `Generate ${targetPath}`);
+      toast({ title: t("pipeline.created", { path: targetPath }) });
+      setPipelineOpen(false);
+      reload();
+    } catch (err) {
+      toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -229,6 +286,12 @@ export function WorkspaceDocPage() {
         </Button>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="font-mono text-xs">{branch}</Badge>
+          {paraSlug && workspaceKind === "script" && (
+            <Button size="sm" variant="outline" onClick={() => void startPipeline("toDraft")}><Wand2 className="mr-1 h-4 w-4" />{t("pipeline.scriptToDraft")}</Button>
+          )}
+          {paraSlug && workspaceKind === "draft" && (
+            <Button size="sm" variant="outline" onClick={() => void startPipeline("toFinal")}><Wand2 className="mr-1 h-4 w-4" />{t("pipeline.draftToFinal")}</Button>
+          )}
           {isDirty && !saving && <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>}
           <Button size="sm" onClick={() => void handleSave()} disabled={!isDirty || saving}>
             <Save className="mr-1 h-4 w-4" />
@@ -343,6 +406,20 @@ export function WorkspaceDocPage() {
           spellCheck={false}
         />
       )}
+      <GeneratePreviewDialog
+        open={pipelineOpen}
+        title={pipelineMode === "toDraft" ? t("pipeline.scriptToDraft") : t("pipeline.draftToFinal")}
+        description={pipelineMode === "toDraft" ? t("pipeline.scriptToDraftDesc") : t("pipeline.draftToFinalDesc")}
+        text={pipelineText}
+        loading={pipelineLoading}
+        ghostwriters={structure?.ghostwriters ?? []}
+        ghostwriter={pipelineGw}
+        onGhostwriter={(slug) => { setPipelineGw(slug); }}
+        onRegenerate={() => void runPipeline(pipelineMode, pipelineGw)}
+        onChange={setPipelineText}
+        onConfirm={() => void applyPipeline()}
+        onCancel={() => setPipelineOpen(false)}
+      />
     </div>
   );
 }

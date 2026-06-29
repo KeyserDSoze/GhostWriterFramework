@@ -214,6 +214,13 @@ export async function loadBookStructure(
     voicesPath: allPaths.includes("guidelines/voices.md")
       ? "guidelines/voices.md"
       : undefined,
+    ghostwriters: allPaths
+      .filter((p) => /^ghostwriters\/[^/]+\.md$/.test(p))
+      .map((p) => {
+        const slug = p.replace(/^ghostwriters\//, "").replace(/\.md$/i, "");
+        return { slug, path: p, name: slugToTitle(slug) };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name)),
     plotPath: allPaths.includes("plot.md") ? "plot.md" : undefined,
   };
 }
@@ -350,6 +357,21 @@ export async function createFile(
     branch,
   });
   return data.content?.sha ?? "";
+}
+
+/** Create the file when missing or update it in place, returning the new sha. */
+export async function createOrUpdateTextFile(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  path: string,
+  content: string,
+  message: string,
+): Promise<string> {
+  const existing = await readFileWithSha(token, owner, repo, branch, path).catch(() => null);
+  if (existing) return updateFile(token, owner, repo, branch, path, existing.sha, content, message);
+  return createFile(token, owner, repo, branch, path, content, message);
 }
 
 /**
