@@ -5,7 +5,7 @@ import { parseDocument, stringify } from "yaml";
 import { ArrowLeft, Save, Loader2, Plus, X, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -474,10 +474,10 @@ export function ParagraphPage() {
           ))}
         </div>
       ) : (
-        <Textarea
+        <AutoTextarea
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          className="min-h-[55vh] font-mono text-sm resize-none"
+          className="min-h-[55vh] font-mono text-sm leading-7"
           placeholder={t("paragraph.writePlaceholder")}
           spellCheck={false}
         />

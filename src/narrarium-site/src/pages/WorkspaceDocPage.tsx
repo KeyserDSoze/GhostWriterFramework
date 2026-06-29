@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
+import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { readFileWithSha, updateFile } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
@@ -335,10 +335,10 @@ export function WorkspaceDocPage() {
           ))}
         </div>
       ) : (
-        <Textarea
+        <AutoTextarea
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          className="min-h-[55vh] font-mono text-sm resize-none"
+          className="min-h-[55vh] font-mono text-sm leading-7"
           placeholder={t("workspace.writeBodyPlaceholder")}
           spellCheck={false}
         />
