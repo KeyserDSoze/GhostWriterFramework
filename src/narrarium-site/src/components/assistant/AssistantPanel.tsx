@@ -487,9 +487,22 @@ export function AssistantPanel() {
     }
   }
 
-  function readCurrentContext() {
-    const text = [contextLabel, contextSummary, ...contextFiles].join("\n");
-    void readText(text);
+  async function readCurrentContext() {
+    const ctx = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches);
+    const book = ctx.book;
+    const token = book ? resolveBookToken(book, settings) : "";
+    if (book && token && ctx.structure) {
+      const target = ctx.paragraph && ctx.chapter
+        ? { kind: "paragraph" as const, chapter: ctx.chapter, paragraph: ctx.paragraph }
+        : ctx.chapter
+          ? { kind: "chapter" as const, chapter: ctx.chapter }
+          : null;
+      if (target) {
+        const body = await loadReadTargetText(target, book, token, ctx.structure.loadedBranch);
+        if (body.trim()) { void readText(body); return; }
+      }
+    }
+    void readText([ctx.title, ctx.summary].filter(Boolean).join("\n"));
   }
   async function handleVoiceTranscript(transcript: string) {
     setLastVoiceTranscript(transcript);
@@ -625,7 +638,8 @@ export function AssistantPanel() {
   ): Promise<AssistantMessage | null> {
     const readTarget = resolveReadTarget(prompt, input.context);
     if (!readTarget || !input.book || !input.token || !input.context.structure) return null;
-    const text = await loadReadTargetText(readTarget, input.book, input.token, input.context.structure.loadedBranch);
+    const includeFrontmatter = /\b(frontmatter|metadat|metadata|intestazion|header|campi|fields)\b/.test(prompt.toLowerCase());
+    const text = await loadReadTargetText(readTarget, input.book, input.token, input.context.structure.loadedBranch, includeFrontmatter);
     if (!text.trim()) return makeAssistantReply(t("assistant.readTargetEmpty"));
     const title = readTarget.kind === "chapter" ? readTarget.chapter.title : readTarget.paragraph.title;
     const reply = makeAssistantReply(t("assistant.readingTarget", { title }));
@@ -681,14 +695,16 @@ export function AssistantPanel() {
     book: NonNullable<Awaited<ReturnType<typeof loadWriterContext>>["book"]>,
     token: string,
     readBranch: string,
+    includeFrontmatter = false,
   ): Promise<string> {
+    const prepare = (raw: string) => (includeFrontmatter ? raw.trim() : stripFrontmatterForSpeech(raw));
     if (target.kind === "paragraph" && target.paragraph) {
-      return stripFrontmatterForSpeech(await loadFileContent(token, book.owner, book.repo, target.paragraph.path, readBranch));
+      return prepare(await loadFileContent(token, book.owner, book.repo, target.paragraph.path, readBranch));
     }
     if (target.kind === "chapter" && target.chapter) {
       const chapterIntro = await loadFileContent(token, book.owner, book.repo, `${target.chapter.path}/chapter.md`, readBranch).catch(() => "");
       const paragraphs = await Promise.all(target.chapter.paragraphs.map((paragraph) => loadFileContent(token, book.owner, book.repo, paragraph.path, readBranch).catch(() => "")));
-      return [`# ${target.chapter.title}`, stripFrontmatterForSpeech(chapterIntro), ...paragraphs.map(stripFrontmatterForSpeech)].filter(Boolean).join("\n\n");
+      return [`# ${target.chapter.title}`, prepare(chapterIntro), ...paragraphs.map(prepare)].filter(Boolean).join("\n\n");
     }
     return "";
   }
@@ -1114,7 +1130,7 @@ export function AssistantPanel() {
                   })}
                 </DropdownMenuContent>
               </DropdownMenu>
-              <Button variant="outline" size="sm" className="h-8 gap-1" onClick={speechController ? stopReading : readCurrentContext}>
+              <Button variant="outline" size="sm" className="h-8 gap-1" onClick={speechController ? stopReading : () => void readCurrentContext()}>
                 {speechController ? <Square className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                 <span className="hidden sm:inline">{speechController ? t("assistant.stopReading") : t("assistant.readContext")}</span>
               </Button>
