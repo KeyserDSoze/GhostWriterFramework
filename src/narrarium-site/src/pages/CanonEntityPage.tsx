@@ -15,6 +15,8 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
 import { resolveBookToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
+import { useProseAssist } from "@/components/editor/useProseAssist";
 
 interface MetaEntry {
   key: string;
@@ -95,6 +97,18 @@ export function CanonEntityPage() {
   const [savedBody, setSavedBody] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const proseAssist = useProseAssist({
+    textareaRef: bodyRef,
+    getBody: () => body,
+    setBody,
+    buildSource: () => (book && structure && token ? { token, owner: book.owner, repo: book.repo, branch, settings, structure } : null),
+  });
+  useRegisterProseEditor(bodyRef, {
+    improve: (s) => proseAssist.improve(s),
+    synonym: (s) => proseAssist.synonym(s),
+  });
   const [showAddMeta, setShowAddMeta] = useState(false);
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
@@ -341,6 +355,7 @@ export function CanonEntityPage() {
         </div>
       ) : (
         <AutoTextarea
+          ref={bodyRef}
           value={body}
           onChange={(e) => setBody(e.target.value)}
           className="min-h-[55vh] font-mono text-sm leading-7"
@@ -348,6 +363,7 @@ export function CanonEntityPage() {
           spellCheck={false}
         />
       )}
+      {proseAssist.dialogs}
 
       <p className="text-[11px] text-muted-foreground truncate">{path}</p>
     </div>

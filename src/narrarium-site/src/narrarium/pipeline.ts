@@ -15,7 +15,8 @@ interface PipelineSource {
   branch: string;
   settings: AppSettings;
   structure: BookStructure;
-  chapter: Chapter;
+  /** Optional: present when working inside a chapter/paragraph/draft. Absent for canon, prompts, etc. */
+  chapter?: Chapter;
 }
 
 async function tryLoad(src: PipelineSource, path?: string): Promise<string> {
@@ -42,9 +43,9 @@ export async function loadGhostwriterProfile(src: PipelineSource, slug?: string)
 async function buildContext(src: PipelineSource, ghostwriterSlug?: string): Promise<{ style: string; story: string }> {
   const [globalStyle, chapterStyle, bookResume, chapterResume] = await Promise.all([
     tryLoad(src, src.structure.globalWritingStylePath),
-    tryLoad(src, src.chapter.writingStylePath),
+    tryLoad(src, src.chapter?.writingStylePath),
     tryLoad(src, "resumes/total.md"),
-    tryLoad(src, `resumes/chapters/${src.chapter.slug}.md`),
+    src.chapter ? tryLoad(src, `resumes/chapters/${src.chapter.slug}.md`) : Promise.resolve(""),
   ]);
   const ghost = await loadGhostwriterProfile(src, ghostwriterSlug);
   const style = [
