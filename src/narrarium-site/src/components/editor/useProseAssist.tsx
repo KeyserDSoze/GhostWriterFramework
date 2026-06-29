@@ -7,6 +7,15 @@ import { FileDiff } from "@/components/diff/DiffView";
 import { useToast } from "@/components/ui/use-toast";
 import { improveProse, synonymsFor, type PipelineSource } from "@/narrarium/pipeline";
 
+/** Split a selection into leading whitespace, core text, and trailing whitespace
+ * so a replacement keeps the surrounding spaces (e.g. double-click that grabs the trailing space). */
+function splitEdges(text: string): { lead: string; core: string; trail: string } {
+  const lead = text.match(/^\s*/)?.[0] ?? "";
+  const trail = text.match(/\s*$/)?.[0] ?? "";
+  const core = text.slice(lead.length, text.length - trail.length);
+  return { lead, core, trail };
+}
+
 export function useProseAssist(opts: {
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   getBody: () => string;
@@ -63,8 +72,12 @@ export function useProseAssist(opts: {
 
   function applyImprove() {
     const body = opts.getBody();
-    if (improveSelection && range) opts.setBody(body.slice(0, range.start) + improveNew + body.slice(range.end));
-    else opts.setBody(improveNew);
+    if (improveSelection && range) {
+      const { lead, trail } = splitEdges(body.slice(range.start, range.end));
+      opts.setBody(body.slice(0, range.start) + lead + improveNew.trim() + trail + body.slice(range.end));
+    } else {
+      opts.setBody(improveNew);
+    }
     setImproveOpen(false);
   }
 
@@ -86,16 +99,20 @@ export function useProseAssist(opts: {
 
   function synonym(selection: string) {
     const sel = captureRange() ?? selection;
-    setSynonymWord(sel.trim());
+    const core = splitEdges(sel).core;
+    setSynonymWord(core);
     setSynonymOptions([]);
     setSynonymSeen([]);
     setSynonymOpen(true);
-    void loadSynonyms([], sel.trim());
+    void loadSynonyms([], core);
   }
 
   function applySynonym(word: string) {
     const body = opts.getBody();
-    if (range) opts.setBody(body.slice(0, range.start) + word + body.slice(range.end));
+    if (range) {
+      const { lead, trail } = splitEdges(body.slice(range.start, range.end));
+      opts.setBody(body.slice(0, range.start) + lead + word + trail + body.slice(range.end));
+    }
     setSynonymOpen(false);
   }
 

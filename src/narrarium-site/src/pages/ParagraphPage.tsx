@@ -92,6 +92,14 @@ function titleToSlug(title: string): string {
     .replace(/^-|-$/g, "");          // trim
 }
 
+/** Split selection into leading whitespace, core, trailing whitespace so a replacement keeps surrounding spaces. */
+function splitEdges(text: string): { lead: string; core: string; trail: string } {
+  const lead = text.match(/^\s*/)?.[0] ?? "";
+  const trail = text.match(/\s*$/)?.[0] ?? "";
+  const core = text.slice(lead.length, text.length - trail.length);
+  return { lead, core, trail };
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function ParagraphPage() {
@@ -369,7 +377,8 @@ export function ParagraphPage() {
   function applyImprove() {
     if (improveSelection && selectionRef.current) {
       const { start, end } = selectionRef.current;
-      setBody(body.slice(0, start) + improveNew + body.slice(end));
+      const { lead, trail } = splitEdges(body.slice(start, end));
+      setBody(body.slice(0, start) + lead + improveNew.trim() + trail + body.slice(end));
     } else {
       setBody(improveNew);
     }
@@ -403,7 +412,7 @@ export function ParagraphPage() {
   async function openSynonyms(selection: string) {
     if (!book || !token || !structure || !chapter || !selection.trim()) return;
     captureSelectionRef();
-    const word = selection.trim();
+    const word = splitEdges(selection).core;
     setSynonymWord(word);
     setSynonymOptions([]);
     setSynonymSeen([]);
@@ -431,7 +440,8 @@ export function ParagraphPage() {
   function applySynonym(word: string) {
     if (selectionRef.current) {
       const { start, end } = selectionRef.current;
-      setBody(body.slice(0, start) + word + body.slice(end));
+      const { lead, trail } = splitEdges(body.slice(start, end));
+      setBody(body.slice(0, start) + lead + word + trail + body.slice(end));
     }
     setSynonymOpen(false);
   }
