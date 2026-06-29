@@ -14,379 +14,266 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { BookStructure } from "@/types/book";
-import { nanoid } from "@/narrarium/script/id";
-import type { InnerBlock, ScriptBlock, ScriptDoc } from "@/narrarium/script/model";
+import { isContainer, makeNode, type NodeKind, type ScriptDoc, type ScriptNode } from "@/narrarium/script/model";
 import { CreateCanonInlineDialog } from "@/components/script/CreateCanonInlineDialog";
+import type { EntityKind } from "@/narrarium/canon";
 
-function slugsFrom(files: { path: string }[], prefix: string): { id: string; label: string }[] {
+type Ref = { id: string; label: string };
+
+function slugsFrom(files: { path: string }[], prefix: string): Ref[] {
   return files.map((f) => {
     const slug = (f.path.split("/").pop() ?? "").replace(/\.md$/i, "");
     return { id: `${prefix}:${slug}`, label: slug.replace(/-/g, " ") };
   });
 }
 
+interface Catalog {
+  characters: Ref[];
+  locations: Ref[];
+  items: Ref[];
+  factions: Ref[];
+  secrets: Ref[];
+  timelines: Ref[];
+  bookId: string | undefined;
+}
+
 export function ScriptEditor({ doc, structure, bookId, onChange }: { doc: ScriptDoc; structure: BookStructure | undefined; bookId: string | undefined; onChange: (next: ScriptDoc) => void }) {
   const { t } = useTranslation();
-  const characters = useMemo(() => slugsFrom(structure?.characters ?? [], "character"), [structure]);
-  const locations = useMemo(() => slugsFrom(structure?.locations ?? [], "location"), [structure]);
-  const timelines = useMemo(() => slugsFrom(structure?.timelines ?? [], "timeline-event"), [structure]);
-  const items = useMemo(() => slugsFrom(structure?.items ?? [], "item"), [structure]);
-  const factions = useMemo(() => slugsFrom(structure?.factions ?? [], "faction"), [structure]);
-  const secrets = useMemo(() => slugsFrom(structure?.secrets ?? [], "secret"), [structure]);
+  const catalog: Catalog = {
+    characters: useMemo(() => slugsFrom(structure?.characters ?? [], "character"), [structure]),
+    locations: useMemo(() => slugsFrom(structure?.locations ?? [], "location"), [structure]),
+    items: useMemo(() => slugsFrom(structure?.items ?? [], "item"), [structure]),
+    factions: useMemo(() => slugsFrom(structure?.factions ?? [], "faction"), [structure]),
+    secrets: useMemo(() => slugsFrom(structure?.secrets ?? [], "secret"), [structure]),
+    timelines: useMemo(() => slugsFrom(structure?.timelines ?? [], "timeline-event"), [structure]),
+    bookId,
+  };
 
-  function patch(p: Partial<ScriptDoc>) { onChange({ ...doc, ...p }); }
-  function setBlocks(blocks: ScriptBlock[]) { onChange({ ...doc, blocks }); }
-
-  function addBlock(block: ScriptBlock) { setBlocks([...doc.blocks, block]); }
-  function updateBlock(id: string, next: Partial<ScriptBlock>) {
-    setBlocks(doc.blocks.map((b) => (b.id === id ? ({ ...b, ...next } as ScriptBlock) : b)));
-  }
-  function removeBlock(id: string) { setBlocks(doc.blocks.filter((b) => b.id !== id)); }
-  function move(id: string, dir: -1 | 1) {
-    const i = doc.blocks.findIndex((b) => b.id === id);
-    if (i < 0) return;
-    const j = i + dir;
-    if (j < 0 || j >= doc.blocks.length) return;
-    const next = [...doc.blocks];
-    [next[i], next[j]] = [next[j], next[i]];
-    setBlocks(next);
-  }
-
-  const addMenu = (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button className="w-full justify-center gap-2" variant="outline"><Plus className="h-4 w-4" />{t("script.addBlock")}<ChevronDown className="h-4 w-4 opacity-60" /></Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="center" className="w-64">
-        <DropdownMenuLabel className="text-xs">{t("script.beats")}</DropdownMenuLabel>
-        <DropdownMenuItem onSelect={() => addBlock({ id: nanoid(), type: "dialogue", children: [{ id: nanoid(), type: "line", text: "" }] })}><MessageSquare className="mr-2 h-4 w-4" />{t("script.dialogue")}</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => addBlock({ id: nanoid(), type: "line", text: "" })}>{t("script.singleLine")}</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => addBlock({ id: nanoid(), type: "action", text: "" })}>{t("script.action")}</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => addBlock({ id: nanoid(), type: "emotion", text: "" })}>{t("script.emotion")}</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => addBlock({ id: nanoid(), type: "tell", text: "" })}>{t("script.tell")}</DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel className="text-xs">{t("script.canon")}</DropdownMenuLabel>
-        <DropdownMenuItem onSelect={() => addBlock({ id: nanoid(), type: "location", text: "" })}>{t("script.location")}</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => addBlock({ id: nanoid(), type: "character", text: "" })}>{t("script.character")}</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => addBlock({ id: nanoid(), type: "item", text: "" })}>{t("script.item")}</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => addBlock({ id: nanoid(), type: "faction", text: "" })}>{t("script.faction")}</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => addBlock({ id: nanoid(), type: "secret", mode: "seed" })}>{t("script.secret")}</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => addBlock({ id: nanoid(), type: "timeline", text: "" })}>{t("script.timeline")}</DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => addBlock({ id: nanoid(), type: "command", raw: "@scene_goal{}" })}>{t("script.rawCommand")}</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
+  function setNodes(nodes: ScriptNode[]) { onChange({ nodes }); }
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-xl border bg-muted/20 p-3 space-y-3">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{t("script.scene")}</p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">{t("script.sceneGoal")}</label>
-            <Input value={doc.sceneGoal ?? ""} onChange={(e) => patch({ sceneGoal: e.target.value })} className="h-8 text-sm" />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">{t("script.pov")}</label>
-            <div className="flex gap-2">
-              <Select value={doc.povRef || "__none__"} onValueChange={(v) => patch({ pov: v === "__none__" ? undefined : v, povRef: v === "__none__" ? undefined : v })}>
-                <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("script.none")} /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">{t("script.none")}</SelectItem>
-                  {characters.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <CreateCanonInlineDialog bookId={bookId} kind="character" onCreated={(id) => patch({ pov: id, povRef: id })} />
-            </div>
-          </div>
-          <div className="space-y-1 sm:col-span-2">
-            <label className="text-xs text-muted-foreground">{t("script.sceneLocation")}</label>
-            <div className="flex gap-2">
-              <Input value={doc.location ?? ""} onChange={(e) => patch({ location: e.target.value })} placeholder={t("script.locationPlaceholder")} className="h-8 flex-1 text-sm" />
-              <Select value={doc.locationRef || "__none__"} onValueChange={(v) => patch({ locationRef: v === "__none__" ? undefined : v })}>
-                <SelectTrigger className="h-8 w-40 text-sm"><SelectValue placeholder={t("script.link")} /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">{t("script.none")}</SelectItem>
-                  {locations.map((l) => <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <CreateCanonInlineDialog bookId={bookId} kind="location" onCreated={(id) => patch({ locationRef: id })} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        {doc.blocks.map((block, idx) => (
-          <BlockCard
-            key={block.id}
-            block={block}
-            first={idx === 0}
-            last={idx === doc.blocks.length - 1}
-            bookId={bookId}
-            characters={characters}
-            locations={locations}
-            timelines={timelines}
-            items={items}
-            factions={factions}
-            secrets={secrets}
-            onUp={() => move(block.id, -1)}
-            onDown={() => move(block.id, 1)}
-            onRemove={() => removeBlock(block.id)}
-            onChange={(next) => updateBlock(block.id, next)}
-          />
-        ))}
-        {doc.blocks.length === 0 && <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{t("script.empty")}</p>}
-      </div>
-
-      {addMenu}
+    <div className="space-y-3">
+      <NodeList
+        nodes={doc.nodes}
+        catalog={catalog}
+        depth={0}
+        onChange={setNodes}
+      />
+      <AddBlockMenu label={t("script.addBlock")} onAdd={(kind) => setNodes([...doc.nodes, makeNode(kind)])} wide />
     </div>
   );
 }
 
-function BlockCard({
-  block, first, last, bookId, characters, locations, timelines, items, factions, secrets, onUp, onDown, onRemove, onChange,
+function NodeList({ nodes, catalog, depth, onChange }: { nodes: ScriptNode[]; catalog: Catalog; depth: number; onChange: (nodes: ScriptNode[]) => void }) {
+  const { t } = useTranslation();
+  function update(id: string, next: ScriptNode) { onChange(nodes.map((n) => (n.id === id ? next : n))); }
+  function remove(id: string) { onChange(nodes.filter((n) => n.id !== id)); }
+  function move(id: string, dir: -1 | 1) {
+    const i = nodes.findIndex((n) => n.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= nodes.length) return;
+    const copy = [...nodes];
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+    onChange(copy);
+  }
+  return (
+    <div className="space-y-2">
+      {nodes.map((node, idx) => (
+        <NodeCard
+          key={node.id}
+          node={node}
+          catalog={catalog}
+          depth={depth}
+          first={idx === 0}
+          last={idx === nodes.length - 1}
+          onUp={() => move(node.id, -1)}
+          onDown={() => move(node.id, 1)}
+          onRemove={() => remove(node.id)}
+          onChange={(next) => update(node.id, next)}
+        />
+      ))}
+      {nodes.length === 0 && depth === 0 && (
+        <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{t("script.empty")}</p>
+      )}
+    </div>
+  );
+}
+
+function NodeCard({
+  node, catalog, depth, first, last, onUp, onDown, onRemove, onChange,
 }: {
-  block: ScriptBlock;
+  node: ScriptNode;
+  catalog: Catalog;
+  depth: number;
   first: boolean;
   last: boolean;
-  bookId: string | undefined;
-  characters: { id: string; label: string }[];
-  locations: { id: string; label: string }[];
-  timelines: { id: string; label: string }[];
-  items: { id: string; label: string }[];
-  factions: { id: string; label: string }[];
-  secrets: { id: string; label: string }[];
   onUp: () => void;
   onDown: () => void;
   onRemove: () => void;
-  onChange: (next: Partial<ScriptBlock>) => void;
+  onChange: (next: ScriptNode) => void;
 }) {
   const { t } = useTranslation();
-  const label = t(`script.type.${block.type}`);
+  const container = isContainer(node.kind);
+  const setAttr = (key: string, value: string | undefined) => {
+    const attrs = { ...node.attrs };
+    if (value && value !== "__none__") attrs[key] = value;
+    else delete attrs[key];
+    onChange({ ...node, attrs });
+  };
 
   return (
-    <div className="rounded-xl border bg-card p-3">
+    <div className={container ? "rounded-xl border bg-muted/20 p-3" : "rounded-lg border bg-card p-2.5"}>
       <div className="mb-2 flex items-center gap-2">
-        <GripVertical className="h-4 w-4 text-muted-foreground/50" />
-        <span className="rounded bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+        <GripVertical className="h-4 w-4 text-muted-foreground/40" />
+        <span className={container ? "rounded bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary" : "rounded bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"}>{t(`script.type.${node.kind}`)}</span>
         <div className="ml-auto flex items-center gap-1">
           <Button variant="ghost" size="icon" className="h-7 w-7" disabled={first} onClick={onUp}><ChevronUp className="h-4 w-4" /></Button>
           <Button variant="ghost" size="icon" className="h-7 w-7" disabled={last} onClick={onDown}><ChevronDown className="h-4 w-4" /></Button>
           <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onRemove}><Trash2 className="h-4 w-4" /></Button>
         </div>
       </div>
-      <BlockBody block={block} bookId={bookId} characters={characters} locations={locations} timelines={timelines} items={items} factions={factions} secrets={secrets} onChange={onChange} />
+
+      <NodeHeader node={node} catalog={catalog} setAttr={setAttr} />
+      {!container && <PrimitiveBody node={node} catalog={catalog} setAttr={setAttr} onChange={onChange} />}
+
+      {container && (
+        <div className="mt-3 space-y-2 border-l-2 border-primary/20 pl-3">
+          <NodeList
+            nodes={node.children ?? []}
+            catalog={catalog}
+            depth={depth + 1}
+            onChange={(children) => onChange({ ...node, children })}
+          />
+          <AddBlockMenu
+            label={t("script.addInside")}
+            onAdd={(kind) => onChange({ ...node, children: [...(node.children ?? []), makeNode(kind)] })}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
-function BlockBody({
-  block, bookId, characters, locations, timelines, items, factions, secrets, onChange,
-}: {
-  block: ScriptBlock;
+function RefSelect({ value, options, placeholder, onChange, bookId, createKind, onCreated }: {
+  value: string | undefined;
+  options: Ref[];
+  placeholder: string;
+  onChange: (v: string | undefined) => void;
   bookId: string | undefined;
-  characters: { id: string; label: string }[];
-  locations: { id: string; label: string }[];
-  timelines: { id: string; label: string }[];
-  items: { id: string; label: string }[];
-  factions: { id: string; label: string }[];
-  secrets: { id: string; label: string }[];
-  onChange: (next: Partial<ScriptBlock>) => void;
+  createKind?: EntityKind;
+  onCreated?: (id: string) => void;
 }) {
   const { t } = useTranslation();
+  return (
+    <div className="flex gap-2">
+      <Select value={value || "__none__"} onValueChange={(v) => onChange(v === "__none__" ? undefined : v)}>
+        <SelectTrigger className="h-8 flex-1 text-sm"><SelectValue placeholder={placeholder} /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">{t("script.none")}</SelectItem>
+          {options.map((o) => <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      {createKind && <CreateCanonInlineDialog bookId={bookId} kind={createKind} onCreated={(id) => onCreated?.(id)} />}
+    </div>
+  );
+}
 
-  if (block.type === "dialogue") {
-    const dlg = block;
-    function setChildren(children: InnerBlock[]) { onChange({ children } as Partial<ScriptBlock>); }
-    function addChild(child: InnerBlock) { setChildren([...dlg.children, child]); }
-    function updateChild(id: string, next: Partial<InnerBlock>) { setChildren(dlg.children.map((c) => (c.id === id ? ({ ...c, ...next } as InnerBlock) : c))); }
-    function removeChild(id: string) { setChildren(dlg.children.filter((c) => c.id !== id)); }
-    return (
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          <Select value={dlg.characterRef || "__none__"} onValueChange={(v) => onChange({ characterRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
-            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("script.speaker")} /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">{t("script.speakerNone")}</SelectItem>
-              {characters.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <CreateCanonInlineDialog bookId={bookId} kind="character" onCreated={(id) => onChange({ characterRef: id } as Partial<ScriptBlock>)} />
+function NodeHeader({ node, catalog, setAttr }: { node: ScriptNode; catalog: Catalog; setAttr: (k: string, v: string | undefined) => void }) {
+  const { t } = useTranslation();
+
+  switch (node.kind) {
+    case "section":
+      return (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Input value={node.attrs.title ?? ""} onChange={(e) => setAttr("title", e.target.value)} placeholder={t("script.sectionTitle")} className="h-8 text-sm sm:col-span-2" />
+          <Input value={node.attrs.goal ?? ""} onChange={(e) => setAttr("goal", e.target.value)} placeholder={t("script.sceneGoal")} className="h-8 text-sm sm:col-span-2" />
+          <RefSelect value={node.attrs.pov} options={catalog.characters} placeholder={t("script.pov")} onChange={(v) => setAttr("pov", v)} bookId={catalog.bookId} createKind="character" onCreated={(id) => setAttr("pov", id)} />
+          <RefSelect value={node.attrs.location} options={catalog.locations} placeholder={t("script.sceneLocation")} onChange={(v) => setAttr("location", v)} bookId={catalog.bookId} createKind="location" onCreated={(id) => setAttr("location", id)} />
         </div>
-        <div className="space-y-2 border-l-2 border-primary/30 pl-3">
-          {dlg.children.map((child) => (
-            <div key={child.id} className="rounded-lg border bg-background p-2">
-              <div className="mb-1 flex items-center gap-2">
-                <span className="text-[10px] uppercase text-muted-foreground">{t(`script.type.${child.type}`)}</span>
-                <Button variant="ghost" size="icon" className="ml-auto h-6 w-6 text-destructive" onClick={() => removeChild(child.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
-              </div>
-              {child.type === "line" ? (
-                <div className="space-y-1">
-                  <AutoTextarea value={child.text} onChange={(e) => updateChild(child.id, { text: e.target.value })} placeholder={t("script.linePlaceholder")} className="text-sm" minRows={1} />
-                  <div className="grid gap-1 sm:grid-cols-2">
-                    <Input value={child.subtext ?? ""} onChange={(e) => updateChild(child.id, { subtext: e.target.value })} placeholder={t("script.subtext")} className="h-7 text-xs" />
-                    <Input value={child.delivery ?? ""} onChange={(e) => updateChild(child.id, { delivery: e.target.value })} placeholder={t("script.delivery")} className="h-7 text-xs" />
-                  </div>
-                </div>
-              ) : (
-                <AutoTextarea value={child.text} onChange={(e) => updateChild(child.id, { text: e.target.value })} placeholder={child.type === "action" ? t("script.actionPlaceholder") : t("script.emotionPlaceholder")} className="text-sm" minRows={1} />
-              )}
-            </div>
-          ))}
-          <div className="flex flex-wrap gap-1.5">
-            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => addChild({ id: nanoid(), type: "line", text: "" })}>+ {t("script.line")}</Button>
-            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => addChild({ id: nanoid(), type: "action", text: "" })}>+ {t("script.action")}</Button>
-            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => addChild({ id: nanoid(), type: "emotion", text: "" })}>+ {t("script.emotion")}</Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (block.type === "line") {
-    return (
-      <div className="space-y-1">
-        <div className="flex gap-2">
-          <Select value={block.characterRef || "__none__"} onValueChange={(v) => onChange({ characterRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
-            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("script.speaker")} /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">{t("script.speakerNone")}</SelectItem>
-              {characters.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <CreateCanonInlineDialog bookId={bookId} kind="character" onCreated={(id) => onChange({ characterRef: id } as Partial<ScriptBlock>)} />
-        </div>
-        <AutoTextarea value={block.text} onChange={(e) => onChange({ text: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.linePlaceholder")} className="text-sm" minRows={1} />
-      </div>
-    );
-  }
-
-  if (block.type === "location") {
-    return (
-      <div className="flex gap-2">
-        <Input value={block.text} onChange={(e) => onChange({ text: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.locationPlaceholder")} className="h-8 flex-1 text-sm" />
-        <Select value={block.locationRef || "__none__"} onValueChange={(v) => onChange({ locationRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
-          <SelectTrigger className="h-8 w-40 text-sm"><SelectValue placeholder={t("script.link")} /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none__">{t("script.none")}</SelectItem>
-            {locations.map((l) => <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <CreateCanonInlineDialog bookId={bookId} kind="location" onCreated={(id) => onChange({ locationRef: id } as Partial<ScriptBlock>)} />
-      </div>
-    );
-  }
-
-  if (block.type === "character") {
-    return (
-      <div className="space-y-1">
-        <div className="flex gap-2">
-          <Select value={block.characterRef || "__none__"} onValueChange={(v) => onChange({ characterRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
-            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("script.character")} /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">{t("script.none")}</SelectItem>
-              {characters.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <CreateCanonInlineDialog bookId={bookId} kind="character" onCreated={(id) => onChange({ characterRef: id } as Partial<ScriptBlock>)} />
-        </div>
-        <Input value={block.text} onChange={(e) => onChange({ text: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.characterNote")} className="h-8 text-sm" />
-      </div>
-    );
-  }
-
-  if (block.type === "timeline") {
-    return (
-      <div className="space-y-1">
-        <div className="flex gap-2">
-          <Select value={block.timelineRef || "__none__"} onValueChange={(v) => onChange({ timelineRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
-            <SelectTrigger className="h-8 flex-1 text-sm"><SelectValue placeholder={t("script.timelineEvent")} /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">{t("script.none")}</SelectItem>
-              {timelines.map((tl) => <SelectItem key={tl.id} value={tl.id}>{tl.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Input value={block.date ?? ""} onChange={(e) => onChange({ date: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.date")} className="h-8 w-32 text-sm" />
-          <CreateCanonInlineDialog bookId={bookId} kind="timeline-event" onCreated={(id) => onChange({ timelineRef: id } as Partial<ScriptBlock>)} />
-        </div>
-        <Input value={block.text} onChange={(e) => onChange({ text: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.timelineNote")} className="h-8 text-sm" />
-      </div>
-    );
-  }
-
-  if (block.type === "command") {
-    return <Input value={block.raw} onChange={(e) => onChange({ raw: e.target.value } as Partial<ScriptBlock>)} className="h-8 font-mono text-xs" />;
-  }
-
-  if (block.type === "item") {
-    return (
-      <div className="space-y-1">
-        <div className="flex gap-2">
-          <Select value={block.itemRef || "__none__"} onValueChange={(v) => onChange({ itemRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
-            <SelectTrigger className="h-8 flex-1 text-sm"><SelectValue placeholder={t("script.item")} /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">{t("script.none")}</SelectItem>
-              {items.map((it) => <SelectItem key={it.id} value={it.id}>{it.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <CreateCanonInlineDialog bookId={bookId} kind="item" onCreated={(id) => onChange({ itemRef: id } as Partial<ScriptBlock>)} />
-        </div>
-        <Input value={block.text} onChange={(e) => onChange({ text: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.itemNote")} className="h-8 text-sm" />
-      </div>
-    );
-  }
-
-  if (block.type === "faction") {
-    return (
-      <div className="space-y-1">
-        <div className="flex gap-2">
-          <Select value={block.factionRef || "__none__"} onValueChange={(v) => onChange({ factionRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
-            <SelectTrigger className="h-8 flex-1 text-sm"><SelectValue placeholder={t("script.faction")} /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">{t("script.none")}</SelectItem>
-              {factions.map((fc) => <SelectItem key={fc.id} value={fc.id}>{fc.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <CreateCanonInlineDialog bookId={bookId} kind="faction" onCreated={(id) => onChange({ factionRef: id } as Partial<ScriptBlock>)} />
-        </div>
-        <Input value={block.text} onChange={(e) => onChange({ text: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.factionNote")} className="h-8 text-sm" />
-      </div>
-    );
-  }
-
-  if (block.type === "secret") {
-    const modes = ["protect", "seed", "partial", "misdirect", "reveal"] as const;
-    return (
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          <Select value={block.secretRef || "__none__"} onValueChange={(v) => onChange({ secretRef: v === "__none__" ? undefined : v } as Partial<ScriptBlock>)}>
-            <SelectTrigger className="h-8 flex-1 text-sm"><SelectValue placeholder={t("script.secret")} /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">{t("script.none")}</SelectItem>
-              {secrets.map((s) => <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <CreateCanonInlineDialog bookId={bookId} kind="secret" onCreated={(id) => onChange({ secretRef: id } as Partial<ScriptBlock>)} />
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">{t("script.secretMode")}</label>
-          <Select value={block.mode} onValueChange={(v) => onChange({ mode: v } as Partial<ScriptBlock>)}>
+      );
+    case "dialogue":
+      return <RefSelect value={node.attrs.speaker} options={catalog.characters} placeholder={t("script.speaker")} onChange={(v) => setAttr("speaker", v)} bookId={catalog.bookId} createKind="character" onCreated={(id) => setAttr("speaker", id)} />;
+    case "secret": {
+      const modes = ["protect", "seed", "partial", "misdirect", "reveal"] as const;
+      return (
+        <div className="space-y-2">
+          <RefSelect value={node.attrs.ref} options={catalog.secrets} placeholder={t("script.secret")} onChange={(v) => setAttr("ref", v)} bookId={catalog.bookId} createKind="secret" onCreated={(id) => setAttr("ref", id)} />
+          <Select value={node.attrs.mode || "seed"} onValueChange={(v) => setAttr("mode", v)}>
             <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {modes.map((m) => <SelectItem key={m} value={m}>{t(`script.secretModes.${m}`)}</SelectItem>)}
-            </SelectContent>
+            <SelectContent>{modes.map((m) => <SelectItem key={m} value={m}>{t(`script.secretModes.${m}`)}</SelectItem>)}</SelectContent>
           </Select>
         </div>
-        <Input value={block.readerSurface ?? ""} onChange={(e) => onChange({ readerSurface: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.readerSurface")} className="h-8 text-sm" />
-        <Input value={block.reveal ?? ""} onChange={(e) => onChange({ reveal: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.revealText")} className="h-8 text-sm" />
-        <Input value={block.writerTruth ?? ""} onChange={(e) => onChange({ writerTruth: e.target.value } as Partial<ScriptBlock>)} placeholder={t("script.writerTruth")} className="h-8 text-sm" />
+      );
+    }
+    case "location":
+      return <RefSelect value={node.attrs.ref} options={catalog.locations} placeholder={t("script.location")} onChange={(v) => setAttr("ref", v)} bookId={catalog.bookId} createKind="location" onCreated={(id) => setAttr("ref", id)} />;
+    case "character":
+      return <RefSelect value={node.attrs.ref} options={catalog.characters} placeholder={t("script.character")} onChange={(v) => setAttr("ref", v)} bookId={catalog.bookId} createKind="character" onCreated={(id) => setAttr("ref", id)} />;
+    case "item":
+      return <RefSelect value={node.attrs.ref} options={catalog.items} placeholder={t("script.item")} onChange={(v) => setAttr("ref", v)} bookId={catalog.bookId} createKind="item" onCreated={(id) => setAttr("ref", id)} />;
+    case "faction":
+      return <RefSelect value={node.attrs.ref} options={catalog.factions} placeholder={t("script.faction")} onChange={(v) => setAttr("ref", v)} bookId={catalog.bookId} createKind="faction" onCreated={(id) => setAttr("ref", id)} />;
+    case "timeline":
+      return (
+        <div className="space-y-2">
+          <RefSelect value={node.attrs.ref} options={catalog.timelines} placeholder={t("script.timelineEvent")} onChange={(v) => setAttr("ref", v)} bookId={catalog.bookId} createKind="timeline-event" onCreated={(id) => setAttr("ref", id)} />
+          <Input value={node.attrs.date ?? ""} onChange={(e) => setAttr("date", e.target.value)} placeholder={t("script.date")} className="h-8 text-sm" />
+        </div>
+      );
+    default:
+      return null; // primitives handled below
+  }
+}
+
+function PrimitiveBody({ node, catalog, setAttr, onChange }: { node: ScriptNode; catalog: Catalog; setAttr: (k: string, v: string | undefined) => void; onChange: (next: ScriptNode) => void }) {
+  const { t } = useTranslation();
+  const setText = (v: string) => onChange({ ...node, text: v });
+
+  if (node.kind === "line") {
+    return (
+      <div className="space-y-1">
+        <RefSelect value={node.attrs.speaker} options={catalog.characters} placeholder={t("script.speaker")} onChange={(v) => setAttr("speaker", v)} bookId={catalog.bookId} createKind="character" onCreated={(id) => setAttr("speaker", id)} />
+        <AutoTextarea value={node.text ?? ""} onChange={(e) => setText(e.target.value)} placeholder={t("script.linePlaceholder")} className="text-sm" minRows={1} />
+        <div className="grid gap-1 sm:grid-cols-2">
+          <Input value={node.attrs.subtext ?? ""} onChange={(e) => setAttr("subtext", e.target.value)} placeholder={t("script.subtext")} className="h-7 text-xs" />
+          <Input value={node.attrs.delivery ?? ""} onChange={(e) => setAttr("delivery", e.target.value)} placeholder={t("script.delivery")} className="h-7 text-xs" />
+        </div>
       </div>
     );
   }
 
-  // tell / action / emotion
-  const placeholder = block.type === "action" ? t("script.actionPlaceholder") : block.type === "emotion" ? t("script.emotionPlaceholder") : t("script.tellPlaceholder");
-  return <AutoTextarea value={(block as { text: string }).text} onChange={(e) => onChange({ text: e.target.value } as Partial<ScriptBlock>)} placeholder={placeholder} className="text-sm" minRows={1} />;
+  const placeholder = node.kind === "action" ? t("script.actionPlaceholder") : node.kind === "emotion" ? t("script.emotionPlaceholder") : t("script.tellPlaceholder");
+  return <AutoTextarea value={node.text ?? ""} onChange={(e) => setText(e.target.value)} placeholder={placeholder} className="text-sm" minRows={1} />;
+}
+
+function AddBlockMenu({ label, onAdd, wide }: { label: string; onAdd: (kind: NodeKind) => void; wide?: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button className={wide ? "w-full justify-center gap-2" : "gap-2"} variant="outline" size={wide ? "default" : "sm"}>
+          <Plus className="h-4 w-4" />{label}<ChevronDown className="h-4 w-4 opacity-60" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="center" className="w-64">
+        <DropdownMenuLabel className="text-xs">{t("script.containers")}</DropdownMenuLabel>
+        <DropdownMenuItem onSelect={() => onAdd("section")}>{t("script.type.section")}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onAdd("dialogue")}><MessageSquare className="mr-2 h-4 w-4" />{t("script.type.dialogue")}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onAdd("secret")}>{t("script.type.secret")}</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs">{t("script.canon")}</DropdownMenuLabel>
+        <DropdownMenuItem onSelect={() => onAdd("location")}>{t("script.type.location")}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onAdd("character")}>{t("script.type.character")}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onAdd("item")}>{t("script.type.item")}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onAdd("faction")}>{t("script.type.faction")}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onAdd("timeline")}>{t("script.type.timeline")}</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs">{t("script.primitives")}</DropdownMenuLabel>
+        <DropdownMenuItem onSelect={() => onAdd("line")}>{t("script.type.line")}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onAdd("action")}>{t("script.type.action")}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onAdd("emotion")}>{t("script.type.emotion")}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onAdd("tell")}>{t("script.type.tell")}</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }

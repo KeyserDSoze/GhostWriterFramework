@@ -587,6 +587,10 @@ const it = {
     link: "Collega",
     none: "Nessuno",
     addBlock: "Aggiungi blocco",
+    addInside: "Aggiungi dentro",
+    containers: "Contenitori",
+    primitives: "Elementi",
+    sectionTitle: "Titolo sezione",
     beats: "Beat",
     canon: "Canone",
     dialogue: "Dialogo",
@@ -643,6 +647,7 @@ const it = {
       reveal: "Rivela"
     },
     type: {
+      section: "Sezione",
       tell: "Narrazione",
       action: "Azione",
       emotion: "Emozione",

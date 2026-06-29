@@ -109,22 +109,13 @@ export async function proseToScript(src: PipelineSource, prose: string, ghostwri
   if (!integration) throw new Error("No AI integration configured.");
   const { style, story } = await buildContext(src, ghostwriterSlug);
   const legend = [
-    "Narrarium scene script meta-language. One beat or command per line, in scene order.",
-    "Renderable beats:",
-    "- `Location: <place>` for the setting (free text or a canon location slug).",
-    "- `[telling beat]` prose-to-render.",
-    "- `{emotion or internal state}`.",
-    "- `(physical action)`.",
-    "- `«spoken line»` dialogue. Use `«Name: line»` to mark the speaker. Add `«line» [subtext: ...; delivery: ...]` for writer notes.",
-    "Writer-only commands (never rendered):",
-    "- `@scene_goal{...}` dramatic function of the scene.",
-    "- `@pov{character:slug}` viewpoint.",
-    "- `@location{location:slug}` to link the setting to canon.",
-    "- `@track{timeline:slug | date | note}` to anchor a timeline beat.",
-    "- `@secret{secret:slug mode=protect|seed|partial|misdirect|reveal}` ... `@end_secret{}` to mark a secret in play; inside use `@reader_surface{...}`, `@reveal{...}`, `@writer_truth{...}`.",
-    "- Reference an item with a `# item: item:slug` comment line and a faction with `# faction: faction:slug`, followed by a `[telling beat]`.",
-    "Group a back-and-forth exchange between `# >>>dialogue` and `# <<<dialogue` comment markers, putting the `«lines»` and their `(actions)`/`{emotions}` inside.",
-    "Rules: one item per line, never put commands inside comments, keep dialogue text in its original language.",
+    "Narrarium nested script format. Containers use curly braces `{ ... }` and can nest other blocks; primitives use square brackets `[ ... ]` and are leaves.",
+    "Open a container with `{<kind> attr=value attr=\"quoted\"` on its own line and close it with `}` on its own line.",
+    "Containers: section (attrs: title, goal, pov=character:slug, location=location:slug), dialogue (attr: speaker=character:slug), secret (attrs: ref=secret:slug, mode=protect|seed|partial|misdirect|reveal), location/character/item/faction (attr: ref=...:slug), timeline (attrs: ref=timeline-event:slug, date).",
+    "Primitives: `[tell] narration text`, `[action] physical action`, `[emotion] inner state`, `[line speaker=character:slug subtext=\"...\" delivery=\"...\"] «spoken line»`.",
+    "Inside a secret container put primitives `[surface] ...`, `[reveal] ...`, `[truth] ...` (use [tell] if unsure).",
+    "Wrap a whole scene in one top-level `{section ...}` and put the beats inside, in order. Keep dialogue exchanges inside a `{dialogue ...}` container.",
+    "Return ONLY the script body, no commentary, no code fences. Keep dialogue text in its original language.",
   ].join("\n");
   const messages: LlmMessage[] = [
     { role: "system", content: `You convert prose into a Narrarium scene script: a compact, ordered, faithful sequence of beats that captures the scene's structure and dialogue. Return ONLY the script body, no commentary, no code fences. Write notes/telling beats in ${LANG(src.settings)}.\n\n${legend}\n\n${style}` },

@@ -110,7 +110,7 @@ export function WorkspaceDocPage() {
   const [pipelineText, setPipelineText] = useState("");
   const [pipelineLoading, setPipelineLoading] = useState(false);
   const [pipelineGw, setPipelineGw] = useState("");
-  const [scriptDoc, setScriptDoc] = useState<ScriptDoc>({ blocks: [] });
+  const [scriptDoc, setScriptDoc] = useState<ScriptDoc>({ nodes: [] });
   const [scriptGenLoading, setScriptGenLoading] = useState(false);
 
   const resolved = resolveWorkspacePath(chapter, paragraph, workspaceKind, !!paragraphNum);

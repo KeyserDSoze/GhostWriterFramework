@@ -587,6 +587,10 @@ const en = {
     link: "Link",
     none: "None",
     addBlock: "Add block",
+    addInside: "Add inside",
+    containers: "Containers",
+    primitives: "Elements",
+    sectionTitle: "Section title",
     beats: "Beats",
     canon: "Canon",
     dialogue: "Dialogue",
@@ -643,6 +647,7 @@ const en = {
       reveal: "Reveal"
     },
     type: {
+      section: "Section",
       tell: "Telling",
       action: "Action",
       emotion: "Emotion",
