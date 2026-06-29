@@ -103,16 +103,48 @@ export async function improveProse(
   return (await completeText(integration, messages)).trim();
 }
 
-/** Suggest a synonym/short replacement for a selected word or short phrase, keeping context and style. */
-export async function synonymFor(src: PipelineSource, fullBody: string, selection: string, ghostwriterSlug?: string): Promise<string> {
+/** Suggest several synonym/short replacements for a selected word or short phrase, keeping context and style. */
+export async function synonymsFor(
+  src: PipelineSource,
+  fullBody: string,
+  selection: string,
+  options?: { count?: number; exclude?: string[]; ghostwriterSlug?: string },
+): Promise<string[]> {
   const integration = resolveWritingIntegration(src.settings);
   if (!integration) throw new Error("No AI integration configured.");
-  const { style, story } = await buildContext(src, ghostwriterSlug);
+  const count = options?.count ?? 3;
+  const exclude = options?.exclude ?? [];
+  const { style, story } = await buildContext(src, options?.ghostwriterSlug);
+  const excludeNote = exclude.length ? `\nDo NOT repeat any of these already-proposed options: ${exclude.join(", ")}.` : "";
   const messages: LlmMessage[] = [
-    { role: "system", content: `You are a precise lexical editor. The user selected a short word or phrase and wants a single best synonym or replacement that fits the sentence, register, and style. Return ONLY the replacement text, no quotes, no explanation, in ${LANG(src.settings)}, matching the selection's grammatical form.\n\n${style}` },
-    { role: "user", content: `${story}\n\nPARAGRAPH:\n${fullBody}\n\nSELECTED TEXT:\n${selection}\n\nReturn the best synonym/replacement for the selected text.` },
+    { role: "system", content: `You are a precise lexical editor. The user selected a short word or phrase and wants ${count} alternative synonyms/replacements that fit the sentence, register, and style, matching the grammatical form. Return ONLY a JSON array of ${count} strings, no commentary. Write in ${LANG(src.settings)}.${excludeNote}\n\n${style}` },
+    { role: "user", content: `${story}\n\nPARAGRAPH:\n${fullBody}\n\nSELECTED TEXT:\n${selection}\n\nReturn ${count} replacements as a JSON array.` },
   ];
-  return (await completeText(integration, messages)).trim().replace(/^["'«»]|["'«»]$/g, "");
+  const raw = (await completeText(integration, messages)).trim();
+  return parseStringList(raw, count, exclude);
+}
+
+function parseStringList(raw: string, count: number, exclude: string[]): string[] {
+  const cleaned = raw.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  let list: string[] = [];
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed)) list = parsed.map((v) => String(v));
+  } catch {
+    list = cleaned.split(/\r?\n|,|;/).map((s) => s.replace(/^[\s\d.)\-*"'«»]+|["'«»]+$/g, "").trim());
+  }
+  const excludeLower = new Set(exclude.map((e) => e.trim().toLowerCase()));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of list) {
+    const value = item.trim();
+    const key = value.toLowerCase();
+    if (!value || excludeLower.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+    if (out.length >= count) break;
+  }
+  return out;
 }
 
 /** Reverse-engineer a Narrarium scene script (one beat per line) from finished or draft prose. */

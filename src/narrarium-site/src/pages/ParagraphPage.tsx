@@ -24,7 +24,7 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { resolveBookToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
-import { improveProse, synonymFor, type PipelineSource } from "@/narrarium/pipeline";
+import { improveProse, synonymsFor, type PipelineSource } from "@/narrarium/pipeline";
 import { TextContextMenu } from "@/components/editor/TextContextMenu";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
@@ -138,6 +138,13 @@ export function ParagraphPage() {
   const [improveLoading, setImproveLoading] = useState(false);
   const [improveNew, setImproveNew] = useState("");
   const [improveSelection, setImproveSelection] = useState<string | null>(null);
+
+  // Synonyms
+  const [synonymOpen, setSynonymOpen] = useState(false);
+  const [synonymLoading, setSynonymLoading] = useState(false);
+  const [synonymWord, setSynonymWord] = useState("");
+  const [synonymOptions, setSynonymOptions] = useState<string[]>([]);
+  const [synonymSeen, setSynonymSeen] = useState<string[]>([]);
 
   const isDirty =
     body !== savedBody ||
@@ -363,6 +370,20 @@ export function ParagraphPage() {
     setImproveOpen(false);
   }
 
+  async function regenerateImprove() {
+    if (!book || !token || !structure || !chapter) return;
+    setImproveNew("");
+    setImproveLoading(true);
+    try {
+      const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter };
+      setImproveNew(await improveProse(src, body, improveSelection, currentGhostwriter));
+    } catch (err) {
+      toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
+    } finally {
+      setImproveLoading(false);
+    }
+  }
+
   function captureSelectionRef() {
     const node = bodyRef.current;
     if (node && node.selectionEnd > node.selectionStart) {
@@ -373,20 +394,40 @@ export function ParagraphPage() {
     return null;
   }
 
-  async function synonymWith(selection: string) {
+  async function openSynonyms(selection: string) {
     if (!book || !token || !structure || !chapter || !selection.trim()) return;
     captureSelectionRef();
+    const word = selection.trim();
+    setSynonymWord(word);
+    setSynonymOptions([]);
+    setSynonymSeen([]);
+    setSynonymOpen(true);
+    await loadSynonyms([], word);
+  }
+
+  async function loadSynonyms(exclude: string[], word?: string) {
+    if (!book || !token || !structure || !chapter) return;
+    const target = word ?? synonymWord;
+    if (!target) return;
+    setSynonymLoading(true);
     try {
       const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter };
-      const replacement = (await synonymFor(src, body, selection, currentGhostwriter)).trim();
-      if (replacement && selectionRef.current) {
-        const { start, end } = selectionRef.current;
-        setBody(body.slice(0, start) + replacement + body.slice(end));
-        toast({ title: t("ctx.synonymApplied", { word: replacement }) });
-      }
+      const options = await synonymsFor(src, body, target, { count: 3, exclude, ghostwriterSlug: currentGhostwriter });
+      setSynonymOptions(options);
+      setSynonymSeen((prev) => [...prev, ...options]);
     } catch (err) {
       toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
+    } finally {
+      setSynonymLoading(false);
     }
+  }
+
+  function applySynonym(word: string) {
+    if (selectionRef.current) {
+      const { start, end } = selectionRef.current;
+      setBody(body.slice(0, start) + word + body.slice(end));
+    }
+    setSynonymOpen(false);
   }
 
   const readonlyEntries = entries.filter((e) => READONLY_KEYS.has(e.key));
@@ -566,7 +607,7 @@ export function ParagraphPage() {
         targetRef={bodyRef}
         getValue={() => body}
         setValue={setBody}
-        improve={{ improveSelection: () => void startImprove(), synonym: (sel) => void synonymWith(sel) }}
+        improve={{ improveSelection: () => void startImprove(), synonym: (sel) => void openSynonyms(sel) }}
       />
 
       <p className="text-[11px] text-muted-foreground truncate">{paragraph.path}</p>
@@ -586,7 +627,35 @@ export function ParagraphPage() {
           </div>
           <div className="flex justify-end gap-2 border-t px-4 py-3">
             <Button variant="ghost" onClick={() => setImproveOpen(false)}>{t("common.cancel")}</Button>
+            <Button variant="outline" onClick={() => void regenerateImprove()} disabled={improveLoading}>{t("pipeline.regenerate")}</Button>
             <Button onClick={applyImprove} disabled={improveLoading || !improveNew.trim()}>{t("pipeline.apply")}</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={synonymOpen} onOpenChange={(next) => { if (!next) setSynonymOpen(false); }}>
+        <DialogContent className="sm:max-w-md">
+          <div className="space-y-3">
+            <div>
+              <p className="font-semibold">{t("ctx.synonym")}</p>
+              <p className="text-xs text-muted-foreground">{t("ctx.synonymFor", { word: synonymWord })}</p>
+            </div>
+            {synonymLoading && synonymOptions.length === 0 ? (
+              <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("pipeline.generating")}</div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {synonymOptions.map((option) => (
+                  <button key={option} type="button" onClick={() => applySynonym(option)} className="rounded-lg border px-3 py-2 text-left text-sm hover:bg-accent">
+                    {option}
+                  </button>
+                ))}
+                {synonymOptions.length === 0 && <p className="text-sm text-muted-foreground">{t("ctx.noSynonyms")}</p>}
+              </div>
+            )}
+            <div className="flex justify-between gap-2">
+              <Button variant="outline" size="sm" onClick={() => void loadSynonyms(synonymSeen)} disabled={synonymLoading}>{synonymLoading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}{t("ctx.moreSynonyms")}</Button>
+              <Button variant="ghost" size="sm" onClick={() => setSynonymOpen(false)}>{t("common.cancel")}</Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
