@@ -418,9 +418,17 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
             <PriceField label={t("costs.priceInput")} value={integration.pricing?.inputPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, inputPerMTok: v } })} />
             <PriceField label={t("costs.priceCached")} value={integration.pricing?.cachedPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, cachedPerMTok: v } })} />
             <PriceField label={t("costs.priceOutput")} value={integration.pricing?.outputPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, outputPerMTok: v } })} />
-            <PriceField label={t("costs.priceImage")} value={integration.pricing?.perImage} onChange={(v) => onChange({ pricing: { ...integration.pricing, perImage: v } })} />
             <PriceField label={t("costs.priceTts")} value={integration.pricing?.ttsPerMChar} onChange={(v) => onChange({ pricing: { ...integration.pricing, ttsPerMChar: v } })} />
             <PriceField label={t("costs.priceStt")} value={integration.pricing?.sttPerMinute} onChange={(v) => onChange({ pricing: { ...integration.pricing, sttPerMinute: v } })} />
+          </div>
+          <p className="mt-3 text-xs font-medium text-muted-foreground">{t("costs.imageTokenPricing")}</p>
+          <div className="mt-1 grid gap-2 sm:grid-cols-3">
+            <PriceField label={t("costs.priceImgInputText")} value={integration.pricing?.imageInputTextPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageInputTextPerMTok: v } })} />
+            <PriceField label={t("costs.priceImgCachedText")} value={integration.pricing?.imageCachedInputTextPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageCachedInputTextPerMTok: v } })} />
+            <PriceField label={t("costs.priceImgInputImage")} value={integration.pricing?.imageInputImagePerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageInputImagePerMTok: v } })} />
+            <PriceField label={t("costs.priceImgCachedImage")} value={integration.pricing?.imageCachedInputImagePerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageCachedInputImagePerMTok: v } })} />
+            <PriceField label={t("costs.priceImgOutput")} value={integration.pricing?.imageOutputPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageOutputPerMTok: v } })} />
+            <PriceField label={t("costs.priceImage")} value={integration.pricing?.perImage} onChange={(v) => onChange({ pricing: { ...integration.pricing, perImage: v } })} />
           </div>
         </details>
       )}

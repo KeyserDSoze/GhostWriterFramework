@@ -8,8 +8,8 @@ function mergeMax(a: CostsFile, b: CostsFile): CostsFile {
   const books: Record<string, BookUsage> = {};
   const ids = new Set([...Object.keys(a.books), ...Object.keys(b.books)]);
   for (const id of ids) {
-    const x = a.books[id] ?? { bookId: id, ...emptyBucket() };
-    const y = b.books[id] ?? { bookId: id, ...emptyBucket() };
+    const x = { ...emptyBucket(), ...(a.books[id] ?? {}) };
+    const y = { ...emptyBucket(), ...(b.books[id] ?? {}) };
     books[id] = {
       bookId: id,
       bookName: y.bookName ?? x.bookName,
@@ -18,6 +18,11 @@ function mergeMax(a: CostsFile, b: CostsFile): CostsFile {
       outputTokens: Math.max(x.outputTokens, y.outputTokens),
       chatCost: Math.max(x.chatCost, y.chatCost),
       imageCount: Math.max(x.imageCount, y.imageCount),
+      imageInputTextTokens: Math.max(x.imageInputTextTokens, y.imageInputTextTokens),
+      imageCachedInputTextTokens: Math.max(x.imageCachedInputTextTokens, y.imageCachedInputTextTokens),
+      imageInputImageTokens: Math.max(x.imageInputImageTokens, y.imageInputImageTokens),
+      imageCachedInputImageTokens: Math.max(x.imageCachedInputImageTokens, y.imageCachedInputImageTokens),
+      imageOutputTokens: Math.max(x.imageOutputTokens, y.imageOutputTokens),
       imageCost: Math.max(x.imageCost, y.imageCost),
       ttsChars: Math.max(x.ttsChars, y.ttsChars),
       ttsCost: Math.max(x.ttsCost, y.ttsCost),

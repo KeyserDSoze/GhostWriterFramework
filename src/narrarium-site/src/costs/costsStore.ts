@@ -49,7 +49,7 @@ export const useCostsStore = create<CostsState>()((set, get) => ({
     const hasValue = Object.values(delta).some((v) => (v ?? 0) !== 0);
     if (!hasValue) return;
     set((s) => {
-      const existing: BookUsage = s.file.books[bookId] ?? { bookId, bookName, ...emptyBucket() };
+      const existing: BookUsage = { ...emptyBucket(), ...(s.file.books[bookId] ?? {}), bookId, bookName: s.file.books[bookId]?.bookName ?? bookName };
       const merged: BookUsage = { ...existing, bookName: bookName ?? existing.bookName, ...addBucket(existing, delta) };
       const file: CostsFile = { ...s.file, updatedAt: new Date().toISOString(), books: { ...s.file.books, [bookId]: merged } };
       persistLocal(file);
@@ -85,6 +85,44 @@ export function chatDelta(usage: TokenUsage, pricing?: AIPricing): Partial<Usage
   return { inputTokens: input, cachedTokens: cached, outputTokens: output, chatCost };
 }
 
+export interface ImageTokenUsage {
+  inputTextTokens: number;
+  cachedInputTextTokens: number;
+  inputImageTokens: number;
+  cachedInputImageTokens: number;
+  outputTokens: number;
+}
+
+/** Token-based image cost (gpt-image style). */
+export function imageTokenDelta(usage: ImageTokenUsage, pricing?: AIPricing): Partial<UsageBucket> {
+  const inputText = usage.inputTextTokens || 0;
+  const cachedText = usage.cachedInputTextTokens || 0;
+  const inputImage = usage.inputImageTokens || 0;
+  const cachedImage = usage.cachedInputImageTokens || 0;
+  const output = usage.outputTokens || 0;
+  const billedInputText = Math.max(0, inputText - cachedText);
+  const billedInputImage = Math.max(0, inputImage - cachedImage);
+  let imageCost = 0;
+  if (pricing) {
+    imageCost =
+      (billedInputText / 1_000_000) * (pricing.imageInputTextPerMTok ?? 0) +
+      (cachedText / 1_000_000) * (pricing.imageCachedInputTextPerMTok ?? 0) +
+      (billedInputImage / 1_000_000) * (pricing.imageInputImagePerMTok ?? 0) +
+      (cachedImage / 1_000_000) * (pricing.imageCachedInputImagePerMTok ?? 0) +
+      (output / 1_000_000) * (pricing.imageOutputPerMTok ?? 0);
+  }
+  return {
+    imageCount: 1,
+    imageInputTextTokens: inputText,
+    imageCachedInputTextTokens: cachedText,
+    imageInputImageTokens: inputImage,
+    imageCachedInputImageTokens: cachedImage,
+    imageOutputTokens: output,
+    imageCost,
+  };
+}
+
+/** Legacy per-image cost (DALL·E style). */
 export function imageDelta(count: number, pricing?: AIPricing): Partial<UsageBucket> {
   return { imageCount: count, imageCost: pricing?.perImage ? count * pricing.perImage : 0 };
 }

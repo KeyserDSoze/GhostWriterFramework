@@ -3,7 +3,7 @@ import { parseDocument, stringify } from "yaml";
 import type { AIIntegration, AppSettings } from "@/types/settings";
 import { createFile, createOrUpdateBinaryFile, loadBinaryFileContent, readFileWithSha, updateFile } from "@/github/githubClient";
 import { completeText, resolveWritingIntegration } from "@/assistant/llm";
-import { imageDelta, useCostsStore } from "@/costs/costsStore";
+import { imageDelta, imageTokenDelta, useCostsStore } from "@/costs/costsStore";
 
 export type AssetSubjectKind = "book" | "chapter" | "paragraph";
 export type AssetPromptSource = "custom" | "text" | "resume";
@@ -188,7 +188,7 @@ export async function generateAssetImage(input: {
     output_format: "png",
     response_format: model === "gpt-image-1" ? undefined : "b64_json",
   } as never);
-  useCostsStore.getState().recordCurrent(imageDelta(1, integration.pricing));
+  recordImageUsage(integration, response);
   const image = response.data?.[0];
   if (image?.b64_json) return { bytes: base64ToBytes(image.b64_json), provider: integration.provider, model };
   if (image?.url) {
@@ -203,6 +203,27 @@ function createImageClient(integration: AIIntegration): AzureOpenAI | OpenAI {
   return integration.provider === "azure_openai"
     ? new AzureOpenAI({ endpoint: integration.endpoint ?? "", apiKey: integration.apiKey, apiVersion: integration.apiVersion || "2024-10-21", dangerouslyAllowBrowser: true })
     : new OpenAI({ apiKey: integration.apiKey, baseURL: integration.endpoint || "https://api.openai.com/v1", dangerouslyAllowBrowser: true });
+}
+
+function recordImageUsage(integration: AIIntegration, response: unknown): void {
+  const pricing = integration.pricing;
+  if (!pricing) return;
+  const usage = (response as { usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { text_tokens?: number; image_tokens?: number; cached_text_tokens?: number; cached_image_tokens?: number; cached_tokens?: number } } }).usage;
+  const details = usage?.input_tokens_details;
+  if (usage && (usage.output_tokens || usage.input_tokens)) {
+    const inputText = details?.text_tokens ?? usage.input_tokens ?? 0;
+    const inputImage = details?.image_tokens ?? 0;
+    useCostsStore.getState().recordCurrent(imageTokenDelta({
+      inputTextTokens: inputText,
+      cachedInputTextTokens: details?.cached_text_tokens ?? 0,
+      inputImageTokens: inputImage,
+      cachedInputImageTokens: details?.cached_image_tokens ?? 0,
+      outputTokens: usage.output_tokens ?? 0,
+    }, pricing));
+    return;
+  }
+  // Fallback to legacy per-image pricing when the API does not return token usage.
+  useCostsStore.getState().recordCurrent(imageDelta(1, pricing));
 }
 
 function parseAssetMarkdown(raw: string): {

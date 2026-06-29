@@ -11,14 +11,20 @@ export type AIProviderType = "azure_openai" | "openai" | "m365_copilot";
 
 /** Optional unit prices (EUR) used to track spend. Token prices are per 1,000,000 tokens. */
 export interface AIPricing {
-  /** EUR per 1M input tokens */
+  /** EUR per 1M input tokens (chat) */
   inputPerMTok?: number;
-  /** EUR per 1M cached input tokens */
+  /** EUR per 1M cached input tokens (chat) */
   cachedPerMTok?: number;
-  /** EUR per 1M output tokens */
+  /** EUR per 1M output tokens (chat) */
   outputPerMTok?: number;
-  /** EUR per generated image */
+  /** EUR per generated image (legacy DALL·E style pricing) */
   perImage?: number;
+  /** Token-based image pricing (gpt-image style), EUR per 1M tokens */
+  imageInputTextPerMTok?: number;
+  imageCachedInputTextPerMTok?: number;
+  imageInputImagePerMTok?: number;
+  imageCachedInputImagePerMTok?: number;
+  imageOutputPerMTok?: number;
   /** EUR per 1M TTS characters */
   ttsPerMChar?: number;
   /** EUR per minute of STT audio */
