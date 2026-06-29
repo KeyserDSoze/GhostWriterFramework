@@ -122,11 +122,6 @@ export function imageTokenDelta(usage: ImageTokenUsage, pricing?: AIPricing): Pa
   };
 }
 
-/** Legacy per-image cost (DALL·E style). */
-export function imageDelta(count: number, pricing?: AIPricing): Partial<UsageBucket> {
-  return { imageCount: count, imageCost: pricing?.perImage ? count * pricing.perImage : 0 };
-}
-
 export function ttsDelta(chars: number, pricing?: AIPricing): Partial<UsageBucket> {
   return { ttsChars: chars, ttsCost: pricing?.ttsPerMChar ? (chars / 1_000_000) * pricing.ttsPerMChar : 0 };
 }

@@ -428,7 +428,6 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
             <PriceField label={t("costs.priceImgInputImage")} value={integration.pricing?.imageInputImagePerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageInputImagePerMTok: v } })} />
             <PriceField label={t("costs.priceImgCachedImage")} value={integration.pricing?.imageCachedInputImagePerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageCachedInputImagePerMTok: v } })} />
             <PriceField label={t("costs.priceImgOutput")} value={integration.pricing?.imageOutputPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageOutputPerMTok: v } })} />
-            <PriceField label={t("costs.priceImage")} value={integration.pricing?.perImage} onChange={(v) => onChange({ pricing: { ...integration.pricing, perImage: v } })} />
           </div>
         </details>
       )}

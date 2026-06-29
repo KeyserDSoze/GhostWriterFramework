@@ -17,8 +17,6 @@ export interface AIPricing {
   cachedPerMTok?: number;
   /** EUR per 1M output tokens (chat) */
   outputPerMTok?: number;
-  /** EUR per generated image (legacy DALL·E style pricing) */
-  perImage?: number;
   /** Token-based image pricing (gpt-image style), EUR per 1M tokens */
   imageInputTextPerMTok?: number;
   imageCachedInputTextPerMTok?: number;

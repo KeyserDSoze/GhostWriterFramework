@@ -597,7 +597,6 @@ const en = {
     priceImgInputImage: "Img: input image (€ / 1M)",
     priceImgCachedImage: "Img: cached input image (€ / 1M)",
     priceImgOutput: "Img: output (€ / 1M)",
-    priceImage: "Per image, legacy (€)",
     priceTts: "TTS (€ / 1M chars)",
     priceStt: "STT (€ / hour)"
   },

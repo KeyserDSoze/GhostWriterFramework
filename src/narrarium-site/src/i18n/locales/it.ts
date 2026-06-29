@@ -597,7 +597,6 @@ const it = {
     priceImgInputImage: "Img: input immagine (€ / 1M)",
     priceImgCachedImage: "Img: input immagine cache (€ / 1M)",
     priceImgOutput: "Img: output (€ / 1M)",
-    priceImage: "Per immagine, legacy (€)",
     priceTts: "TTS (€ / 1M caratteri)",
     priceStt: "STT (€ / ora)"
   },

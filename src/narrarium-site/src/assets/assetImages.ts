@@ -3,7 +3,7 @@ import { parseDocument, stringify } from "yaml";
 import type { AIIntegration, AppSettings } from "@/types/settings";
 import { createFile, createOrUpdateBinaryFile, loadBinaryFileContent, readFileWithSha, updateFile } from "@/github/githubClient";
 import { completeText, resolveWritingIntegration } from "@/assistant/llm";
-import { imageDelta, imageTokenDelta, useCostsStore } from "@/costs/costsStore";
+import { imageTokenDelta, useCostsStore } from "@/costs/costsStore";
 
 export type AssetSubjectKind = "book" | "chapter" | "paragraph";
 export type AssetPromptSource = "custom" | "text" | "resume";
@@ -222,8 +222,8 @@ function recordImageUsage(integration: AIIntegration, response: unknown): void {
     }, pricing));
     return;
   }
-  // Fallback to legacy per-image pricing when the API does not return token usage.
-  useCostsStore.getState().recordCurrent(imageDelta(1, pricing));
+  // No token usage returned: count the image without a cost.
+  useCostsStore.getState().recordCurrent({ imageCount: 1 });
 }
 
 function parseAssetMarkdown(raw: string): {
