@@ -121,6 +121,8 @@ export async function proseToScript(src: PipelineSource, prose: string, ghostwri
     "- `@pov{character:slug}` viewpoint.",
     "- `@location{location:slug}` to link the setting to canon.",
     "- `@track{timeline:slug | date | note}` to anchor a timeline beat.",
+    "- `@secret{secret:slug mode=protect|seed|partial|misdirect|reveal}` ... `@end_secret{}` to mark a secret in play; inside use `@reader_surface{...}`, `@reveal{...}`, `@writer_truth{...}`.",
+    "- Reference an item with a `# item: item:slug` comment line and a faction with `# faction: faction:slug`, followed by a `[telling beat]`.",
     "Group a back-and-forth exchange between `# >>>dialogue` and `# <<<dialogue` comment markers, putting the `«lines»` and their `(actions)`/`{emotions}` inside.",
     "Rules: one item per line, never put commands inside comments, keep dialogue text in its original language.",
   ].join("\n");

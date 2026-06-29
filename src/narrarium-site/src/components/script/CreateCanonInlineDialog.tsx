@@ -31,19 +31,26 @@ export function CreateCanonInlineDialog({
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [date, setDate] = useState("");
+  const [stakes, setStakes] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function create() {
     if (!book || !token || !name.trim()) return;
     setBusy(true);
     try {
-      const extra = kind === "timeline-event" && date.trim() ? { date: date.trim() } : undefined;
+      const extra =
+        kind === "timeline-event" && date.trim()
+          ? { date: date.trim() }
+          : kind === "secret" && stakes.trim()
+            ? { stakes: stakes.trim() }
+            : undefined;
       const created = await createCanonEntity(token, book.owner, book.repo, branch, { kind, label: name.trim(), extraFrontmatter: extra });
       onCreated(created.id, name.trim());
       toast({ title: t("script.canonCreated", { name: name.trim() }) });
       setOpen(false);
       setName("");
       setDate("");
+      setStakes("");
       void reload();
     } catch (err) {
       toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
@@ -52,7 +59,13 @@ export function CreateCanonInlineDialog({
     }
   }
 
-  const titleKey = kind === "character" ? "script.newCharacter" : kind === "location" ? "script.newLocation" : "script.newTimeline";
+  const titleKey =
+    kind === "character" ? "script.newCharacter"
+    : kind === "location" ? "script.newLocation"
+    : kind === "item" ? "script.newItem"
+    : kind === "faction" ? "script.newFaction"
+    : kind === "secret" ? "script.newSecret"
+    : "script.newTimeline";
 
   return (
     <>
@@ -71,6 +84,12 @@ export function CreateCanonInlineDialog({
               <div className="space-y-1">
                 <Label className="text-xs">{t("script.date")}</Label>
                 <Input value={date} onChange={(e) => setDate(e.target.value)} />
+              </div>
+            )}
+            {kind === "secret" && (
+              <div className="space-y-1">
+                <Label className="text-xs">{t("script.secretStakes")}</Label>
+                <Input value={stakes} onChange={(e) => setStakes(e.target.value)} placeholder={t("script.secretStakesPlaceholder")} />
               </div>
             )}
           </div>
