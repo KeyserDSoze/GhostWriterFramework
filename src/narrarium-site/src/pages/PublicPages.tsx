@@ -149,73 +149,86 @@ export function HomePage() {
   );
 }
 
-export function DocsIndexPage() {
+export function DocsIndexContent({ basePath = "/docs" }: { basePath?: string }) {
   const { t, i18n } = useTranslation();
   const lang = normalizeDocLang(i18n.language);
   const groups = getDocGroups();
   return (
+    <section className="mx-auto grid w-full max-w-7xl gap-4 px-4 pb-16 sm:px-6 lg:grid-cols-3 lg:px-8">
+      {groups.map((group) => (
+        <Card key={group.key} className="bg-card/80">
+          <CardHeader>
+            <CardTitle>{group.label}</CardTitle>
+            <CardDescription>{group.docs.length} {group.docs.length === 1 ? t("docsPage.page") : t("docsPage.pages")}</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-2">
+            {group.docs.map((doc) => {
+              const loc = localizedDoc(doc, lang);
+              return (
+                <Link key={doc.slug} className="rounded-xl border bg-background/60 p-3 text-sm transition hover:border-primary/50 hover:bg-accent" to={`${basePath}/${doc.slug}`}>
+                  <span className="font-medium">{loc.title}</span>
+                  <span className="mt-1 block text-xs text-muted-foreground">{loc.summary}</span>
+                </Link>
+              );
+            })}
+          </CardContent>
+        </Card>
+      ))}
+    </section>
+  );
+}
+
+export function DocsIndexPage() {
+  const { t } = useTranslation();
+  return (
     <PublicShell>
       <PageHero eyebrow={t("docsPage.documentation")} title={t("public.docsTitle")} text={t("public.docsText")} />
-      <section className="mx-auto grid w-full max-w-7xl gap-4 px-4 pb-16 sm:px-6 lg:grid-cols-3 lg:px-8">
-        {groups.map((group) => (
-          <Card key={group.key} className="bg-card/80">
-            <CardHeader>
-              <CardTitle>{group.label}</CardTitle>
-              <CardDescription>{group.docs.length} {group.docs.length === 1 ? t("docsPage.page") : t("docsPage.pages")}</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-2">
-              {group.docs.map((doc) => {
-                const loc = localizedDoc(doc, lang);
-                return (
-                  <Link key={doc.href} className="rounded-xl border bg-background/60 p-3 text-sm transition hover:border-primary/50 hover:bg-accent" to={doc.href}>
-                    <span className="font-medium">{loc.title}</span>
-                    <span className="mt-1 block text-xs text-muted-foreground">{loc.summary}</span>
-                  </Link>
-                );
-              })}
-            </CardContent>
-          </Card>
-        ))}
-      </section>
+      <DocsIndexContent basePath="/docs" />
     </PublicShell>
   );
 }
 
-export function DocPage() {
+export function DocContent({ slug, basePath = "/docs" }: { slug: string | undefined; basePath?: string }) {
   const { t, i18n } = useTranslation();
-  const params = useParams();
-  const slug = params["*"]?.replace(/^\/+|\/+$/g, "") || undefined;
   const doc = getDocBySlug(slug);
   const lang = normalizeDocLang(i18n.language);
+  const loc = doc ? localizedDoc(doc, lang) : null;
+  const html = useMarkdownHtml(loc?.markdown ?? "");
 
-  if (!doc) return <NotFoundPage />;
+  if (!doc || !loc) return <NotFoundPage />;
 
-  const loc = localizedDoc(doc, lang);
-  const html = useMarkdownHtml(loc.markdown);
+  return (
+    <section className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-[280px_minmax(0,1fr)] lg:px-8">
+      <aside className="hidden lg:block">
+        <div className="sticky top-24 rounded-3xl border bg-card/80 p-4">
+          <p className="mb-3 text-xs uppercase tracking-[0.22em] text-muted-foreground">{t("docsPage.docs")}</p>
+          <nav className="grid gap-1">
+            {getDocGroups().flatMap((group) => group.docs).map((entry) => (
+              <Link key={entry.slug} to={`${basePath}/${entry.slug}`} className={entry.slug === doc.slug ? "rounded-xl bg-primary px-3 py-2 text-sm text-primary-foreground" : "rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"}>
+                {localizedDoc(entry, lang).title}
+              </Link>
+            ))}
+          </nav>
+        </div>
+      </aside>
+      <article className="rounded-[2rem] border bg-card/86 p-5 shadow-xl shadow-black/5 sm:p-8">
+        <div className="mb-8 border-b pb-6">
+          <Badge variant="secondary">{doc.groupLabel}</Badge>
+          <h1 className="mt-4 font-serif text-4xl font-semibold tracking-tight sm:text-5xl">{loc.title}</h1>
+          <p className="mt-3 max-w-3xl text-muted-foreground">{loc.summary}</p>
+        </div>
+        <div className="doc-prose" dangerouslySetInnerHTML={{ __html: html }} />
+      </article>
+    </section>
+  );
+}
+
+export function DocPage() {
+  const params = useParams();
+  const slug = params["*"]?.replace(/^\/+|\/+$/g, "") || undefined;
   return (
     <PublicShell>
-      <section className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-[280px_minmax(0,1fr)] lg:px-8">
-        <aside className="hidden lg:block">
-          <div className="sticky top-24 rounded-3xl border bg-card/80 p-4">
-            <p className="mb-3 text-xs uppercase tracking-[0.22em] text-muted-foreground">{t("docsPage.docs")}</p>
-            <nav className="grid gap-1">
-              {getDocGroups().flatMap((group) => group.docs).map((entry) => (
-                <Link key={entry.slug} to={entry.href} className={entry.slug === doc.slug ? "rounded-xl bg-primary px-3 py-2 text-sm text-primary-foreground" : "rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"}>
-                  {localizedDoc(entry, lang).title}
-                </Link>
-              ))}
-            </nav>
-          </div>
-        </aside>
-        <article className="rounded-[2rem] border bg-card/86 p-5 shadow-xl shadow-black/5 sm:p-8">
-          <div className="mb-8 border-b pb-6">
-            <Badge variant="secondary">{doc.groupLabel}</Badge>
-            <h1 className="mt-4 font-serif text-4xl font-semibold tracking-tight sm:text-5xl">{loc.title}</h1>
-            <p className="mt-3 max-w-3xl text-muted-foreground">{loc.summary}</p>
-          </div>
-          <div className="doc-prose" dangerouslySetInnerHTML={{ __html: html }} />
-        </article>
-      </section>
+      <DocContent slug={slug} basePath="/docs" />
     </PublicShell>
   );
 }

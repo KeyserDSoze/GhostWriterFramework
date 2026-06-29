@@ -97,7 +97,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     },
     {
       label: t("nav.docs"),
-      href: "/docs",
+      href: "/app/docs",
       icon: <BookText className="h-4 w-4" />,
     },
   ];

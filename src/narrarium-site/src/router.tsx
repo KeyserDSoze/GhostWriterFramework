@@ -18,6 +18,7 @@ import { WritingStylePage } from "@/pages/WritingStylePage";
 import { ChapterStageIndexPage } from "@/pages/ChapterStageIndexPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { CostsPage } from "@/pages/CostsPage";
+import { AppDocsIndexPage, AppDocPage } from "@/pages/AppDocsPage";
 import { AssistantChatsPage } from "@/pages/AssistantChatsPage";
 import {
   DocPage,
@@ -83,6 +84,8 @@ export const router = createBrowserRouter([
       },
       { path: "settings", element: <SettingsPage /> },
       { path: "costs", element: <CostsPage /> },
+      { path: "docs", element: <AppDocsIndexPage /> },
+      { path: "docs/*", element: <AppDocPage /> },
     ],
   },
   { path: "*", element: <NotFoundPage /> },
