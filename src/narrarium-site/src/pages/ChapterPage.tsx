@@ -9,8 +9,6 @@ import {
   Loader2,
   FileEdit,
   PenLine,
-  ClipboardCheck,
-  NotebookText,
   MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -44,11 +42,7 @@ import { type Paragraph } from "@/types/book";
 import { resolveBookToken } from "@/types/settings";
 import { slugify } from "@/narrarium/canon";
 import { useBookStructure } from "@/hooks/useBookStructure";
-import { AssetImageDialog } from "@/components/book/AssetImageDialog";
 import {
-  createChapterDraftArtifacts,
-  createChapterEvaluationArtifact,
-  createChapterResumeArtifact,
   createParagraphDraftArtifact,
   createParagraphEvaluationArtifact,
   createParagraphScriptArtifact,
@@ -231,53 +225,6 @@ export function ChapterPage() {
     }
   }
 
-  async function handleCreateChapterDraft() {
-    if (!book || !chapter) return;
-    const target = `/app/books/${bookId}/chapters/${chapterId}/workspace/draft`;
-    if (chapter.draftPath) { navigate(target); return; }
-    try {
-      const match = /^(\d{3})-/.exec(chapter.slug);
-      const number = Number(match?.[1] ?? 1);
-      await createChapterDraftArtifacts(token, book.owner, book.repo, branch, {
-        number,
-        title: chapter.title,
-      });
-      toast({ title: t("chapter.draftCreated") });
-      await reload();
-      navigate(target);
-    } catch (err) {
-      toast({ title: t("chapter.draftFailed"), description: String(err), variant: "destructive" });
-    }
-  }
-
-  async function handleCreateChapterResume() {
-    if (!book || !chapter) return;
-    const target = `/app/books/${bookId}/chapters/${chapterId}/workspace/resume`;
-    if (chapter.hasResume) { navigate(target); return; }
-    try {
-      await createChapterResumeArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug });
-      toast({ title: t("chapter.resumeCreated") });
-      await reload();
-      navigate(target);
-    } catch (err) {
-      toast({ title: t("chapter.resumeFailed"), description: String(err), variant: "destructive" });
-    }
-  }
-
-  async function handleCreateChapterEvaluation() {
-    if (!book || !chapter) return;
-    const target = `/app/books/${bookId}/chapters/${chapterId}/workspace/evaluation`;
-    if (chapter.hasEvaluation) { navigate(target); return; }
-    try {
-      await createChapterEvaluationArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug });
-      toast({ title: t("chapter.evaluationCreated") });
-      await reload();
-      navigate(target);
-    } catch (err) {
-      toast({ title: t("chapter.evaluationFailed"), description: String(err), variant: "destructive" });
-    }
-  }
-
   async function handleCreateParagraphWorkspace(
     kind: "draft" | "script" | "evaluation",
     paragraph: Paragraph,
@@ -370,25 +317,6 @@ export function ChapterPage() {
               {t("chapter.savingOrder")}
             </div>
           )}
-          {book && token && <AssetImageDialog book={book} branch={branch} token={token} kind="chapter" title={chapter.title} chapterSlug={chapter.slug} textPath={`${chapter.path}/chapter.md`} resumePath={`resumes/chapters/${chapter.slug}.md`} />}
-          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterDraft()}>
-            <FileEdit className="mr-1 h-4 w-4" />
-            {chapter.draftPath ? t("chapter.openDraft") : t("chapter.createDraft")}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterResume()}>
-            <NotebookText className="mr-1 h-4 w-4" />
-            {chapter.hasResume ? t("chapter.openResume") : t("chapter.createResume")}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => void handleCreateChapterEvaluation()}>
-            <ClipboardCheck className="mr-1 h-4 w-4" />
-            {chapter.hasEvaluation ? t("chapter.openEvaluation") : t("chapter.createEvaluation")}
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/app/books/${bookId}/chapters/${chapterId}/writing-style`}>
-              <PenLine className="mr-1 h-4 w-4" />
-              {t("writingStyle.chapterButton")}
-            </Link>
-          </Button>
         </div>
       </div>
 

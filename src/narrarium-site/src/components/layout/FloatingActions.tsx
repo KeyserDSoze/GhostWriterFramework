@@ -9,7 +9,8 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { parseAppRoute } from "@/assistant/context";
 import { resolveBookToken } from "@/types/settings";
 import { useToast } from "@/components/ui/use-toast";
-import { createParagraphDraftArtifact, createParagraphScriptArtifact } from "@/narrarium/workspace";
+import { AssetImageDialog } from "@/components/book/AssetImageDialog";
+import { createChapterDraftArtifacts, createChapterEvaluationArtifact, createChapterResumeArtifact, createParagraphDraftArtifact, createParagraphScriptArtifact } from "@/narrarium/workspace";
 
 interface ActionRow {
   label: string;
@@ -57,6 +58,30 @@ export function FloatingActions() {
     window.location.reload();
   }
 
+  async function openOrCreateChapter(kind: "draft" | "resume" | "evaluation") {
+    if (!chapter || !book || !token || !chapterId) return;
+    const target = `/app/books/${bookId}/chapters/${chapterId}/workspace/${kind}`;
+    const present = kind === "draft" ? !!chapter.draftPath : kind === "resume" ? chapter.hasResume : chapter.hasEvaluation;
+    if (!present) {
+      try {
+        if (kind === "draft") {
+          const number = Number(/^(\d{3})-/.exec(chapter.slug)?.[1] ?? "1");
+          await createChapterDraftArtifacts(token, book.owner, book.repo, branch, { number, title: chapter.title });
+        } else if (kind === "resume") {
+          await createChapterResumeArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug });
+        } else {
+          await createChapterEvaluationArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug });
+        }
+      } catch (err) {
+        toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
+        return;
+      }
+    }
+    setOpen(false);
+    navigate(target);
+    window.location.reload();
+  }
+
   const rows: ActionRow[] = [];
   if (paragraph && chapterId) {
     const base = `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}`;
@@ -68,9 +93,9 @@ export function FloatingActions() {
     const base = `/app/books/${bookId}/chapters/${chapterId}`;
     rows.push({ label: t("nav.scriptsIndex"), to: `${base}/scripts`, icon: <Network className="h-4 w-4" /> });
     rows.push({ label: t("nav.draftsIndex"), to: `${base}/drafts`, icon: <FileEdit className="h-4 w-4" /> });
-    rows.push({ label: chapter.draftPath ? t("chapter.openDraft") : t("chapter.createDraft"), to: `${base}/workspace/draft`, icon: <FileEdit className="h-4 w-4" /> });
-    rows.push({ label: t("chapter.resume"), to: `${base}/workspace/resume`, icon: <NotebookText className="h-4 w-4" /> });
-    rows.push({ label: t("chapter.evaluation"), to: `${base}/workspace/evaluation`, icon: <ClipboardCheck className="h-4 w-4" /> });
+    rows.push({ label: chapter.draftPath ? t("chapter.openDraft") : t("chapter.createDraft"), onClick: () => void openOrCreateChapter("draft"), icon: <FileEdit className="h-4 w-4" /> });
+    rows.push({ label: chapter.hasResume ? t("chapter.openResume") : t("chapter.createResume"), onClick: () => void openOrCreateChapter("resume"), icon: <NotebookText className="h-4 w-4" /> });
+    rows.push({ label: chapter.hasEvaluation ? t("chapter.openEvaluation") : t("chapter.createEvaluation"), onClick: () => void openOrCreateChapter("evaluation"), icon: <ClipboardCheck className="h-4 w-4" /> });
     rows.push({ label: t("writingStyle.chapterButton"), to: `${base}/writing-style`, icon: <PenLine className="h-4 w-4" /> });
   } else if (bookId) {
     rows.push({ label: t("ghostwriters.title"), to: `/app/books/${bookId}/ghostwriters`, icon: <Wand2 className="h-4 w-4" /> });
@@ -88,6 +113,34 @@ export function FloatingActions() {
             <button type="button" onClick={() => setOpen(false)} className="rounded p-1 text-muted-foreground hover:bg-muted"><X className="h-3.5 w-3.5" /></button>
           </div>
           <div className="flex flex-col">
+            {book && token && paragraph && chapter && (
+              <div className="px-1 py-1">
+                <AssetImageDialog
+                  book={book}
+                  branch={branch}
+                  token={token}
+                  kind="paragraph"
+                  title={paragraph.title}
+                  chapterSlug={chapter.slug}
+                  paragraphSlug={(paragraph.path.split("/").pop() ?? "").replace(/\.md$/i, "")}
+                  textPath={paragraph.path}
+                />
+              </div>
+            )}
+            {book && token && chapter && !paragraph && (
+              <div className="px-1 py-1">
+                <AssetImageDialog
+                  book={book}
+                  branch={branch}
+                  token={token}
+                  kind="chapter"
+                  title={chapter.title}
+                  chapterSlug={chapter.slug}
+                  textPath={`${chapter.path}/chapter.md`}
+                  resumePath={`resumes/chapters/${chapter.slug}.md`}
+                />
+              </div>
+            )}
             {rows.map((row, i) =>
               row.to ? (
                 <Link key={i} to={row.to} onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm hover:bg-accent">
