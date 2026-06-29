@@ -22,6 +22,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const [status, setStatus] = useState<Status>("checking");
   const lastAttemptKeyRef = useRef("");
   const silentAuthTimeoutRef = useRef<number | null>(null);
+  const googleRetryRef = useRef(0);
 
   function clearSilentAuthTimeout() {
     if (silentAuthTimeoutRef.current != null) {
@@ -64,6 +65,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
               ? (tokenResponse as { expires_in: number }).expires_in
               : 3600,
           );
+          googleRetryRef.current = 0;
           setStatus("ok");
         })
         .catch(() => {
@@ -72,7 +74,13 @@ export function AuthGuard({ children }: AuthGuardProps) {
         });
     },
     onError: () => {
-      // Silent reauth failed (session expired) → force manual login
+      // A silent refresh can fail transiently (cookies/timing). Retry once before logging out.
+      if (googleRetryRef.current < 1) {
+        googleRetryRef.current += 1;
+        startSilentAuthTimeout();
+        window.setTimeout(() => silentLogin(), 600);
+        return;
+      }
       clearSilentAuthTimeout();
       clearAuth();
       setStatus("unauthenticated");
@@ -116,6 +124,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
       const attemptKey = `google:${user.email}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
       if (lastAttemptKeyRef.current === attemptKey) return;
       lastAttemptKeyRef.current = attemptKey;
+      googleRetryRef.current = 0;
       setStatus("checking");
       startSilentAuthTimeout();
       silentLogin();
