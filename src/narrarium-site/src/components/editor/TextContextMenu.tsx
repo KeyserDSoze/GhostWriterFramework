@@ -51,29 +51,37 @@ export function TextContextMenu({
   };
 
   useEffect(() => {
-    const el = targetRef.current;
-    if (!el) return;
+    const isInside = (target: EventTarget | null) => {
+      const el = targetRef.current;
+      return !!el && (el === target || el.contains(target as Node));
+    };
 
     const onContextMenu = (e: MouseEvent) => {
+      if (!isInside(e.target)) return;
       e.preventDefault();
+      e.stopPropagation();
+      targetRef.current?.focus();
       openAt(e.clientX, e.clientY);
     };
     const onTouchStart = (e: TouchEvent) => {
+      if (!isInside(e.target)) return;
       if (longPressTimer.current) clearTimeout(longPressTimer.current);
       const touch = e.touches[0];
-      longPressTimer.current = setTimeout(() => openAt(touch.clientX, touch.clientY), 550);
+      const x = touch.clientX;
+      const y = touch.clientY;
+      longPressTimer.current = setTimeout(() => openAt(x, y), 500);
     };
     const cancelLongPress = () => { if (longPressTimer.current) clearTimeout(longPressTimer.current); };
 
-    el.addEventListener("contextmenu", onContextMenu);
-    el.addEventListener("touchstart", onTouchStart, { passive: true });
-    el.addEventListener("touchend", cancelLongPress);
-    el.addEventListener("touchmove", cancelLongPress, { passive: true });
+    document.addEventListener("contextmenu", onContextMenu, true);
+    document.addEventListener("touchstart", onTouchStart, { passive: true });
+    document.addEventListener("touchend", cancelLongPress);
+    document.addEventListener("touchmove", cancelLongPress, { passive: true });
     return () => {
-      el.removeEventListener("contextmenu", onContextMenu);
-      el.removeEventListener("touchstart", onTouchStart);
-      el.removeEventListener("touchend", cancelLongPress);
-      el.removeEventListener("touchmove", cancelLongPress);
+      document.removeEventListener("contextmenu", onContextMenu, true);
+      document.removeEventListener("touchstart", onTouchStart);
+      document.removeEventListener("touchend", cancelLongPress);
+      document.removeEventListener("touchmove", cancelLongPress);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetRef]);
@@ -81,6 +89,7 @@ export function TextContextMenu({
   useEffect(() => {
     if (!menu.open) return;
     const close = (e: MouseEvent | TouchEvent) => {
+      if ("button" in e && (e as MouseEvent).button === 2) return;
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenu((m) => ({ ...m, open: false }));
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenu((m) => ({ ...m, open: false })); };
