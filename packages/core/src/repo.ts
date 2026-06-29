@@ -14068,6 +14068,22 @@ export async function readScript(
 }
 
 export function parseScriptBody(body: string, options: { path?: string } = {}): ParsedScriptBody {
+  if (looksLikeNestedScript(body)) {
+    try {
+      return parseNestedScriptBody(body, options);
+    } catch {
+      // fall through to legacy on any nested-parse failure
+    }
+  }
+  return parseScriptBodyLegacy(body, options);
+}
+
+function looksLikeNestedScript(body: string): boolean {
+  return /^\s*\{(?:section|dialogue|secret|location|character|item|faction|timeline)\b/m.test(body)
+    || /^\s*\[(?:tell|action|emotion|line|surface|reveal|truth)\b/m.test(body);
+}
+
+function parseScriptBodyLegacy(body: string, options: { path?: string } = {}): ParsedScriptBody {
   const sourcePath = options.path ?? "script";
   const commands: ScriptCommand[] = [];
   const sceneDirectives: ScriptCommand[] = [];
@@ -14185,6 +14201,189 @@ export function parseScriptBody(body: string, options: { path?: string } = {}): 
 
     sceneDirectives.push(parsedCommand);
   }
+
+  for (const secret of secrets) {
+    addSecretCompletenessChecks(secret, checks, sourcePath);
+  }
+
+  return { commands, sceneDirectives, secrets, variables, continuity, checks };
+}
+
+type NestedScriptNode = {
+  kind: string;
+  attrs: Record<string, string>;
+  text?: string;
+  line: number;
+  children: NestedScriptNode[];
+};
+
+function parseNestedScriptAttrs(raw: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const re = /([a-zA-Z_][\w.-]*)=(?:"([^"]*)"|'([^']*)'|([^\s]+))/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(raw))) {
+    attrs[match[1]] = (match[2] ?? match[3] ?? match[4] ?? "").trim();
+  }
+  return attrs;
+}
+
+function parseNestedScriptTree(body: string): NestedScriptNode[] {
+  const root: NestedScriptNode = { kind: "root", attrs: {}, line: 0, children: [] };
+  const stack: NestedScriptNode[] = [root];
+  for (const [index, rawLine] of body.split(/\r?\n/).entries()) {
+    const lineNumber = index + 1;
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (line === "}" || /^\{\/[a-z]+\}$/i.test(line)) {
+      if (stack.length > 1) stack.pop();
+      continue;
+    }
+    if (line.startsWith("{")) {
+      const inner = line.replace(/^\{/, "").replace(/\}\s*$/, "").trim();
+      const kind = (inner.split(/\s+/)[0] ?? "section").toLowerCase();
+      const attrs = parseNestedScriptAttrs(inner.slice((inner.split(/\s+/)[0] ?? "").length));
+      const node: NestedScriptNode = { kind, attrs, line: lineNumber, children: [] };
+      stack[stack.length - 1].children.push(node);
+      if (!/\}\s*$/.test(line)) stack.push(node);
+      continue;
+    }
+    const primitive = line.match(/^\[([a-zA-Z_][\w-]*)([^\]]*)\]\s*(.*)$/);
+    if (primitive) {
+      const kind = primitive[1].toLowerCase();
+      const attrs = parseNestedScriptAttrs(primitive[2] ?? "");
+      const text = (primitive[3] ?? "").trim();
+      stack[stack.length - 1].children.push({ kind, attrs, text, line: lineNumber, children: [] });
+      continue;
+    }
+    stack[stack.length - 1].children.push({ kind: "tell", attrs: {}, text: line, line: lineNumber, children: [] });
+  }
+  return root.children;
+}
+
+function parseNestedScriptBody(body: string, options: { path?: string } = {}): ParsedScriptBody {
+  const sourcePath = options.path ?? "script";
+  const commands: ScriptCommand[] = [];
+  const sceneDirectives: ScriptCommand[] = [];
+  const secrets: ParsedScriptSecretOccurrence[] = [];
+  const variables: ScriptVariableOccurrence[] = [];
+  const continuity: ScriptContinuityOccurrence[] = [];
+  const checks: ScriptLedgerCheck[] = [];
+
+  const pushDirective = (command: string, content: string, line: number) => {
+    const entry: ScriptCommand = { command, content, line, raw: `${command}=${content}` };
+    commands.push(entry);
+    sceneDirectives.push(entry);
+  };
+
+  const walk = (nodes: NestedScriptNode[]) => {
+    for (const node of nodes) {
+      switch (node.kind) {
+        case "section": {
+          if (node.attrs.goal) pushDirective("scene_goal", node.attrs.goal, node.line);
+          if (node.attrs.pov) pushDirective("pov", node.attrs.pov, node.line);
+          if (node.attrs.location) pushDirective("location", node.attrs.location, node.line);
+          walk(node.children);
+          break;
+        }
+        case "dialogue": {
+          if (node.attrs.speaker) pushDirective("pov", node.attrs.speaker, node.line);
+          walk(node.children);
+          break;
+        }
+        case "location":
+          if (node.attrs.ref) pushDirective("location", node.attrs.ref, node.line);
+          walk(node.children);
+          break;
+        case "character":
+          if (node.attrs.ref) pushDirective("pov", node.attrs.ref, node.line);
+          walk(node.children);
+          break;
+        case "timeline":
+          pushDirective("track", [node.attrs.ref, node.attrs.date].filter(Boolean).join(" | "), node.line);
+          walk(node.children);
+          break;
+        case "item":
+        case "faction":
+          if (node.attrs.ref) pushDirective(node.kind, node.attrs.ref, node.line);
+          walk(node.children);
+          break;
+        case "secret": {
+          const ref = node.attrs.ref ?? "";
+          const modeValue = (node.attrs.mode ?? "").toLowerCase();
+          const mode: ScriptSecretMode = isScriptSecretMode(modeValue) ? modeValue : "protect";
+          if (!ref) {
+            addScriptCheck(checks, "error", "missing-secret-ref", sourcePath, "{secret} requires a ref=secret:slug attribute.", node.line);
+          } else if (!/^secret:[a-z0-9-]+$/i.test(ref)) {
+            addScriptCheck(checks, "error", "invalid-secret-ref", sourcePath, `{secret} ref must look like secret:slug, got ${ref}.`, node.line);
+          }
+          if (!node.attrs.mode) {
+            addScriptCheck(checks, "warning", "missing-secret-mode", sourcePath, "{secret} has no mode; using protect.", node.line);
+          } else if (!isScriptSecretMode(modeValue)) {
+            addScriptCheck(checks, "error", "unknown-secret-mode", sourcePath, `Unknown secret mode ${modeValue}. Use protect, seed, partial, misdirect, or reveal.`, node.line);
+          }
+          const occurrence: ParsedScriptSecretOccurrence = {
+            ref,
+            mode,
+            line: node.line,
+            raw: `{secret ref=${ref} mode=${mode}}`,
+            writer_truth: [],
+            reader_surface: [],
+            reader_belief: [],
+            allowed_clues: [],
+            forbidden: [],
+            forbidden_on_page: [],
+            misdirect: [],
+            reveal_limit: [],
+            reveal: [],
+            dialogue_surface: [],
+            dialogue_hidden: [],
+          };
+          for (const child of node.children) {
+            const value = (child.text ?? "").trim();
+            if (!value) continue;
+            switch (child.kind) {
+              case "surface":
+              case "reader_surface":
+                occurrence.reader_surface.push(value);
+                break;
+              case "reveal":
+                occurrence.reveal.push(value);
+                break;
+              case "truth":
+              case "writer_truth":
+                occurrence.writer_truth.push(value);
+                break;
+              case "belief":
+              case "reader_belief":
+                occurrence.reader_belief.push(value);
+                break;
+              case "clue":
+              case "allowed_clue":
+                occurrence.allowed_clues.push(...value.split(";").map((part) => part.trim()).filter(Boolean));
+                break;
+              case "forbidden":
+                occurrence.forbidden_on_page.push(...value.split(";").map((part) => part.trim()).filter(Boolean));
+                break;
+              case "misdirect":
+                occurrence.misdirect.push(value);
+                break;
+              default:
+                break;
+            }
+          }
+          const secretEntry: ScriptCommand = { command: "secret", content: `${ref} mode=${mode}`, line: node.line, raw: occurrence.raw };
+          commands.push(secretEntry);
+          secrets.push(occurrence);
+          break;
+        }
+        default:
+          walk(node.children);
+          break;
+      }
+    }
+  };
+
+  walk(parseNestedScriptTree(body));
 
   for (const secret of secrets) {
     addSecretCompletenessChecks(secret, checks, sourcePath);
@@ -14476,44 +14675,56 @@ export function paragraphToScriptBody(paragraphBody: string): string {
   ].join("\n");
 }
 
-export const SCRIPT_LEGEND = `## Script meta-language legend
+export const SCRIPT_LEGEND = `## Script nested block format
 
-### Renderable beats
+Scripts are a nested tree. \`{ ... }\` blocks are CONTAINERS that can nest other blocks; \`[ ... ]\` blocks are PRIMITIVES (leaves).
 
-| Syntax | Meaning |
-| --- | --- |
-| \`Location: ...\` | Scene location, free text or canon location slug |
-| \`[...]\` | Tell beat to render as prose |
-| \`{...}\` | Emotion, body state, or internal state |
-| \`(...)\` | Physical action |
-| \`«...»\` | Dialogue surface or dialogue idea |
-| \`«...» [subtext: ...; delivery: ...]\` | Dialogue plus writer-only delivery notes |
+A container opens with \`{<kind> attr=value attr="quoted value"\` on its own line and closes with a \`}\` on its own line.
+A primitive is \`[<kind> attr=value]\` optionally followed by free text on the same line.
 
-### Writer-only commands
+### Containers
 
 | Syntax | Meaning |
 | --- | --- |
-| \`@scene_goal{...}\` | Dramatic function of the scene |
-| \`@pov{character:id}\` | Viewpoint or perception filter |
-| \`@lens{...}\` | POV sensory, emotional, or cognitive lens |
-| \`@secret{secret:id mode=protect|seed|partial|misdirect|reveal}\` | Secret context block |
-| \`@writer_truth{...}\` | Truth the writer may know but must not necessarily reveal |
-| \`@reader_surface{...}\` | What may appear explicitly on page |
-| \`@reader_belief{...}\` | What the reader should believe at this point |
-| \`@allowed_clue{...}\` | Clues allowed in prose |
-| \`@forbidden_on_page{...}\` | Terms or facts forbidden in prose |
-| \`@var{name=value}\`, \`@set{name=value}\`, \`@unset{name}\`, \`@assert{name=value}\` | Track writing variables |
-| \`@state_change{target key=value}\` | Continuity delta leaving the scene |
-| \`@open_loop{...}\`, \`@payoff_later{...}\`, \`@payoff_now{...}\` | Plot loop tracking |
-| \`# ...\` | Free author comment, never parsed as a command |
+| \`{section title="..." goal="..." pov=character:id location=location:id ... }\` | Scene wrapper. \`goal\` becomes the scene goal, \`pov\` the viewpoint. |
+| \`{dialogue speaker=character:id ... }\` | A spoken exchange; put \`[line]\`/\`[action]\`/\`[emotion]\` inside. |
+| \`{secret ref=secret:id mode=protect|seed|partial|misdirect|reveal ... }\` | Secret in play; put \`[surface]\`, \`[reveal]\`, \`[truth]\` inside. |
+| \`{location ref=location:id ... }\`, \`{character ref=character:id ... }\`, \`{item ref=item:id ... }\`, \`{faction ref=faction:id ... }\` | Canon reference blocks. |
+| \`{timeline ref=timeline-event:id date="..." ... }\` | Anchor a timeline beat. |
+
+### Primitives
+
+| Syntax | Meaning |
+| --- | --- |
+| \`[tell] ...\` | Telling beat to render as prose |
+| \`[action] ...\` | Physical action |
+| \`[emotion] ...\` | Emotion, body state, or internal state |
+| \`[line speaker=character:id subtext="..." delivery="..."] «spoken line»\` | A spoken line with optional writer-only notes |
+| \`[surface] ...\`, \`[reveal] ...\`, \`[truth] ...\` | Inside a \`{secret}\`: reader surface, what is revealed, writer truth |
+
+### Example
+
+\`\`\`text
+{section title="Cave" goal="Save the child without naming the queen" pov=character:malachia location=location:salt-cave
+  [tell] A nameless woman has died.
+  {dialogue speaker=character:malachia
+    [line subtext="afraid" delivery="whisper"] We have to move.
+    [action] He lifts the child.
+    [emotion] exhaustion
+  }
+  {secret ref=secret:the-hidden-queen mode=protect
+    [surface] A nameless child survives.
+    [truth] The woman was Mariamne.
+  }
+}
+\`\`\`
 
 Rules:
-- One beat or command per line.
-- Commands are real lines: \`# @secret{...}\` is invalid.
-- \`@command{...}\` lines are never rendered into prose.
-- \`{...}\` without an \`@command\` prefix remains an emotion/state beat.
-- \`[...]\` at the start of a line is a tell beat; \`[...]\` after \`«...»\` is dialogue direction.
-- Commands are parsed deterministically into \`state/script-ledger.md\`.`;
+- One block per line; containers must be closed with \`}\`.
+- Attribute values with spaces must be quoted: \`title="The Arrival"\`.
+- \`# ...\` lines are free author comments and are never parsed.
+- The deterministic ledger in \`state/script-ledger.md\` reads pov, scene goal, and secrets from this tree.
+- Legacy line-oriented scripts (\`@scene_goal{...}\`, \`@pov{...}\`, \`@secret{...}\`, beats with \`[]\`/\`{}\`/\`()\`/\`«»\`) are still parsed for backward compatibility.`;
 
 async function buildScriptLedgerDocument(
   rootPath: string,
@@ -14541,23 +14752,17 @@ async function buildScriptLedgerDocument(
 }
 
 function buildDefaultScriptBody(location?: string): string {
-  const lines: string[] = [];
-  if (location) {
-    lines.push(`Location: ${location}`);
-    lines.push(``);
-  }
-  lines.push(`@scene_goal{TODO}`);
-  lines.push(`@pov{TODO}`);
-  lines.push(`@tone{TODO}`);
-  lines.push(``);
-  lines.push(`[Scene summary]`);
-  lines.push(`{Character - emotion or state}`);
-  lines.push(`«Dialogue idea» [subtext: TODO; delivery: TODO]`);
-  lines.push(`(Action)`);
-  lines.push(``);
-  lines.push(`# Free author note`);
-  lines.push(`@continuity_out{TODO}`);
-  return lines.join("\n");
+  const loc = location ? ` location=location:${location.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase()}` : "";
+  return [
+    `{section title="Scene" goal="TODO" pov=character:todo${loc}`,
+    `  [tell] Scene summary.`,
+    `  {dialogue speaker=character:todo`,
+    `    [line subtext="TODO" delivery="TODO"] Dialogue idea.`,
+    `    [action] Action.`,
+    `    [emotion] emotion or state`,
+    `  }`,
+    `}`,
+  ].join("\n");
 }
 
 function isScriptSecretMode(value: string): value is ScriptSecretMode {

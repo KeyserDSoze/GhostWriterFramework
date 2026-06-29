@@ -416,6 +416,37 @@ test("script ledger tracks script secrets, variables, continuity, and prose leak
   }
 });
 
+test("parseScriptBody understands the nested {}/[] block format", () => {
+  const nestedBody = [
+    '{section title="Cave" goal="Save the child" pov=character:malachia location=location:salt-cave',
+    "  [tell] A nameless woman has died.",
+    "  {dialogue speaker=character:malachia",
+    '    [line subtext="afraid" delivery="whisper"] We have to move.',
+    "    [action] He lifts the child.",
+    "    [emotion] exhaustion",
+    "  }",
+    "  {secret ref=secret:the-hidden-queen mode=reveal",
+    "    [surface] A nameless child survives.",
+    "    [reveal] The child is the hidden heir.",
+    "    [truth] The woman was Mariamne.",
+    "  }",
+    "}",
+  ].join("\n");
+
+  const parsed = parseScriptBody(nestedBody, { path: "scripts/001/001-cave.md" });
+  const pov = parsed.sceneDirectives.find((entry) => entry.command === "pov");
+  const goal = parsed.sceneDirectives.find((entry) => entry.command === "scene_goal");
+  assert.equal(pov?.content, "character:malachia");
+  assert.equal(goal?.content, "Save the child");
+  assert.equal(parsed.secrets.length, 1);
+  assert.equal(parsed.secrets[0].ref, "secret:the-hidden-queen");
+  assert.equal(parsed.secrets[0].mode, "reveal");
+  assert.equal(parsed.secrets[0].reader_surface[0], "A nameless child survives.");
+  assert.equal(parsed.secrets[0].reveal[0], "The child is the hidden heir.");
+  assert.equal(parsed.secrets[0].writer_truth[0], "The woman was Mariamne.");
+  assert.ok(!parsed.checks.some((check) => check.severity === "error"));
+});
+
 test("doctorBook detects broken refs and stale maintenance files", async () => {
   const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-doctor-"));
 
