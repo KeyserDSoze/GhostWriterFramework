@@ -11,6 +11,9 @@ import { parseAppRoute } from "@/assistant/context";
 import { resolveBookToken } from "@/types/settings";
 import { useToast } from "@/components/ui/use-toast";
 import { AssetImageDialog } from "@/components/book/AssetImageDialog";
+import { BookExportDialog } from "@/components/book/BookExportDialog";
+import { CommitHistoryDialog } from "@/components/github/CommitHistoryDialog";
+import { PullRequestsDialog } from "@/components/github/PullRequestsDialog";
 import { createChapterDraftArtifacts, createChapterEvaluationArtifact, createChapterResumeArtifact, createParagraphDraftArtifact, createParagraphScriptArtifact } from "@/narrarium/workspace";
 
 interface ActionRow {
@@ -141,6 +144,14 @@ export function FloatingActions() {
                   textPath={`${chapter.path}/chapter.md`}
                   resumePath={`resumes/chapters/${chapter.slug}.md`}
                 />
+              </div>
+            )}
+            {book && token && !chapter && (
+              <div className="flex flex-col gap-1 px-1 py-1">
+                <CommitHistoryDialog token={token} owner={book.owner} repo={book.repo} branch={branch} />
+                <PullRequestsDialog token={token} owner={book.owner} repo={book.repo} head={branch} base={structure?.defaultBranch ?? "main"} />
+                {structure && <AssetImageDialog book={book} branch={branch} token={token} kind="book" title={structure.title ?? book.name} textPath="book.md" resumePath="resumes/total.md" />}
+                {structure && <BookExportDialog book={book} structure={structure} branch={branch} token={token} />}
               </div>
             )}
             {rows.map((row, i) =>

@@ -2,6 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   BookOpen,
+  BookText,
   ClipboardCheck,
   Clock,
   Coins,
@@ -93,6 +94,11 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       label: t("costs.title"),
       href: "/app/costs",
       icon: <Coins className="h-4 w-4" />,
+    },
+    {
+      label: t("nav.docs"),
+      href: "/docs",
+      icon: <BookText className="h-4 w-4" />,
     },
   ];
 

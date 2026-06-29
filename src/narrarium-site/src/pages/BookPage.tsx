@@ -13,8 +13,6 @@ import {
   EyeOff,
   FileText,
   ChevronRight,
-  ChevronDown,
-  Sparkles,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -37,10 +35,6 @@ import {
 } from "@/narrarium/canon";
 import { CreateChapterDialog } from "@/components/canon/CreateChapterDialog";
 import { CreateEntityDialog } from "@/components/canon/CreateEntityDialog";
-import { PullRequestsDialog } from "@/components/github/PullRequestsDialog";
-import { CommitHistoryDialog } from "@/components/github/CommitHistoryDialog";
-import { BookExportDialog } from "@/components/book/BookExportDialog";
-import { AssetImageDialog } from "@/components/book/AssetImageDialog";
 
 function fileSlug(path: string): string {
   return (path.split("/").pop() ?? "").replace(/\.md$/i, "");
@@ -193,18 +187,6 @@ export function BookPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}
-          <details className="group relative">
-            <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-sm font-medium hover:bg-accent">
-              <Sparkles className="h-4 w-4" />{t("bookActions.title")}
-              <ChevronDown className="h-3.5 w-3.5 opacity-70 transition-transform group-open:rotate-180" />
-            </summary>
-            <div className="absolute left-0 z-20 mt-2 flex w-60 max-w-[85vw] flex-col gap-1 rounded-xl border bg-card p-2 shadow-lg">
-              <CommitHistoryDialog token={token} owner={book.owner} repo={book.repo} branch={branch} />
-              <PullRequestsDialog token={token} owner={book.owner} repo={book.repo} head={branch} base={structure?.defaultBranch ?? "main"} />
-              {structure && token && <AssetImageDialog book={book} branch={branch} token={token} kind="book" title={structure.title ?? book.name} textPath="book.md" resumePath="resumes/total.md" />}
-              {structure && token && <BookExportDialog book={book} structure={structure} branch={branch} token={token} />}
-            </div>
-          </details>
         </div>
       </div>
 
