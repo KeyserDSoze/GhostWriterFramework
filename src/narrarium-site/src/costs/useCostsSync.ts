@@ -26,7 +26,7 @@ function mergeMax(a: CostsFile, b: CostsFile): CostsFile {
       imageCost: Math.max(x.imageCost, y.imageCost),
       ttsChars: Math.max(x.ttsChars, y.ttsChars),
       ttsCost: Math.max(x.ttsCost, y.ttsCost),
-      sttMinutes: Math.max(x.sttMinutes, y.sttMinutes),
+      sttHours: Math.max(x.sttHours, y.sttHours),
       sttCost: Math.max(x.sttCost, y.sttCost),
     };
   }

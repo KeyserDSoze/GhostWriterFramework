@@ -78,9 +78,9 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings): Promis
   const file = new File([blob], "speech.webm", { type: blob.type || "audio/webm" });
   const client = createAudioClient(integration);
   const response = await client.audio.transcriptions.create({ file, model });
-  // Rough minute estimate from compressed audio size (~16KB/s typical webm/opus voice).
-  const estimatedMinutes = blob.size > 0 ? blob.size / (16000 * 60) : 0;
-  if (estimatedMinutes > 0) useCostsStore.getState().recordCurrent(sttDelta(estimatedMinutes, integration.pricing));
+  // Rough hour estimate from compressed audio size (~16KB/s typical webm/opus voice).
+  const estimatedHours = blob.size > 0 ? blob.size / (16000 * 3600) : 0;
+  if (estimatedHours > 0) useCostsStore.getState().recordCurrent(sttDelta(estimatedHours, integration.pricing));
   return response.text ?? "";
 }
 

@@ -585,6 +585,7 @@ const en = {
     imagesUnit: "images",
     charsUnit: "chars",
     minUnit: "min",
+    hourUnit: "hours",
     pricingTitle: "Prices and cost tracking",
     pricingHint: "Prices in euro. Tokens are per 1,000,000. Leave blank to skip that cost.",
     priceInput: "Input (€ / 1M tokens)",
@@ -598,7 +599,7 @@ const en = {
     priceImgOutput: "Img: output (€ / 1M)",
     priceImage: "Per image, legacy (€)",
     priceTts: "TTS (€ / 1M chars)",
-    priceStt: "STT (€ / minute)"
+    priceStt: "STT (€ / hour)"
   },
   writingStyle: {
     title: "Writing style",

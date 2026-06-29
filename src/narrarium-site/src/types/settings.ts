@@ -27,8 +27,8 @@ export interface AIPricing {
   imageOutputPerMTok?: number;
   /** EUR per 1M TTS characters */
   ttsPerMChar?: number;
-  /** EUR per minute of STT audio */
-  sttPerMinute?: number;
+  /** EUR per hour of STT audio */
+  sttPerHour?: number;
 }
 
 export interface AIIntegration {

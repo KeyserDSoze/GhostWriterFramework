@@ -12,7 +12,7 @@ export interface UsageBucket {
   imageCost: number;
   ttsChars: number;
   ttsCost: number;
-  sttMinutes: number;
+  sttHours: number;
   sttCost: number;
 }
 
@@ -43,7 +43,7 @@ export function emptyBucket(): UsageBucket {
     imageCost: 0,
     ttsChars: 0,
     ttsCost: 0,
-    sttMinutes: 0,
+    sttHours: 0,
     sttCost: 0,
   };
 }
@@ -71,7 +71,7 @@ export function addBucket(target: UsageBucket, delta: Partial<UsageBucket>): Usa
     imageCost: target.imageCost + (delta.imageCost ?? 0),
     ttsChars: target.ttsChars + (delta.ttsChars ?? 0),
     ttsCost: target.ttsCost + (delta.ttsCost ?? 0),
-    sttMinutes: target.sttMinutes + (delta.sttMinutes ?? 0),
+    sttHours: target.sttHours + (delta.sttHours ?? 0),
     sttCost: target.sttCost + (delta.sttCost ?? 0),
   };
 }

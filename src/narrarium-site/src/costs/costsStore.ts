@@ -131,8 +131,8 @@ export function ttsDelta(chars: number, pricing?: AIPricing): Partial<UsageBucke
   return { ttsChars: chars, ttsCost: pricing?.ttsPerMChar ? (chars / 1_000_000) * pricing.ttsPerMChar : 0 };
 }
 
-export function sttDelta(minutes: number, pricing?: AIPricing): Partial<UsageBucket> {
-  return { sttMinutes: minutes, sttCost: pricing?.sttPerMinute ? minutes * pricing.sttPerMinute : 0 };
+export function sttDelta(hours: number, pricing?: AIPricing): Partial<UsageBucket> {
+  return { sttHours: hours, sttCost: pricing?.sttPerHour ? hours * pricing.sttPerHour : 0 };
 }
 
 export { aggregateAll, bucketTotal };

@@ -419,7 +419,7 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
             <PriceField label={t("costs.priceCached")} value={integration.pricing?.cachedPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, cachedPerMTok: v } })} />
             <PriceField label={t("costs.priceOutput")} value={integration.pricing?.outputPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, outputPerMTok: v } })} />
             <PriceField label={t("costs.priceTts")} value={integration.pricing?.ttsPerMChar} onChange={(v) => onChange({ pricing: { ...integration.pricing, ttsPerMChar: v } })} />
-            <PriceField label={t("costs.priceStt")} value={integration.pricing?.sttPerMinute} onChange={(v) => onChange({ pricing: { ...integration.pricing, sttPerMinute: v } })} />
+            <PriceField label={t("costs.priceStt")} value={integration.pricing?.sttPerHour} onChange={(v) => onChange({ pricing: { ...integration.pricing, sttPerHour: v } })} />
           </div>
           <p className="mt-3 text-xs font-medium text-muted-foreground">{t("costs.imageTokenPricing")}</p>
           <div className="mt-1 grid gap-2 sm:grid-cols-3">

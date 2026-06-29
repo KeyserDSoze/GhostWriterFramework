@@ -585,6 +585,7 @@ const it = {
     imagesUnit: "immagini",
     charsUnit: "caratteri",
     minUnit: "min",
+    hourUnit: "ore",
     pricingTitle: "Prezzi e tracciamento costi",
     pricingHint: "Prezzi in euro. I token sono per 1.000.000. Lascia vuoto per non calcolare quel costo.",
     priceInput: "Input (€ / 1M token)",
@@ -598,7 +599,7 @@ const it = {
     priceImgOutput: "Img: output (€ / 1M)",
     priceImage: "Per immagine, legacy (€)",
     priceTts: "TTS (€ / 1M caratteri)",
-    priceStt: "STT (€ / minuto)"
+    priceStt: "STT (€ / ora)"
   },
   writingStyle: {
     title: "Stile di scrittura",

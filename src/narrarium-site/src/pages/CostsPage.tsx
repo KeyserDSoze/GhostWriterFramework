@@ -13,6 +13,10 @@ function num(value: number): string {
   return new Intl.NumberFormat().format(Math.round(value || 0));
 }
 
+function hours(value: number): string {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value || 0);
+}
+
 export function CostsPage() {
   const { t } = useTranslation();
   const file = useCostsStore((s) => s.file);
@@ -66,7 +70,7 @@ function CategoryGrid({ bucket }: { bucket: UsageBucket }) {
     { label: t("costs.chat"), cost: bucket.chatCost, detail: `${num(bucket.inputTokens)} in · ${num(bucket.cachedTokens)} cache · ${num(bucket.outputTokens)} out` },
     { label: t("costs.images"), cost: bucket.imageCost, detail: imageDetail },
     { label: t("costs.tts"), cost: bucket.ttsCost, detail: `${num(bucket.ttsChars)} ${t("costs.charsUnit")}` },
-    { label: t("costs.stt"), cost: bucket.sttCost, detail: `${num(bucket.sttMinutes)} ${t("costs.minUnit")}` },
+    { label: t("costs.stt"), cost: bucket.sttCost, detail: `${hours(bucket.sttHours)} ${t("costs.hourUnit")}` },
   ];
   return (
     <div className="grid gap-2 sm:grid-cols-2">
