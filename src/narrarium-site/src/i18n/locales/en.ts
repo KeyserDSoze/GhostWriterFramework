@@ -559,6 +559,28 @@ const en = {
   bookActions: {
     title: "Actions"
   },
+  costs: {
+    title: "Costs",
+    intro: "Estimated spend for AI requests, computed only if you set prices in settings.",
+    grandTotal: "Grand total",
+    perBook: "Per book",
+    empty: "No costs recorded yet. Set prices in your AI integrations to start tracking.",
+    chat: "Chat (tokens)",
+    images: "Images",
+    tts: "Text-to-speech (TTS)",
+    stt: "Transcription (STT)",
+    imagesUnit: "images",
+    charsUnit: "chars",
+    minUnit: "min",
+    pricingTitle: "Prices and cost tracking",
+    pricingHint: "Prices in euro. Tokens are per 1,000,000. Leave blank to skip that cost.",
+    priceInput: "Input (€ / 1M tokens)",
+    priceCached: "Cached input (€ / 1M tokens)",
+    priceOutput: "Output (€ / 1M tokens)",
+    priceImage: "Per image (€)",
+    priceTts: "TTS (€ / 1M chars)",
+    priceStt: "STT (€ / minute)"
+  },
   writingStyle: {
     title: "Writing style",
     chapterTitle: "Chapter style {{slug}}",

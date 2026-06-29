@@ -1,5 +1,6 @@
 import OpenAI, { AzureOpenAI } from "openai";
 import type { AIIntegration, AppSettings } from "@/types/settings";
+import { chatDelta, useCostsStore } from "@/costs/costsStore";
 
 export type LlmContentPart =
   | { type: "text"; text: string }
@@ -51,6 +52,7 @@ export async function completeText(
       dangerouslyAllowBrowser: true,
     });
     const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
+    recordChatUsage(integration, response.usage);
     return response.choices[0]?.message?.content ?? "";
   }
 
@@ -61,8 +63,20 @@ export async function completeText(
       dangerouslyAllowBrowser: true,
     });
     const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
+    recordChatUsage(integration, response.usage);
     return response.choices[0]?.message?.content ?? "";
   }
 
   throw new Error("Microsoft 365 Copilot is not yet wired into the in-browser assistant.");
+}
+
+function recordChatUsage(integration: AIIntegration, usage: unknown): void {
+  if (!integration.pricing) return;
+  const u = usage as { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | undefined;
+  if (!u) return;
+  const inputTokens = u.prompt_tokens ?? 0;
+  const outputTokens = u.completion_tokens ?? 0;
+  const cachedTokens = u.prompt_tokens_details?.cached_tokens ?? 0;
+  if (!inputTokens && !outputTokens) return;
+  useCostsStore.getState().recordCurrent(chatDelta({ inputTokens, cachedTokens, outputTokens }, integration.pricing));
 }

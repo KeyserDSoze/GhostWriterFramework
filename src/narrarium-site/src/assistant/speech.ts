@@ -1,6 +1,7 @@
 import OpenAI, { AzureOpenAI } from "openai";
 import type { AIIntegration, AppSettings } from "@/types/settings";
 import { resolveWritingIntegration } from "@/assistant/llm";
+import { sttDelta, ttsDelta, useCostsStore } from "@/costs/costsStore";
 
 const MAX_TTS_CHARS = 1200;
 
@@ -77,6 +78,9 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings): Promis
   const file = new File([blob], "speech.webm", { type: blob.type || "audio/webm" });
   const client = createAudioClient(integration);
   const response = await client.audio.transcriptions.create({ file, model });
+  // Rough minute estimate from compressed audio size (~16KB/s typical webm/opus voice).
+  const estimatedMinutes = blob.size > 0 ? blob.size / (16000 * 60) : 0;
+  if (estimatedMinutes > 0) useCostsStore.getState().recordCurrent(sttDelta(estimatedMinutes, integration.pricing));
   return response.text ?? "";
 }
 
@@ -171,6 +175,8 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number, u
 
 async function speakWithOpenAICompatible(text: string, integration: AIIntegration, model: string, voice: string): Promise<SpeechController> {
   const chunks = splitSpeechText(text);
+  const ttsChars = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  if (ttsChars > 0) useCostsStore.getState().recordCurrent(ttsDelta(ttsChars, integration.pricing));
   let stopped = false;
   let audio: HTMLAudioElement | null = null;
   let nextPromise: Promise<string> | null = chunks[0] ? synthesizeChunk(chunks[0], integration, model, voice) : null;

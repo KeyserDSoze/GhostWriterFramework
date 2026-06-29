@@ -9,6 +9,9 @@ import { FloatingActions } from "./FloatingActions";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useTokenRefresh } from "@/hooks/useTokenRefresh";
+import { useCostsSync } from "@/costs/useCostsSync";
+import { useCostsStore } from "@/costs/costsStore";
+import { parseAppRoute } from "@/assistant/context";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
@@ -24,6 +27,14 @@ export function Shell() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useTokenRefresh();
+  useCostsSync();
+
+  useEffect(() => {
+    const route = parseAppRoute(location.pathname);
+    const bookId = "bookId" in route ? route.bookId : undefined;
+    const book = bookId ? settings.books.find((b) => b.id === bookId) : undefined;
+    useCostsStore.getState().setCurrentBook(bookId, book?.name);
+  }, [location.pathname, settings.books]);
 
   useEffect(() => {
     void load();

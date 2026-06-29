@@ -3,6 +3,7 @@ import { parseDocument, stringify } from "yaml";
 import type { AIIntegration, AppSettings } from "@/types/settings";
 import { createFile, createOrUpdateBinaryFile, loadBinaryFileContent, readFileWithSha, updateFile } from "@/github/githubClient";
 import { completeText, resolveWritingIntegration } from "@/assistant/llm";
+import { imageDelta, useCostsStore } from "@/costs/costsStore";
 
 export type AssetSubjectKind = "book" | "chapter" | "paragraph";
 export type AssetPromptSource = "custom" | "text" | "resume";
@@ -187,6 +188,7 @@ export async function generateAssetImage(input: {
     output_format: "png",
     response_format: model === "gpt-image-1" ? undefined : "b64_json",
   } as never);
+  useCostsStore.getState().recordCurrent(imageDelta(1, integration.pricing));
   const image = response.data?.[0];
   if (image?.b64_json) return { bytes: base64ToBytes(image.b64_json), provider: integration.provider, model };
   if (image?.url) {

@@ -409,7 +409,42 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
           </div>
         )}
       </div>
+
+      {integration.provider !== "m365_copilot" && (
+        <details className="mt-3 rounded-lg border bg-muted/20 p-3">
+          <summary className="cursor-pointer text-sm font-medium">{t("costs.pricingTitle")}</summary>
+          <p className="mt-1 text-xs text-muted-foreground">{t("costs.pricingHint")}</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <PriceField label={t("costs.priceInput")} value={integration.pricing?.inputPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, inputPerMTok: v } })} />
+            <PriceField label={t("costs.priceCached")} value={integration.pricing?.cachedPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, cachedPerMTok: v } })} />
+            <PriceField label={t("costs.priceOutput")} value={integration.pricing?.outputPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, outputPerMTok: v } })} />
+            <PriceField label={t("costs.priceImage")} value={integration.pricing?.perImage} onChange={(v) => onChange({ pricing: { ...integration.pricing, perImage: v } })} />
+            <PriceField label={t("costs.priceTts")} value={integration.pricing?.ttsPerMChar} onChange={(v) => onChange({ pricing: { ...integration.pricing, ttsPerMChar: v } })} />
+            <PriceField label={t("costs.priceStt")} value={integration.pricing?.sttPerMinute} onChange={(v) => onChange({ pricing: { ...integration.pricing, sttPerMinute: v } })} />
+          </div>
+        </details>
+      )}
       <Badge variant="secondary" className="mt-3 text-xs">{PROVIDERS.find((provider) => provider.value === integration.provider)?.label}</Badge>
+    </div>
+  );
+}
+
+function PriceField({ label, value, onChange }: { label: string; value: number | undefined; onChange: (v: number | undefined) => void }) {
+  return (
+    <div className="grid gap-1">
+      <Label className="text-xs">{label}</Label>
+      <Input
+        type="number"
+        inputMode="decimal"
+        step="0.01"
+        value={value ?? ""}
+        onChange={(e) => {
+          const raw = e.target.value.trim();
+          onChange(raw === "" ? undefined : Number(raw));
+        }}
+        placeholder="0"
+        className="h-8 text-sm"
+      />
     </div>
   );
 }

@@ -17,6 +17,7 @@ import { GhostwritersPage } from "@/pages/GhostwritersPage";
 import { WritingStylePage } from "@/pages/WritingStylePage";
 import { ChapterStageIndexPage } from "@/pages/ChapterStageIndexPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { CostsPage } from "@/pages/CostsPage";
 import { AssistantChatsPage } from "@/pages/AssistantChatsPage";
 import {
   DocPage,
@@ -81,6 +82,7 @@ export const router = createBrowserRouter([
         element: <ParagraphPage />,
       },
       { path: "settings", element: <SettingsPage /> },
+      { path: "costs", element: <CostsPage /> },
     ],
   },
   { path: "*", element: <NotFoundPage /> },

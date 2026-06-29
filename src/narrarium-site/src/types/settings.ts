@@ -9,6 +9,22 @@ export interface AzureOpenAIConfig {
 
 export type AIProviderType = "azure_openai" | "openai" | "m365_copilot";
 
+/** Optional unit prices (EUR) used to track spend. Token prices are per 1,000,000 tokens. */
+export interface AIPricing {
+  /** EUR per 1M input tokens */
+  inputPerMTok?: number;
+  /** EUR per 1M cached input tokens */
+  cachedPerMTok?: number;
+  /** EUR per 1M output tokens */
+  outputPerMTok?: number;
+  /** EUR per generated image */
+  perImage?: number;
+  /** EUR per 1M TTS characters */
+  ttsPerMChar?: number;
+  /** EUR per minute of STT audio */
+  sttPerMinute?: number;
+}
+
 export interface AIIntegration {
   id: string;
   name: string;
@@ -29,6 +45,8 @@ export interface AIIntegration {
   modelImageGeneration?: string;
   /** Azure API version when provider is azure_openai. */
   apiVersion?: string;
+  /** Optional unit prices for spend tracking. */
+  pricing?: AIPricing;
 }
 
 // ─── GitHub token entry ───────────────────────────────────────────────────────

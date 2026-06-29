@@ -4,6 +4,7 @@ import {
   BookOpen,
   ClipboardCheck,
   Clock,
+  Coins,
   EyeOff,
   FileEdit,
   FileText,
@@ -87,6 +88,11 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       label: t("nav.settings"),
       href: "/app/settings",
       icon: <Settings className="h-4 w-4" />,
+    },
+    {
+      label: t("costs.title"),
+      href: "/app/costs",
+      icon: <Coins className="h-4 w-4" />,
     },
   ];
 
