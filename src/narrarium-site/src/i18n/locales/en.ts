@@ -542,6 +542,14 @@ const en = {
     created: "Created {{path}}",
     failed: "Operation failed"
   },
+  writingStyle: {
+    title: "Writing style",
+    chapterTitle: "Chapter style {{slug}}",
+    chapterButton: "Chapter style",
+    intro: "The always-on writing contract: narration, dialogue, rhythm, what to preserve and what to improve.",
+    chapterIntro: "Style exception for this chapter, layered on top of the global style.",
+    placeholder: "Write the style rules here…"
+  },
   canon: {
     notFound: "Canon file not found.",
     backToBook: "Back to book",

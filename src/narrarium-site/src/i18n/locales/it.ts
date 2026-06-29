@@ -542,6 +542,14 @@ const it = {
     created: "Creato {{path}}",
     failed: "Operazione non riuscita"
   },
+  writingStyle: {
+    title: "Stile di scrittura",
+    chapterTitle: "Stile capitolo {{slug}}",
+    chapterButton: "Stile capitolo",
+    intro: "Lo stile sempre attivo del libro: narrazione, dialoghi, ritmo, cosa preservare e cosa migliorare.",
+    chapterIntro: "Eccezione di stile per questo capitolo, applicata sopra lo stile globale.",
+    placeholder: "Scrivi qui le regole di stile…"
+  },
   canon: {
     notFound: "File canone non trovato.",
     backToBook: "Torna al libro",

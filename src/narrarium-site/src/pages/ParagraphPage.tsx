@@ -24,6 +24,7 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { resolveBookToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { AssetImageDialog } from "@/components/book/AssetImageDialog";
+import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { improveProse, type PipelineSource } from "@/narrarium/pipeline";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
@@ -177,6 +178,13 @@ export function ParagraphPage() {
 
   function removeEntry(key: string) {
     setEntries((prev) => prev.filter((e) => e.key !== key));
+  }
+
+  function setGhostwriter(slug: string) {
+    setEntries((prev) => {
+      const without = prev.filter((e) => e.key !== "ghostwriter");
+      return slug ? [...without, { key: "ghostwriter", value: slug }] : without;
+    });
   }
 
   function addEntry() {
@@ -357,7 +365,7 @@ export function ParagraphPage() {
 
   const readonlyEntries = entries.filter((e) => READONLY_KEYS.has(e.key));
   const editableEntries = entries.filter(
-    (e) => !READONLY_KEYS.has(e.key) && e.key !== "title",
+    (e) => !READONLY_KEYS.has(e.key) && e.key !== "title" && e.key !== "ghostwriter",
   );
 
   return (
@@ -444,6 +452,9 @@ export function ParagraphPage() {
                 className="h-7 flex-1 text-sm font-medium"
               />
             </div>
+
+            {/* Ghostwriter */}
+            <GhostwriterField ghostwriters={structure?.ghostwriters ?? []} value={currentGhostwriter} onChange={setGhostwriter} />
 
             {/* Other editable fields */}
             {editableEntries.map((e) => (

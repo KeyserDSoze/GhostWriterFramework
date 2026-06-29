@@ -380,6 +380,12 @@ export function ChapterPage() {
             </Link>
           </Button>
           <Button variant="outline" size="sm" onClick={() => void handleCreateChapterEvaluation()}>{t("chapter.create")}</Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/books/${bookId}/chapters/${chapterId}/writing-style`}>
+              <PenLine className="mr-1 h-4 w-4" />
+              {t("writingStyle.chapterButton")}
+            </Link>
+          </Button>
         </div>
       </div>
 

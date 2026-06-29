@@ -16,6 +16,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { resolveBookToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { GeneratePreviewDialog } from "@/components/book/GeneratePreviewDialog";
+import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { refineProse, scriptToProse, type PipelineSource } from "@/narrarium/pipeline";
 
 interface MetaEntry {
@@ -223,7 +224,14 @@ export function WorkspaceDocPage() {
   }
 
   const readonlyEntries = entries.filter((entry) => READONLY_KEYS.has(entry.key));
-  const editableEntries = entries.filter((entry) => !READONLY_KEYS.has(entry.key));
+  const editableEntries = entries.filter((entry) => !READONLY_KEYS.has(entry.key) && entry.key !== "ghostwriter");
+
+  function setGhostwriter(slug: string) {
+    setEntries((prev) => {
+      const without = prev.filter((e) => e.key !== "ghostwriter");
+      return slug ? [...without, { key: "ghostwriter", value: slug }] : without;
+    });
+  }
 
   const currentGhostwriter = (() => {
     const value = entries.find((entry) => entry.key === "ghostwriter")?.value;
@@ -325,6 +333,10 @@ export function WorkspaceDocPage() {
                 </span>
               </div>
             ))}
+
+            {paraSlug && (workspaceKind === "script" || workspaceKind === "draft") && (
+              <GhostwriterField ghostwriters={structure?.ghostwriters ?? []} value={currentGhostwriter} onChange={setGhostwriter} />
+            )}
 
             {editableEntries.map((entry) => (
               <div key={entry.key} className="flex items-center gap-3">
