@@ -18,6 +18,7 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { GeneratePreviewDialog } from "@/components/book/GeneratePreviewDialog";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { ScriptEditor } from "@/components/script/ScriptEditor";
+import { TextContextMenu } from "@/components/editor/TextContextMenu";
 import { parseScript, serializeScript, type ScriptDoc } from "@/narrarium/script/model";
 import { proseToScript, refineProse, scriptToProse, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
 
@@ -105,6 +106,7 @@ export function WorkspaceDocPage() {
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
   const loadedTargetRef = useRef<string | null>(null);
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const [pipelineOpen, setPipelineOpen] = useState(false);
   const [pipelineMode, setPipelineMode] = useState<"toDraft" | "toFinal">("toDraft");
   const [pipelineText, setPipelineText] = useState("");
@@ -466,6 +468,7 @@ export function WorkspaceDocPage() {
         </div>
       ) : (
         <AutoTextarea
+          ref={bodyRef}
           value={body}
           onChange={(e) => setBody(e.target.value)}
           className="min-h-[55vh] font-mono text-sm leading-7"
@@ -473,6 +476,7 @@ export function WorkspaceDocPage() {
           spellCheck={false}
         />
       )}
+      {workspaceKind !== "script" && <TextContextMenu targetRef={bodyRef} getValue={() => body} setValue={setBody} />}
       <GeneratePreviewDialog
         open={pipelineOpen}
         title={pipelineMode === "toDraft" ? t("pipeline.scriptToDraft") : t("pipeline.draftToFinal")}

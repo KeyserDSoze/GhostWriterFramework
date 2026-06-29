@@ -11,6 +11,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useTokenRefresh } from "@/hooks/useTokenRefresh";
 import { useCostsSync } from "@/costs/useCostsSync";
 import { useCostsStore } from "@/costs/costsStore";
+import { useClipboardSync } from "@/clipboard/useClipboardSync";
 import { parseAppRoute } from "@/assistant/context";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,7 @@ export function Shell() {
 
   useTokenRefresh();
   useCostsSync();
+  useClipboardSync();
 
   useEffect(() => {
     const route = parseAppRoute(location.pathname);

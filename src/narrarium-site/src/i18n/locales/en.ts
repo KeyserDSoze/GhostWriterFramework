@@ -559,6 +559,19 @@ const en = {
   bookActions: {
     title: "Actions"
   },
+  ctx: {
+    improveAll: "Improve paragraph",
+    improveSelection: "Improve selection",
+    synonym: "Synonym",
+    synonymApplied: "Replaced with: {{word}}",
+    selectAll: "Select all",
+    copy: "Copy",
+    cut: "Cut",
+    paste: "Paste",
+    specialPaste: "Special paste",
+    noHistory: "No recent copies.",
+    back: "Back"
+  },
   costs: {
     title: "Costs",
     intro: "Estimated spend for AI requests, computed only if you set prices in settings.",

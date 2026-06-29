@@ -103,6 +103,18 @@ export async function improveProse(
   return (await completeText(integration, messages)).trim();
 }
 
+/** Suggest a synonym/short replacement for a selected word or short phrase, keeping context and style. */
+export async function synonymFor(src: PipelineSource, fullBody: string, selection: string, ghostwriterSlug?: string): Promise<string> {
+  const integration = resolveWritingIntegration(src.settings);
+  if (!integration) throw new Error("No AI integration configured.");
+  const { style, story } = await buildContext(src, ghostwriterSlug);
+  const messages: LlmMessage[] = [
+    { role: "system", content: `You are a precise lexical editor. The user selected a short word or phrase and wants a single best synonym or replacement that fits the sentence, register, and style. Return ONLY the replacement text, no quotes, no explanation, in ${LANG(src.settings)}, matching the selection's grammatical form.\n\n${style}` },
+    { role: "user", content: `${story}\n\nPARAGRAPH:\n${fullBody}\n\nSELECTED TEXT:\n${selection}\n\nReturn the best synonym/replacement for the selected text.` },
+  ];
+  return (await completeText(integration, messages)).trim().replace(/^["'«»]|["'«»]$/g, "");
+}
+
 /** Reverse-engineer a Narrarium scene script (one beat per line) from finished or draft prose. */
 export async function proseToScript(src: PipelineSource, prose: string, ghostwriterSlug?: string): Promise<string> {
   const integration = resolveWritingIntegration(src.settings);

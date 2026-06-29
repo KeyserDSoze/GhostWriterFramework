@@ -559,6 +559,19 @@ const it = {
   bookActions: {
     title: "Azioni"
   },
+  ctx: {
+    improveAll: "Migliora il paragrafo",
+    improveSelection: "Migliora la selezione",
+    synonym: "Sinonimo",
+    synonymApplied: "Sostituito con: {{word}}",
+    selectAll: "Seleziona tutto",
+    copy: "Copia",
+    cut: "Taglia",
+    paste: "Incolla",
+    specialPaste: "Incolla speciale",
+    noHistory: "Nessuna copia recente.",
+    back: "Indietro"
+  },
   costs: {
     title: "Costi",
     intro: "Spesa stimata per le richieste AI, calcolata solo se hai impostato i prezzi nei settings.",

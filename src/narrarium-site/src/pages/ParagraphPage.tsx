@@ -24,7 +24,8 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { resolveBookToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
-import { improveProse, type PipelineSource } from "@/narrarium/pipeline";
+import { improveProse, synonymFor, type PipelineSource } from "@/narrarium/pipeline";
+import { TextContextMenu } from "@/components/editor/TextContextMenu";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
 
@@ -362,6 +363,32 @@ export function ParagraphPage() {
     setImproveOpen(false);
   }
 
+  function captureSelectionRef() {
+    const node = bodyRef.current;
+    if (node && node.selectionEnd > node.selectionStart) {
+      selectionRef.current = { start: node.selectionStart, end: node.selectionEnd };
+      return body.slice(node.selectionStart, node.selectionEnd);
+    }
+    selectionRef.current = null;
+    return null;
+  }
+
+  async function synonymWith(selection: string) {
+    if (!book || !token || !structure || !chapter || !selection.trim()) return;
+    captureSelectionRef();
+    try {
+      const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter };
+      const replacement = (await synonymFor(src, body, selection, currentGhostwriter)).trim();
+      if (replacement && selectionRef.current) {
+        const { start, end } = selectionRef.current;
+        setBody(body.slice(0, start) + replacement + body.slice(end));
+        toast({ title: t("ctx.synonymApplied", { word: replacement }) });
+      }
+    } catch (err) {
+      toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
+    }
+  }
+
   const readonlyEntries = entries.filter((e) => READONLY_KEYS.has(e.key));
   const editableEntries = entries.filter(
     (e) => !READONLY_KEYS.has(e.key) && e.key !== "title" && e.key !== "ghostwriter",
@@ -535,6 +562,12 @@ export function ParagraphPage() {
           spellCheck={false}
         />
       )}
+      <TextContextMenu
+        targetRef={bodyRef}
+        getValue={() => body}
+        setValue={setBody}
+        improve={{ improveSelection: () => void startImprove(), synonym: (sel) => void synonymWith(sel) }}
+      />
 
       <p className="text-[11px] text-muted-foreground truncate">{paragraph.path}</p>
 
