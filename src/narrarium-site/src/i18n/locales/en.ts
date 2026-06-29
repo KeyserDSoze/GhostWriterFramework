@@ -566,6 +566,7 @@ const en = {
     synonymFor: "Synonyms for: {{word}}",
     moreSynonyms: "3 more",
     noSynonyms: "No synonyms found.",
+    textActions: "Text actions",
     selectAll: "Select all",
     copy: "Copy",
     cut: "Cut",
