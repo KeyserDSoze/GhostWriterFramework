@@ -142,7 +142,7 @@ export async function createParagraphDraftArtifact(
         title: input.title,
         canon: "draft",
       },
-      `# ${input.title}\n\nStart the paragraph draft here.\n`,
+      "",
     ),
     `Add paragraph draft ${slug}`,
   );

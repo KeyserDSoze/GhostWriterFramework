@@ -109,12 +109,23 @@ export async function proseToScript(src: PipelineSource, prose: string, ghostwri
   if (!integration) throw new Error("No AI integration configured.");
   const { style, story } = await buildContext(src, ghostwriterSlug);
   const legend = [
-    "Script meta-language: one beat per line.",
-    "[...] tell beat to render as prose; {...} emotion/state; (...) physical action; «...» dialogue; Location: ... for the setting.",
-    "Writer-only lines start with @ (e.g. @scene_goal{...}, @pov{character:id}). Do not invent canon ids.",
+    "Narrarium scene script meta-language. One beat or command per line, in scene order.",
+    "Renderable beats:",
+    "- `Location: <place>` for the setting (free text or a canon location slug).",
+    "- `[telling beat]` prose-to-render.",
+    "- `{emotion or internal state}`.",
+    "- `(physical action)`.",
+    "- `«spoken line»` dialogue. Use `«Name: line»` to mark the speaker. Add `«line» [subtext: ...; delivery: ...]` for writer notes.",
+    "Writer-only commands (never rendered):",
+    "- `@scene_goal{...}` dramatic function of the scene.",
+    "- `@pov{character:slug}` viewpoint.",
+    "- `@location{location:slug}` to link the setting to canon.",
+    "- `@track{timeline:slug | date | note}` to anchor a timeline beat.",
+    "Group a back-and-forth exchange between `# >>>dialogue` and `# <<<dialogue` comment markers, putting the `«lines»` and their `(actions)`/`{emotions}` inside.",
+    "Rules: one item per line, never put commands inside comments, keep dialogue text in its original language.",
   ].join("\n");
   const messages: LlmMessage[] = [
-    { role: "system", content: `You convert prose into a Narrarium scene script: a compact, ordered sequence of beats that captures the scene's structure. Return ONLY the script body, no commentary. Keep notes in ${LANG(src.settings)} but preserve dialogue text in its original language.\n\n${legend}\n\n${style}` },
+    { role: "system", content: `You convert prose into a Narrarium scene script: a compact, ordered, faithful sequence of beats that captures the scene's structure and dialogue. Return ONLY the script body, no commentary, no code fences. Write notes/telling beats in ${LANG(src.settings)}.\n\n${legend}\n\n${style}` },
     { role: "user", content: `${story}\n\nPROSE:\n${prose}\n\nWrite the scene script that reconstructs this scene beat by beat.` },
   ];
   return (await completeText(integration, messages)).trim();

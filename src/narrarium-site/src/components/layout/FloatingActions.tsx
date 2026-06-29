@@ -5,6 +5,7 @@ import { ChevronUp, ClipboardCheck, FileEdit, FileText, NotebookText, Network, P
 import { useUiStore } from "@/store/uiStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
+import { useBookStructure } from "@/hooks/useBookStructure";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { parseAppRoute } from "@/assistant/context";
 import { resolveBookToken } from "@/types/settings";
@@ -33,6 +34,7 @@ export function FloatingActions() {
   const bookId = "bookId" in route ? route.bookId : undefined;
   const chapterId = "chapterId" in route ? route.chapterId : undefined;
   const paragraphNum = "paragraphNum" in route ? route.paragraphNum : undefined;
+  const { reload } = useBookStructure(bookId);
   const { branch } = useWorkingBranch(bookId);
   const structure = bookId ? structures[bookId] : undefined;
   const chapter = chapterId && structure ? structure.chapters.find((c) => c.slug === chapterId) : undefined;
@@ -48,6 +50,7 @@ export function FloatingActions() {
       try {
         if (kind === "draft") await createParagraphDraftArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug, number: Number(paragraph.number), title: paragraph.title });
         else await createParagraphScriptArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug, number: Number(paragraph.number), title: paragraph.title });
+        await reload();
       } catch (err) {
         toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
         return;
@@ -55,7 +58,6 @@ export function FloatingActions() {
     }
     setOpen(false);
     navigate(target);
-    window.location.reload();
   }
 
   async function openOrCreateChapter(kind: "draft" | "resume" | "evaluation") {
@@ -72,6 +74,7 @@ export function FloatingActions() {
         } else {
           await createChapterEvaluationArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug });
         }
+        await reload();
       } catch (err) {
         toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
         return;
@@ -79,7 +82,6 @@ export function FloatingActions() {
     }
     setOpen(false);
     navigate(target);
-    window.location.reload();
   }
 
   const rows: ActionRow[] = [];

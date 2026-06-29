@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, FileEdit, FileText, Lock, Network, Plus, Save, Wand2, X } from "lucide-react";
+import { ArrowLeft, FileEdit, FileText, Loader2, Lock, Network, Plus, Save, Wand2, X } from "lucide-react";
 import { parseDocument, stringify } from "yaml";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -10,14 +10,16 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { useToast } from "@/components/ui/use-toast";
-import { createOrUpdateTextFile, readFileWithSha, updateFile } from "@/github/githubClient";
+import { createOrUpdateTextFile, loadFileContent, readFileWithSha, updateFile } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
 import { resolveBookToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { GeneratePreviewDialog } from "@/components/book/GeneratePreviewDialog";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
-import { refineProse, scriptToProse, type PipelineSource } from "@/narrarium/pipeline";
+import { ScriptEditor } from "@/components/script/ScriptEditor";
+import { parseScript, serializeScript, type ScriptDoc } from "@/narrarium/script/model";
+import { proseToScript, refineProse, scriptToProse, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
 
 interface MetaEntry {
   key: string;
@@ -108,6 +110,8 @@ export function WorkspaceDocPage() {
   const [pipelineText, setPipelineText] = useState("");
   const [pipelineLoading, setPipelineLoading] = useState(false);
   const [pipelineGw, setPipelineGw] = useState("");
+  const [scriptDoc, setScriptDoc] = useState<ScriptDoc>({ blocks: [] });
+  const [scriptGenLoading, setScriptGenLoading] = useState(false);
 
   const resolved = resolveWorkspacePath(chapter, paragraph, workspaceKind, !!paragraphNum);
   const path = resolved?.path ?? null;
@@ -133,6 +137,7 @@ export function WorkspaceDocPage() {
         setBody(parsed.body);
         setSavedBody(parsed.body);
         setSha(fileSha);
+        if (workspaceKind === "script") setScriptDoc(parseScript(parsed.body));
       })
       .catch((err) => {
         loadedTargetRef.current = null;
@@ -238,6 +243,26 @@ export function WorkspaceDocPage() {
     return typeof value === "string" ? value : "";
   })();
   const paraSlug = paragraph ? paragraphSlug(paragraph.path) : null;
+
+  async function generateScriptFromProse() {
+    if (!book || !token || !structure || !chapter || !paragraph) return;
+    setScriptGenLoading(true);
+    try {
+      const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter };
+      const load = (p?: string) => p ? loadFileContent(token, book.owner, book.repo, p, branch).then(stripFrontmatter).catch(() => "") : Promise.resolve("");
+      const prose = (await load(paragraph.draftPath)) || (await load(paragraph.path));
+      if (!prose.trim()) { toast({ title: t("script.noProse") }); return; }
+      const scriptText = await proseToScript(src, prose, currentGhostwriter);
+      const doc = parseScript(scriptText);
+      setScriptDoc(doc);
+      setBody(serializeScript(doc));
+      toast({ title: t("script.generated") });
+    } catch (err) {
+      toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
+    } finally {
+      setScriptGenLoading(false);
+    }
+  }
 
   async function startPipeline(mode: "toDraft" | "toFinal") {
     if (!book || !token || !structure || !chapter || !paraSlug) return;
@@ -427,6 +452,17 @@ export function WorkspaceDocPage() {
           {[...Array(6)].map((_, i) => (
             <Skeleton key={i} className="h-4" style={{ width: `${70 + (i % 3) * 10}%` }} />
           ))}
+        </div>
+      ) : workspaceKind === "script" ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => void generateScriptFromProse()} disabled={scriptGenLoading}>
+              {scriptGenLoading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Wand2 className="mr-1 h-4 w-4" />}
+              {t("script.generateFromProse")}
+            </Button>
+            <span className="text-xs text-muted-foreground">{t("script.generateHint")}</span>
+          </div>
+          <ScriptEditor doc={scriptDoc} structure={structure ?? undefined} onChange={(next) => { setScriptDoc(next); setBody(serializeScript(next)); }} />
         </div>
       ) : (
         <AutoTextarea
