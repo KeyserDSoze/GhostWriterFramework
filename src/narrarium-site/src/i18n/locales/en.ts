@@ -285,6 +285,8 @@ const en = {
     loadingSettings: "Loading settings and books…",
     openNav: "Open navigation menu",
     readPage: "Read page",
+    hideFloating: "Hide floating buttons",
+    showFloating: "Show floating buttons",
     signOut: "Sign out",
     ttsFailed: "TTS failed"
   },

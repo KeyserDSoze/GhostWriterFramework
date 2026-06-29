@@ -1,4 +1,4 @@
-import { LogOut, Menu, Volume2 } from "lucide-react";
+import { Eye, EyeOff, LogOut, Menu, Volume2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ThemeToggle } from "./ThemeToggle";
 import { LanguageToggle } from "./LanguageToggle";
@@ -16,6 +16,7 @@ import { useAuthStore } from "@/store/authStore";
 import { useNavigate } from "react-router-dom";
 import { useRef } from "react";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useUiStore } from "@/store/uiStore";
 import { speakText, type SpeechController } from "@/assistant/speech";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -33,6 +34,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { t } = useTranslation();
   const { user, clearAuth } = useAuthStore();
   const { settings } = useSettingsStore();
+  const { floatingHidden, toggleFloating } = useUiStore();
   const { toast } = useToast();
   const navigate = useNavigate();
   const speechRef = useRef<SpeechController | null>(null);
@@ -72,6 +74,9 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       </div>
 
       <div className="ml-auto flex items-center gap-1 sm:gap-2">
+        <Button variant="ghost" size="icon" aria-label={floatingHidden ? t("shell.showFloating") : t("shell.hideFloating")} onClick={toggleFloating}>
+          {floatingHidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </Button>
         <Button variant="ghost" size="icon" aria-label={t("shell.readPage")} onClick={() => void handleReadPage()}>
           <Volume2 className="h-4 w-4" />
         </Button>

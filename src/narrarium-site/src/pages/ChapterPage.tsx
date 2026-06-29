@@ -243,6 +243,7 @@ export function ChapterPage() {
         title: chapter.title,
       });
       toast({ title: t("chapter.draftCreated") });
+      await reload();
       navigate(target);
     } catch (err) {
       toast({ title: t("chapter.draftFailed"), description: String(err), variant: "destructive" });
@@ -256,6 +257,7 @@ export function ChapterPage() {
     try {
       await createChapterResumeArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug });
       toast({ title: t("chapter.resumeCreated") });
+      await reload();
       navigate(target);
     } catch (err) {
       toast({ title: t("chapter.resumeFailed"), description: String(err), variant: "destructive" });
@@ -269,6 +271,7 @@ export function ChapterPage() {
     try {
       await createChapterEvaluationArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug });
       toast({ title: t("chapter.evaluationCreated") });
+      await reload();
       navigate(target);
     } catch (err) {
       toast({ title: t("chapter.evaluationFailed"), description: String(err), variant: "destructive" });

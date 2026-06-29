@@ -1,5 +1,5 @@
 import { stringify } from "yaml";
-import { createFile } from "@/github/githubClient";
+import { createFileIfAbsent } from "@/github/githubClient";
 import { chapterSlug, formatOrdinal, slugify } from "@/narrarium/canon";
 
 function renderMarkdown(frontmatter: Record<string, unknown>, body: string): string {
@@ -19,7 +19,7 @@ export async function createChapterDraftArtifacts(
 ) {
   const slug = chapterSlug(input.number, input.title);
   const chapterId = `chapter:${slug}`;
-  await createFile(
+  await createFileIfAbsent(
     token,
     owner,
     repo,
@@ -46,7 +46,7 @@ export async function createChapterDraftArtifacts(
         : bucket === "promoted"
           ? `Chapter Draft Promoted ${slug}`
           : `Chapter Draft Notes ${slug}`;
-    await createFile(
+    await createFileIfAbsent(
       token,
       owner,
       repo,
@@ -75,7 +75,7 @@ export async function createChapterResumeArtifact(
   branch: string,
   input: { chapterSlug: string },
 ) {
-  await createFile(
+  await createFileIfAbsent(
     token,
     owner,
     repo,
@@ -100,7 +100,7 @@ export async function createChapterEvaluationArtifact(
   branch: string,
   input: { chapterSlug: string },
 ) {
-  await createFile(
+  await createFileIfAbsent(
     token,
     owner,
     repo,
@@ -126,7 +126,7 @@ export async function createParagraphDraftArtifact(
   input: { chapterSlug: string; number: number; title: string },
 ) {
   const slug = `${formatOrdinal(input.number)}-${slugify(input.title)}`;
-  await createFile(
+  await createFileIfAbsent(
     token,
     owner,
     repo,
@@ -156,7 +156,7 @@ export async function createParagraphScriptArtifact(
   input: { chapterSlug: string; number: number; title: string; location?: string },
 ) {
   const slug = `${formatOrdinal(input.number)}-${slugify(input.title)}`;
-  await createFile(
+  await createFileIfAbsent(
     token,
     owner,
     repo,
@@ -194,7 +194,7 @@ export async function createParagraphEvaluationArtifact(
   input: { chapterSlug: string; paragraphPath: string },
 ) {
   const slug = paragraphSlugFromPath(input.paragraphPath);
-  await createFile(
+  await createFileIfAbsent(
     token,
     owner,
     repo,

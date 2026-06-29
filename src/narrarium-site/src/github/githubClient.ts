@@ -374,6 +374,22 @@ export async function createOrUpdateTextFile(
   return createFile(token, owner, repo, branch, path, content, message);
 }
 
+/** Create the file only if it does not exist yet. Returns true when created, false when it already existed. */
+export async function createFileIfAbsent(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  path: string,
+  content: string,
+  message: string,
+): Promise<boolean> {
+  const existing = await readFileWithSha(token, owner, repo, branch, path).catch(() => null);
+  if (existing) return false;
+  await createFile(token, owner, repo, branch, path, content, message);
+  return true;
+}
+
 /**
  * Commit a reorder (and optional deletion) of chapter paragraphs atomically.
  *

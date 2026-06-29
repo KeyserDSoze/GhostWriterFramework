@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import { Sidebar, MobileSidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { DossierDock } from "./DossierDock";
+import { FloatingActions } from "./FloatingActions";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useTokenRefresh } from "@/hooks/useTokenRefresh";
@@ -67,6 +68,7 @@ export function Shell() {
         </main>
       </div>
       <DossierDock />
+      <FloatingActions />
       <Suspense fallback={null}>
         <AssistantPanel />
       </Suspense>

@@ -370,6 +370,7 @@ export function ParagraphPage() {
     if (!paragraph!.draftPath && book && token) {
       try {
         await createParagraphDraftArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter!.slug, number: Number(paragraph!.number), title: paragraph!.title });
+        await reload();
       } catch (err) {
         toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
         return;
@@ -383,6 +384,7 @@ export function ParagraphPage() {
     if (!paragraph!.scriptPath && book && token) {
       try {
         await createParagraphScriptArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter!.slug, number: Number(paragraph!.number), title: paragraph!.title });
+        await reload();
       } catch (err) {
         toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
         return;

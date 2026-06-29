@@ -285,6 +285,8 @@ const it = {
     loadingSettings: "Caricamento impostazioni e libri…",
     openNav: "Apri menu di navigazione",
     readPage: "Leggi pagina",
+    hideFloating: "Nascondi pulsanti flottanti",
+    showFloating: "Mostra pulsanti flottanti",
     signOut: "Esci",
     ttsFailed: "TTS non riuscito"
   },

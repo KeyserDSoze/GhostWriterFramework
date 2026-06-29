@@ -41,6 +41,7 @@ import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useAuthStore } from "@/store/authStore";
+import { useUiStore } from "@/store/uiStore";
 import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -106,6 +107,7 @@ export function AssistantPanel() {
   const { structures, workingBranches, clearBook } = useBooksStore();
   const { save } = useSettings();
   const { user, accessToken } = useAuthStore();
+  const floatingHidden = useUiStore((s) => s.floatingHidden);
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -1253,15 +1255,17 @@ export function AssistantPanel() {
 
   return (
     <>
-      <div className="fixed bottom-4 right-4 z-40 flex overflow-hidden rounded-full shadow-lg lg:bottom-6 lg:right-6">
-        <button type="button" className="flex items-center gap-2 bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90" onClick={() => { setVoiceMode(false); voiceModeRef.current = false; setOpen(true); }}>
-          <Bot className="h-4 w-4" />{t("assistant.floatingButton")}
-        </button>
-        <span className="w-px self-stretch bg-primary-foreground/20" />
-        <button type="button" className="flex items-center justify-center bg-primary px-3 py-2.5 text-primary-foreground transition hover:bg-primary/90" title={t("assistant.liveVoice")} onClick={() => { setVoiceMode(true); voiceModeRef.current = true; setOpen(true); }}>
-          <Ghost className="h-5 w-5" />
-        </button>
-      </div>
+      {!floatingHidden && (
+        <div className="fixed bottom-4 right-4 z-40 flex overflow-hidden rounded-full shadow-lg lg:bottom-6 lg:right-6">
+          <button type="button" className="flex items-center gap-2 bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90" onClick={() => { setVoiceMode(false); voiceModeRef.current = false; setOpen(true); }}>
+            <Bot className="h-4 w-4" />{t("assistant.floatingButton")}
+          </button>
+          <span className="w-px self-stretch bg-primary-foreground/20" />
+          <button type="button" className="flex items-center justify-center bg-primary px-3 py-2.5 text-primary-foreground transition hover:bg-primary/90" title={t("assistant.liveVoice")} onClick={() => { setVoiceMode(true); voiceModeRef.current = true; setOpen(true); }}>
+            <Ghost className="h-5 w-5" />
+          </button>
+        </div>
+      )}
       <Dialog open={syncOpen} onOpenChange={setSyncOpen}><DialogContent hideCloseButton className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[920px]">{syncPanel}</DialogContent></Dialog>
       <Dialog open={open} onOpenChange={(next) => { if (!next) interruptLiveVoice(); setOpen(next); }}><DialogContent hideCloseButton className={voiceMode || fullScreen ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0" : "left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[720px] lg:right-6 lg:left-auto lg:top-auto lg:bottom-6 lg:h-[80dvh] lg:w-[420px] lg:max-w-[420px] lg:translate-x-0 lg:translate-y-0"}>{voiceMode ? liveVoicePanel : panel}</DialogContent></Dialog>
     </>

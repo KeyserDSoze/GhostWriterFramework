@@ -198,7 +198,7 @@ export function BookPage() {
               <Sparkles className="h-4 w-4" />{t("bookActions.title")}
               <ChevronDown className="h-3.5 w-3.5 opacity-70 transition-transform group-open:rotate-180" />
             </summary>
-            <div className="absolute right-0 z-20 mt-2 flex w-60 flex-col gap-1 rounded-xl border bg-card p-2 shadow-lg">
+            <div className="absolute left-0 z-20 mt-2 flex w-60 max-w-[85vw] flex-col gap-1 rounded-xl border bg-card p-2 shadow-lg">
               <CommitHistoryDialog token={token} owner={book.owner} repo={book.repo} branch={branch} />
               <PullRequestsDialog token={token} owner={book.owner} repo={book.repo} head={branch} base={structure?.defaultBranch ?? "main"} />
               {structure && token && <AssetImageDialog book={book} branch={branch} token={token} kind="book" title={structure.title ?? book.name} textPath="book.md" resumePath="resumes/total.md" />}
