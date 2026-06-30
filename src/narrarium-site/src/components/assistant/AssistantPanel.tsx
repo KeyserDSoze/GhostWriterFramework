@@ -16,6 +16,8 @@ import {
   Mic,
   Minimize2,
   Paperclip,
+  Pause,
+  Play,
   Search,
   Send,
   Sparkles,
@@ -70,7 +72,8 @@ import {
   type BranchDiffFile,
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
-import { speakText, transcribeAudio, type SpeechController } from "@/assistant/speech";
+import { speakText, splitIntoStrofe, transcribeAudio, type SpeechController } from "@/assistant/speech";
+import { completeText, resolveWritingIntegration } from "@/assistant/llm";
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
 
 const ATTACHMENT_TARGETS = [
@@ -122,6 +125,13 @@ export function AssistantPanel() {
   const waitingToneTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const localAudioHandledRef = useRef(false);
   const localAudioDoneRef = useRef<Promise<void> | null>(null);
+  // Live "strofe" memory: every spoken segment of the current reading, the live index,
+  // and a pending rewrite proposal awaiting a spoken "yes"/"no" confirmation.
+  const liveStrofeRef = useRef<string[]>([]);
+  const liveStrofeIndexRef = useRef(0);
+  const speechControllerRef = useRef<SpeechController | null>(null);
+  const manualEndRef = useRef(false);
+  const pendingRewriteRef = useRef<{ from: number; to: number; segments: string[] } | null>(null);
   const {
     open,
     setOpen,
@@ -149,8 +159,12 @@ export function AssistantPanel() {
   const [autoSend, setAutoSend] = useState(false);
   const [speechController, setSpeechController] = useState<SpeechController | null>(null);
   const [voiceMode, setVoiceMode] = useState(false);
-  const [voiceStatus, setVoiceStatus] = useState<"idle" | "listening" | "thinking" | "speaking" | "not-heard">("idle");
+  const [voiceStatus, setVoiceStatus] = useState<"idle" | "listening" | "thinking" | "speaking" | "paused" | "not-heard">("idle");
   const [lastVoiceTranscript, setLastVoiceTranscript] = useState("");
+  const [manualEnd, setManualEnd] = useState(false);
+  const [livePaused, setLivePaused] = useState(false);
+  const [liveStrofeCount, setLiveStrofeCount] = useState(0);
+  const [liveStrofeIndex, setLiveStrofeIndex] = useState(0);
   const [diffMode, setDiffMode] = useState<Record<string, boolean>>({});
   const [previousContents, setPreviousContents] = useState<Record<string, string>>({});
   const [loadingDiffPath, setLoadingDiffPath] = useState<string | null>(null);
@@ -172,6 +186,10 @@ export function AssistantPanel() {
   useEffect(() => {
     voiceModeRef.current = voiceMode;
   }, [voiceMode]);
+
+  useEffect(() => {
+    manualEndRef.current = manualEnd;
+  }, [manualEnd]);
 
   useEffect(() => {
     let active = true;
@@ -379,7 +397,8 @@ export function AssistantPanel() {
         mediaRecorderRef.current = recorder;
         setListening(true);
         if (voiceModeRef.current) setVoiceStatus("listening");
-        monitorSilence(stream);
+        // Manual mode: keep recording until the user explicitly presses "Done".
+        if (!manualEndRef.current) monitorSilence(stream);
         recorder.ondataavailable = (event) => {
           if (event.data.size > 0) audioChunksRef.current.push(event.data);
         };
@@ -424,7 +443,7 @@ export function AssistantPanel() {
     speechRecognitionTranscriptRef.current = "";
     speechRecognitionSentRef.current = false;
     recognition.lang = settings.ui.language === "it" ? "it-IT" : "en-US";
-    recognition.continuous = false;
+    recognition.continuous = manualEndRef.current ? true : false;
     recognition.interimResults = voiceModeRef.current;
     setListening(true);
     if (voiceModeRef.current) setVoiceStatus("listening");
@@ -436,12 +455,13 @@ export function AssistantPanel() {
       }).join(" ").trim();
       if (transcript) speechRecognitionTranscriptRef.current = transcript;
       if (transcript) {
-        if (voiceModeRef.current && hasFinal && !speechRecognitionSentRef.current) {
+        // Manual mode: never auto-submit on a final result; wait for the Done button.
+        if (voiceModeRef.current && hasFinal && !speechRecognitionSentRef.current && !manualEndRef.current) {
           speechRecognitionSentRef.current = true;
           try { recognition.stop(); } catch {}
           void handleVoiceTranscript(transcript);
         }
-        else if (autoSend) void sendPrompt(transcript);
+        else if (autoSend && !manualEndRef.current) void sendPrompt(transcript);
         else if (!voiceModeRef.current) appendDraftText(transcript);
       }
     };
@@ -473,20 +493,71 @@ export function AssistantPanel() {
 
   function stopReading() {
     speechController?.stop();
+    speechControllerRef.current = null;
     setSpeechController(null);
+    setLivePaused(false);
   }
 
-  async function readText(text: string): Promise<SpeechController | null> {
+  function setLiveController(controller: SpeechController | null) {
+    speechControllerRef.current = controller;
+    setSpeechController(controller);
+    setLivePaused(controller?.isPaused() ?? false);
+  }
+
+  /** Read prose as sentence-level "strofe", tracking the live index and heard count. */
+  async function readText(text: string, opts?: { startIndex?: number; segments?: string[] }): Promise<SpeechController | null> {
     stopReading();
+    const segments = opts?.segments ?? splitIntoStrofe(text);
+    liveStrofeRef.current = segments;
+    setLiveStrofeCount(segments.length);
+    const startIndex = Math.max(0, opts?.startIndex ?? 0);
+    liveStrofeIndexRef.current = startIndex;
+    setLiveStrofeIndex(startIndex);
     try {
-      const controller = await speakText(text, settings);
-      setSpeechController(controller);
-      void controller.done.finally(() => setSpeechController((current) => current === controller ? null : current));
+      const controller = await speakText(text, settings, {
+        segments,
+        startIndex,
+        onSegment: (index) => {
+          liveStrofeIndexRef.current = index;
+          setLiveStrofeIndex(index);
+        },
+      });
+      setLiveController(controller);
+      void controller.done.finally(() => {
+        if (speechControllerRef.current === controller) {
+          speechControllerRef.current = null;
+          setSpeechController(null);
+          setLivePaused(false);
+        }
+      });
       return controller;
     } catch (err) {
       toast({ title: t("assistant.toastTtsFailed"), description: String(err), variant: "destructive" });
       return null;
     }
+  }
+
+  function pauseReading() {
+    const controller = speechControllerRef.current;
+    if (!controller) return;
+    controller.pause();
+    setLivePaused(true);
+    if (voiceModeRef.current) setVoiceStatus("paused");
+  }
+
+  function resumeReading() {
+    const controller = speechControllerRef.current;
+    if (!controller) return;
+    controller.resume();
+    setLivePaused(false);
+    if (voiceModeRef.current) setVoiceStatus("speaking");
+  }
+
+  function togglePauseReading() {
+    const controller = speechControllerRef.current;
+    if (!controller) return;
+    if (controller.isPaused()) resumeReading();
+    else pauseReading();
   }
 
   async function readCurrentContext() {
@@ -550,8 +621,15 @@ export function AssistantPanel() {
 
   async function startVoiceTurn() {
     if (listening) {
+      // Pressing while listening submits the current turn (works for manual mode too).
       if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
       speechRecognitionRef.current?.stop?.();
+      return;
+    }
+    // While paused, let the user talk over the pause to issue strofe commands
+    // WITHOUT tearing down the paused playback (resume can continue afterwards).
+    if (voiceStatus === "paused") {
+      await startSpeechToText();
       return;
     }
     if (voiceStatus === "thinking" || voiceStatus === "speaking") {
@@ -565,11 +643,19 @@ export function AssistantPanel() {
     await startSpeechToText();
   }
 
+  /** Manual-mode "Done": stop capturing and submit whatever was heard. */
+  function finishTurn() {
+    if (!listening) return;
+    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+    speechRecognitionRef.current?.stop?.();
+  }
+
   function interruptLiveVoice() {
     liveAbortRef.current?.abort();
     liveAbortRef.current = null;
     localAudioHandledRef.current = false;
     localAudioDoneRef.current = null;
+    pendingRewriteRef.current = null;
     stopWaitingTone();
     if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
     speechRecognitionRef.current?.stop?.();
@@ -592,6 +678,12 @@ export function AssistantPanel() {
     setDraft("");
     setBusy(true);
     try {
+      const strofaReply = await tryHandleStrofaCommand(trimmed);
+      if (strofaReply) {
+        updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, strofaReply] }));
+        setOpen(true);
+        return strofaReply;
+      }
       const localReply = await tryHandleLocalVoiceTool(trimmed, { context: routeContext, book, token, spokenMode: options?.spokenMode });
       if (localReply) {
         updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, localReply] }));
@@ -654,6 +746,151 @@ export function AssistantPanel() {
 
   function makeAssistantReply(text: string): AssistantMessage {
     return { id: crypto.randomUUID(), role: "assistant", text };
+  }
+
+  /** The strofa currently being spoken (or last one if playback already finished). */
+  function liveStrofaIndex(): number {
+    const total = liveStrofeRef.current.length;
+    if (!total) return -1;
+    return Math.min(liveStrofeIndexRef.current, total - 1);
+  }
+
+  /** Parse "ultime N", "ultima", "N strofe fa" → inclusive [from, to] window of indices. */
+  function parseStrofaWindow(lower: string): { from: number; to: number } | null {
+    const live = liveStrofaIndex();
+    if (live < 0) return null;
+    const numberWords: Record<string, number> = {
+      una: 1, uno: 1, due: 2, tre: 3, quattro: 4, cinque: 5, sei: 6,
+      one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+    };
+    const readWord = (raw?: string): number | null => {
+      if (!raw) return null;
+      const digits = raw.match(/\d+/);
+      if (digits) return Math.max(1, parseInt(digits[0], 10));
+      const word = raw.trim().toLowerCase();
+      return numberWords[word] ?? null;
+    };
+    // "N strofe/strofa fa" / "N stanzas ago" → a single past strofa.
+    const agoMatch = lower.match(/(\d+|una|uno|due|tre|quattro|cinque|sei|one|two|three|four|five|six)\s+(?:strofe?|stanzas?|frasi?|periodi?|righe?)\s+(?:fa|prima|indietro|ago|back|earlier)/);
+    if (agoMatch) {
+      const n = readWord(agoMatch[1]) ?? 1;
+      const idx = Math.max(0, live - n);
+      return { from: idx, to: idx };
+    }
+    // "ultime N strofe" / "last N strofe".
+    const lastNMatch = lower.match(/(?:ultime?|last)\s+(\d+|una|uno|due|tre|quattro|cinque|sei|one|two|three|four|five|six)\s+(?:strofe?|stanzas?|frasi?|periodi?|righe?)?/);
+    if (lastNMatch) {
+      const n = readWord(lastNMatch[1]) ?? 1;
+      return { from: Math.max(0, live - n + 1), to: live };
+    }
+    // "ultima strofa" / "last strofa" (singular, default 1).
+    if (/(?:ultim[ao]|last|precedente|previous)\s+(?:strofa|stanza|frase|periodo|riga)/.test(lower)) {
+      return { from: live, to: live };
+    }
+    return null;
+  }
+
+  function strofeSlice(window: { from: number; to: number }): string {
+    return liveStrofeRef.current.slice(window.from, window.to + 1).join(" ").trim();
+  }
+
+  /** Handle in-memory strofe commands (repeat / quote / rewrite / synonym / confirm). */
+  async function tryHandleStrofaCommand(prompt: string): Promise<AssistantMessage | null> {
+    const lower = prompt.toLowerCase().trim();
+
+    // 1) Confirmation of a pending rewrite proposal.
+    if (pendingRewriteRef.current) {
+      const yes = /\b(s[iì]|sì|ok|va bene|conferma|sostituisci|yes|sure|replace|confirm)\b/.test(lower);
+      const no = /\b(no|annulla|lascia|cancel|keep|stop)\b/.test(lower);
+      if (yes) return applyPendingRewrite();
+      if (no) {
+        pendingRewriteRef.current = null;
+        return makeAssistantReply(t("assistant.rewriteCancelled"));
+      }
+      // Not a clear answer → fall through to other handlers/LLM.
+    }
+
+    if (!liveStrofeRef.current.length) return null;
+
+    const isStrofaTopic = /\b(strofe?|stanzas?|frasi?|periodi?|righe?)\b/.test(lower) ||
+      /\b(ultim[ao]|last|precedente|previous)\b/.test(lower);
+    if (!isStrofaTopic) return null;
+
+    const window = parseStrofaWindow(lower);
+
+    // 2) Rewrite / synonym request.
+    const wantsRewrite = /\b(riscriv|rescriv|cambia|modific|sostitu|migliora|rewrite|rephrase|change|replace|improve)\b/.test(lower);
+    const synonymMatch = lower.match(/\b(?:sinonimo|synonym)\b[^a-zàèéìòù]*(?:di|of|for|per)?\s*["“']?([\p{L}][\p{L}\s'-]*?)["”']?(?:\s|$|\.|,)/u);
+    if ((wantsRewrite || synonymMatch) && window) {
+      return proposeRewrite(window, { synonymWord: synonymMatch?.[1]?.trim(), instruction: prompt });
+    }
+
+    // 3) Repeat / read back recent strofe.
+    const wantsRepeat = /\b(ripeti|rileggi|rip[eé]tere|ridimmi|dimmi|cosa hai detto|che hai detto|repeat|read again|say again|what did you say)\b/.test(lower);
+    if (wantsRepeat && window) {
+      const text = strofeSlice(window);
+      if (!text) return makeAssistantReply(t("assistant.strofaEmpty"));
+      localAudioHandledRef.current = true;
+      setVoiceStatus("speaking");
+      const controller = await readText(text);
+      localAudioDoneRef.current = controller?.done ?? Promise.resolve();
+      return makeAssistantReply(text);
+    }
+
+    return null;
+  }
+
+  /** Ask the LLM to rewrite the selected strofe; speak the proposal and await confirmation. */
+  async function proposeRewrite(
+    window: { from: number; to: number },
+    opts: { synonymWord?: string; instruction: string },
+  ): Promise<AssistantMessage | null> {
+    const integration = resolveWritingIntegration(settings);
+    if (!integration) return makeAssistantReply(t("assistant.rewriteNoModel"));
+    const original = strofeSlice(window);
+    if (!original) return makeAssistantReply(t("assistant.strofaEmpty"));
+    const langName = settings.ui.language === "it" ? "Italian" : "English";
+    const task = opts.synonymWord
+      ? `Rewrite the passage replacing the word "${opts.synonymWord}" with a fitting synonym, keeping everything else identical in meaning and tone.`
+      : `Rewrite the passage following this instruction: "${opts.instruction}". Keep the same language, meaning and roughly the same length.`;
+    setVoiceStatus("thinking");
+    startWaitingTone();
+    let rewritten = "";
+    try {
+      rewritten = (await completeText(integration, [
+        { role: "system", content: `You are a prose editor. ${task} Reply with ONLY the rewritten passage in ${langName}, no quotes, no preamble.` },
+        { role: "user", content: original },
+      ], "writing")).trim();
+    } catch (err) {
+      stopWaitingTone();
+      return makeAssistantReply(t("assistant.rewriteFailed", { error: String(err) }));
+    }
+    stopWaitingTone();
+    if (!rewritten) return makeAssistantReply(t("assistant.rewriteFailed", { error: "empty" }));
+    const newSegments = splitIntoStrofe(rewritten);
+    pendingRewriteRef.current = { from: window.from, to: window.to, segments: newSegments };
+    const spoken = `${t("assistant.rewriteProposal")} ${rewritten} ${t("assistant.rewriteConfirmAsk")}`;
+    localAudioHandledRef.current = true;
+    setVoiceStatus("speaking");
+    const controller = await readText(spoken);
+    localAudioDoneRef.current = controller?.done ?? Promise.resolve();
+    return makeAssistantReply(spoken);
+  }
+
+  /** Replace the proposed strofe in memory and resume reading from there. */
+  async function applyPendingRewrite(): Promise<AssistantMessage | null> {
+    const pending = pendingRewriteRef.current;
+    pendingRewriteRef.current = null;
+    if (!pending) return makeAssistantReply(t("assistant.rewriteCancelled"));
+    const segments = [...liveStrofeRef.current];
+    segments.splice(pending.from, pending.to - pending.from + 1, ...pending.segments);
+    liveStrofeRef.current = segments;
+    setLiveStrofeCount(segments.length);
+    localAudioHandledRef.current = true;
+    setVoiceStatus("speaking");
+    const controller = await readText("", { segments, startIndex: pending.from });
+    localAudioDoneRef.current = controller?.done ?? Promise.resolve();
+    return makeAssistantReply(t("assistant.rewriteApplied"));
   }
 
   function resolveReadTarget(prompt: string, context: Awaited<ReturnType<typeof loadWriterContext>>):
@@ -1234,21 +1471,66 @@ export function AssistantPanel() {
         <div className="max-w-lg space-y-2">
           <p className="text-2xl font-semibold tracking-tight">{voiceStatus === "idle" ? t("assistant.liveReady") : t(`assistant.voiceStatusTitle.${voiceStatus}`)}</p>
           <p className="text-sm leading-6 text-muted-foreground">{t(`assistant.voiceStatus.${voiceStatus}`)}</p>
+          {liveStrofeCount > 0 && (
+            <p className="text-xs font-medium text-muted-foreground">
+              {t("assistant.strofaCounter", { current: Math.min(liveStrofeIndex + 1, liveStrofeCount), total: liveStrofeCount })}
+            </p>
+          )}
           {lastVoiceTranscript && <p className="rounded-2xl border bg-background/70 px-4 py-3 text-sm text-muted-foreground">“{lastVoiceTranscript}”</p>}
         </div>
 
-        <button
-          type="button"
-          onClick={() => void startVoiceTurn()}
-          className={voiceStatus === "idle" || voiceStatus === "not-heard" ? "flex h-36 w-36 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44" : "flex h-36 w-36 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44"}
-        >
-          {voiceStatus === "idle" || voiceStatus === "not-heard" ? <Mic className="h-14 w-14" /> : <Square className="h-14 w-14" />}
-          <span className="sr-only">{voiceStatus === "idle" || voiceStatus === "not-heard" ? t("assistant.talk") : t("assistant.interrupt")}</span>
-        </button>
+        <div className="flex items-center gap-4">
+          {(voiceStatus === "speaking" || voiceStatus === "paused") && speechController && (
+            <button
+              type="button"
+              onClick={togglePauseReading}
+              title={livePaused ? t("assistant.resumeAudio") : t("assistant.pauseAudio")}
+              className="flex h-16 w-16 items-center justify-center rounded-full border bg-background text-foreground shadow-lg transition hover:scale-105 active:scale-95"
+            >
+              {livePaused ? <Play className="h-7 w-7" /> : <Pause className="h-7 w-7" />}
+              <span className="sr-only">{livePaused ? t("assistant.resumeAudio") : t("assistant.pauseAudio")}</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void startVoiceTurn()}
+            className={voiceStatus === "idle" || voiceStatus === "not-heard" || voiceStatus === "paused" ? "flex h-36 w-36 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44" : "flex h-36 w-36 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44"}
+          >
+            {voiceStatus === "idle" || voiceStatus === "not-heard" || voiceStatus === "paused" ? <Mic className="h-14 w-14" /> : <Square className="h-14 w-14" />}
+            <span className="sr-only">{voiceStatus === "idle" || voiceStatus === "not-heard" || voiceStatus === "paused" ? t("assistant.talk") : t("assistant.interrupt")}</span>
+          </button>
+
+          {manualEnd && listening && (
+            <button
+              type="button"
+              onClick={finishTurn}
+              title={t("assistant.doneTalking")}
+              className="flex h-16 w-16 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition hover:scale-105 active:scale-95"
+            >
+              <Send className="h-6 w-6" />
+              <span className="sr-only">{t("assistant.doneTalking")}</span>
+            </button>
+          )}
+        </div>
 
         <div className="text-xs text-muted-foreground">
-          {voiceStatus === "idle" || voiceStatus === "not-heard" ? t("assistant.bigTalkHint") : t("assistant.interruptHint")}
+          {voiceStatus === "paused"
+            ? t("assistant.pausedHint")
+            : voiceStatus === "idle" || voiceStatus === "not-heard"
+              ? (manualEnd ? t("assistant.manualTalkHint") : t("assistant.bigTalkHint"))
+              : t("assistant.interruptHint")}
         </div>
+
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border"
+            checked={manualEnd}
+            onChange={(event) => setManualEnd(event.target.checked)}
+          />
+          {t("assistant.manualEndLabel")}
+        </label>
       </div>
     </div>
   );

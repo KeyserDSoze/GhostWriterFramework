@@ -5,8 +5,26 @@ import { sttDelta, ttsDelta, useCostsStore } from "@/costs/costsStore";
 
 const MAX_TTS_CHARS = 1200;
 
+/** Options shared by every TTS engine. */
+export interface SpeakOptions {
+  /** Pre-computed reading units ("strofe"). When omitted they are derived from the text. */
+  segments?: string[];
+  /** Index of the first segment to read (used to resume after a pause or rewrite). */
+  startIndex?: number;
+  /** Fired right before a segment starts playing, with its index in `segments`. */
+  onSegment?: (index: number) => void;
+}
+
 export interface SpeechController {
   stop: () => void;
+  pause: () => void;
+  resume: () => void;
+  /** True while playback is paused (audio + queue frozen). */
+  isPaused: () => boolean;
+  /** The reading units this controller is speaking. */
+  segments: string[];
+  /** Index of the segment currently playing (or about to play). */
+  getCurrentIndex: () => number;
   done: Promise<void>;
 }
 
@@ -47,6 +65,32 @@ export function markdownToSpeechText(markdown: string): string {
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+/**
+ * Split clean prose into "strofe": one sentence/clause per entry.
+ * Keeps the terminator with the sentence and never drops an empty line as a separator
+ * so that verse-like text (one line per stanza) also segments naturally.
+ */
+export function splitIntoStrofe(text: string): string[] {
+  const normalized = markdownToSpeechText(text);
+  const strofe: string[] = [];
+  for (const line of normalized.split(/\n+/)) {
+    const trimmedLine = line.trim();
+    if (!trimmedLine) continue;
+    // Split on sentence terminators (. ! ? … ;) keeping the terminator attached.
+    const sentences = trimmedLine.match(/[^.!?…;]+[.!?…;]+|[^.!?…;]+$/g);
+    if (!sentences) {
+      strofe.push(trimmedLine);
+      continue;
+    }
+    for (const sentence of sentences) {
+      const cleaned = sentence.trim();
+      if (cleaned) strofe.push(cleaned);
+    }
+  }
+  return strofe;
+}
+
+/** Legacy paragraph-based chunking, kept for non-live whole-text reading efficiency. */
 export function splitSpeechText(text: string): string[] {
   const normalized = markdownToSpeechText(text);
   const paragraphs = normalized.split(/\n{2,}/).filter(Boolean);
@@ -84,13 +128,13 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings): Promis
   return response.text ?? "";
 }
 
-export async function speakText(text: string, settings: AppSettings): Promise<SpeechController> {
+export async function speakText(text: string, settings: AppSettings, options: SpeakOptions = {}): Promise<SpeechController> {
   const integration = getSpeechIntegration(settings);
   const ttsModel = integration?.modelTextToSpeech?.trim();
   if (settings.speech.ttsProvider === "ai" && integration && ttsModel) {
-    return speakWithOpenAICompatible(text, integration, ttsModel, settings.speech.ttsVoice || "nova");
+    return speakWithOpenAICompatible(text, integration, ttsModel, settings.speech.ttsVoice || "nova", options);
   }
-  return speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language);
+  return speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, options);
 }
 
 function createAudioClient(integration: AIIntegration): AzureOpenAI | OpenAI {
@@ -139,57 +183,86 @@ function pickVoice(voices: SpeechSynthesisVoice[], voiceName: string, lang: stri
   return byExactName;
 }
 
-async function speakWithBrowser(text: string, voiceName: string, rate: number, uiLanguage: string): Promise<SpeechController> {
-  const chunks = splitSpeechText(text);
+function resolveSegments(text: string, options: SpeakOptions): string[] {
+  if (options.segments && options.segments.length) return options.segments;
+  return splitSpeechText(text);
+}
+
+async function speakWithBrowser(text: string, voiceName: string, rate: number, uiLanguage: string, options: SpeakOptions): Promise<SpeechController> {
+  const segments = resolveSegments(text, options);
   const lang = detectSpeechLang(text, uiLanguage);
   const voices = await loadVoices();
   const voice = pickVoice(voices, voiceName, lang);
   let stopped = false;
+  let paused = false;
+  let currentIndex = Math.max(0, options.startIndex ?? 0);
   window.speechSynthesis.cancel();
   let resolveDone: () => void = () => undefined;
   const done = new Promise<void>((resolve) => { resolveDone = resolve; });
 
   const play = (index: number) => {
-    if (stopped || index >= chunks.length) {
+    currentIndex = index;
+    if (stopped || index >= segments.length) {
       resolveDone();
       return;
     }
-    const utterance = new SpeechSynthesisUtterance(chunks[index]);
+    options.onSegment?.(index);
+    const utterance = new SpeechSynthesisUtterance(segments[index]);
     if (voice) utterance.voice = voice;
     utterance.lang = voice?.lang ?? lang;
     utterance.rate = Number.isFinite(rate) ? rate : 0.95;
-    utterance.onend = () => play(index + 1);
-    utterance.onerror = () => play(index + 1);
+    utterance.onend = () => { if (!stopped) play(index + 1); };
+    utterance.onerror = () => { if (!stopped) play(index + 1); };
     window.speechSynthesis.speak(utterance);
   };
-  play(0);
+  play(currentIndex);
   return {
     stop: () => {
-    stopped = true;
-    window.speechSynthesis.cancel();
-    resolveDone();
+      stopped = true;
+      window.speechSynthesis.cancel();
+      resolveDone();
     },
+    pause: () => {
+      if (stopped || paused) return;
+      paused = true;
+      window.speechSynthesis.pause();
+    },
+    resume: () => {
+      if (stopped || !paused) return;
+      paused = false;
+      window.speechSynthesis.resume();
+    },
+    isPaused: () => paused,
+    segments,
+    getCurrentIndex: () => currentIndex,
     done,
   };
 }
 
-async function speakWithOpenAICompatible(text: string, integration: AIIntegration, model: string, voice: string): Promise<SpeechController> {
-  const chunks = splitSpeechText(text);
-  const ttsChars = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+async function speakWithOpenAICompatible(text: string, integration: AIIntegration, model: string, voice: string, options: SpeakOptions): Promise<SpeechController> {
+  const segments = resolveSegments(text, options);
+  const startIndex = Math.max(0, options.startIndex ?? 0);
+  const ttsChars = segments.slice(startIndex).reduce((sum, chunk) => sum + chunk.length, 0);
   if (ttsChars > 0) useCostsStore.getState().recordCurrent(ttsDelta(ttsChars, integration.pricing));
   let stopped = false;
+  let paused = false;
+  let currentIndex = startIndex;
   let audio: HTMLAudioElement | null = null;
-  let nextPromise: Promise<string> | null = chunks[0] ? synthesizeChunk(chunks[0], integration, model, voice) : null;
+  // Set when a pause arrives between "fetch" and "play": resume() will start it.
+  let heldPlay: (() => void) | null = null;
+  let nextPromise: Promise<string> | null = segments[startIndex] ? synthesizeChunk(segments[startIndex], integration, model, voice) : null;
   let resolveDone: () => void = () => undefined;
   const done = new Promise<void>((resolve) => { resolveDone = resolve; });
 
   const playNext = async (index: number): Promise<void> => {
-    if (stopped || index >= chunks.length || !nextPromise) {
+    currentIndex = index;
+    if (stopped || index >= segments.length || !nextPromise) {
       resolveDone();
       return;
     }
     const url = await nextPromise;
-    nextPromise = chunks[index + 1] ? synthesizeChunk(chunks[index + 1], integration, model, voice) : null;
+    // Prefetch the following segment, but never while paused (freezes mp3 generation too).
+    nextPromise = !paused && segments[index + 1] ? synthesizeChunk(segments[index + 1], integration, model, voice) : null;
     if (stopped) {
       URL.revokeObjectURL(url);
       resolveDone();
@@ -198,22 +271,60 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
     audio = new Audio(url);
     audio.onended = () => {
       URL.revokeObjectURL(url);
-      void playNext(index + 1);
+      if (!paused) void playNext(index + 1);
+      // If paused exactly at the boundary, resume() advances to index + 1.
     };
-    await audio.play().catch(() => {
-      URL.revokeObjectURL(url);
-      void playNext(index + 1);
-    });
+    const start = () => {
+      options.onSegment?.(index);
+      void audio?.play().catch(() => {
+        URL.revokeObjectURL(url);
+        void playNext(index + 1);
+      });
+    };
+    if (paused) {
+      // Hold this segment until resume() is called.
+      heldPlay = start;
+      return;
+    }
+    start();
   };
 
-  void playNext(0);
+  void playNext(startIndex);
   return {
     stop: () => {
       stopped = true;
+      heldPlay = null;
       if (audio) audio.pause();
       window.speechSynthesis.cancel();
       resolveDone();
     },
+    pause: () => {
+      if (stopped || paused) return;
+      paused = true;
+      audio?.pause();
+    },
+    resume: () => {
+      if (stopped || !paused) return;
+      paused = false;
+      // Re-arm prefetch of the upcoming segment if it was suppressed during pause.
+      if (!nextPromise && segments[currentIndex + 1]) {
+        nextPromise = synthesizeChunk(segments[currentIndex + 1], integration, model, voice);
+      }
+      if (heldPlay) {
+        const run = heldPlay;
+        heldPlay = null;
+        run();
+        return;
+      }
+      if (audio && audio.ended) {
+        void playNext(currentIndex + 1);
+        return;
+      }
+      void audio?.play().catch(() => { void playNext(currentIndex + 1); });
+    },
+    isPaused: () => paused,
+    segments,
+    getCurrentIndex: () => currentIndex,
     done,
   };
 }
