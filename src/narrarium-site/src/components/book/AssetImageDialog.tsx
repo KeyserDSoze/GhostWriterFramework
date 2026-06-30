@@ -24,13 +24,21 @@ export function AssetImageDialog(props: {
   paragraphSlug?: string;
   textPath?: string;
   resumePath?: string;
+  /** Controlled open state. When provided the dialog is controlled and the default trigger is hidden. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
 }) {
   const { book, branch, token, kind, title, chapterSlug, paragraphSlug, textPath, resumePath } = props;
   const { t } = useTranslation();
   const { toast } = useToast();
   const { settings } = useSettingsStore();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const controlled = props.open !== undefined;
+  const open = controlled ? props.open! : internalOpen;
+  const setOpen = (next: boolean) => { if (controlled) props.onOpenChange?.(next); else setInternalOpen(next); };
+  const hideTrigger = props.hideTrigger ?? controlled;
   const [source, setSource] = useState<AssetPromptSource>(resumePath ? "resume" : textPath ? "text" : "custom");
   const [prompt, setPrompt] = useState(defaultPrompt(kind, title, ""));
   const [altText, setAltText] = useState("");
@@ -163,12 +171,14 @@ export function AssetImageDialog(props: {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <Image className="mr-1 h-4 w-4" />
-          {t("images.title")}
-        </Button>
-      </DialogTrigger>
+      {!hideTrigger && (
+        <DialogTrigger asChild>
+          <Button variant="outline" size="sm">
+            <Image className="mr-1 h-4 w-4" />
+            {t("images.title")}
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t("images.titleFor", { title })}</DialogTitle>

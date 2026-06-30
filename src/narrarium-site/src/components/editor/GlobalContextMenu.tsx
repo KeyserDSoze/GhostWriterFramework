@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { ClipboardPaste, Copy, LayoutGrid, Save, Scissors, Sparkles, TextCursorInput, Wand2 } from "lucide-react";
+import { ClipboardPaste, Copy, Image as ImageIcon, Save, Scissors, Sparkles, TextCursorInput, Wand2 } from "lucide-react";
 import { useClipboardStore } from "@/clipboard/clipboardStore";
 import { useProseEditorStore, type ProseEditorActions } from "@/components/editor/proseEditorStore";
 import { useContextualActions } from "@/hooks/useContextualActions";
 import { useSaveStore } from "@/store/saveStore";
-import { useUiStore } from "@/store/uiStore";
+import { AssetImageDialog } from "@/components/book/AssetImageDialog";
 
 type Editable = HTMLTextAreaElement | HTMLInputElement;
 
@@ -36,16 +36,18 @@ export function GlobalContextMenu() {
   const navigate = useNavigate();
   const { items, push } = useClipboardStore();
   const forElement = useProseEditorStore((s) => s.forElement);
-  const { actions, hasBookActions } = useContextualActions();
+  const { actions, hasBookActions, imageProps } = useContextualActions();
   const saveReg = useSaveStore((s) => s.current);
-  const setActionsOpen = useUiStore((s) => s.setActionsOpen);
   const [menu, setMenu] = useState<MenuState>(CLOSED);
   const [showHistory, setShowHistory] = useState(false);
   const [fab, setFab] = useState<{ x: number; y: number; editable: Editable | null } | null>(null);
+  const [imageOpen, setImageOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  // Whether the menu has anything contextual to show beyond text actions.
+  // Whether the menu can show contextual (non-text) actions at all.
   const hasContextActions = actions.length > 0 || hasBookActions || Boolean(saveReg);
+  // Contextual actions are only useful when NOT working on a text selection.
+  const showContextActions = hasContextActions && !menu.selection.trim();
 
   const selectionString = (editable: Editable | null) => {
     if (editable) return editable.value.slice(editable.selectionStart ?? 0, editable.selectionEnd ?? 0);
@@ -136,6 +138,19 @@ export function GlobalContextMenu() {
       window.removeEventListener("keydown", onKey);
     };
   }, [menu.open]);
+
+  // After the menu renders, nudge it up/left if it overflows the viewport.
+  useLayoutEffect(() => {
+    if (!menu.open || !menuRef.current) return;
+    const pad = 8;
+    const rect = menuRef.current.getBoundingClientRect();
+    let nextX = menu.x;
+    let nextY = menu.y;
+    if (rect.bottom > window.innerHeight - pad) nextY = Math.max(pad, window.innerHeight - rect.height - pad);
+    if (rect.right > window.innerWidth - pad) nextX = Math.max(pad, window.innerWidth - rect.width - pad);
+    if (nextX !== menu.x || nextY !== menu.y) setMenu((m) => ({ ...m, x: nextX, y: nextY }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menu.open, menu.x, menu.y, showContextActions, showHistory]);
 
   const close = () => setMenu(CLOSED);
 
@@ -234,7 +249,7 @@ export function GlobalContextMenu() {
             </div>
           ) : (
             <div className="flex flex-col">
-              {hasContextActions && (
+              {showContextActions && (
                 <>
                   {actions.map((action) => (
                     <MenuItem
@@ -248,13 +263,13 @@ export function GlobalContextMenu() {
                       }}
                     />
                   ))}
+                  {imageProps && (
+                    <MenuItem icon={<ImageIcon className="h-4 w-4" />} label={t("images.title")} onClick={() => { setImageOpen(true); close(); }} />
+                  )}
                   {saveReg && (
                     <MenuItem icon={<Save className="h-4 w-4" />} label={t("ctx.save")} disabled={!saveReg.dirty} onClick={() => { void saveReg.save(); close(); }} />
                   )}
-                  {hasBookActions && (
-                    <MenuItem icon={<LayoutGrid className="h-4 w-4" />} label={t("ctx.bookActions")} onClick={() => { setActionsOpen(true); close(); }} />
-                  )}
-                  {(menu.prose || menu.editable || menu.selection) && <div className="my-1 h-px bg-border" />}
+                  {menu.prose && <div className="my-1 h-px bg-border" />}
                 </>
               )}
               {menu.prose && (
@@ -272,6 +287,15 @@ export function GlobalContextMenu() {
             </div>
           )}
         </div>
+      )}
+
+      {imageProps && (
+        <AssetImageDialog
+          {...imageProps}
+          open={imageOpen}
+          onOpenChange={setImageOpen}
+          hideTrigger
+        />
       )}
     </>
   );

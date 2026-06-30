@@ -19,11 +19,24 @@ export interface ContextualAction {
   run?: () => void | Promise<void>;
 }
 
+/** Props needed to open the image dialog for the current route target. */
+export interface ContextualImageProps {
+  book: import("@/types/settings").BookEntry;
+  branch: string;
+  token: string;
+  kind: "paragraph" | "chapter" | "book";
+  title: string;
+  chapterSlug?: string;
+  paragraphSlug?: string;
+  textPath?: string;
+  resumePath?: string;
+}
+
 /**
  * The contextual navigable actions for the current route (script/draft/final/evaluation,
  * indexes, resume, writing-style, ghostwriters). Shared by FloatingActions and the right-click menu.
  */
-export function useContextualActions(): { actions: ContextualAction[]; hasBookActions: boolean } {
+export function useContextualActions(): { actions: ContextualAction[]; hasBookActions: boolean; imageProps: ContextualImageProps | null } {
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
@@ -106,5 +119,23 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
   // Book-level dialogs (image/commit/PR/export) exist whenever a book is in scope.
   const hasBookActions = Boolean(book && token);
 
-  return { actions, hasBookActions };
+  // Image dialog props for the current target (paragraph → chapter → book).
+  let imageProps: ContextualImageProps | null = null;
+  if (book && token) {
+    if (paragraph && chapter) {
+      imageProps = {
+        book, branch, token, kind: "paragraph", title: paragraph.title, chapterSlug: chapter.slug,
+        paragraphSlug: (paragraph.path.split("/").pop() ?? "").replace(/\.md$/i, ""), textPath: paragraph.path,
+      };
+    } else if (chapter) {
+      imageProps = {
+        book, branch, token, kind: "chapter", title: chapter.title, chapterSlug: chapter.slug,
+        textPath: `${chapter.path}/chapter.md`, resumePath: `resumes/chapters/${chapter.slug}.md`,
+      };
+    } else if (structure) {
+      imageProps = { book, branch, token, kind: "book", title: structure.title ?? book.name, textPath: "book.md", resumePath: "resumes/total.md" };
+    }
+  }
+
+  return { actions, hasBookActions, imageProps };
 }
