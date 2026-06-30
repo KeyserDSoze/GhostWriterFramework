@@ -35,6 +35,8 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { user, clearAuth } = useAuthStore();
   const { settings } = useSettingsStore();
   const { floatingHidden, toggleFloating } = useUiStore();
+  const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
+  const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
   const { toast } = useToast();
   const navigate = useNavigate();
   const speechRef = useRef<SpeechController | null>(null);
@@ -61,6 +63,17 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
 
   return (
     <header className="flex h-14 items-center justify-between gap-2 border-b bg-background px-3 sm:px-4">
+      {sidebarCollapsed && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="hidden lg:inline-flex"
+          aria-label={t("nav.expandSidebar")}
+          onClick={() => setSidebarCollapsed(false)}
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
+      )}
       <div className="flex items-center gap-2 lg:hidden">
         <Button
           variant="ghost"

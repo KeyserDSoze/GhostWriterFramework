@@ -151,7 +151,7 @@ export function ParagraphSplitPage() {
   const backBase = `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}`;
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
+    <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <h1 className="flex items-center gap-2 font-serif text-xl font-semibold">
           <Columns2 className="h-5 w-5" />{t("paragraph.splitTitle", { title: paragraph.title })}
@@ -159,12 +159,11 @@ export function ParagraphSplitPage() {
         <Link to={backBase} className="text-sm text-muted-foreground underline">{t("paragraph.backToFinal")}</Link>
       </div>
 
-      {/* Desktop-only split. */}
-      <div className="hidden min-h-0 flex-1 grid-cols-2 gap-4 lg:grid">
+      {/* Desktop-only split. Panes flow with the page (no inner scroll) and grow with content. */}
+      <div className="hidden grid-cols-2 items-start gap-4 lg:grid">
         <Pane
           title={t("chapter.draft")}
           loading={draft.loading}
-          missing={!draft.exists}
           body={draft.body}
           onChange={(v) => setDraft((s) => ({ ...s, body: v }))}
           dirty={draftDirty}
@@ -177,7 +176,6 @@ export function ParagraphSplitPage() {
         <Pane
           title={t("stageIndex.final")}
           loading={final.loading}
-          missing={!final.exists}
           body={final.body}
           onChange={(v) => setFinal((s) => ({ ...s, body: v }))}
           dirty={finalDirty}
@@ -201,7 +199,6 @@ export function ParagraphSplitPage() {
 function Pane(props: {
   title: string;
   loading: boolean;
-  missing: boolean;
   body: string;
   onChange: (value: string) => void;
   dirty: boolean;
@@ -213,17 +210,17 @@ function Pane(props: {
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex min-h-0 flex-col rounded-xl border bg-card">
-      <div className="flex items-center justify-between border-b px-3 py-2">
+    <div className="flex flex-col rounded-xl border bg-card">
+      <div className="sticky top-0 z-10 flex items-center justify-between rounded-t-xl border-b bg-card px-3 py-2">
         <span className="text-sm font-semibold">{props.title}{props.dirty ? " •" : ""}</span>
         <Button size="sm" variant="outline" onClick={props.onSave} disabled={!props.dirty || props.saving}>
           {props.saving ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1 h-3.5 w-3.5" />}
           {t("common.save")}
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto p-3">
+      <div className="p-3">
         {props.loading ? (
-          <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+          <div className="flex h-40 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
         ) : (
           <>
             {props.createHint && <p className="mb-2 text-xs text-muted-foreground">{props.createHint}</p>}
@@ -231,7 +228,7 @@ function Pane(props: {
               ref={props.textareaRef}
               value={props.body}
               onChange={(e) => props.onChange(e.target.value)}
-              className="min-h-[60vh] font-mono text-sm leading-7"
+              className="resize-none border-0 p-0 font-mono text-sm leading-7 focus-visible:ring-0 focus-visible:ring-offset-0"
               placeholder={props.placeholder}
               spellCheck={false}
             />

@@ -20,7 +20,6 @@ import {
   Network,
   NotebookText,
   Package,
-  PanelLeft,
   PanelLeftClose,
   PenLine,
   PlusCircle,
@@ -160,6 +159,14 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         <span className="ml-auto rounded-full border px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
           v{APP_VERSION}
         </span>
+        <button
+          type="button"
+          onClick={() => useUiStore.getState().setSidebarCollapsed(true)}
+          title={t("nav.collapseSidebar")}
+          className="hidden h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-accent-foreground lg:inline-flex"
+        >
+          <PanelLeftClose className="h-4 w-4" />
+        </button>
       </div>
       <Separator />
 
@@ -261,33 +268,10 @@ function NavGroup({ label, first }: { label: string; first?: boolean }) {
 }
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
-  const { t } = useTranslation();
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
-  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
-  if (collapsed) {
-    return (
-      <button
-        type="button"
-        onClick={toggleSidebar}
-        title={t("nav.expandSidebar")}
-        className="fixed left-2 top-16 z-30 hidden h-9 w-9 items-center justify-center rounded-md border bg-card text-muted-foreground shadow-sm transition hover:bg-accent hover:text-accent-foreground lg:flex"
-      >
-        <PanelLeft className="h-4 w-4" />
-      </button>
-    );
-  }
+  if (collapsed) return null;
   return (
     <aside className="hidden h-full w-64 shrink-0 flex-col border-r bg-card lg:flex">
-      <div className="flex items-center justify-end px-2 pt-2">
-        <button
-          type="button"
-          onClick={toggleSidebar}
-          title={t("nav.collapseSidebar")}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
-        >
-          <PanelLeftClose className="h-4 w-4" />
-        </button>
-      </div>
       <SidebarContent onNavigate={onNavigate} />
     </aside>
   );

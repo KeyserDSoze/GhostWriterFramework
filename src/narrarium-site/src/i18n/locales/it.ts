@@ -541,9 +541,9 @@ const it = {
     notFound: "Paragrafo non trovato.",
     backToChapter: "Torna al capitolo.",
     writePlaceholder: "Inizia a scrivere…",
-    splitView: "Split bozza/finale",
+    splitView: "Split bozza/definitivo",
     splitTitle: "Split · {{title}}",
-    backToFinal: "Torna al finale",
+    backToFinal: "Torna al definitivo",
     draftMissingHint: "La bozza non esiste ancora: scrivi e salva per crearla.",
     splitDesktopOnly: "La vista affiancata è disponibile solo su desktop.",
     loadFailed: "Caricamento non riuscito",
@@ -579,9 +579,9 @@ const it = {
   },
   pipeline: {
     scriptToDraft: "Genera bozza",
-    draftToFinal: "Genera finale",
+    draftToFinal: "Genera definitivo",
     scriptToDraftDesc: "Trasforma lo script in prosa di bozza seguendo i beat.",
-    draftToFinalDesc: "Rifinisci la bozza nel paragrafo finale.",
+    draftToFinalDesc: "Rifinisci la bozza nel paragrafo definitivo.",
     ghostwriter: "Ghostwriter",
     defaultStyle: "Stile predefinito",
     regenerate: "Rigenera",
@@ -669,15 +669,15 @@ const it = {
     placeholder: "Scrivi qui le regole di stile…"
   },
   stageIndex: {
-    draftsIntro: "Tutte le bozze del capitolo, con la stessa struttura dei paragrafi. Collega script, bozza e paragrafo finale.",
-    scriptsIntro: "Tutti gli script del capitolo, con la stessa struttura dei paragrafi. Collega script, bozza e paragrafo finale.",
-    final: "Finale",
+    draftsIntro: "Tutte le bozze del capitolo, con la stessa struttura dei paragrafi. Collega script, bozza e paragrafo definitivo.",
+    scriptsIntro: "Tutti gli script del capitolo, con la stessa struttura dei paragrafi. Collega script, bozza e paragrafo definitivo.",
+    final: "Definitivo",
     noScript: "Nessuno script",
     noDraft: "Nessuna bozza",
     genScript: "Genera script",
     genScriptDesc: "Ricostruisci lo script dai beat partendo dalla bozza o dal paragrafo.",
     genDraft: "Genera bozza",
-    genFinal: "Genera finale"
+    genFinal: "Genera definitivo"
   },
   script: {
     scene: "Scena",
