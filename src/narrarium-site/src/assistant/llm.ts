@@ -1,5 +1,5 @@
 import OpenAI, { AzureOpenAI } from "openai";
-import type { AIIntegration, AppSettings } from "@/types/settings";
+import type { AIIntegration, AIPricing, AppSettings, ChatCapability, ChatModel } from "@/types/settings";
 import { chatDelta, useCostsStore } from "@/costs/costsStore";
 
 export type LlmContentPart =
@@ -23,15 +23,100 @@ export function resolveReviewIntegration(settings: AppSettings): AIIntegration |
   return integrations.find((entry) => entry.id === settings.defaultReviewIntegrationId) ?? integrations[0] ?? null;
 }
 
+/** The concrete model chosen to run a task, with the pricing to bill it against. */
+export interface ResolvedChatModel {
+  integration: AIIntegration;
+  model: string;
+  pricing?: AIPricing;
+}
+
+/** All chat models declared by an integration (new field), tolerant of the legacy shape. */
+function integrationChatModels(integration: AIIntegration): ChatModel[] {
+  if (Array.isArray(integration.chatModels) && integration.chatModels.length) return integration.chatModels;
+  // Legacy fallback: synthesise from the old single fields.
+  const models: ChatModel[] = [];
+  if (integration.modelWriting) models.push({ id: "legacy-writing", name: integration.modelWriting, capabilities: ["default", "copilot"] });
+  if (integration.modelReview && integration.modelReview !== integration.modelWriting) {
+    models.push({ id: "legacy-review", name: integration.modelReview, capabilities: ["review"] });
+  }
+  return models;
+}
+
+/** Pick the model inside one integration that serves a capability (or its default fallback). */
+function pickModelInIntegration(integration: AIIntegration, capability: ChatCapability): ChatModel | null {
+  const models = integrationChatModels(integration);
+  if (!models.length) return null;
+  return (
+    models.find((m) => m.capabilities?.includes(capability)) ??
+    models.find((m) => m.capabilities?.includes("default")) ??
+    models[0] ??
+    null
+  );
+}
+
+/**
+ * Resolve the best chat model across all integrations for a capability.
+ * Order: a model tagged with the capability anywhere → the default-writing integration's
+ * fallback → any default model → the first model found. Pricing prefers the model's own
+ * pricing, then the integration pricing.
+ */
+export function resolveChatModel(settings: AppSettings, capability: ChatCapability): ResolvedChatModel | null {
+  const integrations = settings.aiIntegrations ?? [];
+  if (!integrations.length) return null;
+
+  // 1) Exact capability match anywhere.
+  for (const integration of integrations) {
+    const exact = integrationChatModels(integration).find((m) => m.capabilities?.includes(capability));
+    if (exact) return { integration, model: exact.name, pricing: exact.pricing ?? integration.pricing };
+  }
+
+  // 2) Default-writing integration fallback (keeps existing behaviour for unmapped tasks).
+  const preferred = resolveWritingIntegration(settings);
+  if (preferred) {
+    const fallback = pickModelInIntegration(preferred, capability);
+    if (fallback) return { integration: preferred, model: fallback.name, pricing: fallback.pricing ?? preferred.pricing };
+  }
+
+  // 3) Any default model anywhere.
+  for (const integration of integrations) {
+    const anyDefault = pickModelInIntegration(integration, capability);
+    if (anyDefault) return { integration, model: anyDefault.name, pricing: anyDefault.pricing ?? integration.pricing };
+  }
+  return null;
+}
+
+/** Map the legacy "writing | review" purpose onto a capability. */
+function purposeCapability(purpose: "writing" | "review"): ChatCapability {
+  return purpose === "review" ? "review" : "default";
+}
+
+/** Pick the model + pricing for an integration given a purpose/capability override. */
+function resolveModelForCall(
+  integration: AIIntegration,
+  purpose: "writing" | "review",
+  options?: { capability?: ChatCapability; modelName?: string },
+): { model: string; pricing?: AIPricing } {
+  if (options?.modelName) {
+    const explicit = integrationChatModels(integration).find((m) => m.name === options.modelName);
+    return { model: options.modelName, pricing: explicit?.pricing ?? integration.pricing };
+  }
+  const capability = options?.capability ?? purposeCapability(purpose);
+  const picked = pickModelInIntegration(integration, capability);
+  if (picked) return { model: picked.name, pricing: picked.pricing ?? integration.pricing };
+  // Legacy fallback so existing integrations without chatModels keep working.
+  const legacy = purpose === "review"
+    ? integration.modelReview || integration.modelWriting || "gpt-4o"
+    : integration.modelWriting || integration.modelReview || "gpt-4o";
+  return { model: legacy, pricing: integration.pricing };
+}
+
 export async function completeText(
   integration: AIIntegration,
   messages: LlmMessage[],
   purpose: "writing" | "review" = "writing",
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; capability?: ChatCapability; modelName?: string },
 ): Promise<string> {
-  const model = purpose === "review"
-    ? integration.modelReview || integration.modelWriting || "gpt-4o"
-    : integration.modelWriting || integration.modelReview || "gpt-4o";
+  const { model, pricing } = resolveModelForCall(integration, purpose, options);
 
   const normalizedMessages = messages.map((message) => ({
     role: message.role,
@@ -52,7 +137,7 @@ export async function completeText(
       dangerouslyAllowBrowser: true,
     });
     const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
-    recordChatUsage(integration, response.usage);
+    recordChatUsage(model, pricing, response.usage);
     return response.choices[0]?.message?.content ?? "";
   }
 
@@ -63,20 +148,69 @@ export async function completeText(
       dangerouslyAllowBrowser: true,
     });
     const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
-    recordChatUsage(integration, response.usage);
+    recordChatUsage(model, pricing, response.usage);
     return response.choices[0]?.message?.content ?? "";
   }
 
   throw new Error("Microsoft 365 Copilot is not yet wired into the in-browser assistant.");
 }
 
-function recordChatUsage(integration: AIIntegration, usage: unknown): void {
-  if (!integration.pricing) return;
+/**
+ * Minimal yes/no understanding for a short user utterance, using a forced tool call.
+ * Picks the "simple-tasks" model (falling back to "default") and sends no system prompt
+ * or history — just the utterance — so it costs as little as possible.
+ * Returns "yes" | "no" | "unclear".
+ */
+export async function classifyConfirmation(settings: AppSettings, utterance: string): Promise<"yes" | "no" | "unclear"> {
+  const resolved = resolveChatModel(settings, "simple-tasks");
+  if (!resolved) return "unclear";
+  const { integration, model, pricing } = resolved;
+  if (integration.provider === "m365_copilot") return "unclear";
+
+  const tools = [{
+    type: "function" as const,
+    function: {
+      name: "confirm",
+      description: "Report whether the user is confirming, rejecting, or being unclear.",
+      parameters: {
+        type: "object",
+        properties: {
+          decision: { type: "string", enum: ["yes", "no", "unclear"], description: "yes = confirms/accepts, no = rejects/cancels, unclear = neither" },
+        },
+        required: ["decision"],
+      },
+    },
+  }];
+
+  const body = {
+    model,
+    messages: [{ role: "user", content: utterance }],
+    tools,
+    tool_choice: { type: "function", function: { name: "confirm" } },
+  };
+
+  try {
+    const client = integration.provider === "azure_openai"
+      ? new AzureOpenAI({ endpoint: integration.endpoint ?? "", apiKey: integration.apiKey, apiVersion: integration.apiVersion || "2024-10-21", dangerouslyAllowBrowser: true })
+      : new OpenAI({ apiKey: integration.apiKey, baseURL: integration.endpoint || "https://api.openai.com/v1", dangerouslyAllowBrowser: true });
+    const response = await client.chat.completions.create(body as never);
+    recordChatUsage(model, pricing, (response as { usage?: unknown }).usage);
+    const call = (response as { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> }).choices?.[0]?.message?.tool_calls?.[0];
+    const args = call?.function?.arguments ? JSON.parse(call.function.arguments) : null;
+    const decision = args?.decision;
+    return decision === "yes" || decision === "no" ? decision : "unclear";
+  } catch {
+    return "unclear";
+  }
+}
+
+function recordChatUsage(model: string, pricing: AIPricing | undefined, usage: unknown): void {
+  if (!pricing) return;
   const u = usage as { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | undefined;
   if (!u) return;
   const inputTokens = u.prompt_tokens ?? 0;
   const outputTokens = u.completion_tokens ?? 0;
   const cachedTokens = u.prompt_tokens_details?.cached_tokens ?? 0;
   if (!inputTokens && !outputTokens) return;
-  useCostsStore.getState().recordCurrent(chatDelta({ inputTokens, cachedTokens, outputTokens }, integration.pricing));
+  useCostsStore.getState().recordCurrent(chatDelta({ inputTokens, cachedTokens, outputTokens }, pricing), model);
 }

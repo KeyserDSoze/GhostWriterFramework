@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings } from "@/types/settings";
+import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel } from "@/types/settings";
 import type { AuthProvider } from "@/store/authStore";
 
 export class TokenExpiredError extends Error {
@@ -208,7 +208,7 @@ function migrateSettings(raw: unknown): AppSettings {
   const aiIntegrations = [
     ...(Array.isArray(source.aiIntegrations) ? source.aiIntegrations : []),
     ...(migratedAzureIntegration ? [migratedAzureIntegration] : []),
-  ];
+  ].map(ensureChatModels);
 
   return {
     ...DEFAULT_SETTINGS,
@@ -230,4 +230,26 @@ function migrateSettings(raw: unknown): AppSettings {
     },
     books: Array.isArray(source.books) ? source.books : [],
   };
+}
+
+/**
+ * Backward-compatible upgrade: give every integration a chatModels[] list.
+ * If it already has one, keep it. Otherwise synthesise entries from the legacy
+ * modelWriting/modelReview fields, tagging capabilities so routing keeps working.
+ */
+function ensureChatModels(integration: AIIntegration): AIIntegration {
+  if (Array.isArray(integration.chatModels) && integration.chatModels.length) return integration;
+  const chatModels: ChatModel[] = [];
+  const writing = integration.modelWriting?.trim();
+  const review = integration.modelReview?.trim();
+  if (writing) {
+    const caps: ChatCapability[] = ["default", "copilot", "simple-tasks"];
+    if (!review || review === writing) caps.push("review");
+    chatModels.push({ id: "legacy-writing", name: writing, capabilities: caps, pricing: integration.pricing });
+  }
+  if (review && review !== writing) {
+    chatModels.push({ id: "legacy-review", name: review, capabilities: ["review"], pricing: integration.pricing });
+  }
+  if (!chatModels.length) return integration;
+  return { ...integration, chatModels };
 }

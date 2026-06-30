@@ -50,11 +50,42 @@ export function CostsPage() {
                   <CardTitle className="text-base">{book.bookName || book.bookId}</CardTitle>
                   <span className="text-lg font-semibold">{eur(bucketTotal(book))}</span>
                 </CardHeader>
-                <CardContent><CategoryGrid bucket={book} /></CardContent>
+                <CardContent>
+                  <CategoryGrid bucket={book} />
+                  <ModelBreakdown models={book.models} />
+                </CardContent>
               </Card>
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ModelBreakdown({ models }: { models?: Record<string, UsageBucket> }) {
+  const { t } = useTranslation();
+  const entries = useMemo(
+    () => Object.entries(models ?? {})
+      .map(([name, bucket]) => [name, { ...emptyBucket(), ...bucket }] as const)
+      .filter(([, bucket]) => bucket.chatCost > 0 || bucket.inputTokens > 0 || bucket.outputTokens > 0)
+      .sort((a, b) => b[1].chatCost - a[1].chatCost),
+    [models],
+  );
+  if (entries.length === 0) return null;
+  return (
+    <div className="mt-3">
+      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t("costs.perModel")}</p>
+      <div className="space-y-1.5">
+        {entries.map(([name, bucket]) => (
+          <div key={name} className="flex items-center justify-between rounded-lg border bg-muted/10 px-3 py-1.5">
+            <div>
+              <p className="text-sm font-medium">{name}</p>
+              <p className="text-[11px] text-muted-foreground">{`${num(bucket.inputTokens)} in · ${num(bucket.cachedTokens)} cache · ${num(bucket.outputTokens)} out`}</p>
+            </div>
+            <span className="text-sm font-semibold">{eur(bucket.chatCost)}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

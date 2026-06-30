@@ -195,7 +195,7 @@ async function answerFromContext(input: PromptInput): Promise<AssistantMessage> 
   const answer = await completeText(integration, [
     buildSystemMessage(input, "You are Narrarium's contextual writing copilot. Answer only from the provided repository context and current location. The manifest lists available files; only LOADED FILE contents are available in full. If needed content is not loaded, say which file you need."),
     buildUserMessage(input, `User request: ${input.prompt}`),
-  ], "writing", { signal: input.signal });
+  ], "writing", { signal: input.signal, capability: "copilot" });
   return makeAssistantMessage("assistant", answer.trim());
 }
 

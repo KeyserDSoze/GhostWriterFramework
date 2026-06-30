@@ -73,7 +73,7 @@ import {
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { speakText, splitIntoStrofe, transcribeAudio, type SpeechController } from "@/assistant/speech";
-import { completeText, resolveWritingIntegration } from "@/assistant/llm";
+import { completeText, classifyConfirmation, resolveWritingIntegration } from "@/assistant/llm";
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
 
 const ATTACHMENT_TARGETS = [
@@ -807,7 +807,14 @@ export function AssistantPanel() {
         pendingRewriteRef.current = null;
         return makeAssistantReply(t("assistant.rewriteCancelled"));
       }
-      // Not a clear answer → fall through to other handlers/LLM.
+      // Ambiguous → ask the cheap "simple-tasks" model with a forced tool to decide.
+      const decision = await classifyConfirmation(settings, prompt);
+      if (decision === "yes") return applyPendingRewrite();
+      if (decision === "no") {
+        pendingRewriteRef.current = null;
+        return makeAssistantReply(t("assistant.rewriteCancelled"));
+      }
+      // Still unclear → fall through to other handlers/LLM.
     }
 
     if (!liveStrofeRef.current.length) return null;

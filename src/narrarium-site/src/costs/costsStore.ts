@@ -31,8 +31,8 @@ interface CostsState {
   setCurrentBook: (bookId: string | undefined, bookName: string | undefined) => void;
   setFile: (file: CostsFile, driveFileId?: string) => void;
   markSynced: (driveFileId?: string) => void;
-  record: (bookId: string | undefined, bookName: string | undefined, delta: Partial<UsageBucket>) => void;
-  recordCurrent: (delta: Partial<UsageBucket>) => void;
+  record: (bookId: string | undefined, bookName: string | undefined, delta: Partial<UsageBucket>, model?: string) => void;
+  recordCurrent: (delta: Partial<UsageBucket>, model?: string) => void;
 }
 
 export const useCostsStore = create<CostsState>()((set, get) => ({
@@ -44,21 +44,30 @@ export const useCostsStore = create<CostsState>()((set, get) => ({
   setCurrentBook: (currentBookId, currentBookName) => set({ currentBookId, currentBookName }),
   setFile: (file, driveFileId) => { persistLocal(file); set({ file, driveFileId, dirty: false }); },
   markSynced: (driveFileId) => set((s) => ({ driveFileId: driveFileId ?? s.driveFileId, dirty: false })),
-  record: (bookId, bookName, delta) => {
+  record: (bookId, bookName, delta, model) => {
     if (!bookId) return;
     const hasValue = Object.values(delta).some((v) => (v ?? 0) !== 0);
     if (!hasValue) return;
     set((s) => {
-      const existing: BookUsage = { ...emptyBucket(), ...(s.file.books[bookId] ?? {}), bookId, bookName: s.file.books[bookId]?.bookName ?? bookName };
-      const merged: BookUsage = { ...existing, bookName: bookName ?? existing.bookName, ...addBucket(existing, delta) };
+      const prev: BookUsage = { ...emptyBucket(), ...(s.file.books[bookId] ?? {}), bookId, bookName: s.file.books[bookId]?.bookName ?? bookName };
+      const merged: BookUsage = { ...prev, bookName: bookName ?? prev.bookName, ...addBucket(prev, delta) };
+      // Per-model breakdown (only when a model name is supplied, e.g. chat tasks).
+      const modelKey = model?.trim();
+      if (modelKey) {
+        const prevModels = prev.models ?? {};
+        const prevModel = prevModels[modelKey] ?? emptyBucket();
+        merged.models = { ...prevModels, [modelKey]: addBucket(prevModel, delta) };
+      } else {
+        merged.models = prev.models;
+      }
       const file: CostsFile = { ...s.file, updatedAt: new Date().toISOString(), books: { ...s.file.books, [bookId]: merged } };
       persistLocal(file);
       return { file, dirty: true };
     });
   },
-  recordCurrent: (delta) => {
+  recordCurrent: (delta, model) => {
     const { currentBookId, currentBookName, record } = get();
-    record(currentBookId, currentBookName, delta);
+    record(currentBookId, currentBookName, delta, model);
   },
 }));
 

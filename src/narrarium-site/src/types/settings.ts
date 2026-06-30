@@ -9,6 +9,29 @@ export interface AzureOpenAIConfig {
 
 export type AIProviderType = "azure_openai" | "openai" | "m365_copilot";
 
+/**
+ * Roles a chat model can fulfil. A task picks the model tagged with its capability,
+ * falling back to the model tagged "default".
+ * - default: universal fallback for any chat task
+ * - copilot: the interactive assistant / live voice conversation
+ * - simple-tasks: cheap micro-decisions (yes/no confirmation, tiny classifications)
+ * - review: evaluations and editorial scoring
+ */
+export type ChatCapability = "default" | "copilot" | "simple-tasks" | "review";
+
+export const CHAT_CAPABILITIES: ChatCapability[] = ["default", "copilot", "simple-tasks", "review"];
+
+/** A single chat model entry inside an integration, with its own price and roles. */
+export interface ChatModel {
+  id: string;
+  /** Provider deployment or model name (e.g. "gpt-4o", "gpt-4o-mini"). */
+  name: string;
+  /** Roles this model is allowed to serve. */
+  capabilities: ChatCapability[];
+  /** Optional per-model unit prices; falls back to the integration pricing when absent. */
+  pricing?: AIPricing;
+}
+
 /** Optional unit prices (EUR) used to track spend. Token prices are per 1,000,000 tokens. */
 export interface AIPricing {
   /** EUR per 1M input tokens (chat) */
@@ -37,9 +60,14 @@ export interface AIIntegration {
   endpoint?: string;
   /** Not used by Microsoft 365 Copilot. */
   apiKey: string;
-  /** Chat/writing deployment or model. */
+  /**
+   * Chat models offered by this integration, each with its own roles and pricing.
+   * Replaces the single modelWriting/modelReview fields (kept below for back-compat).
+   */
+  chatModels?: ChatModel[];
+  /** Chat/writing deployment or model. @deprecated migrated into chatModels */
   modelWriting?: string;
-  /** Review/evaluation deployment or model. */
+  /** Review/evaluation deployment or model. @deprecated migrated into chatModels */
   modelReview?: string;
   /** Speech-to-text deployment/model, used when browser STT is not enough. */
   modelSpeechToText?: string;

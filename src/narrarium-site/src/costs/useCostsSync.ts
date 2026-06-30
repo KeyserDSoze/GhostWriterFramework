@@ -2,7 +2,37 @@ import { useEffect, useRef } from "react";
 import { useAuthStore } from "@/store/authStore";
 import { useCostsStore } from "@/costs/costsStore";
 import { loadCosts, saveCosts } from "@/costs/costsCloud";
-import { emptyBucket, type BookUsage, type CostsFile } from "@/costs/model";
+import { emptyBucket, type BookUsage, type CostsFile, type UsageBucket } from "@/costs/model";
+
+function maxBucket(x: UsageBucket, y: UsageBucket): UsageBucket {
+  return {
+    inputTokens: Math.max(x.inputTokens, y.inputTokens),
+    cachedTokens: Math.max(x.cachedTokens, y.cachedTokens),
+    outputTokens: Math.max(x.outputTokens, y.outputTokens),
+    chatCost: Math.max(x.chatCost, y.chatCost),
+    imageCount: Math.max(x.imageCount, y.imageCount),
+    imageInputTextTokens: Math.max(x.imageInputTextTokens, y.imageInputTextTokens),
+    imageCachedInputTextTokens: Math.max(x.imageCachedInputTextTokens, y.imageCachedInputTextTokens),
+    imageInputImageTokens: Math.max(x.imageInputImageTokens, y.imageInputImageTokens),
+    imageCachedInputImageTokens: Math.max(x.imageCachedInputImageTokens, y.imageCachedInputImageTokens),
+    imageOutputTokens: Math.max(x.imageOutputTokens, y.imageOutputTokens),
+    imageCost: Math.max(x.imageCost, y.imageCost),
+    ttsChars: Math.max(x.ttsChars, y.ttsChars),
+    ttsCost: Math.max(x.ttsCost, y.ttsCost),
+    sttHours: Math.max(x.sttHours, y.sttHours),
+    sttCost: Math.max(x.sttCost, y.sttCost),
+  };
+}
+
+function mergeModels(a?: Record<string, UsageBucket>, b?: Record<string, UsageBucket>): Record<string, UsageBucket> | undefined {
+  if (!a && !b) return undefined;
+  const out: Record<string, UsageBucket> = {};
+  const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]);
+  for (const key of keys) {
+    out[key] = maxBucket({ ...emptyBucket(), ...(a?.[key] ?? {}) }, { ...emptyBucket(), ...(b?.[key] ?? {}) });
+  }
+  return out;
+}
 
 function mergeMax(a: CostsFile, b: CostsFile): CostsFile {
   const books: Record<string, BookUsage> = {};
@@ -13,21 +43,8 @@ function mergeMax(a: CostsFile, b: CostsFile): CostsFile {
     books[id] = {
       bookId: id,
       bookName: y.bookName ?? x.bookName,
-      inputTokens: Math.max(x.inputTokens, y.inputTokens),
-      cachedTokens: Math.max(x.cachedTokens, y.cachedTokens),
-      outputTokens: Math.max(x.outputTokens, y.outputTokens),
-      chatCost: Math.max(x.chatCost, y.chatCost),
-      imageCount: Math.max(x.imageCount, y.imageCount),
-      imageInputTextTokens: Math.max(x.imageInputTextTokens, y.imageInputTextTokens),
-      imageCachedInputTextTokens: Math.max(x.imageCachedInputTextTokens, y.imageCachedInputTextTokens),
-      imageInputImageTokens: Math.max(x.imageInputImageTokens, y.imageInputImageTokens),
-      imageCachedInputImageTokens: Math.max(x.imageCachedInputImageTokens, y.imageCachedInputImageTokens),
-      imageOutputTokens: Math.max(x.imageOutputTokens, y.imageOutputTokens),
-      imageCost: Math.max(x.imageCost, y.imageCost),
-      ttsChars: Math.max(x.ttsChars, y.ttsChars),
-      ttsCost: Math.max(x.ttsCost, y.ttsCost),
-      sttHours: Math.max(x.sttHours, y.sttHours),
-      sttCost: Math.max(x.sttCost, y.sttCost),
+      ...maxBucket(x, y),
+      models: mergeModels(a.books[id]?.models, b.books[id]?.models),
     };
   }
   return { version: 1, currency: "EUR", updatedAt: new Date().toISOString(), books };

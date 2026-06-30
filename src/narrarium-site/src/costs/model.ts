@@ -19,6 +19,8 @@ export interface UsageBucket {
 export interface BookUsage extends UsageBucket {
   bookId: string;
   bookName?: string;
+  /** Per-chat-model breakdown of chat spend within this book, keyed by model name. */
+  models?: Record<string, UsageBucket>;
 }
 
 export interface CostsFile {

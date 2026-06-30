@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
-import type { AIIntegration, AIProviderType, AppSettings } from "@/types/settings";
+import { CHAT_CAPABILITIES, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel } from "@/types/settings";
 
 const PROVIDERS: Array<{ value: AIProviderType; label: string }> = [
   { value: "azure_openai", label: "Azure OpenAI" },
@@ -382,10 +382,6 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
             <Input type="password" value={integration.apiKey} onChange={(e) => onChange({ apiKey: e.target.value })} autoComplete="off" />
           </div>
         )}
-        <div className="grid gap-2">
-          <Label>{t("settings.chatModel")}</Label>
-          <Input value={integration.modelWriting ?? ""} onChange={(e) => onChange({ modelWriting: e.target.value })} placeholder="gpt-4o" disabled={integration.provider === "m365_copilot"} />
-        </div>
         {integration.provider !== "m365_copilot" && (
           <>
             <div className="grid gap-2">
@@ -411,13 +407,17 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
       </div>
 
       {integration.provider !== "m365_copilot" && (
+        <ChatModelsEditor
+          models={integration.chatModels ?? []}
+          onChange={(chatModels) => onChange({ chatModels })}
+        />
+      )}
+
+      {integration.provider !== "m365_copilot" && (
         <details className="mt-3 rounded-lg border bg-muted/20 p-3">
-          <summary className="cursor-pointer text-sm font-medium">{t("costs.pricingTitle")}</summary>
-          <p className="mt-1 text-xs text-muted-foreground">{t("costs.pricingHint")}</p>
+          <summary className="cursor-pointer text-sm font-medium">{t("costs.mediaPricingTitle")}</summary>
+          <p className="mt-1 text-xs text-muted-foreground">{t("costs.mediaPricingHint")}</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            <PriceField label={t("costs.priceInput")} value={integration.pricing?.inputPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, inputPerMTok: v } })} />
-            <PriceField label={t("costs.priceCached")} value={integration.pricing?.cachedPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, cachedPerMTok: v } })} />
-            <PriceField label={t("costs.priceOutput")} value={integration.pricing?.outputPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, outputPerMTok: v } })} />
             <PriceField label={t("costs.priceTts")} value={integration.pricing?.ttsPerMChar} onChange={(v) => onChange({ pricing: { ...integration.pricing, ttsPerMChar: v } })} />
             <PriceField label={t("costs.priceStt")} value={integration.pricing?.sttPerHour} onChange={(v) => onChange({ pricing: { ...integration.pricing, sttPerHour: v } })} />
           </div>
@@ -432,6 +432,85 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
         </details>
       )}
       <Badge variant="secondary" className="mt-3 text-xs">{PROVIDERS.find((provider) => provider.value === integration.provider)?.label}</Badge>
+    </div>
+  );
+}
+
+function ChatModelsEditor({ models, onChange }: { models: ChatModel[]; onChange: (models: ChatModel[]) => void }) {
+  const { t } = useTranslation();
+
+  function patchModel(id: string, patch: Partial<ChatModel>) {
+    onChange(models.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+  }
+  function toggleCapability(id: string, capability: ChatCapability) {
+    onChange(models.map((m) => {
+      if (m.id !== id) return m;
+      const has = m.capabilities?.includes(capability);
+      const capabilities = has
+        ? m.capabilities.filter((c) => c !== capability)
+        : [...(m.capabilities ?? []), capability];
+      return { ...m, capabilities };
+    }));
+  }
+  function addModel() {
+    onChange([...models, { id: crypto.randomUUID(), name: "", capabilities: models.length === 0 ? ["default", "copilot", "simple-tasks", "review"] : [] }]);
+  }
+  function removeModel(id: string) {
+    onChange(models.filter((m) => m.id !== id));
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border bg-muted/10 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium">{t("settings.chatModels")}</p>
+          <p className="text-xs text-muted-foreground">{t("settings.chatModelsHint")}</p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={addModel}>
+          <Plus className="mr-1 h-3.5 w-3.5" />{t("settings.addChatModel")}
+        </Button>
+      </div>
+      {models.length === 0 && <p className="text-xs text-muted-foreground">{t("settings.noChatModels")}</p>}
+      <div className="space-y-3">
+        {models.map((model) => (
+          <div key={model.id} className="rounded-lg border bg-card p-3">
+            <div className="flex items-end gap-2">
+              <div className="grid flex-1 gap-1">
+                <Label className="text-xs">{t("settings.chatModelName")}</Label>
+                <Input value={model.name} onChange={(e) => patchModel(model.id, { name: e.target.value })} placeholder="gpt-4o" className="h-8 text-sm" />
+              </div>
+              <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => removeModel(model.id)}>
+                <Trash2 className="h-4 w-4 text-destructive" />
+              </Button>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {CHAT_CAPABILITIES.map((capability) => {
+                const active = model.capabilities?.includes(capability);
+                return (
+                  <button
+                    key={capability}
+                    type="button"
+                    onClick={() => toggleCapability(model.id, capability)}
+                    className={active
+                      ? "rounded-full border border-primary bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground"
+                      : "rounded-full border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted"}
+                  >
+                    {t(`settings.capability.${capability}`)}
+                  </button>
+                );
+              })}
+            </div>
+            <details className="mt-2 rounded-md border bg-muted/20 p-2">
+              <summary className="cursor-pointer text-xs font-medium">{t("costs.chatPricingTitle")}</summary>
+              <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                <PriceField label={t("costs.priceInput")} value={model.pricing?.inputPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, inputPerMTok: v } })} />
+                <PriceField label={t("costs.priceCached")} value={model.pricing?.cachedPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, cachedPerMTok: v } })} />
+                <PriceField label={t("costs.priceOutput")} value={model.pricing?.outputPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, outputPerMTok: v } })} />
+              </div>
+            </details>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -463,8 +542,9 @@ function createBlankIntegration(): AIIntegration {
     provider: "azure_openai",
     endpoint: "",
     apiKey: "",
-    modelWriting: "gpt-4o",
-    modelReview: "gpt-4o",
+    chatModels: [
+      { id: crypto.randomUUID(), name: "gpt-4o", capabilities: ["default", "copilot", "simple-tasks", "review"] },
+    ],
     modelSpeechToText: "",
     modelTextToSpeech: "",
     modelImageGeneration: "gpt-image-1",
@@ -474,7 +554,7 @@ function createBlankIntegration(): AIIntegration {
 
 function normalizeIntegration(integration: AIIntegration): AIIntegration {
   if (integration.provider === "m365_copilot") {
-    return { ...integration, endpoint: "", apiKey: "", modelWriting: "", modelReview: "", modelImageGeneration: "", apiVersion: "" };
+    return { ...integration, endpoint: "", apiKey: "", chatModels: [], modelWriting: "", modelReview: "", modelImageGeneration: "", apiVersion: "" };
   }
   if (integration.provider === "openai") {
     return { ...integration, apiVersion: "" };
@@ -485,10 +565,14 @@ function normalizeIntegration(integration: AIIntegration): AIIntegration {
 function integrationToAzureCompat(integrations: AIIntegration[]): AppSettings["azureOpenAI"] | null {
   const azure = integrations.find((integration) => integration.provider === "azure_openai");
   if (!azure) return null;
+  const defaultModel = azure.chatModels?.find((m) => m.capabilities?.includes("default"))?.name
+    ?? azure.chatModels?.[0]?.name
+    ?? azure.modelWriting
+    ?? "gpt-4o";
   return {
     endpoint: azure.endpoint ?? "",
     apiKey: azure.apiKey,
-    model: azure.modelWriting || "gpt-4o",
+    model: defaultModel,
     apiVersion: azure.apiVersion || "2024-10-21",
   };
 }
