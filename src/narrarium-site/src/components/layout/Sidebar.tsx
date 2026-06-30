@@ -1,22 +1,27 @@
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
+  Activity,
   BookOpen,
   BookText,
   ClipboardCheck,
   Clock,
   Coins,
+  Columns2,
   EyeOff,
   FileEdit,
   FileText,
   Images,
   LayoutDashboard,
   Library,
+  Loader2,
   MapPin,
   MessagesSquare,
   Network,
   NotebookText,
   Package,
+  PanelLeft,
+  PanelLeftClose,
   PenLine,
   PlusCircle,
   Settings,
@@ -28,6 +33,8 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
+import { useUiStore } from "@/store/uiStore";
+import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import { parseAppRoute } from "@/assistant/context";
 import { APP_VERSION } from "@/config/version";
 
@@ -68,6 +75,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const location = useLocation();
   const { settings } = useSettingsStore();
   const { structures } = useBooksStore();
+  const setDebugOpen = useUiStore((s) => s.setDebugOpen);
+  const debugCount = useLlmDebugStore((s) => s.entries.length);
+  const debugPending = useLlmDebugStore((s) => s.pending);
   const route = parseAppRoute(location.pathname);
   const bookId = "bookId" in route ? route.bookId : undefined;
   const chapterId = "chapterId" in route ? route.chapterId : undefined;
@@ -95,12 +105,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       href: "/app/costs",
       icon: <Coins className="h-4 w-4" />,
     },
-    {
-      label: t("nav.docs"),
-      href: "/app/docs",
-      icon: <BookText className="h-4 w-4" />,
-    },
   ];
+  const docsNav: NavItem = { label: t("nav.docs"), href: "/app/docs", icon: <BookText className="h-4 w-4" /> };
 
   const bookNav: NavItem[] = bookId
     ? [
@@ -139,8 +145,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const paragraphNav: NavItem[] = bookId && chapterId && paragraphNum
     ? [
         { label: t("nav.paragraphOverview"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}`, icon: <FileText className="h-4 w-4" /> },
-        { label: t("chapter.script"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/workspace/script`, icon: <Network className="h-4 w-4" /> },
         { label: t("chapter.draft"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/workspace/draft`, icon: <FileEdit className="h-4 w-4" /> },
+        { label: t("chapter.script"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/workspace/script`, icon: <Network className="h-4 w-4" /> },
+        { label: t("paragraph.splitView"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/split`, icon: <Columns2 className="h-4 w-4" /> },
         { label: t("chapter.evaluation"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/workspace/evaluation`, icon: <ClipboardCheck className="h-4 w-4" /> },
       ]
     : [];
@@ -206,6 +213,18 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               onNavigate={onNavigate}
             />
           ))}
+          <button
+            type="button"
+            onClick={() => setDebugOpen(true)}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          >
+            {debugPending > 0 ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : <Activity className="h-4 w-4" />}
+            <span className="flex-1 text-left">{t("debug.title")}</span>
+            {debugCount > 0 && (
+              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">{debugCount}</span>
+            )}
+          </button>
+          <NavLink item={docsNav} active={location.pathname === docsNav.href} onNavigate={onNavigate} />
         </nav>
 
         {settings.books.length > 0 && (
@@ -242,8 +261,33 @@ function NavGroup({ label, first }: { label: string; first?: boolean }) {
 }
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+  const { t } = useTranslation();
+  const collapsed = useUiStore((s) => s.sidebarCollapsed);
+  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={toggleSidebar}
+        title={t("nav.expandSidebar")}
+        className="fixed left-2 top-16 z-30 hidden h-9 w-9 items-center justify-center rounded-md border bg-card text-muted-foreground shadow-sm transition hover:bg-accent hover:text-accent-foreground lg:flex"
+      >
+        <PanelLeft className="h-4 w-4" />
+      </button>
+    );
+  }
   return (
-    <aside className="hidden h-full w-64 shrink-0 border-r bg-card lg:flex lg:flex-col">
+    <aside className="hidden h-full w-64 shrink-0 flex-col border-r bg-card lg:flex">
+      <div className="flex items-center justify-end px-2 pt-2">
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          title={t("nav.collapseSidebar")}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
+        >
+          <PanelLeftClose className="h-4 w-4" />
+        </button>
+      </div>
       <SidebarContent onNavigate={onNavigate} />
     </aside>
   );

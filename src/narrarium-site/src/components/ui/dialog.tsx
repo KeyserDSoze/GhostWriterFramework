@@ -27,9 +27,20 @@ function isInsideFloatingLayer(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest("[data-narrarium-floating-layer]"));
 }
 
+/** True while any Radix popper (Select/Dropdown) is currently open in the document. */
+function hasOpenFloatingLayer(): boolean {
+  return Boolean(document.querySelector('[data-narrarium-floating-layer][data-state="open"]'));
+}
+
 /** Radix exposes the real DOM target differently per event; check both. */
 function floatingEventTarget(event: { target?: EventTarget | null; detail?: { originalEvent?: { target?: EventTarget | null } } }): EventTarget | null {
   return event.detail?.originalEvent?.target ?? event.target ?? null;
+}
+
+/** Should this outside-interaction be ignored (not close the dialog)? */
+function shouldIgnoreOutside(target: EventTarget | null): boolean {
+  // Ignore clicks inside a popper, AND the first click that merely dismisses an open popper.
+  return isInsideFloatingLayer(target) || hasOpenFloatingLayer();
 }
 
 const DialogContent = React.forwardRef<
@@ -46,19 +57,19 @@ const DialogContent = React.forwardRef<
       )}
       onPointerDownOutside={(event) => {
         onPointerDownOutside?.(event);
-        if (!event.defaultPrevented && isInsideFloatingLayer(floatingEventTarget(event))) {
+        if (!event.defaultPrevented && shouldIgnoreOutside(floatingEventTarget(event))) {
           event.preventDefault();
         }
       }}
       onFocusOutside={(event) => {
         onFocusOutside?.(event);
-        if (!event.defaultPrevented && isInsideFloatingLayer(floatingEventTarget(event))) {
+        if (!event.defaultPrevented && shouldIgnoreOutside(floatingEventTarget(event))) {
           event.preventDefault();
         }
       }}
       onInteractOutside={(event) => {
         onInteractOutside?.(event);
-        if (!event.defaultPrevented && isInsideFloatingLayer(floatingEventTarget(event))) {
+        if (!event.defaultPrevented && shouldIgnoreOutside(floatingEventTarget(event))) {
           event.preventDefault();
         }
       }}

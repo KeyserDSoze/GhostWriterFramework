@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Activity, Loader2, Trash2, ChevronRight } from "lucide-react";
+import { Trash2, ChevronRight } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useUiStore } from "@/store/uiStore";
@@ -20,40 +20,35 @@ const KIND_LABEL: Record<LlmRequestKind, string> = { chat: "Chat", tts: "TTS", s
 export function LlmDebugPanel() {
   const { t } = useTranslation();
   const entries = useLlmDebugStore((s) => s.entries);
-  const pending = useLlmDebugStore((s) => s.pending);
   const clear = useLlmDebugStore((s) => s.clear);
-  const floatingHidden = useUiStore((s) => s.floatingHidden);
   const debugOpen = useUiStore((s) => s.debugOpen);
   const setDebugOpen = useUiStore((s) => s.setDebugOpen);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const totalCost = useMemo(() => entries.reduce((sum, e) => sum + (e.cost ?? 0), 0), [entries]);
   const selected = useMemo(() => entries.find((e) => e.id === selectedId) ?? entries[0] ?? null, [entries, selectedId]);
 
   return (
     <>
-      {!floatingHidden && (
-        <button
-          type="button"
-          onClick={() => setDebugOpen(true)}
-          title={t("debug.title")}
-          className="fixed bottom-4 left-4 z-40 flex items-center gap-2 rounded-full border bg-background/90 px-3 py-2 text-xs font-medium shadow-lg backdrop-blur transition hover:bg-muted lg:bottom-6 lg:left-6"
-        >
-          {pending > 0 ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : <Activity className="h-4 w-4 text-muted-foreground" />}
-          <span>{pending > 0 ? t("debug.inFlight", { count: pending }) : t("debug.requests", { count: entries.length })}</span>
-        </button>
-      )}
-
-      <Dialog open={debugOpen} onOpenChange={setDebugOpen}>
-        <DialogContent className="left-1/2 top-1/2 flex h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 flex-col p-0 sm:w-[920px]">
+      <Dialog open={debugOpen} onOpenChange={(next) => { setConfirmClear(false); setDebugOpen(next); }}>
+        <DialogContent hideCloseButton className="left-1/2 top-1/2 flex h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 flex-col p-0 sm:w-[920px]">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <div>
               <p className="font-semibold">{t("debug.title")}</p>
               <p className="text-xs text-muted-foreground">{t("debug.subtitle", { cost: eur(totalCost) })}</p>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => clear()} disabled={entries.length === 0}>
-              <Trash2 className="mr-1 h-3.5 w-3.5" />{t("debug.clear")}
-            </Button>
+            {confirmClear ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">{t("debug.clearConfirm")}</span>
+                <Button variant="destructive" size="sm" onClick={() => { clear(); setConfirmClear(false); }}>{t("debug.clearYes")}</Button>
+                <Button variant="ghost" size="sm" onClick={() => setConfirmClear(false)}>{t("common.cancel")}</Button>
+              </div>
+            ) : (
+              <Button variant="ghost" size="sm" onClick={() => setConfirmClear(true)} disabled={entries.length === 0}>
+                <Trash2 className="mr-1 h-3.5 w-3.5" />{t("debug.clear")}
+              </Button>
+            )}
           </div>
 
           {entries.length === 0 ? (

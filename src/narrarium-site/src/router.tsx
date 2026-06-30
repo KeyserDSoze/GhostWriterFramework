@@ -12,6 +12,7 @@ import { BookSettingsPage } from "@/pages/BookSettingsPage";
 import { CanonEntityPage } from "@/pages/CanonEntityPage";
 import { ChapterPage } from "@/pages/ChapterPage";
 import { ParagraphPage } from "@/pages/ParagraphPage";
+import { ParagraphSplitPage } from "@/pages/ParagraphSplitPage";
 import { WorkspaceDocPage } from "@/pages/WorkspaceDocPage";
 import { GhostwritersPage } from "@/pages/GhostwritersPage";
 import { WritingStylePage } from "@/pages/WritingStylePage";
@@ -74,6 +75,7 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/chapters/:chapterId/drafts", element: <ChapterStageIndexPage stage="drafts" /> },
       { path: "books/:bookId/chapters/:chapterId/scripts", element: <ChapterStageIndexPage stage="scripts" /> },
       { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/workspace/:workspaceKind", element: <WorkspaceDocPage /> },
+      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/split", element: <ParagraphSplitPage /> },
       {
         path: "books/:bookId/chapters/:chapterId",
         element: <ChapterPage />,
