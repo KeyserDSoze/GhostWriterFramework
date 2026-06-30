@@ -2,6 +2,7 @@ import OpenAI, { AzureOpenAI } from "openai";
 import type { AIIntegration, AppSettings } from "@/types/settings";
 import { resolveWritingIntegration } from "@/assistant/llm";
 import { sttDelta, ttsDelta, useCostsStore } from "@/costs/costsStore";
+import { useLlmDebugStore } from "@/debug/llmDebugStore";
 
 const MAX_TTS_CHARS = 1200;
 
@@ -121,11 +122,21 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings): Promis
   if (!integration || !model) throw new Error("No AI speech-to-text model is configured.");
   const file = new File([blob], "speech.webm", { type: blob.type || "audio/webm" });
   const client = createAudioClient(integration);
-  const response = await client.audio.transcriptions.create({ file, model });
-  // Rough hour estimate from compressed audio size (~16KB/s typical webm/opus voice).
-  const estimatedHours = blob.size > 0 ? blob.size / (16000 * 3600) : 0;
-  if (estimatedHours > 0) useCostsStore.getState().recordCurrent(sttDelta(estimatedHours, integration.pricing));
-  return response.text ?? "";
+  const sizeKb = Math.round(blob.size / 1024);
+  const debugId = useLlmDebugStore.getState().begin({ kind: "stt", label: "stt", model, messages: [{ role: "input", content: `audio ${sizeKb} KB` }] });
+  try {
+    const response = await client.audio.transcriptions.create({ file, model });
+    // Rough hour estimate from compressed audio size (~16KB/s typical webm/opus voice).
+    const estimatedHours = blob.size > 0 ? blob.size / (16000 * 3600) : 0;
+    const cost = integration.pricing ? sttDelta(estimatedHours, integration.pricing).sttCost : undefined;
+    if (estimatedHours > 0) useCostsStore.getState().recordCurrent(sttDelta(estimatedHours, integration.pricing));
+    const text = response.text ?? "";
+    useLlmDebugStore.getState().finish(debugId, { status: "done", response: text, cost });
+    return text;
+  } catch (err) {
+    useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
+    throw err;
+  }
 }
 
 export async function speakText(text: string, settings: AppSettings, options: SpeakOptions = {}): Promise<SpeechController> {
@@ -243,7 +254,13 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
   const segments = resolveSegments(text, options);
   const startIndex = Math.max(0, options.startIndex ?? 0);
   const ttsChars = segments.slice(startIndex).reduce((sum, chunk) => sum + chunk.length, 0);
-  if (ttsChars > 0) useCostsStore.getState().recordCurrent(ttsDelta(ttsChars, integration.pricing));
+  if (ttsChars > 0) {
+    useCostsStore.getState().recordCurrent(ttsDelta(ttsChars, integration.pricing));
+    const cost = integration.pricing ? ttsDelta(ttsChars, integration.pricing).ttsCost : undefined;
+    const preview = segments.slice(startIndex).join(" ").slice(0, 400);
+    const ttsId = useLlmDebugStore.getState().begin({ kind: "tts", label: `tts (${voice})`, model, messages: [{ role: "input", content: preview }] });
+    useLlmDebugStore.getState().finish(ttsId, { status: "done", response: `${ttsChars} chars`, cost });
+  }
   let stopped = false;
   let paused = false;
   let currentIndex = startIndex;

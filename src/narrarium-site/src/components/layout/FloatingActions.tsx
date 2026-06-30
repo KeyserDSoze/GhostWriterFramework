@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ChevronUp, ClipboardCheck, FileEdit, FileText, NotebookText, Network, PenLine, Sparkles, Wand2, X } from "lucide-react";
@@ -29,9 +28,10 @@ export function FloatingActions() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const floatingHidden = useUiStore((s) => s.floatingHidden);
+  const open = useUiStore((s) => s.actionsOpen);
+  const setOpen = useUiStore((s) => s.setActionsOpen);
   const { settings } = useSettingsStore();
   const { structures } = useBooksStore();
-  const [open, setOpen] = useState(false);
 
   const route = parseAppRoute(location.pathname);
   const bookId = "bookId" in route ? route.bookId : undefined;
@@ -170,8 +170,8 @@ export function FloatingActions() {
       )}
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-full bg-secondary px-4 py-2.5 text-sm font-medium text-secondary-foreground shadow-lg transition hover:bg-secondary/80"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 rounded-full bg-secondary px-4 py-2.5 text-sm font-medium text-secondary-foreground shadow-lg transition hover:bg-secondary/80 lg:hidden"
       >
         {open ? <ChevronUp className="h-4 w-4 rotate-180" /> : <Sparkles className="h-4 w-4" />}
         {t("bookActions.title")}

@@ -1,6 +1,7 @@
 import OpenAI, { AzureOpenAI } from "openai";
 import type { AIIntegration, AIPricing, AppSettings, ChatCapability, ChatModel } from "@/types/settings";
 import { chatDelta, useCostsStore } from "@/costs/costsStore";
+import { flattenLlmContent, useLlmDebugStore, type LlmDebugMessage } from "@/debug/llmDebugStore";
 
 export type LlmContentPart =
   | { type: "text"; text: string }
@@ -114,7 +115,7 @@ export async function completeText(
   integration: AIIntegration,
   messages: LlmMessage[],
   purpose: "writing" | "review" = "writing",
-  options?: { signal?: AbortSignal; capability?: ChatCapability; modelName?: string },
+  options?: { signal?: AbortSignal; capability?: ChatCapability; modelName?: string; label?: string },
 ): Promise<string> {
   const { model, pricing } = resolveModelForCall(integration, purpose, options);
 
@@ -129,30 +130,45 @@ export async function completeText(
       : message.content,
   }));
 
-  if (integration.provider === "azure_openai") {
-    const client = new AzureOpenAI({
-      endpoint: integration.endpoint ?? "",
-      apiKey: integration.apiKey,
-      apiVersion: integration.apiVersion || "2024-10-21",
-      dangerouslyAllowBrowser: true,
-    });
-    const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
-    recordChatUsage(model, pricing, response.usage);
-    return response.choices[0]?.message?.content ?? "";
-  }
+  const debugMessages: LlmDebugMessage[] = messages.map((m) => ({ role: m.role, content: flattenLlmContent(m.content) }));
+  const debugId = useLlmDebugStore.getState().begin({ kind: "chat", label: options?.label ?? purpose, model, messages: debugMessages });
 
-  if (integration.provider === "openai") {
-    const client = new OpenAI({
-      apiKey: integration.apiKey,
-      baseURL: integration.endpoint || "https://api.openai.com/v1",
-      dangerouslyAllowBrowser: true,
-    });
-    const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
-    recordChatUsage(model, pricing, response.usage);
-    return response.choices[0]?.message?.content ?? "";
-  }
+  try {
+    if (integration.provider === "azure_openai") {
+      const client = new AzureOpenAI({
+        endpoint: integration.endpoint ?? "",
+        apiKey: integration.apiKey,
+        apiVersion: integration.apiVersion || "2024-10-21",
+        dangerouslyAllowBrowser: true,
+      });
+      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
+      recordChatUsage(model, pricing, response.usage);
+      const text = response.choices[0]?.message?.content ?? "";
+      finishChatDebug(debugId, pricing, response.usage, text);
+      return text;
+    }
 
-  throw new Error("Microsoft 365 Copilot is not yet wired into the in-browser assistant.");
+    if (integration.provider === "openai") {
+      const client = new OpenAI({
+        apiKey: integration.apiKey,
+        baseURL: integration.endpoint || "https://api.openai.com/v1",
+        dangerouslyAllowBrowser: true,
+      });
+      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
+      recordChatUsage(model, pricing, response.usage);
+      const text = response.choices[0]?.message?.content ?? "";
+      finishChatDebug(debugId, pricing, response.usage, text);
+      return text;
+    }
+
+    useLlmDebugStore.getState().finish(debugId, { status: "error", error: "Microsoft 365 Copilot is not wired into the in-browser assistant." });
+    throw new Error("Microsoft 365 Copilot is not yet wired into the in-browser assistant.");
+  } catch (err) {
+    if (integration.provider !== "m365_copilot") {
+      useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
+    }
+    throw err;
+  }
 }
 
 /**
@@ -189,6 +205,7 @@ export async function classifyConfirmation(settings: AppSettings, utterance: str
     tool_choice: { type: "function", function: { name: "confirm" } },
   };
 
+  const debugId = useLlmDebugStore.getState().begin({ kind: "chat", label: "confirm", model, messages: [{ role: "user", content: utterance }] });
   try {
     const client = integration.provider === "azure_openai"
       ? new AzureOpenAI({ endpoint: integration.endpoint ?? "", apiKey: integration.apiKey, apiVersion: integration.apiVersion || "2024-10-21", dangerouslyAllowBrowser: true })
@@ -198,8 +215,11 @@ export async function classifyConfirmation(settings: AppSettings, utterance: str
     const call = (response as { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> }).choices?.[0]?.message?.tool_calls?.[0];
     const args = call?.function?.arguments ? JSON.parse(call.function.arguments) : null;
     const decision = args?.decision;
-    return decision === "yes" || decision === "no" ? decision : "unclear";
-  } catch {
+    const result = decision === "yes" || decision === "no" ? decision : "unclear";
+    finishChatDebug(debugId, pricing, (response as { usage?: unknown }).usage, `decision: ${result}`);
+    return result;
+  } catch (err) {
+    useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
     return "unclear";
   }
 }
@@ -213,4 +233,14 @@ function recordChatUsage(model: string, pricing: AIPricing | undefined, usage: u
   const cachedTokens = u.prompt_tokens_details?.cached_tokens ?? 0;
   if (!inputTokens && !outputTokens) return;
   useCostsStore.getState().recordCurrent(chatDelta({ inputTokens, cachedTokens, outputTokens }, pricing), model);
+}
+
+/** Complete a debug entry from a chat response, computing per-request cost. */
+function finishChatDebug(id: string, pricing: AIPricing | undefined, usage: unknown, response: string): void {
+  const u = usage as { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | undefined;
+  const inputTokens = u?.prompt_tokens ?? 0;
+  const outputTokens = u?.completion_tokens ?? 0;
+  const cachedTokens = u?.prompt_tokens_details?.cached_tokens ?? 0;
+  const cost = pricing ? chatDelta({ inputTokens, cachedTokens, outputTokens }, pricing).chatCost : undefined;
+  useLlmDebugStore.getState().finish(id, { status: "done", response, inputTokens, cachedTokens, outputTokens, cost });
 }

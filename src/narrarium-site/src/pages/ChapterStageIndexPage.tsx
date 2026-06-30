@@ -48,21 +48,29 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
 
   function paraSlugOf(path: string) { return (path.split("/").pop() ?? "").replace(/\.md$/i, ""); }
 
-  async function startGen(kind: GenKind, paraNumber: string, paraSlug: string) {
-    setGenKind(kind); setGenPara(paraSlug); setGenGw(""); setGenText(""); setGenOpen(true); setGenLoading(true);
+  function startGen(kind: GenKind, _paraNumber: string, paraSlug: string) {
+    // Open the preview empty; generation only starts when the user clicks Generate.
+    setGenKind(kind); setGenPara(paraSlug); setGenGw(""); setGenText(""); setGenOpen(true); setGenLoading(false);
+  }
+
+  async function runGen() {
+    const kind = genKind;
+    const paraSlug = genPara;
+    const paraNumber = paraSlug.match(/^(\d{3})/)?.[1] ?? "";
+    setGenLoading(true);
     try {
-      const p = chapter!.paragraphs.find((x) => x.number === paraNumber);
+      const p = chapter!.paragraphs.find((x) => x.number === paraNumber || paraSlugOf(x.path) === paraSlug);
       if (!p) throw new Error("paragraph not found");
       const load = (path?: string) => path ? loadFileContent(token, book!.owner, book!.repo, path, branch).then(stripFrontmatter).catch(() => "") : Promise.resolve("");
       if (kind === "script") {
         const prose = (await load(p.draftPath)) || (await load(p.path));
-        setGenText(await proseToScript(src(), prose, ""));
+        setGenText(await proseToScript(src(), prose, genGw));
       } else if (kind === "draft") {
         const script = await load(p.scriptPath);
-        setGenText(await scriptToProse(src(), script, ""));
+        setGenText(await scriptToProse(src(), script, genGw));
       } else {
         const draft = (await load(p.draftPath)) || (await load(p.path));
-        setGenText(await refineProse(src(), draft, ""));
+        setGenText(await refineProse(src(), draft, genGw));
       }
     } catch (err) {
       toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
@@ -141,7 +149,7 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
         ghostwriters={structure?.ghostwriters ?? []}
         ghostwriter={genGw}
         onGhostwriter={setGenGw}
-        onRegenerate={() => { const p = chapter.paragraphs.find((x) => paraSlugOf(x.path) === genPara); if (p) void startGen(genKind, p.number, genPara); }}
+        onRegenerate={() => void runGen()}
         onChange={setGenText}
         onConfirm={() => void applyGen()}
         onCancel={() => setGenOpen(false)}

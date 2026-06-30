@@ -9,6 +9,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { useRegisterPageSave } from "@/store/saveStore";
 import { resolveBookToken } from "@/types/settings";
 import { createOrUpdateTextFile, loadFileContent } from "@/github/githubClient";
 
@@ -49,6 +50,8 @@ export function WritingStylePage() {
       toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
     } finally { setSaving(false); }
   }
+
+  useRegisterPageSave({ dirty: body !== saved, enabled: Boolean(book && token), onSave: () => save() });
 
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
 

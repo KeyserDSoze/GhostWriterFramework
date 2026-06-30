@@ -26,6 +26,7 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { improveProse, synonymsFor, type PipelineSource } from "@/narrarium/pipeline";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
+import { useRegisterPageSave } from "@/store/saveStore";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
 
@@ -163,6 +164,8 @@ export function ParagraphPage() {
   const isDirty =
     body !== savedBody ||
     JSON.stringify(entries) !== JSON.stringify(savedEntries);
+
+  useRegisterPageSave({ dirty: isDirty, enabled: Boolean(paragraph && book), onSave: () => handleSave() });
 
   // ── Load ──────────────────────────────────────────────────────────────────
   useEffect(() => {

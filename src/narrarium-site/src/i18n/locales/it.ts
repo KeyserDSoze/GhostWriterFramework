@@ -578,6 +578,8 @@ const it = {
     ghostwriter: "Ghostwriter",
     defaultStyle: "Stile predefinito",
     regenerate: "Rigenera",
+    generate: "Genera",
+    generateHint: "Premi Genera per creare l'anteprima. Puoi scegliere un ghostwriter prima di generare.",
     generating: "Generazione in corso…",
     apply: "Applica",
     created: "Creato {{path}}",
@@ -600,7 +602,22 @@ const it = {
     paste: "Incolla",
     specialPaste: "Incolla speciale",
     noHistory: "Nessuna copia recente.",
-    back: "Indietro"
+    back: "Indietro",
+    save: "Salva",
+    bookActions: "Azioni libro…"
+  },
+  debug: {
+    title: "Richieste AI",
+    subtitle: "Storico ultimi 10 giorni · costo totale {{cost}}",
+    requests: "{{count}} richieste",
+    inFlight: "{{count}} in corso…",
+    empty: "Nessuna richiesta registrata.",
+    clear: "Svuota",
+    model: "Modello",
+    cost: "Costo",
+    tokensIn: "Token input",
+    tokensOut: "Token output",
+    response: "Risposta"
   },
   costs: {
     title: "Costi",

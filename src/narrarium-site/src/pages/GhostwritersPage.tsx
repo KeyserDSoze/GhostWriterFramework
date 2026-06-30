@@ -11,6 +11,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { useRegisterPageSave } from "@/store/saveStore";
 import { resolveBookToken } from "@/types/settings";
 import { createFile, deleteFile, readFileWithSha, updateFile } from "@/github/githubClient";
 import { emptyGhostwriter, parseGhostwriter, serializeGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
@@ -72,6 +73,8 @@ export function GhostwritersPage() {
       toast({ title: t("ghostwriters.saveFailed"), description: String(err), variant: "destructive" });
     } finally { setBusy(false); }
   }
+
+  useRegisterPageSave({ dirty: Boolean(profile), enabled: Boolean(profile && book && token), onSave: () => save() });
 
   async function remove() {
     if (!profile || !book || !token) return;

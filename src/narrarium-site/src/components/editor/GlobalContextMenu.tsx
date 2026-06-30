@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ClipboardPaste, Copy, Scissors, Sparkles, TextCursorInput, Wand2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { ClipboardPaste, Copy, LayoutGrid, Save, Scissors, Sparkles, TextCursorInput, Wand2 } from "lucide-react";
 import { useClipboardStore } from "@/clipboard/clipboardStore";
 import { useProseEditorStore, type ProseEditorActions } from "@/components/editor/proseEditorStore";
+import { useContextualActions } from "@/hooks/useContextualActions";
+import { useSaveStore } from "@/store/saveStore";
+import { useUiStore } from "@/store/uiStore";
 
 type Editable = HTMLTextAreaElement | HTMLInputElement;
 
@@ -29,12 +33,19 @@ const CLOSED: MenuState = { open: false, x: 0, y: 0, editable: null, selection: 
 
 export function GlobalContextMenu() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { items, push } = useClipboardStore();
   const forElement = useProseEditorStore((s) => s.forElement);
+  const { actions, hasBookActions } = useContextualActions();
+  const saveReg = useSaveStore((s) => s.current);
+  const setActionsOpen = useUiStore((s) => s.setActionsOpen);
   const [menu, setMenu] = useState<MenuState>(CLOSED);
   const [showHistory, setShowHistory] = useState(false);
   const [fab, setFab] = useState<{ x: number; y: number; editable: Editable | null } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Whether the menu has anything contextual to show beyond text actions.
+  const hasContextActions = actions.length > 0 || hasBookActions || Boolean(saveReg);
 
   const selectionString = (editable: Editable | null) => {
     if (editable) return editable.value.slice(editable.selectionStart ?? 0, editable.selectionEnd ?? 0);
@@ -44,8 +55,8 @@ export function GlobalContextMenu() {
   const openAt = (x: number, y: number, target: EventTarget | null) => {
     const editable = isEditable(target) ? target : null;
     const sel = selectionString(editable);
-    // Don't open custom menu when there is nothing actionable (no editable + no selection).
-    if (!editable && !sel.trim()) return false;
+    // Open when there is something actionable: an editable, a selection, or contextual actions.
+    if (!editable && !sel.trim() && !hasContextActions) return false;
     const pad = 8;
     const width = 234;
     const left = Math.min(x, window.innerWidth - width - pad);
@@ -223,6 +234,29 @@ export function GlobalContextMenu() {
             </div>
           ) : (
             <div className="flex flex-col">
+              {hasContextActions && (
+                <>
+                  {actions.map((action) => (
+                    <MenuItem
+                      key={action.id}
+                      icon={action.icon}
+                      label={action.label}
+                      onClick={() => {
+                        if (action.to) navigate(action.to);
+                        else void action.run?.();
+                        close();
+                      }}
+                    />
+                  ))}
+                  {saveReg && (
+                    <MenuItem icon={<Save className="h-4 w-4" />} label={t("ctx.save")} disabled={!saveReg.dirty} onClick={() => { void saveReg.save(); close(); }} />
+                  )}
+                  {hasBookActions && (
+                    <MenuItem icon={<LayoutGrid className="h-4 w-4" />} label={t("ctx.bookActions")} onClick={() => { setActionsOpen(true); close(); }} />
+                  )}
+                  {(menu.prose || menu.editable || menu.selection) && <div className="my-1 h-px bg-border" />}
+                </>
+              )}
               {menu.prose && (
                 <>
                   <MenuItem icon={<Wand2 className="h-4 w-4" />} label={menu.selection ? t("ctx.improveSelection") : t("ctx.improveAll")} onClick={() => { menu.prose!.improve(menu.selection || null); close(); }} />
@@ -234,7 +268,7 @@ export function GlobalContextMenu() {
               <MenuItem icon={<Copy className="h-4 w-4" />} label={t("ctx.copy")} onClick={() => void doCopy()} disabled={!menu.selection} />
               {menu.editable && <MenuItem icon={<Scissors className="h-4 w-4" />} label={t("ctx.cut")} onClick={() => void doCut()} disabled={!menu.selection} />}
               {menu.editable && <MenuItem icon={<ClipboardPaste className="h-4 w-4" />} label={t("ctx.paste")} onClick={() => void doPaste()} />}
-              <MenuItem icon={<ClipboardPaste className="h-4 w-4" />} label={t("ctx.specialPaste")} onClick={() => setShowHistory(true)} />
+              {(menu.editable || menu.selection) && <MenuItem icon={<ClipboardPaste className="h-4 w-4" />} label={t("ctx.specialPaste")} onClick={() => setShowHistory(true)} />}
             </div>
           )}
         </div>

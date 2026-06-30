@@ -16,6 +16,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { resolveBookToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
+import { useRegisterPageSave } from "@/store/saveStore";
 import { useProseAssist } from "@/components/editor/useProseAssist";
 
 interface MetaEntry {
@@ -135,6 +136,8 @@ export function CanonEntityPage() {
 
   const isDirty =
     body !== savedBody || JSON.stringify(entries) !== JSON.stringify(savedEntries);
+
+  useRegisterPageSave({ dirty: isDirty, enabled: Boolean(book && path), onSave: () => handleSave() });
 
   useEffect(() => {
     const targetKey = book && path ? `${branch}:${path}` : null;

@@ -27,10 +27,15 @@ function isInsideFloatingLayer(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest("[data-narrarium-floating-layer]"));
 }
 
+/** Radix exposes the real DOM target differently per event; check both. */
+function floatingEventTarget(event: { target?: EventTarget | null; detail?: { originalEvent?: { target?: EventTarget | null } } }): EventTarget | null {
+  return event.detail?.originalEvent?.target ?? event.target ?? null;
+}
+
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { hideCloseButton?: boolean }
->(({ className, children, onInteractOutside, hideCloseButton, ...props }, ref) => (
+>(({ className, children, onInteractOutside, onPointerDownOutside, onFocusOutside, hideCloseButton, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
@@ -39,9 +44,21 @@ const DialogContent = React.forwardRef<
         "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
         className,
       )}
+      onPointerDownOutside={(event) => {
+        onPointerDownOutside?.(event);
+        if (!event.defaultPrevented && isInsideFloatingLayer(floatingEventTarget(event))) {
+          event.preventDefault();
+        }
+      }}
+      onFocusOutside={(event) => {
+        onFocusOutside?.(event);
+        if (!event.defaultPrevented && isInsideFloatingLayer(floatingEventTarget(event))) {
+          event.preventDefault();
+        }
+      }}
       onInteractOutside={(event) => {
         onInteractOutside?.(event);
-        if (!event.defaultPrevented && isInsideFloatingLayer(event.target)) {
+        if (!event.defaultPrevented && isInsideFloatingLayer(floatingEventTarget(event))) {
           event.preventDefault();
         }
       }}

@@ -4,6 +4,7 @@ import type { AIIntegration, AppSettings } from "@/types/settings";
 import { createFile, createOrUpdateBinaryFile, loadBinaryFileContent, readFileWithSha, updateFile } from "@/github/githubClient";
 import { completeText, resolveWritingIntegration } from "@/assistant/llm";
 import { imageTokenDelta, useCostsStore } from "@/costs/costsStore";
+import { useLlmDebugStore } from "@/debug/llmDebugStore";
 
 export type AssetSubjectKind = "book" | "chapter" | "paragraph";
 export type AssetPromptSource = "custom" | "text" | "resume";
@@ -180,23 +181,30 @@ export async function generateAssetImage(input: {
   if (!integration.apiKey) throw new Error("Missing API key for image generation.");
   const model = integration.modelImageGeneration?.trim() || "gpt-image-1";
   const client = createImageClient(integration);
-  const response = await client.images.generate({
-    model,
-    prompt: input.prompt,
-    n: 1,
-    size: imageSize(input.orientation),
-    output_format: "png",
-    response_format: model === "gpt-image-1" ? undefined : "b64_json",
-  } as never);
-  recordImageUsage(integration, response);
-  const image = response.data?.[0];
-  if (image?.b64_json) return { bytes: base64ToBytes(image.b64_json), provider: integration.provider, model };
-  if (image?.url) {
-    const fetched = await fetch(image.url);
-    if (!fetched.ok) throw new Error(`Image download failed: ${fetched.status}`);
-    return { bytes: new Uint8Array(await fetched.arrayBuffer()), provider: integration.provider, model };
+  const debugId = useLlmDebugStore.getState().begin({ kind: "image", label: "image", model, messages: [{ role: "input", content: input.prompt }] });
+  try {
+    const response = await client.images.generate({
+      model,
+      prompt: input.prompt,
+      n: 1,
+      size: imageSize(input.orientation),
+      output_format: "png",
+      response_format: model === "gpt-image-1" ? undefined : "b64_json",
+    } as never);
+    const cost = recordImageUsage(integration, response);
+    useLlmDebugStore.getState().finish(debugId, { status: "done", response: `${imageSize(input.orientation)} png`, cost });
+    const image = response.data?.[0];
+    if (image?.b64_json) return { bytes: base64ToBytes(image.b64_json), provider: integration.provider, model };
+    if (image?.url) {
+      const fetched = await fetch(image.url);
+      if (!fetched.ok) throw new Error(`Image download failed: ${fetched.status}`);
+      return { bytes: new Uint8Array(await fetched.arrayBuffer()), provider: integration.provider, model };
+    }
+    throw new Error("Image provider returned no image.");
+  } catch (err) {
+    useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
+    throw err;
   }
-  throw new Error("Image provider returned no image.");
 }
 
 function createImageClient(integration: AIIntegration): AzureOpenAI | OpenAI {
@@ -205,25 +213,27 @@ function createImageClient(integration: AIIntegration): AzureOpenAI | OpenAI {
     : new OpenAI({ apiKey: integration.apiKey, baseURL: integration.endpoint || "https://api.openai.com/v1", dangerouslyAllowBrowser: true });
 }
 
-function recordImageUsage(integration: AIIntegration, response: unknown): void {
+function recordImageUsage(integration: AIIntegration, response: unknown): number | undefined {
   const pricing = integration.pricing;
-  if (!pricing) return;
+  if (!pricing) return undefined;
   const usage = (response as { usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { text_tokens?: number; image_tokens?: number; cached_text_tokens?: number; cached_image_tokens?: number; cached_tokens?: number } } }).usage;
   const details = usage?.input_tokens_details;
   if (usage && (usage.output_tokens || usage.input_tokens)) {
     const inputText = details?.text_tokens ?? usage.input_tokens ?? 0;
     const inputImage = details?.image_tokens ?? 0;
-    useCostsStore.getState().recordCurrent(imageTokenDelta({
+    const delta = imageTokenDelta({
       inputTextTokens: inputText,
       cachedInputTextTokens: details?.cached_text_tokens ?? 0,
       inputImageTokens: inputImage,
       cachedInputImageTokens: details?.cached_image_tokens ?? 0,
       outputTokens: usage.output_tokens ?? 0,
-    }, pricing));
-    return;
+    }, pricing);
+    useCostsStore.getState().recordCurrent(delta);
+    return delta.imageCost;
   }
   // No token usage returned: count the image without a cost.
   useCostsStore.getState().recordCurrent({ imageCount: 1 });
+  return undefined;
 }
 
 function parseAssetMarkdown(raw: string): {

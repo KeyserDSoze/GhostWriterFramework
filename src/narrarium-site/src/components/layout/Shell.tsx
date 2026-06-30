@@ -7,9 +7,11 @@ import { Topbar } from "./Topbar";
 import { DossierDock } from "./DossierDock";
 import { FloatingActions } from "./FloatingActions";
 import { GlobalContextMenu } from "@/components/editor/GlobalContextMenu";
+import { LlmDebugPanel } from "@/components/debug/LlmDebugPanel";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useTokenRefresh } from "@/hooks/useTokenRefresh";
+import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCostsSync } from "@/costs/useCostsSync";
 import { useCostsStore } from "@/costs/costsStore";
 import { useClipboardSync } from "@/clipboard/useClipboardSync";
@@ -31,6 +33,7 @@ export function Shell() {
   useTokenRefresh();
   useCostsSync();
   useClipboardSync();
+  useGlobalShortcuts();
 
   useEffect(() => {
     const route = parseAppRoute(location.pathname);
@@ -84,6 +87,7 @@ export function Shell() {
       <DossierDock />
       <FloatingActions />
       <GlobalContextMenu />
+      <LlmDebugPanel />
       <Suspense fallback={null}>
         <AssistantPanel />
       </Suspense>

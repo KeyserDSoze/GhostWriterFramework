@@ -19,6 +19,7 @@ import { GeneratePreviewDialog } from "@/components/book/GeneratePreviewDialog";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { ScriptEditor } from "@/components/script/ScriptEditor";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
+import { useRegisterPageSave } from "@/store/saveStore";
 import { useProseAssist } from "@/components/editor/useProseAssist";
 import { parseScript, serializeScript, type ScriptDoc } from "@/narrarium/script/model";
 import { proseToScript, refineProse, scriptToProse, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
@@ -139,6 +140,8 @@ export function WorkspaceDocPage() {
     : `/app/books/${bookId}/chapters/${chapterId}`;
 
   const isDirty = body !== savedBody || JSON.stringify(entries) !== JSON.stringify(savedEntries);
+
+  useRegisterPageSave({ dirty: isDirty, enabled: Boolean(book && token), onSave: () => handleSave() });
 
   useEffect(() => {
     const targetKey = book && path ? `${branch}:${path}` : null;
@@ -280,12 +283,14 @@ export function WorkspaceDocPage() {
     }
   }
 
-  async function startPipeline(mode: "toDraft" | "toFinal") {
+  function startPipeline(mode: "toDraft" | "toFinal") {
     if (!book || !token || !structure || !chapter || !paraSlug) return;
     setPipelineMode(mode);
     setPipelineGw(currentGhostwriter);
+    setPipelineText("");
+    setPipelineLoading(false);
     setPipelineOpen(true);
-    await runPipeline(mode, currentGhostwriter);
+    // Generation starts only when the user clicks Generate inside the dialog.
   }
 
   async function runPipeline(mode: "toDraft" | "toFinal", gw: string) {

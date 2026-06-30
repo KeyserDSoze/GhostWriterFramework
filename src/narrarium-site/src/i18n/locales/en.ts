@@ -578,6 +578,8 @@ const en = {
     ghostwriter: "Ghostwriter",
     defaultStyle: "Default style",
     regenerate: "Regenerate",
+    generate: "Generate",
+    generateHint: "Press Generate to create the preview. You can pick a ghostwriter before generating.",
     generating: "Generating…",
     apply: "Apply",
     created: "Created {{path}}",
@@ -600,7 +602,22 @@ const en = {
     paste: "Paste",
     specialPaste: "Special paste",
     noHistory: "No recent copies.",
-    back: "Back"
+    back: "Back",
+    save: "Save",
+    bookActions: "Book actions…"
+  },
+  debug: {
+    title: "AI requests",
+    subtitle: "Last 10 days · total cost {{cost}}",
+    requests: "{{count}} requests",
+    inFlight: "{{count}} in flight…",
+    empty: "No requests recorded.",
+    clear: "Clear",
+    model: "Model",
+    cost: "Cost",
+    tokensIn: "Input tokens",
+    tokensOut: "Output tokens",
+    response: "Response"
   },
   costs: {
     title: "Costs",
