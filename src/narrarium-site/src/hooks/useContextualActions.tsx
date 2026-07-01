@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ClipboardCheck, FileEdit, FileText, NotebookText, Network, PenLine, Wand2 } from "lucide-react";
+import { ClipboardCheck, Columns2, FileEdit, FileText, NotebookText, Network, PenLine, Wand2 } from "lucide-react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useBookStructure } from "@/hooks/useBookStructure";
@@ -102,6 +102,10 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
     actions.push({ id: "script", label: paragraph.scriptPath ? t("chapter.openScript") : t("chapter.createScript"), run: () => openOrCreate("script"), icon: <Network className="h-4 w-4" /> });
     actions.push({ id: "draft", label: paragraph.draftPath ? t("chapter.openDraft") : t("chapter.createDraft"), run: () => openOrCreate("draft"), icon: <FileEdit className="h-4 w-4" /> });
     actions.push({ id: "final", label: t("stageIndex.final"), to: base, icon: <FileText className="h-4 w-4" /> });
+    // Split (draft|final side by side) is desktop-only.
+    if (typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches) {
+      actions.push({ id: "split", label: t("paragraph.splitView"), to: `${base}/split`, icon: <Columns2 className="h-4 w-4" /> });
+    }
     actions.push({ id: "eval", label: t("chapter.openEvaluation"), to: `${base}/workspace/evaluation`, icon: <ClipboardCheck className="h-4 w-4" /> });
   } else if (chapter && chapterId) {
     const base = `/app/books/${bookId}/chapters/${chapterId}`;

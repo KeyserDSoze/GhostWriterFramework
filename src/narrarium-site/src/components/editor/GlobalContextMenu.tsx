@@ -43,6 +43,7 @@ export function GlobalContextMenu() {
   const [fab, setFab] = useState<{ x: number; y: number; editable: Editable | null } | null>(null);
   const [imageOpen, setImageOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const openAtRef = useRef<(x: number, y: number, target: EventTarget | null) => boolean>(() => false);
 
   // Whether the menu can show contextual (non-text) actions at all.
   const hasContextActions = actions.length > 0 || hasBookActions || Boolean(saveReg);
@@ -58,6 +59,7 @@ export function GlobalContextMenu() {
     const editable = isEditable(target) ? target : null;
     const sel = selectionString(editable);
     // Open when there is something actionable: an editable, a selection, or contextual actions.
+    // (hasContextActions is read fresh here because openAtRef always points at the latest closure.)
     if (!editable && !sel.trim() && !hasContextActions) return false;
     const pad = 8;
     const width = 234;
@@ -68,12 +70,13 @@ export function GlobalContextMenu() {
     setFab(null);
     return true;
   };
+  openAtRef.current = openAt;
 
   // ── Desktop: right-click ───────────────────────────────────────────────────
   useEffect(() => {
     const onContextMenu = (e: MouseEvent) => {
       if ((e.target as HTMLElement)?.closest?.("[data-no-context-menu]")) return;
-      const opened = openAt(e.clientX, e.clientY, e.target);
+      const opened = openAtRef.current(e.clientX, e.clientY, e.target);
       if (opened) { e.preventDefault(); e.stopPropagation(); }
     };
     document.addEventListener("contextmenu", onContextMenu, true);

@@ -68,7 +68,7 @@ function CanonList({
           className="flex items-center justify-between py-2 text-sm"
         >
           <span className="font-medium">
-            {slugToTitle(f.path.split("/").pop()?.replace(/\.md$/, "") ?? f.path)}
+            {f.name ?? slugToTitle(f.path.split("/").pop()?.replace(/\.md$/, "") ?? f.path)}
           </span>
           <div className="flex items-center gap-2">
             <span className="hidden text-xs text-muted-foreground lg:inline">{f.path}</span>
@@ -120,7 +120,7 @@ export function BookPage() {
       const content = await loadFileContent(token, book!.owner, book!.repo, file.path, branch);
       pinDossier({
         id: file.path,
-        title: slugToTitle(file.path.split("/").pop()?.replace(/\.md$/, "") ?? file.path),
+        title: file.name ?? slugToTitle(file.path.split("/").pop()?.replace(/\.md$/, "") ?? file.path),
         section,
         path: file.path,
         content,

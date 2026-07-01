@@ -7,6 +7,8 @@ export interface BookFile {
   size: number;
   /** Present only when the file was fetched with explicit content request */
   content?: string;
+  /** Display name from the file's frontmatter (title/name); falls back to the slug when absent. */
+  name?: string;
 }
 
 export interface Ghostwriter {

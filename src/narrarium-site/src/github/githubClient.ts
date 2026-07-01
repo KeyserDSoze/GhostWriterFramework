@@ -79,6 +79,56 @@ export async function listUserRepos(token: string): Promise<RepoSummary[]> {
 
 // ─── Load the full book structure from a repository ──────────────────────────
 
+/** Extract a display name (title/name) from a markdown file's frontmatter block. */
+function nameFromFrontmatter(raw: string): string | undefined {
+  const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
+  const block = fm ? fm[1] : raw.slice(0, 600);
+  const match = /^(?:title|name):\s*(.+)$/m.exec(block);
+  if (!match) return undefined;
+  const value = match[1].trim().replace(/^["']|["']$/g, "").trim();
+  return value || undefined;
+}
+
+/**
+ * Read frontmatter title/name for many files in a few GraphQL requests instead of
+ * one REST call per file. Returns a map path → display name (only where found).
+ */
+async function fetchFrontmatterNames(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  branch: string,
+  paths: string[],
+): Promise<Record<string, string>> {
+  const result: Record<string, string> = {};
+  const unique = [...new Set(paths)].filter(Boolean);
+  const CHUNK = 60;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const chunk = unique.slice(i, i + CHUNK);
+    const fields = chunk
+      .map((p, idx) => {
+        const expression = JSON.stringify(`${branch}:${p}`);
+        return `f${idx}: object(expression: ${expression}) { ... on Blob { text } }`;
+      })
+      .join("\n");
+    const query = `query($owner:String!,$repo:String!){ repository(owner:$owner,name:$repo){ ${fields} } }`;
+    try {
+      const data = await octokit.graphql<{ repository: Record<string, { text?: string } | null> }>(query, { owner, repo });
+      const repository = data.repository ?? {};
+      chunk.forEach((p, idx) => {
+        const text = repository[`f${idx}`]?.text;
+        if (text) {
+          const name = nameFromFrontmatter(text);
+          if (name) result[p] = name;
+        }
+      });
+    } catch {
+      // GraphQL failed for this chunk (e.g. permissions) → leave those names to fall back.
+    }
+  }
+  return result;
+}
+
 export async function loadBookStructure(
   token: string,
   owner: string,
@@ -122,6 +172,13 @@ export async function loadBookStructure(
     } catch { /* no book.md – use defaults */ }
   }
 
+  // ── Frontmatter display names (chapters, paragraphs, canon) via GraphQL batch ──
+  const canonPrefixes = ["characters", "locations", "factions", "items", "timelines", "secrets"];
+  const canonPaths = allPaths.filter((p) => p.endsWith(".md") && canonPrefixes.some((prefix) => p.startsWith(`${prefix}/`)));
+  const chapterMdPaths = allPaths.filter((p) => /^chapters\/[^/]+\/chapter\.md$/.test(p));
+  const paragraphPaths = allPaths.filter((p) => /^chapters\/[^/]+\/\d{3}(?:-[^/]+)?\.md$/.test(p) && !p.includes("/drafts/"));
+  const nameMap = await fetchFrontmatterNames(octokit, owner, repo, branch, [...chapterMdPaths, ...paragraphPaths, ...canonPaths]);
+
   // ── Canon sections ────────────────────────────────────────────────────────
   function filesUnder(prefix: string): BookFile[] {
     return allPaths
@@ -130,6 +187,7 @@ export async function loadBookStructure(
         path: p,
         sha: treeData.tree.find((n) => n.path === p)?.sha ?? "",
         size: treeData.tree.find((n) => n.path === p)?.size ?? 0,
+        name: nameMap[p],
       }));
   }
 
@@ -162,7 +220,7 @@ export async function loadBookStructure(
       const imagePromptPath = `assets/chapters/${slug}/paragraphs/${paragraphSlug}/primary.md`;
       return {
         number: num,
-        title: slugToTitle(filename.replace(/\.md$/, "")),
+        title: nameMap[p] ?? slugToTitle(filename.replace(/\.md$/, "")),
         path: p,
         draftPath: allPaths.includes(draftPath) ? draftPath : undefined,
         scriptPath: allPaths.includes(scriptPath) ? scriptPath : undefined,
@@ -181,7 +239,7 @@ export async function loadBookStructure(
     return {
       slug,
       path: folder,
-      title: slugToTitle(slug),
+      title: nameMap[`${folder}/chapter.md`] ?? slugToTitle(slug),
       paragraphs,
       writingStylePath,
       draftPath,
