@@ -1,12 +1,22 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
-import { ClipboardPaste, Copy, Image as ImageIcon, Save, Scissors, Sparkles, TextCursorInput, Wand2 } from "lucide-react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { BookOpen, ClipboardPaste, Copy, Image as ImageIcon, Save, Scissors, Sparkles, TextCursorInput, Wand2 } from "lucide-react";
 import { useClipboardStore } from "@/clipboard/clipboardStore";
 import { useProseEditorStore, type ProseEditorActions } from "@/components/editor/proseEditorStore";
 import { useContextualActions } from "@/hooks/useContextualActions";
 import { useSaveStore } from "@/store/saveStore";
 import { AssetImageDialog } from "@/components/book/AssetImageDialog";
+import { useBooksStore } from "@/store/booksStore";
+import { useSettingsStore } from "@/store/settingsStore";
+import { useWorkingBranch } from "@/github/useWorkingBranch";
+import { parseAppRoute } from "@/assistant/context";
+import { resolveBookToken } from "@/types/settings";
+import { slugToTitle } from "@/github/githubClient";
+import { openCanonDossier } from "@/narrarium/openDossier";
+import { CANON_SECTION_ORDER, type CanonSection } from "@/lib/canonSections";
+import type { BookStructure } from "@/types/book";
+import { useToast } from "@/components/ui/use-toast";
 
 type Editable = HTMLTextAreaElement | HTMLInputElement;
 
@@ -49,6 +59,51 @@ export function GlobalContextMenu() {
   const hasContextActions = actions.length > 0 || hasBookActions || Boolean(saveReg);
   // Contextual actions are only useful when NOT working on a text selection.
   const showContextActions = hasContextActions && !menu.selection.trim();
+
+  // Book context for the "Open dossier" action.
+  const { toast } = useToast();
+  const location = useLocation();
+  const { structures } = useBooksStore();
+  const { settings } = useSettingsStore();
+  const dossierRoute = parseAppRoute(location.pathname);
+  const dossierBookId = "bookId" in dossierRoute ? dossierRoute.bookId : undefined;
+  const dossierStructure = dossierBookId ? structures[dossierBookId] : undefined;
+  const { branch: dossierBranch } = useWorkingBranch(dossierBookId);
+
+  // The word to look up: the selection, or the word under the caret in an editable.
+  const dossierWord = (() => {
+    const sel = menu.selection.trim();
+    if (sel) return sel;
+    const el = menu.editable;
+    if (el) {
+      const value = el.value;
+      const pos = el.selectionStart ?? 0;
+      const left = value.slice(0, pos).match(/[\p{L}\p{M}'’-]+$/u)?.[0] ?? "";
+      const right = value.slice(pos).match(/^[\p{L}\p{M}'’-]+/u)?.[0] ?? "";
+      return (left + right).trim();
+    }
+    return "";
+  })();
+
+  const dossierMatch = (() => {
+    const word = dossierWord.toLowerCase().replace(/[^\p{L}\p{M}\s'’-]/gu, "").trim();
+    if (word.length < 3 || !dossierStructure) return null;
+    return findClosestEntity(word, dossierStructure);
+  })();
+
+  async function openDossierForWord() {
+    if (!dossierMatch || !dossierBookId) return;
+    const book = settings.books.find((b) => b.id === dossierBookId);
+    const token = book ? resolveBookToken(book, settings) : "";
+    if (!book || !token) return;
+    close();
+    try {
+      await openCanonDossier({ token, owner: book.owner, repo: book.repo, branch: dossierBranch, bookId: dossierBookId, section: dossierMatch.section, file: { path: dossierMatch.path, name: dossierMatch.name, imagePath: dossierMatch.imagePath } });
+    } catch (err) {
+      toast({ title: t("dossier.openFailed"), description: String(err), variant: "destructive" });
+    }
+  }
+
 
   const selectionString = (editable: Editable | null) => {
     if (editable) return editable.value.slice(editable.selectionStart ?? 0, editable.selectionEnd ?? 0);
@@ -275,6 +330,12 @@ export function GlobalContextMenu() {
                   {menu.prose && <div className="my-1 h-px bg-border" />}
                 </>
               )}
+              {dossierMatch && (
+                <>
+                  <MenuItem icon={<BookOpen className="h-4 w-4" />} label={t("dossier.openFor", { name: dossierMatch.name })} onClick={() => void openDossierForWord()} />
+                  <div className="my-1 h-px bg-border" />
+                </>
+              )}
               {menu.prose && (
                 <>
                   <MenuItem icon={<Wand2 className="h-4 w-4" />} label={menu.selection ? t("ctx.improveSelection") : t("ctx.improveAll")} onClick={() => { menu.prose!.improve(menu.selection || null); close(); }} />
@@ -315,4 +376,30 @@ function MenuItem({ icon, label, onClick, disabled }: { icon: React.ReactNode; l
       {icon}{label}
     </button>
   );
+}
+
+interface EntityMatch { section: CanonSection; name: string; path: string; imagePath?: string }
+
+/** Find the canon entity whose name best matches a word (exact > startsWith > includes). */
+function findClosestEntity(word: string, structure: BookStructure): EntityMatch | null {
+  let best: EntityMatch | null = null;
+  let bestScore = 0;
+  for (const section of CANON_SECTION_ORDER) {
+    const files = (structure as unknown as Record<string, BookStructure["characters"]>)[section] ?? [];
+    for (const f of files) {
+      const slug = (f.path.split("/").pop() ?? "").replace(/\.md$/i, "");
+      const name = (f.name ?? slugToTitle(slug)).toLowerCase();
+      let score = 0;
+      if (name === word) score = 100;
+      else if (name.startsWith(word) || word.startsWith(name)) score = 70;
+      else if (name.includes(word) || word.includes(name)) score = 40;
+      // Prefer longer overlaps to avoid matching very short names.
+      if (score > 0) score += Math.min(name.length, word.length);
+      if (score > bestScore) {
+        bestScore = score;
+        best = { section, name: f.name ?? slugToTitle(slug), path: f.path, imagePath: f.imagePath };
+      }
+    }
+  }
+  return best;
 }

@@ -21,11 +21,11 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
-import { loadFileContent, slugToTitle } from "@/github/githubClient";
+import { slugToTitle } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type BookFile } from "@/types/book";
 import { resolveBookToken } from "@/types/settings";
-import { useDossierStore } from "@/store/dossierStore";
+import { openCanonDossier } from "@/narrarium/openDossier";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import {
   createCanonEntity,
@@ -67,14 +67,11 @@ function CanonList({
           key={f.path}
           className="flex items-center justify-between py-2 text-sm"
         >
-          <span className="font-medium">
+          <Link to={`/app/books/${bookId}/canon/${section}/${fileSlug(f.path)}`} className="font-medium hover:underline">
             {f.name ?? slugToTitle(f.path.split("/").pop()?.replace(/\.md$/, "") ?? f.path)}
-          </span>
+          </Link>
           <div className="flex items-center gap-2">
             <span className="hidden text-xs text-muted-foreground lg:inline">{f.path}</span>
-            <Button asChild variant="ghost" size="sm">
-              <Link to={`/app/books/${bookId}/canon/${section}/${fileSlug(f.path)}`}>{t("common.edit")}</Link>
-            </Button>
             <Button variant="ghost" size="sm" onClick={() => onOpen(section, f)}>
               {t("common.openDossier")}
             </Button>
@@ -98,7 +95,6 @@ export function BookPage() {
   }, [location.hash]);
   const { settings } = useSettingsStore();
   const { toast } = useToast();
-  const pinDossier = useDossierStore((state) => state.pinDossier);
   const { book, structure, loading, error, reload } = useBookStructure(bookId ?? "");
   // Kick off branch creation as soon as the structure is available
   const { branch, ensuring } = useWorkingBranch(bookId);
@@ -115,16 +111,9 @@ export function BookPage() {
   const token = resolveBookToken(book, settings);
 
   async function handleOpenDossier(section: string, file: BookFile) {
-    if (!structure || !token) return;
+    if (!structure || !token || !bookId) return;
     try {
-      const content = await loadFileContent(token, book!.owner, book!.repo, file.path, branch);
-      pinDossier({
-        id: file.path,
-        title: file.name ?? slugToTitle(file.path.split("/").pop()?.replace(/\.md$/, "") ?? file.path),
-        section,
-        path: file.path,
-        content,
-      });
+      await openCanonDossier({ token, owner: book!.owner, repo: book!.repo, branch, bookId, section, file });
     } catch (err) {
       toast({ title: t("bookPage.dossierLoadFailed"), description: String(err), variant: "destructive" });
     }

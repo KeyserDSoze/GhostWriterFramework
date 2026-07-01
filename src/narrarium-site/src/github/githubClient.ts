@@ -183,12 +183,20 @@ export async function loadBookStructure(
   function filesUnder(prefix: string): BookFile[] {
     return allPaths
       .filter((p) => p.startsWith(`${prefix}/`) && p.endsWith(".md"))
-      .map((p) => ({
-        path: p,
-        sha: treeData.tree.find((n) => n.path === p)?.sha ?? "",
-        size: treeData.tree.find((n) => n.path === p)?.size ?? 0,
-        name: nameMap[p],
-      }));
+      .map((p) => {
+        const slug = (p.split("/").pop() ?? "").replace(/\.md$/i, "");
+        // Canon assets mirror the canon path; timeline events live under assets/timelines/events/<slug>.
+        const assetBase = prefix === "timelines"
+          ? `assets/timelines/events/${slug}/primary`
+          : `assets/${prefix}/${slug}/primary`;
+        return {
+          path: p,
+          sha: treeData.tree.find((n) => n.path === p)?.sha ?? "",
+          size: treeData.tree.find((n) => n.path === p)?.size ?? 0,
+          name: nameMap[p],
+          imagePath: firstExistingImage(assetBase),
+        };
+      });
   }
 
   // ── Chapters ─────────────────────────────────────────────────────────────

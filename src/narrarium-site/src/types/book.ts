@@ -9,6 +9,8 @@ export interface BookFile {
   content?: string;
   /** Display name from the file's frontmatter (title/name); falls back to the slug when absent. */
   name?: string;
+  /** Primary image path (assets/<section>/<slug>/primary.*) when one exists. */
+  imagePath?: string;
 }
 
 export interface Ghostwriter {
