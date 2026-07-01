@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -9,6 +9,7 @@ import {
   Loader2,
   FileEdit,
   PenLine,
+  Save,
   MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -34,8 +35,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   createFile,
+  readFileWithSha,
   reorderParagraphsInChapter,
   slugToTitle,
+  updateFile,
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type Paragraph } from "@/types/book";
@@ -47,10 +50,19 @@ import {
   createParagraphEvaluationArtifact,
   createParagraphScriptArtifact,
 } from "@/narrarium/workspace";
-import { stringify } from "yaml";
+import { parseDocument, stringify } from "yaml";
 
 function stringifyFrontmatter(frontmatter: Record<string, unknown>): string {
   return `---\n${stringify(frontmatter).trimEnd()}\n---`;
+}
+
+/** Split a chapter.md into frontmatter object + body, keeping unknown keys. */
+function splitChapterDoc(raw: string): { frontmatter: Record<string, unknown>; body: string } {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
+  if (!match) return { frontmatter: {}, body: raw };
+  const doc = parseDocument(match[1]);
+  const parsed = (doc.toJSON() as Record<string, unknown>) ?? {};
+  return { frontmatter: parsed, body: match[2] };
 }
 
 export function ChapterPage() {
@@ -70,6 +82,66 @@ export function ChapterPage() {
   const token = book ? resolveBookToken(book, settings) : "";
 
   const { branch } = useWorkingBranch(bookId);
+
+  // ── Chapter title (chapter.md frontmatter) ────────────────────────────────
+  const chapterMdPath = chapter ? `${chapter.path}/chapter.md` : "";
+  const [titleValue, setTitleValue] = useState("");
+  const [savedTitle, setSavedTitle] = useState("");
+  const [chapterFm, setChapterFm] = useState<Record<string, unknown> | null>(null);
+  const [chapterBody, setChapterBody] = useState("");
+  const [chapterSha, setChapterSha] = useState("");
+  const [savingTitle, setSavingTitle] = useState(false);
+  const titleLoadedRef = useRef("");
+
+  useEffect(() => {
+    if (!chapter || !book || !token || !chapterMdPath) return;
+    const key = `${branch}:${chapterMdPath}`;
+    if (titleLoadedRef.current === key) return;
+    titleLoadedRef.current = key;
+    readFileWithSha(token, book.owner, book.repo, branch, chapterMdPath)
+      .then(({ content, sha }) => {
+        const { frontmatter, body } = splitChapterDoc(content);
+        const title = typeof frontmatter.title === "string" ? frontmatter.title : chapter.title;
+        setChapterFm(frontmatter);
+        setChapterBody(body);
+        setChapterSha(sha);
+        setTitleValue(title);
+        setSavedTitle(title);
+      })
+      .catch(() => {
+        // No chapter.md yet → seed from slug-derived title; save will create it.
+        setChapterFm({ type: "chapter", id: `chapter:${chapter.slug}`, title: chapter.title });
+        setChapterBody("");
+        setChapterSha("");
+        setTitleValue(chapter.title);
+        setSavedTitle(chapter.title);
+      });
+  }, [chapter, book, token, branch, chapterMdPath]);
+
+  async function saveChapterTitle() {
+    if (!book || !token || !chapterMdPath || !chapterFm) return;
+    const trimmed = titleValue.trim();
+    if (!trimmed || trimmed === savedTitle) return;
+    setSavingTitle(true);
+    try {
+      const nextFm = { ...chapterFm, title: trimmed };
+      const content = `${stringifyFrontmatter(nextFm)}\n\n${chapterBody.trim()}\n`;
+      if (chapterSha) {
+        const newSha = await updateFile(token, book.owner, book.repo, branch, chapterMdPath, chapterSha, content, `Rename chapter ${chapter!.slug}`);
+        setChapterSha(newSha);
+      } else {
+        await createFile(token, book.owner, book.repo, branch, chapterMdPath, content, `Create chapter.md for ${chapter!.slug}`);
+      }
+      setChapterFm(nextFm);
+      setSavedTitle(trimmed);
+      toast({ title: t("common.saved") });
+      void reload();
+    } catch (err) {
+      toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setSavingTitle(false);
+    }
+  }
 
   // ── Local paragraph list (source of truth for optimistic UI) ─────────────
   const [localParagraphs, setLocalParagraphs] = useState<Paragraph[]>(
@@ -303,8 +375,22 @@ export function ChapterPage() {
 
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">{chapter.title}</h1>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <Input
+              value={titleValue}
+              onChange={(e) => setTitleValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void saveChapterTitle(); }}
+              className="h-auto border-0 bg-transparent px-0 text-2xl font-bold tracking-tight shadow-none focus-visible:ring-0"
+              placeholder={chapter.title}
+            />
+            {titleValue.trim() && titleValue.trim() !== savedTitle && (
+              <Button size="sm" onClick={() => void saveChapterTitle()} disabled={savingTitle}>
+                {savingTitle ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1 h-3.5 w-3.5" />}
+                {t("common.save")}
+              </Button>
+            )}
+          </div>
           <p className="text-muted-foreground text-sm">
             {localParagraphs.length} paragraph
             {localParagraphs.length !== 1 ? "s" : ""}

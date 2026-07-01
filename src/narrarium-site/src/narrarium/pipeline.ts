@@ -171,3 +171,35 @@ export async function proseToScript(src: PipelineSource, prose: string, ghostwri
 
 export type { PipelineSource };
 export type { Paragraph };
+
+/** Generate a short frontmatter summary for a paragraph from its body text. */
+export async function summarizeParagraphBody(src: PipelineSource, body: string): Promise<string> {
+  const integration = resolveWritingIntegration(src.settings);
+  if (!integration) throw new Error("No AI integration configured.");
+  const clean = stripFrontmatter(body).trim();
+  const messages: LlmMessage[] = [
+    { role: "system", content: `You write a concise scene/paragraph summary for a book's canon frontmatter. 1–3 sentences, present tense, only what happens and what changes (facts, decisions, movements). No preamble, no markdown, no quotes. Write in ${LANG(src.settings)}.` },
+    { role: "user", content: `PARAGRAPH TEXT:\n${clean}\n\nWrite the summary.` },
+  ];
+  return (await completeText(integration, messages, "writing", { label: "summary:paragraph" })).trim();
+}
+
+/**
+ * Generate a chapter summary from the ordered paragraph summaries:
+ * a short opening recap, then one bullet per paragraph/scene.
+ */
+export async function summarizeChapterFromParagraphs(
+  src: PipelineSource,
+  paragraphs: Array<{ title: string; summary: string }>,
+): Promise<string> {
+  const integration = resolveWritingIntegration(src.settings);
+  if (!integration) throw new Error("No AI integration configured.");
+  const list = paragraphs
+    .map((p, i) => `${i + 1}. ${p.title}: ${p.summary}`)
+    .join("\n");
+  const messages: LlmMessage[] = [
+    { role: "system", content: `You write a chapter summary from its scene summaries. Start with a 2–4 sentence overview of the chapter, then a blank line, then one bullet ("- ") per scene in order, each a single concise sentence. No preamble, no code fences. Write in ${LANG(src.settings)}.` },
+    { role: "user", content: `SCENE SUMMARIES (in order):\n${list}\n\nWrite the chapter summary.` },
+  ];
+  return (await completeText(integration, messages, "writing", { label: "summary:chapter" })).trim();
+}

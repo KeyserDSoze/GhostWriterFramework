@@ -1,5 +1,6 @@
 import { loadFileContent, loadBinaryFileContent, slugToTitle } from "@/github/githubClient";
 import { useDossierStore, type DossierEntry } from "@/store/dossierStore";
+import { useUiStore } from "@/store/uiStore";
 import type { BookFile } from "@/types/book";
 import type { CanonSection } from "@/lib/canonSections";
 
@@ -58,4 +59,5 @@ export async function openCanonDossier(input: OpenDossierInput): Promise<void> {
     content,
   };
   useDossierStore.getState().openDossier(entry);
+  useUiStore.getState().setDossierColumnHidden(false);
 }

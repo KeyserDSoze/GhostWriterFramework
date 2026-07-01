@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "react-router-dom";
-import { X, Search, ExternalLink, Anchor } from "lucide-react";
+import { X, Search, ExternalLink, Anchor, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useDossierStore, type DossierEntry } from "@/store/dossierStore";
 import { useBooksStore } from "@/store/booksStore";
+import { useUiStore } from "@/store/uiStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { parseAppRoute } from "@/assistant/context";
@@ -43,7 +44,8 @@ function stripFrontmatter(raw: string): string {
 export function DossierDock() {
   const { t } = useTranslation();
   const { docked, floating } = useDossierStore();
-  const hasAny = Boolean(docked) || floating.length > 0;
+  const hidden = useUiStore((s) => s.dossierColumnHidden);
+  const setHidden = useUiStore((s) => s.setDossierColumnHidden);
 
   // Search needs the current book context (matches FloatingActions/useContextualActions).
   const location = useLocation();
@@ -52,15 +54,22 @@ export function DossierDock() {
   const bookId = "bookId" in route ? route.bookId : undefined;
   const structure = bookId ? structures[bookId] : undefined;
 
-  if (!hasAny && !structure) return null;
+  const columnAvailable = Boolean(docked) || Boolean(structure);
 
   return (
     <>
-      {(hasAny || structure) && (
-        <aside className="hidden w-96 shrink-0 border-l bg-card/92 xl:flex xl:flex-col">
+      {columnAvailable && !hidden && (
+        <aside className="hidden w-96 shrink-0 flex-col border-l bg-card/92 xl:flex">
           <div className="border-b p-4">
-            <p className="text-xs uppercase tracking-[0.22em] text-primary">{t("dossier.title")}</p>
-            <p className="mt-1 text-sm text-muted-foreground">{t("dossier.stayOpen")}</p>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-xs uppercase tracking-[0.22em] text-primary">{t("dossier.title")}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{t("dossier.stayOpen")}</p>
+              </div>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setHidden(true)} aria-label={t("dossier.hide")} title={t("dossier.hide")}>
+                <PanelRightClose className="h-4 w-4" />
+              </Button>
+            </div>
             {structure && bookId && <DossierSearch structure={structure} bookId={bookId} />}
           </div>
           <ScrollArea className="min-h-0 flex-1">
@@ -73,6 +82,17 @@ export function DossierDock() {
             </div>
           </ScrollArea>
         </aside>
+      )}
+
+      {columnAvailable && hidden && (
+        <button
+          type="button"
+          onClick={() => setHidden(false)}
+          title={t("dossier.show")}
+          className="fixed right-0 top-24 z-30 hidden items-center gap-1 rounded-l-lg border border-r-0 bg-card px-2 py-3 text-muted-foreground shadow-sm transition hover:text-foreground xl:flex"
+        >
+          <PanelRightOpen className="h-4 w-4" />
+        </button>
       )}
 
       {floating.map((entry) => (
@@ -218,14 +238,14 @@ function FloatingDossier({ entry }: { entry: DossierEntry }) {
   return (
     <div
       data-no-context-menu
-      className="fixed z-[60] flex max-h-[80vh] w-[380px] max-w-[92vw] flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl"
+      className="fixed z-[60] flex h-[70vh] max-h-[70vh] w-[380px] max-w-[92vw] flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl"
       style={{ left: entry.x ?? 80, top: entry.y ?? 80 }}
     >
       <div
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        className="flex cursor-move items-center gap-2 border-b bg-muted/40 px-3 py-2"
+        className="flex shrink-0 cursor-move items-center gap-2 border-b bg-muted/40 px-3 py-2"
       >
         {Icon && <Icon className="h-4 w-4 text-muted-foreground" />}
         <span className="truncate text-sm font-semibold">{entry.title}</span>
@@ -238,15 +258,13 @@ function FloatingDossier({ entry }: { entry: DossierEntry }) {
           </Button>
         </div>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="p-3">
-          {entry.imageUrl && (
-            <img src={entry.imageUrl} alt={entry.title} className="mb-3 h-24 w-24 rounded-lg object-cover ring-1 ring-border" />
-          )}
-          <p className="mb-2 break-all rounded-lg bg-muted px-2 py-1 font-mono text-[10px] text-muted-foreground">{entry.path}</p>
-          <pre className="whitespace-pre-wrap rounded-xl bg-muted/50 p-3 text-xs leading-6 text-foreground">{body || entry.content}</pre>
-        </div>
-      </ScrollArea>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {entry.imageUrl && (
+          <img src={entry.imageUrl} alt={entry.title} className="mb-3 h-24 w-24 rounded-lg object-cover ring-1 ring-border" />
+        )}
+        <p className="mb-2 break-all rounded-lg bg-muted px-2 py-1 font-mono text-[10px] text-muted-foreground">{entry.path}</p>
+        <pre className="whitespace-pre-wrap break-words rounded-xl bg-muted/50 p-3 text-xs leading-6 text-foreground">{body || entry.content}</pre>
+      </div>
     </div>
   );
 }
