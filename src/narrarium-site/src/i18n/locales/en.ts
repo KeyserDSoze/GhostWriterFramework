@@ -103,6 +103,7 @@ const en = {
     dock: "Dock on the right",
     hide: "Hide dossier",
     show: "Show dossier",
+    resize: "Drag to resize",
     search: "Search canon",
     searchPlaceholder: "Search characters, locations, factions…",
     noResults: "No results.",

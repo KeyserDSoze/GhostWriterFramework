@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { useLocation } from "react-router-dom";
 import { X, Search, ExternalLink, Anchor, PanelRightClose } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { useDossierStore, type DossierEntry } from "@/store/dossierStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
@@ -16,6 +15,11 @@ import { openCanonDossier } from "@/narrarium/openDossier";
 import { CANON_SECTION_ORDER, canonSectionMeta, type CanonSection } from "@/lib/canonSections";
 import type { BookStructure } from "@/types/book";
 import { useToast } from "@/components/ui/use-toast";
+
+const DOSSIER_WIDTH_KEY = "narrarium-dossier-width";
+const DOSSIER_MIN_WIDTH = 320;
+const DOSSIER_MAX_WIDTH = 900;
+const DOSSIER_DEFAULT_WIDTH = 384;
 
 interface SearchHit {
   section: CanonSection;
@@ -56,23 +60,53 @@ export function DossierDock() {
 
   const columnAvailable = Boolean(docked) || Boolean(structure);
 
+  // Persisted, resizable column width.
+  const [width, setWidth] = useState<number>(() => {
+    const raw = Number(localStorage.getItem(DOSSIER_WIDTH_KEY));
+    return Number.isFinite(raw) && raw >= DOSSIER_MIN_WIDTH ? Math.min(raw, DOSSIER_MAX_WIDTH) : DOSSIER_DEFAULT_WIDTH;
+  });
+  const resizingRef = useRef(false);
+
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      if (!resizingRef.current) return;
+      const next = Math.max(DOSSIER_MIN_WIDTH, Math.min(window.innerWidth - e.clientX, DOSSIER_MAX_WIDTH));
+      setWidth(next);
+    }
+    function onUp() {
+      if (!resizingRef.current) return;
+      resizingRef.current = false;
+      document.body.style.userSelect = "";
+      try { localStorage.setItem(DOSSIER_WIDTH_KEY, String(width)); } catch { /* ignore */ }
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+  }, [width]);
+
   return (
     <>
       {columnAvailable && !hidden && (
-        <aside className="hidden w-96 shrink-0 flex-col border-l bg-card/92 xl:flex">
+        <aside className="relative hidden shrink-0 flex-col border-l bg-card/92 xl:flex" style={{ width }}>
+          {/* Drag handle on the left edge to resize. */}
+          <div
+            onMouseDown={() => { resizingRef.current = true; document.body.style.userSelect = "none"; }}
+            className="absolute left-0 top-0 z-10 h-full w-1.5 -translate-x-1/2 cursor-col-resize hover:bg-primary/40"
+            title={t("dossier.resize")}
+          />
           <div className="border-b p-4">
             <div className="flex items-start justify-between gap-2">
-              <div>
+              <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.22em] text-primary">{t("dossier.title")}</p>
                 <p className="mt-1 text-sm text-muted-foreground">{t("dossier.stayOpen")}</p>
               </div>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setHidden(true)} aria-label={t("dossier.hide")} title={t("dossier.hide")}>
+              <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setHidden(true)} aria-label={t("dossier.hide")} title={t("dossier.hide")}>
                 <PanelRightClose className="h-4 w-4" />
               </Button>
             </div>
             {structure && bookId && <DossierSearch structure={structure} bookId={bookId} />}
           </div>
-          <ScrollArea className="min-h-0 flex-1">
+          <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="space-y-3 p-4">
               {docked ? (
                 <DossierCard entry={docked} variant="docked" />
@@ -80,7 +114,7 @@ export function DossierDock() {
                 <p className="rounded-xl border border-dashed p-4 text-center text-xs text-muted-foreground">{t("dossier.empty")}</p>
               )}
             </div>
-          </ScrollArea>
+          </div>
         </aside>
       )}
 
@@ -176,7 +210,7 @@ function DossierCard({ entry, variant }: { entry: DossierEntry; variant: "docked
   const body = useMemo(() => stripFrontmatter(entry.content), [entry.content]);
 
   return (
-    <article className="rounded-2xl border bg-background/70 p-4 shadow-sm">
+    <article className="overflow-hidden rounded-2xl border bg-background/70 p-4 shadow-sm">
       <div className="mb-3 flex items-start gap-3">
         {entry.imageUrl && (
           <img src={entry.imageUrl} alt={entry.title} className="h-14 w-14 shrink-0 rounded-lg object-cover ring-1 ring-border" />
@@ -199,7 +233,7 @@ function DossierCard({ entry, variant }: { entry: DossierEntry; variant: "docked
         </div>
       </div>
       <p className="mb-3 break-all rounded-lg bg-muted px-2 py-1 font-mono text-[10px] text-muted-foreground">{entry.path}</p>
-      <pre className="max-h-[60vh] whitespace-pre-wrap rounded-xl bg-muted/50 p-3 text-xs leading-6 text-foreground">{body || entry.content}</pre>
+      <pre className="w-full max-w-full whitespace-pre-wrap break-words rounded-xl bg-muted/50 p-3 text-xs leading-6 text-foreground [overflow-wrap:anywhere]">{body || entry.content}</pre>
     </article>
   );
 }
@@ -252,7 +286,7 @@ function FloatingDossier({ entry }: { entry: DossierEntry }) {
           <img src={entry.imageUrl} alt={entry.title} className="mb-3 h-24 w-24 rounded-lg object-cover ring-1 ring-border" />
         )}
         <p className="mb-2 break-all rounded-lg bg-muted px-2 py-1 font-mono text-[10px] text-muted-foreground">{entry.path}</p>
-        <pre className="whitespace-pre-wrap break-words rounded-xl bg-muted/50 p-3 text-xs leading-6 text-foreground">{body || entry.content}</pre>
+        <pre className="w-full max-w-full whitespace-pre-wrap break-words rounded-xl bg-muted/50 p-3 text-xs leading-6 text-foreground [overflow-wrap:anywhere]">{body || entry.content}</pre>
       </div>
     </div>
   );

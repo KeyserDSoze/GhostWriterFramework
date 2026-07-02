@@ -103,6 +103,7 @@ const it = {
     dock: "Aggancia a destra",
     hide: "Nascondi dossier",
     show: "Mostra dossier",
+    resize: "Trascina per ridimensionare",
     search: "Cerca nel canone",
     searchPlaceholder: "Cerca personaggi, luoghi, fazioni…",
     noResults: "Nessun risultato.",
