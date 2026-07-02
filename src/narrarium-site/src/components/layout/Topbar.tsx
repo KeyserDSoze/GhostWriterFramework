@@ -1,4 +1,4 @@
-import { Eye, EyeOff, LogOut, Menu, Volume2 } from "lucide-react";
+import { Eye, EyeOff, LogOut, Menu, PanelRight, Volume2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ThemeToggle } from "./ThemeToggle";
 import { LanguageToggle } from "./LanguageToggle";
@@ -37,6 +37,8 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { floatingHidden, toggleFloating } = useUiStore();
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
+  const dossierColumnHidden = useUiStore((s) => s.dossierColumnHidden);
+  const setDossierColumnHidden = useUiStore((s) => s.setDossierColumnHidden);
   const { toast } = useToast();
   const navigate = useNavigate();
   const speechRef = useRef<SpeechController | null>(null);
@@ -95,6 +97,16 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         </Button>
         <ThemeToggle />
         <LanguageToggle />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="hidden xl:inline-flex"
+          aria-label={dossierColumnHidden ? t("dossier.show") : t("dossier.hide")}
+          title={dossierColumnHidden ? t("dossier.show") : t("dossier.hide")}
+          onClick={() => setDossierColumnHidden(!dossierColumnHidden)}
+        >
+          <PanelRight className="h-4 w-4" />
+        </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

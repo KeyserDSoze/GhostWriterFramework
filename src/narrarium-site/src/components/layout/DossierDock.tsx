@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "react-router-dom";
-import { X, Search, ExternalLink, Anchor, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { X, Search, ExternalLink, Anchor, PanelRightClose } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useDossierStore, type DossierEntry } from "@/store/dossierStore";
@@ -82,17 +82,6 @@ export function DossierDock() {
             </div>
           </ScrollArea>
         </aside>
-      )}
-
-      {columnAvailable && hidden && (
-        <button
-          type="button"
-          onClick={() => setHidden(false)}
-          title={t("dossier.show")}
-          className="fixed right-0 top-24 z-30 hidden items-center gap-1 rounded-l-lg border border-r-0 bg-card px-2 py-3 text-muted-foreground shadow-sm transition hover:text-foreground xl:flex"
-        >
-          <PanelRightOpen className="h-4 w-4" />
-        </button>
       )}
 
       {floating.map((entry) => (
