@@ -1,9 +1,15 @@
 import { create } from "zustand";
-import type { SummaryProposal } from "@/narrarium/summary";
 
-type MakeProposal = () => Promise<SummaryProposal>;
+export interface GenerateProposal {
+  title: string;
+  oldText: string;
+  newText: string;
+  apply: () => Promise<void>;
+}
 
-interface SummaryDiffState {
+type MakeProposal = () => Promise<GenerateProposal>;
+
+interface GenerateDiffState {
   open: boolean;
   loading: boolean;
   title: string;
@@ -11,7 +17,7 @@ interface SummaryDiffState {
   newText: string;
   error: string | null;
   make: MakeProposal | null;
-  proposal: SummaryProposal | null;
+  proposal: GenerateProposal | null;
   onApplied: (() => void) | null;
   start: (make: MakeProposal, onApplied?: () => void) => Promise<void>;
   regenerate: () => Promise<void>;
@@ -19,7 +25,7 @@ interface SummaryDiffState {
   close: () => void;
 }
 
-export const useSummaryDiffStore = create<SummaryDiffState>((set, get) => ({
+export const useGenerateDiffStore = create<GenerateDiffState>((set, get) => ({
   open: false,
   loading: false,
   title: "",
@@ -39,7 +45,7 @@ export const useSummaryDiffStore = create<SummaryDiffState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const proposal = await make();
-      set({ loading: false, proposal, title: proposal.title, oldText: proposal.oldSummary, newText: proposal.newSummary });
+      set({ loading: false, proposal, title: proposal.title, oldText: proposal.oldText, newText: proposal.newText });
     } catch (err) {
       set({ loading: false, error: err instanceof Error ? err.message : String(err) });
     }

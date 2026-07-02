@@ -381,7 +381,7 @@ export function ChapterPage() {
               value={titleValue}
               onChange={(e) => setTitleValue(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void saveChapterTitle(); }}
-              className="h-auto border-0 bg-transparent px-0 text-2xl font-bold tracking-tight shadow-none focus-visible:ring-0"
+              className="h-auto border-0 bg-transparent px-0 text-2xl font-bold tracking-tight shadow-none outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
               placeholder={chapter.title}
             />
             {titleValue.trim() && titleValue.trim() !== savedTitle && (

@@ -1,6 +1,6 @@
 import type { AppSettings } from "@/types/settings";
 import type { BookStructure, Chapter, Paragraph } from "@/types/book";
-import { completeText, resolveWritingIntegration, type LlmMessage } from "@/assistant/llm";
+import { completeText, resolveWritingIntegration, resolveReviewIntegration, type LlmMessage } from "@/assistant/llm";
 import { loadFileContent } from "@/github/githubClient";
 import { ghostwriterPrompt, parseGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
 
@@ -172,34 +172,44 @@ export async function proseToScript(src: PipelineSource, prose: string, ghostwri
 export type { PipelineSource };
 export type { Paragraph };
 
-/** Generate a short frontmatter summary for a paragraph from its body text. */
-export async function summarizeParagraphBody(src: PipelineSource, body: string): Promise<string> {
+/** Generate the chapter resume (riassunto) body from the ordered paragraph texts. */
+export async function generateChapterResume(src: PipelineSource, paragraphs: Array<{ title: string; text: string }>): Promise<string> {
   const integration = resolveWritingIntegration(src.settings);
   if (!integration) throw new Error("No AI integration configured.");
-  const clean = stripFrontmatter(body).trim();
+  const { style, story } = await buildContext(src);
+  const scenes = paragraphs
+    .map((p, i) => `### ${i + 1}. ${p.title}\n${p.text.trim()}`)
+    .join("\n\n");
   const messages: LlmMessage[] = [
-    { role: "system", content: `You write a concise scene/paragraph summary for a book's canon frontmatter. 1–3 sentences, present tense, only what happens and what changes (facts, decisions, movements). No preamble, no markdown, no quotes. Write in ${LANG(src.settings)}.` },
-    { role: "user", content: `PARAGRAPH TEXT:\n${clean}\n\nWrite the summary.` },
+    { role: "system", content: `You write a chapter "riassunto" (recap) for the chapter resume file. Start with a 2–4 sentence overview, then a blank line, then one "- " bullet per scene in order, each one concise sentence capturing what happens and what changes. Preserve chronology and visible canon. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src.settings)}.\n\n${style}` },
+    { role: "user", content: `${story}\n\nSCENES:\n${scenes}\n\nWrite the chapter recap.` },
   ];
-  return (await completeText(integration, messages, "writing", { label: "summary:paragraph" })).trim();
+  return (await completeText(integration, messages, "writing", { label: "resume:chapter" })).trim();
 }
 
-/**
- * Generate a chapter summary from the ordered paragraph summaries:
- * a short opening recap, then one bullet per paragraph/scene.
- */
-export async function summarizeChapterFromParagraphs(
-  src: PipelineSource,
-  paragraphs: Array<{ title: string; summary: string }>,
-): Promise<string> {
-  const integration = resolveWritingIntegration(src.settings);
+/** Generate a chapter evaluation body (uses the review model when configured). */
+export async function generateChapterEvaluation(src: PipelineSource, paragraphs: Array<{ title: string; text: string }>): Promise<string> {
+  const integration = resolveReviewIntegration(src.settings) ?? resolveWritingIntegration(src.settings);
   if (!integration) throw new Error("No AI integration configured.");
-  const list = paragraphs
-    .map((p, i) => `${i + 1}. ${p.title}: ${p.summary}`)
-    .join("\n");
+  const { style, story } = await buildContext(src);
+  const scenes = paragraphs
+    .map((p, i) => `### ${i + 1}. ${p.title}\n${p.text.trim()}`)
+    .join("\n\n");
   const messages: LlmMessage[] = [
-    { role: "system", content: `You write a chapter summary from its scene summaries. Start with a 2–4 sentence overview of the chapter, then a blank line, then one bullet ("- ") per scene in order, each a single concise sentence. No preamble, no code fences. Write in ${LANG(src.settings)}.` },
-    { role: "user", content: `SCENE SUMMARIES (in order):\n${list}\n\nWrite the chapter summary.` },
+    { role: "system", content: `You are an editorial reviewer. Write a chapter evaluation using markdown headings and concise bullet points: strengths, weaknesses, pacing, characters, prose, and concrete revision suggestions. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src.settings)}.\n\n${style}` },
+    { role: "user", content: `${story}\n\nCHAPTER SCENES:\n${scenes}\n\nWrite the chapter evaluation.` },
   ];
-  return (await completeText(integration, messages, "writing", { label: "summary:chapter" })).trim();
+  return (await completeText(integration, messages, "review", { label: "evaluation:chapter" })).trim();
+}
+
+/** Generate a paragraph evaluation body from its prose (uses the review model when configured). */
+export async function generateParagraphEvaluation(src: PipelineSource, title: string, prose: string): Promise<string> {
+  const integration = resolveReviewIntegration(src.settings) ?? resolveWritingIntegration(src.settings);
+  if (!integration) throw new Error("No AI integration configured.");
+  const { style, story } = await buildContext(src);
+  const messages: LlmMessage[] = [
+    { role: "system", content: `You are an editorial reviewer. Write an evaluation of a single scene/paragraph using markdown headings and concise bullet points: what works, what to fix, prose/clarity, and concrete suggestions. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src.settings)}.\n\n${style}` },
+    { role: "user", content: `${story}\n\nSCENE (${title}):\n${stripFrontmatter(prose).trim()}\n\nWrite the evaluation.` },
+  ];
+  return (await completeText(integration, messages, "review", { label: "evaluation:paragraph" })).trim();
 }

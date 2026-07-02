@@ -22,7 +22,8 @@ import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEdit
 import { useRegisterPageSave } from "@/store/saveStore";
 import { useProseAssist } from "@/components/editor/useProseAssist";
 import { parseScript, serializeScript, type ScriptDoc } from "@/narrarium/script/model";
-import { proseToScript, refineProse, scriptToProse, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
+import { proseToScript, refineProse, scriptToProse, stripFrontmatter, generateChapterResume, generateChapterEvaluation, generateParagraphEvaluation, type PipelineSource } from "@/narrarium/pipeline";
+import { useGenerateDiffStore } from "@/store/generateDiffStore";
 
 interface MetaEntry {
   key: string;
@@ -329,6 +330,42 @@ export function WorkspaceDocPage() {
     }
   }
 
+  /** Regenerate a resume/evaluation body: generate → diff → apply (writes the file). */
+  function regenerateDoc() {
+    if (!book || !token || !structure || !chapter || !path) return;
+    const bookRef = book;
+    const chapterRef = chapter;
+    const currentPath = path;
+    const src: PipelineSource = { token, owner: bookRef.owner, repo: bookRef.repo, branch, settings, structure, chapter: chapterRef };
+    const loadProse = async (p?: string) => (p ? loadFileContent(token, bookRef.owner, bookRef.repo, p, branch).then(stripFrontmatter).catch(() => "") : "");
+
+    useGenerateDiffStore.getState().start(async () => {
+      let newBody = "";
+      if (workspaceKind === "resume") {
+        const scenes = await Promise.all(chapterRef.paragraphs.map(async (p) => ({ title: p.title, text: (await loadProse(p.draftPath)) || (await loadProse(p.path)) })));
+        newBody = await generateChapterResume(src, scenes.filter((s) => s.text.trim()));
+      } else if (paraSlug && paragraph) {
+        const prose = (await loadProse(paragraph.draftPath)) || (await loadProse(paragraph.path));
+        newBody = await generateParagraphEvaluation(src, paragraph.title, prose);
+      } else {
+        const scenes = await Promise.all(chapterRef.paragraphs.map(async (p) => ({ title: p.title, text: (await loadProse(p.draftPath)) || (await loadProse(p.path)) })));
+        newBody = await generateChapterEvaluation(src, scenes.filter((s) => s.text.trim()));
+      }
+      return {
+        title,
+        oldText: body,
+        newText: newBody,
+        apply: async () => {
+          const nextContent = buildFrontmatter(entries, newBody);
+          const newSha = await updateFile(token, bookRef.owner, bookRef.repo, branch, currentPath, sha, nextContent, `Regenerate ${currentPath}`);
+          setSha(newSha);
+          setBody(newBody);
+          setSavedBody(newBody);
+        },
+      };
+    });
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -364,6 +401,9 @@ export function WorkspaceDocPage() {
             <>
               <Button size="sm" variant="outline" onClick={() => void startPipeline("toFinal")}><Wand2 className="mr-1 h-4 w-4" />{t("pipeline.draftToFinal")}</Button>
             </>
+          )}
+          {(workspaceKind === "resume" || workspaceKind === "evaluation") && (
+            <Button size="sm" variant="outline" onClick={() => regenerateDoc()}><Wand2 className="mr-1 h-4 w-4" />{t("pipeline.regenerate")}</Button>
           )}
           {isDirty && !saving && <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>}
           <Button size="sm" onClick={() => void handleSave()} disabled={!isDirty || saving}>

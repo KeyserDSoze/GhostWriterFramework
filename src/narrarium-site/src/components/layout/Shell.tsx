@@ -8,7 +8,7 @@ import { DossierDock } from "./DossierDock";
 import { FloatingActions } from "./FloatingActions";
 import { GlobalContextMenu } from "@/components/editor/GlobalContextMenu";
 import { LlmDebugPanel } from "@/components/debug/LlmDebugPanel";
-import { SummaryDiffDialog } from "@/components/book/SummaryDiffDialog";
+import { GenerateDiffDialog } from "@/components/book/GenerateDiffDialog";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useTokenRefresh } from "@/hooks/useTokenRefresh";
@@ -89,7 +89,7 @@ export function Shell() {
       <FloatingActions />
       <GlobalContextMenu />
       <LlmDebugPanel />
-      <SummaryDiffDialog />
+      <GenerateDiffDialog />
       <Suspense fallback={null}>
         <AssistantPanel />
       </Suspense>
