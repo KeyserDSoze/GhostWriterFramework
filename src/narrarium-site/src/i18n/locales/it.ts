@@ -337,7 +337,13 @@ const it = {
   pwa: {
     updateTitle: "Nuova versione disponibile",
     updateDescription: "Narrarium è stato aggiornato. Ricarica per usare l'ultima versione.",
-    updateNow: "Aggiorna ora"
+    updateNow: "Aggiorna ora",
+    installTitle: "Installa Narrarium",
+    installDescription: "Aggiungi Narrarium alla schermata Home per usarla come un'app a schermo intero.",
+    installNow: "Installa",
+    installDismiss: "Non ora",
+    iosInstallHint: "Puoi aggiungere Narrarium alla schermata Home.",
+    iosInstallSteps: "Tocca Condividi, poi \"Aggiungi a Home\"."
   },
   git: {
     commits: "Commit",
