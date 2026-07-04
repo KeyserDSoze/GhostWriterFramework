@@ -12,7 +12,18 @@ interface AuthGuardProps {
 }
 
 type Status = "checking" | "ok" | "unauthenticated";
-const SILENT_AUTH_TIMEOUT_MS = 8000;
+const SILENT_AUTH_TIMEOUT_MS = 12000;
+const GOOGLE_MAX_RETRIES = 3;
+const GOOGLE_BACKOFF_MS = [700, 1600, 3200];
+
+/** Errors that mean the Google session is really gone → interactive login is required. */
+const HARD_GOOGLE_ERRORS = new Set([
+  "interaction_required",
+  "login_required",
+  "consent_required",
+  "account_selection_required",
+  "access_denied",
+]);
 
 export function AuthGuard({ children }: AuthGuardProps) {
   const { accessToken, accessTokenExpiry, user, setAuth, clearAuth } =
@@ -31,18 +42,28 @@ export function AuthGuard({ children }: AuthGuardProps) {
     }
   }
 
+  /** Give up gracefully: never nuke the session while offline or backgrounded. */
+  function giveUpSilent() {
+    clearSilentAuthTimeout();
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      // Offline: keep whatever we have; AuthGuard will retry when back online.
+      setStatus((s) => (s === "checking" ? "checking" : s));
+      return;
+    }
+    clearAuth();
+    setStatus("unauthenticated");
+  }
+
   function startSilentAuthTimeout() {
     clearSilentAuthTimeout();
     silentAuthTimeoutRef.current = window.setTimeout(() => {
-      clearAuth();
-      setStatus("unauthenticated");
+      giveUpSilent();
     }, SILENT_AUTH_TIMEOUT_MS);
   }
 
   const silentLogin = useGoogleLogin({
     scope: GOOGLE_DRIVE_SCOPES,
-    // prompt: "none" → no UI, returns immediately; fails with interaction_required
-    // if the Google session has expired → we fall through to /login
+    // prompt: "none" → no UI silent token refresh while the Google session cookie is alive.
     prompt: "none",
     hint: user?.email,
     onSuccess: (tokenResponse) => {
@@ -69,21 +90,30 @@ export function AuthGuard({ children }: AuthGuardProps) {
           setStatus("ok");
         })
         .catch(() => {
-          clearAuth();
-          setStatus("unauthenticated");
+          // Userinfo fetch failed (often a transient network hiccup) → keep the token,
+          // it is still valid for Drive; do not force a logout.
+          googleRetryRef.current = 0;
+          clearSilentAuthTimeout();
+          setStatus("ok");
         });
     },
-    onError: () => {
-      // A silent refresh can fail transiently (cookies/timing). Retry once before logging out.
-      if (googleRetryRef.current < 1) {
-        googleRetryRef.current += 1;
-        startSilentAuthTimeout();
-        window.setTimeout(() => silentLogin(), 600);
+    onError: (err?: { error?: string }) => {
+      const code = err?.error ?? "";
+      // Real "session gone" → interactive login. Transient errors → backoff retries.
+      if (HARD_GOOGLE_ERRORS.has(code)) {
+        clearSilentAuthTimeout();
+        clearAuth();
+        setStatus("unauthenticated");
         return;
       }
-      clearSilentAuthTimeout();
-      clearAuth();
-      setStatus("unauthenticated");
+      if (googleRetryRef.current < GOOGLE_MAX_RETRIES) {
+        const delay = GOOGLE_BACKOFF_MS[googleRetryRef.current] ?? 3200;
+        googleRetryRef.current += 1;
+        startSilentAuthTimeout();
+        window.setTimeout(() => silentLogin(), delay);
+        return;
+      }
+      giveUpSilent();
     },
   });
 
@@ -141,6 +171,27 @@ export function AuthGuard({ children }: AuthGuardProps) {
     }
     return () => clearSilentAuthTimeout();
   }, [accessToken, accessTokenExpiry, clearAuth, instance, setAuth, silentLogin, user]);
+
+  // When the PWA comes back online or to the foreground, allow a fresh silent attempt
+  // (reset the dedupe key + retry counter so the main effect re-runs the silent login).
+  useEffect(() => {
+    const retry = () => {
+      const valid = !!accessToken && !!accessTokenExpiry && Date.now() < accessTokenExpiry;
+      if (user && !valid) {
+        lastAttemptKeyRef.current = "";
+        googleRetryRef.current = 0;
+        // Nudge a re-render by touching status; the main effect will re-attempt.
+        setStatus((s) => (s === "unauthenticated" ? "checking" : s));
+      }
+    };
+    const onVisible = () => { if (document.visibilityState === "visible") retry(); };
+    window.addEventListener("online", retry);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("online", retry);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [accessToken, accessTokenExpiry, user]);
 
   if (status === "checking") {
     return (
