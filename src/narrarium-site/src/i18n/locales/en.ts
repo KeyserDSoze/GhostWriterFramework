@@ -114,6 +114,10 @@ const en = {
     keep: "Keep the new one",
     noPrevious: "(no previous version)",
   },
+  session: {
+    refreshing: "Reconnecting…",
+    offline: "Offline",
+  },
   assistant: {
     title: "Writer Copilot",
     new: "New",

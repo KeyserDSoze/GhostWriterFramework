@@ -19,6 +19,9 @@ interface UiState {
   /** Mobile dossier search popup (there is no docked column on small screens). */
   dossierSearchOpen: boolean;
   setDossierSearchOpen: (open: boolean) => void;
+  /** Session/connection status shown as a discreet pill. */
+  authActivity: "idle" | "refreshing" | "offline";
+  setAuthActivity: (activity: "idle" | "refreshing" | "offline") => void;
 }
 
 export const useUiStore = create<UiState>()((set) => ({
@@ -36,4 +39,6 @@ export const useUiStore = create<UiState>()((set) => ({
   setDossierColumnHidden: (hidden) => set({ dossierColumnHidden: hidden }),
   dossierSearchOpen: false,
   setDossierSearchOpen: (open) => set({ dossierSearchOpen: open }),
+  authActivity: "idle",
+  setAuthActivity: (activity) => set({ authActivity: activity }),
 }));

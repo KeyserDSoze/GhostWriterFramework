@@ -9,6 +9,7 @@ import { FloatingActions } from "./FloatingActions";
 import { GlobalContextMenu } from "@/components/editor/GlobalContextMenu";
 import { LlmDebugPanel } from "@/components/debug/LlmDebugPanel";
 import { GenerateDiffDialog } from "@/components/book/GenerateDiffDialog";
+import { SessionStatusPill } from "@/components/layout/SessionStatusPill";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useTokenRefresh } from "@/hooks/useTokenRefresh";
@@ -86,6 +87,7 @@ export function Shell() {
         </main>
       </div>
       <DossierDock />
+      <SessionStatusPill />
       <DossierSearchDialog />
       <FloatingActions />
       <GlobalContextMenu />

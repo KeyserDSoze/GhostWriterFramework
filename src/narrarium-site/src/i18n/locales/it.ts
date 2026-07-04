@@ -114,6 +114,10 @@ const it = {
     keep: "Tieni il nuovo",
     noPrevious: "(nessuna versione precedente)",
   },
+  session: {
+    refreshing: "Riconnessione in corso…",
+    offline: "Offline",
+  },
   assistant: {
     title: "Copilota di scrittura",
     new: "Nuova",

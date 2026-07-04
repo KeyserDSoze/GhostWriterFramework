@@ -4,6 +4,7 @@ import { useGoogleLogin } from "@react-oauth/google";
 import { useMsal } from "@azure/msal-react";
 import { Loader2 } from "lucide-react";
 import { useAuthStore, type GoogleUser } from "@/store/authStore";
+import { useUiStore } from "@/store/uiStore";
 import { ensureMsalInitialized, findMicrosoftAccountByEmail, microsoftSilentRequest } from "@/config/msal";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 
@@ -47,9 +48,11 @@ export function AuthGuard({ children }: AuthGuardProps) {
     clearSilentAuthTimeout();
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       // Offline: keep whatever we have; AuthGuard will retry when back online.
+      useUiStore.getState().setAuthActivity("offline");
       setStatus((s) => (s === "checking" ? "checking" : s));
       return;
     }
+    useUiStore.getState().setAuthActivity("idle");
     clearAuth();
     setStatus("unauthenticated");
   }
@@ -87,6 +90,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
               : 3600,
           );
           googleRetryRef.current = 0;
+          useUiStore.getState().setAuthActivity("idle");
           setStatus("ok");
         })
         .catch(() => {
@@ -94,6 +98,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
           // it is still valid for Drive; do not force a logout.
           googleRetryRef.current = 0;
           clearSilentAuthTimeout();
+          useUiStore.getState().setAuthActivity("idle");
           setStatus("ok");
         });
     },
@@ -102,6 +107,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
       // Real "session gone" → interactive login. Transient errors → backoff retries.
       if (HARD_GOOGLE_ERRORS.has(code)) {
         clearSilentAuthTimeout();
+        useUiStore.getState().setAuthActivity("idle");
         clearAuth();
         setStatus("unauthenticated");
         return;
@@ -148,6 +154,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
     if (tokenValid) {
       clearSilentAuthTimeout();
+      useUiStore.getState().setAuthActivity("idle");
       setStatus("ok");
     } else if (user?.provider === "google") {
       // Known user, but token missing/expired → try silent re-auth
@@ -155,6 +162,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
       if (lastAttemptKeyRef.current === attemptKey) return;
       lastAttemptKeyRef.current = attemptKey;
       googleRetryRef.current = 0;
+      useUiStore.getState().setAuthActivity(navigator.onLine === false ? "offline" : "refreshing");
       setStatus("checking");
       startSilentAuthTimeout();
       silentLogin();
@@ -185,10 +193,20 @@ export function AuthGuard({ children }: AuthGuardProps) {
       }
     };
     const onVisible = () => { if (document.visibilityState === "visible") retry(); };
-    window.addEventListener("online", retry);
+    const onOffline = () => { if (user) useUiStore.getState().setAuthActivity("offline"); };
+    const onOnline = () => {
+      const valid = !!accessToken && !!accessTokenExpiry && Date.now() < accessTokenExpiry;
+      if (user && valid) useUiStore.getState().setAuthActivity("idle");
+      retry();
+    };
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
     document.addEventListener("visibilitychange", onVisible);
+    // Initialize the pill on mount to reflect current connectivity.
+    if (user && navigator.onLine === false) useUiStore.getState().setAuthActivity("offline");
     return () => {
-      window.removeEventListener("online", retry);
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [accessToken, accessTokenExpiry, user]);
