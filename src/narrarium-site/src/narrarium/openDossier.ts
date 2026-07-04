@@ -60,4 +60,10 @@ export async function openCanonDossier(input: OpenDossierInput): Promise<void> {
   };
   useDossierStore.getState().openDossier(entry);
   useUiStore.getState().setDossierColumnHidden(false);
+  // On small screens there is no docked column, so surface the dossier as a floating popup.
+  const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches;
+  if (isMobile) {
+    useDossierStore.getState().undock(entry.id);
+    useUiStore.getState().setDossierSearchOpen(false);
+  }
 }

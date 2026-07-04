@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { Sidebar, MobileSidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
-import { DossierDock } from "./DossierDock";
+import { DossierDock, DossierSearchDialog } from "./DossierDock";
 import { FloatingActions } from "./FloatingActions";
 import { GlobalContextMenu } from "@/components/editor/GlobalContextMenu";
 import { LlmDebugPanel } from "@/components/debug/LlmDebugPanel";
@@ -86,6 +86,7 @@ export function Shell() {
         </main>
       </div>
       <DossierDock />
+      <DossierSearchDialog />
       <FloatingActions />
       <GlobalContextMenu />
       <LlmDebugPanel />

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useLocation } from "react-router-dom";
 import { X, Search, ExternalLink, Anchor, PanelRightClose } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useDossierStore, type DossierEntry } from "@/store/dossierStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
@@ -125,7 +126,7 @@ export function DossierDock() {
   );
 }
 
-function DossierSearch({ structure, bookId }: { structure: BookStructure; bookId: string }) {
+function DossierSearch({ structure, bookId, onPicked, autoFocus }: { structure: BookStructure; bookId: string; onPicked?: () => void; autoFocus?: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { settings } = useSettingsStore();
@@ -133,6 +134,11 @@ function DossierSearch({ structure, bookId }: { structure: BookStructure; bookId
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (autoFocus) inputRef.current?.focus();
+  }, [autoFocus]);
 
   const entities = useMemo(() => collectEntities(structure), [structure]);
   const results = useMemo(() => {
@@ -157,6 +163,7 @@ function DossierSearch({ structure, bookId }: { structure: BookStructure; bookId
     if (!book || !token) return;
     setOpen(false);
     setQuery("");
+    onPicked?.();
     try {
       await openCanonDossier({ token, owner: book.owner, repo: book.repo, branch, bookId, section: hit.section, file: { path: hit.path, name: hit.name, imagePath: hit.imagePath } });
     } catch (err) {
@@ -169,6 +176,7 @@ function DossierSearch({ structure, bookId }: { structure: BookStructure; bookId
       <div className="flex items-center gap-2 rounded-lg border bg-background px-2">
         <Search className="h-4 w-4 text-muted-foreground" />
         <input
+          ref={inputRef}
           value={query}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
@@ -245,6 +253,7 @@ function FloatingDossier({ entry }: { entry: DossierEntry }) {
   const Icon = meta?.icon;
   const body = useMemo(() => stripFrontmatter(entry.content), [entry.content]);
   const dragRef = useRef<{ dx: number; dy: number } | null>(null);
+  const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches;
 
   function onPointerDown(e: React.PointerEvent) {
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -261,21 +270,25 @@ function FloatingDossier({ entry }: { entry: DossierEntry }) {
   return (
     <div
       data-no-context-menu
-      className="fixed z-[60] flex h-[70vh] max-h-[70vh] w-[380px] max-w-[92vw] flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl"
-      style={{ left: entry.x ?? 80, top: entry.y ?? 80 }}
+      className={isMobile
+        ? "fixed inset-x-2 bottom-2 top-16 z-[60] flex flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl"
+        : "fixed z-[60] flex h-[70vh] max-h-[70vh] w-[380px] max-w-[92vw] flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl"}
+      style={isMobile ? undefined : { left: entry.x ?? 80, top: entry.y ?? 80 }}
     >
       <div
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        className="flex shrink-0 cursor-move items-center gap-2 border-b bg-muted/40 px-3 py-2"
+        onPointerDown={isMobile ? undefined : onPointerDown}
+        onPointerMove={isMobile ? undefined : onPointerMove}
+        onPointerUp={isMobile ? undefined : onPointerUp}
+        className={`flex shrink-0 items-center gap-2 border-b bg-muted/40 px-3 py-2 ${isMobile ? "" : "cursor-move"}`}
       >
         {Icon && <Icon className="h-4 w-4 text-muted-foreground" />}
         <span className="truncate text-sm font-semibold">{entry.title}</span>
         <div className="ml-auto flex items-center gap-0.5">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => dock(entry.id)} aria-label={t("dossier.dock")} title={t("dossier.dock")}>
-            <Anchor className="h-4 w-4" />
-          </Button>
+          {!isMobile && (
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => dock(entry.id)} aria-label={t("dossier.dock")} title={t("dossier.dock")}>
+              <Anchor className="h-4 w-4" />
+            </Button>
+          )}
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => closeDossier(entry.id)} aria-label={t("dossier.close")}>
             <X className="h-4 w-4" />
           </Button>
@@ -289,5 +302,30 @@ function FloatingDossier({ entry }: { entry: DossierEntry }) {
         <pre className="w-full max-w-full whitespace-pre-wrap break-words rounded-xl bg-muted/50 p-3 text-xs leading-6 text-foreground [overflow-wrap:anywhere]">{body || entry.content}</pre>
       </div>
     </div>
+  );
+}
+
+/** Popup canon search, primarily for mobile where there is no docked column. */
+export function DossierSearchDialog() {
+  const { t } = useTranslation();
+  const open = useUiStore((s) => s.dossierSearchOpen);
+  const setOpen = useUiStore((s) => s.setDossierSearchOpen);
+  const location = useLocation();
+  const { structures } = useBooksStore();
+  const route = parseAppRoute(location.pathname);
+  const bookId = "bookId" in route ? route.bookId : undefined;
+  const structure = bookId ? structures[bookId] : undefined;
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent className="left-1/2 top-1/2 w-[94vw] max-w-md -translate-x-1/2 -translate-y-1/2 p-4">
+        <p className="text-xs uppercase tracking-[0.22em] text-primary">{t("dossier.title")}</p>
+        {structure && bookId ? (
+          <DossierSearch structure={structure} bookId={bookId} autoFocus onPicked={() => setOpen(false)} />
+        ) : (
+          <p className="mt-3 text-sm text-muted-foreground">{t("dossier.empty")}</p>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

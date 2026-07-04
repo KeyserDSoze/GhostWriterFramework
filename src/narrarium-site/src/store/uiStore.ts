@@ -16,6 +16,9 @@ interface UiState {
   /** Hide the docked dossier column; reopens when a dossier is opened or search is focused. */
   dossierColumnHidden: boolean;
   setDossierColumnHidden: (hidden: boolean) => void;
+  /** Mobile dossier search popup (there is no docked column on small screens). */
+  dossierSearchOpen: boolean;
+  setDossierSearchOpen: (open: boolean) => void;
 }
 
 export const useUiStore = create<UiState>()((set) => ({
@@ -31,4 +34,6 @@ export const useUiStore = create<UiState>()((set) => ({
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
   dossierColumnHidden: false,
   setDossierColumnHidden: (hidden) => set({ dossierColumnHidden: hidden }),
+  dossierSearchOpen: false,
+  setDossierSearchOpen: (open) => set({ dossierSearchOpen: open }),
 }));

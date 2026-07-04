@@ -39,6 +39,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
   const dossierColumnHidden = useUiStore((s) => s.dossierColumnHidden);
   const setDossierColumnHidden = useUiStore((s) => s.setDossierColumnHidden);
+  const setDossierSearchOpen = useUiStore((s) => s.setDossierSearchOpen);
   const { toast } = useToast();
   const navigate = useNavigate();
   const speechRef = useRef<SpeechController | null>(null);
@@ -100,10 +101,13 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         <Button
           variant="ghost"
           size="icon"
-          className="hidden xl:inline-flex"
-          aria-label={dossierColumnHidden ? t("dossier.show") : t("dossier.hide")}
-          title={dossierColumnHidden ? t("dossier.show") : t("dossier.hide")}
-          onClick={() => setDossierColumnHidden(!dossierColumnHidden)}
+          aria-label={t("dossier.title")}
+          title={t("dossier.title")}
+          onClick={() => {
+            const isMobile = window.matchMedia("(max-width: 1279px)").matches;
+            if (isMobile) setDossierSearchOpen(true);
+            else setDossierColumnHidden(!dossierColumnHidden);
+          }}
         >
           <PanelRight className="h-4 w-4" />
         </Button>
