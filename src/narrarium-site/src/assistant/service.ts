@@ -7,11 +7,9 @@ import {
   updateFile,
 } from "@/github/githubClient";
 import type { AppSettings, BookEntry } from "@/types/settings";
+import type { ChatCapability } from "@/types/settings";
 import type { LoadedWriterContext } from "@/assistant/context";
 import {
-  completeText,
-  resolveReviewIntegration,
-  resolveWritingIntegration,
   type LlmContentPart,
   type LlmMessage,
 } from "@/assistant/llm";
@@ -33,6 +31,21 @@ import {
   createParagraphDraftArtifact,
   createParagraphScriptArtifact,
 } from "@/narrarium/workspace";
+
+async function completeForTask(
+  settings: AppSettings,
+  messages: LlmMessage[],
+  capability: ChatCapability,
+  options?: { signal?: AbortSignal; label?: string },
+): Promise<string | null> {
+  try {
+    return await completeTextRouted(settings, messages, capability, options);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/No AI integration configured/i.test(message)) return null;
+    throw err;
+  }
+}
 
 type PromptInput = {
   prompt: string;
@@ -128,22 +141,20 @@ export async function compactAssistantSession(input: {
   const targetCount = session.messages.length - 6;
   if (targetCount <= session.compactedMessageCount) return session;
 
-  const integration = resolveWritingIntegration(settings);
-  if (!integration) return session;
-
   const content = session.messages
     .slice(0, targetCount)
     .map((message) => `${message.role.toUpperCase()}: ${message.text}`)
     .join("\n\n");
 
-  const summary = await completeText(integration, [
+  const summary = await completeForTask(settings, [
     {
       role: "system",
       content:
         "Summarize the conversation so far for future continuation. Keep goals, decisions, open questions, created notes, requested edits, and canon-sensitive facts. Return concise bullet points. Do not imply that full file contents are preserved; file contents must be reloaded when needed.",
     },
     { role: "user", content },
-  ]);
+  ], "default", { label: "copilot:compact" });
+  if (!summary) return session;
 
   return { ...session, compactSummary: summary.trim(), compactedMessageCount: targetCount };
 }
@@ -171,31 +182,29 @@ export async function applyParagraphRewrite(input: {
 }
 
 async function summarizeCurrentContext(input: PromptInput): Promise<AssistantMessage> {
-  const integration = resolveWritingIntegration(input.settings);
-  if (!integration) return noAiMessage();
-  const answer = await completeText(integration, [
+  const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "You are Narrarium's writing assistant. Summarize the current context clearly and concretely. Use compact paragraphs and bullet points when useful."),
     buildUserMessage(input, `Request: ${input.prompt}`),
-  ], "writing", { signal: input.signal });
+  ], "copilot", { signal: input.signal, label: "copilot:summarize" });
+  if (!answer) return noAiMessage();
   return makeAssistantMessage("assistant", answer.trim());
 }
 
 async function reviewCurrentContext(input: PromptInput): Promise<AssistantMessage> {
-  const integration = resolveReviewIntegration(input.settings) ?? resolveWritingIntegration(input.settings);
-  if (!integration) return noAiMessage();
-  const answer = await completeText(integration, [
+  const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "You are Narrarium's editorial reviewer. Review the current context with concrete strengths, issues, and specific next actions. Preserve facts; do not invent canon."),
     buildUserMessage(input, `Review request: ${input.prompt}`),
-  ], "review", { signal: input.signal });
+  ], "review", { signal: input.signal, label: "copilot:review" });
+  if (!answer) return noAiMessage();
   return makeAssistantMessage("assistant", answer.trim());
 }
 
 async function answerFromContext(input: PromptInput): Promise<AssistantMessage> {
-  if (!resolveWritingIntegration(input.settings)) return noAiMessage();
-  const answer = await completeTextRouted(input.settings, [
+  const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "You are Narrarium's contextual writing copilot. Answer only from the provided repository context and current location. The manifest lists available files; only LOADED FILE contents are available in full. If needed content is not loaded, say which file you need."),
     buildUserMessage(input, `User request: ${input.prompt}`),
   ], "copilot", { signal: input.signal, label: "copilot" });
+  if (!answer) return noAiMessage();
   return makeAssistantMessage("assistant", answer.trim());
 }
 
@@ -226,12 +235,11 @@ async function switchBookBranchFromPrompt(input: PromptInput & { book: BookEntry
 async function createChapterFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const structure = input.context.structure;
   if (!structure) return makeAssistantMessage("assistant", "Open a book first so I can create a chapter in the right repository.");
-  const integration = resolveWritingIntegration(input.settings);
-  if (!integration) return noAiMessage();
-  const answer = await completeText(integration, [
+  const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new chapter: {"title":"...","summary":"...","body":"..."}. Keep it concise and aligned with the current book context.'),
     buildUserMessage(input, `Create a new chapter. Request: ${input.prompt}`),
-  ]);
+  ], "default", { signal: input.signal, label: "copilot:create-chapter" });
+  if (!answer) return noAiMessage();
   const parsed = parseJsonObject(answer);
   const title = typeof parsed?.title === "string" ? parsed.title.trim() : "New Chapter";
   const summary = typeof parsed?.summary === "string" ? parsed.summary.trim() : undefined;
@@ -244,12 +252,11 @@ async function createChapterFromPrompt(input: PromptInput & { book: BookEntry; b
 async function createParagraphFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Open a chapter first so I know where to create the paragraph.");
-  const integration = resolveWritingIntegration(input.settings);
-  if (!integration) return noAiMessage();
-  const answer = await completeText(integration, [
+  const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new paragraph: {"title":"...","summary":"...","body":"..."}. Preserve current chapter context.'),
     buildUserMessage(input, `Create a new paragraph in chapter ${chapter.slug}. Request: ${input.prompt}`),
-  ]);
+  ], "default", { signal: input.signal, label: "copilot:create-paragraph" });
+  if (!answer) return noAiMessage();
   const parsed = parseJsonObject(answer);
   const title = typeof parsed?.title === "string" ? parsed.title.trim() : "New Paragraph";
   const summary = typeof parsed?.summary === "string" ? parsed.summary.trim() : undefined;
@@ -262,12 +269,11 @@ async function createParagraphFromPrompt(input: PromptInput & { book: BookEntry;
 async function createEntityFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const kind = detectEntityKind(input.prompt);
   if (!kind) return makeAssistantMessage("assistant", "Tell me which entity to create: character, location, faction, item, secret, or timeline event.");
-  const integration = resolveWritingIntegration(input.settings);
-  if (!integration) return noAiMessage();
-  const answer = await completeText(integration, [
+  const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new canon entity: {"label":"...","summary":"...","body":"...","extraFrontmatter":{...}}.'),
     buildUserMessage(input, `Create a ${kind}. Request: ${input.prompt}`),
-  ]);
+  ], "default", { signal: input.signal, label: "copilot:create-entity" });
+  if (!answer) return noAiMessage();
   const parsed = parseJsonObject(answer);
   const label = typeof parsed?.label === "string" ? parsed.label.trim() : `New ${kind}`;
   const summary = typeof parsed?.summary === "string" ? parsed.summary.trim() : undefined;
@@ -282,12 +288,11 @@ async function createEntityFromPrompt(input: PromptInput & { book: BookEntry; br
 async function createScriptFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Open a chapter first so I know where to create the script.");
-  const integration = resolveWritingIntegration(input.settings);
-  if (!integration) return noAiMessage();
-  const answer = await completeText(integration, [
+  const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new script scene: {"title":"...","location":"..."}.'),
     buildUserMessage(input, `Create a new scene script in chapter ${chapter.slug}. Request: ${input.prompt}`),
-  ]);
+  ], "default", { signal: input.signal, label: "copilot:create-script" });
+  if (!answer) return noAiMessage();
   const parsed = parseJsonObject(answer);
   const title = typeof parsed?.title === "string" ? parsed.title.trim() : "New Scene";
   const location = typeof parsed?.location === "string" ? parsed.location.trim() : undefined;
@@ -323,48 +328,46 @@ async function importAttachmentsIntoBook(input: PromptInput & { book: BookEntry;
 async function writeResume(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Resume writing works when you are inside a chapter or one of its paragraph/workspace pages.");
-  const integration = resolveWritingIntegration(input.settings);
-  if (!integration) return noAiMessage();
   const targetPath = `resumes/chapters/${chapter.slug}.md`;
-  const answer = await completeText(integration, [
+  const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "Write a chapter resume suitable for the chapter resume file. Preserve chronology and visible canon. Return only the markdown body, no frontmatter."),
     buildUserMessage(input, `Write or refresh the resume for chapter ${chapter.slug}. Request: ${input.prompt}`),
-  ]);
+  ], "default", { signal: input.signal, label: "copilot:write-resume" });
+  if (!answer) return noAiMessage();
   await upsertStructuredMarkdownFile({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, path: targetPath, frontmatter: { type: "resume", id: `resume:chapter:${chapter.slug}`, title: `Resume ${chapter.slug}` }, body: answer.trim(), message: `Update chapter resume ${chapter.slug}` });
   return makeAssistantMessage("assistant", `I wrote the chapter resume to \`${targetPath}\`.\n\n${answer.trim()}`);
 }
 
 async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
-  const integration = resolveReviewIntegration(input.settings) ?? resolveWritingIntegration(input.settings);
-  if (!integration) return noAiMessage();
   if (input.context.paragraph && input.context.chapter) {
     const paragraphSlug = input.context.paragraph.path.split("/").pop()?.replace(/\.md$/i, "") ?? input.context.paragraph.number;
     const targetPath = `evaluations/paragraphs/${input.context.chapter.slug}/${paragraphSlug}.md`;
-    const answer = await completeText(integration, [
+    const answer = await completeForTask(input.settings, [
       buildSystemMessage(input, "Write a paragraph evaluation suitable for the paragraph evaluation file. Use markdown headings and concise bullet points. Return only the body, no frontmatter."),
       buildUserMessage(input, `Write or refresh the evaluation for paragraph ${paragraphSlug}. Request: ${input.prompt}`),
-    ], "review");
+    ], "review", { signal: input.signal, label: "copilot:write-paragraph-evaluation" });
+    if (!answer) return noAiMessage();
     await upsertStructuredMarkdownFile({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, path: targetPath, frontmatter: { type: "evaluation", id: `evaluation:paragraph:${input.context.chapter.slug}:${paragraphSlug}`, title: `Evaluation ${input.context.chapter.slug} ${paragraphSlug}`, chapter: `chapter:${input.context.chapter.slug}`, paragraph: `paragraph:${input.context.chapter.slug}:${paragraphSlug}` }, body: answer.trim(), message: `Update paragraph evaluation ${paragraphSlug}` });
     return makeAssistantMessage("assistant", `I wrote the paragraph evaluation to \`${targetPath}\`.\n\n${answer.trim()}`);
   }
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Evaluation writing works from a chapter or paragraph context.");
   const targetPath = `evaluations/chapters/${chapter.slug}.md`;
-  const answer = await completeText(integration, [
+  const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "Write a chapter evaluation suitable for the chapter evaluation file. Use markdown headings and concise bullet points. Return only the body, no frontmatter."),
     buildUserMessage(input, `Write or refresh the evaluation for chapter ${chapter.slug}. Request: ${input.prompt}`),
-  ], "review");
+  ], "review", { signal: input.signal, label: "copilot:write-chapter-evaluation" });
+  if (!answer) return noAiMessage();
   await upsertStructuredMarkdownFile({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, path: targetPath, frontmatter: { type: "evaluation", id: `evaluation:chapter:${chapter.slug}`, title: `Evaluation ${chapter.slug}` }, body: answer.trim(), message: `Update chapter evaluation ${chapter.slug}` });
   return makeAssistantMessage("assistant", `I wrote the chapter evaluation to \`${targetPath}\`.\n\n${answer.trim()}`);
 }
 
 async function writePlotUpdate(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
-  const integration = resolveWritingIntegration(input.settings);
-  if (!integration) return noAiMessage();
-  const answer = await completeText(integration, [
+  const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "Update the book plot document in markdown. Keep it concise, structural, and consistent with the loaded canon. Return only the body, no frontmatter."),
     buildUserMessage(input, `Refresh plot.md for this book. Request: ${input.prompt}`),
-  ]);
+  ], "default", { signal: input.signal, label: "copilot:update-plot" });
+  if (!answer) return noAiMessage();
   await upsertStructuredMarkdownFile({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, path: "plot.md", frontmatter: { type: "plot", id: "plot:main", title: "Plot" }, body: answer.trim(), message: "Update plot.md" });
   return makeAssistantMessage("assistant", `I updated \`plot.md\`.\n\n${answer.trim()}`);
 }
@@ -372,14 +375,13 @@ async function writePlotUpdate(input: PromptInput & { book: BookEntry; branch: s
 async function rewriteCurrentParagraph(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const { context } = input;
   if (!context.paragraph || !context.chapter) return makeAssistantMessage("assistant", "Paragraph rewrite works when you are inside a paragraph page. Open a paragraph first, then ask me to revise it.");
-  const integration = resolveWritingIntegration(input.settings);
-  if (!integration) return noAiMessage();
   const paragraphFile = context.relevantFiles.find((entry) => entry.path === context.paragraph?.path);
   const paragraphBody = paragraphFile ? parseMarkdown(paragraphFile.content).body : "";
-  const answer = await completeText(integration, [
+  const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "You are Narrarium's prose editor. Rewrite only the paragraph body. Preserve facts, chronology, names, and visible canon. Return only the revised paragraph body, no markdown fences, no commentary. Use any loaded writing-style files if present."),
     buildUserMessage(input, `Current paragraph body:\n${paragraphBody}\n\nRewrite request: ${input.prompt}`),
-  ]);
+  ], "default", { signal: input.signal, label: "copilot:rewrite-paragraph" });
+  if (!answer) return noAiMessage();
   return {
     id: crypto.randomUUID(),
     role: "assistant",
@@ -389,12 +391,11 @@ async function rewriteCurrentParagraph(input: PromptInput & { book: BookEntry; b
 }
 
 async function proposeMultiFileUpdates(input: PromptInput & { book: BookEntry; token: string }): Promise<AssistantMessage> {
-  const integration = resolveWritingIntegration(input.settings);
-  if (!integration) return noAiMessage();
-  const answer = await completeText(integration, [
+  const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, 'You are Narrarium file editor. Propose multi-file changes only for files in the available manifest or obvious notes/workspace files. Return ONLY JSON: {"summary":"...","updates":[{"path":"relative/path.md","content":"FULL NEW FILE CONTENT","reason":"..."}]}. Do not wrap in markdown.'),
     buildUserMessage(input, `User multi-file request: ${input.prompt}`),
-  ]);
+  ], "default", { signal: input.signal, label: "copilot:multi-file-edit" });
+  if (!answer) return noAiMessage();
   const parsed = parseJsonObject(answer);
   const updates = Array.isArray(parsed?.updates)
     ? parsed.updates.filter((entry): entry is { path: string; content: string; reason?: string } => typeof entry?.path === "string" && typeof entry?.content === "string" && isSafeRelativePath(entry.path)).slice(0, 8)
@@ -405,14 +406,13 @@ async function proposeMultiFileUpdates(input: PromptInput & { book: BookEntry; t
 }
 
 async function createContextNote(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
-  const integration = resolveWritingIntegration(input.settings);
-  if (!integration) return noAiMessage();
   const targetPath = input.context.noteTargetPath;
   if (!targetPath) return makeAssistantMessage("assistant", "I could not determine where to save a note from the current screen.");
-  const answer = await completeText(integration, [
+  const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "You create concise writer notes for the current context. Return only the note body in markdown, no frontmatter and no wrapping commentary."),
     buildUserMessage(input, `Create a note for this request: ${input.prompt}`),
-  ]);
+  ], "default", { signal: input.signal, label: "copilot:create-note" });
+  if (!answer) return noAiMessage();
   await upsertNoteFile({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, path: targetPath, title: defaultNoteTitle(targetPath), noteBody: answer.trim() });
   return makeAssistantMessage("assistant", `I saved a note to \`${targetPath}\`.\n\n${answer.trim()}`);
 }

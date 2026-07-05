@@ -74,8 +74,7 @@ import {
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { speakText, splitIntoStrofe, transcribeAudio, type SpeechController } from "@/assistant/speech";
-import { completeText, resolveWritingIntegration } from "@/assistant/llm";
-import { classifyConfirmationRouted, sttMode } from "@/assistant/router";
+import { classifyConfirmationRouted, completeTextRouted, sttMode } from "@/assistant/router";
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
 
 const ATTACHMENT_TARGETS = [
@@ -858,8 +857,6 @@ export function AssistantPanel() {
     window: { from: number; to: number },
     opts: { synonymWord?: string; instruction: string },
   ): Promise<AssistantMessage | null> {
-    const integration = resolveWritingIntegration(settings);
-    if (!integration) return makeAssistantReply(t("assistant.rewriteNoModel"));
     const original = strofeSlice(window);
     if (!original) return makeAssistantReply(t("assistant.strofaEmpty"));
     const langName = settings.ui.language === "it" ? "Italian" : "English";
@@ -870,12 +867,13 @@ export function AssistantPanel() {
     startWaitingTone();
     let rewritten = "";
     try {
-      rewritten = (await completeText(integration, [
+      rewritten = (await completeTextRouted(settings, [
         { role: "system", content: `You are a prose editor. ${task} Reply with ONLY the rewritten passage in ${langName}, no quotes, no preamble.` },
         { role: "user", content: original },
-      ], "writing")).trim();
+      ], "default", { label: "live-voice:rewrite" })).trim();
     } catch (err) {
       stopWaitingTone();
+      if (/No AI integration configured/i.test(err instanceof Error ? err.message : String(err))) return makeAssistantReply(t("assistant.rewriteNoModel"));
       return makeAssistantReply(t("assistant.rewriteFailed", { error: String(err) }));
     }
     stopWaitingTone();

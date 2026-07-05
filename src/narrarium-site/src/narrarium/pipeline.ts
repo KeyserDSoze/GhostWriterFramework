@@ -1,6 +1,7 @@
 import type { AppSettings } from "@/types/settings";
 import type { BookStructure, Chapter, Paragraph } from "@/types/book";
-import { completeText, resolveWritingIntegration, resolveReviewIntegration, type LlmMessage } from "@/assistant/llm";
+import type { LlmMessage } from "@/assistant/llm";
+import { completeTextRouted } from "@/assistant/router";
 import { loadFileContent } from "@/github/githubClient";
 import { ghostwriterPrompt, parseGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
 
@@ -63,25 +64,21 @@ async function buildContext(src: PipelineSource, ghostwriterSlug?: string): Prom
 const LANG = (settings: AppSettings) => (settings.ui.language === "it" ? "Italian" : "English");
 
 export async function scriptToProse(src: PipelineSource, scriptBody: string, ghostwriterSlug?: string): Promise<string> {
-  const integration = resolveWritingIntegration(src.settings);
-  if (!integration) throw new Error("No AI integration configured.");
   const { style, story } = await buildContext(src, ghostwriterSlug);
   const messages: LlmMessage[] = [
     { role: "system", content: `You turn a Narrarium scene script into finished prose. Each script line is an action, beat, or note in sequence. Follow the beat order. Write only the prose body, no frontmatter, no commentary, no markdown fences. Write in ${LANG(src.settings)}.\n\n${style}` },
     { role: "user", content: `${story}\n\nSCENE SCRIPT:\n${scriptBody}\n\nWrite the scene as polished prose following these beats.` },
   ];
-  return (await completeText(integration, messages)).trim();
+  return (await completeTextRouted(src.settings, messages, "default", { label: "pipeline:script-to-prose" })).trim();
 }
 
 export async function refineProse(src: PipelineSource, draftBody: string, ghostwriterSlug?: string): Promise<string> {
-  const integration = resolveWritingIntegration(src.settings);
-  if (!integration) throw new Error("No AI integration configured.");
   const { style, story } = await buildContext(src, ghostwriterSlug);
   const messages: LlmMessage[] = [
     { role: "system", content: `You polish a draft scene into the final paragraph. Preserve facts, names, chronology, and visible canon. Improve prose, rhythm, and clarity. Return only the body, no frontmatter, no commentary. Write in ${LANG(src.settings)}.\n\n${style}` },
     { role: "user", content: `${story}\n\nDRAFT:\n${draftBody}\n\nReturn the polished final version.` },
   ];
-  return (await completeText(integration, messages)).trim();
+  return (await completeTextRouted(src.settings, messages, "default", { label: "pipeline:refine-prose" })).trim();
 }
 
 export async function improveProse(
@@ -90,8 +87,6 @@ export async function improveProse(
   selection: string | null,
   ghostwriterSlug?: string,
 ): Promise<string> {
-  const integration = resolveWritingIntegration(src.settings);
-  if (!integration) throw new Error("No AI integration configured.");
   const { style, story } = await buildContext(src, ghostwriterSlug);
   const target = selection && selection.trim() ? selection : fullBody;
   const scope = selection && selection.trim()
@@ -101,7 +96,7 @@ export async function improveProse(
     { role: "system", content: `You are a prose editor. ${scope} Preserve facts, names, and canon. Write in ${LANG(src.settings)}.\n\n${style}` },
     { role: "user", content: `${story}\n\nFULL PARAGRAPH:\n${fullBody}\n\nTEXT TO IMPROVE:\n${target}\n\nReturn the improved text.` },
   ];
-  return (await completeText(integration, messages)).trim();
+  return (await completeTextRouted(src.settings, messages, "default", { label: "pipeline:improve-prose" })).trim();
 }
 
 /** Suggest several synonym/short replacements for a selected word or short phrase, keeping context and style. */
@@ -111,8 +106,6 @@ export async function synonymsFor(
   selection: string,
   options?: { count?: number; exclude?: string[]; ghostwriterSlug?: string },
 ): Promise<string[]> {
-  const integration = resolveWritingIntegration(src.settings);
-  if (!integration) throw new Error("No AI integration configured.");
   const count = options?.count ?? 3;
   const exclude = options?.exclude ?? [];
   const { style, story } = await buildContext(src, options?.ghostwriterSlug);
@@ -121,7 +114,7 @@ export async function synonymsFor(
     { role: "system", content: `You are a precise lexical editor. The user selected a short word or phrase and wants ${count} alternative synonyms/replacements that fit the sentence, register, and style, matching the grammatical form. Return ONLY a JSON array of ${count} strings, no commentary. Write in ${LANG(src.settings)}.${excludeNote}\n\n${style}` },
     { role: "user", content: `${story}\n\nPARAGRAPH:\n${fullBody}\n\nSELECTED TEXT:\n${selection}\n\nReturn ${count} replacements as a JSON array.` },
   ];
-  const raw = (await completeText(integration, messages)).trim();
+  const raw = (await completeTextRouted(src.settings, messages, "simple-tasks", { label: "pipeline:synonyms" })).trim();
   return parseStringList(raw, count, exclude);
 }
 
@@ -150,8 +143,6 @@ function parseStringList(raw: string, count: number, exclude: string[]): string[
 
 /** Reverse-engineer a Narrarium scene script (one beat per line) from finished or draft prose. */
 export async function proseToScript(src: PipelineSource, prose: string, ghostwriterSlug?: string): Promise<string> {
-  const integration = resolveWritingIntegration(src.settings);
-  if (!integration) throw new Error("No AI integration configured.");
   const { style, story } = await buildContext(src, ghostwriterSlug);
   const legend = [
     "Narrarium nested script format. Containers use curly braces `{ ... }` and can nest other blocks; primitives use square brackets `[ ... ]` and are leaves.",
@@ -166,7 +157,7 @@ export async function proseToScript(src: PipelineSource, prose: string, ghostwri
     { role: "system", content: `You convert prose into a Narrarium scene script: a compact, ordered, faithful sequence of beats that captures the scene's structure and dialogue. Return ONLY the script body, no commentary, no code fences. Write notes/telling beats in ${LANG(src.settings)}.\n\n${legend}\n\n${style}` },
     { role: "user", content: `${story}\n\nPROSE:\n${prose}\n\nWrite the scene script that reconstructs this scene beat by beat.` },
   ];
-  return (await completeText(integration, messages)).trim();
+  return (await completeTextRouted(src.settings, messages, "default", { label: "pipeline:prose-to-script" })).trim();
 }
 
 export type { PipelineSource };
@@ -174,8 +165,6 @@ export type { Paragraph };
 
 /** Generate the chapter resume (riassunto) body from the ordered paragraph texts. */
 export async function generateChapterResume(src: PipelineSource, paragraphs: Array<{ title: string; text: string }>): Promise<string> {
-  const integration = resolveWritingIntegration(src.settings);
-  if (!integration) throw new Error("No AI integration configured.");
   const { style, story } = await buildContext(src);
   const scenes = paragraphs
     .map((p, i) => `### ${i + 1}. ${p.title}\n${p.text.trim()}`)
@@ -184,13 +173,11 @@ export async function generateChapterResume(src: PipelineSource, paragraphs: Arr
     { role: "system", content: `You write a chapter "riassunto" (recap) for the chapter resume file. Start with a 2–4 sentence overview, then a blank line, then one "- " bullet per scene in order, each one concise sentence capturing what happens and what changes. Preserve chronology and visible canon. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src.settings)}.\n\n${style}` },
     { role: "user", content: `${story}\n\nSCENES:\n${scenes}\n\nWrite the chapter recap.` },
   ];
-  return (await completeText(integration, messages, "writing", { label: "resume:chapter" })).trim();
+  return (await completeTextRouted(src.settings, messages, "default", { label: "resume:chapter" })).trim();
 }
 
 /** Generate a chapter evaluation body (uses the review model when configured). */
 export async function generateChapterEvaluation(src: PipelineSource, paragraphs: Array<{ title: string; text: string }>): Promise<string> {
-  const integration = resolveReviewIntegration(src.settings) ?? resolveWritingIntegration(src.settings);
-  if (!integration) throw new Error("No AI integration configured.");
   const { style, story } = await buildContext(src);
   const scenes = paragraphs
     .map((p, i) => `### ${i + 1}. ${p.title}\n${p.text.trim()}`)
@@ -199,17 +186,15 @@ export async function generateChapterEvaluation(src: PipelineSource, paragraphs:
     { role: "system", content: `You are an editorial reviewer. Write a chapter evaluation using markdown headings and concise bullet points: strengths, weaknesses, pacing, characters, prose, and concrete revision suggestions. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src.settings)}.\n\n${style}` },
     { role: "user", content: `${story}\n\nCHAPTER SCENES:\n${scenes}\n\nWrite the chapter evaluation.` },
   ];
-  return (await completeText(integration, messages, "review", { label: "evaluation:chapter" })).trim();
+  return (await completeTextRouted(src.settings, messages, "review", { label: "evaluation:chapter" })).trim();
 }
 
 /** Generate a paragraph evaluation body from its prose (uses the review model when configured). */
 export async function generateParagraphEvaluation(src: PipelineSource, title: string, prose: string): Promise<string> {
-  const integration = resolveReviewIntegration(src.settings) ?? resolveWritingIntegration(src.settings);
-  if (!integration) throw new Error("No AI integration configured.");
   const { style, story } = await buildContext(src);
   const messages: LlmMessage[] = [
     { role: "system", content: `You are an editorial reviewer. Write an evaluation of a single scene/paragraph using markdown headings and concise bullet points: what works, what to fix, prose/clarity, and concrete suggestions. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src.settings)}.\n\n${style}` },
     { role: "user", content: `${story}\n\nSCENE (${title}):\n${stripFrontmatter(prose).trim()}\n\nWrite the evaluation.` },
   ];
-  return (await completeText(integration, messages, "review", { label: "evaluation:paragraph" })).trim();
+  return (await completeTextRouted(src.settings, messages, "review", { label: "evaluation:paragraph" })).trim();
 }

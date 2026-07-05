@@ -70,6 +70,11 @@ function routerCandidates(settings: AppSettings, task: RoutingTaskKind): TaskCan
   return mapped.filter((c): c is TaskCandidate => Boolean(c));
 }
 
+function hasConfiguredRoute(settings: AppSettings, task: RoutingTaskKind): boolean {
+  const route = settings.taskRouting?.[task];
+  return Boolean(route?.primary || route?.fallbacks?.length);
+}
+
 /** Legacy chat resolution tiers (capability match anywhere → default-writing → any default). */
 function legacyChatCandidates(settings: AppSettings, capability: ChatCapability): TaskCandidate[] {
   const integrations = settings.aiIntegrations ?? [];
@@ -117,6 +122,10 @@ function legacyMediaCandidates(settings: AppSettings, task: "tts" | "stt" | "ima
  */
 export function resolveTaskCandidates(settings: AppSettings, task: RoutingTaskKind): TaskCandidate[] {
   const router = routerCandidates(settings, task);
+  // If the user explicitly configured a route for this task, use only that
+  // route and its explicit fallbacks. Falling through to legacy integrations
+  // would make the router feel ignored and can spend tokens on the wrong model.
+  if (hasConfiguredRoute(settings, task)) return dedupe(router);
   const legacy = isChatTask(task)
     ? legacyChatCandidates(settings, task)
     : legacyMediaCandidates(settings, task as "tts" | "stt" | "image");

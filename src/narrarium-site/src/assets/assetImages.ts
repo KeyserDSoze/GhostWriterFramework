@@ -2,8 +2,7 @@ import OpenAI, { AzureOpenAI } from "openai";
 import { parseDocument, stringify } from "yaml";
 import type { AIIntegration, AppSettings } from "@/types/settings";
 import { createFile, createOrUpdateBinaryFile, loadBinaryFileContent, readFileWithSha, updateFile } from "@/github/githubClient";
-import { completeText, resolveWritingIntegration } from "@/assistant/llm";
-import { resolveTaskCandidates } from "@/assistant/router";
+import { completeTextRouted, resolveTaskCandidates } from "@/assistant/router";
 import { imageTokenDelta, useCostsStore } from "@/costs/costsStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
 
@@ -157,9 +156,7 @@ export async function composeAssetPromptWithAI(input: {
   title: string;
   sourceText: string;
 }): Promise<string | null> {
-  const integration = resolveWritingIntegration(input.settings);
-  if (!integration || integration.provider === "m365_copilot" || !integration.apiKey) return null;
-  const answer = await completeText(integration, [
+  const answer = await completeTextRouted(input.settings, [
     {
       role: "system",
       content: "Write a single polished image-generation prompt for a Narrarium book asset. Return only markdown with a '# Prompt' heading and the prompt text. Include visual subject, mood, composition, continuity notes, orientation, and aspect ratio. Do not mention hidden spoilers unless present in the source text.",
@@ -168,7 +165,7 @@ export async function composeAssetPromptWithAI(input: {
       role: "user",
       content: `Asset kind: ${input.kind}\nTitle: ${input.title}\nSource text:\n${input.sourceText.slice(0, 6000)}`,
     },
-  ]);
+  ], "default", { label: "image:prompt" }).catch(() => "");
   return answer.trim() || null;
 }
 
