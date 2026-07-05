@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/components/ui/use-toast";
-import { fetchGitHubModelsCatalog } from "@/github/githubModelsCatalog";
+import { fetchGitHubModelsCatalog, type GitHubCatalogModel } from "@/github/githubModelsCatalog";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { CHAT_CAPABILITIES, ROUTING_TASKS, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget, type RoutingTaskKind, type TaskRoute } from "@/types/settings";
@@ -185,12 +185,16 @@ export function SettingsPage() {
 
             <div className="grid gap-3">
               {aiIntegrations.map((integration) => (
-                <IntegrationEditor
+                <IntegrationAccordion
                   key={integration.id}
                   integration={integration}
-                  onChange={(patch) => updateIntegration(integration.id, patch)}
-                  onRemove={() => removeIntegration(integration.id)}
-                />
+                >
+                  <IntegrationEditor
+                    integration={integration}
+                    onChange={(patch) => updateIntegration(integration.id, patch)}
+                    onRemove={() => removeIntegration(integration.id)}
+                  />
+                </IntegrationAccordion>
               ))}
             </div>
 
@@ -328,6 +332,47 @@ function DefaultIntegrationSelectors({
   );
 }
 
+function hasMultimodalInput(model: GitHubCatalogModel): boolean {
+  const modalities = (model.supported_input_modalities ?? []).map((entry) => entry.toLowerCase());
+  return modalities.includes("text") && modalities.some((entry) => entry !== "text");
+}
+
+function firstFiniteNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function catalogMaxInputTokens(model: GitHubCatalogModel): number | undefined {
+  return firstFiniteNumber(model.max_input_tokens, model.limits?.max_input_tokens, model.context_window, model.limits?.context_window);
+}
+
+function catalogMaxOutputTokens(model: GitHubCatalogModel): number | undefined {
+  return firstFiniteNumber(model.max_output_tokens, model.limits?.max_output_tokens);
+}
+
+function IntegrationAccordion({ integration, children }: { integration: AIIntegration; children: ReactNode }) {
+  const { t } = useTranslation();
+  const providerLabel = PROVIDERS.find((provider) => provider.value === integration.provider)?.label ?? integration.provider;
+  const modelCount = integration.chatModels?.length ?? 0;
+  return (
+    <details className="group rounded-2xl border bg-card shadow-sm [&[open]>summary_.chev]:rotate-90">
+      <summary className="flex cursor-pointer list-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="chev h-4 w-4 shrink-0 text-muted-foreground transition-transform" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold">{integration.name || t("settings.unnamedIntegration")}</p>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {providerLabel} · {t("settings.modelCount", { count: modelCount })}
+          </p>
+        </div>
+        <Badge variant="secondary" className="shrink-0 text-xs">{providerLabel}</Badge>
+      </summary>
+      <div className="border-t p-4">{children}</div>
+    </details>
+  );
+}
+
 function IntegrationEditor({ integration, onChange, onRemove }: { integration: AIIntegration; onChange: (patch: Partial<AIIntegration>) => void; onRemove?: () => void }) {
   const { t } = useTranslation();
   const isGithub = integration.provider === "github_models";
@@ -460,8 +505,15 @@ function ChatModelsEditor({ provider, apiKey, models, onChange }: { provider: AI
       const catalog = await fetchGitHubModelsCatalog(apiKey.trim());
       const existing = new Set(models.map((m) => m.name));
       const added: ChatModel[] = catalog
-        .filter((c) => c.id && !existing.has(c.id))
-        .map((c) => ({ id: crypto.randomUUID(), name: c.id, capabilities: [] }));
+        .filter((c) => c.id && hasMultimodalInput(c) && !existing.has(c.id))
+        .map((c) => ({
+          id: crypto.randomUUID(),
+          name: c.id,
+          capabilities: [],
+          tier: c.rate_limit_tier,
+          maxInputTokens: catalogMaxInputTokens(c),
+          maxOutputTokens: catalogMaxOutputTokens(c),
+        }));
       if (models.length === 0 && added.length) {
         added[0].capabilities = ["default", "copilot", "simple-tasks", "review"];
       }
@@ -507,6 +559,16 @@ function ChatModelsEditor({ provider, apiKey, models, onChange }: { provider: AI
                 <Trash2 className="h-4 w-4 text-destructive" />
               </Button>
             </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-3">
+              {provider === "github_models" && (
+                <div className="grid gap-1">
+                  <Label className="text-xs">{t("settings.modelTier")}</Label>
+                  <Input value={model.tier ?? ""} onChange={(e) => patchModel(model.id, { tier: e.target.value.trim() || undefined })} placeholder="low / standard / high" className="h-8 text-sm" />
+                </div>
+              )}
+              <TokenLimitField label={t("settings.maxInputTokens")} value={model.maxInputTokens} onChange={(v) => patchModel(model.id, { maxInputTokens: v })} />
+              <TokenLimitField label={t("settings.maxOutputTokens")} value={model.maxOutputTokens} onChange={(v) => patchModel(model.id, { maxOutputTokens: v })} />
+            </div>
             <div className="mt-2 flex flex-wrap gap-2">
               {CHAT_CAPABILITIES.map((capability) => {
                 const active = model.capabilities?.includes(capability);
@@ -551,6 +613,28 @@ function PriceField({ label, value, onChange }: { label: string; value: number |
         onChange={(e) => {
           const raw = e.target.value.trim();
           onChange(raw === "" ? undefined : Number(raw));
+        }}
+        placeholder="0"
+        className="h-8 text-sm"
+      />
+    </div>
+  );
+}
+
+function TokenLimitField({ label, value, onChange }: { label: string; value: number | undefined; onChange: (v: number | undefined) => void }) {
+  return (
+    <div className="grid gap-1">
+      <Label className="text-xs">{label}</Label>
+      <Input
+        type="number"
+        inputMode="numeric"
+        min="0"
+        step="1"
+        value={value ?? ""}
+        onChange={(e) => {
+          const raw = e.target.value.trim();
+          const next = raw === "" ? undefined : Math.max(0, Math.floor(Number(raw)));
+          onChange(Number.isFinite(next) ? next : undefined);
         }}
         placeholder="0"
         className="h-8 text-sm"

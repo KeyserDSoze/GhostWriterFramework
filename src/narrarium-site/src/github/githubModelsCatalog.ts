@@ -10,6 +10,14 @@ export interface GitHubCatalogModel {
   supported_input_modalities?: string[];
   supported_output_modalities?: string[];
   rate_limit_tier?: string;
+  max_input_tokens?: number;
+  max_output_tokens?: number;
+  context_window?: number;
+  limits?: {
+    max_input_tokens?: number;
+    max_output_tokens?: number;
+    context_window?: number;
+  };
   tags?: string[];
 }
 

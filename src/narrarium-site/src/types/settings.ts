@@ -47,6 +47,12 @@ export interface ChatModel {
   name: string;
   /** Roles this model is allowed to serve. */
   capabilities: ChatCapability[];
+  /** Provider-specific tier label. Currently populated from GitHub Models rate_limit_tier. */
+  tier?: string;
+  /** Maximum input/context tokens accepted by this model. */
+  maxInputTokens?: number;
+  /** Maximum output tokens this model can generate. */
+  maxOutputTokens?: number;
   /** Optional per-model unit prices; falls back to the integration pricing when absent. */
   pricing?: AIPricing;
 }
