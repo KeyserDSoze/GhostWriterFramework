@@ -173,7 +173,7 @@ export async function generateAssetImage(input: {
   settings: AppSettings;
   prompt: string;
   orientation: AssetOrientation;
-}): Promise<{ bytes: Uint8Array; provider: string; model: string }> {
+}): Promise<{ bytes: Uint8Array; provider: string; model: string; cost?: number }> {
   const candidates = resolveTaskCandidates(input.settings, "image").filter((c) => c.integration && c.model && c.integration.apiKey);
   if (!candidates.length) throw new Error("Image generation requires an OpenAI or Azure OpenAI integration.");
   let lastError: unknown = null;
@@ -195,11 +195,11 @@ export async function generateAssetImage(input: {
       const cost = recordImageUsage(integration, response);
       useLlmDebugStore.getState().finish(debugId, { status: "done", response: `${imageSize(input.orientation)} png`, cost });
       const image = response.data?.[0];
-      if (image?.b64_json) return { bytes: base64ToBytes(image.b64_json), provider: integration.provider, model };
+      if (image?.b64_json) return { bytes: base64ToBytes(image.b64_json), provider: integration.provider, model, cost };
       if (image?.url) {
         const fetched = await fetch(image.url);
         if (!fetched.ok) throw new Error(`Image download failed: ${fetched.status}`);
-        return { bytes: new Uint8Array(await fetched.arrayBuffer()), provider: integration.provider, model };
+        return { bytes: new Uint8Array(await fetched.arrayBuffer()), provider: integration.provider, model, cost };
       }
       throw new Error("Image provider returned no image.");
     } catch (err) {

@@ -314,10 +314,23 @@ export async function loadBinaryFileContent(
   path: string,
   ref?: string,
 ): Promise<Uint8Array> {
+  const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path.split("/").map(encodeURIComponent).join("/")}${query}`;
+  const response = await fetch(url, {
+    cache: "no-store",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github.raw",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (response.ok) return new Uint8Array(await response.arrayBuffer());
+
+  // Fallback to the JSON contents API for small files or older API behaviour.
   const octokit = createGitHubClient(token);
   const params = ref ? { owner, repo, path, ref } : { owner, repo, path };
   const { data } = await octokit.rest.repos.getContent(params);
-  if ("content" in data) return decodeBytes(data.content);
+  if ("content" in data && data.content) return decodeBytes(data.content);
   throw new Error(`${path} is not a file`);
 }
 
