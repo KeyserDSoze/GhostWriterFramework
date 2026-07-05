@@ -7,7 +7,7 @@ export interface AzureOpenAIConfig {
   apiVersion: string;
 }
 
-export type AIProviderType = "azure_openai" | "openai" | "m365_copilot";
+export type AIProviderType = "azure_openai" | "openai" | "m365_copilot" | "github_models";
 
 /**
  * Roles a chat model can fulfil. A task picks the model tagged with its capability,

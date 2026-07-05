@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Bot, Cloud, CloudOff, Github, Loader2, Mic, Plus, Trash2, Volume2 } from "lucide-react";
+import { Bot, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Trash2, Volume2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { useToast } from "@/components/ui/use-toast";
+import { fetchGitHubModelsCatalog } from "@/github/githubModelsCatalog";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { CHAT_CAPABILITIES, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel } from "@/types/settings";
@@ -16,6 +18,7 @@ import { CHAT_CAPABILITIES, type AIIntegration, type AIProviderType, type AppSet
 const PROVIDERS: Array<{ value: AIProviderType; label: string }> = [
   { value: "azure_openai", label: "Azure OpenAI" },
   { value: "openai", label: "OpenAI / compatible" },
+  { value: "github_models", label: "GitHub Models" },
   { value: "m365_copilot", label: "Microsoft 365 Copilot" },
 ];
 
@@ -343,8 +346,10 @@ function DefaultIntegrationSelectors({
 
 function IntegrationEditor({ integration, onChange, onRemove }: { integration: AIIntegration; onChange: (patch: Partial<AIIntegration>) => void; onRemove?: () => void }) {
   const { t } = useTranslation();
+  const isGithub = integration.provider === "github_models";
   const usesApiKey = integration.provider !== "m365_copilot";
-  const usesEndpoint = integration.provider !== "m365_copilot";
+  const usesEndpoint = integration.provider !== "m365_copilot" && !isGithub;
+  const usesMedia = integration.provider !== "m365_copilot" && !isGithub;
 
   return (
     <div className="rounded-2xl border bg-card p-4">
@@ -378,11 +383,12 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
         )}
         {usesApiKey && (
           <div className="grid gap-2">
-            <Label>{t("settings.apiKey")}</Label>
-            <Input type="password" value={integration.apiKey} onChange={(e) => onChange({ apiKey: e.target.value })} autoComplete="off" />
+            <Label>{isGithub ? t("settings.githubPat") : t("settings.apiKey")}</Label>
+            <Input type="password" value={integration.apiKey} onChange={(e) => onChange({ apiKey: e.target.value })} autoComplete="off" placeholder={isGithub ? "ghp_… (GitHub PAT)" : undefined} />
+            {isGithub && <p className="text-xs text-muted-foreground">{t("settings.githubModelsHint")}</p>}
           </div>
         )}
-        {integration.provider !== "m365_copilot" && (
+        {usesMedia && (
           <>
             <div className="grid gap-2">
               <Label>{t("speech.sttModel")}</Label>
@@ -408,12 +414,14 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
 
       {integration.provider !== "m365_copilot" && (
         <ChatModelsEditor
+          provider={integration.provider}
+          apiKey={integration.apiKey}
           models={integration.chatModels ?? []}
           onChange={(chatModels) => onChange({ chatModels })}
         />
       )}
 
-      {integration.provider !== "m365_copilot" && (
+      {usesMedia && (
         <details className="mt-3 rounded-lg border bg-muted/20 p-3">
           <summary className="cursor-pointer text-sm font-medium">{t("costs.mediaPricingTitle")}</summary>
           <p className="mt-1 text-xs text-muted-foreground">{t("costs.mediaPricingHint")}</p>
@@ -436,8 +444,10 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
   );
 }
 
-function ChatModelsEditor({ models, onChange }: { models: ChatModel[]; onChange: (models: ChatModel[]) => void }) {
+function ChatModelsEditor({ provider, apiKey, models, onChange }: { provider: AIProviderType; apiKey: string; models: ChatModel[]; onChange: (models: ChatModel[]) => void }) {
   const { t } = useTranslation();
+  const { toast } = useToast();
+  const [loadingCatalog, setLoadingCatalog] = useState(false);
 
   function patchModel(id: string, patch: Partial<ChatModel>) {
     onChange(models.map((m) => (m.id === id ? { ...m, ...patch } : m)));
@@ -459,16 +469,46 @@ function ChatModelsEditor({ models, onChange }: { models: ChatModel[]; onChange:
     onChange(models.filter((m) => m.id !== id));
   }
 
+  async function loadCatalog() {
+    if (!apiKey.trim()) { toast({ title: t("settings.githubPatMissing"), variant: "destructive" }); return; }
+    setLoadingCatalog(true);
+    try {
+      const catalog = await fetchGitHubModelsCatalog(apiKey.trim());
+      const existing = new Set(models.map((m) => m.name));
+      const added: ChatModel[] = catalog
+        .filter((c) => c.id && !existing.has(c.id))
+        .map((c) => ({ id: crypto.randomUUID(), name: c.id, capabilities: [] }));
+      if (models.length === 0 && added.length) {
+        added[0].capabilities = ["default", "copilot", "simple-tasks", "review"];
+      }
+      if (!added.length) { toast({ title: t("settings.catalogNoNew") }); return; }
+      onChange([...models, ...added]);
+      toast({ title: t("settings.catalogLoaded", { count: added.length }) });
+    } catch (err) {
+      toast({ title: t("settings.catalogFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setLoadingCatalog(false);
+    }
+  }
+
   return (
     <div className="mt-3 rounded-lg border bg-muted/10 p-3">
-      <div className="mb-2 flex items-center justify-between">
+      <div className="mb-2 flex items-center justify-between gap-2">
         <div>
           <p className="text-sm font-medium">{t("settings.chatModels")}</p>
           <p className="text-xs text-muted-foreground">{t("settings.chatModelsHint")}</p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={addModel}>
-          <Plus className="mr-1 h-3.5 w-3.5" />{t("settings.addChatModel")}
-        </Button>
+        <div className="flex items-center gap-2">
+          {provider === "github_models" && (
+            <Button type="button" variant="outline" size="sm" disabled={loadingCatalog} onClick={() => void loadCatalog()}>
+              {loadingCatalog ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1 h-3.5 w-3.5" />}
+              {t("settings.loadCatalogModels")}
+            </Button>
+          )}
+          <Button type="button" variant="outline" size="sm" onClick={addModel}>
+            <Plus className="mr-1 h-3.5 w-3.5" />{t("settings.addChatModel")}
+          </Button>
+        </div>
       </div>
       {models.length === 0 && <p className="text-xs text-muted-foreground">{t("settings.noChatModels")}</p>}
       <div className="space-y-3">
@@ -555,6 +595,10 @@ function createBlankIntegration(): AIIntegration {
 function normalizeIntegration(integration: AIIntegration): AIIntegration {
   if (integration.provider === "m365_copilot") {
     return { ...integration, endpoint: "", apiKey: "", chatModels: [], modelWriting: "", modelReview: "", modelImageGeneration: "", apiVersion: "" };
+  }
+  if (integration.provider === "github_models") {
+    // OpenAI-compatible, LLM-only: fixed baseURL, no version, no media models. Keep PAT + chatModels.
+    return { ...integration, endpoint: "", apiVersion: "", modelSpeechToText: "", modelTextToSpeech: "", modelImageGeneration: "" };
   }
   if (integration.provider === "openai") {
     return { ...integration, apiVersion: "" };

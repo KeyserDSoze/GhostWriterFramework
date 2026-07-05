@@ -177,7 +177,7 @@ export async function generateAssetImage(input: {
   orientation: AssetOrientation;
 }): Promise<{ bytes: Uint8Array; provider: string; model: string }> {
   const integration = resolveWritingIntegration(input.settings);
-  if (!integration || integration.provider === "m365_copilot") throw new Error("Image generation requires an OpenAI or Azure OpenAI integration.");
+  if (!integration || integration.provider === "m365_copilot" || integration.provider === "github_models") throw new Error("Image generation requires an OpenAI or Azure OpenAI integration.");
   if (!integration.apiKey) throw new Error("Missing API key for image generation.");
   const model = integration.modelImageGeneration?.trim() || "gpt-image-1";
   const client = createImageClient(integration);

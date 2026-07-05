@@ -79,6 +79,13 @@ const it = {
     addChatModel: "Aggiungi modello",
     noChatModels: "Nessun modello chat. Aggiungine almeno uno con il ruolo Predefinito.",
     chatModelName: "Nome modello",
+    githubPat: "GitHub Personal Access Token",
+    githubModelsHint: "Usa un PAG GitHub compatibile con GitHub Models. L'endpoint è fisso; solo LLM (niente voce/immagini).",
+    githubPatMissing: "Inserisci prima il GitHub PAT.",
+    loadCatalogModels: "Carica dal catalogo GitHub",
+    catalogLoaded: "Aggiunti {{count}} modelli dal catalogo.",
+    catalogNoNew: "Nessun nuovo modello da aggiungere.",
+    catalogFailed: "Impossibile leggere il catalogo modelli.",
     capability: {
       default: "Predefinito",
       copilot: "Copilot",

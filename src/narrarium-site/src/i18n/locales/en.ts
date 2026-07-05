@@ -79,6 +79,13 @@ const en = {
     addChatModel: "Add model",
     noChatModels: "No chat models yet. Add at least one with the Default role.",
     chatModelName: "Model name",
+    githubPat: "GitHub Personal Access Token",
+    githubModelsHint: "Use a GitHub PAT enabled for GitHub Models. The endpoint is fixed; LLM only (no speech/images).",
+    githubPatMissing: "Enter the GitHub PAT first.",
+    loadCatalogModels: "Load from GitHub catalog",
+    catalogLoaded: "Added {{count}} models from the catalog.",
+    catalogNoNew: "No new models to add.",
+    catalogFailed: "Could not read the models catalog.",
     capability: {
       default: "Default",
       copilot: "Copilot",

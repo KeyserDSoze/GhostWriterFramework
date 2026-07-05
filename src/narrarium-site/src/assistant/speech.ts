@@ -111,7 +111,8 @@ export function splitSpeechText(text: string): string[] {
 
 export function getSpeechIntegration(settings: AppSettings): AIIntegration | null {
   const integration = resolveWritingIntegration(settings);
-  if (!integration || integration.provider === "m365_copilot") return null;
+  // GitHub Models is LLM-only → keep STT/TTS on OpenAI/Azure (browser fallback otherwise).
+  if (!integration || integration.provider === "m365_copilot" || integration.provider === "github_models") return null;
   if (!integration.apiKey) return null;
   return integration;
 }

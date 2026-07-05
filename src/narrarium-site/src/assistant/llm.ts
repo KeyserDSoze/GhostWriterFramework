@@ -111,6 +111,12 @@ function resolveModelForCall(
   return { model: legacy, pricing: integration.pricing };
 }
 
+/** Base URL for OpenAI-compatible providers (openai, github_models). */
+function openAiBaseUrl(integration: AIIntegration): string {
+  if (integration.provider === "github_models") return "https://models.github.ai/inference";
+  return integration.endpoint || "https://api.openai.com/v1";
+}
+
 export async function completeText(
   integration: AIIntegration,
   messages: LlmMessage[],
@@ -148,10 +154,10 @@ export async function completeText(
       return text;
     }
 
-    if (integration.provider === "openai") {
+    if (integration.provider === "openai" || integration.provider === "github_models") {
       const client = new OpenAI({
         apiKey: integration.apiKey,
-        baseURL: integration.endpoint || "https://api.openai.com/v1",
+        baseURL: openAiBaseUrl(integration),
         dangerouslyAllowBrowser: true,
       });
       const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
@@ -209,7 +215,7 @@ export async function classifyConfirmation(settings: AppSettings, utterance: str
   try {
     const client = integration.provider === "azure_openai"
       ? new AzureOpenAI({ endpoint: integration.endpoint ?? "", apiKey: integration.apiKey, apiVersion: integration.apiVersion || "2024-10-21", dangerouslyAllowBrowser: true })
-      : new OpenAI({ apiKey: integration.apiKey, baseURL: integration.endpoint || "https://api.openai.com/v1", dangerouslyAllowBrowser: true });
+      : new OpenAI({ apiKey: integration.apiKey, baseURL: openAiBaseUrl(integration), dangerouslyAllowBrowser: true });
     const response = await client.chat.completions.create(body as never);
     recordChatUsage(model, pricing, (response as { usage?: unknown }).usage);
     const call = (response as { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> }).choices?.[0]?.message?.tool_calls?.[0];
