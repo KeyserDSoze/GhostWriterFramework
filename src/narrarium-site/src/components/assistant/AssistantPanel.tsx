@@ -6,6 +6,7 @@ import {
   BookOpen,
   ChevronDown,
   ClipboardCheck,
+  Copy,
   FileText,
   Ghost,
   GitBranch,
@@ -561,22 +562,26 @@ export function AssistantPanel() {
     else pauseReading();
   }
 
-  async function readCurrentContext() {
-    const ctx = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches);
-    const book = ctx.book;
-    const token = book ? resolveBookToken(book, settings) : "";
-    if (book && token && ctx.structure) {
-      const target = ctx.paragraph && ctx.chapter
-        ? { kind: "paragraph" as const, chapter: ctx.chapter, paragraph: ctx.paragraph }
-        : ctx.chapter
-          ? { kind: "chapter" as const, chapter: ctx.chapter }
-          : null;
-      if (target) {
-        const body = await loadReadTargetText(target, book, token, ctx.structure.loadedBranch);
-        if (body.trim()) { void readText(body); return; }
-      }
+  function lastAssistantReply(): AssistantMessage | undefined {
+    return [...(currentSession?.messages ?? [])].reverse().find((message) => message.role === "assistant" && message.text.trim());
+  }
+
+  async function readLastAssistantReply() {
+    const reply = lastAssistantReply();
+    if (!reply) {
+      toast({ title: t("assistant.noLastReply") });
+      return;
     }
-    void readText([ctx.title, ctx.summary].filter(Boolean).join("\n"));
+    await readText(reply.text);
+  }
+
+  async function copyAssistantMessage(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: t("assistant.copied") });
+    } catch (err) {
+      toast({ title: t("assistant.copyFailed"), description: String(err), variant: "destructive" });
+    }
   }
   async function handleVoiceTranscript(transcript: string) {
     setLastVoiceTranscript(transcript);
@@ -1253,9 +1258,19 @@ export function AssistantPanel() {
         <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">{t("assistant.empty")}</div>
       )}
       {(currentSession?.messages ?? []).map((message, index) => (
-        <div key={message.id} className={message.role === "user" ? "flex justify-end" : "flex justify-start"}>
+        <div key={message.id} className={message.role === "user" ? "flex justify-end" : "group flex justify-start"}>
           <div className={message.role === "user" ? "max-w-[85%]" : "w-full max-w-[92%]"}>
             <div className={message.role === "user" ? "rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm leading-6 text-primary-foreground shadow-sm" : "rounded-2xl rounded-bl-sm border bg-background px-4 py-3 text-sm leading-7 whitespace-pre-wrap shadow-sm"}>{message.text}</div>
+            {message.role === "assistant" && message.text.trim() && (
+              <div className="mt-1 flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100">
+                <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs text-muted-foreground" onClick={() => void copyAssistantMessage(message.text)}>
+                  <Copy className="h-3.5 w-3.5" />{t("assistant.copyMessage")}
+                </Button>
+                <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs text-muted-foreground" onClick={() => void readText(message.text)}>
+                  <Volume2 className="h-3.5 w-3.5" />{t("assistant.listenMessage")}
+                </Button>
+              </div>
+            )}
             {message.action?.kind === "switch-book-branch" && (
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Badge variant="secondary">{t("assistant.branchActionReady")}</Badge>
@@ -1377,9 +1392,9 @@ export function AssistantPanel() {
                   })}
                 </DropdownMenuContent>
               </DropdownMenu>
-              <Button variant="outline" size="sm" className="h-8 gap-1" onClick={speechController ? stopReading : () => void readCurrentContext()}>
+              <Button variant="outline" size="sm" className="h-8 gap-1" onClick={speechController ? stopReading : () => void readLastAssistantReply()}>
                 {speechController ? <Square className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                <span className="hidden sm:inline">{speechController ? t("assistant.stopReading") : t("assistant.readContext")}</span>
+                <span className="hidden sm:inline">{speechController ? t("assistant.stopReading") : t("assistant.read")}</span>
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
