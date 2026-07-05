@@ -1,4 +1,4 @@
-import { Eye, EyeOff, LogOut, Menu, PanelRight, Volume2 } from "lucide-react";
+import { Activity, ArrowLeftRight, Coins, Eye, EyeOff, HelpCircle, LogOut, Menu, PanelRight, Settings, Volume2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ThemeToggle } from "./ThemeToggle";
 import { LanguageToggle } from "./LanguageToggle";
@@ -17,6 +17,7 @@ import { useNavigate } from "react-router-dom";
 import { useRef } from "react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useUiStore } from "@/store/uiStore";
+import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import { speakText, type SpeechController } from "@/assistant/speech";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -40,6 +41,8 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const dossierColumnHidden = useUiStore((s) => s.dossierColumnHidden);
   const setDossierColumnHidden = useUiStore((s) => s.setDossierColumnHidden);
   const setDossierSearchOpen = useUiStore((s) => s.setDossierSearchOpen);
+  const setDebugOpen = useUiStore((s) => s.setDebugOpen);
+  const debugCount = useLlmDebugStore((s) => s.entries.length);
   const { toast } = useToast();
   const navigate = useNavigate();
   const speechRef = useRef<SpeechController | null>(null);
@@ -122,7 +125,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               </Avatar>
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align="end" className="w-56">
             {user && (
               <>
                 <DropdownMenuLabel>
@@ -134,6 +137,30 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
                 <DropdownMenuSeparator />
               </>
             )}
+            <DropdownMenuItem onClick={() => navigate("/app/settings")}>
+              <Settings className="mr-2 h-4 w-4" />
+              {t("nav.settings")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/app/migrate")}>
+              <ArrowLeftRight className="mr-2 h-4 w-4" />
+              {t("migration.title")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/app/costs")}>
+              <Coins className="mr-2 h-4 w-4" />
+              {t("costs.title")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setDebugOpen(true)}>
+              <Activity className="mr-2 h-4 w-4" />
+              <span className="flex-1">{t("debug.title")}</span>
+              {debugCount > 0 && (
+                <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">{debugCount}</span>
+              )}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/app/docs")}>
+              <HelpCircle className="mr-2 h-4 w-4" />
+              {t("nav.help")}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleSignOut}>
               <LogOut className="mr-2 h-4 w-4" />
               {t("shell.signOut")}

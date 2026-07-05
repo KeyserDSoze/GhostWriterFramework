@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseDocument, stringify } from "yaml";
-import { ArrowLeft, Save, Loader2, Plus, X, Lock } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Save, Loader2, Plus, X, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
@@ -27,6 +27,7 @@ import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { improveProse, synonymsFor, type PipelineSource } from "@/narrarium/pipeline";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 import { useRegisterPageSave } from "@/store/saveStore";
+import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
 
@@ -133,6 +134,7 @@ export function ParagraphPage() {
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [switchingDraft, setSwitchingDraft] = useState(false);
   const loadedTargetRef = useRef<string | null>(null);
 
   // Add-field form
@@ -224,6 +226,66 @@ export function ParagraphPage() {
     setNewKey("");
     setNewVal("");
     setShowAddMeta(false);
+  }
+
+  async function reloadCurrentParagraphFile() {
+    if (!paragraph || !book) return;
+    setLoading(true);
+    try {
+      const { content: text, sha: fileSha } = await readFileWithSha(token, book.owner, book.repo, branch, paragraph.path);
+      const { entries: e, body: b } = parseFrontmatter(text);
+      const targetKey = `${branch}:${paragraph.path}`;
+      loadedTargetRef.current = targetKey;
+      setEntries(e);
+      setBody(b);
+      setSavedEntries(e);
+      setSavedBody(b);
+      setSha(fileSha);
+    } catch (err) {
+      loadedTargetRef.current = null;
+      toast({ title: t("paragraph.loadFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function switchResultMessage(action: string, reason?: string) {
+    if (action === "swapped") return t("paragraph.switchDoneSwapped");
+    if (action === "promoted-to-draft") return t("paragraph.switchDoneToDraft");
+    if (action === "promoted-to-final") return t("paragraph.switchDoneToFinal");
+    if (reason === "source-empty") return t("paragraph.switchSourceEmpty");
+    return t("paragraph.switchBothEmpty");
+  }
+
+  async function handleSwitchToDraft() {
+    if (!book || !chapter || !paragraph) return;
+    if (isDirty) {
+      toast({ title: t("paragraph.saveBeforeSwitch") });
+      return;
+    }
+    if (!window.confirm(t("paragraph.switchToDraftConfirm"))) return;
+    setSwitchingDraft(true);
+    try {
+      const outcome = await switchDraftAndFinal({
+        token,
+        owner: book.owner,
+        repo: book.repo,
+        branch,
+        chapterSlug: chapter.slug,
+        chapterPath: chapter.path,
+        paragraphNumber: Number(paragraph.number),
+        finalPath: paragraph.path,
+        draftPath: paragraph.draftPath,
+        title: titleValue || paragraph.title,
+      }, "toDraft");
+      toast({ title: switchResultMessage(outcome.action, "reason" in outcome ? outcome.reason : undefined) });
+      await reload();
+      await reloadCurrentParagraphFile();
+    } catch (err) {
+      toast({ title: t("paragraph.switchFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setSwitchingDraft(false);
+    }
   }
 
   // ── Save ──────────────────────────────────────────────────────────────────
@@ -472,6 +534,10 @@ export function ParagraphPage() {
           {isDirty && !saving && (
             <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>
           )}
+          <Button size="sm" variant="outline" onClick={() => void handleSwitchToDraft()} disabled={switchingDraft || saving}>
+            {switchingDraft ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-1 h-4 w-4" />}
+            {t("paragraph.switchToDraft")}
+          </Button>
           <Button
             size="sm"
             onClick={() => void handleSave()}

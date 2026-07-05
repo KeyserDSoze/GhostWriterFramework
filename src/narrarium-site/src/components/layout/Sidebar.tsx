@@ -1,12 +1,9 @@
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
-  Activity,
   BookOpen,
-  BookText,
   ClipboardCheck,
   Clock,
-  Coins,
   Columns2,
   EyeOff,
   FileEdit,
@@ -14,15 +11,12 @@ import {
   Images,
   LayoutDashboard,
   Library,
-  Loader2,
   MapPin,
-  MessagesSquare,
   Network,
   NotebookText,
   Package,
   PanelLeftClose,
   PenLine,
-  PlusCircle,
   Settings,
   Shield,
   Users,
@@ -33,7 +27,6 @@ import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
-import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import { parseAppRoute } from "@/assistant/context";
 import { APP_VERSION } from "@/config/version";
 
@@ -74,9 +67,6 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const location = useLocation();
   const { settings } = useSettingsStore();
   const { structures } = useBooksStore();
-  const setDebugOpen = useUiStore((s) => s.setDebugOpen);
-  const debugCount = useLlmDebugStore((s) => s.entries.length);
-  const debugPending = useLlmDebugStore((s) => s.pending);
   const route = parseAppRoute(location.pathname);
   const bookId = "bookId" in route ? route.bookId : undefined;
   const chapterId = "chapterId" in route ? route.chapterId : undefined;
@@ -85,27 +75,6 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const chapter = chapterId && structure ? structure.chapters.find((c) => c.slug === chapterId) : undefined;
   const paragraph = paragraphNum && chapter ? chapter.paragraphs.find((p) => p.number === paragraphNum) : undefined;
   const book = bookId ? settings.books.find((b) => b.id === bookId) : undefined;
-
-  const topNav: NavItem[] = [
-    { label: t("nav.books"), href: "/app/books", icon: <Library className="h-4 w-4" /> },
-    { label: t("chats.title"), href: "/app/chats", icon: <MessagesSquare className="h-4 w-4" /> },
-    {
-      label: t("nav.addBook"),
-      href: "/app/books/add",
-      icon: <PlusCircle className="h-4 w-4" />,
-    },
-    {
-      label: t("nav.settings"),
-      href: "/app/settings",
-      icon: <Settings className="h-4 w-4" />,
-    },
-    {
-      label: t("costs.title"),
-      href: "/app/costs",
-      icon: <Coins className="h-4 w-4" />,
-    },
-  ];
-  const docsNav: NavItem = { label: t("nav.docs"), href: "/app/docs", icon: <BookText className="h-4 w-4" /> };
 
   const bookNav: NavItem[] = bookId
     ? [
@@ -210,49 +179,26 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </>
         )}
 
-        <NavGroup label={t("nav.app")} first={!bookId} />
+        <NavGroup label={t("nav.myBooks")} first={!bookId} />
         <nav className="px-2 space-y-1">
-          {topNav.map((item) => (
+          <NavLink
+            item={{ label: t("nav.allBooks"), href: "/app/books", icon: <Library className="h-4 w-4" /> }}
+            active={location.pathname === "/app/books"}
+            onNavigate={onNavigate}
+          />
+          {settings.books.map((entry) => (
             <NavLink
-              key={item.href}
-              item={item}
-              active={location.pathname === item.href}
+              key={entry.id}
+              item={{
+                label: entry.name,
+                href: `/app/books/${entry.id}`,
+                icon: <BookOpen className="h-4 w-4" />,
+              }}
+              active={location.pathname === `/app/books/${entry.id}`}
               onNavigate={onNavigate}
             />
           ))}
-          <button
-            type="button"
-            onClick={() => setDebugOpen(true)}
-            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-          >
-            {debugPending > 0 ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : <Activity className="h-4 w-4" />}
-            <span className="flex-1 text-left">{t("debug.title")}</span>
-            {debugCount > 0 && (
-              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">{debugCount}</span>
-            )}
-          </button>
-          <NavLink item={docsNav} active={location.pathname === docsNav.href} onNavigate={onNavigate} />
         </nav>
-
-        {settings.books.length > 0 && (
-          <>
-            <NavGroup label={t("nav.myBooks")} />
-            <nav className="px-2 space-y-1">
-              {settings.books.map((entry) => (
-                <NavLink
-                  key={entry.id}
-                  item={{
-                    label: entry.name,
-                    href: `/app/books/${entry.id}`,
-                    icon: <BookOpen className="h-4 w-4" />,
-                  }}
-                  active={location.pathname === `/app/books/${entry.id}`}
-                  onNavigate={onNavigate}
-                />
-              ))}
-            </nav>
-          </>
-        )}
       </ScrollArea>
     </>
   );

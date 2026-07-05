@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, FileEdit, FileText, Loader2, Lock, Network, Plus, Save, Wand2, X } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, FileEdit, FileText, Loader2, Lock, Network, Plus, Save, Wand2, X } from "lucide-react";
 import { parseDocument, stringify } from "yaml";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,7 @@ import { useProseAssist } from "@/components/editor/useProseAssist";
 import { parseScript, serializeScript, type ScriptDoc } from "@/narrarium/script/model";
 import { proseToScript, refineProse, scriptToProse, stripFrontmatter, generateChapterResume, generateChapterEvaluation, generateParagraphEvaluation, type PipelineSource } from "@/narrarium/pipeline";
 import { useGenerateDiffStore } from "@/store/generateDiffStore";
+import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
 
 interface MetaEntry {
   key: string;
@@ -105,6 +106,7 @@ export function WorkspaceDocPage() {
   const [savedBody, setSavedBody] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [switchingFinal, setSwitchingFinal] = useState(false);
   const [showAddMeta, setShowAddMeta] = useState(false);
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
@@ -220,6 +222,66 @@ export function WorkspaceDocPage() {
     setNewKey("");
     setNewVal("");
     setShowAddMeta(false);
+  }
+
+  async function reloadCurrentWorkspaceFile() {
+    if (!book || !path) return;
+    setLoading(true);
+    try {
+      const { content, sha: fileSha } = await readFileWithSha(token, book.owner, book.repo, branch, path);
+      const parsed = parseFrontmatter(content);
+      loadedTargetRef.current = `${branch}:${path}`;
+      setEntries(parsed.entries);
+      setSavedEntries(parsed.entries);
+      setBody(parsed.body);
+      setSavedBody(parsed.body);
+      setSha(fileSha);
+      if (workspaceKind === "script") setScriptDoc(parseScript(parsed.body));
+    } catch (err) {
+      loadedTargetRef.current = null;
+      toast({ title: t("workspace.loadFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function switchResultMessage(action: string, reason?: string) {
+    if (action === "swapped") return t("paragraph.switchDoneSwapped");
+    if (action === "promoted-to-final") return t("paragraph.switchDoneToFinal");
+    if (action === "promoted-to-draft") return t("paragraph.switchDoneToDraft");
+    if (reason === "source-empty") return t("paragraph.switchSourceEmpty");
+    return t("paragraph.switchBothEmpty");
+  }
+
+  async function handleSwitchToFinal() {
+    if (!book || !chapter || !paragraph || !path || workspaceKind !== "draft") return;
+    if (isDirty) {
+      toast({ title: t("paragraph.saveBeforeSwitch") });
+      return;
+    }
+    if (!window.confirm(t("paragraph.switchToFinalConfirm"))) return;
+    setSwitchingFinal(true);
+    try {
+      const outcome = await switchDraftAndFinal({
+        token,
+        owner: book.owner,
+        repo: book.repo,
+        branch,
+        chapterSlug: chapter.slug,
+        chapterPath: chapter.path,
+        paragraphNumber: Number(paragraph.number),
+        finalPath: paragraph.path,
+        draftPath: path,
+        title: paragraph.title,
+      }, "toFinal");
+      toast({ title: switchResultMessage(outcome.action, "reason" in outcome ? outcome.reason : undefined) });
+      await reload();
+      await reloadCurrentWorkspaceFile();
+    } catch (err) {
+      toast({ title: t("paragraph.switchFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setSwitchingFinal(false);
+    }
   }
 
   async function handleSave() {
@@ -399,6 +461,10 @@ export function WorkspaceDocPage() {
           )}
           {paraSlug && workspaceKind === "draft" && (
             <>
+              <Button size="sm" variant="outline" onClick={() => void handleSwitchToFinal()} disabled={switchingFinal || saving}>
+                {switchingFinal ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-1 h-4 w-4" />}
+                {t("paragraph.switchToFinal")}
+              </Button>
               <Button size="sm" variant="outline" onClick={() => void startPipeline("toFinal")}><Wand2 className="mr-1 h-4 w-4" />{t("pipeline.draftToFinal")}</Button>
             </>
           )}

@@ -255,6 +255,13 @@ function FloatingDossier({ entry }: { entry: DossierEntry }) {
   const dragRef = useRef<{ dx: number; dy: number } | null>(null);
   const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches;
 
+  // Mobile popups have no docked column, so keep a search box inside the popup itself.
+  const location = useLocation();
+  const { structures } = useBooksStore();
+  const route = parseAppRoute(location.pathname);
+  const bookId = "bookId" in route ? route.bookId : undefined;
+  const structure = bookId ? structures[bookId] : undefined;
+
   function onPointerDown(e: React.PointerEvent) {
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     dragRef.current = { dx: e.clientX - (entry.x ?? 80), dy: e.clientY - (entry.y ?? 80) };
@@ -294,6 +301,11 @@ function FloatingDossier({ entry }: { entry: DossierEntry }) {
           </Button>
         </div>
       </div>
+      {isMobile && structure && bookId && (
+        <div className="shrink-0 border-b px-3 pb-2">
+          <DossierSearch structure={structure} bookId={bookId} />
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {entry.imageUrl && (
           <img src={entry.imageUrl} alt={entry.title} className="mb-3 h-24 w-24 rounded-lg object-cover ring-1 ring-border" />

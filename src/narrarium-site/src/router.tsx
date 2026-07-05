@@ -18,6 +18,7 @@ import { GhostwritersPage } from "@/pages/GhostwritersPage";
 import { WritingStylePage } from "@/pages/WritingStylePage";
 import { ChapterStageIndexPage } from "@/pages/ChapterStageIndexPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { MigratePage } from "@/pages/MigratePage";
 import { CostsPage } from "@/pages/CostsPage";
 import { AppDocsIndexPage, AppDocPage } from "@/pages/AppDocsPage";
 import { AssistantChatsPage } from "@/pages/AssistantChatsPage";
@@ -85,6 +86,7 @@ export const router = createBrowserRouter([
         element: <ParagraphPage />,
       },
       { path: "settings", element: <SettingsPage /> },
+      { path: "migrate", element: <MigratePage /> },
       { path: "costs", element: <CostsPage /> },
       { path: "docs", element: <AppDocsIndexPage /> },
       { path: "docs/*", element: <AppDocPage /> },

@@ -60,9 +60,14 @@ export async function openCanonDossier(input: OpenDossierInput): Promise<void> {
   };
   useDossierStore.getState().openDossier(entry);
   useUiStore.getState().setDossierColumnHidden(false);
-  // On small screens there is no docked column, so surface the dossier as a floating popup.
+  // On small screens there is no docked column, so surface the dossier as a single floating popup.
   const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches;
   if (isMobile) {
+    // Replace any previously open mobile popups instead of stacking them.
+    const store = useDossierStore.getState();
+    for (const open of store.floating) {
+      if (open.id !== entry.id) store.closeDossier(open.id);
+    }
     useDossierStore.getState().undock(entry.id);
     useUiStore.getState().setDossierSearchOpen(false);
   }
