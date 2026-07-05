@@ -1,0 +1,17 @@
+name = "models-github-proxy"
+main = "src/index.js"
+compatibility_date = "2026-07-05"
+
+# The Worker is published on its *.workers.dev subdomain because the
+# narrarium.net DNS zone is hosted on GoDaddy, not Cloudflare, so a Cloudflare
+# custom_domain route cannot be provisioned here.
+#
+# Resulting URL after the first deploy:
+#   https://models-github-proxy.<your-account-subdomain>.workers.dev
+#
+# If narrarium.net is ever moved to Cloudflare, replace `workers_dev = true`
+# with a custom domain route:
+#   [[routes]]
+#   pattern = "models-proxy.narrarium.net"
+#   custom_domain = true
+workers_dev = true

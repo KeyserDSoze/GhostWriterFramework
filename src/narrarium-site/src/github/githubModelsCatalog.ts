@@ -1,3 +1,5 @@
+import { GITHUB_MODELS_CATALOG_URL } from "@/config/githubModels";
+
 export interface GitHubCatalogModel {
   /** Model id used as ChatModel.name, e.g. "openai/gpt-4o". */
   id: string;
@@ -10,8 +12,6 @@ export interface GitHubCatalogModel {
   rate_limit_tier?: string;
   tags?: string[];
 }
-
-const GITHUB_MODELS_CATALOG_URL = "https://models.github.ai/catalog/models";
 
 /** Fetch the GitHub Models catalog with a GitHub PAT (Bearer). */
 export async function fetchGitHubModelsCatalog(pat: string): Promise<GitHubCatalogModel[]> {

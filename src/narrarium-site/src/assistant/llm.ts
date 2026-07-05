@@ -2,6 +2,7 @@ import OpenAI, { AzureOpenAI } from "openai";
 import type { AIIntegration, AIPricing, AppSettings, ChatCapability, ChatModel } from "@/types/settings";
 import { chatDelta, useCostsStore } from "@/costs/costsStore";
 import { flattenLlmContent, useLlmDebugStore, type LlmDebugMessage } from "@/debug/llmDebugStore";
+import { GITHUB_MODELS_INFERENCE_URL } from "@/config/githubModels";
 
 export type LlmContentPart =
   | { type: "text"; text: string }
@@ -124,7 +125,7 @@ function resolveModelForCall(
 
 /** Base URL for OpenAI-compatible providers (openai, github_models). */
 function openAiBaseUrl(integration: AIIntegration): string {
-  if (integration.provider === "github_models") return "https://models.github.ai/inference";
+  if (integration.provider === "github_models") return GITHUB_MODELS_INFERENCE_URL;
   return integration.endpoint || "https://api.openai.com/v1";
 }
 
