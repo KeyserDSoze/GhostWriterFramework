@@ -1,7 +1,7 @@
 import OpenAI, { AzureOpenAI } from "openai";
 import { parseDocument, stringify } from "yaml";
 import type { AIIntegration, AppSettings } from "@/types/settings";
-import { createFile, createOrUpdateBinaryFile, loadBinaryFileContent, readFileWithSha, updateFile } from "@/github/githubClient";
+import { createOrUpdateBinaryFile, createOrUpdateTextFile, loadBinaryFileContent, readFileWithSha } from "@/github/githubClient";
 import { completeTextRouted, resolveTaskCandidates } from "@/assistant/router";
 import { imageTokenDelta, useCostsStore } from "@/costs/costsStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
@@ -106,12 +106,7 @@ export async function saveAssetMarkdown(input: {
   path: string;
   content: string;
 }): Promise<void> {
-  const existing = await readFileWithSha(input.token, input.owner, input.repo, input.branch, input.path).catch(() => null);
-  if (existing) {
-    await updateFile(input.token, input.owner, input.repo, input.branch, input.path, existing.sha, input.content, `Update asset prompt ${input.path}`);
-  } else {
-    await createFile(input.token, input.owner, input.repo, input.branch, input.path, input.content, `Add asset prompt ${input.path}`);
-  }
+  await createOrUpdateTextFile(input.token, input.owner, input.repo, input.branch, input.path, input.content, `Update asset prompt ${input.path}`);
 }
 
 export async function saveAssetImage(input: {

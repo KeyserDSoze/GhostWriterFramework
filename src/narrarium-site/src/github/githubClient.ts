@@ -375,6 +375,25 @@ export interface FileContent {
   sha: string;
 }
 
+function isShaUpdateError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /sha/i.test(message) && /(wasn'?t supplied|does not match|required)/i.test(message);
+}
+
+async function findFileShaFromTree(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  path: string,
+): Promise<string | null> {
+  const octokit = createGitHubClient(token);
+  const ref = await octokit.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
+  const tree = await octokit.rest.git.getTree({ owner, repo, tree_sha: ref.data.object.sha, recursive: "true" });
+  const entry = tree.data.tree.find((item) => item.path === path && item.type === "blob");
+  return entry?.sha ?? null;
+}
+
 /** Read a file's text content and its current SHA (required for updates). */
 export async function readFileWithSha(
   token: string,
@@ -425,7 +444,7 @@ export async function createOrUpdateBinaryFile(
 ): Promise<string> {
   const octokit = createGitHubClient(token);
   const existing = await readFileWithSha(token, owner, repo, branch, path).catch(() => null);
-  const { data } = await octokit.rest.repos.createOrUpdateFileContents({
+  const body = {
     owner,
     repo,
     path,
@@ -433,7 +452,16 @@ export async function createOrUpdateBinaryFile(
     content: encodeBytes(bytes),
     sha: existing?.sha,
     branch,
-  });
+  };
+  let data: Awaited<ReturnType<typeof octokit.rest.repos.createOrUpdateFileContents>>["data"];
+  try {
+    ({ data } = await octokit.rest.repos.createOrUpdateFileContents(body));
+  } catch (err) {
+    if (!isShaUpdateError(err)) throw err;
+    const sha = await findFileShaFromTree(token, owner, repo, branch, path);
+    if (!sha) throw err;
+    ({ data } = await octokit.rest.repos.createOrUpdateFileContents({ ...body, sha }));
+  }
   return data.content?.sha ?? existing?.sha ?? "";
 }
 
@@ -471,7 +499,14 @@ export async function createOrUpdateTextFile(
 ): Promise<string> {
   const existing = await readFileWithSha(token, owner, repo, branch, path).catch(() => null);
   if (existing) return updateFile(token, owner, repo, branch, path, existing.sha, content, message);
-  return createFile(token, owner, repo, branch, path, content, message);
+  try {
+    return await createFile(token, owner, repo, branch, path, content, message);
+  } catch (err) {
+    if (!isShaUpdateError(err)) throw err;
+    const sha = await findFileShaFromTree(token, owner, repo, branch, path);
+    if (!sha) throw err;
+    return updateFile(token, owner, repo, branch, path, sha, content, message);
+  }
 }
 
 /** Create the file only if it does not exist yet. Returns true when created, false when it already existed. */
