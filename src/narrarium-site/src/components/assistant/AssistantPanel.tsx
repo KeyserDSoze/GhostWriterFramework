@@ -74,7 +74,7 @@ import {
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { speakText, splitIntoStrofe, transcribeAudio, type SpeechController } from "@/assistant/speech";
 import { completeText, resolveWritingIntegration } from "@/assistant/llm";
-import { classifyConfirmationRouted } from "@/assistant/router";
+import { classifyConfirmationRouted, sttMode } from "@/assistant/router";
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
 
 const ATTACHMENT_TARGETS = [
@@ -390,7 +390,7 @@ export function AssistantPanel() {
       return;
     }
 
-    if (settings.speech.sttProvider === "ai") {
+    if (sttMode(settings) === "ai") {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const recorder = new MediaRecorder(stream);

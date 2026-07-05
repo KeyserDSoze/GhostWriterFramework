@@ -177,11 +177,12 @@ export async function generateAssetImage(input: {
   prompt: string;
   orientation: AssetOrientation;
 }): Promise<{ bytes: Uint8Array; provider: string; model: string }> {
-  const candidates = resolveTaskCandidates(input.settings, "image").filter((c) => c.model && c.integration.apiKey);
+  const candidates = resolveTaskCandidates(input.settings, "image").filter((c) => c.integration && c.model && c.integration.apiKey);
   if (!candidates.length) throw new Error("Image generation requires an OpenAI or Azure OpenAI integration.");
   let lastError: unknown = null;
   for (const candidate of candidates) {
-    const { integration, model } = candidate;
+    const integration = candidate.integration!;
+    const model = candidate.model!;
     const client = createImageClient(integration);
     const debugId = useLlmDebugStore.getState().begin({ kind: "image", label: "image", model, messages: [{ role: "input", content: input.prompt }] });
     try {

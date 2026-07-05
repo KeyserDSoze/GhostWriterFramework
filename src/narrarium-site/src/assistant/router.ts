@@ -1,10 +1,16 @@
 import type { AIIntegration, AIPricing, AppSettings, ChatCapability, RoutingTarget, RoutingTaskKind } from "@/types/settings";
 import { integrationChatModels, resolveWritingIntegration, completeText, classifyConfirmationWith, type LlmMessage } from "@/assistant/llm";
 
+/** Reserved integrationId meaning "use the browser engine" (TTS/STT only). */
+export const BROWSER_ROUTING_ID = "__browser__";
+
 export interface TaskCandidate {
-  integration: AIIntegration;
-  model: string;
+  /** Present for real AI integrations; absent when browser === true. */
+  integration?: AIIntegration;
+  model?: string;
   pricing?: AIPricing;
+  /** True for the browser TTS/STT engine (no integration). */
+  browser?: boolean;
 }
 
 const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(["default", "copilot", "simple-tasks", "review"]);
@@ -27,8 +33,12 @@ function chatCandidateFromTarget(settings: AppSettings, target: RoutingTarget): 
   return { integration, model, pricing: modelEntry?.pricing ?? integration.pricing };
 }
 
-/** Media (tts/stt/image): only OpenAI/Azure; pricing = integration price. */
-function mediaCandidateFromTarget(settings: AppSettings, target: RoutingTarget): TaskCandidate | null {
+/** Media (tts/stt/image): the browser engine, or an OpenAI/Azure integration. */
+function mediaCandidateFromTarget(settings: AppSettings, target: RoutingTarget, task: RoutingTaskKind): TaskCandidate | null {
+  if (target.integrationId === BROWSER_ROUTING_ID) {
+    // Browser engine is only meaningful for tts/stt, never images.
+    return task === "image" ? null : { browser: true };
+  }
   const integration = findIntegration(settings, target.integrationId);
   if (!integration) return null;
   if (integration.provider !== "openai" && integration.provider !== "azure_openai") return null;
@@ -41,7 +51,7 @@ function dedupe(candidates: TaskCandidate[]): TaskCandidate[] {
   const seen = new Set<string>();
   const out: TaskCandidate[] = [];
   for (const c of candidates) {
-    const key = `${c.integration.id}::${c.model}`;
+    const key = c.browser ? "browser" : `${c.integration?.id}::${c.model}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(c);
@@ -54,8 +64,10 @@ function routerCandidates(settings: AppSettings, task: RoutingTaskKind): TaskCan
   const route = settings.taskRouting?.[task];
   if (!route) return [];
   const targets: RoutingTarget[] = [...(route.primary ? [route.primary] : []), ...(route.fallbacks ?? [])];
-  const map = isChatTask(task) ? chatCandidateFromTarget : mediaCandidateFromTarget;
-  return targets.map((t) => map(settings, t)).filter((c): c is TaskCandidate => Boolean(c));
+  const mapped = targets.map((target) => isChatTask(task)
+    ? chatCandidateFromTarget(settings, target)
+    : mediaCandidateFromTarget(settings, target, task));
+  return mapped.filter((c): c is TaskCandidate => Boolean(c));
 }
 
 /** Legacy chat resolution tiers (capability match anywhere → default-writing → any default). */
@@ -130,6 +142,7 @@ export async function completeTextRouted(
   const purpose = capability === "review" ? "review" : "writing";
   let lastError: unknown = null;
   for (const candidate of candidates) {
+    if (!candidate.integration || !candidate.model) continue; // browser has no chat model
     try {
       return await completeText(candidate.integration, messages, purpose, {
         modelName: candidate.model,
@@ -146,10 +159,34 @@ export async function completeTextRouted(
   throw lastError ?? new Error("All AI candidates failed for this task.");
 }
 
+/** True when TTS should use the browser engine as the first candidate. */
+export function isBrowserTtsPreferred(settings: AppSettings): boolean {
+  return resolveTaskCandidates(settings, "tts")[0]?.browser === true;
+}
+
+/** True when STT should use the browser recognition as the first candidate. */
+export function isBrowserSttPreferred(settings: AppSettings): boolean {
+  return resolveTaskCandidates(settings, "stt")[0]?.browser === true;
+}
+
+/**
+ * How STT should run based on the first resolved candidate:
+ * - "browser": use browser speech recognition
+ * - "ai": use MediaRecorder → transcribeAudio
+ * - "none": no candidate (fall back to browser recognition by default)
+ */
+export function sttMode(settings: AppSettings): "browser" | "ai" | "none" {
+  const first = resolveTaskCandidates(settings, "stt")[0];
+  if (!first) return "none";
+  if (first.browser) return "browser";
+  return first.integration && first.model ? "ai" : "none";
+}
+
 /** Confirmation classification with router (simple-tasks) + fallbacks. Returns "unclear" if all fail. */
 export async function classifyConfirmationRouted(settings: AppSettings, utterance: string): Promise<"yes" | "no" | "unclear"> {
   const candidates = resolveTaskCandidates(settings, "simple-tasks");
   for (const candidate of candidates) {
+    if (!candidate.integration || !candidate.model) continue;
     try {
       return await classifyConfirmationWith(candidate.integration, candidate.model, candidate.pricing, utterance);
     } catch {

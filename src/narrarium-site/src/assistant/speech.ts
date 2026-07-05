@@ -119,12 +119,14 @@ export function getSpeechIntegration(settings: AppSettings): AIIntegration | nul
 }
 
 export async function transcribeAudio(blob: Blob, settings: AppSettings): Promise<string> {
-  const candidates = resolveTaskCandidates(settings, "stt").filter((c) => c.model);
+  const candidates = resolveTaskCandidates(settings, "stt").filter((c) => c.integration && c.model);
   if (!candidates.length) throw new Error("No AI speech-to-text model is configured.");
   const sizeKb = Math.round(blob.size / 1024);
   let lastError: unknown = null;
   for (const candidate of candidates) {
-    const { integration, model, pricing } = candidate;
+    const integration = candidate.integration!;
+    const model = candidate.model!;
+    const pricing = candidate.pricing;
     const file = new File([blob], "speech.webm", { type: blob.type || "audio/webm" });
     const client = createAudioClient(integration);
     const debugId = useLlmDebugStore.getState().begin({ kind: "stt", label: "stt", model, messages: [{ role: "input", content: `audio ${sizeKb} KB` }] });
@@ -146,23 +148,26 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings): Promis
 }
 
 export async function speakText(text: string, settings: AppSettings, options: SpeakOptions = {}): Promise<SpeechController> {
-  if (settings.speech.ttsProvider === "ai") {
-    const voice = settings.speech.ttsVoice || "nova";
-    const candidates = resolveTaskCandidates(settings, "tts").filter((c) => c.model);
-    const segments = resolveSegments(text, options);
-    const probeText = segments[Math.max(0, options.startIndex ?? 0)] ?? text.slice(0, 200);
-    for (const candidate of candidates) {
-      try {
-        // Probe: synthesize the first segment to confirm this provider works before committing.
-        const probeUrl = await synthesizeChunk(probeText, candidate.integration, candidate.model, voice);
-        try { URL.revokeObjectURL(probeUrl); } catch { /* ignore */ }
-        return speakWithOpenAICompatible(text, candidate.integration, candidate.model, voice, options, candidate.pricing);
-      } catch {
-        // try next TTS fallback candidate
-      }
+  const voice = settings.speech.ttsVoice || "nova";
+  const candidates = resolveTaskCandidates(settings, "tts");
+  const segments = resolveSegments(text, options);
+  const probeText = segments[Math.max(0, options.startIndex ?? 0)] ?? text.slice(0, 200);
+  for (const candidate of candidates) {
+    if (candidate.browser) {
+      // Router explicitly selected the browser voice for TTS.
+      return speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, options);
     }
-    // All AI candidates failed → browser fallback.
+    if (!candidate.integration || !candidate.model) continue;
+    try {
+      // Probe: synthesize the first segment to confirm this provider works before committing.
+      const probeUrl = await synthesizeChunk(probeText, candidate.integration, candidate.model, voice);
+      try { URL.revokeObjectURL(probeUrl); } catch { /* ignore */ }
+      return speakWithOpenAICompatible(text, candidate.integration, candidate.model, voice, options, candidate.pricing);
+    } catch {
+      // try next TTS fallback candidate
+    }
   }
+  // No AI candidate (or all failed) → browser voice.
   return speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, options);
 }
 

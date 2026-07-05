@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Bot, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Trash2, Volume2 } from "lucide-react";
+import { Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Trash2, Volume2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,6 +14,7 @@ import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { CHAT_CAPABILITIES, ROUTING_TASKS, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget, type RoutingTaskKind, type TaskRoute } from "@/types/settings";
 import { integrationChatModels } from "@/assistant/llm";
+import { BROWSER_ROUTING_ID } from "@/assistant/router";
 
 const PROVIDERS: Array<{ value: AIProviderType; label: string }> = [
   { value: "azure_openai", label: "Azure OpenAI" },
@@ -22,8 +22,6 @@ const PROVIDERS: Array<{ value: AIProviderType; label: string }> = [
   { value: "github_models", label: "GitHub Models" },
   { value: "m365_copilot", label: "Microsoft 365 Copilot" },
 ];
-
-const AI_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"];
 
 function useBrowserVoices(): SpeechSynthesisVoice[] {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
@@ -35,6 +33,23 @@ function useBrowserVoices(): SpeechSynthesisVoice[] {
     return () => window.speechSynthesis.removeEventListener("voiceschanged", sync);
   }, []);
   return voices;
+}
+
+/** Collapsible settings section (closed by default) styled like a card. */
+function Section({ title, description, icon, defaultOpen, children }: { title: string; description?: string; icon?: ReactNode; defaultOpen?: boolean; children: ReactNode }) {
+  return (
+    <details open={defaultOpen} className="rounded-xl border bg-card text-card-foreground shadow-sm [&[open]>summary_.chev]:rotate-90">
+      <summary className="flex cursor-pointer list-none items-center gap-2 p-4 [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="chev h-4 w-4 shrink-0 text-muted-foreground transition-transform" />
+        {icon}
+        <div className="min-w-0">
+          <p className="font-semibold leading-none">{title}</p>
+          {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
+        </div>
+      </summary>
+      <div className="px-6 pb-6">{children}</div>
+    </details>
+  );
 }
 
 export function SettingsPage() {
@@ -149,94 +164,93 @@ export function SettingsPage() {
         </p>
       )}
 
-      <SpeechCard settings={settings} patchSettings={patchSettings} />
+      <div className="space-y-3">
+        {aiIntegrations.length > 0 && (
+          <Section title={t("routing.title")} description={t("routing.description")} icon={<Route className="h-4 w-4 shrink-0" />}>
+            <TaskRoutingBody settings={settings} patchSettings={patchSettings} />
+          </Section>
+        )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Github className="h-4 w-4" />{t("settings.github")}</CardTitle>
-          <CardDescription>{t("settings.githubDescription")}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-2">
-            <Label htmlFor="default-token">{t("settings.defaultGithubToken")}</Label>
-            <Input id="default-token" type="password" placeholder="github_pat_..." value={defaultToken} onChange={(e) => setDefaultToken(e.target.value)} autoComplete="off" />
-            <p className="text-xs text-muted-foreground">{t("settingsExtra.patRecommended")}</p>
-          </div>
+        <Section title={t("settings.aiIntegrations")} description={t("settings.aiDescription")} icon={<Bot className="h-4 w-4 shrink-0" />} defaultOpen={aiIntegrations.length === 0}>
+          <div className="space-y-5">
+            <DefaultIntegrationSelectors
+              integrations={aiIntegrations}
+              defaultWriting={defaultWriting}
+              defaultReview={defaultReview}
+              onWritingChange={(id) => patchAi({ defaultWritingIntegrationId: id })}
+              onReviewChange={(id) => patchAi({ defaultReviewIntegrationId: id })}
+            />
 
-          <Separator />
+            {aiIntegrations.length === 0 && <p className="text-sm text-muted-foreground">{t("settings.noIntegrations")}</p>}
 
-          <div className="space-y-3">
-            <p className="text-sm font-medium">{t("settings.additionalTokens")}</p>
-            {settings.extraGitHubTokens.map((token, index) => (
-              <div key={`${token.label}-${index}`} className="flex items-center justify-between rounded-md border px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium">{token.label}</p>
-                  <p className="text-xs text-muted-foreground">...{token.token.slice(-4)}</p>
-                </div>
-                <Button variant="ghost" size="icon" onClick={() => removeExtraToken(index)}>
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </div>
-            ))}
-            <div className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
-              <Input placeholder={t("settingsExtra.label")} value={newTokenLabel} onChange={(e) => setNewTokenLabel(e.target.value)} />
-              <Input type="password" placeholder="github_pat_..." value={newToken} onChange={(e) => setNewToken(e.target.value)} autoComplete="off" />
-              <Button variant="outline" size="icon" onClick={addExtraToken} disabled={!newTokenLabel || !newToken}>
-                <Plus className="h-4 w-4" />
+            <div className="grid gap-3">
+              {aiIntegrations.map((integration) => (
+                <IntegrationEditor
+                  key={integration.id}
+                  integration={integration}
+                  onChange={(patch) => updateIntegration(integration.id, patch)}
+                  onRemove={() => removeIntegration(integration.id)}
+                />
+              ))}
+            </div>
+
+            <Separator />
+
+            <div className="rounded-2xl border border-dashed p-4">
+              <p className="mb-3 text-sm font-medium">{t("settings.addIntegration")}</p>
+              <IntegrationEditor integration={newIntegration} onChange={(patch) => setNewIntegration((current) => normalizeIntegration({ ...current, ...patch }))} />
+              <Button className="mt-3" variant="outline" onClick={addIntegration} disabled={!newIntegration.name.trim()}>
+                <Plus className="mr-2 h-4 w-4" />{t("settings.addIntegration")}
               </Button>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </Section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Bot className="h-4 w-4" />{t("settings.aiIntegrations")}</CardTitle>
-          <CardDescription>{t("settings.aiDescription")}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <DefaultIntegrationSelectors
-            integrations={aiIntegrations}
-            defaultWriting={defaultWriting}
-            defaultReview={defaultReview}
-            onWritingChange={(id) => patchAi({ defaultWritingIntegrationId: id })}
-            onReviewChange={(id) => patchAi({ defaultReviewIntegrationId: id })}
-          />
+        <Section title={t("speech.title")} description={t("speech.browserOnlyDescription")} icon={<Volume2 className="h-4 w-4 shrink-0" />}>
+          <SpeechCardBody settings={settings} patchSettings={patchSettings} />
+        </Section>
 
-          {aiIntegrations.length === 0 && <p className="text-sm text-muted-foreground">{t("settings.noIntegrations")}</p>}
+        <Section title={t("settings.github")} description={t("settings.githubDescription")} icon={<Github className="h-4 w-4 shrink-0" />}>
+          <div className="space-y-4">
+            <div className="grid gap-2">
+              <Label htmlFor="default-token">{t("settings.defaultGithubToken")}</Label>
+              <Input id="default-token" type="password" placeholder="github_pat_..." value={defaultToken} onChange={(e) => setDefaultToken(e.target.value)} autoComplete="off" />
+              <p className="text-xs text-muted-foreground">{t("settingsExtra.patRecommended")}</p>
+            </div>
 
-          <div className="grid gap-3">
-            {aiIntegrations.map((integration) => (
-              <IntegrationEditor
-                key={integration.id}
-                integration={integration}
-                onChange={(patch) => updateIntegration(integration.id, patch)}
-                onRemove={() => removeIntegration(integration.id)}
-              />
-            ))}
+            <Separator />
+
+            <div className="space-y-3">
+              <p className="text-sm font-medium">{t("settings.additionalTokens")}</p>
+              {settings.extraGitHubTokens.map((token, index) => (
+                <div key={`${token.label}-${index}`} className="flex items-center justify-between rounded-md border px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium">{token.label}</p>
+                    <p className="text-xs text-muted-foreground">...{token.token.slice(-4)}</p>
+                  </div>
+                  <Button variant="ghost" size="icon" onClick={() => removeExtraToken(index)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              ))}
+              <div className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
+                <Input placeholder={t("settingsExtra.label")} value={newTokenLabel} onChange={(e) => setNewTokenLabel(e.target.value)} />
+                <Input type="password" placeholder="github_pat_..." value={newToken} onChange={(e) => setNewToken(e.target.value)} autoComplete="off" />
+                <Button variant="outline" size="icon" onClick={addExtraToken} disabled={!newTokenLabel || !newToken}>
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
           </div>
-
-          <Separator />
-
-          <div className="rounded-2xl border border-dashed p-4">
-            <p className="mb-3 text-sm font-medium">{t("settings.addIntegration")}</p>
-            <IntegrationEditor integration={newIntegration} onChange={(patch) => setNewIntegration((current) => normalizeIntegration({ ...current, ...patch }))} />
-            <Button className="mt-3" variant="outline" onClick={addIntegration} disabled={!newIntegration.name.trim()}>
-              <Plus className="mr-2 h-4 w-4" />{t("settings.addIntegration")}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <TaskRoutingCard settings={settings} patchSettings={patchSettings} />
+        </Section>
+      </div>
     </div>
   );
 }
 
-function SpeechCard({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
+function SpeechCardBody({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
   const { t } = useTranslation();
   const browserVoices = useBrowserVoices();
-  const useBrowserVoice = settings.speech.ttsProvider === "browser";
 
   function preview() {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
@@ -249,64 +263,31 @@ function SpeechCard({ settings, patchSettings }: { settings: AppSettings; patchS
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2"><Volume2 className="h-4 w-4" />{t("speech.title")}</CardTitle>
-        <CardDescription>{t("speech.description")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4 sm:grid-cols-2">
-        <div className="grid gap-2">
-          <Label>{t("speech.stt")}</Label>
-          <Select value={settings.speech.sttProvider} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, sttProvider: value as "browser" | "ai" } })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="browser">{t("speech.browserMic")}</SelectItem>
-              <SelectItem value="ai">{t("speech.aiTranscription")}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="grid gap-2">
-          <Label>{t("speech.tts")}</Label>
-          <Select value={settings.speech.ttsProvider} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, ttsProvider: value as "browser" | "ai" } })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="browser">{t("speech.browserVoice")}</SelectItem>
-              <SelectItem value="ai">{t("speech.aiTts")}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="grid gap-2">
-          <Label>{t("speech.voice")}</Label>
-          {useBrowserVoice && browserVoices.length > 0 ? (
-            <div className="flex gap-2">
-              <Select value={settings.speech.ttsVoice} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, ttsVoice: value } })}>
-                <SelectTrigger className="flex-1"><SelectValue placeholder={t("speech.selectVoice")} /></SelectTrigger>
-                <SelectContent>
-                  {browserVoices.map((voice) => (
-                    <SelectItem key={`${voice.name}-${voice.lang}`} value={voice.name}>{voice.name} ({voice.lang})</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button type="button" variant="outline" size="icon" onClick={preview}><Volume2 className="h-4 w-4" /></Button>
-            </div>
-          ) : useBrowserVoice ? (
-            <Input value={settings.speech.ttsVoice} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsVoice: e.target.value } })} placeholder={t("speech.browserVoiceName")} />
-          ) : (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-2">
+        <Label>{t("speech.voice")}</Label>
+        {browserVoices.length > 0 ? (
+          <div className="flex gap-2">
             <Select value={settings.speech.ttsVoice} onValueChange={(value) => patchSettings({ speech: { ...settings.speech, ttsVoice: value } })}>
-              <SelectTrigger><SelectValue placeholder="nova" /></SelectTrigger>
+              <SelectTrigger className="flex-1"><SelectValue placeholder={t("speech.selectVoice")} /></SelectTrigger>
               <SelectContent>
-                {AI_VOICES.map((voice) => <SelectItem key={voice} value={voice}>{voice}</SelectItem>)}
+                {browserVoices.map((voice) => (
+                  <SelectItem key={`${voice.name}-${voice.lang}`} value={voice.name}>{voice.name} ({voice.lang})</SelectItem>
+                ))}
               </SelectContent>
             </Select>
-          )}
-        </div>
-        <div className="grid gap-2">
-          <Label>{t("speech.browserTtsSpeed")}</Label>
-          <Input type="number" min="0.5" max="1.5" step="0.05" value={settings.speech.ttsRate} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsRate: Number(e.target.value) || 0.95 } })} />
-        </div>
-        <p className="text-xs text-muted-foreground sm:col-span-2"><Mic className="mr-1 inline h-3 w-3" />{t("speech.sttTtsHint")}</p>
-      </CardContent>
-    </Card>
+            <Button type="button" variant="outline" size="icon" onClick={preview}><Volume2 className="h-4 w-4" /></Button>
+          </div>
+        ) : (
+          <Input value={settings.speech.ttsVoice} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsVoice: e.target.value } })} placeholder={t("speech.browserVoiceName")} />
+        )}
+      </div>
+      <div className="grid gap-2">
+        <Label>{t("speech.browserTtsSpeed")}</Label>
+        <Input type="number" min="0.5" max="1.5" step="0.05" value={settings.speech.ttsRate} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsRate: Number(e.target.value) || 0.95 } })} />
+      </div>
+      <p className="text-xs text-muted-foreground sm:col-span-2"><Mic className="mr-1 inline h-3 w-3" />{t("speech.routerHint")}</p>
+    </div>
   );
 }
 
@@ -632,12 +613,23 @@ function isMediaTask(task: RoutingTaskKind): boolean {
   return MEDIA_TASKS.has(task);
 }
 
-function taskIntegrationOptions(integrations: AIIntegration[], task: RoutingTaskKind): AIIntegration[] {
-  if (isMediaTask(task)) return integrations.filter((i) => i.provider === "openai" || i.provider === "azure_openai");
-  return integrations.filter((i) => i.provider !== "m365_copilot");
+interface IntegrationChoice { id: string; label: string; }
+
+/** Integration options for a task's selects, including a "Browser" pseudo-entry for tts/stt. */
+function taskIntegrationChoices(integrations: AIIntegration[], task: RoutingTaskKind, t: (k: string) => string): IntegrationChoice[] {
+  const choices: IntegrationChoice[] = [];
+  if (task === "tts" || task === "stt") choices.push({ id: BROWSER_ROUTING_ID, label: t("routing.browser") });
+  const list = isMediaTask(task)
+    ? integrations.filter((i) => i.provider === "openai" || i.provider === "azure_openai")
+    : integrations.filter((i) => i.provider !== "m365_copilot");
+  for (const i of list) choices.push({ id: i.id, label: i.name || i.provider });
+  return choices;
 }
 
-function taskModelOptions(integration: AIIntegration | undefined, task: RoutingTaskKind): string[] {
+/** Model options for a given selected integrationId + task. Browser → ["browser"]. */
+function modelChoicesFor(integrations: AIIntegration[], integrationId: string | undefined, task: RoutingTaskKind): string[] {
+  if (integrationId === BROWSER_ROUTING_ID) return ["browser"];
+  const integration = integrations.find((i) => i.id === integrationId);
   if (!integration) return [];
   if (!isMediaTask(task)) return integrationChatModels(integration).map((m) => m.name).filter(Boolean);
   const media = task === "tts" ? integration.modelTextToSpeech
@@ -646,8 +638,7 @@ function taskModelOptions(integration: AIIntegration | undefined, task: RoutingT
   return media?.trim() ? [media.trim()] : [];
 }
 
-function TaskRoutingCard({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
-  const { t } = useTranslation();
+function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
   const integrations = settings.aiIntegrations ?? [];
   const routing = settings.taskRouting ?? {};
 
@@ -658,33 +649,25 @@ function TaskRoutingCard({ settings, patchSettings }: { settings: AppSettings; p
     patchSettings({ taskRouting: next });
   }
 
-  if (integrations.length === 0) return null;
-
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2"><Route className="h-4 w-4" />{t("routing.title")}</CardTitle>
-        <CardDescription>{t("routing.description")}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {ROUTING_TASKS.map((task) => (
-          <TaskRouteEditor
-            key={task}
-            task={task}
-            integrations={integrations}
-            route={routing[task]}
-            onChange={(route) => setRoute(task, route)}
-          />
-        ))}
-      </CardContent>
-    </Card>
+    <div className="space-y-4">
+      {ROUTING_TASKS.map((task) => (
+        <TaskRouteEditor
+          key={task}
+          task={task}
+          integrations={integrations}
+          route={routing[task]}
+          onChange={(route) => setRoute(task, route)}
+        />
+      ))}
+    </div>
   );
 }
 
 function TaskRouteEditor({ task, integrations, route, onChange }: { task: RoutingTaskKind; integrations: AIIntegration[]; route?: TaskRoute; onChange: (route: TaskRoute | undefined) => void }) {
   const { t } = useTranslation();
-  const options = taskIntegrationOptions(integrations, task);
   const current: TaskRoute = route ?? { primary: undefined, fallbacks: [] };
+  const firstChoice = taskIntegrationChoices(integrations, task, t)[0];
 
   function setPrimary(target: RoutingTarget | undefined) {
     onChange({ ...current, primary: target });
@@ -695,7 +678,8 @@ function TaskRouteEditor({ task, integrations, route, onChange }: { task: Routin
     onChange({ ...current, fallbacks });
   }
   function addFallback() {
-    onChange({ ...current, fallbacks: [...current.fallbacks, { integrationId: options[0]?.id ?? "", model: "" }] });
+    const model = modelChoicesFor(integrations, firstChoice?.id, task)[0] ?? "";
+    onChange({ ...current, fallbacks: [...current.fallbacks, { integrationId: firstChoice?.id ?? "", model }] });
   }
 
   const label = t(`routing.task.${task}`);
@@ -706,12 +690,12 @@ function TaskRouteEditor({ task, integrations, route, onChange }: { task: Routin
       <div className="grid gap-2">
         <div className="grid gap-1">
           <Label className="text-xs">{t("routing.primary")}</Label>
-          <TargetRow task={task} integrations={options} target={current.primary} onChange={setPrimary} clearable />
+          <TargetRow task={task} integrations={integrations} target={current.primary} onChange={setPrimary} clearable />
         </div>
         {current.fallbacks.map((fb, i) => (
           <div key={i} className="grid gap-1">
             <Label className="text-xs">{t("routing.fallbackN", { n: i + 1 })}</Label>
-            <TargetRow task={task} integrations={options} target={fb} onChange={(t2) => setFallback(i, t2)} clearable onRemove={() => setFallback(i, undefined)} />
+            <TargetRow task={task} integrations={integrations} target={fb} onChange={(t2) => setFallback(i, t2)} clearable onRemove={() => setFallback(i, undefined)} />
           </div>
         ))}
         <Button type="button" variant="ghost" size="sm" className="w-fit" onClick={addFallback} disabled={!current.primary}>
@@ -724,37 +708,35 @@ function TaskRouteEditor({ task, integrations, route, onChange }: { task: Routin
 
 function TargetRow({ task, integrations, target, onChange, clearable, onRemove }: { task: RoutingTaskKind; integrations: AIIntegration[]; target?: RoutingTarget; onChange: (target: RoutingTarget | undefined) => void; clearable?: boolean; onRemove?: () => void }) {
   const { t } = useTranslation();
-  const integration = integrations.find((i) => i.id === target?.integrationId);
-  const models = taskModelOptions(integration, task);
+  const integrationChoices = taskIntegrationChoices(integrations, task, t);
+  const models = modelChoicesFor(integrations, target?.integrationId, task);
+  const browserSelected = target?.integrationId === BROWSER_ROUTING_ID;
 
   return (
     <div className="flex items-center gap-2">
       <Select
         value={target?.integrationId ?? ""}
         onValueChange={(integrationId) => {
-          const next = integrations.find((i) => i.id === integrationId);
-          const firstModel = taskModelOptions(next, task)[0] ?? "";
+          const firstModel = modelChoicesFor(integrations, integrationId, task)[0] ?? "";
           onChange({ integrationId, model: firstModel });
         }}
       >
         <SelectTrigger className="h-8 flex-1 text-sm"><SelectValue placeholder={t("routing.pickIntegration")} /></SelectTrigger>
-        <SelectContent>{integrations.map((i) => <SelectItem key={i.id} value={i.id}>{i.name || i.provider}</SelectItem>)}</SelectContent>
+        <SelectContent>{integrationChoices.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}</SelectContent>
       </Select>
-      {isMediaTask(task) ? (
-        <Input
-          className="h-8 flex-1 text-sm"
-          placeholder={t("routing.pickModel")}
-          value={target?.model ?? models[0] ?? ""}
-          onChange={(e) => target && onChange({ ...target, model: e.target.value })}
-          disabled={!target}
-        />
+      {browserSelected ? (
+        <div className="h-8 flex-1 rounded-md border bg-muted/40 px-3 text-sm leading-8 text-muted-foreground">{t("routing.browser")}</div>
       ) : (
         <Select
           value={target?.model ?? ""}
           onValueChange={(model) => target && onChange({ ...target, model })}
         >
           <SelectTrigger className="h-8 flex-1 text-sm"><SelectValue placeholder={t("routing.pickModel")} /></SelectTrigger>
-          <SelectContent>{models.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+          <SelectContent>
+            {models.length === 0 ? (
+              <SelectItem value="__none__" disabled>{t("routing.noModel")}</SelectItem>
+            ) : models.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+          </SelectContent>
         </Select>
       )}
       {clearable && target && (
