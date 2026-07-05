@@ -5,6 +5,32 @@ export function createGitHubClient(token: string): Octokit {
   return new Octokit({ auth: token });
 }
 
+function githubContentUrl(owner: string, repo: string, path: string, ref?: string): string {
+  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+  const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+  return `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}${query}`;
+}
+
+async function fetchContentJson(
+  token: string,
+  owner: string,
+  repo: string,
+  path: string,
+  ref?: string,
+): Promise<{ content?: string; sha?: string }> {
+  const response = await fetch(githubContentUrl(owner, repo, path, ref), {
+    cache: "no-store",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Cache-Control": "no-cache",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!response.ok) throw new Error(`GitHub content load ${path}: ${response.status}`);
+  return await response.json() as { content?: string; sha?: string };
+}
+
 /** Decode base64 content returned by the GitHub contents API (UTF-8 safe). */
 function decodeContent(content: string): string {
   const bytes = decodeBytes(content);
@@ -300,10 +326,8 @@ export async function loadFileContent(
   path: string,
   ref?: string,
 ): Promise<string> {
-  const octokit = createGitHubClient(token);
-  const params = ref ? { owner, repo, path, ref } : { owner, repo, path };
-  const { data } = await octokit.rest.repos.getContent(params);
-  if ("content" in data) return decodeContent(data.content);
+  const data = await fetchContentJson(token, owner, repo, path, ref);
+  if (data.content) return decodeContent(data.content);
   throw new Error(`${path} is not a file`);
 }
 
@@ -314,9 +338,7 @@ export async function loadBinaryFileContent(
   path: string,
   ref?: string,
 ): Promise<Uint8Array> {
-  const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
-  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path.split("/").map(encodeURIComponent).join("/")}${query}`;
-  const response = await fetch(url, {
+  const response = await fetch(githubContentUrl(owner, repo, path, ref), {
     cache: "no-store",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -327,10 +349,8 @@ export async function loadBinaryFileContent(
   if (response.ok) return new Uint8Array(await response.arrayBuffer());
 
   // Fallback to the JSON contents API for small files or older API behaviour.
-  const octokit = createGitHubClient(token);
-  const params = ref ? { owner, repo, path, ref } : { owner, repo, path };
-  const { data } = await octokit.rest.repos.getContent(params);
-  if ("content" in data && data.content) return decodeBytes(data.content);
+  const data = await fetchContentJson(token, owner, repo, path, ref);
+  if (data.content) return decodeBytes(data.content);
   throw new Error(`${path} is not a file`);
 }
 
@@ -361,9 +381,8 @@ export async function readFileWithSha(
   branch: string,
   path: string,
 ): Promise<FileContent> {
-  const octokit = createGitHubClient(token);
-  const { data } = await octokit.rest.repos.getContent({ owner, repo, path, ref: branch });
-  if ("content" in data) {
+  const data = await fetchContentJson(token, owner, repo, path, branch);
+  if (data.content && data.sha) {
     return { content: decodeContent(data.content), sha: data.sha };
   }
   throw new Error(`${path} is not a file`);
