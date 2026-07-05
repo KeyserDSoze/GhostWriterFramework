@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel } from "@/types/settings";
+import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget } from "@/types/settings";
 import type { AuthProvider } from "@/store/authStore";
 
 export class TokenExpiredError extends Error {
@@ -229,7 +229,33 @@ function migrateSettings(raw: unknown): AppSettings {
       ...(typeof source.speech === "object" && source.speech ? source.speech : {}),
     },
     books: Array.isArray(source.books) ? source.books : [],
+    taskRouting: normalizeTaskRouting(source.taskRouting, aiIntegrations),
   };
+}
+
+/** Drop router targets pointing at integrations/models that no longer exist. */
+function normalizeTaskRouting(
+  raw: unknown,
+  integrations: AIIntegration[],
+): AppSettings["taskRouting"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const byId = new Map(integrations.map((i) => [i.id, i]));
+  const validTarget = (t: unknown): t is RoutingTarget => {
+    if (!t || typeof t !== "object") return false;
+    const target = t as RoutingTarget;
+    const integration = byId.get(target.integrationId);
+    if (!integration || !target.model) return false;
+    return true;
+  };
+  const out: NonNullable<AppSettings["taskRouting"]> = {};
+  for (const [task, route] of Object.entries(raw as Record<string, unknown>)) {
+    if (!route || typeof route !== "object") continue;
+    const r = route as { primary?: unknown; fallbacks?: unknown };
+    const primary = validTarget(r.primary) ? (r.primary as RoutingTarget) : undefined;
+    const fallbacks = Array.isArray(r.fallbacks) ? r.fallbacks.filter(validTarget) as RoutingTarget[] : [];
+    if (primary || fallbacks.length) out[task as keyof typeof out] = { primary, fallbacks };
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Bot, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Trash2, Volume2 } from "lucide-react";
+import { Bot, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Trash2, Volume2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,8 @@ import { useToast } from "@/components/ui/use-toast";
 import { fetchGitHubModelsCatalog } from "@/github/githubModelsCatalog";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
-import { CHAT_CAPABILITIES, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel } from "@/types/settings";
+import { CHAT_CAPABILITIES, ROUTING_TASKS, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget, type RoutingTaskKind, type TaskRoute } from "@/types/settings";
+import { integrationChatModels } from "@/assistant/llm";
 
 const PROVIDERS: Array<{ value: AIProviderType; label: string }> = [
   { value: "azure_openai", label: "Azure OpenAI" },
@@ -226,6 +227,8 @@ export function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      <TaskRoutingCard settings={settings} patchSettings={patchSettings} />
     </div>
   );
 }
@@ -619,4 +622,146 @@ function integrationToAzureCompat(integrations: AIIntegration[]): AppSettings["a
     model: defaultModel,
     apiVersion: azure.apiVersion || "2024-10-21",
   };
+}
+
+// ─── Task routing ─────────────────────────────────────────────────────────────
+
+const MEDIA_TASKS = new Set<RoutingTaskKind>(["tts", "stt", "image"]);
+
+function isMediaTask(task: RoutingTaskKind): boolean {
+  return MEDIA_TASKS.has(task);
+}
+
+function taskIntegrationOptions(integrations: AIIntegration[], task: RoutingTaskKind): AIIntegration[] {
+  if (isMediaTask(task)) return integrations.filter((i) => i.provider === "openai" || i.provider === "azure_openai");
+  return integrations.filter((i) => i.provider !== "m365_copilot");
+}
+
+function taskModelOptions(integration: AIIntegration | undefined, task: RoutingTaskKind): string[] {
+  if (!integration) return [];
+  if (!isMediaTask(task)) return integrationChatModels(integration).map((m) => m.name).filter(Boolean);
+  const media = task === "tts" ? integration.modelTextToSpeech
+    : task === "stt" ? integration.modelSpeechToText
+    : integration.modelImageGeneration;
+  return media?.trim() ? [media.trim()] : [];
+}
+
+function TaskRoutingCard({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
+  const { t } = useTranslation();
+  const integrations = settings.aiIntegrations ?? [];
+  const routing = settings.taskRouting ?? {};
+
+  function setRoute(task: RoutingTaskKind, route: TaskRoute | undefined) {
+    const next: NonNullable<AppSettings["taskRouting"]> = { ...routing };
+    if (route && (route.primary || route.fallbacks.length)) next[task] = route;
+    else delete next[task];
+    patchSettings({ taskRouting: next });
+  }
+
+  if (integrations.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><Route className="h-4 w-4" />{t("routing.title")}</CardTitle>
+        <CardDescription>{t("routing.description")}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {ROUTING_TASKS.map((task) => (
+          <TaskRouteEditor
+            key={task}
+            task={task}
+            integrations={integrations}
+            route={routing[task]}
+            onChange={(route) => setRoute(task, route)}
+          />
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function TaskRouteEditor({ task, integrations, route, onChange }: { task: RoutingTaskKind; integrations: AIIntegration[]; route?: TaskRoute; onChange: (route: TaskRoute | undefined) => void }) {
+  const { t } = useTranslation();
+  const options = taskIntegrationOptions(integrations, task);
+  const current: TaskRoute = route ?? { primary: undefined, fallbacks: [] };
+
+  function setPrimary(target: RoutingTarget | undefined) {
+    onChange({ ...current, primary: target });
+  }
+  function setFallback(index: number, target: RoutingTarget | undefined) {
+    const fallbacks = [...current.fallbacks];
+    if (target) fallbacks[index] = target; else fallbacks.splice(index, 1);
+    onChange({ ...current, fallbacks });
+  }
+  function addFallback() {
+    onChange({ ...current, fallbacks: [...current.fallbacks, { integrationId: options[0]?.id ?? "", model: "" }] });
+  }
+
+  const label = t(`routing.task.${task}`);
+
+  return (
+    <div className="rounded-lg border bg-muted/10 p-3">
+      <p className="mb-2 text-sm font-medium">{label}</p>
+      <div className="grid gap-2">
+        <div className="grid gap-1">
+          <Label className="text-xs">{t("routing.primary")}</Label>
+          <TargetRow task={task} integrations={options} target={current.primary} onChange={setPrimary} clearable />
+        </div>
+        {current.fallbacks.map((fb, i) => (
+          <div key={i} className="grid gap-1">
+            <Label className="text-xs">{t("routing.fallbackN", { n: i + 1 })}</Label>
+            <TargetRow task={task} integrations={options} target={fb} onChange={(t2) => setFallback(i, t2)} clearable onRemove={() => setFallback(i, undefined)} />
+          </div>
+        ))}
+        <Button type="button" variant="ghost" size="sm" className="w-fit" onClick={addFallback} disabled={!current.primary}>
+          <Plus className="mr-1 h-3.5 w-3.5" />{t("routing.addFallback")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function TargetRow({ task, integrations, target, onChange, clearable, onRemove }: { task: RoutingTaskKind; integrations: AIIntegration[]; target?: RoutingTarget; onChange: (target: RoutingTarget | undefined) => void; clearable?: boolean; onRemove?: () => void }) {
+  const { t } = useTranslation();
+  const integration = integrations.find((i) => i.id === target?.integrationId);
+  const models = taskModelOptions(integration, task);
+
+  return (
+    <div className="flex items-center gap-2">
+      <Select
+        value={target?.integrationId ?? ""}
+        onValueChange={(integrationId) => {
+          const next = integrations.find((i) => i.id === integrationId);
+          const firstModel = taskModelOptions(next, task)[0] ?? "";
+          onChange({ integrationId, model: firstModel });
+        }}
+      >
+        <SelectTrigger className="h-8 flex-1 text-sm"><SelectValue placeholder={t("routing.pickIntegration")} /></SelectTrigger>
+        <SelectContent>{integrations.map((i) => <SelectItem key={i.id} value={i.id}>{i.name || i.provider}</SelectItem>)}</SelectContent>
+      </Select>
+      {isMediaTask(task) ? (
+        <Input
+          className="h-8 flex-1 text-sm"
+          placeholder={t("routing.pickModel")}
+          value={target?.model ?? models[0] ?? ""}
+          onChange={(e) => target && onChange({ ...target, model: e.target.value })}
+          disabled={!target}
+        />
+      ) : (
+        <Select
+          value={target?.model ?? ""}
+          onValueChange={(model) => target && onChange({ ...target, model })}
+        >
+          <SelectTrigger className="h-8 flex-1 text-sm"><SelectValue placeholder={t("routing.pickModel")} /></SelectTrigger>
+          <SelectContent>{models.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+        </Select>
+      )}
+      {clearable && target && (
+        <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => (onRemove ? onRemove() : onChange(undefined))}>
+          <Trash2 className="h-4 w-4 text-muted-foreground" />
+        </Button>
+      )}
+    </div>
+  );
 }

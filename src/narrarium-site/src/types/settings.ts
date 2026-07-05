@@ -21,6 +21,25 @@ export type ChatCapability = "default" | "copilot" | "simple-tasks" | "review";
 
 export const CHAT_CAPABILITIES: ChatCapability[] = ["default", "copilot", "simple-tasks", "review"];
 
+/** Task kinds the configurable router can target: the 4 chat capabilities plus media tasks. */
+export type RoutingTaskKind = ChatCapability | "tts" | "stt" | "image";
+
+export const ROUTING_TASKS: RoutingTaskKind[] = ["default", "copilot", "simple-tasks", "review", "tts", "stt", "image"];
+
+/** A concrete integration+model target the router points a task at. */
+export interface RoutingTarget {
+  /** References AIIntegration.id */
+  integrationId: string;
+  /** Chat: ChatModel.name. Media: the integration's tts/stt/image model string. */
+  model: string;
+}
+
+/** Primary target + ordered fallbacks tried when the primary errors (e.g. 429/network). */
+export interface TaskRoute {
+  primary?: RoutingTarget;
+  fallbacks: RoutingTarget[];
+}
+
 /** A single chat model entry inside an integration, with its own price and roles. */
 export interface ChatModel {
   id: string;
@@ -214,6 +233,8 @@ export interface AppSettings {
   aiIntegrations: AIIntegration[];
   defaultWritingIntegrationId?: string;
   defaultReviewIntegrationId?: string;
+  /** Optional configurable router: per task, a primary integration+model and ordered fallbacks. */
+  taskRouting?: Partial<Record<RoutingTaskKind, TaskRoute>>;
   ui: {
     language: "en" | "it";
     theme: "light" | "dark" | "system";

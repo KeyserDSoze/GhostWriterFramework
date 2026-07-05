@@ -73,7 +73,8 @@ import {
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { speakText, splitIntoStrofe, transcribeAudio, type SpeechController } from "@/assistant/speech";
-import { completeText, classifyConfirmation, resolveWritingIntegration } from "@/assistant/llm";
+import { completeText, resolveWritingIntegration } from "@/assistant/llm";
+import { classifyConfirmationRouted } from "@/assistant/router";
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
 
 const ATTACHMENT_TARGETS = [
@@ -808,7 +809,7 @@ export function AssistantPanel() {
         return makeAssistantReply(t("assistant.rewriteCancelled"));
       }
       // Ambiguous → ask the cheap "simple-tasks" model with a forced tool to decide.
-      const decision = await classifyConfirmation(settings, prompt);
+      const decision = await classifyConfirmationRouted(settings, prompt);
       if (decision === "yes") return applyPendingRewrite();
       if (decision === "no") {
         pendingRewriteRef.current = null;

@@ -15,12 +15,23 @@ export interface LlmMessage {
 export function resolveWritingIntegration(settings: AppSettings): AIIntegration | null {
   const integrations = settings.aiIntegrations ?? [];
   if (integrations.length === 0) return null;
+  // Honor the configurable router's "default" primary integration when set.
+  const routed = settings.taskRouting?.default?.primary?.integrationId;
+  if (routed) {
+    const match = integrations.find((entry) => entry.id === routed);
+    if (match) return match;
+  }
   return integrations.find((entry) => entry.id === settings.defaultWritingIntegrationId) ?? integrations[0] ?? null;
 }
 
 export function resolveReviewIntegration(settings: AppSettings): AIIntegration | null {
   const integrations = settings.aiIntegrations ?? [];
   if (integrations.length === 0) return null;
+  const routed = settings.taskRouting?.review?.primary?.integrationId;
+  if (routed) {
+    const match = integrations.find((entry) => entry.id === routed);
+    if (match) return match;
+  }
   return integrations.find((entry) => entry.id === settings.defaultReviewIntegrationId) ?? integrations[0] ?? null;
 }
 
@@ -32,7 +43,7 @@ export interface ResolvedChatModel {
 }
 
 /** All chat models declared by an integration (new field), tolerant of the legacy shape. */
-function integrationChatModels(integration: AIIntegration): ChatModel[] {
+export function integrationChatModels(integration: AIIntegration): ChatModel[] {
   if (Array.isArray(integration.chatModels) && integration.chatModels.length) return integration.chatModels;
   // Legacy fallback: synthesise from the old single fields.
   const models: ChatModel[] = [];
@@ -186,7 +197,20 @@ export async function completeText(
 export async function classifyConfirmation(settings: AppSettings, utterance: string): Promise<"yes" | "no" | "unclear"> {
   const resolved = resolveChatModel(settings, "simple-tasks");
   if (!resolved) return "unclear";
-  const { integration, model, pricing } = resolved;
+  try {
+    return await classifyConfirmationWith(resolved.integration, resolved.model, resolved.pricing, utterance);
+  } catch {
+    return "unclear";
+  }
+}
+
+/** Single-attempt confirmation classification against one integration+model. Throws on error. */
+export async function classifyConfirmationWith(
+  integration: AIIntegration,
+  model: string,
+  pricing: AIPricing | undefined,
+  utterance: string,
+): Promise<"yes" | "no" | "unclear"> {
   if (integration.provider === "m365_copilot") return "unclear";
 
   const tools = [{
@@ -226,7 +250,7 @@ export async function classifyConfirmation(settings: AppSettings, utterance: str
     return result;
   } catch (err) {
     useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
-    return "unclear";
+    throw err;
   }
 }
 

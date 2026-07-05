@@ -1,6 +1,7 @@
 import OpenAI, { AzureOpenAI } from "openai";
 import type { AIIntegration, AppSettings } from "@/types/settings";
 import { resolveWritingIntegration } from "@/assistant/llm";
+import { resolveTaskCandidates } from "@/assistant/router";
 import { sttDelta, ttsDelta, useCostsStore } from "@/costs/costsStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
 
@@ -118,33 +119,49 @@ export function getSpeechIntegration(settings: AppSettings): AIIntegration | nul
 }
 
 export async function transcribeAudio(blob: Blob, settings: AppSettings): Promise<string> {
-  const integration = getSpeechIntegration(settings);
-  const model = integration?.modelSpeechToText?.trim();
-  if (!integration || !model) throw new Error("No AI speech-to-text model is configured.");
-  const file = new File([blob], "speech.webm", { type: blob.type || "audio/webm" });
-  const client = createAudioClient(integration);
+  const candidates = resolveTaskCandidates(settings, "stt").filter((c) => c.model);
+  if (!candidates.length) throw new Error("No AI speech-to-text model is configured.");
   const sizeKb = Math.round(blob.size / 1024);
-  const debugId = useLlmDebugStore.getState().begin({ kind: "stt", label: "stt", model, messages: [{ role: "input", content: `audio ${sizeKb} KB` }] });
-  try {
-    const response = await client.audio.transcriptions.create({ file, model });
-    // Rough hour estimate from compressed audio size (~16KB/s typical webm/opus voice).
-    const estimatedHours = blob.size > 0 ? blob.size / (16000 * 3600) : 0;
-    const cost = integration.pricing ? sttDelta(estimatedHours, integration.pricing).sttCost : undefined;
-    if (estimatedHours > 0) useCostsStore.getState().recordCurrent(sttDelta(estimatedHours, integration.pricing));
-    const text = response.text ?? "";
-    useLlmDebugStore.getState().finish(debugId, { status: "done", response: text, cost });
-    return text;
-  } catch (err) {
-    useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
-    throw err;
+  let lastError: unknown = null;
+  for (const candidate of candidates) {
+    const { integration, model, pricing } = candidate;
+    const file = new File([blob], "speech.webm", { type: blob.type || "audio/webm" });
+    const client = createAudioClient(integration);
+    const debugId = useLlmDebugStore.getState().begin({ kind: "stt", label: "stt", model, messages: [{ role: "input", content: `audio ${sizeKb} KB` }] });
+    try {
+      const response = await client.audio.transcriptions.create({ file, model });
+      const estimatedHours = blob.size > 0 ? blob.size / (16000 * 3600) : 0;
+      const cost = pricing ? sttDelta(estimatedHours, pricing).sttCost : undefined;
+      if (estimatedHours > 0 && pricing) useCostsStore.getState().recordCurrent(sttDelta(estimatedHours, pricing));
+      const text = response.text ?? "";
+      useLlmDebugStore.getState().finish(debugId, { status: "done", response: text, cost });
+      return text;
+    } catch (err) {
+      useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
+      lastError = err;
+      // try next fallback candidate
+    }
   }
+  throw lastError ?? new Error("Speech-to-text failed.");
 }
 
 export async function speakText(text: string, settings: AppSettings, options: SpeakOptions = {}): Promise<SpeechController> {
-  const integration = getSpeechIntegration(settings);
-  const ttsModel = integration?.modelTextToSpeech?.trim();
-  if (settings.speech.ttsProvider === "ai" && integration && ttsModel) {
-    return speakWithOpenAICompatible(text, integration, ttsModel, settings.speech.ttsVoice || "nova", options);
+  if (settings.speech.ttsProvider === "ai") {
+    const voice = settings.speech.ttsVoice || "nova";
+    const candidates = resolveTaskCandidates(settings, "tts").filter((c) => c.model);
+    const segments = resolveSegments(text, options);
+    const probeText = segments[Math.max(0, options.startIndex ?? 0)] ?? text.slice(0, 200);
+    for (const candidate of candidates) {
+      try {
+        // Probe: synthesize the first segment to confirm this provider works before committing.
+        const probeUrl = await synthesizeChunk(probeText, candidate.integration, candidate.model, voice);
+        try { URL.revokeObjectURL(probeUrl); } catch { /* ignore */ }
+        return speakWithOpenAICompatible(text, candidate.integration, candidate.model, voice, options, candidate.pricing);
+      } catch {
+        // try next TTS fallback candidate
+      }
+    }
+    // All AI candidates failed → browser fallback.
   }
   return speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, options);
 }
@@ -251,13 +268,14 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number, u
   };
 }
 
-async function speakWithOpenAICompatible(text: string, integration: AIIntegration, model: string, voice: string, options: SpeakOptions): Promise<SpeechController> {
+async function speakWithOpenAICompatible(text: string, integration: AIIntegration, model: string, voice: string, options: SpeakOptions, pricingOverride?: import("@/types/settings").AIPricing): Promise<SpeechController> {
   const segments = resolveSegments(text, options);
   const startIndex = Math.max(0, options.startIndex ?? 0);
+  const pricing = pricingOverride ?? integration.pricing;
   const ttsChars = segments.slice(startIndex).reduce((sum, chunk) => sum + chunk.length, 0);
   if (ttsChars > 0) {
-    useCostsStore.getState().recordCurrent(ttsDelta(ttsChars, integration.pricing));
-    const cost = integration.pricing ? ttsDelta(ttsChars, integration.pricing).ttsCost : undefined;
+    if (pricing) useCostsStore.getState().recordCurrent(ttsDelta(ttsChars, pricing));
+    const cost = pricing ? ttsDelta(ttsChars, pricing).ttsCost : undefined;
     const preview = segments.slice(startIndex).join(" ").slice(0, 400);
     const ttsId = useLlmDebugStore.getState().begin({ kind: "tts", label: `tts (${voice})`, model, messages: [{ role: "input", content: preview }] });
     useLlmDebugStore.getState().finish(ttsId, { status: "done", response: `${ttsChars} chars`, cost });

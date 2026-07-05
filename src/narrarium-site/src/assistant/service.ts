@@ -15,6 +15,7 @@ import {
   type LlmContentPart,
   type LlmMessage,
 } from "@/assistant/llm";
+import { completeTextRouted } from "@/assistant/router";
 import type {
   AssistantAction,
   AssistantAttachment,
@@ -190,12 +191,11 @@ async function reviewCurrentContext(input: PromptInput): Promise<AssistantMessag
 }
 
 async function answerFromContext(input: PromptInput): Promise<AssistantMessage> {
-  const integration = resolveWritingIntegration(input.settings);
-  if (!integration) return noAiMessage();
-  const answer = await completeText(integration, [
+  if (!resolveWritingIntegration(input.settings)) return noAiMessage();
+  const answer = await completeTextRouted(input.settings, [
     buildSystemMessage(input, "You are Narrarium's contextual writing copilot. Answer only from the provided repository context and current location. The manifest lists available files; only LOADED FILE contents are available in full. If needed content is not loaded, say which file you need."),
     buildUserMessage(input, `User request: ${input.prompt}`),
-  ], "writing", { signal: input.signal, capability: "copilot" });
+  ], "copilot", { signal: input.signal, label: "copilot" });
   return makeAssistantMessage("assistant", answer.trim());
 }
 

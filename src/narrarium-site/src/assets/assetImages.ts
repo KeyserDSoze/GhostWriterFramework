@@ -3,6 +3,7 @@ import { parseDocument, stringify } from "yaml";
 import type { AIIntegration, AppSettings } from "@/types/settings";
 import { createFile, createOrUpdateBinaryFile, loadBinaryFileContent, readFileWithSha, updateFile } from "@/github/githubClient";
 import { completeText, resolveWritingIntegration } from "@/assistant/llm";
+import { resolveTaskCandidates } from "@/assistant/router";
 import { imageTokenDelta, useCostsStore } from "@/costs/costsStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
 
@@ -176,35 +177,39 @@ export async function generateAssetImage(input: {
   prompt: string;
   orientation: AssetOrientation;
 }): Promise<{ bytes: Uint8Array; provider: string; model: string }> {
-  const integration = resolveWritingIntegration(input.settings);
-  if (!integration || integration.provider === "m365_copilot" || integration.provider === "github_models") throw new Error("Image generation requires an OpenAI or Azure OpenAI integration.");
-  if (!integration.apiKey) throw new Error("Missing API key for image generation.");
-  const model = integration.modelImageGeneration?.trim() || "gpt-image-1";
-  const client = createImageClient(integration);
-  const debugId = useLlmDebugStore.getState().begin({ kind: "image", label: "image", model, messages: [{ role: "input", content: input.prompt }] });
-  try {
-    const response = await client.images.generate({
-      model,
-      prompt: input.prompt,
-      n: 1,
-      size: imageSize(input.orientation),
-      output_format: "png",
-      response_format: model === "gpt-image-1" ? undefined : "b64_json",
-    } as never);
-    const cost = recordImageUsage(integration, response);
-    useLlmDebugStore.getState().finish(debugId, { status: "done", response: `${imageSize(input.orientation)} png`, cost });
-    const image = response.data?.[0];
-    if (image?.b64_json) return { bytes: base64ToBytes(image.b64_json), provider: integration.provider, model };
-    if (image?.url) {
-      const fetched = await fetch(image.url);
-      if (!fetched.ok) throw new Error(`Image download failed: ${fetched.status}`);
-      return { bytes: new Uint8Array(await fetched.arrayBuffer()), provider: integration.provider, model };
+  const candidates = resolveTaskCandidates(input.settings, "image").filter((c) => c.model && c.integration.apiKey);
+  if (!candidates.length) throw new Error("Image generation requires an OpenAI or Azure OpenAI integration.");
+  let lastError: unknown = null;
+  for (const candidate of candidates) {
+    const { integration, model } = candidate;
+    const client = createImageClient(integration);
+    const debugId = useLlmDebugStore.getState().begin({ kind: "image", label: "image", model, messages: [{ role: "input", content: input.prompt }] });
+    try {
+      const response = await client.images.generate({
+        model,
+        prompt: input.prompt,
+        n: 1,
+        size: imageSize(input.orientation),
+        output_format: "png",
+        response_format: model === "gpt-image-1" ? undefined : "b64_json",
+      } as never);
+      const cost = recordImageUsage(integration, response);
+      useLlmDebugStore.getState().finish(debugId, { status: "done", response: `${imageSize(input.orientation)} png`, cost });
+      const image = response.data?.[0];
+      if (image?.b64_json) return { bytes: base64ToBytes(image.b64_json), provider: integration.provider, model };
+      if (image?.url) {
+        const fetched = await fetch(image.url);
+        if (!fetched.ok) throw new Error(`Image download failed: ${fetched.status}`);
+        return { bytes: new Uint8Array(await fetched.arrayBuffer()), provider: integration.provider, model };
+      }
+      throw new Error("Image provider returned no image.");
+    } catch (err) {
+      useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
+      lastError = err;
+      // try next image fallback candidate
     }
-    throw new Error("Image provider returned no image.");
-  } catch (err) {
-    useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
-    throw err;
   }
+  throw lastError ?? new Error("Image generation failed.");
 }
 
 function createImageClient(integration: AIIntegration): AzureOpenAI | OpenAI {
