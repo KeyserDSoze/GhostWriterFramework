@@ -5,9 +5,12 @@ export function createGitHubClient(token: string): Octokit {
   return new Octokit({ auth: token });
 }
 
-function githubContentUrl(owner: string, repo: string, path: string, ref?: string): string {
+function githubContentUrl(owner: string, repo: string, path: string, ref?: string, cacheBust = false): string {
   const encodedPath = path.split("/").map(encodeURIComponent).join("/");
-  const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+  const params = new URLSearchParams();
+  if (ref) params.set("ref", ref);
+  if (cacheBust) params.set("_", String(Date.now()));
+  const query = params.size ? `?${params.toString()}` : "";
   return `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}${query}`;
 }
 
@@ -18,12 +21,11 @@ async function fetchContentJson(
   path: string,
   ref?: string,
 ): Promise<{ content?: string; sha?: string }> {
-  const response = await fetch(githubContentUrl(owner, repo, path, ref), {
+  const response = await fetch(githubContentUrl(owner, repo, path, ref, true), {
     cache: "no-store",
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/vnd.github+json",
-      "Cache-Control": "no-cache",
       "X-GitHub-Api-Version": "2022-11-28",
     },
   });
@@ -338,7 +340,7 @@ export async function loadBinaryFileContent(
   path: string,
   ref?: string,
 ): Promise<Uint8Array> {
-  const response = await fetch(githubContentUrl(owner, repo, path, ref), {
+  const response = await fetch(githubContentUrl(owner, repo, path, ref, true), {
     cache: "no-store",
     headers: {
       Authorization: `Bearer ${token}`,
