@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useGoogleLogin } from "@react-oauth/google";
-import { ArrowLeftRight, Check, Loader2, LogIn, X } from "lucide-react";
+import { ArrowLeftRight, Check, Loader2, LogIn, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuthStore, type AuthProvider } from "@/store/authStore";
@@ -10,6 +10,7 @@ import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
 import {
   migrateCloudData,
+  deleteNarrariumCloudData,
   type MigrationEndpoint,
   type MigrationStepKind,
   type MigrationStepResult,
@@ -39,7 +40,9 @@ export function MigratePage() {
   const [target, setTarget] = useState<TargetAccount | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [running, setRunning] = useState(false);
+  const [deleting, setDeleting] = useState<AuthProvider | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleteNotice, setDeleteNotice] = useState<string | null>(null);
   const [results, setResults] = useState<MigrationStepResult[] | null>(null);
   const [activeStep, setActiveStep] = useState<MigrationStepKind | null>(null);
 
@@ -109,6 +112,7 @@ export function MigratePage() {
 
   function connectTarget() {
     setResults(null);
+    setDeleteNotice(null);
     if (targetProvider === "google") {
       setConnecting(true);
       connectGoogle();
@@ -121,6 +125,7 @@ export function MigratePage() {
     if (!user || !accessToken || !target) return;
     setRunning(true);
     setError(null);
+    setDeleteNotice(null);
     setResults(null);
     setActiveStep(null);
     const src: MigrationEndpoint = { provider: user.provider, accessToken };
@@ -138,7 +143,27 @@ export function MigratePage() {
     }
   }
 
-  if (!user || !sourceProvider || !targetProvider) {
+  async function confirmAndDelete(account: TargetAccount) {
+    const provider = providerLabel(account.provider, t);
+    const expected = t("migration.deleteConfirmWord");
+    const typed = window.prompt(t("migration.deleteConfirmPrompt", { provider, word: expected }));
+    if (typed !== expected) return;
+    setDeleting(account.provider);
+    setError(null);
+    setDeleteNotice(null);
+    try {
+      const result = await deleteNarrariumCloudData(account.provider, account.accessToken);
+      setDeleteNotice(result.deleted
+        ? t("migration.deleteDone", { provider, count: result.count })
+        : t("migration.deleteNothing", { provider }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  if (!user || !accessToken || !sourceProvider || !targetProvider) {
     return (
       <div className="mx-auto max-w-2xl">
         <Alert><AlertDescription>{t("migration.notSignedIn")}</AlertDescription></Alert>
@@ -147,6 +172,7 @@ export function MigratePage() {
   }
 
   const steps: MigrationStepKind[] = ["settings", "costs", "clipboard", "chats"];
+  const sourceAccount: TargetAccount = { provider: sourceProvider, accessToken, name: user.name, email: user.email };
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -159,6 +185,10 @@ export function MigratePage() {
 
       {error && (
         <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
+      )}
+
+      {deleteNotice && (
+        <Alert><AlertDescription>{deleteNotice}</AlertDescription></Alert>
       )}
 
       <div className="rounded-xl border bg-card p-5">
@@ -214,6 +244,35 @@ export function MigratePage() {
         {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-2 h-4 w-4" />}
         {t("migration.start")}
       </Button>
+
+      <div className="space-y-4 rounded-xl border border-destructive/40 bg-destructive/5 p-5">
+        <div>
+          <p className="text-sm font-semibold text-destructive">{t("migration.deleteTitle")}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t("migration.deleteDescription")}</p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Button
+            variant="destructive"
+            onClick={() => void confirmAndDelete(sourceAccount)}
+            disabled={running || connecting || deleting !== null}
+          >
+            {deleting === sourceAccount.provider ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+            {t("migration.deleteSource", { provider: providerLabel(sourceAccount.provider, t) })}
+          </Button>
+          {target ? (
+            <Button
+              variant="destructive"
+              onClick={() => void confirmAndDelete(target)}
+              disabled={running || connecting || deleting !== null}
+            >
+              {deleting === target.provider ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              {t("migration.deleteTarget", { provider: providerLabel(target.provider, t) })}
+            </Button>
+          ) : (
+            <Button variant="outline" disabled>{t("migration.connectTargetToDelete")}</Button>
+          )}
+        </div>
+      </div>
 
       {(running || results) && (
         <div className="space-y-2 rounded-xl border bg-card p-5">
