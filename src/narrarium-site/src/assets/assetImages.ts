@@ -183,14 +183,15 @@ export async function generateAssetImage(input: {
     const client = createImageClient(integration);
     const debugId = useLlmDebugStore.getState().begin({ kind: "image", label: "image", model, messages: [{ role: "input", content: input.prompt }] });
     try {
-      const response = await client.images.generate({
+      const request: Record<string, unknown> = {
         model,
         prompt: input.prompt,
         n: 1,
         size: imageSize(input.orientation),
-        output_format: "png",
-        response_format: model === "gpt-image-1" ? undefined : "b64_json",
-      } as never);
+      };
+      if (isGptImageModel(model)) request.output_format = "png";
+      else request.response_format = "b64_json";
+      const response = await client.images.generate(request as never);
       const cost = recordImageUsage(integration, response);
       useLlmDebugStore.getState().finish(debugId, { status: "done", response: `${imageSize(input.orientation)} png`, cost });
       const image = response.data?.[0];
@@ -271,6 +272,10 @@ function imageSize(orientation: AssetOrientation): "1024x1024" | "1536x1024" | "
   if (orientation === "landscape") return "1536x1024";
   if (orientation === "square") return "1024x1024";
   return "1024x1536";
+}
+
+function isGptImageModel(model: string): boolean {
+  return model.trim().toLowerCase().startsWith("gpt-image-");
 }
 
 function base64ToBytes(value: string): Uint8Array {
