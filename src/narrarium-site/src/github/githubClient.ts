@@ -20,9 +20,10 @@ async function fetchContentJson(
   repo: string,
   path: string,
   ref?: string,
+  fresh = false,
 ): Promise<{ content?: string; sha?: string }> {
-  const response = await fetch(githubContentUrl(owner, repo, path, ref, true), {
-    cache: "no-store",
+  const response = await fetch(githubContentUrl(owner, repo, path, ref, fresh), {
+    cache: fresh ? "no-store" : "default",
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/vnd.github+json",
@@ -351,7 +352,7 @@ export async function loadBinaryFileContent(
   if (response.ok) return new Uint8Array(await response.arrayBuffer());
 
   // Fallback to the JSON contents API for small files or older API behaviour.
-  const data = await fetchContentJson(token, owner, repo, path, ref);
+  const data = await fetchContentJson(token, owner, repo, path, ref, true);
   if (data.content) return decodeBytes(data.content);
   throw new Error(`${path} is not a file`);
 }
@@ -402,7 +403,7 @@ export async function readFileWithSha(
   branch: string,
   path: string,
 ): Promise<FileContent> {
-  const data = await fetchContentJson(token, owner, repo, path, branch);
+  const data = await fetchContentJson(token, owner, repo, path, branch, true);
   if (data.content && data.sha) {
     return { content: decodeContent(data.content), sha: data.sha };
   }
