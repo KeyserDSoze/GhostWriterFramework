@@ -16,6 +16,8 @@ export interface ContextualAction {
   id: string;
   label: string;
   icon: ReactNode;
+  shortcut?: string;
+  disabled?: boolean;
   to?: string;
   run?: () => void | Promise<void>;
 }

@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useLocation } from "react-router-dom";
-import { BookOpen, ClipboardPaste, Copy, Image as ImageIcon, Save, Scissors, Sparkles, TextCursorInput, Wand2 } from "lucide-react";
+import { BookOpen, ClipboardPaste, Copy, Image as ImageIcon, RefreshCcw, Save, Scissors, Sparkles, TextCursorInput, Wand2 } from "lucide-react";
 import { useClipboardStore } from "@/clipboard/clipboardStore";
 import { useProseEditorStore, type ProseEditorActions } from "@/components/editor/proseEditorStore";
 import { useContextualActions } from "@/hooks/useContextualActions";
 import { useSaveStore } from "@/store/saveStore";
+import { triggerCurrentRepositorySync, useRepositorySyncStore } from "@/store/repositorySyncStore";
 import { AssetImageDialog } from "@/components/book/AssetImageDialog";
 import { useBooksStore } from "@/store/booksStore";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -48,6 +49,7 @@ export function GlobalContextMenu() {
   const forElement = useProseEditorStore((s) => s.forElement);
   const { actions, hasBookActions, imageProps } = useContextualActions();
   const saveReg = useSaveStore((s) => s.current);
+  const syncReg = useRepositorySyncStore((s) => s.current);
   const [menu, setMenu] = useState<MenuState>(CLOSED);
   const [showHistory, setShowHistory] = useState(false);
   const [fab, setFab] = useState<{ x: number; y: number; editable: Editable | null } | null>(null);
@@ -56,7 +58,7 @@ export function GlobalContextMenu() {
   const openAtRef = useRef<(x: number, y: number, target: EventTarget | null) => boolean>(() => false);
 
   // Whether the menu can show contextual (non-text) actions at all.
-  const hasContextActions = actions.length > 0 || hasBookActions || Boolean(saveReg);
+  const hasContextActions = actions.length > 0 || hasBookActions || Boolean(saveReg) || Boolean(syncReg);
   // Contextual actions are only useful when NOT working on a text selection.
   const showContextActions = hasContextActions && !menu.selection.trim();
 
@@ -314,6 +316,8 @@ export function GlobalContextMenu() {
                       key={action.id}
                       icon={action.icon}
                       label={action.label}
+                      shortcut={action.shortcut}
+                      disabled={action.disabled}
                       onClick={() => {
                         if (action.to) navigate(action.to);
                         else void action.run?.();
@@ -325,7 +329,10 @@ export function GlobalContextMenu() {
                     <MenuItem icon={<ImageIcon className="h-4 w-4" />} label={t("images.title")} onClick={() => { setImageOpen(true); close(); }} />
                   )}
                   {saveReg && (
-                    <MenuItem icon={<Save className="h-4 w-4" />} label={t("ctx.save")} disabled={!saveReg.dirty} onClick={() => { void saveReg.save(); close(); }} />
+                    <MenuItem icon={<Save className="h-4 w-4" />} label={t("ctx.save")} shortcut="Ctrl+S" disabled={!saveReg.dirty} onClick={() => { void saveReg.save(); close(); }} />
+                  )}
+                  {syncReg && (
+                    <MenuItem icon={<RefreshCcw className={syncReg.busy ? "h-4 w-4 animate-spin" : "h-4 w-4"} />} label={t("repoStatus.sync")} shortcut="Ctrl+E" disabled={syncReg.busy} onClick={() => { void triggerCurrentRepositorySync(); close(); }} />
                   )}
                   {menu.prose && <div className="my-1 h-px bg-border" />}
                 </>
@@ -365,15 +372,17 @@ export function GlobalContextMenu() {
   );
 }
 
-function MenuItem({ icon, label, onClick, disabled }: { icon: React.ReactNode; label: string; onClick: () => void; disabled?: boolean }) {
+function MenuItem({ icon, label, shortcut, onClick, disabled }: { icon: React.ReactNode; label: string; shortcut?: string; onClick: () => void; disabled?: boolean }) {
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
     >
-      {icon}{label}
+      <span className="shrink-0">{icon}</span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {shortcut && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">({shortcut})</span>}
     </button>
   );
 }

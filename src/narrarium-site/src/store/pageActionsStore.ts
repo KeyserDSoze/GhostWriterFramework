@@ -5,6 +5,7 @@ export interface PageActionRegistration {
   id: string;
   label: string;
   icon: React.ReactNode;
+  shortcut?: string;
   run: () => void | Promise<void>;
   disabled?: boolean;
 }

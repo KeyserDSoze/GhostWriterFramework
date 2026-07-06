@@ -17,6 +17,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
+import { useRegisterRepositorySync } from "@/store/repositorySyncStore";
 import { speakText, type SpeechController } from "@/assistant/speech";
 import { useToast } from "@/components/ui/use-toast";
 import { useSettings } from "@/drive/useSettings";
@@ -73,6 +74,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const currentBranch = currentBook?.activeBranch
     ?? (currentBookId ? workingBranches[currentBookId] : undefined)
     ?? (user?.email ? emailToBranchName(user.email) : undefined);
+  const currentToken = currentBook ? resolveBookToken(currentBook, settings) : "";
 
   useEffect(() => {
     const bookId = currentBookId;
@@ -183,7 +185,15 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     }
   }
 
-  const currentToken = currentBook ? resolveBookToken(currentBook, settings) : "";
+  useRegisterRepositorySync({
+    enabled: Boolean(currentBook && currentToken),
+    busy: repoActionBusy === "sync",
+    onSync: () => runRepoAction("sync", async () => {
+      const result = await syncFullRepository({ bookId: currentBook!.id, token: currentToken });
+      return t("repoStatus.syncDone", { pulled: result.pulled, kept: result.keptLocal, committed: result.committed, pushed: result.pushed });
+    }),
+  });
+
   const visibleRepoStatus = currentBook && repoStatus.tone === "none"
     ? { label: t("repoStatus.notCloned"), tone: "offline" as const }
     : repoStatus;

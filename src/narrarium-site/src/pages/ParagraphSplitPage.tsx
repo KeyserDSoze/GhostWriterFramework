@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Loader2, Save, Columns2 } from "lucide-react";
+import { ArrowLeftRight, Loader2, Save, Columns2 } from "lucide-react";
+import { stringify } from "yaml";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
@@ -10,7 +11,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { resolveBookToken } from "@/types/settings";
-import { readFileWithSha, updateFile, createOrUpdateTextFile } from "@/github/githubClient";
+import { readFileWithSha, createOrUpdateTextFile } from "@/github/githubClient";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { useProseAssist } from "@/components/editor/useProseAssist";
@@ -26,6 +27,10 @@ function splitDoc(raw: string): { frontmatter: string; body: string } {
 function joinDoc(frontmatter: string, body: string): string {
   if (!frontmatter) return `${body.trim()}\n`;
   return `${frontmatter.trimEnd()}\n\n${body.trim()}\n`;
+}
+
+function buildFrontmatter(fields: Record<string, unknown>): string {
+  return `---\n${stringify(fields).trim()}\n---\n`;
 }
 
 function paragraphSlug(path: string): string {
@@ -107,38 +112,87 @@ export function ParagraphSplitPage() {
   const draftDirty = draft.body !== draft.savedBody;
   const finalDirty = final.body !== final.savedBody;
 
-  async function saveDraft() {
-    if (!book || !draftDirty) return;
+  function defaultDraftFrontmatter() {
+    if (!chapter || !paragraph || !finalPath) return "";
+    const slug = paragraphSlug(finalPath);
+    return buildFrontmatter({
+      type: "paragraph-draft",
+      id: `draft:paragraph:${chapter.slug}:${slug}`,
+      paragraph: `paragraph:${chapter.slug}:${slug}`,
+      chapter: `chapter:${chapter.slug}`,
+      number: Number(paragraph.number),
+      title: paragraph.title,
+      canon: "draft",
+    });
+  }
+
+  function defaultFinalFrontmatter() {
+    if (!chapter || !paragraph || !finalPath) return "";
+    const slug = paragraphSlug(finalPath);
+    return buildFrontmatter({
+      type: "paragraph",
+      id: `paragraph:${chapter.slug}:${slug}`,
+      chapter: `chapter:${chapter.slug}`,
+      number: Number(paragraph.number),
+      title: paragraph.title,
+    });
+  }
+
+  async function saveDraft(showToast = true): Promise<boolean> {
+    if (!book || !draftDirty) return true;
+    const frontmatter = draft.frontmatter || defaultDraftFrontmatter();
     setDraft((s) => ({ ...s, saving: true }));
     try {
-      await createOrUpdateTextFile(token, book.owner, book.repo, branch, draftPath, joinDoc(draft.frontmatter, draft.body), `Update draft ${paragraphSlug(finalPath)}`);
-      setDraft((s) => ({ ...s, savedBody: s.body, exists: true, saving: false }));
-      toast({ title: t("common.saved") });
+      const newSha = await createOrUpdateTextFile(token, book.owner, book.repo, branch, draftPath, joinDoc(frontmatter, draft.body), `Update draft ${paragraphSlug(finalPath)}`);
+      setDraft((s) => ({ ...s, frontmatter, savedBody: s.body, exists: true, sha: newSha, saving: false }));
+      if (showToast) toast({ title: t("common.saved") });
       if (!draft.exists) void reload();
+      return true;
     } catch (err) {
       setDraft((s) => ({ ...s, saving: false }));
       toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
+      return false;
     }
   }
 
-  async function saveFinal() {
-    if (!book || !finalDirty || !final.exists) return;
+  async function saveFinal(showToast = true): Promise<boolean> {
+    if (!book || !finalDirty) return true;
+    const frontmatter = final.frontmatter || defaultFinalFrontmatter();
     setFinal((s) => ({ ...s, saving: true }));
     try {
-      const newSha = await updateFile(token, book.owner, book.repo, branch, finalPath, final.sha, joinDoc(final.frontmatter, final.body), `Update paragraph ${paragraphSlug(finalPath)}`);
-      setFinal((s) => ({ ...s, savedBody: s.body, sha: newSha, saving: false }));
-      toast({ title: t("common.saved") });
+      const newSha = await createOrUpdateTextFile(token, book.owner, book.repo, branch, finalPath, joinDoc(frontmatter, final.body), `Update paragraph ${paragraphSlug(finalPath)}`);
+      setFinal((s) => ({ ...s, frontmatter, savedBody: s.body, exists: true, sha: newSha, saving: false }));
+      if (showToast) toast({ title: t("common.saved") });
+      if (!final.exists) void reload();
+      return true;
     } catch (err) {
       setFinal((s) => ({ ...s, saving: false }));
       toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
+      return false;
     }
+  }
+
+  async function saveAll() {
+    if (!draftDirty && !finalDirty) return;
+    const draftOk = await saveDraft(false);
+    const finalOk = await saveFinal(false);
+    if (draftOk && finalOk) toast({ title: t("common.saved") });
+  }
+
+  function swapDraftFinal() {
+    if (draft.loading || final.loading || draft.saving || final.saving) return;
+    const nextDraftBody = final.body;
+    const nextFinalBody = draft.body;
+    setDraft((s) => ({ ...s, body: nextDraftBody }));
+    setFinal((s) => ({ ...s, body: nextFinalBody }));
+    toast({ title: t("paragraph.switchPending") });
   }
 
   // Ctrl+S saves whichever sides are dirty.
   useRegisterPageSave({
     dirty: draftDirty || finalDirty,
     enabled: Boolean(book && token),
-    onSave: async () => { await saveDraft(); await saveFinal(); },
+    onSave: () => saveAll(),
   });
 
   if (structureLoading && !structure) {
@@ -160,7 +214,7 @@ export function ParagraphSplitPage() {
       </div>
 
       {/* Desktop-only split. Panes flow with the page (no inner scroll) and grow with content. */}
-      <div className="hidden grid-cols-2 items-start gap-4 lg:grid">
+      <div className="hidden grid-cols-[minmax(0,1fr)_2rem_minmax(0,1fr)] items-start gap-2 lg:grid">
         <Pane
           title={t("chapter.draft")}
           loading={draft.loading}
@@ -173,6 +227,22 @@ export function ParagraphSplitPage() {
           placeholder={t("workspace.writeBodyPlaceholder")}
           createHint={!draft.exists ? t("paragraph.draftMissingHint") : undefined}
         />
+        <div className="relative self-stretch">
+          <div className="sticky top-1/2 z-30 flex -translate-y-1/2 justify-center">
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              className="h-7 w-7 rounded-full border-dashed bg-background/95 shadow-sm"
+              onClick={swapDraftFinal}
+              disabled={draft.loading || final.loading || draft.saving || final.saving}
+              title={t("paragraph.swapDraftFinal")}
+              aria-label={t("paragraph.swapDraftFinal")}
+            >
+              <ArrowLeftRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
         <Pane
           title={t("stageIndex.final")}
           loading={final.loading}
@@ -210,15 +280,15 @@ function Pane(props: {
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-col rounded-xl border bg-card">
-      <div className="sticky top-0 z-10 flex items-center justify-between rounded-t-xl border-b bg-card px-3 py-2">
+    <div className="isolate flex flex-col rounded-xl border bg-card">
+      <div className="sticky top-0 z-30 flex items-center justify-between rounded-t-xl border-b bg-card px-3 py-2 shadow-sm">
         <span className="text-sm font-semibold">{props.title}{props.dirty ? " •" : ""}</span>
         <Button size="sm" variant="outline" onClick={props.onSave} disabled={!props.dirty || props.saving}>
           {props.saving ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1 h-3.5 w-3.5" />}
           {t("common.save")}
         </Button>
       </div>
-      <div className="p-3">
+      <div className="relative z-0 p-3">
         {props.loading ? (
           <div className="flex h-40 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
         ) : (

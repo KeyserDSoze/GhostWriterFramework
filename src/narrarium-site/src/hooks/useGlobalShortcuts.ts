@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { triggerCurrentSave } from "@/store/saveStore";
+import { triggerCurrentRepositorySync } from "@/store/repositorySyncStore";
 import { useProseEditorStore } from "@/components/editor/proseEditorStore";
 import { useClipboardStore } from "@/clipboard/clipboardStore";
 import { useUiStore } from "@/store/uiStore";
@@ -32,6 +33,13 @@ export function useGlobalShortcuts() {
       if (key === "d") {
         event.preventDefault();
         useUiStore.getState().setDebugOpen(true);
+        return;
+      }
+
+      // Ctrl/Cmd+E → save active page edits, then auto-commit and push the current book.
+      if (key === "e") {
+        event.preventDefault();
+        void triggerCurrentRepositorySync();
         return;
       }
 

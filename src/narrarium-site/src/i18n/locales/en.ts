@@ -710,6 +710,8 @@ const en = {
     switchSourceEmpty: "The side to copy is empty: no changes applied.",
     switchFailed: "Draft/final switch failed",
     saveBeforeSwitch: "Save your changes before switching.",
+    swapDraftFinal: "Swap draft and final",
+    switchPending: "Draft and final swapped on the page. Save to apply.",
     titleField: "title",
     improve: "Improve",
     improveAll: "Improve paragraph",

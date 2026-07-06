@@ -710,6 +710,8 @@ const it = {
     switchSourceEmpty: "Il lato da copiare è vuoto: nessuna modifica applicata.",
     switchFailed: "Switch bozza/definitivo non riuscito",
     saveBeforeSwitch: "Salva le modifiche prima di fare lo switch.",
+    swapDraftFinal: "Scambia bozza e definitivo",
+    switchPending: "Bozza e definitivo scambiati in pagina. Salva per applicare.",
     titleField: "titolo",
     improve: "Migliora",
     improveAll: "Migliora il paragrafo",
