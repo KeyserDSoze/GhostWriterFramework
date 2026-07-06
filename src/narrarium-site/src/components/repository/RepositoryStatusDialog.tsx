@@ -101,10 +101,12 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
                 return result.changed ? t("repoStatus.remoteChanged") : t("repoStatus.remoteUpToDate");
               })}>{busy === "fetch" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-1 h-4 w-4" />}{t("repoStatus.fetch")}</Button>
               <Button variant="outline" disabled={disabled} onClick={() => void run("pull", async () => {
+                if ((dirtyFiles.length || ahead) && !window.confirm(t("repoStatus.pullRemoteWinsConfirm"))) return t("repoStatus.cancelled");
                 const result = await pullRemoteChanges({ bookId: book.id, token });
                 return t("repoStatus.pullDone", { count: result.updated });
               })}>{busy === "pull" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <GitPullRequest className="mr-1 h-4 w-4" />}{t("repoStatus.pull")}</Button>
               <Button variant="outline" disabled={disabled || ahead === 0} onClick={() => void run("push", async () => {
+                if (!window.confirm(t("repoStatus.pushLocalWinsConfirm"))) return t("repoStatus.cancelled");
                 const result = await pushLocalCommits({ bookId: book.id, token });
                 return t("repoStatus.pushDone", { count: result.files });
               })}>{busy === "push" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-1 h-4 w-4" />}{t("repoStatus.push")}</Button>

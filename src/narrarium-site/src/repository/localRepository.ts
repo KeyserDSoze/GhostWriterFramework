@@ -310,6 +310,19 @@ export async function listUnpushedLocalCommits(repoIdValue: string): Promise<Loc
   return (await allFromIndex<LocalCommit>("commits", "repoPushed", range)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
+export async function discardUnpushedLocalCommits(repoIdValue: string): Promise<void> {
+  const commits = await listUnpushedLocalCommits(repoIdValue);
+  if (!commits.length) return;
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("commits", "readwrite");
+    const store = tx.objectStore("commits");
+    for (const commit of commits) store.delete(commit.id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 export async function markLocalCommitsPushed(repoIdValue: string, commitIds: string[], remoteHeadSha: string, pushedShas: Record<string, string | null>): Promise<void> {
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
