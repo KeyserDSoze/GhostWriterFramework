@@ -46,6 +46,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { save } = useSettings();
   const { theme, toggle: toggleTheme } = useTheme();
   const cloneProgress = useBooksStore((s) => s.cloneProgress);
+  const setCloneProgress = useBooksStore((s) => s.setCloneProgress);
   const workingBranches = useBooksStore((s) => s.workingBranches);
   const { floatingHidden, toggleFloating } = useUiStore();
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
@@ -74,7 +75,11 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     let cancelled = false;
     async function refresh() {
       if (!bookId) { if (!cancelled) setRepoStatus({ label: "", tone: "none" }); return; }
-      const progress = cloneProgress[bookId];
+      let progress = cloneProgress[bookId];
+      if (progress?.total && progress.done >= progress.total) {
+        setCloneProgress(bookId, undefined);
+        progress = undefined;
+      }
       if (progress) {
         const percent = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
         if (!cancelled) setRepoStatus({ label: t("repoStatus.cloning", { percent }), tone: "offline" });
@@ -108,7 +113,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [cloneProgress, currentBook, currentBookId, currentBranch, t, toast]);
+  }, [cloneProgress, currentBook, currentBookId, currentBranch, setCloneProgress, t, toast]);
 
   useEffect(() => {
     if (!currentBook || !settings.repository.autoFetchIntervalMinutes || settings.repository.autoFetchIntervalMinutes <= 0) return;
@@ -168,6 +173,9 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   }
 
   const currentToken = currentBook ? resolveBookToken(currentBook, settings) : "";
+  const visibleRepoStatus = currentBook && repoStatus.tone === "none"
+    ? { label: t("repoStatus.notCloned"), tone: "offline" as const }
+    : repoStatus;
 
   return (
     <header className="flex h-14 items-center justify-between gap-2 border-b bg-background px-3 sm:px-4">
@@ -195,24 +203,24 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       </div>
 
       <div className="ml-auto flex items-center gap-1 sm:gap-2">
-        {repoStatus.tone !== "none" && (
+        {currentBook && visibleRepoStatus.tone !== "none" && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className={repoStatus.tone === "dirty"
+                className={visibleRepoStatus.tone === "dirty"
                   ? "inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300"
-                  : repoStatus.tone === "ahead"
+                  : visibleRepoStatus.tone === "ahead"
                     ? "inline-flex items-center gap-1 rounded-full border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-xs text-sky-700 dark:text-sky-300"
-                    : repoStatus.tone === "behind"
+                    : visibleRepoStatus.tone === "behind"
                       ? "inline-flex items-center gap-1 rounded-full border border-violet-500/50 bg-violet-500/10 px-2 py-1 text-xs text-violet-700 dark:text-violet-300"
-                  : repoStatus.tone === "clean"
+                  : visibleRepoStatus.tone === "clean"
                     ? "inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300"
                     : "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs text-muted-foreground"}
-                title={repoStatus.label}
+                title={visibleRepoStatus.label}
               >
                 <span className="h-2 w-2 rounded-full bg-current" />
-                <span className="hidden sm:inline">{repoStatus.label}</span>
+                <span className="max-w-[34vw] truncate sm:max-w-none">{visibleRepoStatus.label}</span>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64">

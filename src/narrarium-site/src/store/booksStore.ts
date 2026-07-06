@@ -54,7 +54,12 @@ export const useBooksStore = create<BooksState>()((set) => ({
     })),
 
   setCloneProgress: (bookId, progress) =>
-    set((s) => ({ cloneProgress: { ...s.cloneProgress, [bookId]: progress } })),
+    set((s) => {
+      const cloneProgress = { ...s.cloneProgress };
+      if (progress) cloneProgress[bookId] = progress;
+      else delete cloneProgress[bookId];
+      return { cloneProgress };
+    }),
 
   clearBook: (bookId) =>
     set((s) => {
