@@ -22,7 +22,7 @@ import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import { speakText, type SpeechController } from "@/assistant/speech";
 import { useToast } from "@/components/ui/use-toast";
 import { parseAppRoute } from "@/assistant/context";
-import { getLocalRepositoryByBook, localStatus } from "@/repository/localRepository";
+import { getLocalRepositoryByBook, listUnpushedLocalCommits, localStatus } from "@/repository/localRepository";
 import { RepositoryStatusDialog } from "@/components/repository/RepositoryStatusDialog";
 import { fetchRemoteStatus, pullRemoteChanges } from "@/repository/repositoryService";
 import { resolveBookToken } from "@/types/settings";
@@ -75,6 +75,19 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       if (!repo) { if (!cancelled) setRepoStatus({ label: t("repoStatus.notCloned"), tone: "offline" }); return; }
       const status = await localStatus(repo.id);
       if (cancelled) return;
+      if (status.ahead > 0) {
+        const commits = await listUnpushedLocalCommits(repo.id).catch(() => []);
+        const oldest = commits[0];
+        const oldMs = oldest ? Date.now() - new Date(oldest.createdAt).getTime() : 0;
+        const shouldNotify = status.ahead >= 3 || oldMs > 24 * 60 * 60 * 1000;
+        if (shouldNotify) {
+          const key = `narrarium-unpushed-warning-${bookId}-${status.ahead}-${oldest?.id ?? "none"}`;
+          if (!sessionStorage.getItem(key)) {
+            sessionStorage.setItem(key, "1");
+            toast({ title: t("repoStatus.unpushedNotice", { count: status.ahead }) });
+          }
+        }
+      }
       setRepoStatus(status.dirty > 0
         ? { label: t("repoStatus.dirty", { count: status.dirty }), tone: "dirty" }
         : status.ahead > 0
@@ -86,7 +99,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [cloneProgress, currentBookId, t]);
+  }, [cloneProgress, currentBookId, t, toast]);
 
   useEffect(() => {
     if (!currentBook || !settings.repository.autoFetchIntervalMinutes || settings.repository.autoFetchIntervalMinutes <= 0) return;

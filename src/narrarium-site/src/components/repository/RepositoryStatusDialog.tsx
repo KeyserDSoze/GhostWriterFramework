@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
-import { addLocalRepoLog, buildLocalBookStructure, getLocalRepositoryByBook, listAllLocalFiles, listDirtyLocalFiles, listLocalRepoLogs, listUnpushedLocalCommits, localStatus, type LocalRepoLogEntry, type LocalRepositoryFile, type LocalRepoStatus } from "@/repository/localRepository";
+import { addLocalRepoLog, buildLocalBookStructure, getLocalRepositoryByBook, listAllLocalFiles, listDirtyLocalFiles, listLocalRepoLogs, listUnpushedLocalCommits, localStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryFile, type LocalRepoStatus } from "@/repository/localRepository";
 import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 
@@ -24,6 +24,15 @@ function formatBytes(value: number): string {
   return `${size.toFixed(size >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
+const LOG_FILTERS: Array<"all" | LocalRepoLogKind> = ["all", "clone", "fetch", "pull", "commit", "push", "backup", "reset", "error"];
+
+function logTone(kind: LocalRepoLogKind): string {
+  if (kind === "error") return "border-destructive/40 bg-destructive/10 text-destructive";
+  if (kind === "push" || kind === "commit") return "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300";
+  if (kind === "pull" || kind === "fetch" || kind === "clone") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  return "border-muted bg-muted/40 text-muted-foreground";
+}
+
 export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: { open: boolean; onOpenChange: (open: boolean) => void; book?: BookEntry; settings: AppSettings }) {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -36,6 +45,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
   const [ahead, setAhead] = useState(0);
   const [storage, setStorage] = useState<{ usage?: number; quota?: number }>({});
   const [logs, setLogs] = useState<LocalRepoLogEntry[]>([]);
+  const [logFilter, setLogFilter] = useState<"all" | LocalRepoLogKind>("all");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const token = book ? resolveBookToken(book, settings) : "";
@@ -47,6 +57,8 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
     if (dirtyFiles.length === 1) return `Update ${dirtyFiles[0].path}`;
     return dirtyFiles.length ? `Update ${dirtyFiles.length} files` : "";
   }, [dirtyFiles]);
+
+  const visibleLogs = useMemo(() => logFilter === "all" ? logs : logs.filter((log) => log.kind === logFilter), [logFilter, logs]);
 
   async function refresh() {
     if (!book) { setStatus(null); setDirtyFiles([]); setAhead(0); return; }
@@ -214,10 +226,32 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
               </div>
             </div>
             <div className="space-y-2 rounded-xl border p-3">
-              <p className="text-sm font-medium">{t("repoStatus.history")}</p>
-              {logs.length ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium">{t("repoStatus.history")}</p>
+                <div className="flex flex-wrap gap-1">
+                  {LOG_FILTERS.map((filter) => (
+                    <button
+                      key={filter}
+                      type="button"
+                      onClick={() => setLogFilter(filter)}
+                      className={logFilter === filter ? "rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium uppercase text-primary-foreground" : "rounded-full border px-2 py-0.5 text-[10px] uppercase text-muted-foreground hover:bg-muted"}
+                    >
+                      {filter === "all" ? t("repoStatus.logAll") : filter}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {visibleLogs.length ? (
                 <div className="max-h-48 space-y-1 overflow-auto text-xs">
-                  {logs.map((log) => <div key={log.id} className="rounded border px-2 py-1"><span className="mr-2 uppercase text-muted-foreground">{log.kind}</span><span>{log.message}</span><span className="ml-2 text-muted-foreground">{new Date(log.createdAt).toLocaleString()}</span></div>)}
+                  {visibleLogs.map((log) => (
+                    <div key={log.id} className="rounded border px-2 py-1">
+                      <div className="mb-1 flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase ${logTone(log.kind)}`}>{log.kind}</span>
+                        <span className="text-[10px] text-muted-foreground">{new Date(log.createdAt).toLocaleString()}</span>
+                      </div>
+                      <p className="break-words text-xs">{log.message}</p>
+                    </div>
+                  ))}
                 </div>
               ) : <p className="text-sm text-muted-foreground">{t("repoStatus.noHistory")}</p>}
             </div>

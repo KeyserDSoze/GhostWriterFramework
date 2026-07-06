@@ -67,7 +67,9 @@ const en = {
     remoteUpToDate: "Remote is up to date.",
     actionFailed: "Repository operation failed",
     history: "Sync history",
+    logAll: "All",
     noHistory: "No operations recorded yet.",
+    unpushedNotice: "You have {{count}} local commits that are not pushed. Push or back them up to avoid losing them.",
   },
   repoSettings: {
     title: "Local repositories",

@@ -67,7 +67,9 @@ const it = {
     remoteUpToDate: "Il remoto è aggiornato.",
     actionFailed: "Operazione repository non riuscita",
     history: "Cronologia sync",
+    logAll: "Tutto",
     noHistory: "Nessuna operazione registrata.",
+    unpushedNotice: "Hai {{count}} commit locali non pushati. Fai push o backup per evitare di perderli.",
   },
   repoSettings: {
     title: "Repository locali",
