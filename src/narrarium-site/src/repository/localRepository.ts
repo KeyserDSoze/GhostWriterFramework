@@ -28,6 +28,8 @@ export interface LocalRepositoryFile {
   text?: string;
   blob?: Blob;
   baseSha?: string;
+  /** SHA-256 of the clean/base content, used for dirty tracking. */
+  baseHash?: string;
   currentHash: string;
   status: LocalFileStatus;
   /** True when this file change is already included in a local commit awaiting push. */
@@ -153,6 +155,12 @@ async function hashBytes(bytes: Uint8Array): Promise<string> {
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+function statusAfterWrite(existing: LocalRepositoryFile | undefined, currentHash: string): LocalFileStatus {
+  if (!existing || existing.status === "new") return "new";
+  if (existing.baseHash && currentHash === existing.baseHash) return "clean";
+  return "modified";
+}
+
 function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
@@ -237,6 +245,7 @@ export async function putCleanLocalFile(input: {
     text: input.text,
     blob: input.blob,
     baseSha: input.baseSha,
+    baseHash: currentHash,
     currentHash,
     status: "clean",
     committed: false,
@@ -257,8 +266,9 @@ export async function writeLocalText(repoIdValue: string, path: string, text: st
     kind: "text",
     text,
     baseSha: existing?.baseSha,
+    baseHash: existing?.baseHash,
     currentHash,
-    status: existing && existing.status !== "new" ? (existing.currentHash === currentHash ? "clean" : "modified") : "new",
+    status: statusAfterWrite(existing, currentHash),
     committed: false,
     size: new TextEncoder().encode(text).byteLength,
     updatedAt: new Date().toISOString(),
@@ -278,8 +288,9 @@ export async function writeLocalBinary(repoIdValue: string, path: string, bytes:
     kind: "binary",
     blob,
     baseSha: existing?.baseSha,
+    baseHash: existing?.baseHash,
     currentHash,
-    status: existing && existing.status !== "new" ? (existing.currentHash === currentHash ? "clean" : "modified") : "new",
+    status: statusAfterWrite(existing, currentHash),
     committed: false,
     size: bytes.byteLength,
     updatedAt: new Date().toISOString(),
@@ -419,7 +430,7 @@ export async function markLocalCommitsPushed(repoIdValue: string, commitIds: str
         const file = req.result as LocalRepositoryFile | undefined;
         if (!file) return;
         if (sha === null) fileStore.delete(file.key);
-        else fileStore.put({ ...file, baseSha: sha, committed: false, status: "clean", updatedAt: new Date().toISOString() });
+        else fileStore.put({ ...file, baseSha: sha, baseHash: file.currentHash, committed: false, status: "clean", updatedAt: new Date().toISOString() });
       };
     }
     tx.oncomplete = () => resolve();

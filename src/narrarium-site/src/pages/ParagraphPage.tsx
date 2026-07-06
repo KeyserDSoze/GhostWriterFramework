@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseDocument, stringify } from "yaml";
-import { ArrowLeft, ArrowLeftRight, Save, Loader2, Plus, X, Lock } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Save, Loader2, MoreHorizontal, Plus, X, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { FileDiff } from "@/components/diff/DiffView";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
@@ -520,25 +521,26 @@ export function ParagraphPage() {
   return (
     <div className="flex flex-col gap-5">
       {/* Top bar */}
-      <div className="flex items-center justify-between">
-        <Button asChild variant="ghost" size="sm" className="-ml-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button asChild variant="ghost" size="sm" className="-ml-2 min-w-0 max-w-[52vw] justify-start sm:max-w-none">
           <Link to={`/app/books/${bookId}/chapters/${chapterId}`}>
             <ArrowLeft className="mr-1 h-4 w-4" />
-            {chapter.title}
+            <span className="truncate">{chapter.title}</span>
           </Link>
         </Button>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className="font-mono text-xs">
+        <div className="flex min-w-0 items-center gap-2">
+          <Badge variant="outline" className="max-w-[42vw] truncate font-mono text-xs sm:max-w-none">
             {branch}
           </Badge>
           {isDirty && !saving && (
-            <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>
+            <span className="hidden text-xs text-muted-foreground sm:inline">{t("common.unsaved")}</span>
           )}
-          <Button size="sm" variant="outline" onClick={() => void handleSwitchToDraft()} disabled={switchingDraft || saving}>
+          <Button className="hidden sm:inline-flex" size="sm" variant="outline" onClick={() => void handleSwitchToDraft()} disabled={switchingDraft || saving}>
             {switchingDraft ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-1 h-4 w-4" />}
             {t("paragraph.switchToDraft")}
           </Button>
           <Button
+            className="hidden sm:inline-flex"
             size="sm"
             onClick={() => void handleSave()}
             disabled={!isDirty || saving}
@@ -550,6 +552,23 @@ export function ParagraphPage() {
             )}
             {t("common.save")}
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="icon" variant="outline" className="h-9 w-9 sm:hidden" aria-label={t("assistant.quickActions")}>
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => void handleSwitchToDraft()} disabled={switchingDraft || saving}>
+                {switchingDraft ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-2 h-4 w-4" />}
+                {t("paragraph.switchToDraft")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void handleSave()} disabled={!isDirty || saving}>
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                {t("common.save")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 

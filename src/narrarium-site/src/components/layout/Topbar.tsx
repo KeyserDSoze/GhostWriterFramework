@@ -1,7 +1,5 @@
-import { Activity, ArrowLeftRight, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, LogOut, Menu, PanelRight, RefreshCcw, Settings, UploadCloud, Volume2 } from "lucide-react";
+import { Activity, ArrowLeftRight, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, Languages, LogOut, Menu, Moon, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { ThemeToggle } from "./ThemeToggle";
-import { LanguageToggle } from "./LanguageToggle";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -21,11 +19,14 @@ import { useUiStore } from "@/store/uiStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import { speakText, type SpeechController } from "@/assistant/speech";
 import { useToast } from "@/components/ui/use-toast";
+import { useSettings } from "@/drive/useSettings";
 import { parseAppRoute } from "@/assistant/context";
 import { getLocalRepositoryByBook, listUnpushedLocalCommits, localStatus } from "@/repository/localRepository";
 import { RepositoryStatusDialog } from "@/components/repository/RepositoryStatusDialog";
 import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits, syncFullRepository } from "@/repository/repositoryService";
 import { resolveBookToken } from "@/types/settings";
+import { useTheme } from "./ThemeProvider";
+import { SUPPORTED_LANGUAGES } from "@/i18n";
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -38,9 +39,11 @@ function initials(name: string | undefined): string {
 }
 
 export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { user, clearAuth } = useAuthStore();
-  const { settings } = useSettingsStore();
+  const { settings, patchSettings } = useSettingsStore();
+  const { save } = useSettings();
+  const { theme, toggle: toggleTheme } = useTheme();
   const cloneProgress = useBooksStore((s) => s.cloneProgress);
   const { floatingHidden, toggleFloating } = useUiStore();
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
@@ -125,6 +128,12 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     navigate("/login");
   }
 
+  async function changeLanguage(code: "en" | "it") {
+    await i18n.changeLanguage(code);
+    patchSettings({ ui: { ...settings.ui, language: code } });
+    await save();
+  }
+
   async function handleReadPage() {
     try {
       if (speechRef.current) {
@@ -187,18 +196,18 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               <button
                 type="button"
                 className={repoStatus.tone === "dirty"
-                  ? "hidden items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300 sm:inline-flex"
+                  ? "inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300"
                   : repoStatus.tone === "ahead"
-                    ? "hidden items-center gap-1 rounded-full border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-xs text-sky-700 dark:text-sky-300 sm:inline-flex"
+                    ? "inline-flex items-center gap-1 rounded-full border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-xs text-sky-700 dark:text-sky-300"
                     : repoStatus.tone === "behind"
-                      ? "hidden items-center gap-1 rounded-full border border-violet-500/50 bg-violet-500/10 px-2 py-1 text-xs text-violet-700 dark:text-violet-300 sm:inline-flex"
+                      ? "inline-flex items-center gap-1 rounded-full border border-violet-500/50 bg-violet-500/10 px-2 py-1 text-xs text-violet-700 dark:text-violet-300"
                   : repoStatus.tone === "clean"
-                    ? "hidden items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300 sm:inline-flex"
-                    : "hidden items-center gap-1 rounded-full border px-2 py-1 text-xs text-muted-foreground sm:inline-flex"}
+                    ? "inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300"
+                    : "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs text-muted-foreground"}
                 title={repoStatus.label}
               >
                 <span className="h-2 w-2 rounded-full bg-current" />
-                {repoStatus.label}
+                <span className="hidden sm:inline">{repoStatus.label}</span>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64">
@@ -232,8 +241,6 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         <Button variant="ghost" size="icon" aria-label={t("shell.readPage")} onClick={() => void handleReadPage()}>
           <Volume2 className="h-4 w-4" />
         </Button>
-        <ThemeToggle />
-        <LanguageToggle />
         <Button
           variant="ghost"
           size="icon"
@@ -270,6 +277,18 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
                 <DropdownMenuSeparator />
               </>
             )}
+            <DropdownMenuItem onSelect={(event) => { event.preventDefault(); toggleTheme(); }}>
+              {theme === "dark" ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
+              {theme === "dark" ? t("common.switchToLight") : t("common.switchToDark")}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="flex items-center gap-2 text-xs"><Languages className="h-3.5 w-3.5" />{t("common.changeLanguage")}</DropdownMenuLabel>
+            {SUPPORTED_LANGUAGES.map((language) => (
+              <DropdownMenuItem key={language.code} onSelect={() => void changeLanguage(language.code)} className={(i18n.resolvedLanguage?.split("-")[0] ?? settings.ui.language) === language.code ? "font-semibold" : undefined}>
+                {language.label}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => navigate("/app/settings")}>
               <Settings className="mr-2 h-4 w-4" />
               {t("nav.settings")}
