@@ -1,5 +1,6 @@
 import { Octokit } from "@octokit/rest";
 import { BookStructure, Chapter, Paragraph, BookFile } from "@/types/book";
+import { deleteLocalFile, getLocalFile, getLocalRepository, writeLocalBinary, writeLocalText } from "@/repository/localRepository";
 
 export function createGitHubClient(token: string): Octokit {
   return new Octokit({ auth: token });
@@ -32,6 +33,12 @@ async function fetchContentJson(
   });
   if (!response.ok) throw new Error(`GitHub content load ${path}: ${response.status}`);
   return await response.json() as { content?: string; sha?: string };
+}
+
+async function localRepoId(owner: string, repo: string, branch: string | undefined): Promise<string | null> {
+  if (!branch) return null;
+  const local = await getLocalRepository(owner, repo, branch).catch(() => null);
+  return local?.id ?? null;
 }
 
 /** Decode base64 content returned by the GitHub contents API (UTF-8 safe). */
@@ -329,6 +336,12 @@ export async function loadFileContent(
   path: string,
   ref?: string,
 ): Promise<string> {
+  const id = await localRepoId(owner, repo, ref);
+  if (id) {
+    const file = await getLocalFile(id, path);
+    if (file?.kind === "text" && file.text !== undefined) return file.text;
+    if (file?.kind === "binary" && file.blob) return new TextDecoder().decode(await file.blob.arrayBuffer());
+  }
   const data = await fetchContentJson(token, owner, repo, path, ref);
   if (data.content) return decodeContent(data.content);
   throw new Error(`${path} is not a file`);
@@ -341,6 +354,12 @@ export async function loadBinaryFileContent(
   path: string,
   ref?: string,
 ): Promise<Uint8Array> {
+  const id = await localRepoId(owner, repo, ref);
+  if (id) {
+    const file = await getLocalFile(id, path);
+    if (file?.kind === "binary" && file.blob) return new Uint8Array(await file.blob.arrayBuffer());
+    if (file?.kind === "text" && file.text !== undefined) return new TextEncoder().encode(file.text);
+  }
   const response = await fetch(githubContentUrl(owner, repo, path, ref, true), {
     cache: "no-store",
     headers: {
@@ -403,6 +422,12 @@ export async function readFileWithSha(
   branch: string,
   path: string,
 ): Promise<FileContent> {
+  const id = await localRepoId(owner, repo, branch);
+  if (id) {
+    const file = await getLocalFile(id, path);
+    if (file?.kind === "text" && file.text !== undefined) return { content: file.text, sha: file.currentHash };
+    if (file?.kind === "binary" && file.blob) return { content: new TextDecoder().decode(await file.blob.arrayBuffer()), sha: file.currentHash };
+  }
   const data = await fetchContentJson(token, owner, repo, path, branch, true);
   if (data.content && data.sha) {
     return { content: decodeContent(data.content), sha: data.sha };
@@ -421,6 +446,8 @@ export async function updateFile(
   content: string,
   message: string,
 ): Promise<string> {
+  const id = await localRepoId(owner, repo, branch);
+  if (id) return (await writeLocalText(id, path, content)).currentHash;
   const octokit = createGitHubClient(token);
   const { data } = await octokit.rest.repos.createOrUpdateFileContents({
     owner,
@@ -443,6 +470,8 @@ export async function createOrUpdateBinaryFile(
   bytes: Uint8Array,
   message: string,
 ): Promise<string> {
+  const id = await localRepoId(owner, repo, branch);
+  if (id) return (await writeLocalBinary(id, path, bytes)).currentHash;
   const octokit = createGitHubClient(token);
   const existing = await readFileWithSha(token, owner, repo, branch, path).catch(() => null);
   const body = {
@@ -476,6 +505,12 @@ export async function createFile(
   content: string,
   message: string,
 ): Promise<string> {
+  const id = await localRepoId(owner, repo, branch);
+  if (id) {
+    const existing = await getLocalFile(id, path);
+    if (existing) throw new Error(`File already exists: ${path}`);
+    return (await writeLocalText(id, path, content)).currentHash;
+  }
   const octokit = createGitHubClient(token);
   const { data } = await octokit.rest.repos.createOrUpdateFileContents({
     owner,
@@ -728,6 +763,12 @@ export async function renameAndUpdateFile(
   content: string,
   message: string,
 ): Promise<{ sha: string }> {
+  const id = await localRepoId(owner, repo, branch);
+  if (id) {
+    await deleteLocalFile(id, oldPath);
+    const file = await writeLocalText(id, newPath, content);
+    return { sha: file.currentHash };
+  }
   const octokit = createGitHubClient(token);
 
   const { data: branchData } = await octokit.rest.repos.getBranch({
@@ -810,6 +851,11 @@ export async function deleteFile(
   sha: string,
   message: string,
 ): Promise<void> {
+  const id = await localRepoId(owner, repo, branch);
+  if (id) {
+    await deleteLocalFile(id, path);
+    return;
+  }
   const octokit = createGitHubClient(token);
   await octokit.rest.repos.deleteFile({
     owner,

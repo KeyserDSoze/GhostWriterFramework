@@ -29,6 +29,11 @@ const it = {
     draftsIndex: "Bozze",
     scriptsIndex: "Script",
   },
+  repoStatus: {
+    clean: "Pulito",
+    dirty: "{{count}} modifiche locali",
+    notCloned: "Locale non pronto",
+  },
   migration: {
     title: "Migrazione",
     description: "Copia tutto ciò che Narrarium salva sul cloud (impostazioni, impostazioni di tutti i libri, costi, appunti e chat) verso il tuo altro account.",

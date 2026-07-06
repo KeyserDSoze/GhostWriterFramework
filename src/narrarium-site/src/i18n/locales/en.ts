@@ -29,6 +29,11 @@ const en = {
     draftsIndex: "Drafts",
     scriptsIndex: "Scripts",
   },
+  repoStatus: {
+    clean: "Clean",
+    dirty: "{{count}} local changes",
+    notCloned: "Local not ready",
+  },
   migration: {
     title: "Migration",
     description: "Copy everything Narrarium stores in the cloud (settings, all book settings, costs, clipboard, and chats) to your other account.",

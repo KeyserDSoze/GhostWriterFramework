@@ -4,6 +4,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { loadBookStructure } from "@/github/githubClient";
 import { resolveBookToken } from "@/types/settings";
+import { ensureLocalBookStructure, getExistingLocalBookStructure } from "@/repository/repositoryService";
 
 export function useBookStructure(bookId: string | undefined) {
   const { t } = useTranslation();
@@ -35,7 +36,12 @@ export function useBookStructure(bookId: string | undefined) {
     }
     setError(resolvedBookId, "");
     setLoading(resolvedBookId, true);
-    loadBookStructure(token, book.owner, book.repo, readBranch)
+    getExistingLocalBookStructure(resolvedBookId)
+      .then((local) => {
+        if (local && (!readBranch || local.structure.loadedBranch === readBranch)) return local.structure;
+        return ensureLocalBookStructure({ bookId: resolvedBookId, book, token, branch: readBranch }).then((result) => result.structure);
+      })
+      .catch(() => loadBookStructure(token, book.owner, book.repo, readBranch))
       .then((nextStructure) => {
         setStructure(resolvedBookId, nextStructure);
         setError(resolvedBookId, "");
