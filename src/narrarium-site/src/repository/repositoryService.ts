@@ -17,6 +17,7 @@ import {
   putLocalRepository,
   removeLocalFileEntry,
   removeLocalRepository,
+  restoreUnpushedCommitsAsDirty,
   updateLocalRepositoryHead,
   type LocalRepositoryMeta,
   type LocalRepositoryFile,
@@ -38,6 +39,13 @@ export interface RemoteStatusResult {
 export interface PushResult {
   commitSha: string;
   files: number;
+}
+
+export interface SyncResult {
+  pulled: number;
+  keptLocal: number;
+  committed: number;
+  pushed: number;
 }
 
 function extension(path: string): string {
@@ -138,9 +146,22 @@ export async function getExistingLocalBookStructure(bookId: string): Promise<{ m
 export async function commitLocalChanges(bookId: string, message: string) {
   const meta = await getLocalRepositoryByBook(bookId);
   if (!meta) throw new Error("Local repository is not ready.");
-  const commit = await createLocalCommit(meta.id, message.trim() || "Update book files");
+  const dirty = await listDirtyLocalFiles(meta.id);
+  const commit = await createLocalCommit(meta.id, message.trim() || autoCommitMessage(dirty.map((file) => file.path)));
   await addLocalRepoLog(meta.id, "commit", `Committed ${commit.files.length} files: ${commit.message}`);
   return commit;
+}
+
+export function autoCommitMessage(paths: string[]): string {
+  const names = paths.slice(0, 5).map((path) => path.split("/").pop() || path);
+  const rest = Math.max(0, paths.length - names.length);
+  const joined = names.length <= 1 ? names[0] ?? "files" : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  let message = `Update ${joined}${rest ? ` and ${rest} other files` : ""}`;
+  if (message.length > 120) {
+    const shorter = names.slice(0, 3).join(", ");
+    message = `Update ${shorter}${paths.length > 3 ? ` and ${paths.length - 3} other files` : ""}`;
+  }
+  return message.slice(0, 120);
 }
 
 export async function fetchRemoteStatus(input: { bookId: string; token: string }): Promise<RemoteStatusResult> {
@@ -240,6 +261,81 @@ export async function pushLocalCommits(input: { bookId: string; token: string })
   await markLocalCommitsPushed(meta.id, commits.map((entry) => entry.id), commit.data.sha, pushedShas);
   await addLocalRepoLog(meta.id, "push", `Pushed ${changedPaths.size} files to ${commit.data.sha.slice(0, 7)} (local wins)`);
   return { commitSha: commit.data.sha, files: changedPaths.size };
+}
+
+export async function syncFullRepository(input: { bookId: string; token: string }): Promise<SyncResult> {
+  const meta = await getLocalRepositoryByBook(input.bookId);
+  if (!meta) throw new Error("Local repository is not ready.");
+  await restoreUnpushedCommitsAsDirty(meta.id);
+  const octokit = new Octokit({ auth: input.token });
+  const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
+  const remoteHeadSha = ref.data.object.sha;
+  const remoteChanged = remoteHeadSha !== meta.remoteHeadSha;
+  let pulled = 0;
+  let keptLocal = 0;
+  if (remoteChanged) {
+    const remoteChanges = await remoteChangedFiles(octokit, meta, remoteHeadSha);
+    const dirty = await listDirtyLocalFiles(meta.id);
+    const dirtyByPath = new Map(dirty.map((file) => [file.path, file]));
+    const remoteTree = await octokit.rest.git.getTree({ owner: meta.owner, repo: meta.repo, tree_sha: remoteHeadSha, recursive: "1" });
+    const remoteBlobEntries = (remoteTree.data.tree ?? []).filter((entry) => entry.type === "blob" && entry.path);
+    const remotePaths = new Set(remoteBlobEntries.map((entry) => entry.path!));
+    const remoteShaByPath = new Map(remoteBlobEntries.map((entry) => [entry.path!, entry.sha]));
+    for (const [path, remoteDate] of remoteChanges) {
+      const local = dirtyByPath.get(path);
+      if (local && new Date(local.updatedAt).getTime() >= remoteDate.getTime()) {
+        keptLocal += 1;
+        continue;
+      }
+      if (!remotePaths.has(path)) {
+        await removePulledFile(meta.id, path);
+        pulled += 1;
+        continue;
+      }
+      const bytes = await fetchRaw(input.token, meta.owner, meta.repo, meta.branch, path);
+      await putCleanLocalFile({
+        repoId: meta.id,
+        path,
+        kind: isTextPath(path) ? "text" : "binary",
+        text: isTextPath(path) ? new TextDecoder().decode(bytes) : undefined,
+        blob: isTextPath(path) ? undefined : new Blob([bytesToArrayBuffer(bytes)]),
+        baseSha: remoteShaByPath.get(path),
+        size: bytes.byteLength,
+      });
+      pulled += 1;
+    }
+    await updateLocalRepositoryHead(meta.id, remoteHeadSha);
+    await addLocalRepoLog(meta.id, "pull", `Sync pulled ${pulled} remote files, kept ${keptLocal} local files by timestamp`);
+  } else {
+    await markLocalRepositoryRemoteCheck(meta.id, remoteHeadSha, false);
+  }
+  const dirtyAfterMerge = await listDirtyLocalFiles(meta.id);
+  let committed = 0;
+  if (dirtyAfterMerge.length) {
+    const commit = await createLocalCommit(meta.id, autoCommitMessage(dirtyAfterMerge.map((file) => file.path)));
+    committed = commit.files.length;
+    await addLocalRepoLog(meta.id, "commit", `Sync auto-committed ${committed} files: ${commit.message}`);
+  }
+  const ahead = await listUnpushedLocalCommits(meta.id);
+  let pushed = 0;
+  if (ahead.length) pushed = (await pushLocalCommits(input)).files;
+  await addLocalRepoLog(meta.id, "push", `Full sync complete: pulled ${pulled}, kept local ${keptLocal}, committed ${committed}, pushed ${pushed}`);
+  return { pulled, keptLocal, committed, pushed };
+}
+
+async function remoteChangedFiles(octokit: Octokit, meta: LocalRepositoryMeta, remoteHeadSha: string): Promise<Map<string, Date>> {
+  const comparison = await octokit.rest.repos.compareCommitsWithBasehead({ owner: meta.owner, repo: meta.repo, basehead: `${meta.remoteHeadSha}...${remoteHeadSha}` });
+  const lastCommit = comparison.data.commits[comparison.data.commits.length - 1];
+  const fallbackDate = new Date(lastCommit?.commit.committer?.date ?? Date.now());
+  const map = new Map<string, Date>();
+  const commits = comparison.data.commits.slice(-50);
+  for (const commitSummary of commits) {
+    const date = new Date(commitSummary.commit.committer?.date ?? fallbackDate);
+    const detail = await octokit.rest.repos.getCommit({ owner: meta.owner, repo: meta.repo, ref: commitSummary.sha }).catch(() => null);
+    for (const file of detail?.data.files ?? []) map.set(file.filename, date);
+  }
+  for (const file of comparison.data.files ?? []) if (!map.has(file.filename)) map.set(file.filename, fallbackDate);
+  return map;
 }
 
 export async function removeLocalWorkingCopy(bookId: string): Promise<void> {

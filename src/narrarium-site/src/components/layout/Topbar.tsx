@@ -1,4 +1,4 @@
-import { Activity, ArrowLeftRight, Coins, Eye, EyeOff, HelpCircle, LogOut, Menu, PanelRight, Settings, Volume2 } from "lucide-react";
+import { Activity, ArrowLeftRight, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, LogOut, Menu, PanelRight, RefreshCcw, Settings, UploadCloud, Volume2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ThemeToggle } from "./ThemeToggle";
 import { LanguageToggle } from "./LanguageToggle";
@@ -24,7 +24,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { parseAppRoute } from "@/assistant/context";
 import { getLocalRepositoryByBook, listUnpushedLocalCommits, localStatus } from "@/repository/localRepository";
 import { RepositoryStatusDialog } from "@/components/repository/RepositoryStatusDialog";
-import { fetchRemoteStatus, pullRemoteChanges } from "@/repository/repositoryService";
+import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits, syncFullRepository } from "@/repository/repositoryService";
 import { resolveBookToken } from "@/types/settings";
 
 function initials(name: string | undefined): string {
@@ -56,6 +56,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const speechRef = useRef<SpeechController | null>(null);
   const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "behind" | "offline" | "none" }>({ label: "", tone: "none" });
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
+  const [repoActionBusy, setRepoActionBusy] = useState<string | null>(null);
   const route = parseAppRoute(location.pathname);
   const currentBookId = "bookId" in route ? route.bookId : undefined;
   const currentBook = currentBookId ? settings.books.find((entry) => entry.id === currentBookId) : undefined;
@@ -139,6 +140,21 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     }
   }
 
+  async function runRepoAction(label: string, action: () => Promise<string>) {
+    if (!currentBook) return;
+    setRepoActionBusy(label);
+    try {
+      const result = await action();
+      toast({ title: result });
+    } catch (err) {
+      toast({ title: t("repoStatus.actionFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setRepoActionBusy(null);
+    }
+  }
+
+  const currentToken = currentBook ? resolveBookToken(currentBook, settings) : "";
+
   return (
     <header className="flex h-14 items-center justify-between gap-2 border-b bg-background px-3 sm:px-4">
       {sidebarCollapsed && (
@@ -166,23 +182,49 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
 
       <div className="ml-auto flex items-center gap-1 sm:gap-2">
         {repoStatus.tone !== "none" && (
-          <button
-            type="button"
-            className={repoStatus.tone === "dirty"
-              ? "hidden items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300 sm:inline-flex"
-              : repoStatus.tone === "ahead"
-                ? "hidden items-center gap-1 rounded-full border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-xs text-sky-700 dark:text-sky-300 sm:inline-flex"
-                : repoStatus.tone === "behind"
-                  ? "hidden items-center gap-1 rounded-full border border-violet-500/50 bg-violet-500/10 px-2 py-1 text-xs text-violet-700 dark:text-violet-300 sm:inline-flex"
-              : repoStatus.tone === "clean"
-                ? "hidden items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300 sm:inline-flex"
-                : "hidden items-center gap-1 rounded-full border px-2 py-1 text-xs text-muted-foreground sm:inline-flex"}
-            title={repoStatus.label}
-            onClick={() => setRepoDialogOpen(true)}
-          >
-            <span className="h-2 w-2 rounded-full bg-current" />
-            {repoStatus.label}
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className={repoStatus.tone === "dirty"
+                  ? "hidden items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300 sm:inline-flex"
+                  : repoStatus.tone === "ahead"
+                    ? "hidden items-center gap-1 rounded-full border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-xs text-sky-700 dark:text-sky-300 sm:inline-flex"
+                    : repoStatus.tone === "behind"
+                      ? "hidden items-center gap-1 rounded-full border border-violet-500/50 bg-violet-500/10 px-2 py-1 text-xs text-violet-700 dark:text-violet-300 sm:inline-flex"
+                  : repoStatus.tone === "clean"
+                    ? "hidden items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300 sm:inline-flex"
+                    : "hidden items-center gap-1 rounded-full border px-2 py-1 text-xs text-muted-foreground sm:inline-flex"}
+                title={repoStatus.label}
+              >
+                <span className="h-2 w-2 rounded-full bg-current" />
+                {repoStatus.label}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuLabel>{t("repoStatus.quickActions")}</DropdownMenuLabel>
+              <div className="p-2">
+                <Button className="w-full" size="sm" disabled={!currentBook || !currentToken || !!repoActionBusy} onClick={() => void runRepoAction("sync", async () => {
+                  const result = await syncFullRepository({ bookId: currentBook!.id, token: currentToken });
+                  return t("repoStatus.syncDone", { pulled: result.pulled, kept: result.keptLocal, committed: result.committed, pushed: result.pushed });
+                })}>{repoActionBusy === "sync" ? <RefreshCcw className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-1 h-4 w-4" />}{t("repoStatus.sync")}</Button>
+              </div>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setRepoDialogOpen(true)}><Activity className="mr-2 h-4 w-4" />{t("repoStatus.viewStatus")}</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setRepoDialogOpen(true)}><Eye className="mr-2 h-4 w-4" />{t("repoStatus.viewChangedFiles")}</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={!currentBook || !currentToken || !!repoActionBusy} onSelect={() => void runRepoAction("fetch", async () => {
+                const result = await fetchRemoteStatus({ bookId: currentBook!.id, token: currentToken });
+                return result.changed ? t("repoStatus.remoteChanged") : t("repoStatus.remoteUpToDate");
+              })}><RefreshCcw className="mr-2 h-4 w-4" />{t("repoStatus.fetch")}</DropdownMenuItem>
+              <DropdownMenuItem disabled={!currentBook || !currentToken || !!repoActionBusy} onSelect={() => void runRepoAction("pull", async () => {
+                const result = await pullRemoteChanges({ bookId: currentBook!.id, token: currentToken });
+                return t("repoStatus.pullDone", { count: result.updated });
+              })}><GitPullRequest className="mr-2 h-4 w-4" />{t("repoStatus.pull")}</DropdownMenuItem>
+              <DropdownMenuItem disabled={!currentBook || !!repoActionBusy} onSelect={() => void runRepoAction("commit", async () => { await commitLocalChanges(currentBook!.id, ""); return t("repoStatus.commitDone"); })}><GitCommit className="mr-2 h-4 w-4" />{t("repoStatus.commit")}</DropdownMenuItem>
+              <DropdownMenuItem disabled={!currentBook || !currentToken || !!repoActionBusy} onSelect={() => void runRepoAction("push", async () => { const result = await pushLocalCommits({ bookId: currentBook!.id, token: currentToken }); return t("repoStatus.pushDone", { count: result.files }); })}><UploadCloud className="mr-2 h-4 w-4" />{t("repoStatus.push")}</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
         <Button variant="ghost" size="icon" aria-label={floatingHidden ? t("shell.showFloating") : t("shell.hideFloating")} onClick={toggleFloating}>
           {floatingHidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

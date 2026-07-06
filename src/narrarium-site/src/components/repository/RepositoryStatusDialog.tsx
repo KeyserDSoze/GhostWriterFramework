@@ -9,7 +9,7 @@ import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
 import { addLocalRepoLog, buildLocalBookStructure, getLocalRepositoryByBook, listAllLocalFiles, listDirtyLocalFiles, listLocalRepoLogs, listUnpushedLocalCommits, localStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryFile, type LocalRepoStatus } from "@/repository/localRepository";
-import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy } from "@/repository/repositoryService";
+import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, syncFullRepository } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 
 function formatBytes(value: number): string {
@@ -189,6 +189,10 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
               )}
             </div>
             <div className="grid gap-2 sm:grid-cols-3">
+              <Button className="sm:col-span-3" disabled={networkDisabled} onClick={() => void run("sync", async () => {
+                const result = await syncFullRepository({ bookId: book.id, token });
+                return t("repoStatus.syncDone", { pulled: result.pulled, kept: result.keptLocal, committed: result.committed, pushed: result.pushed });
+              })}>{busy === "sync" ? <RefreshCcw className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-1 h-4 w-4" />}{t("repoStatus.sync")}</Button>
               <Button variant="outline" disabled={networkDisabled} onClick={() => void run("fetch", async () => {
                 const result = await fetchRemoteStatus({ bookId: book.id, token });
                 return result.changed ? t("repoStatus.remoteChanged") : t("repoStatus.remoteUpToDate");

@@ -31,6 +31,11 @@ const en = {
   },
   repoStatus: {
     title: "Repository status",
+    quickActions: "Git actions",
+    sync: "Full sync",
+    syncDone: "Sync complete: pulled {{pulled}}, kept local {{kept}}, committed {{committed}}, pushed {{pushed}}.",
+    viewStatus: "View status",
+    viewChangedFiles: "View changed files",
     clean: "Clean",
     cloning: "Clone {{percent}}%",
     dirty: "{{count}} local changes",

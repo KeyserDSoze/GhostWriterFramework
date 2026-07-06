@@ -370,6 +370,30 @@ export async function discardUnpushedLocalCommits(repoIdValue: string): Promise<
   });
 }
 
+export async function restoreUnpushedCommitsAsDirty(repoIdValue: string): Promise<LocalCommit[]> {
+  const commits = await listUnpushedLocalCommits(repoIdValue);
+  if (!commits.length) return [];
+  const byPath = new Map<string, LocalCommitFile>();
+  for (const commit of commits) for (const file of commit.files) byPath.set(file.path, file);
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(["files", "commits"], "readwrite");
+    const filesStore = tx.objectStore("files");
+    const commitsStore = tx.objectStore("commits");
+    for (const file of byPath.values()) {
+      const req = filesStore.get(fileKey(repoIdValue, file.path));
+      req.onsuccess = () => {
+        const row = req.result as LocalRepositoryFile | undefined;
+        if (row) filesStore.put({ ...row, status: file.status, committed: false });
+      };
+    }
+    for (const commit of commits) commitsStore.delete(commit.id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  return commits;
+}
+
 export async function markLocalCommitsPushed(repoIdValue: string, commitIds: string[], remoteHeadSha: string, pushedShas: Record<string, string | null>): Promise<void> {
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
