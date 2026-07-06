@@ -69,6 +69,8 @@ const en = {
     pushLocalWinsConfirm: "Push uses local as the source of truth: locally committed files will overwrite those paths on remote even if remote advanced. Continue?",
     cancelled: "Operation cancelled.",
     remoteChanged: "Remote has changed: pull when ready.",
+    remoteBehindTitle: "Remote is ahead",
+    remoteBehindDescription: "Someone updated the remote branch. Use Sync from the repository status pill to bring this local copy up to date.",
     remoteUpToDate: "Remote is up to date.",
     actionFailed: "Repository operation failed",
     history: "Sync history",

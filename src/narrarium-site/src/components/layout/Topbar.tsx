@@ -39,6 +39,10 @@ function initials(name: string | undefined): string {
     .join("");
 }
 
+function remoteChangedNoticeKey(bookId: string, remoteHeadSha: string): string {
+  return `narrarium-remote-changed-${bookId}-${remoteHeadSha}`;
+}
+
 export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { t, i18n } = useTranslation();
   const { user, clearAuth } = useAuthStore();
@@ -125,6 +129,13 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       try {
         const result = await fetchRemoteStatus({ bookId: currentBook.id, token });
         if (result.changed && settings.repository.autoPullWhenClean) await pullRemoteChanges({ bookId: currentBook.id, token }).catch(() => undefined);
+        else if (result.changed) {
+          const key = remoteChangedNoticeKey(currentBook.id, result.remoteHeadSha);
+          if (!sessionStorage.getItem(key)) {
+            sessionStorage.setItem(key, "1");
+            toast({ title: t("repoStatus.remoteBehindTitle"), description: t("repoStatus.remoteBehindDescription") });
+          }
+        }
       } catch {
         // Background sync is opportunistic; keep local editing uninterrupted.
       }

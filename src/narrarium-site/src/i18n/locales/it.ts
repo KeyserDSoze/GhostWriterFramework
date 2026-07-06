@@ -69,6 +69,8 @@ const it = {
     pushLocalWinsConfirm: "Push usa il locale come fonte di verità: i file committati localmente sovrascriveranno quei path sul remoto anche se il remoto è avanzato. Continuare?",
     cancelled: "Operazione annullata.",
     remoteChanged: "Il remoto è cambiato: fai pull quando sei pronto.",
+    remoteBehindTitle: "Il remoto è più avanti",
+    remoteBehindDescription: "Qualcuno ha aggiornato il branch remoto. Puoi fare Sync dal pallino repository per allineare questa copia locale.",
     remoteUpToDate: "Il remoto è aggiornato.",
     actionFailed: "Operazione repository non riuscita",
     history: "Cronologia sync",
