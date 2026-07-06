@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ChevronUp, ClipboardCheck, FileEdit, FileText, NotebookText, Network, PenLine, Sparkles, Wand2, X } from "lucide-react";
+import { ChevronUp, ClipboardCheck, FileEdit, FileText, NotebookText, Network, PenLine, Save, Sparkles, Wand2, X } from "lucide-react";
 import { useUiStore } from "@/store/uiStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
@@ -14,12 +14,15 @@ import { BookExportDialog } from "@/components/book/BookExportDialog";
 import { CommitHistoryDialog } from "@/components/github/CommitHistoryDialog";
 import { PullRequestsDialog } from "@/components/github/PullRequestsDialog";
 import { createChapterDraftArtifacts, createChapterEvaluationArtifact, createChapterResumeArtifact, createParagraphDraftArtifact, createParagraphScriptArtifact } from "@/narrarium/workspace";
+import { useSaveStore } from "@/store/saveStore";
+import { usePageActionsStore } from "@/store/pageActionsStore";
 
 interface ActionRow {
   label: string;
   to?: string;
   onClick?: () => void;
   icon: React.ReactNode;
+  disabled?: boolean;
 }
 
 export function FloatingActions() {
@@ -32,6 +35,8 @@ export function FloatingActions() {
   const setOpen = useUiStore((s) => s.setActionsOpen);
   const { settings } = useSettingsStore();
   const { structures } = useBooksStore();
+  const saveReg = useSaveStore((s) => s.current);
+  const pageActions = usePageActionsStore((s) => s.actions);
 
   const route = parseAppRoute(location.pathname);
   const bookId = "bookId" in route ? route.bookId : undefined;
@@ -87,7 +92,8 @@ export function FloatingActions() {
     navigate(target);
   }
 
-  const rows: ActionRow[] = [];
+  const rows: ActionRow[] = pageActions.map((action) => ({ label: action.label, icon: action.icon, onClick: () => { setOpen(false); void action.run(); }, disabled: action.disabled }));
+  if (saveReg) rows.push({ label: t("common.save"), icon: <Save className="h-4 w-4" />, disabled: !saveReg.dirty, onClick: () => { setOpen(false); void saveReg.save(); } });
   if (paragraph && chapterId) {
     const base = `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}`;
     rows.push({ label: paragraph.scriptPath ? t("chapter.openScript") : t("chapter.createScript"), onClick: () => void openOrCreate("script"), icon: <Network className="h-4 w-4" /> });
@@ -160,7 +166,7 @@ export function FloatingActions() {
                   {row.icon}{row.label}
                 </Link>
               ) : (
-                <button key={i} type="button" onClick={row.onClick} className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-accent">
+                <button key={i} type="button" onClick={row.onClick} disabled={row.disabled} className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50">
                   {row.icon}{row.label}
                 </button>
               ),

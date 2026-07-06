@@ -10,6 +10,7 @@ import { parseAppRoute } from "@/assistant/context";
 import { resolveBookToken } from "@/types/settings";
 import { useToast } from "@/components/ui/use-toast";
 import { createChapterDraftArtifacts, createChapterEvaluationArtifact, createChapterResumeArtifact, createParagraphDraftArtifact, createParagraphEvaluationArtifact, createParagraphScriptArtifact } from "@/narrarium/workspace";
+import { usePageActionsStore } from "@/store/pageActionsStore";
 
 export interface ContextualAction {
   id: string;
@@ -43,6 +44,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
   const { toast } = useToast();
   const { settings } = useSettingsStore();
   const { structures } = useBooksStore();
+  const pageActions = usePageActionsStore((s) => s.actions);
 
   const route = parseAppRoute(location.pathname);
   const bookId = "bookId" in route ? route.bookId : undefined;
@@ -111,7 +113,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
     navigate(target);
   }
 
-  const actions: ContextualAction[] = [];
+  const actions: ContextualAction[] = [...pageActions];
   if (paragraph && chapterId) {
     const base = `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}`;
     actions.push({ id: "script", label: paragraph.scriptPath ? t("chapter.openScript") : t("chapter.createScript"), run: () => openOrCreate("script"), icon: <Network className="h-4 w-4" /> });

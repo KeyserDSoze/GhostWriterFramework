@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, ArrowLeftRight, FileEdit, FileText, Loader2, Lock, Network, Plus, Save, Wand2, X } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Loader2, Lock, Plus, Wand2, X } from "lucide-react";
 import { parseDocument, stringify } from "yaml";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,7 @@ import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { ScriptEditor } from "@/components/script/ScriptEditor";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 import { useRegisterPageSave } from "@/store/saveStore";
+import { useRegisterPageActions } from "@/store/pageActionsStore";
 import { useProseAssist } from "@/components/editor/useProseAssist";
 import { parseScript, serializeScript, type ScriptDoc } from "@/narrarium/script/model";
 import { proseToScript, refineProse, scriptToProse, stripFrontmatter, generateChapterResume, generateChapterEvaluation, generateParagraphEvaluation, type PipelineSource } from "@/narrarium/pipeline";
@@ -141,10 +142,19 @@ export function WorkspaceDocPage() {
   const backHref = paragraph
     ? `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}`
     : `/app/books/${bookId}/chapters/${chapterId}`;
+  const paraSlug = paragraph ? paragraphSlug(paragraph.path) : null;
 
   const isDirty = body !== savedBody || JSON.stringify(entries) !== JSON.stringify(savedEntries);
 
   useRegisterPageSave({ dirty: isDirty, enabled: Boolean(book && token), onSave: () => handleSave() });
+  useRegisterPageActions([
+    ...(paraSlug && workspaceKind === "script" ? [{ id: "script-to-draft", label: t("pipeline.scriptToDraft"), icon: <Wand2 className="h-4 w-4" />, run: () => startPipeline("toDraft") }] : []),
+    ...(paraSlug && workspaceKind === "draft" ? [
+      { id: "switch-to-final", label: t("paragraph.switchToFinal"), icon: switchingFinal ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowLeftRight className="h-4 w-4" />, run: () => handleSwitchToFinal(), disabled: switchingFinal || saving },
+      { id: "draft-to-final", label: t("pipeline.draftToFinal"), icon: <Wand2 className="h-4 w-4" />, run: () => startPipeline("toFinal") },
+    ] : []),
+    ...((workspaceKind === "resume" || workspaceKind === "evaluation") ? [{ id: "regenerate", label: t("pipeline.regenerate"), icon: <Wand2 className="h-4 w-4" />, run: () => regenerateDoc() }] : []),
+  ], Boolean(book && token));
 
   useEffect(() => {
     const targetKey = book && path ? `${branch}:${path}` : null;
@@ -324,8 +334,6 @@ export function WorkspaceDocPage() {
     const value = entries.find((entry) => entry.key === "ghostwriter")?.value;
     return typeof value === "string" ? value : "";
   })();
-  const paraSlug = paragraph ? paragraphSlug(paragraph.path) : null;
-
   async function generateScriptFromProse() {
     if (!book || !token || !structure || !chapter || !paragraph) return;
     setScriptGenLoading(true);
@@ -439,43 +447,7 @@ export function WorkspaceDocPage() {
         </Button>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" className="font-mono text-xs">{branch}</Badge>
-          {paragraph && (
-            <>
-              <Button asChild size="sm" variant="ghost">
-                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}`}><FileText className="mr-1 h-4 w-4" />{t("stageIndex.final")}</Link>
-              </Button>
-              {workspaceKind === "script" && (
-                <Button asChild size="sm" variant="ghost">
-                  <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}/workspace/draft`}><FileEdit className="mr-1 h-4 w-4" />{t("chapter.draft")}</Link>
-                </Button>
-              )}
-              {workspaceKind === "draft" && (
-                <Button asChild size="sm" variant="ghost">
-                  <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}/workspace/script`}><Network className="mr-1 h-4 w-4" />{t("chapter.script")}</Link>
-                </Button>
-              )}
-            </>
-          )}
-          {paraSlug && workspaceKind === "script" && (
-            <Button size="sm" variant="outline" onClick={() => void startPipeline("toDraft")}><Wand2 className="mr-1 h-4 w-4" />{t("pipeline.scriptToDraft")}</Button>
-          )}
-          {paraSlug && workspaceKind === "draft" && (
-            <>
-              <Button size="sm" variant="outline" onClick={() => void handleSwitchToFinal()} disabled={switchingFinal || saving}>
-                {switchingFinal ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-1 h-4 w-4" />}
-                {t("paragraph.switchToFinal")}
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => void startPipeline("toFinal")}><Wand2 className="mr-1 h-4 w-4" />{t("pipeline.draftToFinal")}</Button>
-            </>
-          )}
-          {(workspaceKind === "resume" || workspaceKind === "evaluation") && (
-            <Button size="sm" variant="outline" onClick={() => regenerateDoc()}><Wand2 className="mr-1 h-4 w-4" />{t("pipeline.regenerate")}</Button>
-          )}
           {isDirty && !saving && <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>}
-          <Button size="sm" onClick={() => void handleSave()} disabled={!isDirty || saving}>
-            <Save className="mr-1 h-4 w-4" />
-            {t("common.save")}
-          </Button>
         </div>
       </div>
 
