@@ -8,15 +8,31 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
-import { getLocalRepositoryByBook, listAllLocalFiles, listDirtyLocalFiles, listUnpushedLocalCommits, localStatus, type LocalRepositoryFile, type LocalRepoStatus } from "@/repository/localRepository";
+import { buildLocalBookStructure, getLocalRepositoryByBook, listAllLocalFiles, listDirtyLocalFiles, listUnpushedLocalCommits, localStatus, type LocalRepositoryFile, type LocalRepoStatus } from "@/repository/localRepository";
 import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits } from "@/repository/repositoryService";
+import { useBooksStore } from "@/store/booksStore";
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size.toFixed(size >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
 
 export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: { open: boolean; onOpenChange: (open: boolean) => void; book?: BookEntry; settings: AppSettings }) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const setStructure = useBooksStore((s) => s.setStructure);
+  const cloneProgress = useBooksStore((s) => (book ? s.cloneProgress[book.id] : undefined));
   const [status, setStatus] = useState<LocalRepoStatus | null>(null);
   const [dirtyFiles, setDirtyFiles] = useState<LocalRepositoryFile[]>([]);
   const [ahead, setAhead] = useState(0);
+  const [storage, setStorage] = useState<{ usage?: number; quota?: number }>({});
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const token = book ? resolveBookToken(book, settings) : "";
@@ -35,7 +51,15 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
     setStatus(nextStatus);
     setDirtyFiles(dirty);
     setAhead(commits.length);
+    setStorage(await navigator.storage?.estimate?.().catch(() => ({})) ?? {});
     if (!message && dirty.length) setMessage(dirty.length === 1 ? `Update ${dirty[0].path}` : `Update ${dirty.length} files`);
+  }
+
+  async function refreshBookStructure() {
+    if (!book) return;
+    const repo = await getLocalRepositoryByBook(book.id).catch(() => null);
+    if (!repo) return;
+    setStructure(book.id, await buildLocalBookStructure(repo));
   }
 
   useEffect(() => { if (open) void refresh(); }, [open, book?.id]);
@@ -45,6 +69,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
     try {
       const result = await fn();
       toast({ title: result });
+      await refreshBookStructure();
       await refresh();
     } catch (err) {
       toast({ title: t("repoStatus.actionFailed"), description: String(err), variant: "destructive" });
@@ -94,6 +119,17 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
             <div className="rounded-xl border bg-muted/20 p-3 text-sm">
               <p className="font-medium">{book.owner}/{book.repo}</p>
               <p className="text-xs text-muted-foreground">{status ? t("repoStatus.summary", { dirty: status.dirty, ahead }) : t("repoStatus.notCloned")}</p>
+              {cloneProgress && (
+                <div className="mt-3 space-y-1">
+                  <div className="h-2 overflow-hidden rounded-full bg-muted">
+                    <div className="h-full bg-primary transition-all" style={{ width: `${cloneProgress.total ? Math.round((cloneProgress.done / cloneProgress.total) * 100) : 0}%` }} />
+                  </div>
+                  <p className="truncate text-xs text-muted-foreground">{t("repoStatus.cloneProgress", { done: cloneProgress.done, total: cloneProgress.total })} {cloneProgress.path ?? ""}</p>
+                </div>
+              )}
+              {storage.usage && (
+                <p className="mt-2 text-xs text-muted-foreground">{t("repoStatus.storage", { usage: formatBytes(storage.usage), quota: storage.quota ? formatBytes(storage.quota) : "n/d" })}</p>
+              )}
             </div>
             <div className="grid gap-2 sm:grid-cols-3">
               <Button variant="outline" disabled={disabled} onClick={() => void run("fetch", async () => {

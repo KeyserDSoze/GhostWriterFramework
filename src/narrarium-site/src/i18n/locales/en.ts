@@ -39,6 +39,8 @@ const en = {
     summary: "{{dirty}} local changes, {{ahead}} local commits to push",
     notCloned: "Local not ready",
     noBook: "Open a book to see repository status.",
+    cloneProgress: "Clone {{done}} / {{total}}",
+    storage: "Local storage used: {{usage}} / {{quota}}",
     fetch: "Fetch",
     pull: "Pull",
     push: "Push",

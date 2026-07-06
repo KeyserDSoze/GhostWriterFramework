@@ -39,6 +39,8 @@ const it = {
     summary: "{{dirty}} modifiche locali, {{ahead}} commit locali da pushare",
     notCloned: "Locale non pronto",
     noBook: "Apri un libro per vedere lo stato repository.",
+    cloneProgress: "Clone {{done}} / {{total}}",
+    storage: "Storage locale usato: {{usage}} / {{quota}}",
     fetch: "Fetch",
     pull: "Pull",
     push: "Push",
