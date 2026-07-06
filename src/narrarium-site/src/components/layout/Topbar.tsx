@@ -21,10 +21,11 @@ import { speakText, type SpeechController } from "@/assistant/speech";
 import { useToast } from "@/components/ui/use-toast";
 import { useSettings } from "@/drive/useSettings";
 import { parseAppRoute } from "@/assistant/context";
-import { getLocalRepositoryByBook, listUnpushedLocalCommits, localStatus } from "@/repository/localRepository";
+import { getLocalRepository, listUnpushedLocalCommits, localStatus } from "@/repository/localRepository";
 import { RepositoryStatusDialog } from "@/components/repository/RepositoryStatusDialog";
 import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits, syncFullRepository } from "@/repository/repositoryService";
 import { resolveBookToken } from "@/types/settings";
+import { emailToBranchName } from "@/github/githubClient";
 import { useTheme } from "./ThemeProvider";
 import { SUPPORTED_LANGUAGES } from "@/i18n";
 
@@ -45,6 +46,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { save } = useSettings();
   const { theme, toggle: toggleTheme } = useTheme();
   const cloneProgress = useBooksStore((s) => s.cloneProgress);
+  const workingBranches = useBooksStore((s) => s.workingBranches);
   const { floatingHidden, toggleFloating } = useUiStore();
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
@@ -63,6 +65,9 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const route = parseAppRoute(location.pathname);
   const currentBookId = "bookId" in route ? route.bookId : undefined;
   const currentBook = currentBookId ? settings.books.find((entry) => entry.id === currentBookId) : undefined;
+  const currentBranch = currentBook?.activeBranch
+    ?? (currentBookId ? workingBranches[currentBookId] : undefined)
+    ?? (user?.email ? emailToBranchName(user.email) : undefined);
 
   useEffect(() => {
     const bookId = currentBookId;
@@ -75,7 +80,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         if (!cancelled) setRepoStatus({ label: t("repoStatus.cloning", { percent }), tone: "offline" });
         return;
       }
-      const repo = await getLocalRepositoryByBook(bookId).catch(() => null);
+      const repo = currentBook && currentBranch ? await getLocalRepository(currentBook.owner, currentBook.repo, currentBranch).catch(() => null) : null;
       if (!repo) { if (!cancelled) setRepoStatus({ label: t("repoStatus.notCloned"), tone: "offline" }); return; }
       const status = await localStatus(repo.id);
       if (cancelled) return;
@@ -103,7 +108,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [cloneProgress, currentBookId, t, toast]);
+  }, [cloneProgress, currentBook, currentBookId, currentBranch, t, toast]);
 
   useEffect(() => {
     if (!currentBook || !settings.repository.autoFetchIntervalMinutes || settings.repository.autoFetchIntervalMinutes <= 0) return;
@@ -320,7 +325,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <RepositoryStatusDialog open={repoDialogOpen} onOpenChange={setRepoDialogOpen} book={currentBook} settings={settings} />
+      <RepositoryStatusDialog open={repoDialogOpen} onOpenChange={setRepoDialogOpen} book={currentBook} branch={currentBranch} settings={settings} />
     </header>
   );
 }

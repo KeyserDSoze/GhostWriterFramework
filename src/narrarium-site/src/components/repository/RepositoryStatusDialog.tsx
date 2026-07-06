@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
-import { addLocalRepoLog, buildLocalBookStructure, getLocalRepositoryByBook, listAllLocalFiles, listDirtyLocalFiles, listLocalRepoLogs, listUnpushedLocalCommits, localStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryFile, type LocalRepoStatus } from "@/repository/localRepository";
+import { addLocalRepoLog, buildLocalBookStructure, getLocalRepository, getLocalRepositoryByBook, listAllLocalFiles, listDirtyLocalFiles, listLocalRepoLogs, listUnpushedLocalCommits, localStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryFile, type LocalRepoStatus } from "@/repository/localRepository";
 import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, syncFullRepository } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 
@@ -33,7 +33,7 @@ function logTone(kind: LocalRepoLogKind): string {
   return "border-muted bg-muted/40 text-muted-foreground";
 }
 
-export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: { open: boolean; onOpenChange: (open: boolean) => void; book?: BookEntry; settings: AppSettings }) {
+export function RepositoryStatusDialog({ open, onOpenChange, book, branch, settings }: { open: boolean; onOpenChange: (open: boolean) => void; book?: BookEntry; branch?: string; settings: AppSettings }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const setStructure = useBooksStore((s) => s.setStructure);
@@ -60,9 +60,14 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
 
   const visibleLogs = useMemo(() => logFilter === "all" ? logs : logs.filter((log) => log.kind === logFilter), [logFilter, logs]);
 
+  async function currentRepo() {
+    if (!book) return null;
+    return branch ? getLocalRepository(book.owner, book.repo, branch) : getLocalRepositoryByBook(book.id);
+  }
+
   async function refresh() {
     if (!book) { setStatus(null); setDirtyFiles([]); setAhead(0); return; }
-    const repo = await getLocalRepositoryByBook(book.id).catch(() => null);
+    const repo = await currentRepo().catch(() => null);
     if (!repo) { setStatus(null); setDirtyFiles([]); setAhead(0); return; }
     const [nextStatus, dirty, commits, nextLogs] = await Promise.all([localStatus(repo.id), listDirtyLocalFiles(repo.id), listUnpushedLocalCommits(repo.id), listLocalRepoLogs(repo.id)]);
     setStatus(nextStatus);
@@ -75,12 +80,12 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
 
   async function refreshBookStructure() {
     if (!book) return;
-    const repo = await getLocalRepositoryByBook(book.id).catch(() => null);
+    const repo = await currentRepo().catch(() => null);
     if (!repo) return;
     setStructure(book.id, await buildLocalBookStructure(repo));
   }
 
-  useEffect(() => { if (open) void refresh(); }, [open, book?.id]);
+  useEffect(() => { if (open) void refresh(); }, [open, book?.id, branch]);
 
   async function run(label: string, fn: () => Promise<string>) {
     setBusy(label);
@@ -91,7 +96,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
       await refresh();
     } catch (err) {
       if (book) {
-        const repo = await getLocalRepositoryByBook(book.id).catch(() => null);
+        const repo = await currentRepo().catch(() => null);
         if (repo) await addLocalRepoLog(repo.id, "error", `${label}: ${err instanceof Error ? err.message : String(err)}`).catch(() => undefined);
       }
       toast({ title: t("repoStatus.actionFailed"), description: String(err), variant: "destructive" });
@@ -104,7 +109,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
     if (!book) return;
     setBusy("backup");
     try {
-      const repo = await getLocalRepositoryByBook(book.id);
+      const repo = await currentRepo();
       if (!repo) throw new Error(t("repoStatus.notCloned"));
       const zip = new JSZip();
       const files = await listAllLocalFiles(repo.id);
@@ -152,7 +157,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
     if (!window.confirm(t("repoStatus.recloneConfirm"))) return;
     setBusy("reclone");
     try {
-      const current = await getLocalRepositoryByBook(book.id).catch(() => null);
+      const current = await currentRepo().catch(() => null);
       const result = await recloneLocalWorkingCopy({ bookId: book.id, book, token, branch: current?.branch, onProgress: (p) => setCloneProgress(book.id, p) });
       setStructure(book.id, result.structure);
       toast({ title: t("repoStatus.recloneDone") });

@@ -3,11 +3,14 @@ import { useTranslation } from "react-i18next";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { loadBookStructure } from "@/github/githubClient";
+import { emailToBranchName } from "@/github/githubClient";
 import { resolveBookToken } from "@/types/settings";
 import { ensureLocalBookStructure, fetchRemoteStatus, getExistingLocalBookStructure, pullRemoteChanges } from "@/repository/repositoryService";
+import { useAuthStore } from "@/store/authStore";
 
 export function useBookStructure(bookId: string | undefined) {
   const { t } = useTranslation();
+  const user = useAuthStore((s) => s.user);
   const { settings } = useSettingsStore();
   const {
     structures,
@@ -28,7 +31,9 @@ export function useBookStructure(bookId: string | undefined) {
   const loading = resolvedBookId ? loadingIds.has(resolvedBookId) : false;
   const error = resolvedBookId ? errors[resolvedBookId] : undefined;
   const progress = resolvedBookId ? cloneProgress[resolvedBookId] : undefined;
-  const readBranch = book?.activeBranch ?? (resolvedBookId ? workingBranches[resolvedBookId] : undefined) ?? undefined;
+  const readBranch = book?.activeBranch
+    ?? (resolvedBookId ? workingBranches[resolvedBookId] : undefined)
+    ?? (user?.email ? emailToBranchName(user.email) : undefined);
 
   const loadStructure = useCallback(() => {
     if (!book || !resolvedBookId) return;
