@@ -1,7 +1,7 @@
 import type { BookStructure, BookFile, Chapter, Paragraph } from "@/types/book";
 
 const DB_NAME = "narrarium-local-repositories";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 export type LocalFileStatus = "clean" | "modified" | "new" | "deleted";
 export type LocalFileKind = "text" | "binary";
@@ -111,7 +111,6 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains("commits")) {
         const commits = db.createObjectStore("commits", { keyPath: "id" });
         commits.createIndex("repoId", "repoId", { unique: false });
-        commits.createIndex("repoPushed", ["repoId", "pushed"], { unique: false });
       }
       if (!db.objectStoreNames.contains("logs")) {
         const logs = db.createObjectStore("logs", { keyPath: "id" });
@@ -364,8 +363,9 @@ export async function createLocalCommit(repoIdValue: string, message: string): P
 }
 
 export async function listUnpushedLocalCommits(repoIdValue: string): Promise<LocalCommit[]> {
-  const range = IDBKeyRange.only([repoIdValue, false]);
-  return (await allFromIndex<LocalCommit>("commits", "repoPushed", range)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return (await allFromIndex<LocalCommit>("commits", "repoId", repoIdValue))
+    .filter((commit) => !commit.pushed)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export async function discardUnpushedLocalCommits(repoIdValue: string): Promise<void> {
