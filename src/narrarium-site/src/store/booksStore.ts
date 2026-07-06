@@ -1,17 +1,25 @@
 import { create } from "zustand";
 import { BookStructure, Paragraph } from "@/types/book";
 
+export interface CloneProgress {
+  done: number;
+  total: number;
+  path?: string;
+}
+
 interface BooksState {
   structures: Record<string, BookStructure>;
   loadingIds: Set<string>;
   errors: Record<string, string>;
   /** bookId → resolved personal dev branch name */
   workingBranches: Record<string, string>;
+  cloneProgress: Record<string, CloneProgress | undefined>;
 
   setStructure: (bookId: string, structure: BookStructure) => void;
   setLoading: (bookId: string, loading: boolean) => void;
   setError: (bookId: string, message: string) => void;
   setWorkingBranch: (bookId: string, branch: string) => void;
+  setCloneProgress: (bookId: string, progress?: CloneProgress) => void;
   clearBook: (bookId: string) => void;
   updateChapterParagraphs: (
     bookId: string,
@@ -25,6 +33,7 @@ export const useBooksStore = create<BooksState>()((set) => ({
   loadingIds: new Set(),
   errors: {},
   workingBranches: {},
+  cloneProgress: {},
 
   setStructure: (bookId, structure) =>
     set((s) => ({ structures: { ...s.structures, [bookId]: structure } })),
@@ -44,6 +53,9 @@ export const useBooksStore = create<BooksState>()((set) => ({
       workingBranches: { ...s.workingBranches, [bookId]: branch },
     })),
 
+  setCloneProgress: (bookId, progress) =>
+    set((s) => ({ cloneProgress: { ...s.cloneProgress, [bookId]: progress } })),
+
   clearBook: (bookId) =>
     set((s) => {
       const structures = { ...s.structures };
@@ -52,9 +64,11 @@ export const useBooksStore = create<BooksState>()((set) => ({
       delete errors[bookId];
       const workingBranches = { ...s.workingBranches };
       delete workingBranches[bookId];
+      const cloneProgress = { ...s.cloneProgress };
+      delete cloneProgress[bookId];
       const loadingIds = new Set(s.loadingIds);
       loadingIds.delete(bookId);
-      return { structures, errors, workingBranches, loadingIds };
+      return { structures, errors, workingBranches, cloneProgress, loadingIds };
     }),
 
   updateChapterParagraphs: (bookId, chapterSlug, paragraphs) =>

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { GitCommit, GitPullRequest, Loader2, RefreshCcw, UploadCloud } from "lucide-react";
+import JSZip from "jszip";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
-import { getLocalRepositoryByBook, listDirtyLocalFiles, listUnpushedLocalCommits, localStatus, type LocalRepositoryFile, type LocalRepoStatus } from "@/repository/localRepository";
+import { getLocalRepositoryByBook, listAllLocalFiles, listDirtyLocalFiles, listUnpushedLocalCommits, localStatus, type LocalRepositoryFile, type LocalRepoStatus } from "@/repository/localRepository";
 import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits } from "@/repository/repositoryService";
 
 export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: { open: boolean; onOpenChange: (open: boolean) => void; book?: BookEntry; settings: AppSettings }) {
@@ -52,6 +53,36 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
     }
   }
 
+  async function exportBackup() {
+    if (!book) return;
+    setBusy("backup");
+    try {
+      const repo = await getLocalRepositoryByBook(book.id);
+      if (!repo) throw new Error(t("repoStatus.notCloned"));
+      const zip = new JSZip();
+      const files = await listAllLocalFiles(repo.id);
+      for (const file of files) {
+        if (file.status === "deleted") continue;
+        if (file.kind === "text") zip.file(file.path, file.text ?? "");
+        else if (file.blob) zip.file(file.path, file.blob);
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${book.owner}-${book.repo}-working-copy.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast({ title: t("repoStatus.backupDone") });
+    } catch (err) {
+      toast({ title: t("repoStatus.actionFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto">
@@ -78,6 +109,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, settings }: {
                 return t("repoStatus.pushDone", { count: result.files });
               })}>{busy === "push" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-1 h-4 w-4" />}{t("repoStatus.push")}</Button>
             </div>
+            <Button variant="outline" className="w-full" disabled={disabled} onClick={() => void exportBackup()}>{busy === "backup" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}{t("repoStatus.exportBackup")}</Button>
             <div className="space-y-2 rounded-xl border p-3">
               <p className="text-sm font-medium">{t("repoStatus.localChanges")}</p>
               {dirtyFiles.length ? (

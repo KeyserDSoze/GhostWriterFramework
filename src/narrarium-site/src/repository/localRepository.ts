@@ -14,6 +14,7 @@ export interface LocalRepositoryMeta {
   branch: string;
   defaultBranch: string;
   remoteHeadSha: string;
+  remoteChanged?: boolean;
   clonedAt: string;
   updatedAt: string;
   lastFetchAt?: string;
@@ -345,7 +346,13 @@ export async function markLocalCommitsPushed(repoIdValue: string, commitIds: str
 export async function updateLocalRepositoryHead(repoIdValue: string, remoteHeadSha: string): Promise<void> {
   const repo = await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(repoIdValue));
   if (!repo) return;
-  await txStore("repositories", "readwrite", (store) => store.put({ ...repo, remoteHeadSha, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString() }));
+  await txStore("repositories", "readwrite", (store) => store.put({ ...repo, remoteHeadSha, remoteChanged: false, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString() }));
+}
+
+export async function markLocalRepositoryRemoteCheck(repoIdValue: string, remoteHeadSha: string, changed: boolean): Promise<void> {
+  const repo = await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(repoIdValue));
+  if (!repo) return;
+  await txStore("repositories", "readwrite", (store) => store.put({ ...repo, remoteChanged: changed, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString(), ...(changed ? {} : { remoteHeadSha }) }));
 }
 
 function splitFrontmatter(raw: string): Record<string, unknown> {

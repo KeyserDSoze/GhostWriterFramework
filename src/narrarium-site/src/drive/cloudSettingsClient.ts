@@ -228,6 +228,10 @@ function migrateSettings(raw: unknown): AppSettings {
       ...DEFAULT_SETTINGS.speech,
       ...(typeof source.speech === "object" && source.speech ? source.speech : {}),
     },
+    repository: {
+      ...DEFAULT_SETTINGS.repository,
+      ...(typeof source.repository === "object" && source.repository ? source.repository : {}),
+    },
     books: Array.isArray(source.books) ? source.books : [],
     taskRouting: normalizeTaskRouting(source.taskRouting, aiIntegrations),
   };

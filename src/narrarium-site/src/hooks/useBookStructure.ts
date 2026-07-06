@@ -4,7 +4,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { loadBookStructure } from "@/github/githubClient";
 import { resolveBookToken } from "@/types/settings";
-import { ensureLocalBookStructure, getExistingLocalBookStructure } from "@/repository/repositoryService";
+import { ensureLocalBookStructure, fetchRemoteStatus, getExistingLocalBookStructure, pullRemoteChanges } from "@/repository/repositoryService";
 
 export function useBookStructure(bookId: string | undefined) {
   const { t } = useTranslation();
@@ -14,9 +14,11 @@ export function useBookStructure(bookId: string | undefined) {
     loadingIds,
     errors,
     workingBranches,
+    cloneProgress,
     setStructure,
     setLoading,
     setError,
+    setCloneProgress,
     clearBook,
   } = useBooksStore();
 
@@ -25,6 +27,7 @@ export function useBookStructure(bookId: string | undefined) {
   const structure = resolvedBookId ? structures[resolvedBookId] : undefined;
   const loading = resolvedBookId ? loadingIds.has(resolvedBookId) : false;
   const error = resolvedBookId ? errors[resolvedBookId] : undefined;
+  const progress = resolvedBookId ? cloneProgress[resolvedBookId] : undefined;
   const readBranch = book?.activeBranch ?? (resolvedBookId ? workingBranches[resolvedBookId] : undefined) ?? undefined;
 
   const loadStructure = useCallback(() => {
@@ -36,21 +39,34 @@ export function useBookStructure(bookId: string | undefined) {
     }
     setError(resolvedBookId, "");
     setLoading(resolvedBookId, true);
+    setCloneProgress(resolvedBookId, undefined);
     getExistingLocalBookStructure(resolvedBookId)
-      .then((local) => {
+      .then(async (local) => {
         if (local && (!readBranch || local.structure.loadedBranch === readBranch)) return local.structure;
-        return ensureLocalBookStructure({ bookId: resolvedBookId, book, token, branch: readBranch }).then((result) => result.structure);
+        return ensureLocalBookStructure({ bookId: resolvedBookId, book, token, branch: readBranch, onProgress: (p) => setCloneProgress(resolvedBookId, p) }).then((result) => result.structure);
       })
       .catch(() => loadBookStructure(token, book.owner, book.repo, readBranch))
-      .then((nextStructure) => {
+      .then(async (nextStructure) => {
         setStructure(resolvedBookId, nextStructure);
         setError(resolvedBookId, "");
+        if (settings.repository.autoFetchOnOpen && navigator.onLine) {
+          try {
+            const remote = await fetchRemoteStatus({ bookId: resolvedBookId, token });
+            if (remote.changed && settings.repository.autoPullWhenClean) {
+              await pullRemoteChanges({ bookId: resolvedBookId, token });
+              const refreshed = await getExistingLocalBookStructure(resolvedBookId);
+              if (refreshed) setStructure(resolvedBookId, refreshed.structure);
+            }
+          } catch {
+            // Remote checks are opportunistic; local offline editing stays available.
+          }
+        }
       })
       .catch((err: unknown) => {
         setError(resolvedBookId, err instanceof Error ? err.message : t("common.loadFailed"));
       })
-      .finally(() => setLoading(resolvedBookId, false));
-  }, [book, readBranch, resolvedBookId, setError, setLoading, setStructure, settings, t]);
+      .finally(() => { setCloneProgress(resolvedBookId, undefined); setLoading(resolvedBookId, false); });
+  }, [book, readBranch, resolvedBookId, setCloneProgress, setError, setLoading, setStructure, settings, t]);
 
   useEffect(() => {
     if (!book || !resolvedBookId || loading) return;
@@ -64,5 +80,5 @@ export function useBookStructure(bookId: string | undefined) {
     loadStructure();
   }, [clearBook, loadStructure, resolvedBookId]);
 
-  return { book, structure, loading, error, reload };
+  return { book, structure, loading, error, reload, cloneProgress: progress };
 }

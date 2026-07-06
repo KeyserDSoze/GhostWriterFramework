@@ -230,6 +230,15 @@ export interface SpeechSettings {
   ttsRate: number;
 }
 
+export interface RepositorySettings {
+  /** Lightweight remote-head check when opening a local repository. */
+  autoFetchOnOpen: boolean;
+  /** Periodic lightweight remote-head check. 0 disables the interval. */
+  autoFetchIntervalMinutes: number;
+  /** Apply remote changes automatically only when the local repo is clean. */
+  autoPullWhenClean: boolean;
+}
+
 export interface AppSettings {
   /** Schema version for future migrations */
   version: 2;
@@ -246,6 +255,7 @@ export interface AppSettings {
     theme: "light" | "dark" | "system";
   };
   speech: SpeechSettings;
+  repository: RepositorySettings;
   books: BookEntry[];
 }
 
@@ -273,6 +283,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
     ttsProvider: "browser",
     ttsVoice: "nova",
     ttsRate: 0.95,
+  },
+  repository: {
+    autoFetchOnOpen: true,
+    autoFetchIntervalMinutes: 15,
+    autoPullWhenClean: false,
   },
   books: [],
 };

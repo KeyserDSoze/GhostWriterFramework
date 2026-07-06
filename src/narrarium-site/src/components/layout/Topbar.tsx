@@ -16,6 +16,7 @@ import { useAuthStore } from "@/store/authStore";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import { speakText, type SpeechController } from "@/assistant/speech";
@@ -23,6 +24,8 @@ import { useToast } from "@/components/ui/use-toast";
 import { parseAppRoute } from "@/assistant/context";
 import { getLocalRepositoryByBook, localStatus } from "@/repository/localRepository";
 import { RepositoryStatusDialog } from "@/components/repository/RepositoryStatusDialog";
+import { fetchRemoteStatus, pullRemoteChanges } from "@/repository/repositoryService";
+import { resolveBookToken } from "@/types/settings";
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -38,6 +41,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { t } = useTranslation();
   const { user, clearAuth } = useAuthStore();
   const { settings } = useSettingsStore();
+  const cloneProgress = useBooksStore((s) => s.cloneProgress);
   const { floatingHidden, toggleFloating } = useUiStore();
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
@@ -50,7 +54,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const navigate = useNavigate();
   const location = useLocation();
   const speechRef = useRef<SpeechController | null>(null);
-  const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "offline" | "none" }>({ label: "", tone: "none" });
+  const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "behind" | "offline" | "none" }>({ label: "", tone: "none" });
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
   const route = parseAppRoute(location.pathname);
   const currentBookId = "bookId" in route ? route.bookId : undefined;
@@ -61,6 +65,12 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     let cancelled = false;
     async function refresh() {
       if (!bookId) { if (!cancelled) setRepoStatus({ label: "", tone: "none" }); return; }
+      const progress = cloneProgress[bookId];
+      if (progress) {
+        const percent = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
+        if (!cancelled) setRepoStatus({ label: t("repoStatus.cloning", { percent }), tone: "offline" });
+        return;
+      }
       const repo = await getLocalRepositoryByBook(bookId).catch(() => null);
       if (!repo) { if (!cancelled) setRepoStatus({ label: t("repoStatus.notCloned"), tone: "offline" }); return; }
       const status = await localStatus(repo.id);
@@ -69,12 +79,32 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         ? { label: t("repoStatus.dirty", { count: status.dirty }), tone: "dirty" }
         : status.ahead > 0
           ? { label: t("repoStatus.ahead", { count: status.ahead }), tone: "ahead" }
+          : repo.remoteChanged
+            ? { label: t("repoStatus.behind"), tone: "behind" }
         : { label: t("repoStatus.clean"), tone: "clean" });
     }
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [currentBookId, t]);
+  }, [cloneProgress, currentBookId, t]);
+
+  useEffect(() => {
+    if (!currentBook || !settings.repository.autoFetchIntervalMinutes || settings.repository.autoFetchIntervalMinutes <= 0) return;
+    const token = resolveBookToken(currentBook, settings);
+    if (!token) return;
+    const intervalMs = settings.repository.autoFetchIntervalMinutes * 60_000;
+    const tick = async () => {
+      if (!navigator.onLine) return;
+      try {
+        const result = await fetchRemoteStatus({ bookId: currentBook.id, token });
+        if (result.changed && settings.repository.autoPullWhenClean) await pullRemoteChanges({ bookId: currentBook.id, token }).catch(() => undefined);
+      } catch {
+        // Background sync is opportunistic; keep local editing uninterrupted.
+      }
+    };
+    const timer = window.setInterval(() => void tick(), intervalMs);
+    return () => window.clearInterval(timer);
+  }, [currentBook, settings]);
 
   function handleSignOut() {
     clearAuth();
@@ -129,6 +159,8 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               ? "hidden items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300 sm:inline-flex"
               : repoStatus.tone === "ahead"
                 ? "hidden items-center gap-1 rounded-full border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-xs text-sky-700 dark:text-sky-300 sm:inline-flex"
+                : repoStatus.tone === "behind"
+                  ? "hidden items-center gap-1 rounded-full border border-violet-500/50 bg-violet-500/10 px-2 py-1 text-xs text-violet-700 dark:text-violet-300 sm:inline-flex"
               : repoStatus.tone === "clean"
                 ? "hidden items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300 sm:inline-flex"
                 : "hidden items-center gap-1 rounded-full border px-2 py-1 text-xs text-muted-foreground sm:inline-flex"}

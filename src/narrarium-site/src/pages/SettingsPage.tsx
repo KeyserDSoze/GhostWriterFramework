@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
 import { fetchGitHubModelsCatalog, type GitHubCatalogModel } from "@/github/githubModelsCatalog";
 import { useSettings } from "@/drive/useSettings";
@@ -247,6 +248,10 @@ export function SettingsPage() {
             </div>
           </div>
         </Section>
+
+        <Section title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-4 w-4 shrink-0" />}>
+          <RepositorySettingsBody settings={settings} patchSettings={patchSettings} />
+        </Section>
       </div>
     </div>
   );
@@ -291,6 +296,37 @@ function SpeechCardBody({ settings, patchSettings }: { settings: AppSettings; pa
         <Input type="number" min="0.5" max="1.5" step="0.05" value={settings.speech.ttsRate} onChange={(e) => patchSettings({ speech: { ...settings.speech, ttsRate: Number(e.target.value) || 0.95 } })} />
       </div>
       <p className="text-xs text-muted-foreground sm:col-span-2"><Mic className="mr-1 inline h-3 w-3" />{t("speech.routerHint")}</p>
+    </div>
+  );
+}
+
+function RepositorySettingsBody({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
+  const { t } = useTranslation();
+  const repo = settings.repository;
+  const patchRepo = (patch: Partial<AppSettings["repository"]>) => patchSettings({ repository: { ...repo, ...patch } });
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+        <div>
+          <p className="text-sm font-medium">{t("repoSettings.autoFetchOnOpen")}</p>
+          <p className="text-xs text-muted-foreground">{t("repoSettings.autoFetchOnOpenHint")}</p>
+        </div>
+        <Switch checked={repo.autoFetchOnOpen} onCheckedChange={(checked) => patchRepo({ autoFetchOnOpen: checked })} />
+      </div>
+      <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-[1fr_160px] sm:items-center">
+        <div>
+          <p className="text-sm font-medium">{t("repoSettings.autoFetchInterval")}</p>
+          <p className="text-xs text-muted-foreground">{t("repoSettings.autoFetchIntervalHint")}</p>
+        </div>
+        <Input type="number" min="0" step="1" value={repo.autoFetchIntervalMinutes} onChange={(event) => patchRepo({ autoFetchIntervalMinutes: Math.max(0, Math.floor(Number(event.target.value) || 0)) })} />
+      </div>
+      <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+        <div>
+          <p className="text-sm font-medium">{t("repoSettings.autoPullWhenClean")}</p>
+          <p className="text-xs text-muted-foreground">{t("repoSettings.autoPullWhenCleanHint")}</p>
+        </div>
+        <Switch checked={repo.autoPullWhenClean} onCheckedChange={(checked) => patchRepo({ autoPullWhenClean: checked })} />
+      </div>
     </div>
   );
 }

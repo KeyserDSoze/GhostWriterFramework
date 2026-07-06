@@ -9,6 +9,7 @@ import {
   listAllLocalFiles,
   listDirtyLocalFiles,
   listUnpushedLocalCommits,
+  markLocalRepositoryRemoteCheck,
   markLocalCommitsPushed,
   putCleanLocalFile,
   putLocalRepository,
@@ -141,7 +142,9 @@ export async function fetchRemoteStatus(input: { bookId: string; token: string }
   const octokit = new Octokit({ auth: input.token });
   const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
   const remoteHeadSha = ref.data.object.sha;
-  return { remoteHeadSha, changed: remoteHeadSha !== meta.remoteHeadSha };
+  const changed = remoteHeadSha !== meta.remoteHeadSha;
+  await markLocalRepositoryRemoteCheck(meta.id, remoteHeadSha, changed);
+  return { remoteHeadSha, changed };
 }
 
 export async function pullRemoteChanges(input: { bookId: string; token: string }): Promise<{ updated: number; remoteHeadSha: string }> {
