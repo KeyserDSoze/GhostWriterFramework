@@ -3,11 +3,19 @@ import type { BookEntry } from "@/types/settings";
 import type { BookStructure } from "@/types/book";
 import {
   buildLocalBookStructure,
+  createLocalCommit,
   getLocalRepository,
   getLocalRepositoryByBook,
+  listAllLocalFiles,
+  listDirtyLocalFiles,
+  listUnpushedLocalCommits,
+  markLocalCommitsPushed,
   putCleanLocalFile,
   putLocalRepository,
+  removeLocalFileEntry,
+  updateLocalRepositoryHead,
   type LocalRepositoryMeta,
+  type LocalRepositoryFile,
 } from "@/repository/localRepository";
 
 const TEXT_EXTENSIONS = new Set(["md", "markdown", "txt", "json", "yaml", "yml", "toml", "csv", "html", "css", "js", "ts", "tsx"]);
@@ -16,6 +24,16 @@ export interface LocalCloneProgress {
   done: number;
   total: number;
   path?: string;
+}
+
+export interface RemoteStatusResult {
+  remoteHeadSha: string;
+  changed: boolean;
+}
+
+export interface PushResult {
+  commitSha: string;
+  files: number;
 }
 
 function extension(path: string): string {
@@ -109,4 +127,110 @@ export async function ensureLocalBookStructure(input: {
 export async function getExistingLocalBookStructure(bookId: string): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure } | null> {
   const meta = await getLocalRepositoryByBook(bookId);
   return meta ? { meta, structure: await buildLocalBookStructure(meta) } : null;
+}
+
+export async function commitLocalChanges(bookId: string, message: string) {
+  const meta = await getLocalRepositoryByBook(bookId);
+  if (!meta) throw new Error("Local repository is not ready.");
+  return createLocalCommit(meta.id, message.trim() || "Update book files");
+}
+
+export async function fetchRemoteStatus(input: { bookId: string; token: string }): Promise<RemoteStatusResult> {
+  const meta = await getLocalRepositoryByBook(input.bookId);
+  if (!meta) throw new Error("Local repository is not ready.");
+  const octokit = new Octokit({ auth: input.token });
+  const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
+  const remoteHeadSha = ref.data.object.sha;
+  return { remoteHeadSha, changed: remoteHeadSha !== meta.remoteHeadSha };
+}
+
+export async function pullRemoteChanges(input: { bookId: string; token: string }): Promise<{ updated: number; remoteHeadSha: string }> {
+  const meta = await getLocalRepositoryByBook(input.bookId);
+  if (!meta) throw new Error("Local repository is not ready.");
+  const dirty = await listDirtyLocalFiles(meta.id);
+  const ahead = await listUnpushedLocalCommits(meta.id);
+  if (dirty.length || ahead.length) throw new Error("Commit and push local changes before pulling remote changes.");
+
+  const octokit = new Octokit({ auth: input.token });
+  const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
+  const remoteHeadSha = ref.data.object.sha;
+  if (remoteHeadSha === meta.remoteHeadSha) return { updated: 0, remoteHeadSha };
+  const comparison = await octokit.rest.repos.compareCommitsWithBasehead({ owner: meta.owner, repo: meta.repo, basehead: `${meta.remoteHeadSha}...${remoteHeadSha}` });
+  let updated = 0;
+  for (const file of comparison.data.files ?? []) {
+    const path = file.filename;
+    if (file.status === "removed") {
+      // A clean remote delete removes the local working file entry.
+      await removePulledFile(meta.id, path);
+      updated += 1;
+      continue;
+    }
+    const bytes = await fetchRaw(input.token, meta.owner, meta.repo, meta.branch, path);
+    await putCleanLocalFile({
+      repoId: meta.id,
+      path,
+      kind: isTextPath(path) ? "text" : "binary",
+      text: isTextPath(path) ? new TextDecoder().decode(bytes) : undefined,
+      blob: isTextPath(path) ? undefined : new Blob([bytesToArrayBuffer(bytes)]),
+      baseSha: file.sha,
+      size: bytes.byteLength,
+    });
+    updated += 1;
+  }
+  await updateLocalRepositoryHead(meta.id, remoteHeadSha);
+  return { updated, remoteHeadSha };
+}
+
+async function removePulledFile(repoId: string, path: string): Promise<void> {
+  await removeLocalFileEntry(repoId, path);
+}
+
+export async function pushLocalCommits(input: { bookId: string; token: string }): Promise<PushResult> {
+  const meta = await getLocalRepositoryByBook(input.bookId);
+  if (!meta) throw new Error("Local repository is not ready.");
+  const dirty = await listDirtyLocalFiles(meta.id);
+  if (dirty.length) throw new Error("Commit local changes before pushing.");
+  const commits = await listUnpushedLocalCommits(meta.id);
+  if (!commits.length) throw new Error("No local commits to push.");
+
+  const octokit = new Octokit({ auth: input.token });
+  const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
+  if (ref.data.object.sha !== meta.remoteHeadSha) throw new Error("Remote branch changed. Fetch/pull before pushing.");
+  const baseCommit = await octokit.rest.git.getCommit({ owner: meta.owner, repo: meta.repo, commit_sha: meta.remoteHeadSha });
+  const files = await listAllLocalFiles(meta.id);
+  const fileByPath = new Map(files.map((file) => [file.path, file]));
+  const changedPaths = new Map<string, LocalRepositoryFile | null>();
+  for (const commit of commits) {
+    for (const file of commit.files) changedPaths.set(file.path, file.status === "deleted" ? null : fileByPath.get(file.path) ?? null);
+  }
+
+  const pushedShas: Record<string, string | null> = {};
+  const treeEntries = [] as Array<{ path: string; mode: "100644"; type: "blob"; sha: string | null }>;
+  for (const [path, file] of changedPaths) {
+    if (!file) {
+      treeEntries.push({ path, mode: "100644", type: "blob", sha: null });
+      pushedShas[path] = null;
+      continue;
+    }
+    const blob = await createBlobForFile(octokit, meta, file);
+    treeEntries.push({ path, mode: "100644", type: "blob", sha: blob });
+    pushedShas[path] = blob;
+  }
+  const tree = await octokit.rest.git.createTree({ owner: meta.owner, repo: meta.repo, base_tree: baseCommit.data.tree.sha, tree: treeEntries });
+  const commit = await octokit.rest.git.createCommit({ owner: meta.owner, repo: meta.repo, message: commits.map((entry) => entry.message).join("\n\n"), tree: tree.data.sha, parents: [meta.remoteHeadSha] });
+  await octokit.rest.git.updateRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, sha: commit.data.sha });
+  await markLocalCommitsPushed(meta.id, commits.map((entry) => entry.id), commit.data.sha, pushedShas);
+  return { commitSha: commit.data.sha, files: changedPaths.size };
+}
+
+async function createBlobForFile(octokit: Octokit, meta: LocalRepositoryMeta, file: LocalRepositoryFile): Promise<string> {
+  if (file.kind === "text") {
+    const result = await octokit.rest.git.createBlob({ owner: meta.owner, repo: meta.repo, content: file.text ?? "", encoding: "utf-8" });
+    return result.data.sha;
+  }
+  const bytes = file.blob ? new Uint8Array(await file.blob.arrayBuffer()) : new Uint8Array();
+  let binary = "";
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  const result = await octokit.rest.git.createBlob({ owner: meta.owner, repo: meta.repo, content: btoa(binary), encoding: "base64" });
+  return result.data.sha;
 }

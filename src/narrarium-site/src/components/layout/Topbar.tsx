@@ -22,6 +22,7 @@ import { speakText, type SpeechController } from "@/assistant/speech";
 import { useToast } from "@/components/ui/use-toast";
 import { parseAppRoute } from "@/assistant/context";
 import { getLocalRepositoryByBook, localStatus } from "@/repository/localRepository";
+import { RepositoryStatusDialog } from "@/components/repository/RepositoryStatusDialog";
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -49,11 +50,14 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const navigate = useNavigate();
   const location = useLocation();
   const speechRef = useRef<SpeechController | null>(null);
-  const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "offline" | "none" }>({ label: "", tone: "none" });
+  const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "offline" | "none" }>({ label: "", tone: "none" });
+  const [repoDialogOpen, setRepoDialogOpen] = useState(false);
+  const route = parseAppRoute(location.pathname);
+  const currentBookId = "bookId" in route ? route.bookId : undefined;
+  const currentBook = currentBookId ? settings.books.find((entry) => entry.id === currentBookId) : undefined;
 
   useEffect(() => {
-    const route = parseAppRoute(location.pathname);
-    const bookId = "bookId" in route ? route.bookId : undefined;
+    const bookId = currentBookId;
     let cancelled = false;
     async function refresh() {
       if (!bookId) { if (!cancelled) setRepoStatus({ label: "", tone: "none" }); return; }
@@ -63,12 +67,14 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       if (cancelled) return;
       setRepoStatus(status.dirty > 0
         ? { label: t("repoStatus.dirty", { count: status.dirty }), tone: "dirty" }
+        : status.ahead > 0
+          ? { label: t("repoStatus.ahead", { count: status.ahead }), tone: "ahead" }
         : { label: t("repoStatus.clean"), tone: "clean" });
     }
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [location.pathname, t]);
+  }, [currentBookId, t]);
 
   function handleSignOut() {
     clearAuth();
@@ -121,10 +127,13 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
             type="button"
             className={repoStatus.tone === "dirty"
               ? "hidden items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300 sm:inline-flex"
+              : repoStatus.tone === "ahead"
+                ? "hidden items-center gap-1 rounded-full border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-xs text-sky-700 dark:text-sky-300 sm:inline-flex"
               : repoStatus.tone === "clean"
                 ? "hidden items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300 sm:inline-flex"
                 : "hidden items-center gap-1 rounded-full border px-2 py-1 text-xs text-muted-foreground sm:inline-flex"}
             title={repoStatus.label}
+            onClick={() => setRepoDialogOpen(true)}
           >
             <span className="h-2 w-2 rounded-full bg-current" />
             {repoStatus.label}
@@ -205,6 +214,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <RepositoryStatusDialog open={repoDialogOpen} onOpenChange={setRepoDialogOpen} book={currentBook} settings={settings} />
     </header>
   );
 }
