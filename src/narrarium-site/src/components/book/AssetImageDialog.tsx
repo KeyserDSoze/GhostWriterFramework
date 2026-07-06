@@ -224,11 +224,11 @@ export function AssetImageDialog(props: {
           </Button>
         </DialogTrigger>
       )}
-      <DialogContent className="flex max-h-[92dvh] w-[96vw] max-w-5xl flex-col overflow-hidden p-0">
+      <DialogContent className="!flex max-h-[92dvh] w-[96vw] !max-w-[96vw] flex-col overflow-hidden !p-0 sm:!max-w-5xl">
         <DialogHeader className="shrink-0 px-4 pt-4 sm:px-6 sm:pt-6">
           <DialogTitle>{t("images.titleFor", { title })}</DialogTitle>
         </DialogHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6">
           <div className="grid gap-4">
           {pendingGenerated && previewUrl ? (
             <div className="rounded-xl border bg-muted/20 p-3">
@@ -245,18 +245,24 @@ export function AssetImageDialog(props: {
               <div className="grid gap-3 lg:grid-cols-2">
                 <div className="rounded-lg border bg-background p-2">
                   <p className="mb-2 text-xs font-medium text-muted-foreground">{t("images.currentImage")}</p>
-                  <img src={previewUrl} alt={altText || title} className="max-h-[48vh] w-full rounded-md object-contain lg:max-h-80" />
+                  <div className="h-36 sm:h-56 lg:h-80">
+                    <img src={previewUrl} alt={altText || title} className="h-full w-full rounded-md object-contain" />
+                  </div>
                 </div>
                 <div className="rounded-lg border border-primary/40 bg-background p-2">
                   <p className="mb-2 text-xs font-medium text-muted-foreground">{t("images.newImage")}</p>
-                  <img src={pendingGenerated.url} alt={altText || title} className="max-h-[48vh] w-full rounded-md object-contain lg:max-h-80" />
+                  <div className="h-36 sm:h-56 lg:h-80">
+                    <img src={pendingGenerated.url} alt={altText || title} className="h-full w-full rounded-md object-contain" />
+                  </div>
                 </div>
               </div>
             </div>
           ) : previewUrl && (
             <div className="rounded-xl border bg-muted/20 p-3">
               <p className="mb-2 text-xs text-muted-foreground">{existingImagePath ?? t("images.preview")}</p>
-              <img src={previewUrl} alt={altText || title} className="max-h-[50vh] w-full rounded-lg object-contain sm:max-h-80" />
+              <div className="h-44 sm:h-64 lg:h-80">
+                <img src={previewUrl} alt={altText || title} className="h-full w-full rounded-lg object-contain" />
+              </div>
             </div>
           )}
           <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
