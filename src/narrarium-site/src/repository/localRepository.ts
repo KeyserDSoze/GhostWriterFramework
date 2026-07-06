@@ -1,7 +1,7 @@
 import type { BookStructure, BookFile, Chapter, Paragraph } from "@/types/book";
 
 const DB_NAME = "narrarium-local-repositories";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 export type LocalFileStatus = "clean" | "modified" | "new" | "deleted";
 export type LocalFileKind = "text" | "binary";
@@ -53,6 +53,16 @@ export interface LocalCommit {
   remoteCommitSha?: string;
 }
 
+export type LocalRepoLogKind = "clone" | "fetch" | "pull" | "commit" | "push" | "backup" | "reset" | "error";
+
+export interface LocalRepoLogEntry {
+  id: string;
+  repoId: string;
+  kind: LocalRepoLogKind;
+  message: string;
+  createdAt: string;
+}
+
 export interface LocalRepoStatus {
   clean: number;
   modified: number;
@@ -100,6 +110,10 @@ function openDb(): Promise<IDBDatabase> {
         const commits = db.createObjectStore("commits", { keyPath: "id" });
         commits.createIndex("repoId", "repoId", { unique: false });
         commits.createIndex("repoPushed", ["repoId", "pushed"], { unique: false });
+      }
+      if (!db.objectStoreNames.contains("logs")) {
+        const logs = db.createObjectStore("logs", { keyPath: "id" });
+        logs.createIndex("repoId", "repoId", { unique: false });
       }
     };
   });
@@ -171,6 +185,29 @@ export async function listLocalFiles(repoIdValue: string): Promise<LocalReposito
 export async function listAllLocalFiles(repoIdValue: string): Promise<LocalRepositoryFile[]> {
   const files = await allFromIndex<LocalRepositoryFile>("files", "repoId", repoIdValue);
   return files.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export async function removeLocalRepository(repoIdValue: string): Promise<void> {
+  const db = await openDb();
+  const stores = ["repositories", "files", "commits", "logs"].filter((store) => db.objectStoreNames.contains(store));
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(stores, "readwrite");
+    tx.objectStore("repositories").delete(repoIdValue);
+    for (const storeName of ["files", "commits", "logs"]) {
+      if (!stores.includes(storeName)) continue;
+      const store = tx.objectStore(storeName);
+      const index = store.index("repoId");
+      const request = index.openKeyCursor(IDBKeyRange.only(repoIdValue));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        store.delete(cursor.primaryKey);
+        cursor.continue();
+      };
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
 }
 
 export async function listDirtyLocalFiles(repoIdValue: string): Promise<LocalRepositoryFile[]> {
@@ -274,6 +311,16 @@ export async function localStatus(repoIdValue: string): Promise<LocalRepoStatus>
   out.dirty = out.modified + out.new + out.deleted;
   out.ahead = (await listUnpushedLocalCommits(repoIdValue)).length;
   return out;
+}
+
+export async function addLocalRepoLog(repoIdValue: string, kind: LocalRepoLogKind, message: string): Promise<void> {
+  const entry: LocalRepoLogEntry = { id: crypto.randomUUID(), repoId: repoIdValue, kind, message, createdAt: new Date().toISOString() };
+  await txStore("logs", "readwrite", (store) => store.put(entry));
+}
+
+export async function listLocalRepoLogs(repoIdValue: string, limit = 30): Promise<LocalRepoLogEntry[]> {
+  const entries = await allFromIndex<LocalRepoLogEntry>("logs", "repoId", repoIdValue);
+  return entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
 }
 
 export async function createLocalCommit(repoIdValue: string, message: string): Promise<LocalCommit> {

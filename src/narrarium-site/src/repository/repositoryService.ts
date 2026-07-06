@@ -2,6 +2,7 @@ import { Octokit } from "@octokit/rest";
 import type { BookEntry } from "@/types/settings";
 import type { BookStructure } from "@/types/book";
 import {
+  addLocalRepoLog,
   buildLocalBookStructure,
   createLocalCommit,
   discardUnpushedLocalCommits,
@@ -15,6 +16,7 @@ import {
   putCleanLocalFile,
   putLocalRepository,
   removeLocalFileEntry,
+  removeLocalRepository,
   updateLocalRepositoryHead,
   type LocalRepositoryMeta,
   type LocalRepositoryFile,
@@ -123,6 +125,8 @@ export async function ensureLocalBookStructure(input: {
     input.onProgress?.({ done, total: blobs.length, path: blob.path });
   });
 
+  await addLocalRepoLog(meta.id, "clone", `Cloned ${blobs.length} files from ${meta.branch}`);
+
   return { meta, structure: await buildLocalBookStructure(meta), cloned: true };
 }
 
@@ -134,7 +138,9 @@ export async function getExistingLocalBookStructure(bookId: string): Promise<{ m
 export async function commitLocalChanges(bookId: string, message: string) {
   const meta = await getLocalRepositoryByBook(bookId);
   if (!meta) throw new Error("Local repository is not ready.");
-  return createLocalCommit(meta.id, message.trim() || "Update book files");
+  const commit = await createLocalCommit(meta.id, message.trim() || "Update book files");
+  await addLocalRepoLog(meta.id, "commit", `Committed ${commit.files.length} files: ${commit.message}`);
+  return commit;
 }
 
 export async function fetchRemoteStatus(input: { bookId: string; token: string }): Promise<RemoteStatusResult> {
@@ -145,6 +151,7 @@ export async function fetchRemoteStatus(input: { bookId: string; token: string }
   const remoteHeadSha = ref.data.object.sha;
   const changed = remoteHeadSha !== meta.remoteHeadSha;
   await markLocalRepositoryRemoteCheck(meta.id, remoteHeadSha, changed);
+  await addLocalRepoLog(meta.id, "fetch", changed ? `Remote changed: ${remoteHeadSha.slice(0, 7)}` : "Remote up to date");
   return { remoteHeadSha, changed };
 }
 
@@ -188,6 +195,7 @@ export async function pullRemoteChanges(input: { bookId: string; token: string }
   }
   if (ahead.length) await discardUnpushedLocalCommits(meta.id);
   await updateLocalRepositoryHead(meta.id, remoteHeadSha);
+  await addLocalRepoLog(meta.id, "pull", `Pulled ${updated} files from remote (remote wins)`);
   return { updated, remoteHeadSha };
 }
 
@@ -230,7 +238,27 @@ export async function pushLocalCommits(input: { bookId: string; token: string })
   const commit = await octokit.rest.git.createCommit({ owner: meta.owner, repo: meta.repo, message: commits.map((entry) => entry.message).join("\n\n"), tree: tree.data.sha, parents: [remoteHeadSha] });
   await octokit.rest.git.updateRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, sha: commit.data.sha });
   await markLocalCommitsPushed(meta.id, commits.map((entry) => entry.id), commit.data.sha, pushedShas);
+  await addLocalRepoLog(meta.id, "push", `Pushed ${changedPaths.size} files to ${commit.data.sha.slice(0, 7)} (local wins)`);
   return { commitSha: commit.data.sha, files: changedPaths.size };
+}
+
+export async function removeLocalWorkingCopy(bookId: string): Promise<void> {
+  const meta = await getLocalRepositoryByBook(bookId);
+  if (!meta) return;
+  await removeLocalRepository(meta.id);
+}
+
+export async function recloneLocalWorkingCopy(input: {
+  bookId: string;
+  book: BookEntry;
+  token: string;
+  branch?: string;
+  onProgress?: (progress: LocalCloneProgress) => void;
+}): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
+  await removeLocalWorkingCopy(input.bookId);
+  const result = await ensureLocalBookStructure(input);
+  await addLocalRepoLog(result.meta.id, "reset", "Recloned local working copy");
+  return result;
 }
 
 async function createBlobForFile(octokit: Octokit, meta: LocalRepositoryMeta, file: LocalRepositoryFile): Promise<string> {
