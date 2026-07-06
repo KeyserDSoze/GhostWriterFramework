@@ -224,10 +224,11 @@ export function AssetImageDialog(props: {
           </Button>
         </DialogTrigger>
       )}
-      <DialogContent className="max-w-5xl">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[92dvh] w-[96vw] max-w-5xl flex-col overflow-hidden p-0">
+        <DialogHeader className="shrink-0 px-4 pt-4 sm:px-6 sm:pt-6">
           <DialogTitle>{t("images.titleFor", { title })}</DialogTitle>
         </DialogHeader>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="grid gap-4">
           {pendingGenerated && previewUrl ? (
             <div className="rounded-xl border bg-muted/20 p-3">
@@ -236,26 +237,26 @@ export function AssetImageDialog(props: {
                   <p className="text-sm font-medium">{t("images.compareTitle")}</p>
                   <p className="text-xs text-muted-foreground">{t("images.generationCost", { cost: formatCost(pendingGenerated.cost) })}</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button type="button" variant="outline" size="sm" onClick={keepCurrentImage} disabled={busy}>{t("images.keepCurrent")}</Button>
                   <Button type="button" size="sm" onClick={() => void keepGeneratedImage()} disabled={busy}>{busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}{t("images.keepGenerated")}</Button>
                 </div>
               </div>
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid gap-3 lg:grid-cols-2">
                 <div className="rounded-lg border bg-background p-2">
                   <p className="mb-2 text-xs font-medium text-muted-foreground">{t("images.currentImage")}</p>
-                  <img src={previewUrl} alt={altText || title} className="max-h-80 w-full rounded-md object-contain" />
+                  <img src={previewUrl} alt={altText || title} className="max-h-[48vh] w-full rounded-md object-contain lg:max-h-80" />
                 </div>
                 <div className="rounded-lg border border-primary/40 bg-background p-2">
                   <p className="mb-2 text-xs font-medium text-muted-foreground">{t("images.newImage")}</p>
-                  <img src={pendingGenerated.url} alt={altText || title} className="max-h-80 w-full rounded-md object-contain" />
+                  <img src={pendingGenerated.url} alt={altText || title} className="max-h-[48vh] w-full rounded-md object-contain lg:max-h-80" />
                 </div>
               </div>
             </div>
           ) : previewUrl && (
             <div className="rounded-xl border bg-muted/20 p-3">
               <p className="mb-2 text-xs text-muted-foreground">{existingImagePath ?? t("images.preview")}</p>
-              <img src={previewUrl} alt={altText || title} className="max-h-80 w-full rounded-lg object-contain" />
+              <img src={previewUrl} alt={altText || title} className="max-h-[50vh] w-full rounded-lg object-contain sm:max-h-80" />
             </div>
           )}
           <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
@@ -305,11 +306,12 @@ export function AssetImageDialog(props: {
           </div>
           <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => void handleUpload(event.target.files?.[0])} />
         </div>
-        <DialogFooter className="flex-wrap gap-2">
-          <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>{t("common.cancel")}</Button>
-          <Button variant="outline" onClick={() => void handleSavePrompt()} disabled={busy || !prompt.trim()}>{t("images.savePrompt")}</Button>
-          <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={busy || !prompt.trim()}><Upload className="mr-1 h-4 w-4" />{t("images.uploadImage")}</Button>
-          <Button onClick={() => void handleGenerate()} disabled={busy || !prompt.trim()}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}{t("images.generateImage")}</Button>
+        </div>
+        <DialogFooter className="shrink-0 gap-2 border-t bg-background px-4 py-3 sm:flex-wrap sm:px-6">
+          <Button className="w-full sm:w-auto" variant="outline" onClick={() => setOpen(false)} disabled={busy}>{t("common.cancel")}</Button>
+          <Button className="w-full sm:w-auto" variant="outline" onClick={() => void handleSavePrompt()} disabled={busy || !prompt.trim()}>{t("images.savePrompt")}</Button>
+          <Button className="w-full sm:w-auto" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={busy || !prompt.trim()}><Upload className="mr-1 h-4 w-4" />{t("images.uploadImage")}</Button>
+          <Button className="w-full sm:w-auto" onClick={() => void handleGenerate()} disabled={busy || !prompt.trim()}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}{t("images.generateImage")}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
