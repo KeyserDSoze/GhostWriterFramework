@@ -232,6 +232,7 @@ function migrateSettings(raw: unknown): AppSettings {
       ...DEFAULT_SETTINGS.repository,
       ...(typeof source.repository === "object" && source.repository ? source.repository : {}),
     },
+    customActions: Array.isArray(source.customActions) ? source.customActions : [],
     books: Array.isArray(source.books) ? source.books : [],
     taskRouting: normalizeTaskRouting(source.taskRouting, aiIntegrations),
   };

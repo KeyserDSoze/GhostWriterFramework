@@ -20,6 +20,7 @@ import { ChapterStageIndexPage } from "@/pages/ChapterStageIndexPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { MigratePage } from "@/pages/MigratePage";
 import { CostsPage } from "@/pages/CostsPage";
+import { CustomActionsPage } from "@/pages/CustomActionsPage";
 import { AppDocsIndexPage, AppDocPage } from "@/pages/AppDocsPage";
 import { AssistantChatsPage } from "@/pages/AssistantChatsPage";
 import {
@@ -86,6 +87,7 @@ export const router = createBrowserRouter([
         element: <ParagraphPage />,
       },
       { path: "settings", element: <SettingsPage /> },
+      { path: "custom-actions", element: <CustomActionsPage /> },
       { path: "migrate", element: <MigratePage /> },
       { path: "costs", element: <CostsPage /> },
       { path: "docs", element: <AppDocsIndexPage /> },

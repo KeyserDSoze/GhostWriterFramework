@@ -239,6 +239,31 @@ export interface RepositorySettings {
   autoPullWhenClean: boolean;
 }
 
+export type CustomActionActivation = "selection" | "element";
+export type CustomActionOutputMode = "show" | "replace";
+
+export interface CustomActionContextInjection {
+  includeBody: boolean;
+  includeFrontmatter: boolean;
+  includeContext: boolean;
+  includeWritingStyle: boolean;
+  includeGhostwriter: boolean;
+}
+
+export interface CustomAction {
+  id: string;
+  name: string;
+  prompt: string;
+  /** Router capability used for the chat request. Never stores a concrete model. */
+  capability: ChatCapability;
+  /** "*" means every supported target type. Other values are semantic target names such as paragraph, chapter, character. */
+  targetTypes: string[];
+  activation: CustomActionActivation;
+  injections: CustomActionContextInjection;
+  outputMode: CustomActionOutputMode;
+  enabled: boolean;
+}
+
 export interface AppSettings {
   /** Schema version for future migrations */
   version: 2;
@@ -256,6 +281,7 @@ export interface AppSettings {
   };
   speech: SpeechSettings;
   repository: RepositorySettings;
+  customActions: CustomAction[];
   books: BookEntry[];
 }
 
@@ -289,5 +315,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoFetchIntervalMinutes: 15,
     autoPullWhenClean: false,
   },
+  customActions: [],
   books: [],
 };

@@ -18,6 +18,9 @@ import { openCanonDossier } from "@/narrarium/openDossier";
 import { CANON_SECTION_ORDER, type CanonSection } from "@/lib/canonSections";
 import type { BookStructure } from "@/types/book";
 import { useToast } from "@/components/ui/use-toast";
+import { CustomActionRunner, type CustomActionInvocation } from "@/components/custom-actions/CustomActionRunner";
+import { compatibleCustomActions, resolveCustomActionTarget } from "@/custom-actions/customActions";
+import type { CustomAction } from "@/types/settings";
 
 type Editable = HTMLTextAreaElement | HTMLInputElement;
 
@@ -42,6 +45,10 @@ interface MenuState {
 
 const CLOSED: MenuState = { open: false, x: 0, y: 0, editable: null, selection: "" };
 
+function isTouchDevice(): boolean {
+  return typeof window !== "undefined" && (window.matchMedia("(pointer: coarse)").matches || "ontouchstart" in window);
+}
+
 export function GlobalContextMenu() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -52,25 +59,33 @@ export function GlobalContextMenu() {
   const syncReg = useRepositorySyncStore((s) => s.current);
   const [menu, setMenu] = useState<MenuState>(CLOSED);
   const [showHistory, setShowHistory] = useState(false);
+  const [customSubmenuOpen, setCustomSubmenuOpen] = useState(false);
+  const [customInvocation, setCustomInvocation] = useState<CustomActionInvocation | null>(null);
   const [fab, setFab] = useState<{ x: number; y: number; editable: Editable | null } | null>(null);
   const [imageOpen, setImageOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const openAtRef = useRef<(x: number, y: number, target: EventTarget | null) => boolean>(() => false);
 
-  // Whether the menu can show contextual (non-text) actions at all.
-  const hasContextActions = actions.length > 0 || hasBookActions || Boolean(saveReg) || Boolean(syncReg);
-  // Contextual actions are only useful when NOT working on a text selection.
-  const showContextActions = hasContextActions && !menu.selection.trim();
-
   // Book context for the "Open dossier" action.
   const { toast } = useToast();
   const location = useLocation();
-  const { structures } = useBooksStore();
+  const { structures, workingBranches } = useBooksStore();
   const { settings } = useSettingsStore();
   const dossierRoute = parseAppRoute(location.pathname);
   const dossierBookId = "bookId" in dossierRoute ? dossierRoute.bookId : undefined;
   const dossierStructure = dossierBookId ? structures[dossierBookId] : undefined;
   const { branch: dossierBranch } = useWorkingBranch(dossierBookId);
+  const customTarget = resolveCustomActionTarget({ pathname: location.pathname, settings, books: settings.books, structures, workingBranches });
+  const currentCustomActions = compatibleCustomActions({
+    actions: settings.customActions ?? [],
+    targetType: customTarget?.type ?? null,
+    selection: menu.selection,
+    canReplace: Boolean(menu.editable),
+  });
+  const hasBaseContextActions = actions.length > 0 || hasBookActions || Boolean(saveReg) || Boolean(syncReg);
+  const showBaseContextActions = hasBaseContextActions && !menu.selection.trim();
+  const showCustomActions = currentCustomActions.length > 0;
+  const showContextActions = showBaseContextActions || showCustomActions;
 
   // The word to look up: the selection, or the word under the caret in an editable.
   const dossierWord = (() => {
@@ -115,15 +130,22 @@ export function GlobalContextMenu() {
   const openAt = (x: number, y: number, target: EventTarget | null) => {
     const editable = isEditable(target) ? target : null;
     const sel = selectionString(editable);
+    const customForOpen = compatibleCustomActions({
+      actions: settings.customActions ?? [],
+      targetType: customTarget?.type ?? null,
+      selection: sel,
+      canReplace: Boolean(editable),
+    });
     // Open when there is something actionable: an editable, a selection, or contextual actions.
     // (hasContextActions is read fresh here because openAtRef always points at the latest closure.)
-    if (!editable && !sel.trim() && !hasContextActions) return false;
+    if (!editable && !sel.trim() && !hasBaseContextActions && customForOpen.length === 0) return false;
     const pad = 8;
     const width = 234;
     const left = Math.min(x, window.innerWidth - width - pad);
     const top = Math.min(y, window.innerHeight - 320 - pad);
     setMenu({ open: true, x: Math.max(pad, left), y: Math.max(pad, top), editable, prose: editable ? forElement(editable) : undefined, selection: sel });
     setShowHistory(false);
+    setCustomSubmenuOpen(false);
     setFab(null);
     return true;
   };
@@ -212,7 +234,10 @@ export function GlobalContextMenu() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [menu.open, menu.x, menu.y, showContextActions, showHistory]);
 
-  const close = () => setMenu(CLOSED);
+  const close = () => {
+    setCustomSubmenuOpen(false);
+    setMenu(CLOSED);
+  };
 
   const replaceSelection = (text: string) => {
     const el = menu.editable;
@@ -266,6 +291,42 @@ export function GlobalContextMenu() {
     openAt(Math.min(fab.x, window.innerWidth - 244), fab.y + 36, target);
   };
 
+  function startCustomAction(action: CustomAction) {
+    const editable = menu.editable;
+    const range = editable && (editable.selectionEnd ?? 0) > (editable.selectionStart ?? 0)
+      ? { start: editable.selectionStart ?? 0, end: editable.selectionEnd ?? 0 }
+      : null;
+    setCustomInvocation({ id: crypto.randomUUID(), action, selection: menu.selection, editable, range });
+    setMenu(CLOSED);
+    setCustomSubmenuOpen(false);
+  }
+
+  const customActionsBlock = showCustomActions ? (
+    isTouchDevice() ? (
+      <>
+        <div className="my-1 h-px bg-border" />
+        <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("customActions.title")}</div>
+        {currentCustomActions.map((action) => (
+          <MenuItem key={action.id} icon={<Wand2 className="h-4 w-4" />} label={action.name} onClick={() => startCustomAction(action)} />
+        ))}
+      </>
+    ) : (
+      <div className="relative" onMouseEnter={() => setCustomSubmenuOpen(true)}>
+        <MenuItem icon={<Wand2 className="h-4 w-4" />} label={t("customActions.menu")} trailing="▶" onClick={() => setCustomSubmenuOpen((open) => !open)} />
+        {customSubmenuOpen && (
+          <div
+            data-no-context-menu
+            className={`absolute top-0 z-[75] w-[234px] overflow-hidden rounded-xl border bg-popover p-1 text-popover-foreground shadow-2xl ${menu.x + 480 > window.innerWidth ? "right-full mr-1" : "left-full ml-1"}`}
+          >
+            {currentCustomActions.map((action) => (
+              <MenuItem key={action.id} icon={<Wand2 className="h-4 w-4" />} label={action.name} onClick={() => startCustomAction(action)} />
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  ) : null;
+
   return (
     <>
       {fab && !menu.open && (
@@ -311,29 +372,34 @@ export function GlobalContextMenu() {
             <div className="flex flex-col">
               {showContextActions && (
                 <>
-                  {actions.map((action) => (
-                    <MenuItem
-                      key={action.id}
-                      icon={action.icon}
-                      label={action.label}
-                      shortcut={action.shortcut}
-                      disabled={action.disabled}
-                      onClick={() => {
-                        if (action.to) navigate(action.to);
-                        else void action.run?.();
-                        close();
-                      }}
-                    />
-                  ))}
-                  {imageProps && (
-                    <MenuItem icon={<ImageIcon className="h-4 w-4" />} label={t("images.title")} onClick={() => { setImageOpen(true); close(); }} />
+                  {showBaseContextActions && (
+                    <>
+                      {actions.map((action) => (
+                        <MenuItem
+                          key={action.id}
+                          icon={action.icon}
+                          label={action.label}
+                          shortcut={action.shortcut}
+                          disabled={action.disabled}
+                          onClick={() => {
+                            if (action.to) navigate(action.to);
+                            else void action.run?.();
+                            close();
+                          }}
+                        />
+                      ))}
+                      {imageProps && (
+                        <MenuItem icon={<ImageIcon className="h-4 w-4" />} label={t("images.title")} onClick={() => { setImageOpen(true); close(); }} />
+                      )}
+                      {saveReg && (
+                        <MenuItem icon={<Save className="h-4 w-4" />} label={t("ctx.save")} shortcut="Ctrl+S" disabled={!saveReg.dirty} onClick={() => { void saveReg.save(); close(); }} />
+                      )}
+                      {syncReg && (
+                        <MenuItem icon={<RefreshCcw className={syncReg.busy ? "h-4 w-4 animate-spin" : "h-4 w-4"} />} label={t("repoStatus.sync")} shortcut="Ctrl+E" disabled={syncReg.busy} onClick={() => { void triggerCurrentRepositorySync(); close(); }} />
+                      )}
+                    </>
                   )}
-                  {saveReg && (
-                    <MenuItem icon={<Save className="h-4 w-4" />} label={t("ctx.save")} shortcut="Ctrl+S" disabled={!saveReg.dirty} onClick={() => { void saveReg.save(); close(); }} />
-                  )}
-                  {syncReg && (
-                    <MenuItem icon={<RefreshCcw className={syncReg.busy ? "h-4 w-4 animate-spin" : "h-4 w-4"} />} label={t("repoStatus.sync")} shortcut="Ctrl+E" disabled={syncReg.busy} onClick={() => { void triggerCurrentRepositorySync(); close(); }} />
-                  )}
+                  {customActionsBlock}
                   {menu.prose && <div className="my-1 h-px bg-border" />}
                 </>
               )}
@@ -368,11 +434,13 @@ export function GlobalContextMenu() {
           hideTrigger
         />
       )}
+
+      <CustomActionRunner invocation={customInvocation} onDone={() => setCustomInvocation(null)} />
     </>
   );
 }
 
-function MenuItem({ icon, label, shortcut, onClick, disabled }: { icon: React.ReactNode; label: string; shortcut?: string; onClick: () => void; disabled?: boolean }) {
+function MenuItem({ icon, label, shortcut, trailing, onClick, disabled }: { icon: React.ReactNode; label: string; shortcut?: string; trailing?: string; onClick: () => void; disabled?: boolean }) {
   return (
     <button
       type="button"
@@ -383,6 +451,7 @@ function MenuItem({ icon, label, shortcut, onClick, disabled }: { icon: React.Re
       <span className="shrink-0">{icon}</span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {shortcut && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">({shortcut})</span>}
+      {trailing && <span className="ml-auto shrink-0 text-xs text-muted-foreground">{trailing}</span>}
     </button>
   );
 }

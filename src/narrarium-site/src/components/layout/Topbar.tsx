@@ -1,4 +1,4 @@
-import { Activity, ArrowLeftRight, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, Languages, LogOut, Menu, Moon, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2 } from "lucide-react";
+import { Activity, ArrowLeftRight, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, Languages, LogOut, Menu, Moon, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2, Wand2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -326,6 +326,10 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
             <DropdownMenuItem onClick={() => navigate("/app/settings")}>
               <Settings className="mr-2 h-4 w-4" />
               {t("nav.settings")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/app/custom-actions")}>
+              <Wand2 className="mr-2 h-4 w-4" />
+              {t("customActions.title")}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => navigate("/app/migrate")}>
               <ArrowLeftRight className="mr-2 h-4 w-4" />
