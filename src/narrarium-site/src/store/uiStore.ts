@@ -20,6 +20,9 @@ interface UiState {
   /** Mobile dossier search popup (there is no docked column on small screens). */
   dossierSearchOpen: boolean;
   setDossierSearchOpen: (open: boolean) => void;
+  /** Quick notes dialog (opened with Ctrl+N or the topbar button). */
+  notesOpen: boolean;
+  setNotesOpen: (open: boolean) => void;
   /** Session/connection status shown as a discreet pill. */
   authActivity: "idle" | "refreshing" | "offline";
   setAuthActivity: (activity: "idle" | "refreshing" | "offline") => void;
@@ -42,6 +45,8 @@ export const useUiStore = create<UiState>()(
       setDossierColumnHidden: (hidden) => set({ dossierColumnHidden: hidden }),
       dossierSearchOpen: false,
       setDossierSearchOpen: (open) => set({ dossierSearchOpen: open }),
+      notesOpen: false,
+      setNotesOpen: (open) => set({ notesOpen: open }),
       authActivity: "idle",
       setAuthActivity: (activity) => set({ authActivity: activity }),
     }),

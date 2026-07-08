@@ -1440,6 +1440,22 @@ const it = {
     placeholder: "Cerca capitoli, paragrafi, canon, ricerche…",
     empty: "Nessuna pagina trovata.",
     backToPrevious: "Torna al precedente"
+  },
+  notes: {
+    title: "Note",
+    new: "Nuova nota",
+    newTitle: "Nuova nota",
+    create: "Crea nota",
+    searchPlaceholder: "Cerca tra le note…",
+    titlePlaceholder: "Titolo della nota",
+    bodyPlaceholder: "Scrivi la tua nota…",
+    empty: "Nessuna nota. Creane una da tenere sempre pronta.",
+    openBookFirst: "Apri prima un libro per gestire le sue note.",
+    created: "Nota creata",
+    deleted: "Nota eliminata",
+    deleteConfirm: "Eliminare questa nota?",
+    loadFailed: "Caricamento nota non riuscito",
+    saveFailed: "Salvataggio nota non riuscito"
   }
 };
 

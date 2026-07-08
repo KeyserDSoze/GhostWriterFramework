@@ -23,6 +23,16 @@ export interface ResearchFile {
   title: string;
 }
 
+export interface NoteFile {
+  /** File path inside the repo, e.g. notes/idea-for-chapter-3.md */
+  path: string;
+  sha: string;
+  /** Slug derived from filename */
+  slug: string;
+  /** Display title from frontmatter, falls back to slug */
+  title: string;
+}
+
 export interface Ghostwriter {
   slug: string;
   path: string;
@@ -110,4 +120,6 @@ export interface BookStructure {
   ghostwriters: Ghostwriter[];
   /** research/*.md files */
   researchFiles: ResearchFile[];
+  /** notes/*.md quick personal notes */
+  notesFiles: NoteFile[];
 }

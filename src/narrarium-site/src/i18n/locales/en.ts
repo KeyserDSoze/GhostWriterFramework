@@ -1440,6 +1440,22 @@ const en = {
     placeholder: "Search chapters, paragraphs, canon, research…",
     empty: "No matching page.",
     backToPrevious: "Back to previous"
+  },
+  notes: {
+    title: "Notes",
+    new: "New note",
+    newTitle: "New note",
+    create: "Create note",
+    searchPlaceholder: "Search notes…",
+    titlePlaceholder: "Note title",
+    bodyPlaceholder: "Write your note…",
+    empty: "No notes yet. Create one to keep it handy.",
+    openBookFirst: "Open a book first to manage its notes.",
+    created: "Note created",
+    deleted: "Note deleted",
+    deleteConfirm: "Delete this note?",
+    loadFailed: "Failed to load note",
+    saveFailed: "Failed to save note"
   }
 };
 

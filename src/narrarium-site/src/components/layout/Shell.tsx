@@ -6,6 +6,7 @@ import { Sidebar, MobileSidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { DossierDock, DossierSearchDialog } from "./DossierDock";
 import { FloatingActions } from "./FloatingActions";
+import { NotesDialog } from "./NotesDialog";
 import { GlobalContextMenu } from "@/components/editor/GlobalContextMenu";
 import { LlmDebugPanel } from "@/components/debug/LlmDebugPanel";
 import { GenerateDiffDialog } from "@/components/book/GenerateDiffDialog";
@@ -13,6 +14,7 @@ import { SessionStatusPill } from "@/components/layout/SessionStatusPill";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
+import { useUiStore } from "@/store/uiStore";
 import { useTokenRefresh } from "@/hooks/useTokenRefresh";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCostsSync } from "@/costs/useCostsSync";
@@ -37,6 +39,8 @@ export function Shell() {
   const navigate = useNavigate();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
+  const notesOpen = useUiStore((s) => s.notesOpen);
+  const setNotesOpen = useUiStore((s) => s.setNotesOpen);
 
   useTokenRefresh();
   useCostsSync();
@@ -75,6 +79,13 @@ export function Shell() {
         if (!bookId) return;
         event.preventDefault();
         setQuickOpen(true);
+        return;
+      }
+
+      if (key === "n") {
+        if (!bookId) return;
+        event.preventDefault();
+        setNotesOpen(true);
         return;
       }
 
@@ -148,6 +159,7 @@ export function Shell() {
         </DialogContent>
       </Dialog>
       <QuickSwitchDialog open={quickOpen} onOpenChange={setQuickOpen} />
+      <NotesDialog open={notesOpen} onOpenChange={setNotesOpen} />
     </div>
   );
 }

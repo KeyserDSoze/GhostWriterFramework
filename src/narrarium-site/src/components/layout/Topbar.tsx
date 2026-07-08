@@ -1,4 +1,4 @@
-import { Activity, ArrowLeftRight, BookOpen, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, History, Languages, LogOut, Menu, Moon, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2, Wand2 } from "lucide-react";
+import { Activity, ArrowLeftRight, BookOpen, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, History, Languages, LogOut, Menu, Moon, NotebookPen, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2, Wand2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -60,6 +60,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const dossierColumnHidden = useUiStore((s) => s.dossierColumnHidden);
   const setDossierColumnHidden = useUiStore((s) => s.setDossierColumnHidden);
   const setDossierSearchOpen = useUiStore((s) => s.setDossierSearchOpen);
+  const setNotesOpen = useUiStore((s) => s.setNotesOpen);
   const setDebugOpen = useUiStore((s) => s.setDebugOpen);
   const debugCount = useLlmDebugStore((s) => s.entries.length);
   const { toast } = useToast();
@@ -291,6 +292,11 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         <Button variant="ghost" size="icon" aria-label={t("shell.readPage")} onClick={() => void handleReadPage()}>
           <Volume2 className="h-4 w-4" />
         </Button>
+        {currentBook && (
+          <Button variant="ghost" size="icon" aria-label={t("notes.title")} title={`${t("notes.title")} (Ctrl+N)`} onClick={() => setNotesOpen(true)}>
+            <NotebookPen className="h-4 w-4" />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"

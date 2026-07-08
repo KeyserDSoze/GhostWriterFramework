@@ -296,7 +296,8 @@ export async function loadBookStructure(
   const canonPaths = allPaths.filter((p) => p.endsWith(".md") && canonPrefixes.some((prefix) => p.startsWith(`${prefix}/`)));
   const chapterMdPaths = allPaths.filter((p) => /^chapters\/[^/]+\/chapter\.md$/.test(p));
   const paragraphPaths = allPaths.filter((p) => /^chapters\/[^/]+\/\d{3}(?:-[^/]+)?\.md$/.test(p) && !p.includes("/drafts/"));
-  const metaMap = await fetchFrontmatterMetadata(octokit, owner, repo, branch, [...chapterMdPaths, ...paragraphPaths, ...canonPaths]);
+  const notePaths = allPaths.filter((p) => /^notes\/[^/]+\.md$/.test(p));
+  const metaMap = await fetchFrontmatterMetadata(octokit, owner, repo, branch, [...chapterMdPaths, ...paragraphPaths, ...canonPaths, ...notePaths]);
 
   // ── Canon sections ────────────────────────────────────────────────────────
   function filesUnder(prefix: string): BookFile[] {
@@ -419,6 +420,13 @@ export async function loadBookStructure(
           })(),
         );
         return { path: p, sha: treeData.tree.find((n) => n.path === p)?.sha ?? "", slug, title: rawTitle ?? slug };
+      })
+      .sort((a, b) => b.slug.localeCompare(a.slug)),
+    notesFiles: allPaths
+      .filter((p) => /^notes\/[^/]+\.md$/.test(p))
+      .map((p) => {
+        const slug = p.replace(/^notes\//, "").replace(/\.md$/i, "");
+        return { path: p, sha: treeData.tree.find((n) => n.path === p)?.sha ?? "", slug, title: metaMap[p]?.name ?? slugToTitle(slug) };
       })
       .sort((a, b) => b.slug.localeCompare(a.slug)),
   };

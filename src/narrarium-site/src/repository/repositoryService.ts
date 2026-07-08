@@ -74,7 +74,25 @@ async function fetchRaw(token: string, owner: string, repo: string, branch: stri
     },
   });
   if (!response.ok) throw new Error(`Download ${path}: ${response.status}`);
-  return new Uint8Array(await response.arrayBuffer());
+  const buffer = await response.arrayBuffer();
+  // GitHub may ignore the "raw" media type and return the JSON contents
+  // envelope ({ content: base64, encoding: "base64", ... }). Detect that and
+  // decode the real bytes so the JSON never gets stored as the file content.
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    try {
+      const json = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer))) as { content?: string; encoding?: string };
+      if (typeof json.content === "string" && json.encoding === "base64") {
+        const binary = atob(json.content.replace(/\n/g, ""));
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+      }
+    } catch {
+      // Not the JSON envelope after all — fall through to raw bytes.
+    }
+  }
+  return new Uint8Array(buffer);
 }
 
 async function mapLimit<T>(items: T[], limit: number, run: (item: T, index: number) => Promise<void>): Promise<void> {
