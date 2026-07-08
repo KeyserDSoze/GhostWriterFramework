@@ -22,6 +22,7 @@ import { MigratePage } from "@/pages/MigratePage";
 import { CostsPage } from "@/pages/CostsPage";
 import { CustomActionsPage } from "@/pages/CustomActionsPage";
 import { ReaderSettingsPage } from "@/pages/ReaderSettingsPage";
+import { DeepResearchPage } from "@/pages/DeepResearchPage";
 import { AppDocsIndexPage, AppDocPage } from "@/pages/AppDocsPage";
 import { AssistantChatsPage } from "@/pages/AssistantChatsPage";
 import {
@@ -69,6 +70,7 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/dashboard", element: <BookDashboardPage /> },
       { path: "books/:bookId/assets", element: <AssetGalleryPage /> },
       { path: "books/:bookId/reader", element: <ReaderPreviewPage /> },
+      { path: "books/:bookId/research", element: <DeepResearchPage /> },
       { path: "books/:bookId/ghostwriters", element: <GhostwritersPage /> },
       { path: "books/:bookId/writing-style", element: <WritingStylePage /> },
       { path: "books/:bookId/settings", element: <BookSettingsPage /> },

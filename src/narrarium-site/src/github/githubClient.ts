@@ -1,5 +1,5 @@
 import { Octokit } from "@octokit/rest";
-import { BookStructure, Chapter, Paragraph, BookFile } from "@/types/book";
+import { BookStructure, Chapter, Paragraph, BookFile, ResearchFile } from "@/types/book";
 import { deleteLocalFile, getLocalFile, getLocalRepository, writeLocalBinary, writeLocalText } from "@/repository/localRepository";
 
 export function createGitHubClient(token: string): Octokit {
@@ -324,6 +324,18 @@ export async function loadBookStructure(
       })
       .sort((a, b) => a.name.localeCompare(b.name)),
     plotPath: allPaths.includes("plot.md") ? "plot.md" : undefined,
+    researchFiles: allPaths
+      .filter((p) => /^research\/[^/]+\.md$/.test(p))
+      .map((p): ResearchFile => {
+        const slug = p.replace(/^research\//, "").replace(/\.md$/i, "");
+        const rawTitle = nameFromFrontmatter(
+          (() => {
+            try { return ""; } catch { return ""; }
+          })(),
+        );
+        return { path: p, sha: treeData.tree.find((n) => n.path === p)?.sha ?? "", slug, title: rawTitle ?? slug };
+      })
+      .sort((a, b) => b.slug.localeCompare(a.slug)),
   };
 }
 

@@ -553,5 +553,12 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
         return { slug, path: p, name: titleName(p, slugToTitle(slug)) };
       })
       .sort((a, b) => a.name.localeCompare(b.name)),
+    researchFiles: allPaths
+      .filter((p) => /^research\/[^/]+\.md$/.test(p))
+      .map((p) => {
+        const slug = p.replace(/^research\//, "").replace(/\.md$/i, "");
+        return { path: p, sha: "", slug, title: titleName(p, slug) };
+      })
+      .sort((a, b) => b.slug.localeCompare(a.slug)),
   };
 }

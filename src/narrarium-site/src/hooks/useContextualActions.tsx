@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ClipboardCheck, Columns2, FileEdit, FileText, NotebookText, Network, PenLine, Wand2 } from "lucide-react";
+import { ClipboardCheck, Columns2, FileEdit, FileText, NotebookText, Network, PenLine, Search, Wand2 } from "lucide-react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useBookStructure } from "@/hooks/useBookStructure";
@@ -135,6 +135,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
     actions.push({ id: "chEval", label: chapter.hasEvaluation ? t("chapter.openEvaluation") : t("chapter.createEvaluation"), run: () => openOrCreateChapter("evaluation"), icon: <ClipboardCheck className="h-4 w-4" /> });
     actions.push({ id: "chStyle", label: t("writingStyle.chapterButton"), to: `${base}/writing-style`, icon: <PenLine className="h-4 w-4" /> });
   } else if (bookId) {
+    actions.push({ id: "research", label: t("research.title"), to: `/app/books/${bookId}/research`, icon: <Search className="h-4 w-4" /> });
     actions.push({ id: "gw", label: t("ghostwriters.title"), to: `/app/books/${bookId}/ghostwriters`, icon: <Wand2 className="h-4 w-4" /> });
     actions.push({ id: "style", label: t("writingStyle.title"), to: `/app/books/${bookId}/writing-style`, icon: <PenLine className="h-4 w-4" /> });
   }

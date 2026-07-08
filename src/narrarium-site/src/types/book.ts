@@ -13,6 +13,16 @@ export interface BookFile {
   imagePath?: string;
 }
 
+export interface ResearchFile {
+  /** File path inside the repo, e.g. research/2024-01-15-rome.md */
+  path: string;
+  sha: string;
+  /** Slug derived from filename */
+  slug: string;
+  /** Display title from frontmatter, falls back to slug */
+  title: string;
+}
+
 export interface Ghostwriter {
   slug: string;
   path: string;
@@ -92,4 +102,6 @@ export interface BookStructure {
   plotPath?: string;
   /** ghostwriters/<slug>.md profiles */
   ghostwriters: Ghostwriter[];
+  /** research/*.md files */
+  researchFiles: ResearchFile[];
 }
