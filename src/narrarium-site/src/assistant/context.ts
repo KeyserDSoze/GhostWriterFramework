@@ -6,6 +6,7 @@ import { resolveBookToken } from "@/types/settings";
 export type AppRouteContext =
   | { kind: "app-home" }
   | { kind: "book"; bookId: string }
+  | { kind: "reader"; bookId: string }
   | { kind: "book-settings"; bookId: string }
   | { kind: "canon"; bookId: string; section: string; slug: string }
   | { kind: "chapter"; bookId: string; chapterId: string }
@@ -37,7 +38,10 @@ export function parseAppRoute(pathname: string): AppRouteContext {
   const clean = pathname.replace(/\/+$/, "") || "/";
   if (clean === "/app" || clean === "/app/books") return { kind: "app-home" };
 
-  let match = /^\/app\/books\/([^/]+)\/settings$/.exec(clean);
+  let match = /^\/app\/books\/([^/]+)\/reader$/.exec(clean);
+  if (match) return { kind: "reader", bookId: decodeURIComponent(match[1]) };
+
+  match = /^\/app\/books\/([^/]+)\/settings$/.exec(clean);
   if (match) return { kind: "book-settings", bookId: decodeURIComponent(match[1]) };
 
   match = /^\/app\/books\/([^/]+)\/canon\/([^/]+)\/([^/]+)$/.exec(clean);
@@ -156,6 +160,7 @@ export async function loadWriterContext(
 
     switch (route.kind) {
       case "book":
+      case "reader":
       case "book-settings":
       case "app-home":
         await pushFile("book.md");
@@ -208,6 +213,7 @@ function buildContextTitle(
 ): string {
   switch (route.kind) {
     case "book":
+    case "reader":
       return structure?.title ?? "Book";
     case "chapter":
     case "chapter-workspace":
@@ -235,6 +241,7 @@ function buildContextSummary(
 ): string {
   switch (route.kind) {
     case "book":
+    case "reader":
       return `${book?.owner}/${book?.repo}\nChapters: ${structure?.chapters.length ?? 0}`;
     case "chapter":
       return `Chapter ${chapter?.slug ?? route.chapterId} with ${chapter?.paragraphs.length ?? 0} paragraphs.`;
@@ -259,7 +266,7 @@ function buildNoteTargetPath(route: AppRouteContext, chapter: Chapter | null): s
   if (route.kind === "chapter" || route.kind === "paragraph" || route.kind === "chapter-workspace" || route.kind === "paragraph-workspace") {
     return chapter ? `drafts/${chapter.slug}/notes.md` : null;
   }
-  if (route.kind === "book" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "app-home") {
+  if (route.kind === "book" || route.kind === "reader" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "app-home") {
     return "notes.md";
   }
   return null;

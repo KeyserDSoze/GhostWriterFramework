@@ -120,6 +120,7 @@ export function resolveCustomActionTarget(input: {
 
   switch (route.kind) {
     case "book":
+    case "reader":
     case "book-settings":
       return { type: "book", title: structure?.title ?? book?.name ?? "Book", filePath: "book.md", book, structure, chapter: null, paragraph: null, branch, token };
     case "chapter":

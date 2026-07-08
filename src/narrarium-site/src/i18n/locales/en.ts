@@ -1137,6 +1137,7 @@ const en = {
     deleteBookmark: "Delete bookmark",
     bookmarkLogicHint: "Each bookmark stores book, chapter, paragraph, and text offset so it survives font, window, and device changes.",
     settingsTitle: "Reader Settings",
+    backToBook: "Back to book",
     settingsDescription: "Configure the ebook-style reader experience and persistent reading preferences.",
     settingsSaved: "Reader settings saved",
     display: "Display",

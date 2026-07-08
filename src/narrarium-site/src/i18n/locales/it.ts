@@ -1137,6 +1137,7 @@ const it = {
     deleteBookmark: "Elimina segnalibro",
     bookmarkLogicHint: "Ogni segnalibro salva libro, capitolo, paragrafo e offset nel testo, quindi resta valido cambiando font, finestra o dispositivo.",
     settingsTitle: "Reader Settings",
+    backToBook: "Torna al libro",
     settingsDescription: "Configura l'esperienza di lettura stile ebook e le preferenze persistenti.",
     settingsSaved: "Reader Settings salvate",
     display: "Visualizzazione",

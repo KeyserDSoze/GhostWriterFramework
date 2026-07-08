@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { BookOpen, Loader2, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, BookOpen, Loader2, Save, Trash2 } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,12 +17,14 @@ import type { ReaderLineBreakMode, ReaderSettings } from "@/types/settings";
 
 export function ReaderSettingsPage() {
   const { t } = useTranslation();
+  const location = useLocation();
   const { toast } = useToast();
   const { settings, patchSettings } = useSettingsStore();
   const { save, load, syncStatus } = useSettings();
   const didLoad = useRef(false);
   const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify(settings.reader));
   const reader = settings.reader;
+  const readerReturnTo = getReaderReturnTo(location.state);
   const dirty = JSON.stringify(reader) !== savedSnapshot;
   const saving = syncStatus === "saving";
 
@@ -54,7 +57,10 @@ export function ReaderSettingsPage() {
           <h1 className="flex items-center gap-2 font-serif text-3xl font-semibold tracking-tight"><BookOpen className="h-6 w-6" />{t("reader.settingsTitle")}</h1>
           <p className="text-muted-foreground">{t("reader.settingsDescription")}</p>
         </div>
-        <Button onClick={() => void handleSave()} disabled={saving || !dirty}>{saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}{t("common.save")}</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {readerReturnTo && <Button asChild variant="outline"><Link to={readerReturnTo}><ArrowLeft className="mr-1 h-4 w-4" />{t("reader.backToBook")}</Link></Button>}
+          <Button onClick={() => void handleSave()} disabled={saving || !dirty}>{saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}{t("common.save")}</Button>
+        </div>
       </div>
 
       <Card>
@@ -132,6 +138,13 @@ export function ReaderSettingsPage() {
       </Card>
     </div>
   );
+}
+
+function getReaderReturnTo(state: unknown): string | null {
+  if (!state || typeof state !== "object") return null;
+  const returnTo = (state as { returnTo?: unknown }).returnTo;
+  if (typeof returnTo !== "string") return null;
+  return /^\/app\/books\/[^/]+\/reader$/.test(returnTo) ? returnTo : null;
 }
 
 function ReaderSwitch({ label, hint, checked, onChange }: { label: string; hint: string; checked: boolean; onChange: (checked: boolean) => void }) {

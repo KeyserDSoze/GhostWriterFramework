@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseDocument } from "yaml";
-import { AlertCircle, ArrowLeft, BookOpen, Bookmark, BookmarkPlus, ChevronLeft, ChevronRight, Eye, EyeOff, Image as ImageIcon, Maximize2, Settings, Trash2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, BookOpen, Bookmark, BookmarkPlus, ChevronLeft, ChevronRight, Eye, EyeOff, Image as ImageIcon, Maximize2, Minimize2, Settings, Trash2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -341,7 +341,7 @@ export function ReaderPreviewPage() {
           <Button variant="outline" size="sm" onClick={() => go(1)} disabled={pageIndex >= pageCount - 1}>{t("reader.next")}<ChevronRight className="h-4 w-4" /></Button>
           <Button variant="outline" size="sm" onClick={addBookmark}><BookmarkPlus className="mr-1 h-4 w-4" />{t("reader.addBookmark")}</Button>
           <Button variant="outline" size="sm" onClick={() => setBookmarksOpen(true)}><Bookmark className="mr-1 h-4 w-4" />{bookBookmarks.length}</Button>
-          <Button asChild variant="outline" size="sm"><Link to="/app/reader-settings"><Settings className="mr-1 h-4 w-4" />{t("reader.settingsTitle")}</Link></Button>
+          <Button asChild variant="outline" size="sm"><Link to="/app/reader-settings" state={{ returnTo: `/app/books/${book.id}/reader` }}><Settings className="mr-1 h-4 w-4" />{t("reader.settingsTitle")}</Link></Button>
           <Button variant="outline" size="icon" title={readerSettings.showImages ? t("reader.hideImages") : t("reader.showImages")} onClick={() => patchReaderSettings({ showImages: !readerSettings.showImages })}>
             {readerSettings.showImages ? <ImageIcon className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
           </Button>
@@ -362,6 +362,22 @@ export function ReaderPreviewPage() {
               onClick={handleReaderClick}
               style={{ padding: `${readerSettings.pageMargin}px` }}
             >
+              {fullScreen && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="icon"
+                  className="absolute right-3 top-3 z-30 h-9 w-9 rounded-full border bg-background/85 text-foreground shadow-lg backdrop-blur transition hover:bg-background sm:right-5 sm:top-5"
+                  title={t("reader.exitFullscreen")}
+                  aria-label={t("reader.exitFullscreen")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setReaderFullScreen(false);
+                  }}
+                >
+                  <Minimize2 className="h-4 w-4" />
+                </Button>
+              )}
               <div ref={viewportRef} className="h-full overflow-hidden">
               <article
                 ref={flowRef}

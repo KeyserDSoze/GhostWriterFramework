@@ -75,6 +75,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     ?? (currentBookId ? workingBranches[currentBookId] : undefined)
     ?? (user?.email ? emailToBranchName(user.email) : undefined);
   const currentToken = currentBook ? resolveBookToken(currentBook, settings) : "";
+  const readerSettingsState = route.kind === "reader" ? { returnTo: location.pathname } : undefined;
 
   useEffect(() => {
     const bookId = currentBookId;
@@ -327,7 +328,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               <Settings className="mr-2 h-4 w-4" />
               {t("nav.settings")}
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate("/app/reader-settings")}>
+            <DropdownMenuItem onClick={() => navigate("/app/reader-settings", { state: readerSettingsState })}>
               <BookOpen className="mr-2 h-4 w-4" />
               {t("reader.settingsTitle")}
             </DropdownMenuItem>
