@@ -362,7 +362,7 @@ export function ReaderPreviewPage() {
               onClick={handleReaderClick}
               style={{ padding: `${readerSettings.pageMargin}px` }}
             >
-              {fullScreen && (
+              {fullScreen && readerSettings.showExitFullscreenButton && (
                 <Button
                   type="button"
                   variant="secondary"

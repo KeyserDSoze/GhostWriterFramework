@@ -1153,6 +1153,8 @@ const en = {
     fullscreen: "Full screen",
     exitFullscreen: "Exit full screen",
     fullscreenHint: "Hide the app interface and keep only the book on screen while reading.",
+    showExitFullscreenButton: "Show exit full-screen button",
+    showExitFullscreenButtonHint: "Show a persistent minimize button in the top-right corner while reading in full-screen mode. Off by default; you can also exit with Esc or a tap.",
     fontFamily: "Font family",
     fontSerif: "Serif",
     fontSans: "Sans",

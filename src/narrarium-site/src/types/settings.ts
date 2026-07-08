@@ -265,6 +265,8 @@ export interface ReaderSettings {
   pageMargin: number;
   /** How Markdown line/paragraph breaks are translated into the ebook reading flow. */
   lineBreakMode: ReaderLineBreakMode;
+  /** Show a persistent exit-fullscreen button overlay while in full-screen mode. Off by default. */
+  showExitFullscreenButton: boolean;
   bookmarks: ReaderBookmark[];
 }
 
@@ -355,6 +357,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     lineHeight: 1.75,
     pageMargin: 48,
     lineBreakMode: "book",
+    showExitFullscreenButton: false,
     bookmarks: [],
   },
   customActions: [],

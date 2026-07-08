@@ -1153,6 +1153,8 @@ const it = {
     fullscreen: "Full Screen",
     exitFullscreen: "Esci dal Full Screen",
     fullscreenHint: "Nasconde l'interfaccia dell'app e lascia sullo schermo solo il libro.",
+    showExitFullscreenButton: "Mostra bottone per uscire dal Full Screen",
+    showExitFullscreenButtonHint: "Mostra un piccolo bottone in alto a destra durante la lettura a schermo intero. Disattivo di default; puoi uscire anche con Esc o un tap.",
     fontFamily: "Font family",
     fontSerif: "Serif",
     fontSans: "Sans",

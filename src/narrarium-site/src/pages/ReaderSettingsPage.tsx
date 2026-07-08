@@ -73,6 +73,7 @@ export function ReaderSettingsPage() {
           <ReaderSwitch label={t("reader.showFrontmatter")} hint={t("reader.showFrontmatterHint")} checked={reader.showFrontmatter} onChange={(showFrontmatter) => patchReader({ showFrontmatter })} />
           <ReaderSwitch label={t("reader.showEntityLinks")} hint={t("reader.showEntityLinksHint")} checked={reader.showRichEntityLinks} onChange={(showRichEntityLinks) => patchReader({ showRichEntityLinks })} />
           <ReaderSwitch label={t("reader.fullscreen")} hint={t("reader.fullscreenHint")} checked={reader.fullScreen} onChange={(fullScreen) => patchReader({ fullScreen })} />
+          <ReaderSwitch label={t("reader.showExitFullscreenButton")} hint={t("reader.showExitFullscreenButtonHint")} checked={reader.showExitFullscreenButton} onChange={(showExitFullscreenButton) => patchReader({ showExitFullscreenButton })} />
           <div className="grid gap-2 sm:max-w-md">
             <Label>{t("reader.fontFamily")}</Label>
             <Select value={reader.fontFamily} onValueChange={(fontFamily) => patchReader({ fontFamily: fontFamily as ReaderSettings["fontFamily"] })}>
