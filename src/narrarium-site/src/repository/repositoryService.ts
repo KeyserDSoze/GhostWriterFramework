@@ -244,10 +244,27 @@ export async function pushLocalCommits(input: { bookId: string; token: string })
     for (const file of commit.files) changedPaths.set(file.path, file.status === "deleted" ? null : fileByPath.get(file.path) ?? null);
   }
 
+  // A deletion entry whose path is a directory (or missing) on the remote tree
+  // triggers GitRPC::BadObjectState. Only keep deletions that target an actual blob.
+  const remoteBlobPaths = new Set<string>();
+  try {
+    const baseTree = await octokit.rest.git.getTree({ owner: meta.owner, repo: meta.repo, tree_sha: baseCommit.data.tree.sha, recursive: "1" });
+    for (const entry of baseTree.data.tree ?? []) {
+      if (entry.type === "blob" && entry.path) remoteBlobPaths.add(entry.path);
+    }
+  } catch {
+    // If we cannot read the base tree, fall back to attempting all deletions.
+  }
+
   const pushedShas: Record<string, string | null> = {};
   const treeEntries = [] as Array<{ path: string; mode: "100644"; type: "blob"; sha: string | null }>;
   for (const [path, file] of changedPaths) {
     if (!file) {
+      // Skip deletions for paths that are not blobs on the remote (avoids BadObjectState).
+      if (remoteBlobPaths.size > 0 && !remoteBlobPaths.has(path)) {
+        pushedShas[path] = null;
+        continue;
+      }
       treeEntries.push({ path, mode: "100644", type: "blob", sha: null });
       pushedShas[path] = null;
       continue;
@@ -256,12 +273,19 @@ export async function pushLocalCommits(input: { bookId: string; token: string })
     treeEntries.push({ path, mode: "100644", type: "blob", sha: blob });
     pushedShas[path] = blob;
   }
+  if (treeEntries.length === 0) {
+    // Nothing valid to push (e.g. only stale directory-deletions). Mark commits
+    // pushed against the current remote head so the local state settles.
+    await markLocalCommitsPushed(meta.id, commits.map((entry) => entry.id), remoteHeadSha, pushedShas);
+    await addLocalRepoLog(meta.id, "push", `No pushable changes; settled local commits at ${remoteHeadSha.slice(0, 7)}`);
+    return { commitSha: remoteHeadSha, files: 0 };
+  }
   const tree = await octokit.rest.git.createTree({ owner: meta.owner, repo: meta.repo, base_tree: baseCommit.data.tree.sha, tree: treeEntries });
   const commit = await octokit.rest.git.createCommit({ owner: meta.owner, repo: meta.repo, message: commits.map((entry) => entry.message).join("\n\n"), tree: tree.data.sha, parents: [remoteHeadSha] });
   await octokit.rest.git.updateRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, sha: commit.data.sha });
   await markLocalCommitsPushed(meta.id, commits.map((entry) => entry.id), commit.data.sha, pushedShas);
-  await addLocalRepoLog(meta.id, "push", `Pushed ${changedPaths.size} files to ${commit.data.sha.slice(0, 7)} (local wins)`);
-  return { commitSha: commit.data.sha, files: changedPaths.size };
+  await addLocalRepoLog(meta.id, "push", `Pushed ${treeEntries.length} files to ${commit.data.sha.slice(0, 7)} (local wins)`);
+  return { commitSha: commit.data.sha, files: treeEntries.length };
 }
 
 export async function syncFullRepository(input: { bookId: string; token: string }): Promise<SyncResult> {
@@ -365,6 +389,12 @@ export async function recloneLocalWorkingCopy(input: {
  * non-deleted local file into a fresh tree (no base_tree), commits it on top of
  * the current remote head, then rebases the local baseline so the working copy
  * is reported clean and consistent again.
+ *
+ * A full tree with no base_tree avoids the `GitRPC::BadObjectState` error that
+ * corrupted repositories hit on incremental pushes (e.g. a stale "deleted"
+ * tombstone pointing at a path that is a directory on the remote). Invalid or
+ * colliding paths (a blob that is also used as a directory) are dropped so the
+ * tree is always well-formed.
  */
 export async function overwriteRemoteWithLocal(input: { bookId: string; token: string }): Promise<PushResult> {
   const meta = await getLocalRepositoryByBook(input.bookId);
@@ -375,8 +405,27 @@ export async function overwriteRemoteWithLocal(input: { bookId: string; token: s
   const remoteHeadSha = ref.data.object.sha;
 
   // The app's current view = all non-deleted local files.
-  const files = await listLocalFiles(meta.id);
-  if (files.length === 0) throw new Error("Local working copy is empty.");
+  const allLocal = await listLocalFiles(meta.id);
+  if (allLocal.length === 0) throw new Error("Local working copy is empty.");
+
+  // Drop malformed paths (empty segments, leading/trailing slashes, . / ..).
+  const wellFormed = allLocal.filter((file) => {
+    const p = file.path;
+    if (!p || p.startsWith("/") || p.endsWith("/") || p.includes("//")) return false;
+    return !p.split("/").some((seg) => seg === "" || seg === "." || seg === "..");
+  });
+
+  // Any path used as a directory prefix cannot also exist as a blob (git tree
+  // conflict). Collect directory prefixes, then drop bare files that collide.
+  const directoryPrefixes = new Set<string>();
+  for (const file of wellFormed) {
+    const parts = file.path.split("/");
+    for (let i = 1; i < parts.length; i++) directoryPrefixes.add(parts.slice(0, i).join("/"));
+  }
+  const files = wellFormed.filter((file) => !directoryPrefixes.has(file.path));
+  const droppedPaths = new Set(allLocal.filter((f) => !files.includes(f)).map((f) => f.path));
+
+  if (files.length === 0) throw new Error("No valid files to push after removing conflicting paths.");
 
   const treeEntries: Array<{ path: string; mode: "100644"; type: "blob"; sha: string }> = [];
   const pushedShas: Record<string, string> = {};
@@ -401,7 +450,8 @@ export async function overwriteRemoteWithLocal(input: { bookId: string; token: s
   await discardUnpushedLocalCommits(meta.id);
   const allFiles = await listAllLocalFiles(meta.id);
   for (const file of allFiles) {
-    if (file.status === "deleted") {
+    // Remove deletion tombstones and any dropped/conflicting entries.
+    if (file.status === "deleted" || droppedPaths.has(file.path)) {
       await removeLocalFileEntry(meta.id, file.path);
       continue;
     }
