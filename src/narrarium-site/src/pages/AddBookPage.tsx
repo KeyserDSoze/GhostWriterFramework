@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Search, Loader2, Github, Lock, Globe } from "lucide-react";
+import { Search, Loader2, Github, Lock, Globe, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -18,8 +18,19 @@ import {
 import { useSettingsStore } from "@/store/settingsStore";
 import { useSettings } from "@/drive/useSettings";
 import { useRepositories } from "@/github/useRepositories";
-import { type RepoSummary } from "@/github/githubClient";
+import { createNarrariumBookRepository, type RepoSummary } from "@/github/githubClient";
 import { type BookEntry } from "@/types/settings";
+
+function defaultRepoName(title: string): string {
+  const normalized = title
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "")
+    .replace(/-{2,}/g, "-")
+    .toLowerCase();
+  return `book.${normalized || "untitled"}`;
+}
 
 export function AddBookPage() {
   const { t } = useTranslation();
@@ -32,6 +43,12 @@ export function AddBookPage() {
   const [selectedToken, setSelectedToken] = useState("default");
   const [customToken, setCustomToken] = useState("");
   const [customTokenLabel, setCustomTokenLabel] = useState("");
+  const [newBookTitle, setNewBookTitle] = useState("");
+  const [newRepoName, setNewRepoName] = useState(defaultRepoName(""));
+  const [repoNameEdited, setRepoNameEdited] = useState(false);
+  const [newRepoVisibility, setNewRepoVisibility] = useState<"private" | "public">("private");
+  const [creatingRepo, setCreatingRepo] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const activeToken =
     selectedToken === "default"
@@ -51,6 +68,10 @@ export function AddBookPage() {
 
   const [search, setSearch] = useState("");
   const [adding, setAdding] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!repoNameEdited) setNewRepoName(defaultRepoName(newBookTitle));
+  }, [newBookTitle, repoNameEdited]);
 
   const filtered = repos.filter(
     (r) =>
@@ -78,6 +99,41 @@ export function AddBookPage() {
     patchSettings({ books: next });
     await save();
     navigate(`/app/books/${entry.id}`);
+  }
+
+  async function handleCreateNewBook() {
+    const title = newBookTitle.trim();
+    const repoName = newRepoName.trim();
+    if (!title || !repoName || !activeToken) return;
+    setCreateError(null);
+    setCreatingRepo(true);
+    try {
+      const repo = await createNarrariumBookRepository(activeToken, {
+        name: repoName,
+        title,
+        private: newRepoVisibility === "private",
+        language: settings.ui.language,
+      });
+      const usingCustom = selectedToken === "custom";
+      const entry: BookEntry = {
+        id: crypto.randomUUID(),
+        owner: repo.owner,
+        repo: repo.name,
+        name: title,
+        tokenIndex: selectedToken === "default" || usingCustom ? null : Number(selectedToken),
+        bookToken: usingCustom ? customToken.trim() : undefined,
+        bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${repo.name} PAT` : undefined,
+        activeBranch: repo.default_branch,
+        addedAt: new Date().toISOString(),
+      };
+      patchSettings({ books: [...settings.books, entry] });
+      await save();
+      navigate(`/app/books/${entry.id}`);
+    } catch (err) {
+      setCreateError(String(err));
+    } finally {
+      setCreatingRepo(false);
+    }
   }
 
   const noDefaultToken = !settings.defaultGitHubToken && selectedToken === "default";
@@ -166,6 +222,47 @@ export function AddBookPage() {
         )}
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Plus className="h-5 w-5" />{t("addBook.createNew")}</CardTitle>
+          <CardDescription>{t("addBook.createNewDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label>{t("addBook.bookTitle")}</Label>
+              <Input value={newBookTitle} onChange={(e) => setNewBookTitle(e.target.value)} placeholder={t("addBook.bookTitlePlaceholder")} />
+            </div>
+            <div className="grid gap-2">
+              <Label>{t("addBook.repositoryName")}</Label>
+              <Input value={newRepoName} onChange={(e) => { setRepoNameEdited(true); setNewRepoName(e.target.value); }} placeholder="book.my-story" />
+              <p className="text-xs text-muted-foreground">{t("addBook.repoNameHint")}</p>
+            </div>
+          </div>
+          <div className="grid gap-2 sm:max-w-xs">
+            <Label>{t("addBook.visibility")}</Label>
+            <Select value={newRepoVisibility} onValueChange={(value) => setNewRepoVisibility(value as "private" | "public")}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="private">{t("addBook.privateRepo")}</SelectItem>
+                <SelectItem value="public">{t("addBook.publicRepo")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {createError && <Alert variant="destructive"><AlertDescription>{createError}</AlertDescription></Alert>}
+          <Button onClick={() => void handleCreateNewBook()} disabled={creatingRepo || !activeToken || !newBookTitle.trim() || !newRepoName.trim()}>
+            {creatingRepo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+            {creatingRepo ? t("addBook.creatingRepo") : t("addBook.createRepo")}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("addBook.existingReposTitle")}</CardTitle>
+          <CardDescription>{t("addBook.existingReposDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
       {/* Search */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -239,6 +336,8 @@ export function AddBookPage() {
           );
         })}
       </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

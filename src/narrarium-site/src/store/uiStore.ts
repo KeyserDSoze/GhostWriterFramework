@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 interface UiState {
   floatingHidden: boolean;
@@ -24,21 +25,29 @@ interface UiState {
   setAuthActivity: (activity: "idle" | "refreshing" | "offline") => void;
 }
 
-export const useUiStore = create<UiState>()((set) => ({
-  floatingHidden: false,
-  toggleFloating: () => set((s) => ({ floatingHidden: !s.floatingHidden })),
-  setFloatingHidden: (hidden) => set({ floatingHidden: hidden }),
-  debugOpen: false,
-  setDebugOpen: (open) => set({ debugOpen: open }),
-  actionsOpen: false,
-  setActionsOpen: (open) => set({ actionsOpen: open }),
-  sidebarCollapsed: false,
-  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
-  dossierColumnHidden: false,
-  setDossierColumnHidden: (hidden) => set({ dossierColumnHidden: hidden }),
-  dossierSearchOpen: false,
-  setDossierSearchOpen: (open) => set({ dossierSearchOpen: open }),
-  authActivity: "idle",
-  setAuthActivity: (activity) => set({ authActivity: activity }),
-}));
+export const useUiStore = create<UiState>()(
+  persist(
+    (set) => ({
+      floatingHidden: false,
+      toggleFloating: () => set((s) => ({ floatingHidden: !s.floatingHidden })),
+      setFloatingHidden: (hidden) => set({ floatingHidden: hidden }),
+      debugOpen: false,
+      setDebugOpen: (open) => set({ debugOpen: open }),
+      actionsOpen: false,
+      setActionsOpen: (open) => set({ actionsOpen: open }),
+      sidebarCollapsed: false,
+      toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+      setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+      dossierColumnHidden: false,
+      setDossierColumnHidden: (hidden) => set({ dossierColumnHidden: hidden }),
+      dossierSearchOpen: false,
+      setDossierSearchOpen: (open) => set({ dossierSearchOpen: open }),
+      authActivity: "idle",
+      setAuthActivity: (activity) => set({ authActivity: activity }),
+    }),
+    {
+      name: "narrarium-ui-state",
+      partialize: (state) => ({ dossierColumnHidden: state.dossierColumnHidden }),
+    },
+  ),
+);

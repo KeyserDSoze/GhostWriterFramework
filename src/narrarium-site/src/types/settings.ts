@@ -117,13 +117,17 @@ export interface GitHubToken {
 export type BookExportScope = "full" | "draft";
 export type BookExportPageSize = "letter" | "a4";
 export type BookExportAlignment = "left" | "justified";
+export type BookExportFontFamily = "serif" | "sans" | "mono";
 
 export interface BookExportSettings {
   defaultScope: BookExportScope;
   sampleChapters: number;
   includeTitlePage: boolean;
+  includeImages: boolean;
+  includeFrontmatter: boolean;
   showParagraphTitles: boolean;
   showChapterSummary: boolean;
+  fontFamily: BookExportFontFamily;
   fontName: string;
   fontSize: number;
   lineSpacing: number;
@@ -131,6 +135,7 @@ export interface BookExportSettings {
   paragraphIndentInches: number;
   pageSize: BookExportPageSize;
   paragraphAlignment: BookExportAlignment;
+  lineBreakMode: ReaderLineBreakMode;
   sceneBreak: string;
   googleDriveFolderId?: string;
   googleDriveFolderName?: string;
@@ -147,8 +152,11 @@ export const DEFAULT_BOOK_EXPORT_SETTINGS: BookExportSettings = {
   defaultScope: "draft",
   sampleChapters: 5,
   includeTitlePage: true,
+  includeImages: true,
+  includeFrontmatter: false,
   showParagraphTitles: false,
   showChapterSummary: false,
+  fontFamily: "serif",
   fontName: "Times New Roman",
   fontSize: 12,
   lineSpacing: 2,
@@ -156,6 +164,7 @@ export const DEFAULT_BOOK_EXPORT_SETTINGS: BookExportSettings = {
   paragraphIndentInches: 0.5,
   pageSize: "letter",
   paragraphAlignment: "left",
+  lineBreakMode: "book",
   sceneBreak: "#",
 };
 

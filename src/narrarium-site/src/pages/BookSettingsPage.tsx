@@ -342,6 +342,17 @@ export function BookSettingsPage() {
               <Input type="number" min="1" value={exportSettings.sampleChapters} onChange={(e) => patchExportSettings({ sampleChapters: Math.max(1, Number(e.target.value) || 1) })} />
             </div>
             <div className="grid gap-2">
+              <Label>{t("export.fontFamily")}</Label>
+              <Select value={exportSettings.fontFamily} onValueChange={(value) => patchExportSettings({ fontFamily: value as "serif" | "sans" | "mono" })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="serif">{t("reader.fontSerif")}</SelectItem>
+                  <SelectItem value="sans">{t("reader.fontSans")}</SelectItem>
+                  <SelectItem value="mono">{t("reader.fontMono")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
               <Label>{t("export.fontName")}</Label>
               <Input value={exportSettings.fontName} onChange={(e) => patchExportSettings({ fontName: e.target.value })} />
             </div>
@@ -382,6 +393,18 @@ export function BookSettingsPage() {
               </Select>
             </div>
             <div className="grid gap-2 sm:col-span-2">
+              <Label>{t("export.lineBreakMode")}</Label>
+              <Select value={exportSettings.lineBreakMode} onValueChange={(value) => patchExportSettings({ lineBreakMode: value as "book" | "dialogue" | "source" })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="book">{t("reader.lineBreakBook")}</SelectItem>
+                  <SelectItem value="dialogue">{t("reader.lineBreakDialogue")}</SelectItem>
+                  <SelectItem value="source">{t("reader.lineBreakSource")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t("reader.lineBreakHint")}</p>
+            </div>
+            <div className="grid gap-2 sm:col-span-2">
               <Label>{t("export.sceneBreak")}</Label>
               <Input value={exportSettings.sceneBreak} onChange={(e) => patchExportSettings({ sceneBreak: e.target.value || "#" })} />
             </div>
@@ -394,6 +417,20 @@ export function BookSettingsPage() {
                 <p className="text-xs text-muted-foreground">{t("export.includeTitlePageHint")}</p>
               </div>
               <Switch checked={exportSettings.includeTitlePage} onCheckedChange={(checked) => patchExportSettings({ includeTitlePage: checked })} />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-medium">{t("export.includeImages")}</p>
+                <p className="text-xs text-muted-foreground">{t("export.includeImagesHint")}</p>
+              </div>
+              <Switch checked={exportSettings.includeImages} onCheckedChange={(checked) => patchExportSettings({ includeImages: checked })} />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-medium">{t("export.includeFrontmatter")}</p>
+                <p className="text-xs text-muted-foreground">{t("export.includeFrontmatterHint")}</p>
+              </div>
+              <Switch checked={exportSettings.includeFrontmatter} onCheckedChange={(checked) => patchExportSettings({ includeFrontmatter: checked })} />
             </div>
             <div className="flex items-center justify-between gap-3">
               <div>

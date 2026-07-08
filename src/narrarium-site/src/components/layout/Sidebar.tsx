@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   Clock,
   Columns2,
+  Download,
   EyeOff,
   FileEdit,
   FileText,
@@ -86,6 +87,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         { label: t("assets.title"), href: `/app/books/${bookId}/assets`, icon: <Images className="h-4 w-4" /> },
         { label: t("research.title"), href: `/app/books/${bookId}/research`, icon: <Search className="h-4 w-4" /> },
         { label: t("reader.title"), href: `/app/books/${bookId}/reader`, icon: <BookOpen className="h-4 w-4" /> },
+        { label: t("export.title"), href: `/app/books/${bookId}/export`, icon: <Download className="h-4 w-4" /> },
         { label: t("bookPage.bookSettings"), href: `/app/books/${bookId}/settings`, icon: <Settings className="h-4 w-4" /> },
       ]
     : [];

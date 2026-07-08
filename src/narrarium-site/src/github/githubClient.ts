@@ -1,6 +1,7 @@
 import { Octokit } from "@octokit/rest";
 import { BookStructure, Chapter, Paragraph, BookFile, ResearchFile } from "@/types/book";
 import { deleteLocalFile, getLocalFile, getLocalRepository, writeLocalBinary, writeLocalText } from "@/repository/localRepository";
+import { buildInitialBookFiles } from "@/narrarium/bookScaffold";
 
 export function createGitHubClient(token: string): Octokit {
   return new Octokit({ auth: token });
@@ -126,6 +127,65 @@ export async function listUserRepos(token: string): Promise<RepoSummary[]> {
     html_url: r.html_url,
     default_branch: r.default_branch,
   }));
+}
+
+export interface CreateNarrariumBookRepositoryInput {
+  name: string;
+  title: string;
+  private: boolean;
+  language?: string;
+  author?: string;
+}
+
+export async function createNarrariumBookRepository(token: string, input: CreateNarrariumBookRepositoryInput): Promise<RepoSummary> {
+  const octokit = createGitHubClient(token);
+  const repoName = input.name.trim();
+  if (!repoName) throw new Error("Repository name is required.");
+
+  const { data: repoData } = await octokit.rest.repos.createForAuthenticatedUser({
+    name: repoName,
+    private: input.private,
+    auto_init: false,
+    description: `Narrarium book: ${input.title.trim() || repoName}`,
+  });
+
+  const owner = repoData.owner.login;
+  const repo = repoData.name;
+  const branch = "main";
+  const files = buildInitialBookFiles({ title: input.title, author: input.author, language: input.language });
+
+  const { data: tree } = await octokit.rest.git.createTree({
+    owner,
+    repo,
+    tree: files.map((file) => ({
+      path: file.path,
+      mode: "100644" as const,
+      type: "blob" as const,
+      content: file.content,
+    })),
+  });
+
+  const { data: commit } = await octokit.rest.git.createCommit({
+    owner,
+    repo,
+    message: "init",
+    tree: tree.sha,
+    parents: [],
+  });
+
+  await octokit.rest.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: commit.sha });
+  await octokit.rest.repos.update({ owner, repo, default_branch: branch }).catch(() => undefined);
+
+  return {
+    id: repoData.id,
+    full_name: repoData.full_name,
+    owner,
+    name: repo,
+    private: repoData.private,
+    description: repoData.description,
+    html_url: repoData.html_url,
+    default_branch: branch,
+  };
 }
 
 // ─── Load the full book structure from a repository ──────────────────────────
