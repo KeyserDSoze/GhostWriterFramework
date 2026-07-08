@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { GitCommit, GitPullRequest, Loader2, RefreshCcw, RotateCcw, Trash2, UploadCloud } from "lucide-react";
+import { GitCommit, GitPullRequest, Loader2, RefreshCcw, RotateCcw, Trash2, UploadCloud, ShieldCheck } from "lucide-react";
 import JSZip from "jszip";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -9,7 +9,7 @@ import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
 import { addLocalRepoLog, buildLocalBookStructure, getLocalRepository, getLocalRepositoryByBook, listAllLocalFiles, listDirtyLocalFiles, listLocalRepoLogs, listUnpushedLocalCommits, localStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryFile, type LocalRepoStatus } from "@/repository/localRepository";
-import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, syncFullRepository } from "@/repository/repositoryService";
+import { commitLocalChanges, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, syncFullRepository } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 
 function formatBytes(value: number): string {
@@ -214,6 +214,15 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
               })}>{busy === "push" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-1 h-4 w-4" />}{t("repoStatus.push")}</Button>
             </div>
             <Button variant="outline" className="w-full" disabled={disabled} onClick={() => void exportBackup()}>{busy === "backup" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}{t("repoStatus.exportBackup")}</Button>
+            <div className="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3">
+              <p className="text-sm font-medium">{t("repoStatus.repairTitle")}</p>
+              <p className="text-xs text-muted-foreground">{t("repoStatus.repairDescription")}</p>
+              <Button variant="outline" className="w-full" disabled={networkDisabled} onClick={() => void run("resync-local", async () => {
+                if (!window.confirm(t("repoStatus.resyncLocalConfirm"))) return t("repoStatus.cancelled");
+                const result = await overwriteRemoteWithLocal({ bookId: book.id, token });
+                return t("repoStatus.resyncLocalDone", { count: result.files });
+              })}>{busy === "resync-local" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-1 h-4 w-4" />}{t("repoStatus.resyncLocal")}</Button>
+            </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <Button variant="outline" disabled={networkDisabled} onClick={() => void recloneLocal()}>{busy === "reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.reclone")}</Button>
               <Button variant="destructive" disabled={disabled} onClick={() => void removeLocal()}>{busy === "remove-local" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}{t("repoStatus.removeLocal")}</Button>

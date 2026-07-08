@@ -10,6 +10,7 @@ import {
   getLocalRepositoryByBook,
   listAllLocalFiles,
   listDirtyLocalFiles,
+  listLocalFiles,
   listUnpushedLocalCommits,
   markLocalRepositoryRemoteCheck,
   markLocalCommitsPushed,
@@ -355,6 +356,69 @@ export async function recloneLocalWorkingCopy(input: {
   const result = await ensureLocalBookStructure(input);
   await addLocalRepoLog(result.meta.id, "reset", "Recloned local working copy");
   return result;
+}
+
+/**
+ * Overwrite the remote branch so it matches the local working copy exactly.
+ *
+ * Use this to recover from a local/remote divergence: it snapshots every
+ * non-deleted local file into a fresh tree (no base_tree), commits it on top of
+ * the current remote head, then rebases the local baseline so the working copy
+ * is reported clean and consistent again.
+ */
+export async function overwriteRemoteWithLocal(input: { bookId: string; token: string }): Promise<PushResult> {
+  const meta = await getLocalRepositoryByBook(input.bookId);
+  if (!meta) throw new Error("Local repository is not ready.");
+
+  const octokit = new Octokit({ auth: input.token });
+  const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
+  const remoteHeadSha = ref.data.object.sha;
+
+  // The app's current view = all non-deleted local files.
+  const files = await listLocalFiles(meta.id);
+  if (files.length === 0) throw new Error("Local working copy is empty.");
+
+  const treeEntries: Array<{ path: string; mode: "100644"; type: "blob"; sha: string }> = [];
+  const pushedShas: Record<string, string> = {};
+  await mapLimit(files, 6, async (file) => {
+    const blob = await createBlobForFile(octokit, meta, file);
+    treeEntries.push({ path: file.path, mode: "100644", type: "blob", sha: blob });
+    pushedShas[file.path] = blob;
+  });
+
+  // Full tree (no base_tree) → remote will contain EXACTLY these files.
+  const tree = await octokit.rest.git.createTree({ owner: meta.owner, repo: meta.repo, tree: treeEntries });
+  const commit = await octokit.rest.git.createCommit({
+    owner: meta.owner,
+    repo: meta.repo,
+    message: "Resync: local working copy as source of truth",
+    tree: tree.data.sha,
+    parents: [remoteHeadSha],
+  });
+  await octokit.rest.git.updateRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, sha: commit.data.sha });
+
+  // Rebase the local baseline so everything reads clean and consistent again.
+  await discardUnpushedLocalCommits(meta.id);
+  const allFiles = await listAllLocalFiles(meta.id);
+  for (const file of allFiles) {
+    if (file.status === "deleted") {
+      await removeLocalFileEntry(meta.id, file.path);
+      continue;
+    }
+    await putCleanLocalFile({
+      repoId: meta.id,
+      path: file.path,
+      kind: file.kind,
+      text: file.kind === "text" ? file.text ?? "" : undefined,
+      blob: file.kind === "binary" ? file.blob : undefined,
+      baseSha: pushedShas[file.path],
+      size: file.size,
+    });
+  }
+  await updateLocalRepositoryHead(meta.id, commit.data.sha);
+  await addLocalRepoLog(meta.id, "push", `Resynced remote to match local (${files.length} files) at ${commit.data.sha.slice(0, 7)}`);
+
+  return { commitSha: commit.data.sha, files: files.length };
 }
 
 async function createBlobForFile(octokit: Octokit, meta: LocalRepositoryMeta, file: LocalRepositoryFile): Promise<string> {
