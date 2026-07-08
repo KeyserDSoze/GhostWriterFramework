@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, Download, FileText, Image, PackageCheck, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -7,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BookExportDialog } from "@/components/book/BookExportDialog";
+import { BookExportSettingsDialog } from "@/components/book/BookExportSettingsDialog";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -18,6 +20,7 @@ export function BookExportPage() {
   const { settings } = useSettingsStore();
   const { book, structure, loading, error, reload } = useBookStructure(bookId);
   const { branch, ensuring } = useWorkingBranch(bookId);
+  const [configOpen, setConfigOpen] = useState(false);
 
   if (!book) {
     return (
@@ -88,8 +91,8 @@ export function BookExportPage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2 md:justify-end">
-            <Button asChild variant="outline">
-              <Link to={`/app/books/${book.id}/settings`}><Settings className="mr-1 h-4 w-4" />{t("export.configure")}</Link>
+            <Button variant="outline" onClick={() => setConfigOpen(true)}>
+              <Settings className="mr-1 h-4 w-4" />{t("export.configure")}
             </Button>
             {token && <BookExportDialog book={book} structure={structure} branch={branch} token={token} />}
           </div>
@@ -116,6 +119,14 @@ export function BookExportPage() {
           <SummaryRow label={t("export.includeFrontmatter")} value={exportSettings.includeFrontmatter ? t("common.yes") : t("common.no")} />
         </CardContent>
       </Card>
+
+      {bookId && (
+        <BookExportSettingsDialog
+          bookId={bookId}
+          open={configOpen}
+          onOpenChange={setConfigOpen}
+        />
+      )}
     </div>
   );
 }
