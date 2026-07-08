@@ -12,7 +12,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettings } from "@/drive/useSettings";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { useSettingsStore } from "@/store/settingsStore";
-import type { ReaderSettings } from "@/types/settings";
+import type { ReaderLineBreakMode, ReaderSettings } from "@/types/settings";
 
 export function ReaderSettingsPage() {
   const { t } = useTranslation();
@@ -87,6 +87,18 @@ export function ReaderSettingsPage() {
           <CardDescription>{t("reader.readingDescription")}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-2 sm:col-span-3">
+            <Label>{t("reader.lineBreakMode")}</Label>
+            <Select value={reader.lineBreakMode} onValueChange={(lineBreakMode) => patchReader({ lineBreakMode: lineBreakMode as ReaderLineBreakMode })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="book">{t("reader.lineBreakBook")}</SelectItem>
+                <SelectItem value="dialogue">{t("reader.lineBreakDialogue")}</SelectItem>
+                <SelectItem value="source">{t("reader.lineBreakSource")}</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">{t("reader.lineBreakHint")}</p>
+          </div>
           <NumberSetting label={t("reader.fontSize")} value={reader.fontSize} min={14} max={32} step={1} suffix="px" onChange={(fontSize) => patchReader({ fontSize })} />
           <NumberSetting label={t("reader.lineHeight")} value={reader.lineHeight} min={1.2} max={2.4} step={0.05} onChange={(lineHeight) => patchReader({ lineHeight })} />
           <NumberSetting label={t("reader.pageMargin")} value={reader.pageMargin} min={16} max={96} step={4} suffix="px" onChange={(pageMargin) => patchReader({ pageMargin })} />

@@ -251,6 +251,8 @@ export interface ReaderBookmark {
   createdAt: string;
 }
 
+export type ReaderLineBreakMode = "book" | "dialogue" | "source";
+
 export interface ReaderSettings {
   showImages: boolean;
   /** Frontmatter stays hidden by default; this is a reader/debug preference. */
@@ -261,6 +263,8 @@ export interface ReaderSettings {
   fontFamily: "serif" | "sans" | "mono";
   lineHeight: number;
   pageMargin: number;
+  /** How Markdown line/paragraph breaks are translated into the ebook reading flow. */
+  lineBreakMode: ReaderLineBreakMode;
   bookmarks: ReaderBookmark[];
 }
 
@@ -350,6 +354,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fontFamily: "serif",
     lineHeight: 1.75,
     pageMargin: 48,
+    lineBreakMode: "book",
     bookmarks: [],
   },
   customActions: [],

@@ -1158,6 +1158,11 @@ const it = {
     fontMono: "Mono",
     reading: "Lettura",
     readingDescription: "Regola tipografia e margini pagina. La paginazione viene ricalcolata automaticamente.",
+    lineBreakMode: "A capo",
+    lineBreakBook: "Flusso libro",
+    lineBreakDialogue: "A capo solo nei discorsi",
+    lineBreakSource: "Come scritto",
+    lineBreakHint: "Flusso libro unisce la prosa in una lettura continua. La modalità dialoghi mantiene separati solo i paragrafi che iniziano come battute. Come scritto preserva gli a capo del Markdown.",
     fontSize: "Dimensione font",
     lineHeight: "Altezza righe",
     pageMargin: "Margini pagina"

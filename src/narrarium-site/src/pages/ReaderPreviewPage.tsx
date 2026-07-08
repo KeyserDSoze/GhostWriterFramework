@@ -135,7 +135,7 @@ export function ReaderPreviewPage() {
       active = false;
       objectUrls.forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [book, branch, entities, readerSettings.showFrontmatter, readerSettings.showImages, readerSettings.showRichEntityLinks, structure, t, toast, token]);
+  }, [book, branch, entities, readerSettings.lineBreakMode, readerSettings.showFrontmatter, readerSettings.showImages, readerSettings.showRichEntityLinks, structure, t, toast, token]);
 
   useEffect(() => () => {
     entityImageUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
@@ -178,7 +178,7 @@ export function ReaderPreviewPage() {
 
   useLayoutEffect(() => {
     recalculatePages();
-  }, [readerBook, readerSettings.fontFamily, readerSettings.fontSize, readerSettings.fullScreen, readerSettings.lineHeight, readerSettings.pageMargin]);
+  }, [readerBook, readerSettings.fontFamily, readerSettings.fontSize, readerSettings.fullScreen, readerSettings.lineBreakMode, readerSettings.lineHeight, readerSettings.pageMargin]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -186,7 +186,7 @@ export function ReaderPreviewPage() {
     const observer = new ResizeObserver(() => recalculatePages());
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, [readerBook, readerSettings.fontFamily, readerSettings.fontSize, readerSettings.fullScreen, readerSettings.lineHeight, readerSettings.pageMargin, pageIndex, pageWidth, pageCount]);
+  }, [readerBook, readerSettings.fontFamily, readerSettings.fontSize, readerSettings.fullScreen, readerSettings.lineBreakMode, readerSettings.lineHeight, readerSettings.pageMargin, pageIndex, pageWidth, pageCount]);
 
   const resolveCurrentPosition = useCallback((): LogicalPosition | null => {
     const viewport = viewportRef.current;
@@ -575,12 +575,55 @@ async function renderReaderMarkdown(input: {
   marked: typeof import("marked")["marked"];
 }): Promise<{ html: string; text: string; images: ReaderImage[] }> {
   const extracted = extractMarkdownImages(input.rawBody, input.filePath);
-  const html = input.marked.parse(extracted.body, { async: false }) as string;
+  const readerBody = normalizeReaderLineBreaks(extracted.body, input.input.readerSettings.lineBreakMode);
+  const html = input.marked.parse(readerBody, { async: false }) as string;
   const linkedHtml = input.input.readerSettings.showRichEntityLinks ? linkEntityHtml(html, input.input.entities) : html;
   const images = input.input.readerSettings.showImages
     ? (await Promise.all(extracted.images.map((image) => loadImageUrl(input.input, image.path, image.alt || input.fallbackAlt).catch(() => undefined)))).filter(Boolean) as ReaderImage[]
     : [];
-  return { html: linkedHtml, text: markdownToPlainText(extracted.body), images };
+  return { html: linkedHtml, text: markdownToPlainText(readerBody), images };
+}
+
+function normalizeReaderLineBreaks(markdown: string, mode: ReaderSettings["lineBreakMode"]): string {
+  if (mode === "source") return markdown.trim();
+  const blocks = markdown.replace(/\r\n/g, "\n").split(/\n\s*\n+/);
+  const output: string[] = [];
+  const prose: string[] = [];
+
+  function flushProse() {
+    const text = prose.join(" ").replace(/\s+/g, " ").trim();
+    if (text) output.push(text);
+    prose.length = 0;
+  }
+
+  for (const block of blocks) {
+    const trimmed = block.trim();
+    if (!trimmed) continue;
+    if (isPreservedMarkdownBlock(trimmed)) {
+      flushProse();
+      output.push(trimmed);
+      continue;
+    }
+    const compact = trimmed.split("\n").map((line) => line.trim()).filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    if (!compact) continue;
+    if (mode === "dialogue" && isDialogueParagraph(compact)) {
+      flushProse();
+      output.push(compact);
+      continue;
+    }
+    prose.push(compact);
+  }
+  flushProse();
+  return output.join("\n\n").trim();
+}
+
+function isPreservedMarkdownBlock(block: string): boolean {
+  return /^(#{1,6}\s+|```|~~~|>\s+|[-*+]\s+|\d+\.\s+|---+$|\*\*\*+$)/m.test(block.trim());
+}
+
+function isDialogueParagraph(text: string): boolean {
+  const trimmed = text.trim();
+  return /^[«“"—–]/.test(trimmed);
 }
 
 async function loadEntityDetails(input: { entity: ReaderEntity; book: BookEntry; token: string; branch: string; objectUrls: string[] }): Promise<EntityDetails> {

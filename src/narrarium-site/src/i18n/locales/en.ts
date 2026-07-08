@@ -1158,6 +1158,11 @@ const en = {
     fontMono: "Mono",
     reading: "Reading",
     readingDescription: "Tune typography and page margins. Pagination recalculates automatically.",
+    lineBreakMode: "Line breaks",
+    lineBreakBook: "Book flow",
+    lineBreakDialogue: "Dialogue breaks only",
+    lineBreakSource: "As written",
+    lineBreakHint: "Book flow joins prose into continuous reading. Dialogue mode keeps separate only paragraphs that start as spoken lines. Source mode preserves the Markdown breaks.",
     fontSize: "Font size",
     lineHeight: "Line height",
     pageMargin: "Page margins"
