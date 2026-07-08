@@ -704,7 +704,7 @@ const it = {
     script: "Script",
     eval: "Valutazione",
     deleteParagraph: "Eliminare il paragrafo?",
-    deleteParagraphDescription: "{{title}} sarà eliminato definitivamente da GitHub e i paragrafi rimanenti verranno rinumerati.",
+    deleteParagraphDescription: "{{title}} sarà eliminato definitivamente insieme a bozza, script, valutazione e immagini. I paragrafi rimanenti (e tutti i loro file collegati) verranno rinumerati.",
     deleteParagraphAria: "Elimina paragrafo {{number}}",
     reorderFailed: "Riordino non riuscito",
     reorderConfirmTitle: "Confermi il nuovo ordine?",

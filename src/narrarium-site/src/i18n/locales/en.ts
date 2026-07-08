@@ -704,7 +704,7 @@ const en = {
     script: "Script",
     eval: "Evaluation",
     deleteParagraph: "Delete paragraph?",
-    deleteParagraphDescription: "{{title}} will be permanently deleted from GitHub and the remaining paragraphs will be renumbered.",
+    deleteParagraphDescription: "{{title}} will be permanently deleted along with its draft, script, evaluation, and image assets. The remaining paragraphs (and all their companion files) will be renumbered.",
     deleteParagraphAria: "Delete paragraph {{number}}",
     reorderFailed: "Reorder failed",
     reorderConfirmTitle: "Confirm new order?",

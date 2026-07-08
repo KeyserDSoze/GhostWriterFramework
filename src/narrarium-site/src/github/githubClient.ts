@@ -664,12 +664,14 @@ export async function createFileIfAbsent(
  * - `oldParagraphs`: current paragraph list as loaded from the store
  * - `newOrderedParagraphs`: desired order (may be shorter if a paragraph was deleted)
  *
- * Files are renumbered by their 1-based position in `newOrderedParagraphs`.
- * Any paragraph in `oldParagraphs` absent from `newOrderedParagraphs` is deleted.
- * Returns the updated `Paragraph[]` with new paths, numbers and titles.
+ * Renumbers the paragraph files by their 1-based position and moves EVERY
+ * paragraph-scoped companion file so nothing is orphaned: the paragraph `.md`,
+ * its draft, its script, its evaluation, and its image assets. Removed
+ * paragraphs delete all of those companions too. Slug references
+ * (`paragraph:<chapter>:<slug>`) and the `number` field are rewritten repo-wide.
  *
- * When a local working copy exists, the reorder is applied to IndexedDB (local-first);
- * otherwise it is committed straight to GitHub via the Git Trees API.
+ * Local-first: applies to IndexedDB when a working copy exists, else commits to GitHub.
+ * Returns the updated `Paragraph[]` with new paths, numbers and titles.
  */
 export async function reorderParagraphsInChapter(
   token: string,
@@ -681,171 +683,188 @@ export async function reorderParagraphsInChapter(
   newOrderedParagraphs: Paragraph[],
   commitMessage = "Reorder paragraphs",
 ): Promise<Paragraph[]> {
-  // ── Compute the target layout (shared by local + remote paths) ──────────────
-  interface ReorderPlan {
-    oldPath: string;
-    newPath: string;
-    oldDraftPath?: string;
-    newDraftPath?: string;
-    number: string;
-    title: string;
-  }
+  const chapterSlug = chapterPath.replace(/^chapters\//, "");
+  const escapedChapter = chapterSlug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  const plans: ReorderPlan[] = [];
-  const newOriginalPaths = new Set(newOrderedParagraphs.map((p) => p.path));
+  const paragraphSlug = (path: string): string => (path.split("/").pop() ?? "").replace(/\.md$/i, "");
 
-  for (let i = 0; i < newOrderedParagraphs.length; i++) {
-    const p = newOrderedParagraphs[i];
-    const newNumber = String(i + 1).padStart(3, "0");
-    const oldFilename = p.path.split("/").pop()!;
-    const m = oldFilename.match(/^(\d{3})(?:-(.+))?\.md$/);
-    const slugPart = m?.[2]; // undefined for bare "001.md"
-    const newFilename = slugPart ? `${newNumber}-${slugPart}.md` : `${newNumber}.md`;
-    const newPath = `${chapterPath}/${newFilename}`;
+  // Build the slug remap and per-slug new number.
+  const remapBySlug = new Map<string, string>(); // oldSlug -> newSlug (only when changed)
+  const newNumberByNewSlug = new Map<string, number>();
+  const result: Paragraph[] = [];
 
-    let newDraftPath: string | undefined;
-    if (p.draftPath) {
-      const draftFilename = p.draftPath.split("/").pop()!;
-      const dm = draftFilename.match(/^(\d{3})(?:-(.+))?\.md$/);
-      const draftSlug = dm?.[2];
-      const newDraftFilename = draftSlug ? `${newNumber}-${draftSlug}.md` : `${newNumber}.md`;
-      newDraftPath = `${chapterPath}/drafts/${newDraftFilename}`;
-    }
+  newOrderedParagraphs.forEach((p, index) => {
+    const newNumber = index + 1;
+    const oldSlug = paragraphSlug(p.path);
+    const m = oldSlug.match(/^(\d{3})(?:-(.+))?$/);
+    const slugPart = m?.[2];
+    const numStr = String(newNumber).padStart(3, "0");
+    const newSlug = slugPart ? `${numStr}-${slugPart}` : numStr;
+    newNumberByNewSlug.set(newSlug, newNumber);
+    if (newSlug !== oldSlug) remapBySlug.set(oldSlug, newSlug);
 
-    plans.push({
-      oldPath: p.path,
-      newPath,
-      oldDraftPath: p.draftPath,
-      newDraftPath,
-      number: newNumber,
-      title: slugToTitle(newFilename.replace(/\.md$/, "")),
+    const rename = (path: string | undefined, build: (slug: string) => string): string | undefined =>
+      path ? build(newSlug) : undefined;
+
+    result.push({
+      number: numStr,
+      title: slugToTitle(newSlug),
+      path: `${chapterPath}/${newSlug}.md`,
+      draftPath: rename(p.draftPath, (s) => `${chapterPath}/drafts/${s}.md`),
+      scriptPath: rename(p.scriptPath, (s) => `scripts/${chapterSlug}/${s}.md`),
+      evaluationPath: rename(p.evaluationPath, (s) => `evaluations/paragraphs/${chapterSlug}/${s}.md`),
+      imagePath: p.imagePath ? p.imagePath.replace(`/paragraphs/${paragraphSlug(p.path)}/`, `/paragraphs/${newSlug}/`) : undefined,
     });
-  }
+  });
 
-  const result: Paragraph[] = plans.map((plan) => ({
-    number: plan.number,
-    title: plan.title,
-    path: plan.newPath,
-    draftPath: plan.newDraftPath,
-  }));
+  const newSlugs = new Set(newOrderedParagraphs.map((p) => paragraphSlug(p.path)));
+  const deleteSlugs = new Set(oldParagraphs.map((p) => paragraphSlug(p.path)).filter((slug) => !newSlugs.has(slug)));
 
-  const deletions = oldParagraphs.filter((p) => !newOriginalPaths.has(p.path));
+  if (remapBySlug.size === 0 && deleteSlugs.size === 0) return result;
 
-  // ── Local working copy: apply renames/deletions in IndexedDB ────────────────
+  // Classify a repo path to the paragraph slug it belongs to (or null).
+  const slugOfPath = (path: string): string | null => {
+    let m = new RegExp(`^chapters/${escapedChapter}/drafts/(\\d{3}(?:-[^/]+)?)\\.md$`).exec(path);
+    if (m) return m[1];
+    m = new RegExp(`^chapters/${escapedChapter}/(\\d{3}(?:-[^/]+)?)\\.md$`).exec(path);
+    if (m) return m[1];
+    m = new RegExp(`^scripts/${escapedChapter}/(\\d{3}(?:-[^/]+)?)\\.md$`).exec(path);
+    if (m) return m[1];
+    m = new RegExp(`^evaluations/paragraphs/${escapedChapter}/(\\d{3}(?:-[^/]+)?)\\.md$`).exec(path);
+    if (m) return m[1];
+    m = new RegExp(`^assets/chapters/${escapedChapter}/paragraphs/([^/]+)/`).exec(path);
+    if (m) return m[1];
+    return null;
+  };
+
+  // Compute the new path for a companion file when its paragraph slug is remapped.
+  const remapPath = (path: string): string | null => {
+    const slug = slugOfPath(path);
+    if (!slug) return null;
+    const newSlug = remapBySlug.get(slug);
+    if (!newSlug) return null;
+    // Replace the slug segment while keeping the surrounding path.
+    if (path.startsWith(`chapters/${chapterSlug}/drafts/`)) return `chapters/${chapterSlug}/drafts/${newSlug}.md`;
+    if (path.startsWith(`chapters/${chapterSlug}/`)) return `chapters/${chapterSlug}/${newSlug}.md`;
+    if (path.startsWith(`scripts/${chapterSlug}/`)) return `scripts/${chapterSlug}/${newSlug}.md`;
+    if (path.startsWith(`evaluations/paragraphs/${chapterSlug}/`)) return `evaluations/paragraphs/${chapterSlug}/${newSlug}.md`;
+    const assetMatch = new RegExp(`^(assets/chapters/${escapedChapter}/paragraphs/)[^/]+(/.*)$`).exec(path);
+    if (assetMatch) return `${assetMatch[1]}${newSlug}${assetMatch[2]}`;
+    return null;
+  };
+
+  const isDeletedPath = (path: string): boolean => {
+    const slug = slugOfPath(path);
+    return slug !== null && deleteSlugs.has(slug);
+  };
+
+  const rewriteRefs = (text: string): string => {
+    let out = text;
+    for (const [oldSlug, newSlug] of remapBySlug) {
+      out = out.split(`paragraph:${chapterSlug}:${oldSlug}`).join(`paragraph:${chapterSlug}:${newSlug}`);
+    }
+    return out;
+  };
+
+  const fixNumber = (finalPath: string, text: string): string => {
+    const m = new RegExp(`^chapters/${escapedChapter}/(\\d{3}(?:-[^/]+)?)\\.md$`).exec(finalPath);
+    if (!m) return text;
+    const num = newNumberByNewSlug.get(m[1]);
+    if (!num) return text;
+    if (/^number:\s*.*$/m.test(text)) return text.replace(/^number:\s*.*$/m, `number: ${num}`);
+    return text;
+  };
+
+  // ── Local working copy ──────────────────────────────────────────────────────
   const id = await localRepoId(owner, repo, branch);
   if (id) {
-    // Read all source contents into memory FIRST to avoid rename collisions.
-    const writes: Array<{ path: string; text: string }> = [];
+    const files = await listLocalFiles(id);
+    const textWrites: Array<{ path: string; text: string }> = [];
+    const binaryWrites: Array<{ path: string; bytes: Uint8Array }> = [];
     const toDelete = new Set<string>();
 
-    const readLocalText = async (path: string): Promise<string> => {
-      const file = await getLocalFile(id, path);
-      if (!file) return "";
-      if (file.kind === "text" && file.text !== undefined) return file.text;
-      if (file.kind === "binary" && file.blob) return await file.blob.text();
-      return "";
-    };
-
-    for (const plan of plans) {
-      if (plan.oldPath !== plan.newPath) {
-        writes.push({ path: plan.newPath, text: await readLocalText(plan.oldPath) });
-        toDelete.add(plan.oldPath);
+    for (const file of files) {
+      if (isDeletedPath(file.path)) {
+        toDelete.add(file.path);
+        continue;
       }
-      if (plan.oldDraftPath && plan.newDraftPath && plan.oldDraftPath !== plan.newDraftPath) {
-        const draft = await getLocalFile(id, plan.oldDraftPath);
-        if (draft) {
-          writes.push({ path: plan.newDraftPath, text: await readLocalText(plan.oldDraftPath) });
-          toDelete.add(plan.oldDraftPath);
+      const newPath = remapPath(file.path);
+      const moved = newPath !== null && newPath !== file.path;
+      const finalPath = newPath ?? file.path;
+
+      if (file.kind === "text") {
+        const original = file.text ?? "";
+        let next = rewriteRefs(original);
+        next = fixNumber(finalPath, next);
+        if (moved || next !== original) {
+          textWrites.push({ path: finalPath, text: next });
+          if (moved) toDelete.add(file.path);
         }
+      } else if (moved && file.blob) {
+        binaryWrites.push({ path: finalPath, bytes: new Uint8Array(await file.blob.arrayBuffer()) });
+        toDelete.add(file.path);
       }
     }
-    for (const p of deletions) {
-      toDelete.add(p.path);
-      if (p.draftPath) toDelete.add(p.draftPath);
-    }
 
-    const writePaths = new Set(writes.map((w) => w.path));
-    // Delete old paths that are not being overwritten by a new file.
+    const writePaths = new Set([...textWrites.map((w) => w.path), ...binaryWrites.map((w) => w.path)]);
     for (const path of toDelete) {
       if (writePaths.has(path)) continue;
       await deleteLocalFile(id, path);
     }
-    // Write the renamed files.
-    for (const w of writes) {
-      await writeLocalText(id, w.path, w.text);
-    }
+    for (const w of textWrites) await writeLocalText(id, w.path, w.text);
+    for (const w of binaryWrites) await writeLocalBinary(id, w.path, w.bytes);
     return result;
   }
 
   // ── Remote: single atomic commit via the Git Trees API ──────────────────────
   const octokit = createGitHubClient(token);
-
   const { data: branchData } = await octokit.rest.repos.getBranch({ owner, repo, branch });
   const currentCommitSha = branchData.commit.sha;
   const currentTreeSha = branchData.commit.commit.tree.sha;
 
-  const { data: fullTree } = await octokit.rest.git.getTree({
-    owner,
-    repo,
-    tree_sha: currentTreeSha,
-    recursive: "1",
-  });
+  const { data: fullTree } = await octokit.rest.git.getTree({ owner, repo, tree_sha: currentTreeSha, recursive: "1" });
 
-  const getBlobSha = (p: string) => fullTree.tree.find((n) => n.path === p)?.sha ?? null;
-
-  type TreeEntry = {
-    path: string;
-    mode: "100644";
-    type: "blob";
-    sha: string | null;
-  };
+  type TreeEntry = { path: string; mode: "100644"; type: "blob"; sha?: string | null; content?: string };
   const treeUpdates: TreeEntry[] = [];
+  const isTextPath = (path: string) => /\.(md|json|txt|ya?ml)$/i.test(path);
 
-  for (const plan of plans) {
-    if (plan.oldPath !== plan.newPath) {
-      const sha = getBlobSha(plan.oldPath);
-      if (sha) {
-        treeUpdates.push({ path: plan.oldPath, mode: "100644", type: "blob", sha: null });
-        treeUpdates.push({ path: plan.newPath, mode: "100644", type: "blob", sha });
-      }
-    }
-    if (plan.oldDraftPath && plan.newDraftPath && plan.oldDraftPath !== plan.newDraftPath) {
-      const draftSha = getBlobSha(plan.oldDraftPath);
-      if (draftSha) {
-        treeUpdates.push({ path: plan.oldDraftPath, mode: "100644", type: "blob", sha: null });
-        treeUpdates.push({ path: plan.newDraftPath, mode: "100644", type: "blob", sha: draftSha });
-      }
-    }
-  }
+  for (const node of fullTree.tree) {
+    if (node.type !== "blob" || !node.path) continue;
+    const path = node.path;
 
-  for (const p of deletions) {
-    treeUpdates.push({ path: p.path, mode: "100644", type: "blob", sha: null });
-    if (p.draftPath) {
-      treeUpdates.push({ path: p.draftPath, mode: "100644", type: "blob", sha: null });
+    if (isDeletedPath(path)) {
+      treeUpdates.push({ path, mode: "100644", type: "blob", sha: null });
+      continue;
+    }
+
+    const newPath = remapPath(path);
+    const moved = newPath !== null && newPath !== path;
+    const finalPath = newPath ?? path;
+
+    if (moved) {
+      treeUpdates.push({ path, mode: "100644", type: "blob", sha: null });
+      if (isTextPath(path)) {
+        const raw = await loadFileContent(token, owner, repo, path, branch).catch(() => null);
+        const next = raw !== null ? fixNumber(finalPath, rewriteRefs(raw)) : null;
+        if (next !== null) treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", content: next });
+        else if (node.sha) treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", sha: node.sha });
+      } else if (node.sha) {
+        treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", sha: node.sha });
+      }
+    } else if (isTextPath(path) && remapBySlug.size > 0) {
+      const raw = await loadFileContent(token, owner, repo, path, branch).catch(() => null);
+      if (raw !== null) {
+        const next = rewriteRefs(raw);
+        if (next !== raw) treeUpdates.push({ path, mode: "100644", type: "blob", content: next });
+      }
     }
   }
 
   if (treeUpdates.length === 0) return result;
 
-  const { data: newTree } = await octokit.rest.git.createTree({
-    owner,
-    repo,
-    base_tree: currentTreeSha,
-    tree: treeUpdates,
-  });
-  const { data: newCommit } = await octokit.rest.git.createCommit({
-    owner,
-    repo,
-    message: commitMessage,
-    tree: newTree.sha,
-    parents: [currentCommitSha],
-  });
-  await octokit.rest.git.updateRef({
-    owner,
-    repo,
-    ref: `heads/${branch}`,
-    sha: newCommit.sha,
-  });
+  const { data: newTree } = await octokit.rest.git.createTree({ owner, repo, base_tree: currentTreeSha, tree: treeUpdates });
+  const { data: newCommit } = await octokit.rest.git.createCommit({ owner, repo, message: commitMessage, tree: newTree.sha, parents: [currentCommitSha] });
+  await octokit.rest.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha: newCommit.sha });
 
   return result;
 }
