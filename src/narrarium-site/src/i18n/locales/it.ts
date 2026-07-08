@@ -576,7 +576,12 @@ const it = {
     chapterCreated: "Capitolo {{number}} creato",
     created: "{{label}} creato",
     dossierLoadFailed: "Caricamento dossier non riuscito",
-    noTokenConfigured: "Nessun token GitHub configurato per questo libro."
+    noTokenConfigured: "Nessun token GitHub configurato per questo libro.",
+    bookMetadata: "Metadati libro",
+    titleField: "Titolo",
+    languageField: "Lingua",
+    descriptionField: "Descrizione",
+    descriptionPlaceholder: "Descrivi il libro in Markdown. Questo testo viene salvato come corpo di book.md."
   },
   dashboard: {
     title: "Dashboard",

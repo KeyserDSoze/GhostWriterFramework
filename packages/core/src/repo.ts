@@ -2967,7 +2967,7 @@ async function readWritingStyleDocuments(
   chapter: GuidelineDocument | null;
   draft: GuidelineDocument | null;
 }> {
-  const global = await readGuidelineIfExists(path.join(root, GUIDELINE_FILES.writingStyle));
+  const global = await readGlobalWritingStyleDocument(root);
   const chapter = chapterSlugValue && hasFinalChapter
     ? await readGuidelineIfExists(path.join(root, "chapters", chapterSlugValue, "writing-style.md"))
     : null;
@@ -2976,6 +2976,24 @@ async function readWritingStyleDocuments(
     : null;
 
   return { global, chapter, draft };
+}
+
+const LEGACY_WRITING_STYLE_FILES = ["guidelines/writing-style.md", "guidelines/style.md"] as const;
+
+async function readGlobalWritingStyleDocument(root: string): Promise<GuidelineDocument | null> {
+  for (const relativePath of [GUIDELINE_FILES.writingStyle, ...LEGACY_WRITING_STYLE_FILES]) {
+    const document = await readGuidelineIfExists(path.join(root, relativePath));
+    if (document) return document;
+  }
+  return null;
+}
+
+async function readGlobalWritingStyleRaw(root: string): Promise<string | null> {
+  for (const relativePath of [GUIDELINE_FILES.writingStyle, ...LEGACY_WRITING_STYLE_FILES]) {
+    const raw = await readFile(path.join(root, relativePath), "utf8").catch(() => null);
+    if (raw) return raw;
+  }
+  return null;
 }
 
 async function readGuidelineIfExists(filePath: string): Promise<GuidelineDocument | null> {
@@ -11788,7 +11806,7 @@ function buildGithubCopilotInstructions(): string {
     "- `resumes/` for running summaries",
     "- `state/` for structured continuity snapshots and sync status",
     "- `evaluations/` for critique and continuity checks",
-    "- `guidelines/writing-style.md` for the always-on writing and review contract of the book",
+    "- `writing-style.md` for the always-on writing and review contract of the book",
     "",
     "## Working rules",
     "",
@@ -11838,14 +11856,14 @@ function buildGithubCopilotInstructions(): string {
       "- Respect chapter numbering and paragraph numbering.",
       "- Keep prose in body content and structured facts in frontmatter.",
       "- In chapter and paragraph prose, write character, item, location, faction, secret, and timeline-event names as plain text. Do not insert markdown links to canon files or reader routes; the reader resolves visible mentions automatically.",
-      "- Always read `guidelines/writing-style.md` before drafting or revising chapter and paragraph prose.",
+      "- Always read `writing-style.md` before drafting or revising chapter and paragraph prose.",
       "- If `chapters/<chapter>/writing-style.md` or `drafts/<chapter>/writing-style.md` exists, treat it as an explicit chapter-local addendum or override on top of the global writing-style file.",
-    "- Before writing or rewriting a scene, review `context.md`, `story-design.md`, `notes.md`, any matching chapter draft notes, the relevant prior chapter content, the scoped summaries for story so far, the global `guidelines/writing-style.md`, any chapter-specific `writing-style.md`, any point-in-time state snapshot available before that point, and any matching files in `drafts/`.",
+    "- Before writing or rewriting a scene, review `context.md`, `story-design.md`, `notes.md`, any matching chapter draft notes, the relevant prior chapter content, the scoped summaries for story so far, the global `writing-style.md`, any chapter-specific `writing-style.md`, any point-in-time state snapshot available before that point, and any matching files in `drafts/`.",
     "- Treat `ideas.md` as unstable material under review; do not treat active ideas as accepted canon or default drafting instructions unless the user asks you to use them.",
     "- Treat notes, ideas, and promoted archives as working support material, not canon. If something becomes a stable fact, move it into the correct canon file.",
     "- Keep `plot.md` aligned with chapter summaries, secret reveals, and timeline references.",
     "- After `update_paragraph`, assume plot and resume files were refreshed automatically by the MCP layer, and review `sync_story_state` separately only when continuity snapshots must be updated.",
-    "- If stylistic guidance is missing, update `guidelines/writing-style.md` or add a chapter-local `writing-style.md` instead of inventing a new style ad hoc.",
+    "- If stylistic guidance is missing, update `writing-style.md` or add a chapter-local `writing-style.md` instead of inventing a new style ad hoc.",
   ].join("\n");
 }
 
@@ -12001,7 +12019,7 @@ function buildResumeBookCommand(): string {
     "Before doing anything else:",
     "1. Parse `$ARGUMENTS`: if the first token starts with `chapter:`, use it as the chapter target; if the next token looks like a paragraph id or slug, use it as the paragraph target; everything after that is the follow-up request.",
     "2. Call the `resume_book_context` MCP tool with the scoped `chapter` and optional `paragraph` when a target was provided; otherwise call it without scope.",
-    "3. Read the files it references, especially `context.md`, `story-design.md`, `notes.md`, any scoped chapter draft notes, `guidelines/writing-style.md`, any chapter-specific `writing-style.md`, scoped story summaries, `state/current.md`, `state/status.md` when present, and the latest files in `conversations/`.",
+    "3. Read the files it references, especially `context.md`, `story-design.md`, `notes.md`, any scoped chapter draft notes, `writing-style.md`, any chapter-specific `writing-style.md`, scoped story summaries, `state/current.md`, `state/status.md` when present, and the latest files in `conversations/`.",
     "4. Briefly restate where the book stands, what the latest conversation was doing, and the next best actions.",
     "5. Then continue with the parsed follow-up request if one is present.",
     "6. If no extra request is present, ask for the next book task only after giving the short status recap.",
@@ -12130,7 +12148,7 @@ function buildConversationExportPlugin(): string {
     '      "",',
     '      "## Read first",',
     '      "",',
-      '      "1. guidelines/writing-style.md",',
+      '      "1. writing-style.md",',
       '      "2. plot.md",',
       '      "3. resumes/total.md",',
       '      "4. state/current.md",',
@@ -14620,8 +14638,7 @@ export async function scriptToParagraphContext(
   const parsedBody = parseScriptBody(script.body, { path: relativeScriptPath });
   const canonicalSecrets = await buildCanonicalSecretLookup(root);
 
-  const wsPath = path.join(root, "guidelines", "writing-style.md");
-  const wsRaw = await readFile(wsPath, "utf8").catch(() => null);
+  const wsRaw = await readGlobalWritingStyleRaw(root);
   const writingStyleBody = wsRaw ? String(matter(wsRaw).content ?? "").trim() : undefined;
 
   const chapterSlugNorm = normalizeChapterReference(chapter);

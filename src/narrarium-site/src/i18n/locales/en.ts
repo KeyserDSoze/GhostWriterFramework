@@ -576,7 +576,12 @@ const en = {
     chapterCreated: "Chapter {{number}} created",
     created: "{{label}} created",
     dossierLoadFailed: "Dossier load failed",
-    noTokenConfigured: "No GitHub token configured for this book."
+    noTokenConfigured: "No GitHub token configured for this book.",
+    bookMetadata: "Book metadata",
+    titleField: "Title",
+    languageField: "Language",
+    descriptionField: "Description",
+    descriptionPlaceholder: "Describe the book in Markdown. This text is saved as the body of book.md."
   },
   dashboard: {
     title: "Dashboard",

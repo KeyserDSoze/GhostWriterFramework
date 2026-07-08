@@ -72,7 +72,7 @@ export const PROMOTED_FILE = "promoted.md";
 export const STORY_DESIGN_FILE = "story-design.md";
 
 export const GUIDELINE_FILES = {
-  writingStyle: "guidelines/writing-style.md",
+  writingStyle: "writing-style.md",
   images: "guidelines/images.md",
 } as const;
 

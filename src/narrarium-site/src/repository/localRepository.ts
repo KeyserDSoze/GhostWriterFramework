@@ -456,7 +456,14 @@ function splitFrontmatter(raw: string): Record<string, unknown> {
   const title = /^title:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
   const name = /^name:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
   const description = /^description:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
-  return { title, name, description };
+  const language = /^language:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
+  const ghostwriter = /^ghostwriter:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
+  return { title, name, description, language, ghostwriter };
+}
+
+function markdownBody(raw: string): string {
+  const match = /^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
+  return (match ? match[1] : raw).trim();
 }
 
 function textByPath(files: LocalRepositoryFile[]): Map<string, string> {
@@ -492,6 +499,7 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
   const chapters: Chapter[] = chapterFolders.map((folder) => {
     const slug = folder.replace("chapters/", "");
     const folderPaths = allPaths.filter((p) => p.startsWith(`${folder}/`));
+    const chapterFm = splitFrontmatter(textMap.get(`${folder}/chapter.md`) ?? "");
     const paragraphFiles = folderPaths.filter((p) => /\/\d{3}(?:-[^/]+)?\.md$/.test(p) && !p.includes("/drafts/")).sort();
     const paragraphs: Paragraph[] = paragraphFiles.map((p) => {
       const filename = p.split("/").pop() ?? "";
@@ -517,6 +525,7 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
       slug,
       path: folder,
       title: titleName(`${folder}/chapter.md`, slugToTitle(slug)),
+      ghostwriter: typeof chapterFm.ghostwriter === "string" && chapterFm.ghostwriter ? chapterFm.ghostwriter : undefined,
       paragraphs,
       writingStylePath: folderPaths.find((p) => p.endsWith("writing-style.md")),
       draftPath: folderPaths.find((p) => p.endsWith("draft.md")),
@@ -529,7 +538,9 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
 
   return {
     title: (typeof bookFm.title === "string" && bookFm.title) || meta.repo,
-    description: typeof bookFm.description === "string" ? bookFm.description : "",
+    description: markdownBody(textMap.get("book.md") ?? "") || (typeof bookFm.description === "string" ? bookFm.description : ""),
+    language: typeof bookFm.language === "string" && bookFm.language ? bookFm.language : undefined,
+    ghostwriter: typeof bookFm.ghostwriter === "string" && bookFm.ghostwriter ? bookFm.ghostwriter : undefined,
     owner: meta.owner,
     repo: meta.repo,
     defaultBranch: meta.defaultBranch,
@@ -543,7 +554,7 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
     items: filesUnder("items"),
     timelines: filesUnder("timelines"),
     secrets: filesUnder("secrets"),
-    globalWritingStylePath: allPaths.find((p) => p === "guidelines/writing-style.md" || p === "guidelines/style.md"),
+    globalWritingStylePath: allPaths.find((p) => p === "writing-style.md") ?? allPaths.find((p) => p === "guidelines/writing-style.md" || p === "guidelines/style.md"),
     voicesPath: allPaths.find((p) => p === "guidelines/voices.md"),
     plotPath: allPaths.includes("plot.md") ? "plot.md" : undefined,
     ghostwriters: allPaths

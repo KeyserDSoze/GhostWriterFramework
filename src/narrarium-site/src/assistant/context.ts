@@ -6,6 +6,10 @@ import { resolveBookToken } from "@/types/settings";
 export type AppRouteContext =
   | { kind: "app-home" }
   | { kind: "book"; bookId: string }
+  | { kind: "book-dashboard"; bookId: string }
+  | { kind: "book-assets"; bookId: string }
+  | { kind: "book-ghostwriters"; bookId: string }
+  | { kind: "book-writing-style"; bookId: string }
   | { kind: "reader"; bookId: string }
   | { kind: "book-settings"; bookId: string }
   | { kind: "research"; bookId: string }
@@ -42,6 +46,18 @@ export function parseAppRoute(pathname: string): AppRouteContext {
 
   let match = /^\/app\/books\/([^/]+)\/reader$/.exec(clean);
   if (match) return { kind: "reader", bookId: decodeURIComponent(match[1]) };
+
+  match = /^\/app\/books\/([^/]+)\/dashboard$/.exec(clean);
+  if (match) return { kind: "book-dashboard", bookId: decodeURIComponent(match[1]) };
+
+  match = /^\/app\/books\/([^/]+)\/assets$/.exec(clean);
+  if (match) return { kind: "book-assets", bookId: decodeURIComponent(match[1]) };
+
+  match = /^\/app\/books\/([^/]+)\/ghostwriters$/.exec(clean);
+  if (match) return { kind: "book-ghostwriters", bookId: decodeURIComponent(match[1]) };
+
+  match = /^\/app\/books\/([^/]+)\/writing-style$/.exec(clean);
+  if (match) return { kind: "book-writing-style", bookId: decodeURIComponent(match[1]) };
 
   match = /^\/app\/books\/([^/]+)\/research\/([^/]+)$/.exec(clean);
   if (match) return { kind: "research-detail", bookId: decodeURIComponent(match[1]), researchSlug: decodeURIComponent(match[2]) };
@@ -168,6 +184,10 @@ export async function loadWriterContext(
 
     switch (route.kind) {
       case "book":
+      case "book-dashboard":
+      case "book-assets":
+      case "book-ghostwriters":
+      case "book-writing-style":
       case "reader":
       case "research":
       case "research-detail":
@@ -223,6 +243,10 @@ function buildContextTitle(
 ): string {
   switch (route.kind) {
     case "book":
+    case "book-dashboard":
+    case "book-assets":
+    case "book-ghostwriters":
+    case "book-writing-style":
     case "reader":
     case "research":
     case "research-detail":
@@ -253,6 +277,10 @@ function buildContextSummary(
 ): string {
   switch (route.kind) {
     case "book":
+    case "book-dashboard":
+    case "book-assets":
+    case "book-ghostwriters":
+    case "book-writing-style":
     case "reader":
     case "research":
     case "research-detail":
@@ -280,7 +308,7 @@ function buildNoteTargetPath(route: AppRouteContext, chapter: Chapter | null): s
   if (route.kind === "chapter" || route.kind === "paragraph" || route.kind === "chapter-workspace" || route.kind === "paragraph-workspace") {
     return chapter ? `drafts/${chapter.slug}/notes.md` : null;
   }
-  if (route.kind === "book" || route.kind === "reader" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "app-home") {
+  if (route.kind === "book" || route.kind === "book-dashboard" || route.kind === "book-assets" || route.kind === "book-ghostwriters" || route.kind === "book-writing-style" || route.kind === "reader" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "app-home") {
     return "notes.md";
   }
   return null;

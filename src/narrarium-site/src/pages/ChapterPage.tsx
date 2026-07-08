@@ -50,6 +50,7 @@ import {
   createParagraphEvaluationArtifact,
   createParagraphScriptArtifact,
 } from "@/narrarium/workspace";
+import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { parseDocument, stringify } from "yaml";
 
 function stringifyFrontmatter(frontmatter: Record<string, unknown>): string {
@@ -87,6 +88,7 @@ export function ChapterPage() {
   const chapterMdPath = chapter ? `${chapter.path}/chapter.md` : "";
   const [titleValue, setTitleValue] = useState("");
   const [savedTitle, setSavedTitle] = useState("");
+  const [savedChapterGhostwriter, setSavedChapterGhostwriter] = useState("");
   const [chapterFm, setChapterFm] = useState<Record<string, unknown> | null>(null);
   const [chapterBody, setChapterBody] = useState("");
   const [chapterSha, setChapterSha] = useState("");
@@ -107,6 +109,7 @@ export function ChapterPage() {
         setChapterSha(sha);
         setTitleValue(title);
         setSavedTitle(title);
+        setSavedChapterGhostwriter(typeof frontmatter.ghostwriter === "string" ? frontmatter.ghostwriter : "");
       })
       .catch(() => {
         // No chapter.md yet → seed from slug-derived title; save will create it.
@@ -115,25 +118,40 @@ export function ChapterPage() {
         setChapterSha("");
         setTitleValue(chapter.title);
         setSavedTitle(chapter.title);
+        setSavedChapterGhostwriter("");
       });
   }, [chapter, book, token, branch, chapterMdPath]);
+
+  const currentChapterGhostwriter = typeof chapterFm?.ghostwriter === "string" ? chapterFm.ghostwriter : "";
+  const chapterMetadataDirty = titleValue.trim() !== savedTitle || currentChapterGhostwriter !== savedChapterGhostwriter;
+
+  function setChapterGhostwriter(slug: string) {
+    setChapterFm((prev) => {
+      const next = { ...(prev ?? { type: "chapter", id: `chapter:${chapter?.slug ?? chapterId}`, title: titleValue || chapter?.title || "" }) };
+      if (slug) next.ghostwriter = slug;
+      else delete next.ghostwriter;
+      return next;
+    });
+  }
 
   async function saveChapterTitle() {
     if (!book || !token || !chapterMdPath || !chapterFm) return;
     const trimmed = titleValue.trim();
-    if (!trimmed || trimmed === savedTitle) return;
+    if (!trimmed || !chapterMetadataDirty) return;
     setSavingTitle(true);
     try {
-      const nextFm = { ...chapterFm, title: trimmed };
+      const nextFm: Record<string, unknown> = { ...chapterFm, title: trimmed };
       const content = `${stringifyFrontmatter(nextFm)}\n\n${chapterBody.trim()}\n`;
       if (chapterSha) {
         const newSha = await updateFile(token, book.owner, book.repo, branch, chapterMdPath, chapterSha, content, `Rename chapter ${chapter!.slug}`);
         setChapterSha(newSha);
       } else {
-        await createFile(token, book.owner, book.repo, branch, chapterMdPath, content, `Create chapter.md for ${chapter!.slug}`);
+        const newSha = await createFile(token, book.owner, book.repo, branch, chapterMdPath, content, `Create chapter.md for ${chapter!.slug}`);
+        setChapterSha(newSha);
       }
       setChapterFm(nextFm);
       setSavedTitle(trimmed);
+      setSavedChapterGhostwriter(typeof nextFm.ghostwriter === "string" ? nextFm.ghostwriter : "");
       toast({ title: t("common.saved") });
       void reload();
     } catch (err) {
@@ -384,7 +402,7 @@ export function ChapterPage() {
               className="h-auto border-0 bg-transparent px-0 text-2xl font-bold tracking-tight shadow-none outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
               placeholder={chapter.title}
             />
-            {titleValue.trim() && titleValue.trim() !== savedTitle && (
+            {titleValue.trim() && chapterMetadataDirty && (
               <Button size="sm" onClick={() => void saveChapterTitle()} disabled={savingTitle}>
                 {savingTitle ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1 h-3.5 w-3.5" />}
                 {t("common.save")}
@@ -395,6 +413,9 @@ export function ChapterPage() {
             {localParagraphs.length} paragraph
             {localParagraphs.length !== 1 ? "s" : ""}
           </p>
+          <div className="mt-3 max-w-xl rounded-lg border bg-muted/30 px-3 py-2">
+            <GhostwriterField ghostwriters={structure?.ghostwriters ?? []} value={currentChapterGhostwriter} onChange={setChapterGhostwriter} />
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {isSavingOrder && (

@@ -70,10 +70,25 @@ export function slugToTitle(slug: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase()); // Title Case
 }
 
+function frontmatterBlock(raw: string): string {
+  return /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw)?.[1] ?? raw.slice(0, 600);
+}
+
+function markdownBody(raw: string): string {
+  const match = /^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
+  return (match ? match[1] : raw).trim();
+}
+
+function frontmatterString(raw: string, key: string): string | undefined {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^${escaped}:\\s*(.+)$`, "m").exec(frontmatterBlock(raw));
+  const value = match?.[1]?.trim().replace(/^["']|["']$/g, "").trim();
+  return value || undefined;
+}
+
 /** Extract a frontmatter `title` field if present, otherwise fall back to slug. */
 function titleFromFrontmatter(raw: string, fallback: string): string {
-  const match = /^---[\s\S]*?^title:\s*(.+)$/m.exec(raw);
-  return match ? match[1].trim().replace(/^["']|["']$/g, "") : fallback;
+  return frontmatterString(raw, "title") ?? fallback;
 }
 
 // ─── List user repositories ───────────────────────────────────────────────────
@@ -117,26 +132,30 @@ export async function listUserRepos(token: string): Promise<RepoSummary[]> {
 
 /** Extract a display name (title/name) from a markdown file's frontmatter block. */
 function nameFromFrontmatter(raw: string): string | undefined {
-  const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
-  const block = fm ? fm[1] : raw.slice(0, 600);
+  const block = frontmatterBlock(raw);
   const match = /^(?:title|name):\s*(.+)$/m.exec(block);
   if (!match) return undefined;
   const value = match[1].trim().replace(/^["']|["']$/g, "").trim();
   return value || undefined;
 }
 
+interface FrontmatterMetadata {
+  name?: string;
+  ghostwriter?: string;
+}
+
 /**
- * Read frontmatter title/name for many files in a few GraphQL requests instead of
- * one REST call per file. Returns a map path → display name (only where found).
+ * Read selected frontmatter fields for many files in a few GraphQL requests instead of
+ * one REST call per file. Returns a map path -> parsed metadata.
  */
-async function fetchFrontmatterNames(
+async function fetchFrontmatterMetadata(
   octokit: Octokit,
   owner: string,
   repo: string,
   branch: string,
   paths: string[],
-): Promise<Record<string, string>> {
-  const result: Record<string, string> = {};
+): Promise<Record<string, FrontmatterMetadata>> {
+  const result: Record<string, FrontmatterMetadata> = {};
   const unique = [...new Set(paths)].filter(Boolean);
   const CHUNK = 60;
   for (let i = 0; i < unique.length; i += CHUNK) {
@@ -155,7 +174,8 @@ async function fetchFrontmatterNames(
         const text = repository[`f${idx}`]?.text;
         if (text) {
           const name = nameFromFrontmatter(text);
-          if (name) result[p] = name;
+          const ghostwriter = frontmatterString(text, "ghostwriter");
+          if (name || ghostwriter) result[p] = { name, ghostwriter };
         }
       });
     } catch {
@@ -196,14 +216,17 @@ export async function loadBookStructure(
   // ── book.md ──────────────────────────────────────────────────────────────
   let title = repo;
   let description = "";
+  let language: string | undefined;
+  let ghostwriter: string | undefined;
   if (allPaths.includes("book.md")) {
     try {
       const { data } = await octokit.rest.repos.getContent({ owner, repo, path: "book.md", ref: branch });
       if ("content" in data) {
         const raw = decodeContent(data.content);
         title = titleFromFrontmatter(raw, repo);
-        const descMatch = /^description:\s*(.+)$/m.exec(raw);
-        description = descMatch ? descMatch[1].trim().replace(/^["']|["']$/g, "") : "";
+        description = markdownBody(raw) || frontmatterString(raw, "description") || "";
+        language = frontmatterString(raw, "language");
+        ghostwriter = frontmatterString(raw, "ghostwriter");
       }
     } catch { /* no book.md – use defaults */ }
   }
@@ -213,7 +236,7 @@ export async function loadBookStructure(
   const canonPaths = allPaths.filter((p) => p.endsWith(".md") && canonPrefixes.some((prefix) => p.startsWith(`${prefix}/`)));
   const chapterMdPaths = allPaths.filter((p) => /^chapters\/[^/]+\/chapter\.md$/.test(p));
   const paragraphPaths = allPaths.filter((p) => /^chapters\/[^/]+\/\d{3}(?:-[^/]+)?\.md$/.test(p) && !p.includes("/drafts/"));
-  const nameMap = await fetchFrontmatterNames(octokit, owner, repo, branch, [...chapterMdPaths, ...paragraphPaths, ...canonPaths]);
+  const metaMap = await fetchFrontmatterMetadata(octokit, owner, repo, branch, [...chapterMdPaths, ...paragraphPaths, ...canonPaths]);
 
   // ── Canon sections ────────────────────────────────────────────────────────
   function filesUnder(prefix: string): BookFile[] {
@@ -229,7 +252,7 @@ export async function loadBookStructure(
           path: p,
           sha: treeData.tree.find((n) => n.path === p)?.sha ?? "",
           size: treeData.tree.find((n) => n.path === p)?.size ?? 0,
-          name: nameMap[p],
+          name: metaMap[p]?.name,
           imagePath: firstExistingImage(assetBase),
         };
       });
@@ -264,7 +287,7 @@ export async function loadBookStructure(
       const imagePromptPath = `assets/chapters/${slug}/paragraphs/${paragraphSlug}/primary.md`;
       return {
         number: num,
-        title: nameMap[p] ?? slugToTitle(filename.replace(/\.md$/, "")),
+        title: metaMap[p]?.name ?? slugToTitle(filename.replace(/\.md$/, "")),
         path: p,
         draftPath: allPaths.includes(draftPath) ? draftPath : undefined,
         scriptPath: allPaths.includes(scriptPath) ? scriptPath : undefined,
@@ -283,7 +306,8 @@ export async function loadBookStructure(
     return {
       slug,
       path: folder,
-      title: nameMap[`${folder}/chapter.md`] ?? slugToTitle(slug),
+      title: metaMap[`${folder}/chapter.md`]?.name ?? slugToTitle(slug),
+      ghostwriter: metaMap[`${folder}/chapter.md`]?.ghostwriter,
       paragraphs,
       writingStylePath,
       draftPath,
@@ -297,6 +321,8 @@ export async function loadBookStructure(
   return {
     title,
     description,
+    language,
+    ghostwriter,
     owner,
     repo,
     defaultBranch,
@@ -310,9 +336,8 @@ export async function loadBookStructure(
     items: filesUnder("items"),
     timelines: filesUnder("timelines"),
     secrets: filesUnder("secrets"),
-    globalWritingStylePath: allPaths.find((p) =>
-      p.match(/^guidelines\/(writing-style|style)\.md$/)
-    ),
+    globalWritingStylePath: allPaths.find((p) => p === "writing-style.md")
+      ?? allPaths.find((p) => p.match(/^guidelines\/(writing-style|style)\.md$/)),
     voicesPath: allPaths.includes("guidelines/voices.md")
       ? "guidelines/voices.md"
       : undefined,

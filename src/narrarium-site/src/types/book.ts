@@ -68,6 +68,8 @@ export interface Chapter {
   /** Chapter folder path: chapters/001-the-arrival/ */
   path: string;
   title: string;
+  /** Optional chapter-level ghostwriter slug from chapter.md frontmatter. */
+  ghostwriter?: string;
   paragraphs: Paragraph[];
   /** Path to the chapter-level writing style file, if present */
   writingStylePath?: string;
@@ -82,6 +84,10 @@ export interface BookStructure {
   /** book.md metadata */
   title: string;
   description: string;
+  /** Optional language code from book.md frontmatter, e.g. en or it. */
+  language?: string;
+  /** Optional default ghostwriter slug from book.md frontmatter. */
+  ghostwriter?: string;
   owner: string;
   repo: string;
   defaultBranch: string;
@@ -95,7 +101,7 @@ export interface BookStructure {
   items: BookFile[];
   timelines: BookFile[];
   secrets: BookFile[];
-  /** guidelines/writing-style.md or guidelines/style.md */
+  /** writing-style.md, or legacy guidelines/writing-style.md / guidelines/style.md */
   globalWritingStylePath?: string;
   /** guidelines/voices.md */
   voicesPath?: string;

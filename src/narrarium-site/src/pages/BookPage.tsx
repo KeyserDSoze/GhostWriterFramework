@@ -1,6 +1,7 @@
 import { useParams, Link, useLocation } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { parseDocument, stringify } from "yaml";
 import {
   Loader2,
   AlertCircle,
@@ -13,20 +14,26 @@ import {
   EyeOff,
   FileText,
   ChevronRight,
+  Save,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
-import { slugToTitle } from "@/github/githubClient";
+import { createFile, readFileWithSha, slugToTitle, updateFile } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type BookFile } from "@/types/book";
 import { resolveBookToken } from "@/types/settings";
 import { openCanonDossier } from "@/narrarium/openDossier";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { useRegisterPageSave } from "@/store/saveStore";
+import { GhostwriterField } from "@/components/book/GhostwriterField";
 import {
   createCanonEntity,
   createChapter as createChapterFile,
@@ -38,6 +45,24 @@ import { CreateEntityDialog } from "@/components/canon/CreateEntityDialog";
 
 function fileSlug(path: string): string {
   return (path.split("/").pop() ?? "").replace(/\.md$/i, "");
+}
+
+function splitMarkdownDoc(raw: string): { frontmatter: Record<string, unknown>; body: string } {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
+  if (!match) return { frontmatter: {}, body: raw };
+  try {
+    return { frontmatter: (parseDocument(match[1]).toJSON() as Record<string, unknown>) ?? {}, body: match[2] };
+  } catch {
+    return { frontmatter: {}, body: match[2] };
+  }
+}
+
+function buildMarkdownDoc(frontmatter: Record<string, unknown>, body: string): string {
+  return `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${body.trim()}\n`;
+}
+
+function metaString(value: unknown): string {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
 }
 
 function CanonList({
@@ -98,6 +123,85 @@ export function BookPage() {
   const { book, structure, loading, error, reload } = useBookStructure(bookId ?? "");
   // Kick off branch creation as soon as the structure is available
   const { branch, ensuring } = useWorkingBranch(bookId);
+  const token = book ? resolveBookToken(book, settings) : "";
+
+  const [bookFrontmatter, setBookFrontmatter] = useState<Record<string, unknown>>({});
+  const [bookBody, setBookBody] = useState("");
+  const [savedBookFrontmatter, setSavedBookFrontmatter] = useState<Record<string, unknown>>({});
+  const [savedBookBody, setSavedBookBody] = useState("");
+  const [bookSha, setBookSha] = useState("");
+  const [bookDocLoading, setBookDocLoading] = useState(false);
+  const [bookDocSaving, setBookDocSaving] = useState(false);
+  const loadedBookDocRef = useRef("");
+
+  const bookDocDirty = bookBody !== savedBookBody || JSON.stringify(bookFrontmatter) !== JSON.stringify(savedBookFrontmatter);
+
+  useEffect(() => {
+    if (!book || !token) return;
+    const key = `${book.id}:${branch}:book.md`;
+    if (loadedBookDocRef.current === key) return;
+    loadedBookDocRef.current = key;
+    setBookDocLoading(true);
+    readFileWithSha(token, book.owner, book.repo, branch, "book.md")
+      .then(({ content, sha }) => {
+        const { frontmatter, body } = splitMarkdownDoc(content);
+        setBookFrontmatter(frontmatter);
+        setBookBody(body);
+        setSavedBookFrontmatter(frontmatter);
+        setSavedBookBody(body);
+        setBookSha(sha);
+      })
+      .catch(() => {
+        const fallback = {
+          type: "book",
+          title: structure?.title ?? book.name,
+          language: structure?.language ?? settings.ui.language ?? "en",
+          ...(structure?.ghostwriter ? { ghostwriter: structure.ghostwriter } : {}),
+        };
+        setBookFrontmatter(fallback);
+        setBookBody(structure?.description ?? "");
+        setSavedBookFrontmatter(fallback);
+        setSavedBookBody(structure?.description ?? "");
+        setBookSha("");
+      })
+      .finally(() => setBookDocLoading(false));
+  }, [book, token, branch, structure?.title, structure?.description, structure?.language, structure?.ghostwriter, settings.ui.language]);
+
+  function patchBookFrontmatter(key: string, value: string) {
+    setBookFrontmatter((prev) => {
+      const next = { ...prev };
+      if (key === "ghostwriter" && !value) delete next.ghostwriter;
+      else next[key] = value;
+      return next;
+    });
+  }
+
+  async function saveBookDoc() {
+    if (!book || !token || !bookDocDirty) return;
+    setBookDocSaving(true);
+    try {
+      const nextFrontmatter = {
+        ...bookFrontmatter,
+        title: metaString(bookFrontmatter.title).trim() || structure?.title || book.name,
+      };
+      const content = buildMarkdownDoc(nextFrontmatter, bookBody);
+      const nextSha = bookSha
+        ? await updateFile(token, book.owner, book.repo, branch, "book.md", bookSha, content, "Update book metadata")
+        : await createFile(token, book.owner, book.repo, branch, "book.md", content, "Create book metadata");
+      setBookSha(nextSha);
+      setBookFrontmatter(nextFrontmatter);
+      setSavedBookFrontmatter(nextFrontmatter);
+      setSavedBookBody(bookBody);
+      toast({ title: t("common.saved") });
+      reload();
+    } catch (err) {
+      toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setBookDocSaving(false);
+    }
+  }
+
+  useRegisterPageSave({ dirty: bookDocDirty, enabled: Boolean(book && token), onSave: () => saveBookDoc() });
 
   if (!book) {
     return (
@@ -108,7 +212,9 @@ export function BookPage() {
     );
   }
 
-  const token = resolveBookToken(book, settings);
+  const displayTitle = metaString(bookFrontmatter.title).trim() || structure?.title || book.name;
+  const displayDescription = bookBody.trim() || structure?.description;
+  const currentGhostwriter = metaString(bookFrontmatter.ghostwriter);
 
   async function handleOpenDossier(section: string, file: BookFile) {
     if (!structure || !token || !bookId) return;
@@ -154,10 +260,10 @@ export function BookPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
-            {structure?.title ?? book.name}
+            {displayTitle}
           </h1>
-          {structure?.description && (
-            <p className="text-muted-foreground">{structure.description}</p>
+          {displayDescription && (
+            <p className="text-muted-foreground">{displayDescription}</p>
           )}
           <p className="mt-1 text-xs text-muted-foreground">
             {book.owner}/{book.repo}
@@ -192,6 +298,67 @@ export function BookPage() {
       )}
 
       {loading && !structure && <BookSkeleton />}
+
+      {structure && (
+        <section className="rounded-xl border bg-card p-4 shadow-sm">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                {t("bookPage.bookMetadata")}
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">book.md</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {bookDocDirty && !bookDocSaving && <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>}
+              <Button size="sm" onClick={() => void saveBookDoc()} disabled={!bookDocDirty || bookDocSaving || bookDocLoading}>
+                {bookDocSaving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}
+                {t("common.save")}
+              </Button>
+            </div>
+          </div>
+          {bookDocLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-[1fr_180px]">
+              <div className="space-y-2">
+                <Label htmlFor="book-title">{t("bookPage.titleField")}</Label>
+                <Input
+                  id="book-title"
+                  value={metaString(bookFrontmatter.title)}
+                  onChange={(event) => patchBookFrontmatter("title", event.target.value)}
+                  placeholder={book.name}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="book-language">{t("bookPage.languageField")}</Label>
+                <Input
+                  id="book-language"
+                  value={metaString(bookFrontmatter.language)}
+                  onChange={(event) => patchBookFrontmatter("language", event.target.value)}
+                  placeholder="en"
+                />
+              </div>
+              <div className="lg:col-span-2">
+                <GhostwriterField ghostwriters={structure.ghostwriters} value={currentGhostwriter} onChange={(slug) => patchBookFrontmatter("ghostwriter", slug)} />
+              </div>
+              <div className="space-y-2 lg:col-span-2">
+                <Label htmlFor="book-description">{t("bookPage.descriptionField")}</Label>
+                <AutoTextarea
+                  id="book-description"
+                  value={bookBody}
+                  onChange={(event) => setBookBody(event.target.value)}
+                  className="min-h-28 text-sm leading-6"
+                  placeholder={t("bookPage.descriptionPlaceholder")}
+                />
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {structure && (
         <Tabs value={section} onValueChange={setSection}>
