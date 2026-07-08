@@ -51,8 +51,6 @@ interface ReaderParagraph {
 interface ReaderChapter {
   chapter: Chapter;
   frontmatter: string;
-  html: string;
-  text: string;
   images: ReaderImage[];
   paragraphs: ReaderParagraph[];
 }
@@ -179,25 +177,34 @@ export function ReaderPreviewPage() {
     if (!viewport || !bookId) return null;
     const viewportRect = viewport.getBoundingClientRect();
     const elements = Array.from(viewport.querySelectorAll<HTMLElement>("[data-reader-paragraph]"));
-    let best: { el: HTMLElement; rectIndex: number; rectCount: number; score: number } | null = null;
+    let bestEl: HTMLElement | null = null;
+    let bestRectIndex = 0;
+    let bestRectCount = 1;
+    let bestScore = 0;
 
     for (const el of elements) {
       const rects = Array.from(el.getClientRects());
-      rects.forEach((rect, index) => {
+      for (let index = 0; index < rects.length; index++) {
+        const rect = rects[index];
         const horizontal = Math.max(0, Math.min(rect.right, viewportRect.right) - Math.max(rect.left, viewportRect.left));
         const vertical = Math.max(0, Math.min(rect.bottom, viewportRect.bottom) - Math.max(rect.top, viewportRect.top));
         const score = horizontal * vertical;
-        if (score > 0 && (!best || score > best.score)) best = { el, rectIndex: index, rectCount: rects.length, score };
-      });
+        if (score > bestScore) {
+          bestEl = el;
+          bestRectIndex = index;
+          bestRectCount = Math.max(1, rects.length);
+          bestScore = score;
+        }
+      }
     }
 
-    const target = best?.el ?? elements[0];
+    const target = bestEl ?? elements[0];
     if (!target) return null;
     const chapterSlug = target.dataset.chapterSlug;
     const paragraphNumber = target.dataset.paragraphNumber;
     if (!chapterSlug || !paragraphNumber) return null;
     const textLength = Number(target.dataset.textLength || "0");
-    const ratio = best && best.rectCount > 1 ? best.rectIndex / Math.max(1, best.rectCount - 1) : 0;
+    const ratio = bestScore > 0 && bestRectCount > 1 ? bestRectIndex / Math.max(1, bestRectCount - 1) : 0;
     return { bookId, chapterSlug, paragraphNumber, offset: Math.max(0, Math.round(textLength * ratio)) };
   }, [bookId]);
 
@@ -324,7 +331,7 @@ export function ReaderPreviewPage() {
         </div>
       </div>
 
-      <div className={readerShellClass(readerSettings)}>
+      <div className="min-h-0 flex-1 rounded-[2rem] border bg-card p-2 text-card-foreground shadow-sm sm:p-3">
         {busy || !readerBook ? <ReaderSkeleton /> : (
           <div className="flex h-full min-h-0 flex-col">
             <div
@@ -353,7 +360,6 @@ export function ReaderPreviewPage() {
                       <h2 className="mt-3 font-serif text-4xl font-semibold leading-tight tracking-tight">{entry.chapter.title}</h2>
                     </header>
                     {readerSettings.showFrontmatter && entry.frontmatter.trim() && <ReaderFrontmatter value={entry.frontmatter} />}
-                    {entry.html && <div className="doc-prose reader-prose" dangerouslySetInnerHTML={{ __html: entry.html }} />}
                     {entry.paragraphs.map((paragraph) => (
                       <section
                         key={paragraph.paragraph.path}
@@ -490,20 +496,13 @@ async function loadReaderBook(input: {
   objectUrls: string[];
 }): Promise<ReaderBook> {
   const { marked } = await import("marked");
-  const coverUrl = input.structure.bookCoverPath
+  const cover = input.structure.bookCoverPath
     ? await loadImageUrl(input, input.structure.bookCoverPath, input.structure.title).catch(() => undefined)
     : undefined;
   const chapters = await Promise.all(input.structure.chapters.map(async (chapter) => {
     const chapterPath = `${chapter.path}/chapter.md`;
     const rawChapter = await loadFileContent(input.token, input.book.owner, input.book.repo, chapterPath, input.branch).catch(() => "");
     const chapterDoc = splitMarkdown(rawChapter);
-    const chapterRendered = await renderReaderMarkdown({
-      rawBody: chapterDoc.body,
-      filePath: chapterPath,
-      fallbackAlt: chapter.title,
-      input,
-      marked,
-    });
     const paragraphs = await Promise.all(chapter.paragraphs.map(async (paragraph) => {
       const rawParagraph = await loadFileContent(input.token, input.book.owner, input.book.repo, paragraph.path, input.branch).catch(() => "");
       const paragraphDoc = splitMarkdown(rawParagraph);
@@ -529,13 +528,11 @@ async function loadReaderBook(input: {
     return {
       chapter,
       frontmatter: chapterDoc.frontmatter,
-      html: chapterRendered.html,
-      text: chapterRendered.text,
-      images: [...chapterRendered.images, ...(structureImage ? [structureImage] : [])],
+      images: [...(structureImage ? [structureImage] : [])],
       paragraphs,
     };
   }));
-  return { title: input.structure.title || input.book.name || input.book.repo, coverPath: input.structure.bookCoverPath, coverUrl, chapters };
+  return { title: input.structure.title || input.book.name || input.book.repo, coverPath: input.structure.bookCoverPath, coverUrl: cover?.url, chapters };
 }
 
 async function renderReaderMarkdown(input: {
@@ -708,13 +705,6 @@ function findReaderParagraph(book: ReaderBook, chapterSlug: string, paragraphNum
 function bookmarkLabel(book: ReaderBook, position: LogicalPosition): string {
   const paragraph = findReaderParagraph(book, position.chapterSlug, position.paragraphNumber);
   return paragraph ? `${paragraph.chapterTitle} · ${paragraph.paragraph.number}` : position.chapterSlug;
-}
-
-function readerShellClass(settings: ReaderSettings): string {
-  const base = "min-h-0 flex-1 rounded-[2rem] border p-2 shadow-sm sm:p-3";
-  if (settings.theme === "dark") return `${base} border-zinc-800 bg-zinc-950 text-zinc-100`;
-  if (settings.theme === "sepia") return `${base} border-amber-900/20 bg-[#f4ecd8] text-[#2d2215]`;
-  return `${base} bg-card text-card-foreground`;
 }
 
 function readerFontFamily(value: string): string {

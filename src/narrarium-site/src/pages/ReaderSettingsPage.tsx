@@ -12,7 +12,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettings } from "@/drive/useSettings";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { useSettingsStore } from "@/store/settingsStore";
-import type { ReaderSettings, ReaderTheme } from "@/types/settings";
+import type { ReaderSettings } from "@/types/settings";
 
 export function ReaderSettingsPage() {
   const { t } = useTranslation();
@@ -67,29 +67,16 @@ export function ReaderSettingsPage() {
           <ReaderSwitch label={t("reader.showFrontmatter")} hint={t("reader.showFrontmatterHint")} checked={reader.showFrontmatter} onChange={(showFrontmatter) => patchReader({ showFrontmatter })} />
           <ReaderSwitch label={t("reader.showEntityLinks")} hint={t("reader.showEntityLinksHint")} checked={reader.showRichEntityLinks} onChange={(showRichEntityLinks) => patchReader({ showRichEntityLinks })} />
           <ReaderSwitch label={t("reader.fullscreen")} hint={t("reader.fullscreenHint")} checked={reader.fullScreen} onChange={(fullScreen) => patchReader({ fullScreen })} />
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label>{t("reader.theme")}</Label>
-              <Select value={reader.theme} onValueChange={(theme) => patchReader({ theme: theme as ReaderTheme })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="paper">{t("reader.paper")}</SelectItem>
-                  <SelectItem value="sepia">{t("reader.sepia")}</SelectItem>
-                  <SelectItem value="dark">{t("reader.dark")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label>{t("reader.fontFamily")}</Label>
-              <Select value={reader.fontFamily} onValueChange={(fontFamily) => patchReader({ fontFamily: fontFamily as ReaderSettings["fontFamily"] })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="serif">{t("reader.fontSerif")}</SelectItem>
-                  <SelectItem value="sans">{t("reader.fontSans")}</SelectItem>
-                  <SelectItem value="mono">{t("reader.fontMono")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="grid gap-2 sm:max-w-md">
+            <Label>{t("reader.fontFamily")}</Label>
+            <Select value={reader.fontFamily} onValueChange={(fontFamily) => patchReader({ fontFamily: fontFamily as ReaderSettings["fontFamily"] })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="serif">{t("reader.fontSerif")}</SelectItem>
+                <SelectItem value="sans">{t("reader.fontSans")}</SelectItem>
+                <SelectItem value="mono">{t("reader.fontMono")}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardContent>
       </Card>

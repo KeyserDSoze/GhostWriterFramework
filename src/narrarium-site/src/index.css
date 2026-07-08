@@ -220,6 +220,31 @@
     text-indent: 0;
   }
 
+  .reader-prose h1,
+  .reader-prose h2,
+  .reader-prose h3 {
+    @apply my-8 border-0 text-center font-serif font-semibold tracking-tight;
+  }
+
+  .reader-prose h1 {
+    @apply text-4xl;
+  }
+
+  .reader-prose h2 {
+    @apply text-3xl;
+  }
+
+  .reader-prose h3 {
+    @apply text-2xl italic;
+  }
+
+  .reader-prose h1::after,
+  .reader-prose h2::after,
+  .reader-prose h3::after {
+    content: "";
+    @apply mx-auto mt-3 block h-px w-20 bg-primary/35;
+  }
+
   .reader-entity-link {
     @apply rounded px-0.5 text-primary underline decoration-primary/40 decoration-dotted underline-offset-4 transition hover:bg-primary/10 hover:decoration-primary;
   }

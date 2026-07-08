@@ -239,8 +239,6 @@ export interface RepositorySettings {
   autoPullWhenClean: boolean;
 }
 
-export type ReaderTheme = "paper" | "sepia" | "dark";
-
 export interface ReaderBookmark {
   id: string;
   bookId: string;
@@ -263,7 +261,6 @@ export interface ReaderSettings {
   fontFamily: "serif" | "sans" | "mono";
   lineHeight: number;
   pageMargin: number;
-  theme: ReaderTheme;
   bookmarks: ReaderBookmark[];
 }
 
@@ -353,7 +350,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fontFamily: "serif",
     lineHeight: 1.75,
     pageMargin: 48,
-    theme: "paper",
     bookmarks: [],
   },
   customActions: [],
