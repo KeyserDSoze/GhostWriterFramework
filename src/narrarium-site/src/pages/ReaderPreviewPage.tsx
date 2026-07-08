@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseDocument } from "yaml";
-import { AlertCircle, ArrowLeft, BookOpen, Bookmark, BookmarkPlus, ChevronLeft, ChevronRight, Eye, EyeOff, Image as ImageIcon, Maximize2, Minimize2, Settings, Trash2 } from "lucide-react";
+import { AlertCircle, BookOpen, Bookmark, BookmarkPlus, ChevronLeft, ChevronRight, Eye, EyeOff, Image as ImageIcon, Maximize2, Minimize2, Settings, Trash2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -329,9 +329,6 @@ export function ReaderPreviewPage() {
   return (
     <div className={rootClass}>
       {!fullScreen && <div className="flex flex-wrap items-center gap-2">
-        <Button asChild variant="ghost" size="sm" className="-ml-2">
-          <Link to={`/app/books/${book.id}`}><ArrowLeft className="mr-1 h-4 w-4" />{book.name}</Link>
-        </Button>
         <div className="min-w-0 flex-1">
           <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">{t("reader.title")}</p>
           <h1 className="truncate font-serif text-2xl font-semibold tracking-tight sm:text-3xl">{readerBook?.title ?? structure?.title ?? book.name}</h1>
