@@ -112,7 +112,7 @@ export function BookPage() {
   const { t } = useTranslation();
   const { bookId } = useParams<{ bookId: string }>();
   const location = useLocation();
-  const SECTIONS = ["chapters", "characters", "locations", "factions", "items", "timelines", "secrets"];
+  const SECTIONS = ["chapters", "characters", "locations", "factions", "items", "timelines", "secrets", "metadata"];
   const [section, setSection] = useState("chapters");
   useEffect(() => {
     const hash = location.hash.replace(/^#/, "");
@@ -301,67 +301,6 @@ export function BookPage() {
       {loading && !structure && <BookSkeleton />}
 
       {structure && (
-        <section className="rounded-xl border bg-card p-4 shadow-sm">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                {t("bookPage.bookMetadata")}
-              </h2>
-              <p className="mt-1 text-xs text-muted-foreground">book.md</p>
-            </div>
-            <div className="flex items-center gap-2">
-              {bookDocDirty && !bookDocSaving && <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>}
-              <Button size="sm" onClick={() => void saveBookDoc()} disabled={!bookDocDirty || bookDocSaving || bookDocLoading}>
-                {bookDocSaving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}
-                {t("common.save")}
-              </Button>
-            </div>
-          </div>
-          {bookDocLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-9 w-full" />
-              <Skeleton className="h-9 w-full" />
-              <Skeleton className="h-24 w-full" />
-            </div>
-          ) : (
-            <div className="grid gap-4 lg:grid-cols-[1fr_180px]">
-              <div className="space-y-2">
-                <Label htmlFor="book-title">{t("bookPage.titleField")}</Label>
-                <Input
-                  id="book-title"
-                  value={metaString(bookFrontmatter.title)}
-                  onChange={(event) => patchBookFrontmatter("title", event.target.value)}
-                  placeholder={book.name}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="book-language">{t("bookPage.languageField")}</Label>
-                <Input
-                  id="book-language"
-                  value={metaString(bookFrontmatter.language)}
-                  onChange={(event) => patchBookFrontmatter("language", event.target.value)}
-                  placeholder="en"
-                />
-              </div>
-              <div className="lg:col-span-2">
-                <GhostwriterField ghostwriters={structure.ghostwriters} value={currentGhostwriter} onChange={(slug) => patchBookFrontmatter("ghostwriter", slug)} />
-              </div>
-              <div className="space-y-2 lg:col-span-2">
-                <Label htmlFor="book-description">{t("bookPage.descriptionField")}</Label>
-                <AutoTextarea
-                  id="book-description"
-                  value={bookBody}
-                  onChange={(event) => setBookBody(event.target.value)}
-                  className="min-h-28 text-sm leading-6"
-                  placeholder={t("bookPage.descriptionPlaceholder")}
-                />
-              </div>
-            </div>
-          )}
-        </section>
-      )}
-
-      {structure && (
         <Tabs value={section} onValueChange={setSection}>
           <TabsList className="flex-wrap h-auto gap-1">
             <TabsTrigger value="chapters">
@@ -412,6 +351,10 @@ export function BookPage() {
               <Badge variant="secondary" className="ml-1.5 text-[10px]">
                 {structure.secrets.length}
               </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="metadata">
+              <FileText className="mr-1 h-3 w-3" />
+              {t("bookPage.bookMetadata")}
             </TabsTrigger>
           </TabsList>
 
@@ -556,6 +499,67 @@ export function BookPage() {
               section="secrets"
               onOpen={handleOpenDossier}
             />
+          </TabsContent>
+
+          <TabsContent value="metadata" className="mt-4">
+            <section className="rounded-xl border bg-card p-4 shadow-sm">
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                    {t("bookPage.bookMetadata")}
+                  </h2>
+                  <p className="mt-1 text-xs text-muted-foreground">book.md</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {bookDocDirty && !bookDocSaving && <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>}
+                  <Button size="sm" onClick={() => void saveBookDoc()} disabled={!bookDocDirty || bookDocSaving || bookDocLoading}>
+                    {bookDocSaving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}
+                    {t("common.save")}
+                  </Button>
+                </div>
+              </div>
+              {bookDocLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-9 w-full" />
+                  <Skeleton className="h-9 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                </div>
+              ) : (
+                <div className="grid gap-4 lg:grid-cols-[1fr_180px]">
+                  <div className="space-y-2">
+                    <Label htmlFor="book-title">{t("bookPage.titleField")}</Label>
+                    <Input
+                      id="book-title"
+                      value={metaString(bookFrontmatter.title)}
+                      onChange={(event) => patchBookFrontmatter("title", event.target.value)}
+                      placeholder={book.name}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="book-language">{t("bookPage.languageField")}</Label>
+                    <Input
+                      id="book-language"
+                      value={metaString(bookFrontmatter.language)}
+                      onChange={(event) => patchBookFrontmatter("language", event.target.value)}
+                      placeholder="en"
+                    />
+                  </div>
+                  <div className="lg:col-span-2">
+                    <GhostwriterField ghostwriters={structure.ghostwriters} value={currentGhostwriter} onChange={(slug) => patchBookFrontmatter("ghostwriter", slug)} />
+                  </div>
+                  <div className="space-y-2 lg:col-span-2">
+                    <Label htmlFor="book-description">{t("bookPage.descriptionField")}</Label>
+                    <AutoTextarea
+                      id="book-description"
+                      value={bookBody}
+                      onChange={(event) => setBookBody(event.target.value)}
+                      className="min-h-28 text-sm leading-6"
+                      placeholder={t("bookPage.descriptionPlaceholder")}
+                    />
+                  </div>
+                </div>
+              )}
+            </section>
           </TabsContent>
         </Tabs>
       )}
