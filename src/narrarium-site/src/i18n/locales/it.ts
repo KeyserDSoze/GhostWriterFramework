@@ -1307,6 +1307,9 @@ const it = {
     description: "Ricerca approfondita su fonti esterne. I risultati vengono salvati come Markdown e versionati con il libro.",
     new: "Nuova ricerca",
     newTitle: "Nuova Deep Research",
+    edit: "Modifica ricerca",
+    markdownBody: "Corpo Markdown",
+    searchPlaceholder: "Cerca nel titolo o nel contenuto…",
     queryLabel: "Query o richiesta",
     queryPlaceholder: "Es. vita quotidiana nella Roma imperiale, oppure approfondisci questo personaggio…",
     sourceModeLabel: "Fonte",
@@ -1344,8 +1347,16 @@ const it = {
     deepResearchTask: "Deep Research",
     createFromResearchTask: "Crea da Ricerca",
     contextMenuResearch: "Deep Research su questa entità",
+    contextMenuResearchSelection: "Deep Research sulla selezione",
+    contextMenuSearchSaved: "Cerca nelle ricerche salvate",
     contextMenuCreate: "Crea entità da ricerca",
     backToList: "Torna alle ricerche"
+  },
+  quickSwitch: {
+    title: "Cerca veloce",
+    placeholder: "Cerca capitoli, paragrafi, canon, ricerche…",
+    empty: "Nessuna pagina trovata.",
+    backToPrevious: "Torna al precedente"
   }
 };
 

@@ -1307,6 +1307,9 @@ const en = {
     description: "Deep research on external sources. Results are saved as Markdown and versioned with the book.",
     new: "New research",
     newTitle: "New Deep Research",
+    edit: "Edit research",
+    markdownBody: "Markdown body",
+    searchPlaceholder: "Search title or content…",
     queryLabel: "Query or request",
     queryPlaceholder: "E.g. daily life in Imperial Rome, or research this character…",
     sourceModeLabel: "Source",
@@ -1344,8 +1347,16 @@ const en = {
     deepResearchTask: "Deep Research",
     createFromResearchTask: "Create from Research",
     contextMenuResearch: "Deep Research on this entity",
+    contextMenuResearchSelection: "Deep Research on selection",
+    contextMenuSearchSaved: "Search saved research for selection",
     contextMenuCreate: "Create entity from research",
     backToList: "Back to research list"
+  },
+  quickSwitch: {
+    title: "Quick switch",
+    placeholder: "Search chapters, paragraphs, canon, research…",
+    empty: "No matching page.",
+    backToPrevious: "Back to previous"
   }
 };
 

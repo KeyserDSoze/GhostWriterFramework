@@ -1,4 +1,4 @@
-import { Activity, ArrowLeftRight, BookOpen, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, Languages, LogOut, Menu, Moon, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2, Wand2 } from "lucide-react";
+import { Activity, ArrowLeftRight, BookOpen, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, History, Languages, LogOut, Menu, Moon, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2, Wand2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,6 +29,7 @@ import { resolveBookToken } from "@/types/settings";
 import { emailToBranchName } from "@/github/githubClient";
 import { useTheme } from "./ThemeProvider";
 import { SUPPORTED_LANGUAGES } from "@/i18n";
+import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -68,6 +69,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "behind" | "offline" | "none" }>({ label: "", tone: "none" });
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
   const [repoActionBusy, setRepoActionBusy] = useState<string | null>(null);
+  const previousDocument = useNavigationHistoryStore((s) => s.previous);
   const route = parseAppRoute(location.pathname);
   const currentBookId = "bookId" in route ? route.bookId : undefined;
   const currentBook = currentBookId ? settings.books.find((entry) => entry.id === currentBookId) : undefined;
@@ -225,6 +227,19 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       </div>
 
       <div className="ml-auto flex items-center gap-1 sm:gap-2">
+        {previousDocument && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="hidden max-w-[260px] items-center gap-1 text-xs md:inline-flex"
+            title={`${t("quickSwitch.backToPrevious")}: ${previousDocument.label}`}
+            onClick={() => navigate(previousDocument.pathname)}
+          >
+            <History className="h-3.5 w-3.5" />
+            <span className="truncate">{previousDocument.label}</span>
+            <span className="ml-1 text-[10px] text-muted-foreground">Ctrl+Tab</span>
+          </Button>
+        )}
         {currentBook && visibleRepoStatus.tone !== "none" && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

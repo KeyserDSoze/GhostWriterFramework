@@ -135,6 +135,16 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
     actions.push({ id: "chEval", label: chapter.hasEvaluation ? t("chapter.openEvaluation") : t("chapter.createEvaluation"), run: () => openOrCreateChapter("evaluation"), icon: <ClipboardCheck className="h-4 w-4" /> });
     actions.push({ id: "chStyle", label: t("writingStyle.chapterButton"), to: `${base}/writing-style`, icon: <PenLine className="h-4 w-4" /> });
   } else if (bookId) {
+    if (route.kind === "canon") {
+      const files = structure?.[route.section as keyof typeof structure] as Array<{ path: string; name?: string }> | undefined;
+      const file = Array.isArray(files) ? files.find((entry) => entry.path.endsWith(`/${route.slug}.md`)) : undefined;
+      actions.push({
+        id: "research-entity",
+        label: t("research.contextMenuResearch"),
+        run: () => navigate(`/app/books/${bookId}/research`, { state: { newResearchQuery: file?.name ?? route.slug } }),
+        icon: <Search className="h-4 w-4" />,
+      });
+    }
     actions.push({ id: "research", label: t("research.title"), to: `/app/books/${bookId}/research`, icon: <Search className="h-4 w-4" /> });
     actions.push({ id: "gw", label: t("ghostwriters.title"), to: `/app/books/${bookId}/ghostwriters`, icon: <Wand2 className="h-4 w-4" /> });
     actions.push({ id: "style", label: t("writingStyle.title"), to: `/app/books/${bookId}/writing-style`, icon: <PenLine className="h-4 w-4" /> });

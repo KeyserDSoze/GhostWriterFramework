@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useLocation } from "react-router-dom";
-import { BookOpen, ClipboardPaste, Copy, Image as ImageIcon, RefreshCcw, Save, Scissors, Sparkles, TextCursorInput, Wand2 } from "lucide-react";
+import { BookOpen, ClipboardPaste, Copy, Image as ImageIcon, RefreshCcw, Save, Scissors, Search, Sparkles, TextCursorInput, Wand2 } from "lucide-react";
 import { useClipboardStore } from "@/clipboard/clipboardStore";
 import { useProseEditorStore, type ProseEditorActions } from "@/components/editor/proseEditorStore";
 import { useContextualActions } from "@/hooks/useContextualActions";
@@ -283,6 +283,7 @@ export function GlobalContextMenu() {
 
   const wordCount = menu.selection.trim() ? menu.selection.trim().split(/\s+/).length : 0;
   const canSynonym = !!menu.prose && wordCount >= 1 && wordCount <= 3;
+  const selectedResearchText = menu.selection.trim();
 
   const openFromFab = () => {
     if (!fab) return;
@@ -406,6 +407,27 @@ export function GlobalContextMenu() {
               {dossierMatch && (
                 <>
                   <MenuItem icon={<BookOpen className="h-4 w-4" />} label={t("dossier.openFor", { name: dossierMatch.name })} onClick={() => void openDossierForWord()} />
+                  <div className="my-1 h-px bg-border" />
+                </>
+              )}
+              {selectedResearchText && dossierBookId && (
+                <>
+                  <MenuItem
+                    icon={<Search className="h-4 w-4" />}
+                    label={t("research.contextMenuResearchSelection")}
+                    onClick={() => {
+                      navigate(`/app/books/${dossierBookId}/research`, { state: { newResearchQuery: selectedResearchText } });
+                      close();
+                    }}
+                  />
+                  <MenuItem
+                    icon={<BookOpen className="h-4 w-4" />}
+                    label={t("research.contextMenuSearchSaved")}
+                    onClick={() => {
+                      navigate(`/app/books/${dossierBookId}/research`, { state: { researchFilter: selectedResearchText } });
+                      close();
+                    }}
+                  />
                   <div className="my-1 h-px bg-border" />
                 </>
               )}
