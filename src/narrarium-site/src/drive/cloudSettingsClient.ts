@@ -209,6 +209,7 @@ function migrateSettings(raw: unknown): AppSettings {
     ...(Array.isArray(source.aiIntegrations) ? source.aiIntegrations : []),
     ...(migratedAzureIntegration ? [migratedAzureIntegration] : []),
   ].map(ensureChatModels);
+  const sourceReader = typeof source.reader === "object" && source.reader ? source.reader : {};
 
   return {
     ...DEFAULT_SETTINGS,
@@ -231,6 +232,11 @@ function migrateSettings(raw: unknown): AppSettings {
     repository: {
       ...DEFAULT_SETTINGS.repository,
       ...(typeof source.repository === "object" && source.repository ? source.repository : {}),
+    },
+    reader: {
+      ...DEFAULT_SETTINGS.reader,
+      ...sourceReader,
+      bookmarks: Array.isArray((sourceReader as Partial<AppSettings["reader"]>).bookmarks) ? (sourceReader as Partial<AppSettings["reader"]>).bookmarks! : [],
     },
     customActions: Array.isArray(source.customActions) ? source.customActions : [],
     books: Array.isArray(source.books) ? source.books : [],

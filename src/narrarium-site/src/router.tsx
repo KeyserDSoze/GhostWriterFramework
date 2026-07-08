@@ -21,6 +21,7 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { MigratePage } from "@/pages/MigratePage";
 import { CostsPage } from "@/pages/CostsPage";
 import { CustomActionsPage } from "@/pages/CustomActionsPage";
+import { ReaderSettingsPage } from "@/pages/ReaderSettingsPage";
 import { AppDocsIndexPage, AppDocPage } from "@/pages/AppDocsPage";
 import { AssistantChatsPage } from "@/pages/AssistantChatsPage";
 import {
@@ -87,6 +88,7 @@ export const router = createBrowserRouter([
         element: <ParagraphPage />,
       },
       { path: "settings", element: <SettingsPage /> },
+      { path: "reader-settings", element: <ReaderSettingsPage /> },
       { path: "custom-actions", element: <CustomActionsPage /> },
       { path: "migrate", element: <MigratePage /> },
       { path: "costs", element: <CostsPage /> },

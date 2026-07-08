@@ -239,6 +239,34 @@ export interface RepositorySettings {
   autoPullWhenClean: boolean;
 }
 
+export type ReaderTheme = "paper" | "sepia" | "dark";
+
+export interface ReaderBookmark {
+  id: string;
+  bookId: string;
+  chapterSlug: string;
+  paragraphNumber: string;
+  /** Logical character offset inside the paragraph text. Re-resolved after pagination changes. */
+  offset: number;
+  label: string;
+  preview?: string;
+  createdAt: string;
+}
+
+export interface ReaderSettings {
+  showImages: boolean;
+  /** Frontmatter stays hidden by default; this is a reader/debug preference. */
+  showFrontmatter: boolean;
+  showRichEntityLinks: boolean;
+  fullScreen: boolean;
+  fontSize: number;
+  fontFamily: "serif" | "sans" | "mono";
+  lineHeight: number;
+  pageMargin: number;
+  theme: ReaderTheme;
+  bookmarks: ReaderBookmark[];
+}
+
 export type CustomActionActivation = "selection" | "element";
 export type CustomActionOutputMode = "show" | "replace";
 
@@ -281,6 +309,7 @@ export interface AppSettings {
   };
   speech: SpeechSettings;
   repository: RepositorySettings;
+  reader: ReaderSettings;
   customActions: CustomAction[];
   books: BookEntry[];
 }
@@ -314,6 +343,18 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoFetchOnOpen: true,
     autoFetchIntervalMinutes: 15,
     autoPullWhenClean: false,
+  },
+  reader: {
+    showImages: true,
+    showFrontmatter: false,
+    showRichEntityLinks: true,
+    fullScreen: false,
+    fontSize: 19,
+    fontFamily: "serif",
+    lineHeight: 1.75,
+    pageMargin: 48,
+    theme: "paper",
+    bookmarks: [],
   },
   customActions: [],
   books: [],

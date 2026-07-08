@@ -184,4 +184,43 @@
   .doc-prose blockquote {
     @apply border-l-4 border-primary/50 pl-4 text-muted-foreground;
   }
+
+  .reader-page-flow {
+    column-fill: auto;
+    overflow: visible;
+    will-change: transform;
+  }
+
+  .reader-cover,
+  .reader-chapter-title,
+  .reader-image,
+  .reader-frontmatter {
+    break-inside: avoid;
+  }
+
+  .reader-chapter {
+    break-before: column;
+  }
+
+  .reader-paragraph {
+    margin-top: 1.1em;
+  }
+
+  .reader-prose {
+    font-size: 1em;
+    line-height: inherit;
+  }
+
+  .reader-prose p {
+    margin-top: 0.95em;
+    text-indent: 1.35em;
+  }
+
+  .reader-prose p:first-child {
+    text-indent: 0;
+  }
+
+  .reader-entity-link {
+    @apply rounded px-0.5 text-primary underline decoration-primary/40 decoration-dotted underline-offset-4 transition hover:bg-primary/10 hover:decoration-primary;
+  }
 }
