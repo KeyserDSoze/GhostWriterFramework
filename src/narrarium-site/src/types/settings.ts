@@ -315,6 +315,8 @@ export interface AppSettings {
   defaultReviewIntegrationId?: string;
   /** Optional configurable router: per task, a primary integration+model and ordered fallbacks. */
   taskRouting?: Partial<Record<RoutingTaskKind, TaskRoute>>;
+  /** Currency symbol/code used for cost display (e.g. "USD", "EUR", "GBP"). Default: "USD". */
+  costCurrency: string;
   ui: {
     language: "en" | "it";
     theme: "light" | "dark" | "system";
@@ -341,6 +343,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   aiIntegrations: [],
   defaultWritingIntegrationId: undefined,
   defaultReviewIntegrationId: undefined,
+  costCurrency: "USD",
   ui: {
     language: "en",
     theme: "system",

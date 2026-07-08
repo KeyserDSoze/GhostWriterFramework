@@ -236,7 +236,7 @@ async function createChapterFromPrompt(input: PromptInput & { book: BookEntry; b
   const structure = input.context.structure;
   if (!structure) return makeAssistantMessage("assistant", "Open a book first so I can create a chapter in the right repository.");
   const answer = await completeForTask(input.settings, [
-    buildSystemMessage(input, 'Return ONLY JSON for a new chapter: {"title":"...","summary":"...","body":"..."}. Keep it concise and aligned with the current book context.'),
+    buildSystemMessage(input, 'Return ONLY JSON for a new chapter: {"title":"...","summary":"...","body":"..."}. Keep it concise and aligned with the current book context.', "book"),
     buildUserMessage(input, `Create a new chapter. Request: ${input.prompt}`),
   ], "default", { signal: input.signal, label: "copilot:create-chapter" });
   if (!answer) return noAiMessage();
@@ -253,7 +253,7 @@ async function createParagraphFromPrompt(input: PromptInput & { book: BookEntry;
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Open a chapter first so I know where to create the paragraph.");
   const answer = await completeForTask(input.settings, [
-    buildSystemMessage(input, 'Return ONLY JSON for a new paragraph: {"title":"...","summary":"...","body":"..."}. Preserve current chapter context.'),
+    buildSystemMessage(input, 'Return ONLY JSON for a new paragraph: {"title":"...","summary":"...","body":"..."}. Preserve current chapter context.', "book"),
     buildUserMessage(input, `Create a new paragraph in chapter ${chapter.slug}. Request: ${input.prompt}`),
   ], "default", { signal: input.signal, label: "copilot:create-paragraph" });
   if (!answer) return noAiMessage();
@@ -270,7 +270,7 @@ async function createEntityFromPrompt(input: PromptInput & { book: BookEntry; br
   const kind = detectEntityKind(input.prompt);
   if (!kind) return makeAssistantMessage("assistant", "Tell me which entity to create: character, location, faction, item, secret, or timeline event.");
   const answer = await completeForTask(input.settings, [
-    buildSystemMessage(input, 'Return ONLY JSON for a new canon entity: {"label":"...","summary":"...","body":"...","extraFrontmatter":{...}}.'),
+    buildSystemMessage(input, 'Return ONLY JSON for a new canon entity: {"label":"...","summary":"...","body":"...","extraFrontmatter":{...}}.', "book"),
     buildUserMessage(input, `Create a ${kind}. Request: ${input.prompt}`),
   ], "default", { signal: input.signal, label: "copilot:create-entity" });
   if (!answer) return noAiMessage();
@@ -330,7 +330,7 @@ async function writeResume(input: PromptInput & { book: BookEntry; branch: strin
   if (!chapter) return makeAssistantMessage("assistant", "Resume writing works when you are inside a chapter or one of its paragraph/workspace pages.");
   const targetPath = `resumes/chapters/${chapter.slug}.md`;
   const answer = await completeForTask(input.settings, [
-    buildSystemMessage(input, "Write a chapter resume suitable for the chapter resume file. Preserve chronology and visible canon. Return only the markdown body, no frontmatter."),
+    buildSystemMessage(input, "Write a chapter resume suitable for the chapter resume file. Preserve chronology and visible canon. Return only the markdown body, no frontmatter.", "book"),
     buildUserMessage(input, `Write or refresh the resume for chapter ${chapter.slug}. Request: ${input.prompt}`),
   ], "default", { signal: input.signal, label: "copilot:write-resume" });
   if (!answer) return noAiMessage();
@@ -343,7 +343,7 @@ async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: s
     const paragraphSlug = input.context.paragraph.path.split("/").pop()?.replace(/\.md$/i, "") ?? input.context.paragraph.number;
     const targetPath = `evaluations/paragraphs/${input.context.chapter.slug}/${paragraphSlug}.md`;
     const answer = await completeForTask(input.settings, [
-      buildSystemMessage(input, "Write a paragraph evaluation suitable for the paragraph evaluation file. Use markdown headings and concise bullet points. Return only the body, no frontmatter."),
+      buildSystemMessage(input, "Write a paragraph evaluation suitable for the paragraph evaluation file. Use markdown headings and concise bullet points. Return only the body, no frontmatter.", "book"),
       buildUserMessage(input, `Write or refresh the evaluation for paragraph ${paragraphSlug}. Request: ${input.prompt}`),
     ], "review", { signal: input.signal, label: "copilot:write-paragraph-evaluation" });
     if (!answer) return noAiMessage();
@@ -354,7 +354,7 @@ async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: s
   if (!chapter) return makeAssistantMessage("assistant", "Evaluation writing works from a chapter or paragraph context.");
   const targetPath = `evaluations/chapters/${chapter.slug}.md`;
   const answer = await completeForTask(input.settings, [
-    buildSystemMessage(input, "Write a chapter evaluation suitable for the chapter evaluation file. Use markdown headings and concise bullet points. Return only the body, no frontmatter."),
+    buildSystemMessage(input, "Write a chapter evaluation suitable for the chapter evaluation file. Use markdown headings and concise bullet points. Return only the body, no frontmatter.", "book"),
     buildUserMessage(input, `Write or refresh the evaluation for chapter ${chapter.slug}. Request: ${input.prompt}`),
   ], "review", { signal: input.signal, label: "copilot:write-chapter-evaluation" });
   if (!answer) return noAiMessage();
@@ -364,7 +364,7 @@ async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: s
 
 async function writePlotUpdate(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const answer = await completeForTask(input.settings, [
-    buildSystemMessage(input, "Update the book plot document in markdown. Keep it concise, structural, and consistent with the loaded canon. Return only the body, no frontmatter."),
+    buildSystemMessage(input, "Update the book plot document in markdown. Keep it concise, structural, and consistent with the loaded canon. Return only the body, no frontmatter.", "book"),
     buildUserMessage(input, `Refresh plot.md for this book. Request: ${input.prompt}`),
   ], "default", { signal: input.signal, label: "copilot:update-plot" });
   if (!answer) return noAiMessage();
@@ -378,7 +378,7 @@ async function rewriteCurrentParagraph(input: PromptInput & { book: BookEntry; b
   const paragraphFile = context.relevantFiles.find((entry) => entry.path === context.paragraph?.path);
   const paragraphBody = paragraphFile ? parseMarkdown(paragraphFile.content).body : "";
   const answer = await completeForTask(input.settings, [
-    buildSystemMessage(input, "You are Narrarium's prose editor. Rewrite only the paragraph body. Preserve facts, chronology, names, and visible canon. Return only the revised paragraph body, no markdown fences, no commentary. Use any loaded writing-style files if present."),
+    buildSystemMessage(input, "You are Narrarium's prose editor. Rewrite only the paragraph body. Preserve facts, chronology, names, and visible canon. Return only the revised paragraph body, no markdown fences, no commentary. Use any loaded writing-style files if present.", "book"),
     buildUserMessage(input, `Current paragraph body:\n${paragraphBody}\n\nRewrite request: ${input.prompt}`),
   ], "default", { signal: input.signal, label: "copilot:rewrite-paragraph" });
   if (!answer) return noAiMessage();
@@ -484,16 +484,27 @@ async function upsertNoteFile(input: { token: string; owner: string; repo: strin
   }
 }
 
-function buildSystemMessage(input: PromptInput, instruction: string): LlmMessage {
+function buildSystemMessage(input: PromptInput, instruction: string, taskLanguage?: "book" | "user"): LlmMessage {
   const spokenInstruction = input.spokenMode
     ? "\n\nThis answer will be read aloud. Be conversational, direct, and natural. Use short spoken paragraphs. Avoid tables, dense markdown, long lists, code blocks, and anything that is hard to understand through audio. If you need to list things, use a few concise spoken points."
     : "";
-  return { role: "system", content: `${instruction}${spokenInstruction}${languageInstruction(input)}\n\n${systemContextBundle(input)}` };
+  return { role: "system", content: `${instruction}${spokenInstruction}${languageInstruction(input, taskLanguage)}\n\n${systemContextBundle(input)}` };
 }
 
-function languageInstruction(input: PromptInput): string {
-  const language = input.settings.ui.language === "it" ? "Italian" : "English";
-  return `\n\nAlways write your reply to the user in ${language}, regardless of the language of the repository files or this prompt. Quoted prose from the book must keep its original language.`;
+function languageInstruction(input: PromptInput, taskLanguage?: "book" | "user"): string {
+  // For book-content tasks (resume, evaluation, rewrite, entity creation),
+  // enforce the book language when it is set so all generated content stays
+  // consistent with the book's target language.
+  // For copilot (conversational assistant), respond in the language the user writes.
+  const bookLang = input.context.structure?.language;
+  if (taskLanguage === "book" && bookLang) {
+    return `\n\nAlways generate all content in the language of this book: "${bookLang}". This includes the markdown body, headings, and all prose. Conversational replies to the user can mirror the user's message language. Quoted prose from the book must keep its original language.`;
+  }
+  if (taskLanguage === "user") {
+    return `\n\nRespond in the same language the user writes to you. For any book content you generate (bodies, summaries, prose), use the book language: "${bookLang ?? (input.settings.ui.language === "it" ? "it" : "en")}". Quoted prose must keep its original language.`;
+  }
+  // Default fallback (general assistant / copilot): mirror user language
+  return `\n\nRespond in the same language the user writes to you. For any book content you generate, match the book language when you can detect it from context. Quoted prose from the book must keep its original language.`;
 }
 
 function buildUserMessage(input: PromptInput, requestText: string): LlmMessage {

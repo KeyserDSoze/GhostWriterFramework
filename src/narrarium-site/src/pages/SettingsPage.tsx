@@ -182,6 +182,23 @@ export function SettingsPage() {
               onReviewChange={(id) => patchAi({ defaultReviewIntegrationId: id })}
             />
 
+            <div className="grid gap-2 sm:max-w-xs">
+              <Label>{t("settings.costCurrency")}</Label>
+              <Select value={settings.costCurrency || "USD"} onValueChange={(value) => patchSettings({ costCurrency: value })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="USD">USD — US Dollar</SelectItem>
+                  <SelectItem value="EUR">EUR — Euro</SelectItem>
+                  <SelectItem value="GBP">GBP — British Pound</SelectItem>
+                  <SelectItem value="JPY">JPY — Japanese Yen</SelectItem>
+                  <SelectItem value="CHF">CHF — Swiss Franc</SelectItem>
+                  <SelectItem value="CAD">CAD — Canadian Dollar</SelectItem>
+                  <SelectItem value="AUD">AUD — Australian Dollar</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t("settings.costCurrencyHint")}</p>
+            </div>
+
             {aiIntegrations.length === 0 && <p className="text-sm text-muted-foreground">{t("settings.noIntegrations")}</p>}
 
             <div className="grid gap-3">

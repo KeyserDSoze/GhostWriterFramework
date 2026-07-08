@@ -2,6 +2,7 @@
 // Takes a saved research document and generates a Narrarium canon entity from it.
 
 import type { AppSettings, BookEntry } from "@/types/settings";
+import { completeText } from "@/assistant/llm";
 import { completeTextRouted } from "@/assistant/router";
 import { createCanonEntity } from "@/narrarium/canon";
 import type { EntityKind } from "@/narrarium/canon";
@@ -21,6 +22,9 @@ export interface CreateFromResearchInput {
   customPrompt?: string;
   /** Language for the generated entity */
   language: string;
+  /** Optional: bypass the router and use a specific integration+model */
+  overrideIntegrationId?: string;
+  overrideModelName?: string;
   signal?: AbortSignal;
 }
 
@@ -115,10 +119,28 @@ export async function createEntityFromResearch(input: CreateFromResearchInput): 
     },
   ];
 
-  const raw = await completeTextRouted(input.settings, messages, "create-from-research", {
-    signal: input.signal,
-    label: `create-from-research:${input.entityKind}`,
-  });
+  let raw: string;
+  if (input.overrideIntegrationId && input.overrideModelName) {
+    const integration = (input.settings.aiIntegrations ?? []).find((i) => i.id === input.overrideIntegrationId);
+    if (integration) {
+      raw = await completeText(integration, messages, "writing", {
+        modelName: input.overrideModelName,
+        capability: "create-from-research",
+        signal: input.signal,
+        label: `create-from-research:${input.entityKind}`,
+      });
+    } else {
+      raw = await completeTextRouted(input.settings, messages, "create-from-research", {
+        signal: input.signal,
+        label: `create-from-research:${input.entityKind}`,
+      });
+    }
+  } else {
+    raw = await completeTextRouted(input.settings, messages, "create-from-research", {
+      signal: input.signal,
+      label: `create-from-research:${input.entityKind}`,
+    });
+  }
 
   const parsed = extractJson(raw);
 

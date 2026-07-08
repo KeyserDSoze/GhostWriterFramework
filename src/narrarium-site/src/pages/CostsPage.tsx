@@ -3,10 +3,11 @@ import { useTranslation } from "react-i18next";
 import { Coins } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useCostsStore, aggregateAll, bucketTotal } from "@/costs/costsStore";
+import { useSettingsStore } from "@/store/settingsStore";
 import { emptyBucket, type UsageBucket } from "@/costs/model";
 
-function eur(value: number): string {
-  return new Intl.NumberFormat(undefined, { style: "currency", currency: "EUR", maximumFractionDigits: 4 }).format(value || 0);
+function formatCost(value: number, currency: string): string {
+  return new Intl.NumberFormat(undefined, { style: "currency", currency: currency.trim() || "USD", maximumFractionDigits: 4 }).format(value || 0);
 }
 
 function num(value: number): string {
@@ -20,21 +21,24 @@ function hours(value: number): string {
 export function CostsPage() {
   const { t } = useTranslation();
   const file = useCostsStore((s) => s.file);
+  const { settings } = useSettingsStore();
+  const currency = settings.costCurrency || "USD";
   const total = useMemo(() => aggregateAll(file), [file]);
   const books = useMemo(() => Object.values(file.books).map((b) => ({ ...emptyBucket(), ...b })).sort((a, b) => bucketTotal(b) - bucketTotal(a)), [file]);
+  const fmt = (v: number) => formatCost(v, currency);
 
   return (
     <div className="flex flex-col gap-5">
       <div>
         <h1 className="flex items-center gap-2 font-serif text-2xl font-semibold"><Coins className="h-5 w-5" />{t("costs.title")}</h1>
-        <p className="text-sm text-muted-foreground">{t("costs.intro")}</p>
+        <p className="text-sm text-muted-foreground">{t("costs.intro")} <span className="font-mono text-xs text-muted-foreground">({currency})</span></p>
       </div>
 
       <Card>
         <CardHeader><CardTitle className="text-base">{t("costs.grandTotal")}</CardTitle></CardHeader>
         <CardContent>
-          <CategoryGrid bucket={total} />
-          <p className="mt-3 text-right text-xl font-semibold">{eur(bucketTotal(total))}</p>
+          <CategoryGrid bucket={total} fmt={fmt} />
+          <p className="mt-3 text-right text-xl font-semibold">{fmt(bucketTotal(total))}</p>
         </CardContent>
       </Card>
 
@@ -48,11 +52,11 @@ export function CostsPage() {
               <Card key={book.bookId}>
                 <CardHeader className="flex flex-row items-center justify-between">
                   <CardTitle className="text-base">{book.bookName || book.bookId}</CardTitle>
-                  <span className="text-lg font-semibold">{eur(bucketTotal(book))}</span>
+                  <span className="text-lg font-semibold">{fmt(bucketTotal(book))}</span>
                 </CardHeader>
                 <CardContent>
-                  <CategoryGrid bucket={book} />
-                  <ModelBreakdown models={book.models} />
+                  <CategoryGrid bucket={book} fmt={fmt} />
+                  <ModelBreakdown models={book.models} fmt={fmt} />
                 </CardContent>
               </Card>
             ))}
@@ -63,7 +67,7 @@ export function CostsPage() {
   );
 }
 
-function ModelBreakdown({ models }: { models?: Record<string, UsageBucket> }) {
+function ModelBreakdown({ models, fmt }: { models?: Record<string, UsageBucket>; fmt: (v: number) => string }) {
   const { t } = useTranslation();
   const entries = useMemo(
     () => Object.entries(models ?? {})
@@ -83,7 +87,7 @@ function ModelBreakdown({ models }: { models?: Record<string, UsageBucket> }) {
               <p className="text-sm font-medium">{name}</p>
               <p className="text-[11px] text-muted-foreground">{`${num(bucket.inputTokens)} in · ${num(bucket.cachedTokens)} cache · ${num(bucket.outputTokens)} out`}</p>
             </div>
-            <span className="text-sm font-semibold">{eur(bucket.chatCost)}</span>
+            <span className="text-sm font-semibold">{fmt(bucket.chatCost)}</span>
           </div>
         ))}
       </div>
@@ -91,7 +95,7 @@ function ModelBreakdown({ models }: { models?: Record<string, UsageBucket> }) {
   );
 }
 
-function CategoryGrid({ bucket }: { bucket: UsageBucket }) {
+function CategoryGrid({ bucket, fmt }: { bucket: UsageBucket; fmt: (v: number) => string }) {
   const { t } = useTranslation();
   const imageTokens = bucket.imageInputTextTokens + bucket.imageInputImageTokens + bucket.imageOutputTokens;
   const imageDetail = imageTokens > 0
@@ -111,7 +115,7 @@ function CategoryGrid({ bucket }: { bucket: UsageBucket }) {
             <p className="text-sm font-medium">{row.label}</p>
             <p className="text-[11px] text-muted-foreground">{row.detail}</p>
           </div>
-          <span className="text-sm font-semibold">{eur(row.cost)}</span>
+          <span className="text-sm font-semibold">{fmt(row.cost)}</span>
         </div>
       ))}
     </div>

@@ -192,6 +192,8 @@ const en = {
     defaultWriting: "Default writing provider",
     defaultReview: "Default review provider",
     noIntegrations: "No AI integrations configured yet.",
+    costCurrency: "Cost display currency",
+    costCurrencyHint: "Currency used to display AI costs in the Costs page. Enter the prices in your AI pricing settings in this currency.",
   },
   dossier: {
     pinned: "Dossier",
@@ -1015,7 +1017,22 @@ const en = {
     backToBook: "Back to book",
     writeBodyPlaceholder: "Write the canon body…",
     loadFailed: "Failed to load canon file",
-    removeAria: "Remove {{key}}"
+    removeAria: "Remove {{key}}",
+    regenerate: "Regenerate",
+    regenerateTitle: "Regenerate entity",
+    regenerateDescription: "Rewrite this canon entity from scratch using research documents, today's knowledge, and a custom instruction.",
+    regenerateResearch: "Research documents to use",
+    regenerateResearchSelected: "document(s) selected",
+    regeneratePrompt: "Custom instruction (optional)",
+    regeneratePromptPlaceholder: "Describe what you want the LLM to focus on, update, or change…",
+    regenerateGenerate: "Generate new content",
+    regenerateProposed: "Proposed content",
+    regenerateHasPatches: "{{count}} frontmatter field(s) updated",
+    regenerateAgain: "Regenerate again",
+    regenerateAccept: "Apply changes",
+    regenerateFailed: "Regeneration failed",
+    regenerateApplied: "Changes applied — review and save",
+    regeneratePatchedFields: "Frontmatter changes proposed"
   },
   workspace: {
     notFound: "Workspace document not found.",
@@ -1388,7 +1405,13 @@ const en = {
     contextMenuResearchSelection: "Deep Research on selection",
     contextMenuSearchSaved: "Search saved research for selection",
     contextMenuCreate: "Create entity from research",
-    backToList: "Back to research list"
+    backToList: "Back to research list",
+    cost: "Cost",
+    llmLabel: "LLM",
+    llmRouter: "Use configured router",
+    deepen: "Deepen",
+    deepenHint: "Start a new follow-up research at a higher depth from this query",
+    titlePlaceholder: "Research title"
   },
   quickSwitch: {
     title: "Quick switch",

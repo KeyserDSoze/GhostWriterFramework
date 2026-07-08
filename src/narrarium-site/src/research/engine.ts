@@ -4,11 +4,16 @@
 import { stringify } from "yaml";
 import type { AppSettings } from "@/types/settings";
 import type { BookEntry } from "@/types/settings";
+import { completeText } from "@/assistant/llm";
 import { completeTextRouted } from "@/assistant/router";
 import { createOrUpdateTextFile } from "@/github/githubClient";
 import { getProvidersForMode } from "./providers";
 import type { ResearchFrontmatter, ResearchResult, ResearchSourceMode, ResearchDepth } from "./types";
 import { DEPTH_CONFIG } from "./types";
+import { useCostsStore, bucketTotal } from "@/costs/costsStore";
+import { aggregateAll } from "@/costs/costsStore";
+import type { ChatCapability } from "@/types/settings";
+import type { LlmMessage } from "@/assistant/llm";
 
 export interface RunDeepResearchInput {
   settings: AppSettings;
@@ -24,6 +29,9 @@ export interface RunDeepResearchInput {
   /** Optional entity this research is about */
   relatedEntityId?: string;
   relatedEntityType?: string;
+  /** Optional: bypass the router and use a specific integration+model */
+  overrideIntegrationId?: string;
+  overrideModelName?: string;
   signal?: AbortSignal;
   onProgress?: (message: string) => void;
 }
@@ -33,10 +41,33 @@ export interface RunDeepResearchResult {
   slug: string;
   title: string;
   markdown: string;
+  /** Cost in the user's pricing currency for this research run (0 if no pricing configured). */
+  cost: number;
 }
 
 function reportProgress(input: RunDeepResearchInput, message: string) {
   input.onProgress?.(message);
+}
+
+/** Complete text with optional per-run LLM override, falling back to the router. */
+async function completeForResearch(
+  input: RunDeepResearchInput,
+  messages: LlmMessage[],
+  capability: ChatCapability,
+  options?: { signal?: AbortSignal; label?: string },
+): Promise<string> {
+  if (input.overrideIntegrationId && input.overrideModelName) {
+    const integration = (input.settings.aiIntegrations ?? []).find((i) => i.id === input.overrideIntegrationId);
+    if (integration) {
+      return await completeText(integration, messages, "writing", {
+        modelName: input.overrideModelName,
+        capability,
+        signal: options?.signal,
+        label: options?.label,
+      });
+    }
+  }
+  return await completeTextRouted(input.settings, messages, capability, options);
 }
 
 /** Ask the LLM to generate search queries for the given user request. */
@@ -59,7 +90,7 @@ async function generateQueries(input: RunDeepResearchInput): Promise<string[]> {
     },
   ];
 
-  const raw = await completeTextRouted(input.settings, messages, "deep-research", {
+  const raw = await completeForResearch(input, messages, "deep-research", {
     signal: input.signal,
     label: "deep-research:generate-queries",
   });
@@ -111,7 +142,7 @@ async function synthesize(input: RunDeepResearchInput, results: ResearchResult[]
     },
   ];
 
-  const markdown = await completeTextRouted(input.settings, messages, "deep-research", {
+  const markdown = await completeForResearch(input, messages, "deep-research", {
     signal: input.signal,
     label: "deep-research:synthesize",
   });
@@ -141,6 +172,8 @@ function renderResearchFile(frontmatter: ResearchFrontmatter, body: string): str
 
 /** Main entry point: run the full deep research pipeline and save the result. */
 export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunDeepResearchResult> {
+  const costBefore = bucketTotal(aggregateAll(useCostsStore.getState().file));
+
   reportProgress(input, "Generating search queries…");
   const queries = await generateQueries(input);
 
@@ -177,6 +210,9 @@ export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunD
   reportProgress(input, `Synthesizing ${allResults.length} results…`);
   const { title, markdown: body } = await synthesize(input, allResults);
 
+  const costAfter = bucketTotal(aggregateAll(useCostsStore.getState().file));
+  const costDelta = Math.max(0, costAfter - costBefore);
+
   const now = new Date().toISOString();
   const datePrefix = now.slice(0, 10);
   const slug = `${datePrefix}-${slugifyResearch(input.query)}`;
@@ -192,6 +228,7 @@ export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunD
     depth: input.depth,
     language: input.language,
     providers: Array.from(usedProviders),
+    costEur: costDelta,
     ...(input.relatedEntityId ? { relatedEntityId: input.relatedEntityId } : {}),
     ...(input.relatedEntityType ? { relatedEntityType: input.relatedEntityType } : {}),
   };
@@ -209,5 +246,5 @@ export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunD
     `Add research: ${title}`,
   );
 
-  return { path, slug, title, markdown: fullMarkdown };
+  return { path, slug, title, markdown: fullMarkdown, cost: costDelta };
 }

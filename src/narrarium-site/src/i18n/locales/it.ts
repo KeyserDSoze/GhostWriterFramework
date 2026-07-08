@@ -192,6 +192,8 @@ const it = {
     defaultWriting: "Provider scrittura predefinito",
     defaultReview: "Provider revisione predefinito",
     noIntegrations: "Nessuna integrazione AI configurata.",
+    costCurrency: "Valuta visualizzazione costi",
+    costCurrencyHint: "Valuta usata per mostrare i costi AI nella pagina Costi. Inserisci i prezzi nelle impostazioni di ogni integrazione AI in questa valuta.",
   },
   dossier: {
     pinned: "Dossier",
@@ -1015,7 +1017,22 @@ const it = {
     backToBook: "Torna al libro",
     writeBodyPlaceholder: "Scrivi il corpo del canone…",
     loadFailed: "Caricamento file canone non riuscito",
-    removeAria: "Rimuovi {{key}}"
+    removeAria: "Rimuovi {{key}}",
+    regenerate: "Rigenera",
+    regenerateTitle: "Rigenera entità",
+    regenerateDescription: "Riscrivi da capo questa entità canone usando ricerche, le informazioni attuali e un'istruzione personalizzata.",
+    regenerateResearch: "Documenti di ricerca da usare",
+    regenerateResearchSelected: "documento/i selezionato/i",
+    regeneratePrompt: "Istruzione personalizzata (opzionale)",
+    regeneratePromptPlaceholder: "Descrivi su cosa vuoi che il modello si concentri, aggiorni o cambi…",
+    regenerateGenerate: "Genera nuovo contenuto",
+    regenerateProposed: "Contenuto proposto",
+    regenerateHasPatches: "{{count}} campo/i frontmatter aggiornato/i",
+    regenerateAgain: "Rigenera di nuovo",
+    regenerateAccept: "Applica modifiche",
+    regenerateFailed: "Rigenerazione non riuscita",
+    regenerateApplied: "Modifiche applicate — rivedi e salva",
+    regeneratePatchedFields: "Modifiche frontmatter proposte"
   },
   workspace: {
     notFound: "Documento workspace non trovato.",
@@ -1388,7 +1405,13 @@ const it = {
     contextMenuResearchSelection: "Deep Research sulla selezione",
     contextMenuSearchSaved: "Cerca nelle ricerche salvate",
     contextMenuCreate: "Crea entità da ricerca",
-    backToList: "Torna alle ricerche"
+    backToList: "Torna alle ricerche",
+    cost: "Costo",
+    llmLabel: "LLM",
+    llmRouter: "Usa il router configurato",
+    deepen: "Approfondisci",
+    deepenHint: "Avvia una nuova ricerca di follow-up a profondità maggiore da questa query",
+    titlePlaceholder: "Titolo ricerca"
   },
   quickSwitch: {
     title: "Cerca veloce",

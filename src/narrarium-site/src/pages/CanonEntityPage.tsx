@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Lock, Plus, Save, X } from "lucide-react";
+import { ArrowLeft, Lock, Plus, RefreshCcw, Save, X } from "lucide-react";
 import { parseDocument, stringify } from "yaml";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,8 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { useProseAssist } from "@/components/editor/useProseAssist";
+import { RegenerateEntityDialog } from "@/components/book/RegenerateEntityDialog";
+import type { EntityKind } from "@/narrarium/canon";
 
 interface MetaEntry {
   key: string;
@@ -98,6 +100,7 @@ export function CanonEntityPage() {
   const [savedBody, setSavedBody] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showRegen, setShowRegen] = useState(false);
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
 
   const proseAssist = useProseAssist({
@@ -242,6 +245,24 @@ export function CanonEntityPage() {
     }
   }
 
+  function handleRegenerateAccept(proposedBody: string, patches: Record<string, unknown>) {
+    setBody(proposedBody.trim());
+    if (Object.keys(patches).length > 0) {
+      setEntries((prev) => {
+        let next = [...prev];
+        for (const [key, value] of Object.entries(patches)) {
+          if (READONLY_KEYS.has(key)) continue;
+          const idx = next.findIndex((entry) => entry.key === key);
+          const normalized = normalizeMetaValue(value);
+          if (idx >= 0) next = next.map((e, i) => i === idx ? { ...e, value: normalized } : e);
+          else next = [...next, { key, value: normalized }];
+        }
+        return next;
+      });
+    }
+    toast({ title: t("canon.regenerateApplied") });
+  }
+
   const readonlyEntries = entries.filter((entry) => READONLY_KEYS.has(entry.key));
   const editableEntries = entries.filter((entry) => !READONLY_KEYS.has(entry.key));
 
@@ -257,6 +278,11 @@ export function CanonEntityPage() {
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="font-mono text-xs">{branch}</Badge>
           {isDirty && !saving && <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>}
+          {book && token && path && structure && (
+            <Button size="sm" variant="outline" onClick={() => setShowRegen(true)}>
+              <RefreshCcw className="mr-1 h-4 w-4" />{t("canon.regenerate")}
+            </Button>
+          )}
           <Button size="sm" onClick={() => void handleSave()} disabled={!isDirty || saving}>
             {saving ? <Save className="mr-1 h-4 w-4 animate-pulse" /> : <Save className="mr-1 h-4 w-4" />}
             {t("common.save")}
@@ -369,6 +395,23 @@ export function CanonEntityPage() {
       {proseAssist.dialogs}
 
       <p className="text-[11px] text-muted-foreground truncate">{path}</p>
+
+      {book && token && path && structure && showRegen && (
+        <RegenerateEntityDialog
+          open={showRegen}
+          onOpenChange={setShowRegen}
+          book={book}
+          token={token}
+          branch={branch}
+          entityKind={(section === "characters" ? "character" : section === "locations" ? "location" : section === "factions" ? "faction" : section === "items" ? "item" : section === "secrets" ? "secret" : "timeline-event") as EntityKind}
+          entityPath={path}
+          entityName={entries.find((e) => e.key === "name" || e.key === "title")?.value as string ?? slug ?? ""}
+          currentContent={buildFrontmatter(entries, body)}
+          researchFiles={structure.researchFiles}
+          bookLanguage={structure.language}
+          onAccept={handleRegenerateAccept}
+        />
+      )}
     </div>
   );
 }
