@@ -63,7 +63,7 @@ function splitChapterDoc(raw: string): { frontmatter: Record<string, unknown>; b
   if (!match) return { frontmatter: {}, body: raw };
   const doc = parseDocument(match[1]);
   const parsed = (doc.toJSON() as Record<string, unknown>) ?? {};
-  return { frontmatter: parsed, body: match[2] };
+  return { frontmatter: parsed, body: match[2].replace(/^\s*\n/, "") };
 }
 
 export function ChapterPage() {
@@ -174,6 +174,8 @@ export function ChapterPage() {
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
   const [isSavingOrder, setIsSavingOrder] = useState(false);
+  // Proposed reorder awaiting user confirmation.
+  const [pendingReorder, setPendingReorder] = useState<Paragraph[] | null>(null);
 
   function handleDragStart(e: React.DragEvent, i: number) {
     setDraggingIdx(i);
@@ -188,18 +190,27 @@ export function ChapterPage() {
     setDraggingIdx(null);
     setOverIdx(null);
   }
-  async function handleDrop(e: React.DragEvent, targetIdx: number) {
+  function handleDrop(e: React.DragEvent, targetIdx: number) {
     e.preventDefault();
+    const from = draggingIdx;
     setDraggingIdx(null);
     setOverIdx(null);
-    if (draggingIdx === null || draggingIdx === targetIdx) return;
+    if (from === null || from === targetIdx) return;
 
     const newOrder = [...localParagraphs];
-    const [moved] = newOrder.splice(draggingIdx, 1);
+    const [moved] = newOrder.splice(from, 1);
     newOrder.splice(targetIdx, 0, moved);
-    setLocalParagraphs(newOrder); // optimistic update
+    setLocalParagraphs(newOrder); // optimistic visual reorder
+    setPendingReorder(newOrder); // opens confirmation dialog
+  }
 
-    if (!book || !structure) return;
+  function cancelReorder() {
+    setPendingReorder(null);
+    setLocalParagraphs(chapter?.paragraphs ?? []); // revert visual change
+  }
+
+  async function confirmReorder() {
+    if (!pendingReorder || !book || !structure || !chapter) return;
     setIsSavingOrder(true);
     try {
       const updated = await reorderParagraphsInChapter(
@@ -207,20 +218,22 @@ export function ChapterPage() {
         book.owner,
         book.repo,
         branch,
-        chapter!.path,
-        chapter!.paragraphs,
-        newOrder,
-        `Reorder paragraphs in ${chapter!.slug}`,
+        chapter.path,
+        chapter.paragraphs,
+        pendingReorder,
+        `Reorder paragraphs in ${chapter.slug}`,
       );
       setLocalParagraphs(updated);
       updateChapterParagraphs(bookId!, chapterId!, updated);
+      setPendingReorder(null);
     } catch (err) {
       toast({
         title: t("chapter.reorderFailed"),
         description: String(err),
         variant: "destructive",
       });
-      setLocalParagraphs(chapter!.paragraphs); // revert
+      setLocalParagraphs(chapter.paragraphs); // revert
+      setPendingReorder(null);
     } finally {
       setIsSavingOrder(false);
     }
@@ -453,7 +466,7 @@ export function ChapterPage() {
             draggable
             onDragStart={(e) => handleDragStart(e, i)}
             onDragOver={(e) => handleDragOver(e, i)}
-            onDrop={(e) => void handleDrop(e, i)}
+            onDrop={(e) => handleDrop(e, i)}
             onDragEnd={handleDragEnd}
             className={[
               "flex items-center gap-2 rounded-lg border bg-card px-3 py-2.5 text-sm transition-colors",
@@ -613,6 +626,36 @@ export function ChapterPage() {
             >
               {deleting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
               {t("common.delete")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reorder confirmation */}
+      <Dialog
+        open={!!pendingReorder}
+        onOpenChange={(open) => { if (!open) cancelReorder(); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("chapter.reorderConfirmTitle")}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">{t("chapter.reorderConfirmDescription")}</p>
+          <div className="max-h-64 space-y-1 overflow-y-auto rounded-lg border p-2">
+            {(pendingReorder ?? []).map((p, i) => (
+              <div key={p.path} className="flex items-center gap-2 rounded px-2 py-1 text-sm">
+                <Badge variant="outline" className="shrink-0 font-mono text-[10px]">{String(i + 1).padStart(3, "0")}</Badge>
+                <span className="truncate">{p.title}</span>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={cancelReorder} disabled={isSavingOrder}>
+              {t("common.cancel")}
+            </Button>
+            <Button onClick={() => void confirmReorder()} disabled={isSavingOrder}>
+              {isSavingOrder ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+              {t("chapter.reorderConfirm")}
             </Button>
           </DialogFooter>
         </DialogContent>

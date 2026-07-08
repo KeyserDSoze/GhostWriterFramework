@@ -38,7 +38,7 @@ function parseFrontmatter(raw: string): { entries: MetaEntry[]; body: string } {
     key,
     value: normalizeMetaValue(value),
   }));
-  return { entries, body: match[2] };
+  return { entries, body: match[2].replace(/^\s*\n/, "") };
 }
 
 function buildFrontmatter(entries: MetaEntry[], body: string): string {

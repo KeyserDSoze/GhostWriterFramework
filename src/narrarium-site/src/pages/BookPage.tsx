@@ -42,6 +42,7 @@ import {
 } from "@/narrarium/canon";
 import { CreateChapterDialog } from "@/components/canon/CreateChapterDialog";
 import { CreateEntityDialog } from "@/components/canon/CreateEntityDialog";
+import { ChapterReorderList } from "@/components/book/ChapterReorderList";
 
 function fileSlug(path: string): string {
   return (path.split("/").pop() ?? "").replace(/\.md$/i, "");
@@ -51,9 +52,9 @@ function splitMarkdownDoc(raw: string): { frontmatter: Record<string, unknown>; 
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
   if (!match) return { frontmatter: {}, body: raw };
   try {
-    return { frontmatter: (parseDocument(match[1]).toJSON() as Record<string, unknown>) ?? {}, body: match[2] };
+    return { frontmatter: (parseDocument(match[1]).toJSON() as Record<string, unknown>) ?? {}, body: match[2].replace(/^\s*\n/, "") };
   } catch {
-    return { frontmatter: {}, body: match[2] };
+    return { frontmatter: {}, body: match[2].replace(/^\s*\n/, "") };
   }
 }
 
@@ -426,31 +427,42 @@ export function BookPage() {
                 onCreate={handleCreateChapter}
               />
             </div>
-            <ul className="space-y-2">
-              {structure.chapters.map((ch) => (
-                <li key={ch.slug}>
-                  <Link
-                    to={`/app/books/${bookId}/chapters/${ch.slug}`}
-                    className="flex items-center justify-between rounded-lg border bg-card px-4 py-3 text-sm hover:bg-accent/50 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <div>
-                        <p className="font-medium">{ch.title}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {ch.paragraphs.length} paragraph
-                          {ch.paragraphs.length !== 1 ? "s" : ""}
-                          {ch.draftPath && ` · ${t("bookPage.draft")}`}
-                          {ch.hasResume && ` · ${t("bookPage.resume")}`}
-                          {ch.hasEvaluation && ` · ${t("bookPage.eval")}`}
-                        </p>
+            {book && token && structure.chapters.length > 0 ? (
+              <ChapterReorderList
+                bookId={bookId ?? ""}
+                book={book}
+                token={token}
+                branch={branch}
+                chapters={structure.chapters}
+                onReordered={() => void reload()}
+              />
+            ) : (
+              <ul className="space-y-2">
+                {structure.chapters.map((ch) => (
+                  <li key={ch.slug}>
+                    <Link
+                      to={`/app/books/${bookId}/chapters/${ch.slug}`}
+                      className="flex items-center justify-between rounded-lg border bg-card px-4 py-3 text-sm hover:bg-accent/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <div>
+                          <p className="font-medium">{ch.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {ch.paragraphs.length} paragraph
+                            {ch.paragraphs.length !== 1 ? "s" : ""}
+                            {ch.draftPath && ` · ${t("bookPage.draft")}`}
+                            {ch.hasResume && ` · ${t("bookPage.resume")}`}
+                            {ch.hasEvaluation && ` · ${t("bookPage.eval")}`}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                  </Link>
-                </li>
-              ))}
-            </ul>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
             {structure.chapters.length === 0 && (
               <p className="text-sm text-muted-foreground py-4">
                 {t("bookPage.noChapters")}

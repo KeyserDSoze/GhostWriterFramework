@@ -58,6 +58,36 @@ export async function listMicrosoftDriveFolders(accessToken: string, folderPath 
     .map((entry) => ({ id: entry.id, name: entry.name }));
 }
 
+/** Create a new subfolder inside a Google Drive folder. Returns the created folder. */
+export async function createGoogleDriveFolder(accessToken: string, parentId: string, name: string): Promise<DriveFolderEntry> {
+  const response = await fetch(`${GOOGLE_DRIVE_API}/files?fields=id,name`, {
+    method: "POST",
+    headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
+    body: JSON.stringify({
+      name: name.trim(),
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [parentId || "root"],
+    }),
+  });
+  assertOk(response, "Google Drive folder create");
+  const data = (await response.json()) as { id: string; name: string };
+  return { id: data.id, name: data.name };
+}
+
+/** Create a new subfolder inside a OneDrive folder path. Returns the new folder path. */
+export async function createMicrosoftDriveFolder(accessToken: string, parentPath: string, name: string): Promise<string> {
+  const normalized = parentPath.split("/").filter(Boolean).join("/");
+  const endpoint = normalized ? `${GRAPH_DRIVE_API}/root:/${normalized}:/children` : `${GRAPH_DRIVE_API}/root/children`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
+    body: JSON.stringify({ name: name.trim(), folder: {}, "@microsoft.graph.conflictBehavior": "rename" }),
+  });
+  assertOk(response, "OneDrive folder create");
+  const data = (await response.json()) as { name: string };
+  return normalized ? `${normalized}/${data.name}` : data.name;
+}
+
 export async function uploadGoogleDriveFile(
   accessToken: string,
   folderId: string,

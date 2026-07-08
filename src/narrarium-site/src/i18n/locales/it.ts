@@ -598,7 +598,11 @@ const it = {
     titleField: "Titolo",
     languageField: "Lingua",
     descriptionField: "Descrizione",
-    descriptionPlaceholder: "Descrivi il libro in Markdown. Questo testo viene salvato come corpo di book.md."
+    descriptionPlaceholder: "Descrivi il libro in Markdown. Questo testo viene salvato come corpo di book.md.",
+    chaptersReordered: "Capitoli riordinati",
+    reorderChaptersFailed: "Riordino capitoli non riuscito",
+    reorderChaptersConfirmTitle: "Confermi il nuovo ordine dei capitoli?",
+    reorderChaptersConfirmDescription: "Le cartelle dei capitoli verranno rinumerate e i riferimenti aggiornati. Controlla l'ordine prima di applicare."
   },
   dashboard: {
     title: "Dashboard",
@@ -698,6 +702,9 @@ const it = {
     deleteParagraphDescription: "{{title}} sarà eliminato definitivamente da GitHub e i paragrafi rimanenti verranno rinumerati.",
     deleteParagraphAria: "Elimina paragrafo {{number}}",
     reorderFailed: "Riordino non riuscito",
+    reorderConfirmTitle: "Confermi il nuovo ordine?",
+    reorderConfirmDescription: "I file dei paragrafi verranno rinumerati con questo ordine. Controlla prima di applicare.",
+    reorderConfirm: "Applica ordine",
     deleteFailed: "Eliminazione non riuscita",
     createParagraphFailed: "Creazione paragrafo non riuscita",
     draftCreated: "Bozza capitolo creata",
@@ -1336,6 +1343,10 @@ const it = {
     useThisFolder: "Usa questa cartella",
     noFolders: "Nessuna sottocartella trovata qui.",
     folderLoadFailed: "Caricamento cartelle non riuscito",
+    newFolder: "Nuova cartella",
+    newFolderPlaceholder: "Nome cartella",
+    folderCreated: "Cartella \"{{name}}\" creata",
+    folderCreateFailed: "Creazione cartella non riuscita",
     formats: "Formati",
     docx: "Word (.docx)",
     pdf: "PDF (.pdf)",

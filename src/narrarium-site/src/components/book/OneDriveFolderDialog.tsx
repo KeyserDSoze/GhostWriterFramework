@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, Folder, Loader2 } from "lucide-react";
+import { ChevronLeft, Folder, FolderPlus, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/components/ui/use-toast";
-import { listMicrosoftDriveFolders, type DriveFolderEntry } from "@/drive/exportDriveClient";
+import { createMicrosoftDriveFolder, listMicrosoftDriveFolders, type DriveFolderEntry } from "@/drive/exportDriveClient";
 
 interface OneDriveFolderDialogProps {
   open: boolean;
@@ -26,6 +27,9 @@ export function OneDriveFolderDialog({ open, onOpenChange, accessToken, onSelect
   const [stack, setStack] = useState<FolderNode[]>([rootNode]);
   const [folders, setFolders] = useState<DriveFolderEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
 
   useEffect(() => {
     setStack((current) => (current.length === 0 ? [rootNode] : [{ name: rootNode.name, path: "" }, ...current.slice(1)]));
@@ -41,6 +45,24 @@ export function OneDriveFolderDialog({ open, onOpenChange, accessToken, onSelect
       .catch((err) => toast({ title: t("export.folderLoadFailed"), description: String(err), variant: "destructive" }))
       .finally(() => setLoading(false));
   }, [accessToken, current.path, open, t, toast]);
+
+  async function handleCreateFolder() {
+    const name = newFolderName.trim();
+    if (!name) return;
+    setCreating(true);
+    try {
+      const newPath = await createMicrosoftDriveFolder(accessToken, current.path, name);
+      const createdName = newPath.split("/").pop() ?? name;
+      setNewFolderName("");
+      setShowCreate(false);
+      setStack((prev) => [...prev, { name: createdName, path: newPath }]);
+      toast({ title: t("export.folderCreated", { name: createdName }) });
+    } catch (err) {
+      toast({ title: t("export.folderCreateFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setCreating(false);
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -63,6 +85,34 @@ export function OneDriveFolderDialog({ open, onOpenChange, accessToken, onSelect
             </Button>
           </div>
         </div>
+
+        {showCreate ? (
+          <div className="flex items-center gap-2">
+            <Input
+              autoFocus
+              placeholder={t("export.newFolderPlaceholder")}
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleCreateFolder();
+                if (e.key === "Escape") { setShowCreate(false); setNewFolderName(""); }
+              }}
+              disabled={creating}
+            />
+            <Button type="button" size="sm" onClick={() => void handleCreateFolder()} disabled={creating || !newFolderName.trim()}>
+              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : t("common.create")}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => { setShowCreate(false); setNewFolderName(""); }} disabled={creating}>
+              {t("common.cancel")}
+            </Button>
+          </div>
+        ) : (
+          <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => setShowCreate(true)} disabled={loading}>
+            <FolderPlus className="mr-1 h-4 w-4" />
+            {t("export.newFolder")}
+          </Button>
+        )}
+
         <ScrollArea className="h-72 rounded-lg border">
           <div className="p-2">
             {loading ? (

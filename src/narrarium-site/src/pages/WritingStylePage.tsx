@@ -35,9 +35,9 @@ function splitMarkdownDoc(raw: string): { frontmatter: Record<string, unknown>; 
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
   if (!match) return { frontmatter: {}, body: raw };
   try {
-    return { frontmatter: (parseDocument(match[1]).toJSON() as Record<string, unknown>) ?? {}, body: match[2] };
+    return { frontmatter: (parseDocument(match[1]).toJSON() as Record<string, unknown>) ?? {}, body: match[2].replace(/^\s*\n/, "") };
   } catch {
-    return { frontmatter: {}, body: match[2] };
+    return { frontmatter: {}, body: match[2].replace(/^\s*\n/, "") };
   }
 }
 

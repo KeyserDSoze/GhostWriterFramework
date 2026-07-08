@@ -598,7 +598,11 @@ const en = {
     titleField: "Title",
     languageField: "Language",
     descriptionField: "Description",
-    descriptionPlaceholder: "Describe the book in Markdown. This text is saved as the body of book.md."
+    descriptionPlaceholder: "Describe the book in Markdown. This text is saved as the body of book.md.",
+    chaptersReordered: "Chapters reordered",
+    reorderChaptersFailed: "Chapter reorder failed",
+    reorderChaptersConfirmTitle: "Confirm new chapter order?",
+    reorderChaptersConfirmDescription: "Chapter folders will be renumbered and references updated. Review the order before applying."
   },
   dashboard: {
     title: "Dashboard",
@@ -698,6 +702,9 @@ const en = {
     deleteParagraphDescription: "{{title}} will be permanently deleted from GitHub and the remaining paragraphs will be renumbered.",
     deleteParagraphAria: "Delete paragraph {{number}}",
     reorderFailed: "Reorder failed",
+    reorderConfirmTitle: "Confirm new order?",
+    reorderConfirmDescription: "Paragraph files will be renumbered to this order. Review it before applying.",
+    reorderConfirm: "Apply order",
     deleteFailed: "Delete failed",
     createParagraphFailed: "Failed to create paragraph",
     draftCreated: "Chapter draft created",
@@ -1336,6 +1343,10 @@ const en = {
     useThisFolder: "Use this folder",
     noFolders: "No subfolders found here.",
     folderLoadFailed: "Failed to load folders",
+    newFolder: "New folder",
+    newFolderPlaceholder: "Folder name",
+    folderCreated: "Folder \"{{name}}\" created",
+    folderCreateFailed: "Failed to create folder",
     formats: "Formats",
     docx: "Word (.docx)",
     pdf: "PDF (.pdf)",
