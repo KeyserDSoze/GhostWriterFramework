@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseDocument } from "yaml";
-import { AlertCircle, ArrowLeft, BookOpen, Bookmark, BookmarkPlus, ChevronLeft, ChevronRight, Eye, EyeOff, Image as ImageIcon, Maximize2, Minimize2, Settings, Trash2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, BookOpen, Bookmark, BookmarkPlus, ChevronLeft, ChevronRight, Eye, EyeOff, Image as ImageIcon, Maximize2, Settings, Trash2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -142,6 +142,22 @@ export function ReaderPreviewPage() {
     entityImageUrlsRef.current = [];
   }, []);
 
+  useEffect(() => {
+    if (!readerSettings.fullScreen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setReaderFullScreen(false);
+    };
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement) setReaderFullScreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+    };
+  }, [readerSettings.fullScreen]);
+
   function recalculatePages() {
     const viewport = viewportRef.current;
     const flow = flowRef.current;
@@ -216,6 +232,15 @@ export function ReaderPreviewPage() {
     pendingPositionRef.current = resolveCurrentPosition() ?? currentPosition;
     patchSettings({ reader: { ...settings.reader, ...patch } });
     void save();
+  }
+
+  function setReaderFullScreen(enabled: boolean) {
+    patchReaderSettings({ fullScreen: enabled });
+    if (enabled) {
+      void document.documentElement.requestFullscreen?.().catch(() => undefined);
+    } else if (document.fullscreenElement) {
+      void document.exitFullscreen?.().catch(() => undefined);
+    }
   }
 
   function go(delta: number) {
@@ -298,17 +323,15 @@ export function ReaderPreviewPage() {
 
   const fullScreen = readerSettings.fullScreen;
   const rootClass = fullScreen
-    ? "fixed inset-0 z-40 flex flex-col bg-background p-3 sm:p-5"
+    ? "fixed inset-0 z-[90] flex flex-col bg-background p-0"
     : "flex h-[calc(100dvh-6.5rem)] min-h-[560px] flex-col gap-4";
 
   return (
     <div className={rootClass}>
-      <div className="flex flex-wrap items-center gap-2">
-        {!fullScreen && (
-          <Button asChild variant="ghost" size="sm" className="-ml-2">
-            <Link to={`/app/books/${book.id}`}><ArrowLeft className="mr-1 h-4 w-4" />{book.name}</Link>
-          </Button>
-        )}
+      {!fullScreen && <div className="flex flex-wrap items-center gap-2">
+        <Button asChild variant="ghost" size="sm" className="-ml-2">
+          <Link to={`/app/books/${book.id}`}><ArrowLeft className="mr-1 h-4 w-4" />{book.name}</Link>
+        </Button>
         <div className="min-w-0 flex-1">
           <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">{t("reader.title")}</p>
           <h1 className="truncate font-serif text-2xl font-semibold tracking-tight sm:text-3xl">{readerBook?.title ?? structure?.title ?? book.name}</h1>
@@ -325,30 +348,31 @@ export function ReaderPreviewPage() {
           <Button variant="outline" size="icon" title={readerSettings.showRichEntityLinks ? t("reader.hideEntityLinks") : t("reader.showEntityLinks")} onClick={() => patchReaderSettings({ showRichEntityLinks: !readerSettings.showRichEntityLinks })}>
             {readerSettings.showRichEntityLinks ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
           </Button>
-          <Button variant="outline" size="icon" title={fullScreen ? t("reader.exitFullscreen") : t("reader.fullscreen")} onClick={() => patchReaderSettings({ fullScreen: !fullScreen })}>
-            {fullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          <Button variant="outline" size="icon" title={t("reader.fullscreen")} onClick={() => setReaderFullScreen(true)}>
+            <Maximize2 className="h-4 w-4" />
           </Button>
         </div>
-      </div>
+      </div>}
 
-      <div className="min-h-0 flex-1 rounded-[2rem] border bg-card p-2 text-card-foreground shadow-sm sm:p-3">
+      <div className={fullScreen ? "min-h-0 flex-1 bg-card text-card-foreground" : "min-h-0 flex-1 rounded-[2rem] border bg-card p-2 text-card-foreground shadow-sm sm:p-3"}>
         {busy || !readerBook ? <ReaderSkeleton /> : (
           <div className="flex h-full min-h-0 flex-col">
             <div
-              ref={viewportRef}
-              className="relative min-h-0 flex-1 cursor-pointer overflow-hidden rounded-[2rem] border bg-background/70 shadow-inner"
+              className={fullScreen ? "relative min-h-0 flex-1 cursor-pointer overflow-hidden bg-background" : "relative min-h-0 flex-1 cursor-pointer overflow-hidden rounded-[2rem] border bg-background/70 shadow-inner"}
               onClick={handleReaderClick}
+              style={{ padding: `${readerSettings.pageMargin}px` }}
             >
+              <div ref={viewportRef} className="h-full overflow-hidden">
               <article
                 ref={flowRef}
                 className="reader-page-flow h-full transition-transform duration-200 ease-out"
                 style={{
                   columnGap: `${PAGE_GAP}px`,
                   columnWidth: pageWidth ? `${pageWidth}px` : undefined,
+                  width: pageWidth ? `${pageWidth}px` : undefined,
                   fontFamily: readerFontFamily(readerSettings.fontFamily),
                   fontSize: `${readerSettings.fontSize}px`,
                   lineHeight: readerSettings.lineHeight,
-                  padding: `${readerSettings.pageMargin}px`,
                   transform: `translateX(-${pageIndex * (pageWidth + PAGE_GAP)}px)`,
                 }}
               >
@@ -378,11 +402,12 @@ export function ReaderPreviewPage() {
                   </section>
                 ))}
               </article>
+              </div>
             </div>
-            <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+            {!fullScreen && <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
               <span>{currentPosition ? bookmarkLabel(readerBook, currentPosition) : t("reader.cover")}</span>
               <span>{t("reader.pageOf", { page: pageIndex + 1, pages: pageCount })}</span>
-            </div>
+            </div>}
           </div>
         )}
       </div>
@@ -411,7 +436,7 @@ export function ReaderPreviewPage() {
       </Dialog>
 
       <Dialog open={entityLoading || Boolean(entityDetails) || Boolean(entityError)} onOpenChange={(open) => { if (!open) { setEntityDetails(null); setEntityError(""); setEntityLoading(false); } }}>
-        <DialogContent className="max-h-[88dvh] overflow-auto sm:max-w-3xl">
+        <DialogContent className="z-[120] max-h-[88dvh] overflow-auto sm:max-w-3xl">
           {entityLoading ? (
             <ReaderSkeleton />
           ) : entityError ? (
