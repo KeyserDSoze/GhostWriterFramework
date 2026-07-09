@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Search, Trash2, Volume2 } from "lucide-react";
+import { Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Search, Trash2, Volume2, Wand2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import { CHAT_CAPABILITIES, ROUTING_TASKS, type AIIntegration, type AIProviderTy
 import { integrationChatModels } from "@/assistant/llm";
 import { BROWSER_ROUTING_ID } from "@/assistant/router";
 import { DeepSearchSettingsBody } from "@/components/settings/DeepSearchSettingsBody";
+import { CopilotToolsSettingsBody } from "@/components/settings/CopilotToolsSettingsBody";
 import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
 
 const PROVIDERS: Array<{ value: AIProviderType; label: string }> = [
@@ -159,6 +160,7 @@ export function SettingsPage() {
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <SettingsCard href="/app/settings/ai-router" title={t("settingsSection.aiRouterTitle")} description={t("settingsSection.aiRouterDescription")} icon={<Bot className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/deep-search" title={t("settingsSection.deepSearchTitle")} description={t("settingsSection.deepSearchDescription")} icon={<Search className="h-5 w-5" />} />
+          <SettingsCard href="/app/settings/tools" title={t("settingsSection.copilotToolsTitle")} description={t("settingsSection.copilotToolsDescription")} icon={<Wand2 className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/github" title={t("settings.github")} description={t("settings.githubDescription")} icon={<Github className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/speech" title={t("speech.title")} description={t("speech.browserOnlyDescription")} icon={<Volume2 className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/repository" title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-5 w-5" />} />
@@ -200,6 +202,10 @@ export function SettingsPage() {
         <Section title={t("settingsSection.deepSearchTitle")} description={t("settingsSection.deepSearchDescription")} icon={<Search className="h-4 w-4 shrink-0" />} defaultOpen>
           <DeepSearchSettingsBody settings={settings} patchSettings={patchSettings} />
         </Section>
+      ) : section === "tools" ? (
+        <Section title={t("settingsSection.copilotToolsTitle")} description={t("settingsSection.copilotToolsDescription")} icon={<Wand2 className="h-4 w-4 shrink-0" />} defaultOpen>
+          <CopilotToolsSettingsBody settings={settings} patchSettings={patchSettings} />
+        </Section>
       ) : section === "github" ? (
         <Section title={t("settings.github")} description={t("settings.githubDescription")} icon={<Github className="h-4 w-4 shrink-0" />} defaultOpen>
           <div className="space-y-4">
@@ -225,9 +231,10 @@ export function SettingsPage() {
   );
 }
 
-function currentSettingsSection(pathname: string): "home" | "ai-router" | "deep-search" | "github" | "speech" | "repository" {
+function currentSettingsSection(pathname: string): "home" | "ai-router" | "deep-search" | "tools" | "github" | "speech" | "repository" {
   if (/\/app\/settings\/ai-router$/.test(pathname)) return "ai-router";
   if (/\/app\/settings\/deep-search$/.test(pathname)) return "deep-search";
+  if (/\/app\/settings\/tools$/.test(pathname)) return "tools";
   if (/\/app\/settings\/github$/.test(pathname)) return "github";
   if (/\/app\/settings\/speech$/.test(pathname)) return "speech";
   if (/\/app\/settings\/repository$/.test(pathname)) return "repository";
@@ -237,6 +244,7 @@ function currentSettingsSection(pathname: string): "home" | "ai-router" | "deep-
 function settingsSectionMeta(t: ReturnType<typeof useTranslation>["t"], section: ReturnType<typeof currentSettingsSection>) {
   if (section === "ai-router") return { title: t("settingsSection.aiRouterTitle"), description: t("settingsSection.aiRouterDescription") };
   if (section === "deep-search") return { title: t("settingsSection.deepSearchTitle"), description: t("settingsSection.deepSearchDescription") };
+  if (section === "tools") return { title: t("settingsSection.copilotToolsTitle"), description: t("settingsSection.copilotToolsDescription") };
   if (section === "github") return { title: t("settings.github"), description: t("settings.githubDescription") };
   if (section === "speech") return { title: t("speech.title"), description: t("speech.browserOnlyDescription") };
   if (section === "repository") return { title: t("repoSettings.title"), description: t("repoSettings.description") };

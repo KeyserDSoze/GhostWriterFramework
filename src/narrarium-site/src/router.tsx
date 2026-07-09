@@ -94,6 +94,7 @@ export const router = createBrowserRouter([
       { path: "settings", element: <SettingsPage /> },
       { path: "settings/ai-router", element: <SettingsPage /> },
       { path: "settings/deep-search", element: <SettingsPage /> },
+      { path: "settings/tools", element: <SettingsPage /> },
       { path: "settings/github", element: <SettingsPage /> },
       { path: "settings/speech", element: <SettingsPage /> },
       { path: "settings/repository", element: <SettingsPage /> },

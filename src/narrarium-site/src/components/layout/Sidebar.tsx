@@ -20,6 +20,7 @@ import {
   PenLine,
   Search,
   Settings,
+  Wand2,
   Shield,
   Users,
 } from "lucide-react";
@@ -131,6 +132,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     { label: t("settings.title"), href: "/app/settings", icon: <Settings className="h-4 w-4" /> },
     { label: t("settingsSection.aiRouterTitle"), href: "/app/settings/ai-router", icon: <Users className="h-4 w-4" /> },
     { label: t("settingsSection.deepSearchTitle"), href: "/app/settings/deep-search", icon: <Search className="h-4 w-4" /> },
+    { label: t("settingsSection.copilotToolsTitle"), href: "/app/settings/tools", icon: <Wand2 className="h-4 w-4" /> },
     { label: t("settings.github"), href: "/app/settings/github", icon: <Library className="h-4 w-4" /> },
     { label: t("speech.title"), href: "/app/settings/speech", icon: <BookOpen className="h-4 w-4" /> },
     { label: t("repoSettings.title"), href: "/app/settings/repository", icon: <Network className="h-4 w-4" /> },

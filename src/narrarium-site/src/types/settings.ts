@@ -321,6 +321,14 @@ export interface CustomAction {
   enabled: boolean;
 }
 
+export interface CopilotToolOverride {
+  enabled?: boolean;
+}
+
+export interface CopilotToolSettings {
+  toolOverrides: Record<string, CopilotToolOverride>;
+}
+
 export interface AppSettings {
   /** Schema version for future migrations */
   version: 2;
@@ -341,6 +349,7 @@ export interface AppSettings {
   speech: SpeechSettings;
   repository: RepositorySettings;
   deepSearch: DeepSearchProviderSettings;
+  copilotTools: CopilotToolSettings;
   reader: ReaderSettings;
   customActions: CustomAction[];
   books: BookEntry[];
@@ -386,6 +395,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
       encyclopedia: { primary: "wikipedia", fallbacks: ["wikidata"] },
       internet: { primary: "brave", fallbacks: ["duckduckgo_instant"] },
     },
+  },
+  copilotTools: {
+    toolOverrides: {},
   },
   reader: {
     showImages: true,

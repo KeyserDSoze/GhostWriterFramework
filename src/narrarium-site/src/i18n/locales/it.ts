@@ -1384,6 +1384,8 @@ const it = {
     aiRouterDescription: "Configura routing LLM, integrazioni, pricing e fallback dei task.",
     deepSearchTitle: "Deep Search",
     deepSearchDescription: "Configura provider di ricerca, routing per intent, API key web search e recupero contenuti.",
+    copilotToolsTitle: "Tools for Copilot",
+    copilotToolsDescription: "Scegli quali tool possono usare Copilot e l’assistente vocale. I tool distruttivi sono separati e spenti di default.",
   },
   deepSearch: {
     braveApiKey: "Brave API key",
@@ -1486,6 +1488,19 @@ const it = {
     placeholder: "Cerca capitoli, paragrafi, canon, ricerche…",
     empty: "Nessuna pagina trovata.",
     backToPrevious: "Torna al precedente"
+  },
+  copilotTools: {
+    introTitle: "Registry tool Copilot",
+    introBody: "Copilot e l’assistente vocale scoprono le funzionalità disponibili da questo registry. Puoi attivare o disattivare i singoli tool senza cambiare il motore di orchestrazione.",
+    safeToolsTitle: "Tool standard",
+    warningTitle: "Tool pericolosi / distruttivi",
+    warningBody: "Questi tool possono eliminare o modificare definitivamente i dati. Sono disattivati di default e vanno attivati solo intenzionalmente.",
+    enabled: "Attivo",
+    disabled: "Disattivo",
+    turnOn: "Attiva",
+    turnOff: "Disattiva",
+    output: "Output",
+    prerequisites: "Prerequisiti",
   },
   notes: {
     title: "Note",

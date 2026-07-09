@@ -14,6 +14,7 @@ import {
   type LlmMessage,
 } from "@/assistant/llm";
 import { completeTextRouted } from "@/assistant/router";
+import { buildCapabilitiesMessage, chooseToolHandlerId, isCapabilityQuestion } from "@/assistant/orchestrator";
 import type {
   AssistantAction,
   AssistantAttachment,
@@ -100,6 +101,8 @@ export async function runAssistantPrompt(input: {
     signal,
   };
 
+  if (isCapabilityQuestion(prompt)) return buildCapabilitiesMessage(settings);
+
   if (!book || !token) {
     return makeAssistantMessage(
       "assistant",
@@ -113,6 +116,29 @@ export async function runAssistantPrompt(input: {
     );
   }
 
+  const handlers = {
+    "search-book": () => searchCurrentBook({ ...promptInput, book, token }),
+    "switch-branch": () => switchBookBranchFromPrompt({ ...promptInput, book, branch, token }),
+    "import-attachments": () => importAttachmentsIntoBook({ ...promptInput, book, branch, token }),
+    "create-chapter": () => createChapterFromPrompt({ ...promptInput, book, branch, token }),
+    "create-paragraph": () => createParagraphFromPrompt({ ...promptInput, book, branch, token }),
+    "create-entity": () => createEntityFromPrompt({ ...promptInput, book, branch, token }),
+    "create-script": () => createScriptFromPrompt({ ...promptInput, book, branch, token }),
+    "create-draft": () => createDraftFromPrompt({ ...promptInput, book, branch, token }),
+    "update-plot": () => writePlotUpdate({ ...promptInput, book, branch, token }),
+    "write-resume": () => writeResume({ ...promptInput, book, branch, token }),
+    "write-evaluation": () => writeEvaluation({ ...promptInput, book, branch, token }),
+    "rewrite-paragraph": () => rewriteCurrentParagraph({ ...promptInput, book, branch, token }),
+    "create-note": () => createContextNote({ ...promptInput, book, branch, token }),
+    "review-context": () => reviewCurrentContext(promptInput),
+    "summarize-context": () => summarizeCurrentContext(promptInput),
+    "answer-from-context": () => answerFromContext(promptInput),
+  } as const;
+
+  const handlerId = chooseToolHandlerId({ prompt, lowered, settings, spokenMode }, new Set(Object.keys(handlers)));
+  if (handlerId && handlerId in handlers) return handlers[handlerId as keyof typeof handlers]();
+
+  // Fallback while the registry coverage is still growing. Keep existing behavior for unmatched prompts.
   if (looksLikeSearch(lowered)) return searchCurrentBook({ ...promptInput, book, token });
   if (looksLikeBranchSwitch(lowered)) return switchBookBranchFromPrompt({ ...promptInput, book, branch, token });
   if (looksLikeImportAttachment(lowered)) return importAttachmentsIntoBook({ ...promptInput, book, branch, token });
