@@ -1,6 +1,11 @@
 import { parseDocument, stringify } from "yaml";
 import {
+  compareBranches,
   createFile,
+  createPullRequest,
+  listBranchCommits,
+  listBranches,
+  listOpenPullRequests,
   loadFileContent,
   readFileWithSha,
   slugToTitle,
@@ -15,6 +20,7 @@ import {
 } from "@/assistant/llm";
 import { completeTextRouted } from "@/assistant/router";
 import { buildCapabilitiesMessage, chooseToolHandlerId, isCapabilityQuestion } from "@/assistant/orchestrator";
+import { resolveNavigateAction, resolveReadAloudAction } from "@/assistant/planner";
 import type {
   AssistantAction,
   AssistantAttachment,
@@ -133,6 +139,14 @@ export async function runAssistantPrompt(input: {
     "review-context": () => reviewCurrentContext(promptInput),
     "summarize-context": () => summarizeCurrentContext(promptInput),
     "answer-from-context": () => answerFromContext(promptInput),
+    "open-reader": () => openReaderNavigation({ ...promptInput, book }),
+    "navigate": () => navigateFromPrompt({ ...promptInput, book }),
+    "read-current-page": () => readCurrentPageFromPrompt({ ...promptInput, book }),
+    "list-branches": () => listBranchesMessage({ ...promptInput, book, token }),
+    "show-branch-diff": () => showBranchDiffMessage({ ...promptInput, book, branch, token }),
+    "list-commits": () => listCommitsMessage({ ...promptInput, book, branch, token }),
+    "list-pull-requests": () => listPullRequestsMessage({ ...promptInput, book, token }),
+    "create-pull-request": () => createPullRequestFromPrompt({ ...promptInput, book, branch, token }),
   } as const;
 
   const handlerId = chooseToolHandlerId({ prompt, lowered, settings, spokenMode }, new Set(Object.keys(handlers)));
@@ -256,6 +270,93 @@ async function switchBookBranchFromPrompt(input: PromptInput & { book: BookEntry
       baseBranch,
     },
   };
+}
+
+async function openReaderNavigation(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    text: "Opening the reader.",
+    action: { kind: "navigate", to: `/app/books/${input.book.id}/reader`, label: "Reader" },
+  };
+}
+
+async function navigateFromPrompt(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+  const action = resolveNavigateAction(input.prompt, input.context, input.book.id);
+  if (!action) {
+    return makeAssistantMessage("assistant", "Tell me where to go, for example: open the reader, go to chapter 3, or open research.");
+  }
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    text: `Opening ${action.label ?? action.to}.`,
+    action,
+  };
+}
+
+async function readCurrentPageFromPrompt(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+  const action = resolveReadAloudAction(input.prompt, input.context, input.book.id);
+  if (!action) {
+    return makeAssistantMessage("assistant", "I couldn't find a chapter or paragraph to read here. Open one, or say for example: read chapter 3.");
+  }
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    text: `Reading ${action.title} aloud.`,
+    action,
+  };
+}
+
+async function listBranchesMessage(input: PromptInput & { book: BookEntry; token: string }): Promise<AssistantMessage> {
+  const branches = await listBranches(input.token, input.book.owner, input.book.repo);
+  if (!branches.length) return makeAssistantMessage("assistant", "No branches found in this repository.");
+  const current = input.context.structure?.loadedBranch;
+  const lines = branches.map((entry) => `- ${entry.name === current ? "**" + entry.name + "** (current)" : entry.name}${entry.protected ? " · protected" : ""}`);
+  return makeAssistantMessage("assistant", `Branches in ${input.book.owner}/${input.book.repo}:\n${lines.join("\n")}`);
+}
+
+async function showBranchDiffMessage(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const base = input.context.structure?.defaultBranch ?? "main";
+  const head = input.branch;
+  if (base === head) return makeAssistantMessage("assistant", `You are on the default branch \`${base}\`, so there is nothing to compare.`);
+  const files = await compareBranches(input.token, input.book.owner, input.book.repo, base, head);
+  if (!files.length) return makeAssistantMessage("assistant", `No differences between \`${head}\` and \`${base}\`.`);
+  const additions = files.reduce((sum, file) => sum + file.additions, 0);
+  const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
+  const lines = files.slice(0, 20).map((file) => `- ${file.status}: ${file.filename} (+${file.additions}/-${file.deletions})`);
+  const more = files.length > 20 ? `\n…and ${files.length - 20} more files.` : "";
+  return makeAssistantMessage("assistant", `\`${head}\` vs \`${base}\`: ${files.length} file(s), +${additions}/-${deletions}.\n${lines.join("\n")}${more}`);
+}
+
+async function listCommitsMessage(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const commits = await listBranchCommits(input.token, input.book.owner, input.book.repo, input.branch);
+  if (!commits.length) return makeAssistantMessage("assistant", `No commits found on \`${input.branch}\`.`);
+  const lines = commits.slice(0, 15).map((commit) => `- \`${commit.sha.slice(0, 7)}\` ${commit.message} — ${commit.authorName}`);
+  return makeAssistantMessage("assistant", `Recent commits on \`${input.branch}\`:\n${lines.join("\n")}`);
+}
+
+async function listPullRequestsMessage(input: PromptInput & { book: BookEntry; token: string }): Promise<AssistantMessage> {
+  const pulls = await listOpenPullRequests(input.token, input.book.owner, input.book.repo);
+  if (!pulls.length) return makeAssistantMessage("assistant", "There are no open pull requests in this repository.");
+  const lines = pulls.map((pull) => `- #${pull.number} ${pull.title} (${pull.head} → ${pull.base})\n  ${pull.htmlUrl}`);
+  return makeAssistantMessage("assistant", `Open pull requests:\n${lines.join("\n")}`);
+}
+
+async function createPullRequestFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const base = input.context.structure?.defaultBranch ?? "main";
+  const head = input.branch;
+  if (base === head) return makeAssistantMessage("assistant", `You are on the default branch \`${base}\`. Switch to a feature branch first, then I can open a pull request.`);
+  const existing = await listOpenPullRequests(input.token, input.book.owner, input.book.repo, head);
+  if (existing.length) return makeAssistantMessage("assistant", `A pull request from \`${head}\` is already open: #${existing[0].number} ${existing[0].title}\n${existing[0].htmlUrl}`);
+  const title = extractPullRequestTitle(input.prompt) ?? `Merge ${head} into ${base}`;
+  const pull = await createPullRequest(input.token, input.book.owner, input.book.repo, { title, head, base });
+  return makeAssistantMessage("assistant", `Opened pull request #${pull.number} “${pull.title}” (${pull.head} → ${pull.base}).\n${pull.htmlUrl}`);
+}
+
+function extractPullRequestTitle(prompt: string): string | null {
+  const match = prompt.match(/(?:titled?|title|dal titolo|con titolo|chiamala|call it)\s+["“']?([^"”'\n]+)["”']?/i);
+  const title = match?.[1]?.trim();
+  return title && title.length > 1 ? title : null;
 }
 
 async function createChapterFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {

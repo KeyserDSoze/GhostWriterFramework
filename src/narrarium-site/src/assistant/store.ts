@@ -41,6 +41,18 @@ export type AssistantAction =
       branchName: string;
       createIfMissing?: boolean;
       baseBranch?: string;
+    }
+  | {
+      kind: "navigate";
+      to: string;
+      label?: string;
+    }
+  | {
+      kind: "read-aloud";
+      bookId: string;
+      title: string;
+      paths: string[];
+      includeFrontmatter?: boolean;
     };
 
 export interface AssistantMessage {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Bot,
   BookOpen,
@@ -38,6 +38,7 @@ import {
 } from "@/assistant/store";
 import { applyParagraphRewrite, compactAssistantSession, runAssistantPrompt } from "@/assistant/service";
 import { loadWriterContext, parseAppRoute } from "@/assistant/context";
+import { resolveNavigateAction, resolveReadAloudAction, type ReadAloudAction } from "@/assistant/planner";
 import { deleteAssistantSession, listAssistantSessions, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
 import { parseAttachment } from "@/assistant/attachments";
 import { useSettings } from "@/drive/useSettings";
@@ -104,6 +105,7 @@ type QuickAction = {
 export function AssistantPanel() {
   const { t } = useTranslation();
   const location = useLocation();
+  const navigate = useNavigate();
   const route = useMemo(() => parseAppRoute(location.pathname), [location.pathname]);
   const bookId = "bookId" in route ? route.bookId : undefined;
   const { branch } = useWorkingBranch(bookId);
@@ -711,6 +713,12 @@ export function AssistantPanel() {
       });
       updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, reply] }));
       setOpen(true);
+      if (reply.action?.kind === "navigate") {
+        navigate(reply.action.to);
+      } else if (reply.action?.kind === "read-aloud" && book && token) {
+        const readBranch = routeContext.structure?.loadedBranch ?? branch;
+        await speakReadAloud(reply.action, book, token, readBranch);
+      }
       return reply;
     } catch (err) {
       if (options?.signal?.aborted) return null;
@@ -735,18 +743,64 @@ export function AssistantPanel() {
       spokenMode?: boolean;
     },
   ): Promise<AssistantMessage | null> {
-    const readTarget = resolveReadTarget(prompt, input.context);
-    if (!readTarget || !input.book || !input.token || !input.context.structure) return null;
-    const includeFrontmatter = /\b(frontmatter|metadat|metadata|intestazion|header|campi|fields)\b/.test(prompt.toLowerCase());
-    const text = await loadReadTargetText(readTarget, input.book, input.token, input.context.structure.loadedBranch, includeFrontmatter);
-    if (!text.trim()) return makeAssistantReply(t("assistant.readTargetEmpty"));
-    const title = readTarget.kind === "chapter" ? readTarget.chapter.title : readTarget.paragraph.title;
-    const reply = makeAssistantReply(t("assistant.readingTarget", { title }));
+    if (!input.book || !input.token || !input.context.structure) return null;
+
+    // No-LLM navigation: "apri il reader", "vai al capitolo 3", "open research".
+    const navAction = resolveNavigateAction(prompt, input.context, input.book.id);
+    if (navAction) {
+      navigate(navAction.to);
+      const reply = makeAssistantReply(t("assistant.navigatingTo", { target: navAction.label ?? navAction.to }));
+      reply.action = navAction;
+      return reply;
+    }
+
+    // No-LLM read-aloud: "leggi questo paragrafo", "read chapter 3".
+    const readAction = resolveReadAloudAction(prompt, input.context, input.book.id);
+    if (readAction) {
+      const spoke = await speakReadAloud(readAction, input.book, input.token, input.context.structure.loadedBranch);
+      if (!spoke) return makeAssistantReply(t("assistant.readTargetEmpty"));
+      const reply = makeAssistantReply(t("assistant.readingTarget", { title: readAction.title }));
+      reply.action = readAction;
+      return reply;
+    }
+
+    return null;
+  }
+
+  /** Load the read-aloud target paths and speak them via TTS. Returns false when there is nothing to read. */
+  async function speakReadAloud(
+    action: ReadAloudAction,
+    book: NonNullable<Awaited<ReturnType<typeof loadWriterContext>>["book"]>,
+    token: string,
+    readBranch: string,
+  ): Promise<boolean> {
+    const raws = await Promise.all(
+      action.paths.map((path) => loadFileContent(token, book.owner, book.repo, path, readBranch).catch(() => "")),
+    );
+    const text = raws
+      .map((raw) => (action.includeFrontmatter ? raw.trim() : stripFrontmatterForSpeech(raw)))
+      .filter(Boolean)
+      .join("\n\n");
+    if (!text.trim()) return false;
     localAudioHandledRef.current = true;
     setVoiceStatus("speaking");
     const controller = await readText(text);
     localAudioDoneRef.current = controller?.done ?? Promise.resolve();
-    return reply;
+    return true;
+  }
+
+  /** Re-run a read-aloud action attached to a rendered message (manual "play" button). */
+  async function replayReadAloud(messageIndex: number) {
+    const message = currentSession?.messages[messageIndex];
+    if (!message?.action || message.action.kind !== "read-aloud") return;
+    const action = message.action;
+    const book = settings.books.find((entry) => entry.id === action.bookId);
+    const token = book ? resolveBookToken(book, settings) : "";
+    if (!book || !token) return;
+    const readBranch = structures[action.bookId]?.loadedBranch ?? branch;
+    localAudioHandledRef.current = false;
+    const spoke = await speakReadAloud(action, book, token, readBranch);
+    if (!spoke) toast({ title: t("assistant.readTargetEmpty") });
   }
 
   function makeAssistantReply(text: string): AssistantMessage {
@@ -902,61 +956,6 @@ export function AssistantPanel() {
     const controller = await readText("", { segments, startIndex: pending.from });
     localAudioDoneRef.current = controller?.done ?? Promise.resolve();
     return makeAssistantReply(t("assistant.rewriteApplied"));
-  }
-
-  function resolveReadTarget(prompt: string, context: Awaited<ReturnType<typeof loadWriterContext>>):
-    | { kind: "chapter"; chapter: NonNullable<typeof context.chapter> }
-    | { kind: "paragraph"; chapter: NonNullable<typeof context.chapter>; paragraph: NonNullable<typeof context.paragraph> }
-    | null {
-    const lower = prompt.toLowerCase();
-    if (!/\b(leggi|leggimi|riproduci|ascolta|read|play)\b/.test(lower)) return null;
-    const structure = context.structure;
-    if (!structure) return null;
-    const paragraphThenChapterMatch = lower.match(/(?:paragrafo|paragraph|scena|scene)\s+(\d+).*?(?:capitolo|chapter)\s+(\d+)/);
-    const chapterThenParagraphMatch = lower.match(/(?:capitolo|chapter)\s+(\d+).*?(?:paragrafo|paragraph|scena|scene)\s+(\d+)/);
-    if (paragraphThenChapterMatch || chapterThenParagraphMatch) {
-      const paragraphNumber = (paragraphThenChapterMatch?.[1] ?? chapterThenParagraphMatch?.[2] ?? "").padStart(3, "0");
-      const chapterNumber = (paragraphThenChapterMatch?.[2] ?? chapterThenParagraphMatch?.[1] ?? "").padStart(3, "0");
-      const chapter = structure.chapters.find((entry) => entry.slug.startsWith(`${chapterNumber}-`));
-      const paragraph = chapter?.paragraphs.find((entry) => entry.number === paragraphNumber);
-      if (chapter && paragraph) return { kind: "paragraph", chapter, paragraph };
-    }
-    const paragraphMatch = lower.match(/(?:questo\s+)?(?:paragrafo|paragraph|scena|scene)\s*(\d+)?/);
-    if (paragraphMatch && context.chapter) {
-      const paragraphNumber = paragraphMatch[1]?.padStart(3, "0");
-      const paragraph = paragraphNumber
-        ? context.chapter.paragraphs.find((entry) => entry.number === paragraphNumber)
-        : context.paragraph;
-      if (paragraph) return { kind: "paragraph", chapter: context.chapter, paragraph };
-    }
-    const chapterMatch = lower.match(/(?:questo\s+)?(?:capitolo|chapter)\s*(\d+)?/);
-    if (chapterMatch) {
-      const chapterNumber = chapterMatch[1]?.padStart(3, "0");
-      const chapter = chapterNumber
-        ? structure.chapters.find((entry) => entry.slug.startsWith(`${chapterNumber}-`))
-        : context.chapter;
-      if (chapter) return { kind: "chapter", chapter };
-    }
-    return null;
-  }
-
-  async function loadReadTargetText(
-    target: { kind: "chapter"; chapter: Awaited<ReturnType<typeof loadWriterContext>>["chapter"] } | { kind: "paragraph"; chapter: Awaited<ReturnType<typeof loadWriterContext>>["chapter"]; paragraph: Awaited<ReturnType<typeof loadWriterContext>>["paragraph"] },
-    book: NonNullable<Awaited<ReturnType<typeof loadWriterContext>>["book"]>,
-    token: string,
-    readBranch: string,
-    includeFrontmatter = false,
-  ): Promise<string> {
-    const prepare = (raw: string) => (includeFrontmatter ? raw.trim() : stripFrontmatterForSpeech(raw));
-    if (target.kind === "paragraph" && target.paragraph) {
-      return prepare(await loadFileContent(token, book.owner, book.repo, target.paragraph.path, readBranch));
-    }
-    if (target.kind === "chapter" && target.chapter) {
-      const chapterIntro = await loadFileContent(token, book.owner, book.repo, `${target.chapter.path}/chapter.md`, readBranch).catch(() => "");
-      const paragraphs = await Promise.all(target.chapter.paragraphs.map((paragraph) => loadFileContent(token, book.owner, book.repo, paragraph.path, readBranch).catch(() => "")));
-      return [`# ${target.chapter.title}`, prepare(chapterIntro), ...paragraphs.map(prepare)].filter(Boolean).join("\n\n");
-    }
-    return "";
   }
 
   function stripFrontmatterForSpeech(raw: string): string {
@@ -1307,6 +1306,8 @@ export function AssistantPanel() {
             )}
             {message.action?.kind === "undo-file-updates" && <div className="mt-2 flex items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy}>{t("assistant.undoChanges")}</Button></div>}
             {message.action?.kind === "apply-paragraph-rewrite" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.rewriteReady")}</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy}>{t("assistant.applyToParagraph")}</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>{t("assistant.openChapter")}</Link></Button></div>}
+            {message.action?.kind === "navigate" && <div className="mt-2 flex items-center gap-2"><Button asChild size="sm" variant="outline"><Link to={message.action.to}><BookOpen className="mr-1.5 h-3.5 w-3.5" />{message.action.label ?? t("assistant.openLocation")}</Link></Button></div>}
+            {message.action?.kind === "read-aloud" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" onClick={() => void replayReadAloud(index)}><Play className="mr-1.5 h-3.5 w-3.5" />{t("assistant.playAloud")}</Button></div>}
           </div>
         </div>
       ))}
