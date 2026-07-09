@@ -107,7 +107,7 @@ export async function runAssistantPrompt(input: {
     signal,
   };
 
-  if (isCapabilityQuestion(prompt)) return buildCapabilitiesMessage(settings);
+  if (isCapabilityQuestion(prompt)) return buildCapabilitiesMessage(prompt, settings);
 
   if (!book || !token) {
     return makeAssistantMessage(

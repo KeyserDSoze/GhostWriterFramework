@@ -1,5 +1,6 @@
 import type { AppSettings } from "@/types/settings";
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
+import { localizeCopilotToolArea, localizeCopilotToolText, localizeCopilotToolsLabel } from "@/assistant/tools/presentation";
 import { copilotToolRegistry, isCopilotToolEnabled } from "@/assistant/tools/registry";
 import type { AssistantMessage } from "@/assistant/store";
 
@@ -17,15 +18,23 @@ export function isCapabilityQuestion(prompt: string): boolean {
   return /\b(cosa puoi fare|che strumenti hai|come mi puoi aiutare|quali funzionalita supporti|quali funzionalità supporti|what can you do|what tools do you have|how can you help)\b/i.test(prompt);
 }
 
-export function buildCapabilitiesMessage(settings: AppSettings): AssistantMessage {
+export function buildCapabilitiesMessage(prompt: string, settings: AppSettings): AssistantMessage {
   ensureBuiltinCopilotToolsRegistered();
+  const language = capabilityMessageLanguage(prompt, settings);
   const tools = copilotToolRegistry.list().filter((tool) => isCopilotToolEnabled(settings, tool));
   const grouped = new Map<string, string[]>();
   for (const tool of tools) {
-    grouped.set(tool.area, [...(grouped.get(tool.area) ?? []), `- ${tool.name}: ${tool.description}`]);
+    const area = localizeCopilotToolArea(tool.area, language);
+    const name = localizeCopilotToolText(tool, "name", language);
+    const description = localizeCopilotToolText(tool, "description", language);
+    grouped.set(area, [...(grouped.get(area) ?? []), `- ${name}: ${description}`]);
   }
-  const sections = [...grouped.entries()].map(([area, lines]) => `**${titleCase(area)}**\n${lines.join("\n")}`).join("\n\n");
-  return { id: crypto.randomUUID(), role: "assistant", text: `I can help with these tool groups right now:\n\n${sections}` };
+  const sections = [...grouped.entries()].map(([area, lines]) => `**${area}**\n${lines.join("\n")}`).join("\n\n");
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    text: `${localizeCopilotToolsLabel("capabilitiesIntro", language, "I can help with these tool groups right now:")}\n\n${sections}`,
+  };
 }
 
 export function chooseToolHandlerId(context: OrchestratorToolContext, availableHandlerIds: Set<string>): string | null {
@@ -57,6 +66,8 @@ function isBetterTie(nextId: string, prevId: string, settings: AppSettings): boo
   return isCopilotToolEnabled(settings, next);
 }
 
-function titleCase(value: string): string {
-  return value.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+function capabilityMessageLanguage(prompt: string, settings: AppSettings): "it" | "en" {
+  if (/\b(cosa puoi fare|che strumenti hai|come mi puoi aiutare|quali funzionalita supporti|quali funzionalità supporti)\b/i.test(prompt)) return "it";
+  if (/\b(what can you do|what tools do you have|how can you help)\b/i.test(prompt)) return "en";
+  return settings.ui.language === "it" ? "it" : "en";
 }

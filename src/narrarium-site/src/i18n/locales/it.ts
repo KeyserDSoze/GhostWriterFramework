@@ -1510,6 +1510,7 @@ const it = {
     turnOff: "Disattiva",
     output: "Output",
     prerequisites: "Prerequisiti",
+    capabilitiesIntro: "Posso aiutarti con questi gruppi di strumenti in questo momento:",
     areas: {
       navigation: "navigazione",
       reader: "reader",

@@ -1510,6 +1510,7 @@ const en = {
     turnOff: "Turn off",
     output: "Output",
     prerequisites: "Prerequisites",
+    capabilitiesIntro: "I can help with these tool groups right now:",
     areas: {
       navigation: "Navigation",
       reader: "Reader",
