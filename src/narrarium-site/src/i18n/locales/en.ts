@@ -41,6 +41,7 @@ const en = {
     dirty: "{{count}} local changes",
     ahead: "{{count}} local commits",
     behind: "Remote changed",
+    incomplete: "Sync incomplete",
     summary: "{{dirty}} local changes, {{ahead}} local commits to push",
     notCloned: "Local not ready",
     noBook: "Open a book to see repository status.",

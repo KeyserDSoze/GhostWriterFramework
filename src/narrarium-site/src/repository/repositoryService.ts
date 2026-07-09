@@ -13,6 +13,7 @@ import {
   listLocalFiles,
   listUnpushedLocalCommits,
   markLocalRepositoryRemoteCheck,
+  markLocalRepositoryCloneComplete,
   markLocalCommitsPushed,
   putCleanLocalFile,
   putLocalRepository,
@@ -119,7 +120,13 @@ export async function ensureLocalBookStructure(input: {
   const branch = input.branch || defaultBranch;
   const existing = await getLocalRepository(input.book.owner, input.book.repo, branch);
   if (existing) {
-    return { meta: existing, structure: await buildLocalBookStructure(existing), cloned: false };
+    // A repo is only trustworthy once its clone was verified complete. Legacy repos
+    // (cloneComplete === undefined) and interrupted clones (=== false) get healed here.
+    if (existing.cloneComplete === true) {
+      return { meta: existing, structure: await buildLocalBookStructure(existing), cloned: false };
+    }
+    const repaired = await verifyAndRepairLocalRepository({ meta: existing, token: input.token, onProgress: input.onProgress });
+    return { meta: repaired.meta, structure: repaired.structure, cloned: false };
   }
 
   await navigator.storage?.persist?.().catch(() => false);
@@ -137,6 +144,10 @@ export async function ensureLocalBookStructure(input: {
     defaultBranch,
     remoteHeadSha: headSha,
     clonedAt: new Date().toISOString(),
+    // Mark incomplete up-front: only flip to true once every blob is stored, so an
+    // interrupted clone can never masquerade as a complete, clean, synced repo.
+    cloneComplete: false,
+    expectedFileCount: blobs.length,
   });
 
   let done = 0;
@@ -152,9 +163,83 @@ export async function ensureLocalBookStructure(input: {
     input.onProgress?.({ done, total: blobs.length, path: blob.path });
   });
 
+  if (tree.data.truncated) {
+    // Extremely large tree we could not enumerate in one request: leave the repo
+    // marked incomplete so it is re-verified, rather than trusting a partial file set.
+    await addLocalRepoLog(meta.id, "error", `Remote tree truncated at ${blobs.length} files; clone left unverified`);
+  } else {
+    await markLocalRepositoryCloneComplete(meta.id, blobs.length, headSha);
+  }
   await addLocalRepoLog(meta.id, "clone", `Cloned ${blobs.length} files from ${meta.branch}`);
 
-  return { meta, structure: await buildLocalBookStructure(meta), cloned: true };
+  const finalMeta = await getLocalRepository(input.book.owner, input.book.repo, branch) ?? meta;
+  return { meta: finalMeta, structure: await buildLocalBookStructure(finalMeta), cloned: true };
+}
+
+/**
+ * Fetch a single blob by its git object sha (exact content, independent of branch tip).
+ */
+async function fetchBlobBytes(octokit: Octokit, owner: string, repo: string, fileSha: string): Promise<Uint8Array> {
+  const blob = await octokit.rest.git.getBlob({ owner, repo, file_sha: fileSha });
+  if (blob.data.encoding === "base64") {
+    const binary = atob(blob.data.content.replace(/\n/g, ""));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+  return new TextEncoder().encode(blob.data.content);
+}
+
+/**
+ * Heal an incomplete or unverified local clone: re-fetch any blob from the repo's
+ * recorded head tree that is missing locally (or stored clean with a stale base sha),
+ * without touching the user's dirty/uncommitted edits. Marks the repo clone-complete.
+ */
+export async function verifyAndRepairLocalRepository(input: {
+  meta: LocalRepositoryMeta;
+  token: string;
+  onProgress?: (progress: LocalCloneProgress) => void;
+}): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; repaired: number }> {
+  const { meta, token } = input;
+  const octokit = new Octokit({ auth: token });
+  // Verify against the head the local repo claims to be at, so we restore exactly that
+  // tree; the normal fetch/pull flow advances to any newer remote head afterwards.
+  const treeSha = meta.remoteHeadSha;
+  const tree = await octokit.rest.git.getTree({ owner: meta.owner, repo: meta.repo, tree_sha: treeSha, recursive: "1" });
+  const remoteBlobs = tree.data.tree
+    .filter((item) => item.type === "blob" && item.path && item.sha)
+    .map((item) => ({ path: item.path!, sha: item.sha!, size: item.size ?? 0 }));
+
+  const localFiles = await listAllLocalFiles(meta.id);
+  const localByPath = new Map(localFiles.map((file) => [file.path, file]));
+  const missing = remoteBlobs.filter((blob) => {
+    const local = localByPath.get(blob.path);
+    if (!local) return true;
+    // Only refetch a "clean" file whose recorded base sha no longer matches the tree;
+    // never clobber modified/new/deleted (uncommitted) local work.
+    return local.status === "clean" && Boolean(local.baseSha) && Boolean(blob.sha) && local.baseSha !== blob.sha;
+  });
+
+  let done = 0;
+  input.onProgress?.({ done, total: missing.length });
+  await mapLimit(missing, 5, async (blob) => {
+    const bytes = await fetchBlobBytes(octokit, meta.owner, meta.repo, blob.sha);
+    if (isTextPath(blob.path)) {
+      await putCleanLocalFile({ repoId: meta.id, path: blob.path, kind: "text", text: new TextDecoder().decode(bytes), baseSha: blob.sha, size: bytes.byteLength });
+    } else {
+      await putCleanLocalFile({ repoId: meta.id, path: blob.path, kind: "binary", blob: new Blob([bytesToArrayBuffer(bytes)]), baseSha: blob.sha, size: bytes.byteLength });
+    }
+    done += 1;
+    input.onProgress?.({ done, total: missing.length, path: blob.path });
+  });
+
+  if (!tree.data.truncated) {
+    await markLocalRepositoryCloneComplete(meta.id, remoteBlobs.length);
+    if (missing.length) await addLocalRepoLog(meta.id, "pull", `Repaired ${missing.length} missing file(s) on ${meta.branch}`);
+  }
+
+  const updated = await getLocalRepository(meta.owner, meta.repo, meta.branch) ?? meta;
+  return { meta: updated, structure: await buildLocalBookStructure(updated), repaired: missing.length };
 }
 
 export async function getExistingLocalBookStructure(bookId: string): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure } | null> {
@@ -417,6 +502,12 @@ export async function recloneLocalWorkingCopy(input: {
 export async function overwriteRemoteWithLocal(input: { bookId: string; token: string }): Promise<PushResult> {
   const meta = await getLocalRepositoryByBook(input.bookId);
   if (!meta) throw new Error("Local repository is not ready.");
+  // Refuse to make an unverified/partial local copy the source of truth: doing so would
+  // overwrite the remote branch with an incomplete tree and destroy files that never
+  // finished cloning. Require a verified-complete clone first.
+  if (meta.cloneComplete !== true) {
+    throw new Error("Local working copy is not fully synced yet. Reload the book (or re-clone) so all files are present before using it as the source of truth.");
+  }
 
   const octokit = new Octokit({ auth: input.token });
   const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });

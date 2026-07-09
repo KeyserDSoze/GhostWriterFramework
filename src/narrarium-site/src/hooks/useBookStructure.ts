@@ -5,7 +5,7 @@ import { useBooksStore } from "@/store/booksStore";
 import { loadBookStructure } from "@/github/githubClient";
 import { emailToBranchName } from "@/github/githubClient";
 import { resolveBookToken } from "@/types/settings";
-import { ensureLocalBookStructure, fetchRemoteStatus, getExistingLocalBookStructure, pullRemoteChanges } from "@/repository/repositoryService";
+import { ensureLocalBookStructure, fetchRemoteStatus, getExistingLocalBookStructure, pullRemoteChanges, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -53,7 +53,19 @@ export function useBookStructure(bookId: string | undefined) {
     setCloneProgress(resolvedBookId, undefined);
     getExistingLocalBookStructure(resolvedBookId)
       .then(async (local) => {
-        if (local && (!readBranch || local.structure.loadedBranch === readBranch)) return local.structure;
+        if (local && (!readBranch || local.structure.loadedBranch === readBranch)) {
+          // Heal partial/legacy clones: a repo is only trustworthy once verified complete.
+          // When online, re-fetch any files missing from an interrupted clone before serving it.
+          if (local.meta.cloneComplete !== true && navigator.onLine) {
+            try {
+              const repaired = await verifyAndRepairLocalRepository({ meta: local.meta, token, onProgress: (p) => setCloneProgress(resolvedBookId, p) });
+              return repaired.structure;
+            } catch {
+              return local.structure;
+            }
+          }
+          return local.structure;
+        }
         return ensureLocalBookStructure({ bookId: resolvedBookId, book, token, branch: readBranch, onProgress: (p) => setCloneProgress(resolvedBookId, p) }).then((result) => result.structure);
       })
       .catch(() => loadBookStructure(token, book.owner, book.repo, readBranch))

@@ -116,6 +116,8 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         ? { label: t("repoStatus.dirty", { count: status.dirty }), tone: "dirty" }
         : status.ahead > 0
           ? { label: t("repoStatus.ahead", { count: status.ahead }), tone: "ahead" }
+          : repo.cloneComplete === false
+            ? { label: t("repoStatus.incomplete"), tone: "behind" }
           : repo.remoteChanged
             ? { label: t("repoStatus.behind"), tone: "behind" }
         : { label: t("repoStatus.clean"), tone: "clean" });

@@ -18,6 +18,14 @@ export interface LocalRepositoryMeta {
   clonedAt: string;
   updatedAt: string;
   lastFetchAt?: string;
+  /**
+   * True only once every file blob of the cloned tree has been stored locally.
+   * Undefined on repos cloned before this flag existed (treated as unverified).
+   * A repo is considered fully in sync only when this is strictly `true`.
+   */
+  cloneComplete?: boolean;
+  /** Number of blobs the remote tree had at clone/verify time. */
+  expectedFileCount?: number;
 }
 
 export interface LocalRepositoryFile {
@@ -442,6 +450,18 @@ export async function updateLocalRepositoryHead(repoIdValue: string, remoteHeadS
   const repo = await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(repoIdValue));
   if (!repo) return;
   await txStore("repositories", "readwrite", (store) => store.put({ ...repo, remoteHeadSha, remoteChanged: false, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString() }));
+}
+
+export async function markLocalRepositoryCloneComplete(repoIdValue: string, expectedFileCount: number, remoteHeadSha?: string): Promise<void> {
+  const repo = await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(repoIdValue));
+  if (!repo) return;
+  await txStore("repositories", "readwrite", (store) => store.put({
+    ...repo,
+    cloneComplete: true,
+    expectedFileCount,
+    ...(remoteHeadSha ? { remoteHeadSha } : {}),
+    updatedAt: new Date().toISOString(),
+  }));
 }
 
 export async function markLocalRepositoryRemoteCheck(repoIdValue: string, remoteHeadSha: string, changed: boolean): Promise<void> {
