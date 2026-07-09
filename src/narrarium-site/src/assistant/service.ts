@@ -137,7 +137,7 @@ export async function runAssistantPrompt(input: {
     "rewrite-paragraph": () => rewriteCurrentParagraph({ ...promptInput, book, branch, token }),
     "create-note": () => createContextNote({ ...promptInput, book, branch, token }),
     "review-context": () => reviewCurrentContext(promptInput),
-    "summarize-context": () => summarizeCurrentContext(promptInput),
+    "summarize-context": () => summarizeCurrentContext(promptInput, token),
     "answer-from-context": () => answerFromContext(promptInput),
     "open-reader": () => openReaderNavigation({ ...promptInput, book }),
     "navigate": () => navigateFromPrompt({ ...promptInput, book }),
@@ -147,6 +147,20 @@ export async function runAssistantPrompt(input: {
     "list-commits": () => listCommitsMessage({ ...promptInput, book, branch, token }),
     "list-pull-requests": () => listPullRequestsMessage({ ...promptInput, book, token }),
     "create-pull-request": () => createPullRequestFromPrompt({ ...promptInput, book, branch, token }),
+    "get-book": () => getBookInfo({ ...promptInput, book }),
+    "get-chapter": () => getChapterInfo({ ...promptInput, book, token }),
+    "get-paragraph": () => getParagraphInfo({ ...promptInput, book, branch, token }),
+    "get-character": () => getCanonEntityInfo("characters", { ...promptInput, book, branch, token }),
+    "get-location": () => getCanonEntityInfo("locations", { ...promptInput, book, branch, token }),
+    "get-faction": () => getCanonEntityInfo("factions", { ...promptInput, book, branch, token }),
+    "get-item": () => getCanonEntityInfo("items", { ...promptInput, book, branch, token }),
+    "get-secret": () => getCanonEntityInfo("secrets", { ...promptInput, book, branch, token }),
+    "get-timeline-event": () => getCanonEntityInfo("timelines", { ...promptInput, book, branch, token }),
+    "get-body": () => getBodyInfo({ ...promptInput, book, branch, token }),
+    "get-frontmatter": () => getFrontmatterInfo({ ...promptInput, book, branch, token }),
+    "delete-current-note": () => requestDeleteNote({ ...promptInput, book }),
+    "delete-current-paragraph": () => requestDeleteParagraph({ ...promptInput, book }),
+    "delete-current-entity": () => requestDeleteEntity({ ...promptInput, book }),
   } as const;
 
   const handlerId = chooseToolHandlerId({ prompt, lowered, settings, spokenMode }, new Set(Object.keys(handlers)));
@@ -221,7 +235,17 @@ export async function applyParagraphRewrite(input: {
   );
 }
 
-async function summarizeCurrentContext(input: PromptInput): Promise<AssistantMessage> {
+async function summarizeCurrentContext(input: PromptInput, token?: string): Promise<AssistantMessage> {
+  // Hybrid pipeline: when a concrete chapter/paragraph target is resolvable, send only its
+  // body to the LLM instead of the whole context bundle, to keep the request small and cheap.
+  const target = token ? await resolveTargetBody(input, token) : null;
+  if (target) {
+    const answer = await completeForTask(input.settings, [
+      { role: "system", content: `You summarize the provided text clearly and concisely. Keep the key facts, characters, and events. Return a compact summary.${languageInstruction(input, "user")}` },
+      { role: "user", content: `Summarize this ${target.kind} titled "${target.title}":\n\n${target.body}` },
+    ], "copilot", { signal: input.signal, label: "copilot:summarize-body" });
+    if (answer) return makeAssistantMessage("assistant", answer.trim());
+  }
   const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "You are Narrarium's writing assistant. Summarize the current context clearly and concretely. Use compact paragraphs and bullet points when useful."),
     buildUserMessage(input, `Request: ${input.prompt}`),
@@ -357,6 +381,222 @@ function extractPullRequestTitle(prompt: string): string | null {
   const match = prompt.match(/(?:titled?|title|dal titolo|con titolo|chiamala|call it)\s+["“']?([^"”'\n]+)["”']?/i);
   const title = match?.[1]?.trim();
   return title && title.length > 1 ? title : null;
+}
+
+// ─── Local utility tools (no LLM) ────────────────────────────────────────────
+
+type CanonSectionKey = "characters" | "locations" | "factions" | "items" | "secrets" | "timelines";
+
+function slugFromPath(path: string): string {
+  return path.split("/").pop()?.replace(/\.md$/, "") ?? path;
+}
+
+function canonList(structure: NonNullable<LoadedWriterContext["structure"]>, section: CanonSectionKey) {
+  return structure[section];
+}
+
+/** Best-effort match of a canon file by a name/slug mentioned in the prompt. */
+function findCanonFileByPrompt<T extends { path: string; name?: string }>(files: T[], prompt: string): T | null {
+  const lower = prompt.toLowerCase();
+  let best: { file: T; len: number } | null = null;
+  for (const file of files) {
+    const candidates = [file.name, slugToTitle(slugFromPath(file.path)), slugFromPath(file.path).replace(/-/g, " ")]
+      .filter((value): value is string => Boolean(value && value.length >= 3));
+    for (const candidate of candidates) {
+      const needle = candidate.toLowerCase();
+      if (lower.includes(needle) && (!best || needle.length > best.len)) best = { file, len: needle.length };
+    }
+  }
+  return best?.file ?? null;
+}
+
+function resolveChapterFromPrompt(input: PromptInput): NonNullable<LoadedWriterContext["chapter"]> | null {
+  const structure = input.context.structure;
+  if (!structure) return input.context.chapter;
+  const match = input.prompt.toLowerCase().match(/(?:capitolo|chapter)\s+(\d+)/);
+  if (match) {
+    const padded = match[1].padStart(3, "0");
+    return structure.chapters.find((chapter) => chapter.slug.startsWith(`${padded}-`)) ?? input.context.chapter;
+  }
+  return input.context.chapter;
+}
+
+function resolveParagraphFromPrompt(input: PromptInput): { chapter: NonNullable<LoadedWriterContext["chapter"]>; paragraph: NonNullable<LoadedWriterContext["paragraph"]> } | null {
+  const chapter = resolveChapterFromPrompt(input);
+  if (!chapter) return null;
+  const match = input.prompt.toLowerCase().match(/(?:paragrafo|paragraph|scena|scene)\s+(\d+)/);
+  const paragraph = match
+    ? chapter.paragraphs.find((entry) => entry.number === match[1].padStart(3, "0")) ?? null
+    : input.context.paragraph;
+  if (!paragraph) return null;
+  return { chapter, paragraph };
+}
+
+/** Resolve the "current file" for generic body/frontmatter tools. */
+function currentFilePath(input: PromptInput): { path: string; title: string } | null {
+  const paragraph = resolveParagraphFromPrompt(input);
+  if (paragraph) return { path: paragraph.paragraph.path, title: paragraph.paragraph.title };
+  if (input.context.route.kind === "canon") {
+    const path = resolveCanonPathFromRoute(input);
+    if (path) return { path, title: slugToTitle(slugFromPath(path)) };
+  }
+  const chapter = resolveChapterFromPrompt(input);
+  if (chapter) return { path: `${chapter.path}/chapter.md`, title: chapter.title };
+  return null;
+}
+
+function resolveCanonPathFromRoute(input: PromptInput): string | null {
+  const route = input.context.route;
+  if (route.kind !== "canon") return null;
+  const structure = input.context.structure;
+  if (!structure) return null;
+  const map: Record<string, CanonSectionKey> = {
+    characters: "characters", locations: "locations", factions: "factions",
+    items: "items", secrets: "secrets", timelines: "timelines",
+  };
+  const section = map[route.section];
+  if (!section) return null;
+  return canonList(structure, section).find((file) => slugFromPath(file.path) === route.slug)?.path ?? null;
+}
+
+async function resolveTargetBody(input: PromptInput, token: string): Promise<{ kind: string; title: string; body: string } | null> {
+  const book = input.context.book;
+  const branch = input.context.structure?.loadedBranch;
+  if (!book || !branch || !token) return null;
+  const paragraph = resolveParagraphFromPrompt(input);
+  if (paragraph) {
+    const raw = await loadFileContent(token, book.owner, book.repo, paragraph.paragraph.path, branch).catch(() => "");
+    const { body } = parseMarkdown(raw);
+    if (body.trim()) return { kind: "paragraph", title: paragraph.paragraph.title, body: body.trim() };
+  }
+  const wantsChapter = /\b(capitolo|chapter)\b/.test(input.prompt.toLowerCase());
+  if (wantsChapter || (!paragraph && input.context.chapter)) {
+    const chapter = resolveChapterFromPrompt(input);
+    if (chapter) {
+      const intro = await loadFileContent(token, book.owner, book.repo, `${chapter.path}/chapter.md`, branch).catch(() => "");
+      const paragraphs = await Promise.all(chapter.paragraphs.map((entry) => loadFileContent(token, book.owner, book.repo, entry.path, branch).catch(() => "")));
+      const body = [intro, ...paragraphs].map((raw) => parseMarkdown(raw).body.trim()).filter(Boolean).join("\n\n");
+      if (body.trim()) return { kind: "chapter", title: chapter.title, body: body.trim() };
+    }
+  }
+  return null;
+}
+
+async function getBookInfo(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+  const structure = input.context.structure;
+  if (!structure) return makeAssistantMessage("assistant", "Open a book first so I can read its metadata.");
+  const lines = [
+    `**${structure.title}**`,
+    structure.description || "",
+    structure.language ? `Language: ${structure.language}` : "",
+    `Chapters: ${structure.chapters.length}`,
+    `Characters: ${structure.characters.length} · Locations: ${structure.locations.length} · Factions: ${structure.factions.length} · Items: ${structure.items.length} · Secrets: ${structure.secrets.length} · Timeline events: ${structure.timelines.length}`,
+  ].filter(Boolean);
+  return makeAssistantMessage("assistant", lines.join("\n"));
+}
+
+async function getChapterInfo(input: PromptInput & { book: BookEntry; token: string }): Promise<AssistantMessage> {
+  const chapter = resolveChapterFromPrompt(input);
+  if (!chapter) return makeAssistantMessage("assistant", "Open a chapter or tell me a chapter number, e.g. get chapter 3.");
+  const lines = [
+    `**${chapter.title}** (${chapter.slug})`,
+    `Paragraphs: ${chapter.paragraphs.length}${chapter.hasResume ? " · has resume" : ""}${chapter.hasEvaluation ? " · has evaluation" : ""}`,
+    ...chapter.paragraphs.map((paragraph) => `- ${paragraph.number} ${paragraph.title}`),
+  ];
+  return makeAssistantMessage("assistant", lines.join("\n"));
+}
+
+async function getParagraphInfo(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const target = resolveParagraphFromPrompt(input);
+  if (!target) return makeAssistantMessage("assistant", "Open a paragraph or tell me which one, e.g. get paragraph 2 of chapter 3.");
+  const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, target.paragraph.path, input.branch).catch(() => "");
+  const { body } = parseMarkdown(raw);
+  if (!body.trim()) return makeAssistantMessage("assistant", `**${target.paragraph.title}** is empty.`);
+  return makeAssistantMessage("assistant", `**${target.paragraph.title}**\n\n${body.trim()}`);
+}
+
+async function getCanonEntityInfo(section: CanonSectionKey, input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const structure = input.context.structure;
+  if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
+  const files = canonList(structure, section);
+  if (!files.length) return makeAssistantMessage("assistant", `There are no ${section} in this book yet.`);
+  const file = findCanonFileByPrompt(files, input.prompt) ?? (files.length === 1 ? files[0] : null);
+  if (!file) {
+    const names = files.slice(0, 20).map((entry) => `- ${entry.name ?? slugToTitle(slugFromPath(entry.path))}`).join("\n");
+    return makeAssistantMessage("assistant", `Which one? Available ${section}:\n${names}`);
+  }
+  const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, file.path, input.branch).catch(() => "");
+  const { frontmatter, body } = parseMarkdown(raw);
+  const name = file.name ?? slugToTitle(slugFromPath(file.path));
+  const facts = Object.entries(frontmatter)
+    .filter(([key]) => !["id", "type"].includes(key))
+    .slice(0, 12)
+    .map(([key, value]) => `- ${key}: ${formatFrontmatterValue(value)}`)
+    .join("\n");
+  const sections = [`**${name}**`, facts ? `\n${facts}` : "", body.trim() ? `\n${body.trim()}` : ""].filter(Boolean);
+  return makeAssistantMessage("assistant", sections.join("\n"));
+}
+
+async function getBodyInfo(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const current = currentFilePath(input);
+  if (!current) return makeAssistantMessage("assistant", "Open a paragraph, chapter or canon entity first, or tell me which file you mean.");
+  const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, current.path, input.branch).catch(() => "");
+  const { body } = parseMarkdown(raw);
+  if (!body.trim()) return makeAssistantMessage("assistant", `**${current.title}** has no body text.`);
+  return makeAssistantMessage("assistant", `**${current.title}**\n\n${body.trim()}`);
+}
+
+async function getFrontmatterInfo(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const current = currentFilePath(input);
+  if (!current) return makeAssistantMessage("assistant", "Open a paragraph, chapter or canon entity first, or tell me which file you mean.");
+  const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, current.path, input.branch).catch(() => "");
+  const { frontmatter } = parseMarkdown(raw);
+  const entries = Object.entries(frontmatter);
+  if (!entries.length) return makeAssistantMessage("assistant", `**${current.title}** has no frontmatter.`);
+  const lines = entries.map(([key, value]) => `- ${key}: ${formatFrontmatterValue(value)}`);
+  return makeAssistantMessage("assistant", `Frontmatter of **${current.title}**:\n${lines.join("\n")}`);
+}
+
+function formatFrontmatterValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map((item) => String(item)).join(", ");
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return String(value ?? "");
+}
+
+// ─── Destructive tools (return a confirmation gate, never delete directly) ────
+
+async function requestDeleteNote(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+  const path = input.context.noteTargetPath;
+  if (!path) return makeAssistantMessage("assistant", "There is no note file associated with this page.");
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    text: `This will delete the note file \`${path}\` (all notes it contains). Confirm to proceed.`,
+    action: { kind: "confirm-delete", bookId: input.book.id, target: "note", path, title: path },
+  };
+}
+
+async function requestDeleteParagraph(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+  const target = resolveParagraphFromPrompt(input);
+  if (!target) return makeAssistantMessage("assistant", "Open the paragraph you want to delete first.");
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    text: `This will delete paragraph ${target.paragraph.number} “${target.paragraph.title}” and renumber the following paragraphs. Confirm to proceed.`,
+    action: { kind: "confirm-delete", bookId: input.book.id, target: "paragraph", path: target.paragraph.path, title: target.paragraph.title, chapterSlug: target.chapter.slug },
+  };
+}
+
+async function requestDeleteEntity(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+  const path = resolveCanonPathFromRoute(input);
+  if (!path) return makeAssistantMessage("assistant", "Open the canon entity you want to delete first.");
+  const title = slugToTitle(slugFromPath(path));
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    text: `This will delete the canon entity \`${path}\`. Confirm to proceed.`,
+    action: { kind: "confirm-delete", bookId: input.book.id, target: "entity", path, title },
+  };
 }
 
 async function createChapterFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {

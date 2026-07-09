@@ -53,6 +53,14 @@ export type AssistantAction =
       title: string;
       paths: string[];
       includeFrontmatter?: boolean;
+    }
+  | {
+      kind: "confirm-delete";
+      bookId: string;
+      target: "note" | "paragraph" | "entity";
+      path: string;
+      title: string;
+      chapterSlug?: string;
     };
 
 export interface AssistantMessage {

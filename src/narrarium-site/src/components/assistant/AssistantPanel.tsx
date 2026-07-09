@@ -69,6 +69,7 @@ import {
   deleteFile,
   loadFileContent,
   readFileWithSha,
+  reorderParagraphsInChapter,
   revertFileToRef,
   updateFile,
   type BranchDiffFile,
@@ -1080,6 +1081,36 @@ export function AssistantPanel() {
     }
   }
 
+  async function confirmDeleteAction(messageIndex: number) {
+    const message = currentSession?.messages[messageIndex];
+    if (!message?.action || message.action.kind !== "confirm-delete") return;
+    const action = message.action;
+    const book = settings.books.find((entry) => entry.id === action.bookId);
+    const token = book ? resolveBookToken(book, settings) : "";
+    if (!book || !token) return;
+    setBusy(true);
+    try {
+      if (action.target === "paragraph") {
+        const structure = structures[action.bookId];
+        const chapter = structure?.chapters.find((entry) => entry.slug === action.chapterSlug);
+        if (!chapter) throw new Error("Chapter not found for paragraph deletion.");
+        const remaining = chapter.paragraphs.filter((paragraph) => paragraph.path !== action.path);
+        await reorderParagraphsInChapter(token, book.owner, book.repo, branch, chapter.path, chapter.paragraphs, remaining, `Delete paragraph: ${action.title}`);
+      } else {
+        const existing = await readFileWithSha(token, book.owner, book.repo, branch, action.path).catch(() => null);
+        if (existing) await deleteFile(token, book.owner, book.repo, branch, action.path, existing.sha, `Delete ${action.target}: ${action.title}`);
+      }
+      useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("assistant.deleteApplied")}` });
+      toast({ title: t("assistant.toastDeleted", { title: action.title }) });
+      clearBook(book.id);
+      window.location.reload();
+    } catch (err) {
+      toast({ title: t("assistant.toastDeleteFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function undoFileUpdates(messageIndex: number) {
     const message = currentSession?.messages[messageIndex];
     if (!message?.action || message.action.kind !== "undo-file-updates") return;
@@ -1308,6 +1339,7 @@ export function AssistantPanel() {
             {message.action?.kind === "apply-paragraph-rewrite" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.rewriteReady")}</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy}>{t("assistant.applyToParagraph")}</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>{t("assistant.openChapter")}</Link></Button></div>}
             {message.action?.kind === "navigate" && <div className="mt-2 flex items-center gap-2"><Button asChild size="sm" variant="outline"><Link to={message.action.to}><BookOpen className="mr-1.5 h-3.5 w-3.5" />{message.action.label ?? t("assistant.openLocation")}</Link></Button></div>}
             {message.action?.kind === "read-aloud" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" onClick={() => void replayReadAloud(index)}><Play className="mr-1.5 h-3.5 w-3.5" />{t("assistant.playAloud")}</Button></div>}
+            {message.action?.kind === "confirm-delete" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="destructive">{t("assistant.destructive")}</Badge><Button size="sm" variant="destructive" onClick={() => void confirmDeleteAction(index)} disabled={busy}><Trash2 className="mr-1.5 h-3.5 w-3.5" />{t("assistant.confirmDelete")}</Button><Button size="sm" variant="outline" onClick={() => useAssistantStore.getState().updateMessage(message.id, { action: undefined })} disabled={busy}>{t("assistant.cancel")}</Button></div>}
           </div>
         </div>
       ))}
