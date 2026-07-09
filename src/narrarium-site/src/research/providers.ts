@@ -1,21 +1,34 @@
 // ─── Research Provider Registry ──────────────────────────────────────────────
 
-import type { ResearchProvider, ResearchSourceMode } from "./types";
+import { BraveSearchProvider } from "./BraveSearchProvider";
+import { DuckDuckGoInstantAnswerProvider } from "./DuckDuckGoProvider";
+import { GdeltProvider } from "./GdeltProvider";
+import { TavilyProvider } from "./TavilyProvider";
+import type { ResearchProvider, ResearchProviderId, ResearchRoutableIntent } from "./types";
 import { WikipediaProvider } from "./WikipediaProvider";
-import { DuckDuckGoProvider } from "./DuckDuckGoProvider";
+import { WikidataProvider } from "./WikidataProvider";
 
-const _wikipedia = new WikipediaProvider();
-const _duckduckgo = new DuckDuckGoProvider();
+const providers: ResearchProvider[] = [
+  new GdeltProvider(),
+  new WikipediaProvider(),
+  new WikidataProvider(),
+  new BraveSearchProvider(),
+  new TavilyProvider(),
+  new DuckDuckGoInstantAnswerProvider(),
+];
 
-/** All registered providers, keyed by id. */
-export const RESEARCH_PROVIDERS: Record<string, ResearchProvider> = {
-  wikipedia: _wikipedia,
-  duckduckgo: _duckduckgo,
-};
+export const RESEARCH_PROVIDERS: Record<ResearchProviderId, ResearchProvider> = Object.fromEntries(
+  providers.map((provider) => [provider.id, provider]),
+) as Record<ResearchProviderId, ResearchProvider>;
 
-/** Return the ordered list of providers for a given source mode. */
-export function getProvidersForMode(mode: ResearchSourceMode): ResearchProvider[] {
-  if (mode === "wikipedia") return [_wikipedia];
-  // internet: DuckDuckGo first; extensible by adding more providers here
-  return [_duckduckgo];
+export function providerById(id: ResearchProviderId): ResearchProvider | undefined {
+  return RESEARCH_PROVIDERS[id];
+}
+
+export function providersForIntent(intent: ResearchRoutableIntent): ResearchProvider[] {
+  return providers.filter((provider) => provider.intent === intent);
+}
+
+export function allResearchProviders(): ResearchProvider[] {
+  return providers.slice();
 }

@@ -1,9 +1,7 @@
 // ─── DuckDuckGo Instant Answer Provider ──────────────────────────────────────
-// Uses DuckDuckGo's Instant Answer API (?format=json&no_html=1&skip_disambig=1).
-// This is a limited API (no organic SERP), but works from the browser without CORS.
-// For richer results a Cloudflare Worker proxy would be needed.
+// Weak fallback only. This does NOT return an organic SERP.
 
-import type { ResearchProvider, ResearchResult, SearchOptions } from "./types";
+import type { ResearchProvider, ResearchProviderResult, ResearchResult, SearchOptions } from "./types";
 import { DEPTH_CONFIG } from "./types";
 
 interface DdgResponse {
@@ -15,56 +13,50 @@ interface DdgResponse {
   RelatedTopics?: Array<{ Text?: string; FirstURL?: string; Topics?: Array<{ Text?: string; FirstURL?: string }> }>;
 }
 
-export class DuckDuckGoProvider implements ResearchProvider {
-  readonly id = "duckduckgo";
-  readonly label = "DuckDuckGo";
-  // DuckDuckGo Instant Answer API supports CORS
+export class DuckDuckGoInstantAnswerProvider implements ResearchProvider {
+  readonly id = "duckduckgo_instant" as const;
+  readonly label = "DuckDuckGo Instant Answer";
+  readonly intent = "internet" as const;
+  readonly requiresApiKey = false;
   readonly browserCompatible = true;
 
-  async search(query: string, options: SearchOptions): Promise<ResearchResult[]> {
+  isConfigured(): boolean { return true; }
+
+  async search(query: string, options: SearchOptions): Promise<ResearchProviderResult> {
     const limit = DEPTH_CONFIG[options.depth].maxResultsPerQuery;
     const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-
-    let data: DdgResponse;
     try {
       const resp = await fetch(url, { signal: options.signal });
-      if (!resp.ok) return [];
-      data = (await resp.json()) as DdgResponse;
-    } catch {
-      return [];
-    }
-
-    const results: ResearchResult[] = [];
-
-    // Abstract (primary result)
-    if (data.Abstract && data.AbstractURL) {
-      results.push({
-        title: data.Heading ?? query,
-        url: data.AbstractURL,
-        snippet: data.Abstract,
-        body: data.AbstractText ?? data.Abstract,
-        provider: "duckduckgo",
-      });
-    }
-
-    // Related topics (up to limit - 1 more)
-    const topics = data.RelatedTopics ?? [];
-    for (const topic of topics) {
-      if (results.length >= limit) break;
-      // Flat topic
-      if (topic.Text && topic.FirstURL) {
-        results.push({ title: topic.Text.split(" - ")[0] ?? topic.Text, url: topic.FirstURL, snippet: topic.Text, provider: "duckduckgo" });
-        continue;
+      if (!resp.ok) throw new Error(`DuckDuckGo: ${resp.status}`);
+      const data = (await resp.json()) as DdgResponse;
+      const results: ResearchResult[] = [];
+      if (data.Abstract && data.AbstractURL) {
+        results.push({
+          id: `duck:${data.AbstractURL}`,
+          title: data.Heading ?? query,
+          url: data.AbstractURL,
+          snippet: data.Abstract,
+          body: data.AbstractText ?? data.Abstract,
+          source: data.AbstractSource ?? "DuckDuckGo",
+          provider: this.id,
+          intent: this.intent,
+          raw: data,
+        });
       }
-      // Nested group
-      for (const sub of topic.Topics ?? []) {
+      for (const topic of data.RelatedTopics ?? []) {
         if (results.length >= limit) break;
-        if (sub.Text && sub.FirstURL) {
-          results.push({ title: sub.Text.split(" - ")[0] ?? sub.Text, url: sub.FirstURL, snippet: sub.Text, provider: "duckduckgo" });
+        if (topic.Text && topic.FirstURL) {
+          results.push({ id: `duck:${topic.FirstURL}`, title: topic.Text.split(" - ")[0] ?? topic.Text, url: topic.FirstURL, snippet: topic.Text, source: "DuckDuckGo", provider: this.id, intent: this.intent, raw: topic });
+          continue;
+        }
+        for (const sub of topic.Topics ?? []) {
+          if (results.length >= limit) break;
+          if (sub.Text && sub.FirstURL) results.push({ id: `duck:${sub.FirstURL}`, title: sub.Text.split(" - ")[0] ?? sub.Text, url: sub.FirstURL, snippet: sub.Text, source: "DuckDuckGo", provider: this.id, intent: this.intent, raw: sub });
         }
       }
+      return { provider: this.id, intent: this.intent, results: results.slice(0, limit) };
+    } catch (err) {
+      return { provider: this.id, intent: this.intent, results: [], error: err instanceof Error ? err.message : String(err) };
     }
-
-    return results.slice(0, limit);
   }
 }

@@ -31,6 +31,7 @@ import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
 import { parseAppRoute } from "@/assistant/context";
 import { APP_VERSION } from "@/config/version";
+import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
 
 interface NavItem {
   label: string;
@@ -70,6 +71,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { settings } = useSettingsStore();
   const { structures } = useBooksStore();
   const route = parseAppRoute(location.pathname);
+  const previous = useNavigationHistoryStore((s) => s.previous);
   const bookId = "bookId" in route ? route.bookId : undefined;
   const chapterId = "chapterId" in route ? route.chapterId : undefined;
   const paragraphNum = "paragraphNum" in route ? route.paragraphNum : undefined;
@@ -124,6 +126,16 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       ]
     : [];
 
+  const inSettings = location.pathname === "/app/settings" || location.pathname.startsWith("/app/settings/");
+  const settingsNav: NavItem[] = [
+    { label: t("settings.title"), href: "/app/settings", icon: <Settings className="h-4 w-4" /> },
+    { label: t("settingsSection.aiRouterTitle"), href: "/app/settings/ai-router", icon: <Users className="h-4 w-4" /> },
+    { label: t("settingsSection.deepSearchTitle"), href: "/app/settings/deep-search", icon: <Search className="h-4 w-4" /> },
+    { label: t("settings.github"), href: "/app/settings/github", icon: <Library className="h-4 w-4" /> },
+    { label: t("speech.title"), href: "/app/settings/speech", icon: <BookOpen className="h-4 w-4" /> },
+    { label: t("repoSettings.title"), href: "/app/settings/repository", icon: <Network className="h-4 w-4" /> },
+  ];
+
   return (
     <>
       <div className="flex items-center gap-2 px-4 py-4">
@@ -144,7 +156,23 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <Separator />
 
       <ScrollArea className="flex-1 py-2">
-        {paragraphNav.length > 0 && (
+        {inSettings && (
+          <>
+            <NavGroup label={t("settings.title")} first />
+            <nav className="px-2 space-y-1">
+              {previous && previous.pathname !== location.pathname ? (
+                <NavLink item={{ label: t("quickSwitch.backToPrevious"), href: previous.pathname, icon: <Library className="h-4 w-4" /> }} active={false} onNavigate={onNavigate} />
+              ) : (
+                <NavLink item={{ label: t("nav.allBooks"), href: "/app/books", icon: <Library className="h-4 w-4" /> }} active={false} onNavigate={onNavigate} />
+              )}
+              {settingsNav.map((item) => (
+                <NavLink key={item.href} item={item} active={location.pathname === item.href} onNavigate={onNavigate} />
+              ))}
+            </nav>
+          </>
+        )}
+
+        {!inSettings && paragraphNav.length > 0 && (
           <>
             <NavGroup label={paragraph?.title ?? t("nav.currentParagraph")} first />
             <nav className="px-2 space-y-1">
@@ -155,7 +183,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </>
         )}
 
-        {chapterNav.length > 0 && (
+        {!inSettings && chapterNav.length > 0 && (
           <>
             <NavGroup label={chapter?.title ?? t("nav.currentChapter")} first={paragraphNav.length === 0} />
             <nav className="px-2 space-y-1">
@@ -166,7 +194,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </>
         )}
 
-        {bookId && (
+        {!inSettings && bookId && (
           <>
             <NavGroup label={book?.name ?? t("nav.currentBook")} first={paragraphNav.length === 0 && chapterNav.length === 0} />
             <nav className="px-2 space-y-1">
@@ -183,8 +211,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </>
         )}
 
-        <NavGroup label={t("nav.myBooks")} first={!bookId} />
-        <nav className="px-2 space-y-1">
+        {!inSettings && <NavGroup label={t("nav.myBooks")} first={!bookId} />}
+        {!inSettings && <nav className="px-2 space-y-1">
           <NavLink
             item={{ label: t("nav.allBooks"), href: "/app/books", icon: <Library className="h-4 w-4" /> }}
             active={location.pathname === "/app/books"}
@@ -202,7 +230,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               onNavigate={onNavigate}
             />
           ))}
-        </nav>
+        </nav>}
       </ScrollArea>
     </>
   );

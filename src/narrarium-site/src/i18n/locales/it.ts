@@ -1379,6 +1379,36 @@ const it = {
     scenesShort: "scene",
     imagesDisabled: "Immagini disattivate"
   },
+  settingsSection: {
+    aiRouterTitle: "AI Router",
+    aiRouterDescription: "Configura routing LLM, integrazioni, pricing e fallback dei task.",
+    deepSearchTitle: "Deep Search",
+    deepSearchDescription: "Configura provider di ricerca, routing per intent, API key web search e recupero contenuti.",
+  },
+  deepSearch: {
+    braveApiKey: "Brave API key",
+    tavilyApiKey: "Tavily API key",
+    contentProxy: "Proxy recupero contenuti",
+    contentProxyHint: "Base URL del Cloudflare Worker usato per leggere le pagine quando il browser è bloccato dal CORS.",
+    providersTitle: "Provider",
+    providerReady: "Pronto",
+    providerNeedsConfig: "Da configurare",
+    requiresApiKey: "Richiede API key",
+    noApiKey: "Non richiede API key",
+    testConnection: "Test connessione",
+    testSuccess: "Provider raggiungibile",
+    testFailed: "Test provider non riuscito",
+    routingTitle: "Routing per intent",
+    primaryProvider: "Provider principale",
+    fallbackProviders: "Provider fallback",
+    defaultMapTitle: "Default consigliati",
+    defaultMapBody: "Attualità usa GDELT. Enciclopedia usa Wikipedia con fallback Wikidata. Internet usa Brave con Tavily opzionale e DuckDuckGo Instant solo come fallback debole.",
+    intent: {
+      news: "Attualità",
+      encyclopedia: "Enciclopedia",
+      internet: "Internet"
+    }
+  },
   research: {
     title: "Ricerche",
     description: "Ricerca approfondita su fonti esterne. I risultati vengono salvati come Markdown e versionati con il libro.",
@@ -1433,7 +1463,23 @@ const it = {
     llmRouter: "Usa il router configurato",
     deepen: "Approfondisci",
     deepenHint: "Avvia una nuova ricerca di follow-up a profondità maggiore da questa query",
-    titlePlaceholder: "Titolo ricerca"
+    titlePlaceholder: "Titolo ricerca",
+    intentLabel: "Intent",
+    intentAuto: "Auto",
+    intentNews: "Attualità",
+    intentEncyclopedia: "Enciclopedia",
+    intentInternet: "Internet",
+    internetDisabledTooltip: "Per usare la ricerca Internet configura un provider nelle impostazioni.",
+    internetUnavailableTitle: "Internet non disponibile",
+    internetUnavailableDescription: "Internet non è disponibile perché nessun provider web è configurato.",
+    internetUnavailableConfirm: "Internet non è disponibile perché nessun provider web è configurato. Vuoi continuare con gli altri intent selezionati?",
+    continueWithOtherIntents: "Continua con gli altri intent",
+    providersUsed: "Provider usati",
+    providersUsedShort: "Provider: {{providers}}",
+    noProviderUsed: "nessuno",
+    providerOk: "{{count}} risultato/i",
+    providerFailed: "fallito ({{error}})",
+    unavailableIntents: "Intent non disponibile/i: {{intents}}"
   },
   quickSwitch: {
     title: "Cerca veloce",

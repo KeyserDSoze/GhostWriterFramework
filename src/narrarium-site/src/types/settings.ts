@@ -248,6 +248,23 @@ export interface RepositorySettings {
   autoPullWhenClean: boolean;
 }
 
+export type ResearchIntent = "auto" | "news" | "encyclopedia" | "internet";
+export type ResearchRoutableIntent = Exclude<ResearchIntent, "auto">;
+export type ResearchProviderId = "gdelt" | "wikipedia" | "wikidata" | "brave" | "duckduckgo_instant" | "tavily";
+
+export interface DeepSearchIntentRoute {
+  primary?: ResearchProviderId;
+  fallbacks: ResearchProviderId[];
+}
+
+export interface DeepSearchProviderSettings {
+  braveApiKey: string;
+  tavilyApiKey: string;
+  /** Existing Cloudflare content proxy base URL, if configured. */
+  contentProxyBaseUrl: string;
+  routes: Record<ResearchRoutableIntent, DeepSearchIntentRoute>;
+}
+
 export interface ReaderBookmark {
   id: string;
   bookId: string;
@@ -323,6 +340,7 @@ export interface AppSettings {
   };
   speech: SpeechSettings;
   repository: RepositorySettings;
+  deepSearch: DeepSearchProviderSettings;
   reader: ReaderSettings;
   customActions: CustomAction[];
   books: BookEntry[];
@@ -358,6 +376,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoFetchOnOpen: true,
     autoFetchIntervalMinutes: 15,
     autoPullWhenClean: false,
+  },
+  deepSearch: {
+    braveApiKey: "",
+    tavilyApiKey: "",
+    contentProxyBaseUrl: (typeof import.meta !== "undefined" ? ((import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_RESEARCH_FETCH_PROXY ?? "") : ""),
+    routes: {
+      news: { primary: "gdelt", fallbacks: [] },
+      encyclopedia: { primary: "wikipedia", fallbacks: ["wikidata"] },
+      internet: { primary: "brave", fallbacks: ["duckduckgo_instant"] },
+    },
   },
   reader: {
     showImages: true,

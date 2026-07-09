@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Trash2, Volume2 } from "lucide-react";
+import { Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Search, Trash2, Volume2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,8 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { CHAT_CAPABILITIES, ROUTING_TASKS, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget, type RoutingTaskKind, type TaskRoute } from "@/types/settings";
 import { integrationChatModels } from "@/assistant/llm";
 import { BROWSER_ROUTING_ID } from "@/assistant/router";
+import { DeepSearchSettingsBody } from "@/components/settings/DeepSearchSettingsBody";
+import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
 
 const PROVIDERS: Array<{ value: AIProviderType; label: string }> = [
   { value: "azure_openai", label: "Azure OpenAI" },
@@ -55,9 +58,12 @@ function Section({ title, description, icon, defaultOpen, children }: { title: s
 
 export function SettingsPage() {
   const { t } = useTranslation();
+  const location = useLocation();
+  const previousPath = useNavigationHistoryStore((s) => s.previous?.pathname);
   const { settings, patchSettings } = useSettingsStore();
   const { save, syncStatus, lastSynced, load } = useSettings();
 
+  const section = currentSettingsSection(location.pathname);
   const didAutoLoad = useRef(false);
   useEffect(() => {
     if (didAutoLoad.current) return;
@@ -86,43 +92,25 @@ export function SettingsPage() {
     await save();
   }
 
-  function patchAi(patch: Partial<AppSettings>) {
-    patchSettings(patch);
-  }
-
+  function patchAi(patch: Partial<AppSettings>) { patchSettings(patch); }
   function addExtraToken() {
     if (!newTokenLabel || !newToken) return;
-    patchSettings({
-      extraGitHubTokens: [...settings.extraGitHubTokens, { label: newTokenLabel, token: newToken }],
-    });
+    patchSettings({ extraGitHubTokens: [...settings.extraGitHubTokens, { label: newTokenLabel, token: newToken }] });
     setNewTokenLabel("");
     setNewToken("");
   }
-
-  function removeExtraToken(index: number) {
-    patchSettings({ extraGitHubTokens: settings.extraGitHubTokens.filter((_, i) => i !== index) });
-  }
-
+  function removeExtraToken(index: number) { patchSettings({ extraGitHubTokens: settings.extraGitHubTokens.filter((_, i) => i !== index) }); }
   function addIntegration() {
     const candidate = normalizeIntegration(newIntegration);
     if (!candidate.name.trim()) return;
     const next = [...aiIntegrations, candidate];
-    patchAi({
-      aiIntegrations: next,
-      defaultWritingIntegrationId: defaultWriting ?? candidate.id,
-      defaultReviewIntegrationId: defaultReview ?? candidate.id,
-      azureOpenAI: integrationToAzureCompat(next) ?? settings.azureOpenAI,
-    });
+    patchAi({ aiIntegrations: next, defaultWritingIntegrationId: defaultWriting ?? candidate.id, defaultReviewIntegrationId: defaultReview ?? candidate.id, azureOpenAI: integrationToAzureCompat(next) ?? settings.azureOpenAI });
     setNewIntegration(createBlankIntegration());
   }
-
   function updateIntegration(id: string, patch: Partial<AIIntegration>) {
-    const next = aiIntegrations.map((integration) =>
-      integration.id === id ? normalizeIntegration({ ...integration, ...patch }) : integration,
-    );
+    const next = aiIntegrations.map((integration) => integration.id === id ? normalizeIntegration({ ...integration, ...patch }) : integration);
     patchAi({ aiIntegrations: next, azureOpenAI: integrationToAzureCompat(next) ?? settings.azureOpenAI });
   }
-
   function removeIntegration(id: string) {
     const next = aiIntegrations.filter((integration) => integration.id !== id);
     patchAi({
@@ -133,144 +121,139 @@ export function SettingsPage() {
     });
   }
 
+  const sectionMeta = settingsSectionMeta(t, section);
+
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="font-serif text-3xl font-semibold tracking-tight">{t("settings.title")}</h1>
-          <p className="text-muted-foreground">{t("settings.description")}</p>
+          <div className="flex items-center gap-2">
+            {section !== "home" && (
+              <Button asChild variant="ghost" size="sm" className="-ml-2"><Link to="/app/settings">{t("common.back")}</Link></Button>
+            )}
+            {section !== "home" && previousPath && previousPath !== location.pathname && (
+              <Button asChild variant="outline" size="sm"><Link to={previousPath}>{t("quickSwitch.backToPrevious")}</Link></Button>
+            )}
+          </div>
+          <h1 className="font-serif text-3xl font-semibold tracking-tight">{sectionMeta.title}</h1>
+          <p className="text-muted-foreground">{sectionMeta.description}</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={isLoading}>
             {isLoading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Cloud className="mr-1 h-3 w-3" />}
             {t("settings.syncFromDrive")}
           </Button>
-          <Button size="sm" onClick={() => void handleSave()} disabled={isSaving}>
-            {isSaving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
-            {t("settings.save")}
-          </Button>
+          {section !== "home" && (
+            <Button size="sm" onClick={() => void handleSave()} disabled={isSaving}>
+              {isSaving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+              {t("settings.save")}
+            </Button>
+          )}
         </div>
       </div>
 
-      {syncStatus === "error" && (
-        <Alert variant="destructive">
-          <CloudOff className="h-4 w-4" />
-          <AlertDescription>{t("settings.syncError")}</AlertDescription>
-        </Alert>
-      )}
+      {syncStatus === "error" && <Alert variant="destructive"><CloudOff className="h-4 w-4" /><AlertDescription>{t("settings.syncError")}</AlertDescription></Alert>}
+      {lastSynced && <p className="text-xs text-muted-foreground">{t("settings.lastSynced")}: {new Date(lastSynced).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</p>}
 
-      {lastSynced && (
-        <p className="text-xs text-muted-foreground">
-          {t("settings.lastSynced")}: {new Date(lastSynced).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-        </p>
-      )}
-
-      <div className="space-y-3">
-        {aiIntegrations.length > 0 && (
-          <Section title={t("routing.title")} description={t("routing.description")} icon={<Route className="h-4 w-4 shrink-0" />}>
-            <TaskRoutingBody settings={settings} patchSettings={patchSettings} />
+      {section === "home" ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <SettingsCard href="/app/settings/ai-router" title={t("settingsSection.aiRouterTitle")} description={t("settingsSection.aiRouterDescription")} icon={<Bot className="h-5 w-5" />} />
+          <SettingsCard href="/app/settings/deep-search" title={t("settingsSection.deepSearchTitle")} description={t("settingsSection.deepSearchDescription")} icon={<Search className="h-5 w-5" />} />
+          <SettingsCard href="/app/settings/github" title={t("settings.github")} description={t("settings.githubDescription")} icon={<Github className="h-5 w-5" />} />
+          <SettingsCard href="/app/settings/speech" title={t("speech.title")} description={t("speech.browserOnlyDescription")} icon={<Volume2 className="h-5 w-5" />} />
+          <SettingsCard href="/app/settings/repository" title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-5 w-5" />} />
+        </div>
+      ) : section === "ai-router" ? (
+        <div className="space-y-3">
+          {aiIntegrations.length > 0 && <Section title={t("routing.title")} description={t("routing.description")} icon={<Route className="h-4 w-4 shrink-0" />} defaultOpen><TaskRoutingBody settings={settings} patchSettings={patchSettings} /></Section>}
+          <Section title={t("settings.aiIntegrations")} description={t("settings.aiDescription")} icon={<Bot className="h-4 w-4 shrink-0" />} defaultOpen>
+            <div className="space-y-5">
+              <DefaultIntegrationSelectors integrations={aiIntegrations} defaultWriting={defaultWriting} defaultReview={defaultReview} onWritingChange={(id) => patchAi({ defaultWritingIntegrationId: id })} onReviewChange={(id) => patchAi({ defaultReviewIntegrationId: id })} />
+              <div className="grid gap-2 sm:max-w-xs">
+                <Label>{t("settings.costCurrency")}</Label>
+                <Select value={settings.costCurrency || "USD"} onValueChange={(value) => patchSettings({ costCurrency: value })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="USD">USD — US Dollar</SelectItem>
+                    <SelectItem value="EUR">EUR — Euro</SelectItem>
+                    <SelectItem value="GBP">GBP — British Pound</SelectItem>
+                    <SelectItem value="JPY">JPY — Japanese Yen</SelectItem>
+                    <SelectItem value="CHF">CHF — Swiss Franc</SelectItem>
+                    <SelectItem value="CAD">CAD — Canadian Dollar</SelectItem>
+                    <SelectItem value="AUD">AUD — Australian Dollar</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">{t("settings.costCurrencyHint")}</p>
+              </div>
+              {aiIntegrations.length === 0 && <p className="text-sm text-muted-foreground">{t("settings.noIntegrations")}</p>}
+              <div className="grid gap-3">{aiIntegrations.map((integration) => <IntegrationAccordion key={integration.id} integration={integration}><IntegrationEditor integration={integration} onChange={(patch) => updateIntegration(integration.id, patch)} onRemove={() => removeIntegration(integration.id)} /></IntegrationAccordion>)}</div>
+              <Separator />
+              <div className="rounded-2xl border border-dashed p-4">
+                <p className="mb-3 text-sm font-medium">{t("settings.addIntegration")}</p>
+                <IntegrationEditor integration={newIntegration} onChange={(patch) => setNewIntegration((current) => normalizeIntegration({ ...current, ...patch }))} />
+                <Button className="mt-3" variant="outline" onClick={addIntegration} disabled={!newIntegration.name.trim()}><Plus className="mr-2 h-4 w-4" />{t("settings.addIntegration")}</Button>
+              </div>
+            </div>
           </Section>
-        )}
-
-        <Section title={t("settings.aiIntegrations")} description={t("settings.aiDescription")} icon={<Bot className="h-4 w-4 shrink-0" />} defaultOpen={aiIntegrations.length === 0}>
-          <div className="space-y-5">
-            <DefaultIntegrationSelectors
-              integrations={aiIntegrations}
-              defaultWriting={defaultWriting}
-              defaultReview={defaultReview}
-              onWritingChange={(id) => patchAi({ defaultWritingIntegrationId: id })}
-              onReviewChange={(id) => patchAi({ defaultReviewIntegrationId: id })}
-            />
-
-            <div className="grid gap-2 sm:max-w-xs">
-              <Label>{t("settings.costCurrency")}</Label>
-              <Select value={settings.costCurrency || "USD"} onValueChange={(value) => patchSettings({ costCurrency: value })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="USD">USD — US Dollar</SelectItem>
-                  <SelectItem value="EUR">EUR — Euro</SelectItem>
-                  <SelectItem value="GBP">GBP — British Pound</SelectItem>
-                  <SelectItem value="JPY">JPY — Japanese Yen</SelectItem>
-                  <SelectItem value="CHF">CHF — Swiss Franc</SelectItem>
-                  <SelectItem value="CAD">CAD — Canadian Dollar</SelectItem>
-                  <SelectItem value="AUD">AUD — Australian Dollar</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">{t("settings.costCurrencyHint")}</p>
-            </div>
-
-            {aiIntegrations.length === 0 && <p className="text-sm text-muted-foreground">{t("settings.noIntegrations")}</p>}
-
-            <div className="grid gap-3">
-              {aiIntegrations.map((integration) => (
-                <IntegrationAccordion
-                  key={integration.id}
-                  integration={integration}
-                >
-                  <IntegrationEditor
-                    integration={integration}
-                    onChange={(patch) => updateIntegration(integration.id, patch)}
-                    onRemove={() => removeIntegration(integration.id)}
-                  />
-                </IntegrationAccordion>
-              ))}
-            </div>
-
-            <Separator />
-
-            <div className="rounded-2xl border border-dashed p-4">
-              <p className="mb-3 text-sm font-medium">{t("settings.addIntegration")}</p>
-              <IntegrationEditor integration={newIntegration} onChange={(patch) => setNewIntegration((current) => normalizeIntegration({ ...current, ...patch }))} />
-              <Button className="mt-3" variant="outline" onClick={addIntegration} disabled={!newIntegration.name.trim()}>
-                <Plus className="mr-2 h-4 w-4" />{t("settings.addIntegration")}
-              </Button>
-            </div>
-          </div>
+        </div>
+      ) : section === "deep-search" ? (
+        <Section title={t("settingsSection.deepSearchTitle")} description={t("settingsSection.deepSearchDescription")} icon={<Search className="h-4 w-4 shrink-0" />} defaultOpen>
+          <DeepSearchSettingsBody settings={settings} patchSettings={patchSettings} />
         </Section>
-
-        <Section title={t("speech.title")} description={t("speech.browserOnlyDescription")} icon={<Volume2 className="h-4 w-4 shrink-0" />}>
-          <SpeechCardBody settings={settings} patchSettings={patchSettings} />
-        </Section>
-
-        <Section title={t("settings.github")} description={t("settings.githubDescription")} icon={<Github className="h-4 w-4 shrink-0" />}>
+      ) : section === "github" ? (
+        <Section title={t("settings.github")} description={t("settings.githubDescription")} icon={<Github className="h-4 w-4 shrink-0" />} defaultOpen>
           <div className="space-y-4">
             <div className="grid gap-2">
               <Label htmlFor="default-token">{t("settings.defaultGithubToken")}</Label>
               <Input id="default-token" type="password" placeholder="github_pat_..." value={defaultToken} onChange={(e) => setDefaultToken(e.target.value)} autoComplete="off" />
               <p className="text-xs text-muted-foreground">{t("settingsExtra.patRecommended")}</p>
             </div>
-
             <Separator />
-
             <div className="space-y-3">
               <p className="text-sm font-medium">{t("settings.additionalTokens")}</p>
-              {settings.extraGitHubTokens.map((token, index) => (
-                <div key={`${token.label}-${index}`} className="flex items-center justify-between rounded-md border px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium">{token.label}</p>
-                    <p className="text-xs text-muted-foreground">...{token.token.slice(-4)}</p>
-                  </div>
-                  <Button variant="ghost" size="icon" onClick={() => removeExtraToken(index)}>
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              ))}
-              <div className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
-                <Input placeholder={t("settingsExtra.label")} value={newTokenLabel} onChange={(e) => setNewTokenLabel(e.target.value)} />
-                <Input type="password" placeholder="github_pat_..." value={newToken} onChange={(e) => setNewToken(e.target.value)} autoComplete="off" />
-                <Button variant="outline" size="icon" onClick={addExtraToken} disabled={!newTokenLabel || !newToken}>
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </div>
+              {settings.extraGitHubTokens.map((token, index) => <div key={`${token.label}-${index}`} className="flex items-center justify-between rounded-md border px-3 py-2"><div><p className="text-sm font-medium">{token.label}</p><p className="text-xs text-muted-foreground">...{token.token.slice(-4)}</p></div><Button variant="ghost" size="icon" onClick={() => removeExtraToken(index)}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>)}
+              <div className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]"><Input placeholder={t("settingsExtra.label")} value={newTokenLabel} onChange={(e) => setNewTokenLabel(e.target.value)} /><Input type="password" placeholder="github_pat_..." value={newToken} onChange={(e) => setNewToken(e.target.value)} autoComplete="off" /><Button variant="outline" size="icon" onClick={addExtraToken} disabled={!newTokenLabel || !newToken}><Plus className="h-4 w-4" /></Button></div>
             </div>
           </div>
         </Section>
-
-        <Section title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-4 w-4 shrink-0" />}>
-          <RepositorySettingsBody settings={settings} patchSettings={patchSettings} />
-        </Section>
-      </div>
+      ) : section === "speech" ? (
+        <Section title={t("speech.title")} description={t("speech.browserOnlyDescription")} icon={<Volume2 className="h-4 w-4 shrink-0" />} defaultOpen><SpeechCardBody settings={settings} patchSettings={patchSettings} /></Section>
+      ) : (
+        <Section title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-4 w-4 shrink-0" />} defaultOpen><RepositorySettingsBody settings={settings} patchSettings={patchSettings} /></Section>
+      )}
     </div>
+  );
+}
+
+function currentSettingsSection(pathname: string): "home" | "ai-router" | "deep-search" | "github" | "speech" | "repository" {
+  if (/\/app\/settings\/ai-router$/.test(pathname)) return "ai-router";
+  if (/\/app\/settings\/deep-search$/.test(pathname)) return "deep-search";
+  if (/\/app\/settings\/github$/.test(pathname)) return "github";
+  if (/\/app\/settings\/speech$/.test(pathname)) return "speech";
+  if (/\/app\/settings\/repository$/.test(pathname)) return "repository";
+  return "home";
+}
+
+function settingsSectionMeta(t: ReturnType<typeof useTranslation>["t"], section: ReturnType<typeof currentSettingsSection>) {
+  if (section === "ai-router") return { title: t("settingsSection.aiRouterTitle"), description: t("settingsSection.aiRouterDescription") };
+  if (section === "deep-search") return { title: t("settingsSection.deepSearchTitle"), description: t("settingsSection.deepSearchDescription") };
+  if (section === "github") return { title: t("settings.github"), description: t("settings.githubDescription") };
+  if (section === "speech") return { title: t("speech.title"), description: t("speech.browserOnlyDescription") };
+  if (section === "repository") return { title: t("repoSettings.title"), description: t("repoSettings.description") };
+  return { title: t("settings.title"), description: t("settings.description") };
+}
+
+function SettingsCard({ href, title, description, icon }: { href: string; title: string; description: string; icon: ReactNode }) {
+  return (
+    <Link to={href} className="rounded-2xl border bg-card p-5 shadow-sm transition hover:border-primary/40 hover:bg-accent/30">
+      <div className="flex items-start gap-3">
+        <div className="rounded-full bg-primary/10 p-2 text-primary">{icon}</div>
+        <div className="min-w-0">
+          <p className="font-semibold">{title}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        </div>
+      </div>
+    </Link>
   );
 }
 

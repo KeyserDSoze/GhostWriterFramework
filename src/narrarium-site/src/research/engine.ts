@@ -1,5 +1,5 @@
 // ─── Deep Research Engine ─────────────────────────────────────────────────────
-// Orchestrates: LLM query generation → provider search → LLM synthesis → save.
+// Orchestrates: LLM query generation → provider search router → synthesis → save.
 
 import { stringify } from "yaml";
 import type { AppSettings } from "@/types/settings";
@@ -7,29 +7,26 @@ import type { BookEntry } from "@/types/settings";
 import { completeText } from "@/assistant/llm";
 import { completeTextRouted } from "@/assistant/router";
 import { createOrUpdateTextFile } from "@/github/githubClient";
-import { getProvidersForMode } from "./providers";
-import type { ResearchFrontmatter, ResearchResult, ResearchSourceMode, ResearchDepth } from "./types";
-import { DEPTH_CONFIG } from "./types";
-import { useCostsStore, bucketTotal } from "@/costs/costsStore";
-import { aggregateAll } from "@/costs/costsStore";
-import type { ChatCapability } from "@/types/settings";
+import type { ChatCapability, ResearchIntent } from "@/types/settings";
 import type { LlmMessage } from "@/assistant/llm";
+import type { ResearchFrontmatter, ResearchResult, ResearchDepth, ResearchSourceMode } from "./types";
+import { DEPTH_CONFIG } from "./types";
+import { useCostsStore, bucketTotal, aggregateAll } from "@/costs/costsStore";
+import { runResearchRouter } from "./ResearchRouter";
 
 export interface RunDeepResearchInput {
   settings: AppSettings;
   book: BookEntry;
   branch: string;
   token: string;
-  /** Original query / request from the user */
   query: string;
-  sourceMode: ResearchSourceMode;
+  /** Legacy selector kept for compatibility; converted to intents when explicit intents are absent. */
+  sourceMode?: ResearchSourceMode;
   depth: ResearchDepth;
-  /** Target language for the final document (e.g. "it", "en") */
   language: string;
-  /** Optional entity this research is about */
+  intents?: ResearchIntent[];
   relatedEntityId?: string;
   relatedEntityType?: string;
-  /** Optional: bypass the router and use a specific integration+model */
   overrideIntegrationId?: string;
   overrideModelName?: string;
   signal?: AbortSignal;
@@ -41,15 +38,22 @@ export interface RunDeepResearchResult {
   slug: string;
   title: string;
   markdown: string;
-  /** Cost in the user's pricing currency for this research run (0 if no pricing configured). */
   cost: number;
+  providers: string[];
+  providerUsage: ResearchFrontmatter["providerUsage"];
+  intentsResolved: NonNullable<ResearchFrontmatter["intents"]>;
+  unavailableSummary: string[];
 }
 
 function reportProgress(input: RunDeepResearchInput, message: string) {
   input.onProgress?.(message);
 }
 
-/** Complete text with optional per-run LLM override, falling back to the router. */
+function normalizeSelectedIntents(input: RunDeepResearchInput): ResearchIntent[] {
+  if (input.intents?.length) return input.intents;
+  return input.sourceMode === "wikipedia" ? ["encyclopedia"] : ["auto"];
+}
+
 async function completeForResearch(
   input: RunDeepResearchInput,
   messages: LlmMessage[],
@@ -70,9 +74,9 @@ async function completeForResearch(
   return await completeTextRouted(input.settings, messages, capability, options);
 }
 
-/** Ask the LLM to generate search queries for the given user request. */
 async function generateQueries(input: RunDeepResearchInput): Promise<string[]> {
   const maxQueries = DEPTH_CONFIG[input.depth].maxQueries;
+  const selectedIntents = normalizeSelectedIntents(input).join(", ");
   const messages = [
     {
       role: "system" as const,
@@ -80,7 +84,7 @@ async function generateQueries(input: RunDeepResearchInput): Promise<string[]> {
         `You are a research assistant. Given a user research request, generate ${maxQueries} focused search queries`,
         `to find relevant information. The queries should cover different angles of the topic.`,
         `Respond with a JSON array of strings, nothing else. Example: ["query 1", "query 2"]`,
-        `Queries should be effective for ${input.sourceMode === "wikipedia" ? "Wikipedia" : "web"} searches.`,
+        `The active research intents are: ${selectedIntents}.`,
         `Language for queries: ${input.language}`,
       ].join(" "),
     },
@@ -106,15 +110,12 @@ async function generateQueries(input: RunDeepResearchInput): Promise<string[]> {
   } catch {
     // fall through
   }
-
-  // Fallback: use the original query
   return [input.query];
 }
 
-/** Synthesize collected results into a structured research document. */
-async function synthesize(input: RunDeepResearchInput, results: ResearchResult[]): Promise<{ title: string; markdown: string }> {
+async function synthesize(input: RunDeepResearchInput, results: ResearchResult[], providerSummary: string[]): Promise<{ title: string; markdown: string }> {
   const resultsText = results
-    .map((r, i) => `[${i + 1}] **${r.title}**\nURL: ${r.url}\n${r.body ?? r.snippet}`)
+    .map((r, i) => `[${i + 1}] **${r.title}**\nProvider: ${r.provider}\nURL: ${r.url}\n${r.body ?? r.snippet ?? ""}`)
     .join("\n\n---\n\n");
 
   const entityContext = input.relatedEntityId
@@ -133,12 +134,13 @@ async function synthesize(input: RunDeepResearchInput, results: ResearchResult[]
         `- Main findings organized in sections`,
         `- A "Sources" section listing the URLs`,
         `- A "Narrative Notes" section with suggestions for how this research could be used in the book`,
+        `- A final transparency note that mentions the providers actually used`,
         `Write in ${input.language}. Be thorough but concise.`,
       ].join(" "),
     },
     {
       role: "user" as const,
-      content: `Original research request: "${input.query}"${entityContext}\n\nDepth: ${input.depth}\n\nCollected sources:\n\n${resultsText}`,
+      content: `Original research request: "${input.query}"${entityContext}\n\nDepth: ${input.depth}\n\nProvider summary:\n${providerSummary.join("\n")}\n\nCollected sources:\n\n${resultsText}`,
     },
   ];
 
@@ -147,10 +149,8 @@ async function synthesize(input: RunDeepResearchInput, results: ResearchResult[]
     label: "deep-research:synthesize",
   });
 
-  // Extract the title from the first H1 in the response
   const titleMatch = markdown.match(/^#\s+(.+)$/m);
   const title = titleMatch?.[1]?.trim() ?? input.query;
-
   return { title, markdown };
 }
 
@@ -170,45 +170,41 @@ function renderResearchFile(frontmatter: ResearchFrontmatter, body: string): str
   return `---\n${fm}\n---\n\n${body.replace(/^\n+/, "")}\n`;
 }
 
-/** Main entry point: run the full deep research pipeline and save the result. */
 export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunDeepResearchResult> {
   const costBefore = bucketTotal(aggregateAll(useCostsStore.getState().file));
 
   reportProgress(input, "Generating search queries…");
   const queries = await generateQueries(input);
 
-  const providers = getProvidersForMode(input.sourceMode);
-  const allResults: ResearchResult[] = [];
-  const usedProviders = new Set<string>();
+  const combinedResults: ResearchResult[] = [];
+  const providerUsage: NonNullable<ResearchFrontmatter["providerUsage"]> = [];
+  let intentsResolved: NonNullable<ResearchFrontmatter["intents"]> = [];
+  const unavailableSummary = new Set<string>();
 
   for (const query of queries) {
     if (input.signal?.aborted) throw new Error("Aborted");
     reportProgress(input, `Searching: "${query}"`);
-    for (const provider of providers) {
-      try {
-        const results = await provider.search(query, {
-          depth: input.depth,
-          language: input.language,
-          signal: input.signal,
-        });
-        for (const r of results) {
-          if (!allResults.some((existing) => existing.url === r.url)) {
-            allResults.push(r);
-            usedProviders.add(r.provider);
-          }
-        }
-      } catch {
-        // Provider failed – continue with others
-      }
-    }
+    const routed = await runResearchRouter({
+      settings: input.settings,
+      query,
+      language: input.language,
+      depth: input.depth,
+      intents: normalizeSelectedIntents(input),
+      signal: input.signal,
+      onProgress: input.onProgress,
+    });
+    intentsResolved = [...new Set([...intentsResolved, ...routed.intentsResolved])];
+    routed.results.forEach((result) => combinedResults.push(result));
+    routed.providerUsage.forEach((usage) => providerUsage.push(usage));
+    routed.unavailableIntents.forEach((intent) => unavailableSummary.add(intent));
   }
 
-  if (allResults.length === 0) {
-    throw new Error("No results found. Try a different query or source mode.");
-  }
+  const deduped = combinedResults.filter((result, index, arr) => arr.findIndex((entry) => entry.url === result.url) === index);
+  if (deduped.length === 0) throw new Error("No results found. Try a different query or intent.");
 
-  reportProgress(input, `Synthesizing ${allResults.length} results…`);
-  const { title, markdown: body } = await synthesize(input, allResults);
+  const providerSummary = buildProviderSummary(providerUsage, unavailableSummary);
+  reportProgress(input, `Synthesizing ${deduped.length} results…`);
+  const { title, markdown: body } = await synthesize(input, deduped, providerSummary);
 
   const costAfter = bucketTotal(aggregateAll(useCostsStore.getState().file));
   const costDelta = Math.max(0, costAfter - costBefore);
@@ -224,27 +220,32 @@ export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunD
     createdAt: now,
     updatedAt: now,
     query: input.query,
-    sourceMode: input.sourceMode,
+    sourceMode: (intentsResolved.length === 1 && intentsResolved[0] === "encyclopedia") ? "wikipedia" : "internet",
     depth: input.depth,
     language: input.language,
-    providers: Array.from(usedProviders),
+    providers: [...new Set(providerUsage.filter((p) => p.ok && p.resultCount > 0).map((p) => p.provider))],
+    intents: normalizeSelectedIntents(input),
+    providerUsage,
     costEur: costDelta,
     ...(input.relatedEntityId ? { relatedEntityId: input.relatedEntityId } : {}),
     ...(input.relatedEntityType ? { relatedEntityType: input.relatedEntityType } : {}),
   };
 
   const fullMarkdown = renderResearchFile(frontmatter, body);
-
   reportProgress(input, "Saving research document…");
-  await createOrUpdateTextFile(
-    input.token,
-    input.book.owner,
-    input.book.repo,
-    input.branch,
-    path,
-    fullMarkdown,
-    `Add research: ${title}`,
-  );
+  await createOrUpdateTextFile(input.token, input.book.owner, input.book.repo, input.branch, path, fullMarkdown, `Add research: ${title}`);
 
-  return { path, slug, title, markdown: fullMarkdown, cost: costDelta };
+  return { path, slug, title, markdown: fullMarkdown, cost: costDelta, providers: frontmatter.providers, providerUsage, intentsResolved, unavailableSummary: [...unavailableSummary] };
+}
+
+function buildProviderSummary(providerUsage: NonNullable<ResearchFrontmatter["providerUsage"]>, unavailableIntents: Set<string>): string[] {
+  const lines: string[] = [];
+  const byIntent = new Map<string, string[]>();
+  for (const usage of providerUsage) {
+    const line = usage.ok ? `${usage.provider}: ${usage.resultCount} result(s)` : `${usage.provider}: failed (${usage.error ?? "unknown error"})`;
+    byIntent.set(usage.intent, [...(byIntent.get(usage.intent) ?? []), line]);
+  }
+  for (const [intent, entries] of byIntent) lines.push(`${intent}: ${entries.join(", ")}`);
+  for (const intent of unavailableIntents) lines.push(`${intent}: unavailable`);
+  return lines;
 }

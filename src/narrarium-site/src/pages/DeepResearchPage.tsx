@@ -7,6 +7,7 @@ import {
   Loader2, Plus, Save, Search, Trash2, Users, MapPin, Shield, Package, Clock, EyeOff, FileEdit, X, GitFork, Cpu,
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,7 @@ import { useRegisterPageActions } from "@/store/pageActionsStore";
 import { useRegisterPageSave } from "@/store/saveStore";
 import type { EntityKind } from "@/narrarium/canon";
 import { ENTITY_LABEL } from "@/narrarium/canon";
-import type { ResearchDepth, ResearchFrontmatter, ResearchSourceMode } from "@/research/types";
+import type { ResearchDepth, ResearchFrontmatter, ResearchIntent } from "@/research/types";
 import type { ResearchFile } from "@/types/book";
 import { integrationChatModels } from "@/assistant/llm";
 
@@ -297,17 +298,32 @@ function ResearchDetail({
             <h2 className="font-serif text-2xl font-semibold leading-tight">{frontmatter?.title ?? draftTitle ?? file.slug}</h2>
           )}
           {frontmatter && (
-            <p className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
-              <span>{t("research.date")}: {frontmatter.createdAt?.slice(0, 10)}</span>
-              <span>{t("research.sourceMode")}: {frontmatter.sourceMode}</span>
-              <span>{t("research.depth")}: {frontmatter.depth}</span>
-              {frontmatter.relatedEntityId && <span>{t("research.relatedEntity")}: {frontmatter.relatedEntityId}</span>}
-              <span className="font-medium text-foreground">
-                {t("research.cost")}: {costValue !== undefined
-                  ? new Intl.NumberFormat(undefined, { style: "currency", currency: currency.trim() || "USD", maximumFractionDigits: 4 }).format(costValue)
-                  : new Intl.NumberFormat(undefined, { style: "currency", currency: currency.trim() || "USD", maximumFractionDigits: 4 }).format(0)}
-              </span>
-            </p>
+            <>
+              <p className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
+                <span>{t("research.date")}: {frontmatter.createdAt?.slice(0, 10)}</span>
+                <span>{t("research.depth")}: {frontmatter.depth}</span>
+                <span>{t("research.sourceMode")}: {frontmatter.sourceMode}</span>
+                {frontmatter.intents?.length ? <span>{t("research.intentLabel")}: {frontmatter.intents.join(", ")}</span> : null}
+                {frontmatter.relatedEntityId && <span>{t("research.relatedEntity")}: {frontmatter.relatedEntityId}</span>}
+                <span className="font-medium text-foreground">
+                  {t("research.cost")}: {costValue !== undefined
+                    ? new Intl.NumberFormat(undefined, { style: "currency", currency: currency.trim() || "USD", maximumFractionDigits: 4 }).format(costValue)
+                    : new Intl.NumberFormat(undefined, { style: "currency", currency: currency.trim() || "USD", maximumFractionDigits: 4 }).format(0)}
+                </span>
+              </p>
+              <div className="mt-3 rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                <p className="font-medium text-foreground">{t("research.providersUsed")}: {frontmatter.providers?.length ? frontmatter.providers.join(", ") : t("research.noProviderUsed")}</p>
+                {frontmatter.providerUsage?.length ? (
+                  <div className="mt-1 space-y-1">
+                    {frontmatter.providerUsage.map((usage, index) => (
+                      <p key={`${usage.provider}-${index}`}>
+                        {usage.intent} · {usage.provider}: {usage.ok ? t("research.providerOk", { count: usage.resultCount }) : t("research.providerFailed", { error: usage.error ?? "unknown" })}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </>
           )}
         </div>
         <div className="flex flex-wrap gap-2">
@@ -417,30 +433,27 @@ function NewResearchForm({
   const { settings } = useSettingsStore();
   const { structure } = useBookStructure(book.id);
   const [query, setQuery] = useState(initialQuery ?? "");
-  const [sourceMode, setSourceMode] = useState<ResearchSourceMode>("wikipedia");
   const [depth, setDepth] = useState<ResearchDepth>(initialDepth ?? "medium");
+  const [selectedIntents, setSelectedIntents] = useState<ResearchIntent[]>(["auto"]);
   const [relatedEntityId, setRelatedEntityId] = useState("");
   const [relatedEntityType, setRelatedEntityType] = useState("");
   const [llmOverride, setLlmOverride] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
+  const [intentConfirmOpen, setIntentConfirmOpen] = useState(false);
+  const [intentConfirmSelection, setIntentConfirmSelection] = useState<ResearchIntent[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
   const currency = settings.costCurrency || "USD";
+  const internetConfigured = Boolean(settings.deepSearch.braveApiKey.trim() || settings.deepSearch.tavilyApiKey.trim());
 
-  useEffect(() => {
-    if (initialQuery) setQuery(initialQuery);
-  }, [initialQuery]);
-  useEffect(() => {
-    if (initialDepth) setDepth(initialDepth);
-  }, [initialDepth]);
+  useEffect(() => { if (initialQuery) setQuery(initialQuery); }, [initialQuery]);
+  useEffect(() => { if (initialDepth) setDepth(initialDepth); }, [initialDepth]);
 
-  // Collect all canon entities for the "related entity" selector
   const allEntities = useMemo(() => {
     if (!structure) return [];
     const out: Array<{ id: string; label: string; kind: string }> = [];
-    const add = (kind: string, files: import("@/types/book").BookFile[]) =>
-      files.forEach((f) => out.push({ id: f.name ?? f.path, label: f.name ?? f.path, kind }));
+    const add = (kind: string, files: import("@/types/book").BookFile[]) => files.forEach((f) => out.push({ id: f.name ?? f.path, label: f.name ?? f.path, kind }));
     add("characters", structure.characters);
     add("locations", structure.locations);
     add("factions", structure.factions);
@@ -448,10 +461,24 @@ function NewResearchForm({
     return out;
   }, [structure]);
 
-  async function handleRun() {
+  function toggleIntent(intent: ResearchIntent) {
+    if (intent === "auto") {
+      setSelectedIntents(["auto"]);
+      return;
+    }
+    setSelectedIntents((current) => {
+      const base = current.includes("auto") ? [] : current;
+      if (base.includes(intent)) {
+        const next = base.filter((entry) => entry !== intent);
+        return next.length ? next : ["auto"];
+      }
+      return [...base, intent];
+    });
+  }
+
+  async function startRun(intents: ResearchIntent[]) {
     const q = query.trim();
     if (!q) return;
-    if (busy) { abortRef.current?.abort(); return; }
     abortRef.current = new AbortController();
     setBusy(true);
     setProgress("");
@@ -464,9 +491,9 @@ function NewResearchForm({
         branch,
         token,
         query: q,
-        sourceMode,
         depth,
         language: lang,
+        intents,
         relatedEntityId: relatedEntityId || undefined,
         relatedEntityType: relatedEntityType || undefined,
         overrideIntegrationId,
@@ -474,17 +501,47 @@ function NewResearchForm({
         signal: abortRef.current.signal,
         onProgress: setProgress,
       });
+      const providerLine = result.providers.length ? result.providers.join(", ") : t("research.noProviderUsed");
+      const unavailableLine = result.unavailableSummary.length ? ` · ${t("research.unavailableIntents", { intents: result.unavailableSummary.join(", ") })}` : "";
       toast({
         title: result.title,
-        description: `${t("research.cost")}: ${new Intl.NumberFormat(undefined, { style: "currency", currency: currency.trim() || "USD", maximumFractionDigits: 4 }).format(result.cost)}`,
+        description: `${t("research.cost")}: ${new Intl.NumberFormat(undefined, { style: "currency", currency: currency.trim() || "USD", maximumFractionDigits: 4 }).format(result.cost)} · ${t("research.providersUsedShort", { providers: providerLine })}${unavailableLine}`,
       });
       onDone(result.slug, result.cost);
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
         toast({ title: t("research.saveFailed"), description: String(err), variant: "destructive" });
       }
-    } finally { setBusy(false); setProgress(""); }
+    } finally {
+      setBusy(false);
+      setProgress("");
+    }
   }
+
+  async function handleRun() {
+    const q = query.trim();
+    if (!q) return;
+    if (busy) { abortRef.current?.abort(); return; }
+    const chosen: ResearchIntent[] = selectedIntents.length ? selectedIntents : ["auto"];
+    if (!chosen.includes("auto") && chosen.includes("internet") && !internetConfigured) {
+      const fallback: ResearchIntent[] = chosen.filter((intent): intent is ResearchIntent => intent !== "internet");
+      if (!fallback.length) {
+        toast({ title: t("research.internetUnavailableTitle"), description: t("research.internetUnavailableDescription"), variant: "destructive" });
+        return;
+      }
+      setIntentConfirmSelection(fallback);
+      setIntentConfirmOpen(true);
+      return;
+    }
+    await startRun(chosen);
+  }
+
+  const intentButtons: Array<{ intent: ResearchIntent; label: string; disabled?: boolean }> = [
+    { intent: "auto", label: t("research.intentAuto") },
+    { intent: "news", label: t("research.intentNews") },
+    { intent: "encyclopedia", label: t("research.intentEncyclopedia") },
+    { intent: "internet", label: t("research.intentInternet"), disabled: !internetConfigured },
+  ];
 
   return (
     <div className="space-y-5">
@@ -492,26 +549,32 @@ function NewResearchForm({
 
       <div className="grid gap-2">
         <Label>{t("research.queryLabel")}</Label>
-        <AutoTextarea
-          autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={t("research.queryPlaceholder")}
-          className="min-h-[80px]"
-          disabled={busy}
-        />
+        <AutoTextarea autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("research.queryPlaceholder")} className="min-h-[80px]" disabled={busy} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="grid gap-2">
-          <Label>{t("research.sourceModeLabel")}</Label>
-          <Select value={sourceMode} onValueChange={(v) => setSourceMode(v as ResearchSourceMode)} disabled={busy}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="wikipedia">{t("research.sourceWikipedia")}</SelectItem>
-              <SelectItem value="internet">{t("research.sourceInternet")}</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="grid gap-2 lg:col-span-2">
+          <Label>{t("research.intentLabel")}</Label>
+          <div className="flex flex-wrap gap-2">
+            {intentButtons.map((button) => {
+              const active = selectedIntents.includes(button.intent);
+              return (
+                <Button
+                  key={button.intent}
+                  type="button"
+                  size="sm"
+                  variant={active ? "default" : "outline"}
+                  disabled={busy || button.disabled}
+                  title={button.disabled ? t("research.internetDisabledTooltip") : undefined}
+                  className={button.disabled ? "opacity-60" : undefined}
+                  onClick={() => toggleIntent(button.intent)}
+                >
+                  {button.label}
+                </Button>
+              );
+            })}
+          </div>
+          {!internetConfigured && <p className="text-xs text-muted-foreground">{t("research.internetDisabledTooltip")}</p>}
         </div>
         <div className="grid gap-2">
           <Label>{t("research.depthLabel")}</Label>
@@ -526,45 +589,43 @@ function NewResearchForm({
         </div>
         <div className="grid gap-2">
           <Label>{t("research.relatedEntityLabel")}</Label>
-          <Select
-            value={relatedEntityId || "__none__"}
-            onValueChange={(v) => {
-              if (v === "__none__") { setRelatedEntityId(""); setRelatedEntityType(""); return; }
-              const found = allEntities.find((e) => e.id === v);
-              setRelatedEntityId(found?.id ?? "");
-              setRelatedEntityType(found?.kind ?? "");
-            }}
-            disabled={busy}
-          >
+          <Select value={relatedEntityId || "__none__"} onValueChange={(v) => {
+            if (v === "__none__") { setRelatedEntityId(""); setRelatedEntityType(""); return; }
+            const found = allEntities.find((e) => e.id === v);
+            setRelatedEntityId(found?.id ?? "");
+            setRelatedEntityType(found?.kind ?? "");
+          }} disabled={busy}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__">{t("research.relatedEntityNone")}</SelectItem>
-              {allEntities.map((e) => (
-                <SelectItem key={e.id} value={e.id}>{e.label}</SelectItem>
-              ))}
+              {allEntities.map((e) => <SelectItem key={e.id} value={e.id}>{e.label}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
-        <LlmOverrideSelector value={llmOverride} onChange={setLlmOverride} disabled={busy} />
       </div>
 
-      {busy && progress && (
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />{progress}
-        </p>
-      )}
+      <LlmOverrideSelector value={llmOverride} onChange={setLlmOverride} disabled={busy} />
+
+      {busy && progress && <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{progress}</p>}
 
       <div className="flex gap-2">
         <Button onClick={() => void handleRun()} disabled={!query.trim()}>
           {busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Search className="mr-1 h-4 w-4" />}
           {busy ? t("research.running") : t("research.runResearch")}
         </Button>
-        {busy && (
-          <Button variant="outline" onClick={() => abortRef.current?.abort()}>
-            {t("common.cancel")}
-          </Button>
-        )}
+        {busy && <Button variant="outline" onClick={() => abortRef.current?.abort()}>{t("common.cancel")}</Button>}
       </div>
+
+      <Dialog open={intentConfirmOpen} onOpenChange={setIntentConfirmOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{t("research.internetUnavailableTitle")}</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">{t("research.internetUnavailableConfirm")}</p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIntentConfirmOpen(false)}>{t("common.cancel")}</Button>
+            <Button onClick={() => { setIntentConfirmOpen(false); void startRun(intentConfirmSelection); }}>{t("research.continueWithOtherIntents")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

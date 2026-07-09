@@ -1379,6 +1379,36 @@ const en = {
     scenesShort: "scenes",
     imagesDisabled: "Images disabled"
   },
+  settingsSection: {
+    aiRouterTitle: "AI Router",
+    aiRouterDescription: "Configure LLM routing, integrations, pricing, and task fallbacks.",
+    deepSearchTitle: "Deep Search",
+    deepSearchDescription: "Configure research providers, intent routing, web-search API keys, and content fetching.",
+  },
+  deepSearch: {
+    braveApiKey: "Brave API key",
+    tavilyApiKey: "Tavily API key",
+    contentProxy: "Content fetch proxy",
+    contentProxyHint: "Cloudflare Worker base URL used to fetch page content when the browser is blocked by CORS.",
+    providersTitle: "Providers",
+    providerReady: "Ready",
+    providerNeedsConfig: "Needs configuration",
+    requiresApiKey: "API key required",
+    noApiKey: "No API key required",
+    testConnection: "Test connection",
+    testSuccess: "Provider reachable",
+    testFailed: "Provider test failed",
+    routingTitle: "Intent routing",
+    primaryProvider: "Primary provider",
+    fallbackProviders: "Fallback providers",
+    defaultMapTitle: "Recommended defaults",
+    defaultMapBody: "News defaults to GDELT. Encyclopedia defaults to Wikipedia with Wikidata fallback. Internet defaults to Brave with optional Tavily fallback and weak DuckDuckGo Instant fallback.",
+    intent: {
+      news: "News",
+      encyclopedia: "Encyclopedia",
+      internet: "Internet"
+    }
+  },
   research: {
     title: "Research",
     description: "Deep research on external sources. Results are saved as Markdown and versioned with the book.",
@@ -1433,7 +1463,23 @@ const en = {
     llmRouter: "Use configured router",
     deepen: "Deepen",
     deepenHint: "Start a new follow-up research at a higher depth from this query",
-    titlePlaceholder: "Research title"
+    titlePlaceholder: "Research title",
+    intentLabel: "Intent",
+    intentAuto: "Auto",
+    intentNews: "News",
+    intentEncyclopedia: "Encyclopedia",
+    intentInternet: "Internet",
+    internetDisabledTooltip: "To use Internet research configure a provider in Settings.",
+    internetUnavailableTitle: "Internet is unavailable",
+    internetUnavailableDescription: "Internet is unavailable because no web provider is configured.",
+    internetUnavailableConfirm: "Internet is unavailable because no web provider is configured. Do you want to continue with the other selected intents?",
+    continueWithOtherIntents: "Continue with other intents",
+    providersUsed: "Providers used",
+    providersUsedShort: "Providers: {{providers}}",
+    noProviderUsed: "none",
+    providerOk: "{{count}} result(s)",
+    providerFailed: "failed ({{error}})",
+    unavailableIntents: "Unavailable intent(s): {{intents}}"
   },
   quickSwitch: {
     title: "Quick switch",
