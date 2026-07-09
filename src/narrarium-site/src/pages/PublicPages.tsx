@@ -263,7 +263,7 @@ export function McpPage() {
       </section>
       <section className="mx-auto grid w-full max-w-7xl gap-6 px-4 pb-16 sm:px-6 lg:px-8">
         {localCategories.map((category) => (
-          <ToolTable key={category} title={category} tools={localTools.filter((tool) => tool.category === category)} />
+          <ToolTable key={category} title={mcpCategoryLabel(t, category)} tools={localTools.filter((tool) => tool.category === category)} />
         ))}
         <ToolTable title={t("mcpPageContent.publicTools")} tools={publicTools} />
       </section>
@@ -340,7 +340,7 @@ function ToolTable({ title, tools }: { title: string; tools: Array<{ name: strin
     <Card>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
-        <CardDescription>{tools.length} {t("mcpPageContent.toolSuffix")}{tools.length === 1 ? "" : "s"}</CardDescription>
+        <CardDescription>{tools.length} {tools.length === 1 ? t("mcpPageContent.toolSingle") : t("mcpPageContent.toolPlural")}</CardDescription>
       </CardHeader>
       <CardContent className="overflow-x-auto">
         <table className="w-full min-w-[720px] text-left text-sm">
@@ -359,6 +359,11 @@ function ToolTable({ title, tools }: { title: string; tools: Array<{ name: strin
       </CardContent>
     </Card>
   );
+}
+
+function mcpCategoryLabel(t: ReturnType<typeof useTranslation>["t"], category: string): string {
+  const key = category.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return t(`mcpPageContent.categories.${key}`, { defaultValue: category });
 }
 
 function LegalArticle({ title, children }: { title: string; children: React.ReactNode }) {

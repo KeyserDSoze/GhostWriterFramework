@@ -81,8 +81,20 @@ const it = {
     actionFailed: "Operazione repository non riuscita",
     history: "Cronologia sync",
     logAll: "Tutto",
+    logKinds: {
+      clone: "clone",
+      fetch: "fetch",
+      pull: "pull",
+      commit: "commit",
+      push: "push",
+      backup: "backup",
+      reset: "reset",
+      error: "errore",
+    },
     noHistory: "Nessuna operazione registrata.",
     unpushedNotice: "Hai {{count}} commit locali non pushati. Fai push o backup per evitare di perderli.",
+    defaultCommitSingle: "Aggiorna {{path}}",
+    defaultCommitMany: "Aggiorna {{count}} file",
   },
   repoSettings: {
     title: "Repository locali",
@@ -200,6 +212,21 @@ const it = {
     noIntegrations: "Nessuna integrazione AI configurata.",
     costCurrency: "Valuta visualizzazione costi",
     costCurrencyHint: "Valuta usata per mostrare i costi AI nella pagina Costi. Inserisci i prezzi nelle impostazioni di ogni integrazione AI in questa valuta.",
+    providers: {
+      azure_openai: "Azure OpenAI",
+      openai: "OpenAI / compatibili",
+      github_models: "GitHub Models",
+      m365_copilot: "Microsoft 365 Copilot",
+    },
+    currencies: {
+      USD: "USD — Dollaro statunitense",
+      EUR: "EUR — Euro",
+      GBP: "GBP — Sterlina britannica",
+      JPY: "JPY — Yen giapponese",
+      CHF: "CHF — Franco svizzero",
+      CAD: "CAD — Dollaro canadese",
+      AUD: "AUD — Dollaro australiano",
+    },
   },
   dossier: {
     pinned: "Dossier",
@@ -587,6 +614,11 @@ const it = {
     defaultToken: "token predefinito",
     bookSettings: "Impostazioni libro",
     chapters: "Capitoli",
+    chapterCountOne: "{{count}} capitolo",
+    chapterCountMany: "{{count}} capitoli",
+    paragraphLabel: "Paragrafo",
+    paragraphCountOne: "{{count}} paragrafo",
+    paragraphCountMany: "{{count}} paragrafi",
     characters: "Personaggi",
     locations: "Luoghi",
     factions: "Fazioni",
@@ -1264,7 +1296,13 @@ const it = {
     docs: "Docs",
     source: "Sorgente:",
     page: "pagina",
-    pages: "pagine"
+    pages: "pagine",
+    groups: {
+      guides: "Guide",
+      overview: "Panoramica",
+      reference: "Riferimento",
+      packages: "Pacchetti",
+    }
   },
   mcpPageContent: {
     integration: "Integrazione",
@@ -1276,7 +1314,14 @@ const it = {
     publicTools: "Tool HTTP pubblici",
     tool: "Tool",
     description: "Descrizione",
-    toolSuffix: "tool"
+    toolSingle: "tool",
+    toolPlural: "tool",
+    categories: {
+      other: "Altri",
+      "guided-flows": "Flussi guidati",
+      "creation-and-assets": "Creazione e asset",
+      "maintenance-and-output": "Manutenzione ed output",
+    }
   },
   legal: {
     lastUpdated: "Ultimo aggiornamento: giugno 2026",
@@ -1450,6 +1495,14 @@ const it = {
     deleteFailed: "Eliminazione ricerca non riuscita",
     createFrom: "Crea entità dalla ricerca",
     createEntityKindLabel: "Tipo entità",
+    entityKinds: {
+      character: "Personaggio",
+      location: "Luogo",
+      faction: "Fazione",
+      item: "Oggetto",
+      secret: "Segreto",
+      "timeline-event": "Evento timeline",
+    },
     createEntityCustomPromptLabel: "Prompt personalizzato (opzionale)",
     createEntityCustomPromptPlaceholder: "Sostituisce il prompt di creazione predefinito per questo tipo di entità…",
     creating: "Creazione in corso…",

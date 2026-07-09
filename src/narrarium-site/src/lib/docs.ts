@@ -1,4 +1,5 @@
 import { docEntries, mcpTools, type DocEntry, type DocGroup, type DocLang, type DocTranslation } from "./generated-docs";
+import i18n from "@/i18n";
 
 export type { DocEntry, DocGroup, DocLang, DocTranslation };
 
@@ -35,14 +36,5 @@ export function getMcpTools() {
 }
 
 function groupLabel(group: DocGroup): string {
-  switch (group) {
-    case "guides":
-      return "Guides";
-    case "overview":
-      return "Overview";
-    case "reference":
-      return "Reference";
-    case "packages":
-      return "Packages";
-  }
+  return i18n.t(`docsPage.groups.${group}`, { defaultValue: group });
 }

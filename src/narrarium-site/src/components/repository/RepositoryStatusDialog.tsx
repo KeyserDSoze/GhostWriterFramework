@@ -26,6 +26,10 @@ function formatBytes(value: number): string {
 
 const LOG_FILTERS: Array<"all" | LocalRepoLogKind> = ["all", "clone", "fetch", "pull", "commit", "push", "backup", "reset", "error"];
 
+function logKindLabel(t: ReturnType<typeof useTranslation>["t"], kind: LocalRepoLogKind): string {
+  return t(`repoStatus.logKinds.${kind}`, { defaultValue: kind });
+}
+
 function logTone(kind: LocalRepoLogKind): string {
   if (kind === "error") return "border-destructive/40 bg-destructive/10 text-destructive";
   if (kind === "push" || kind === "commit") return "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300";
@@ -54,9 +58,9 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const storageHigh = Boolean(storage.usage && storage.quota && storage.usage / storage.quota > 0.8);
 
   const defaultMessage = useMemo(() => {
-    if (dirtyFiles.length === 1) return `Update ${dirtyFiles[0].path}`;
-    return dirtyFiles.length ? `Update ${dirtyFiles.length} files` : "";
-  }, [dirtyFiles]);
+    if (dirtyFiles.length === 1) return t("repoStatus.defaultCommitSingle", { path: dirtyFiles[0].path });
+    return dirtyFiles.length ? t("repoStatus.defaultCommitMany", { count: dirtyFiles.length }) : "";
+  }, [dirtyFiles, t]);
 
   const visibleLogs = useMemo(() => logFilter === "all" ? logs : logs.filter((log) => log.kind === logFilter), [logFilter, logs]);
 
@@ -75,7 +79,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
     setAhead(commits.length);
     setLogs(nextLogs);
     setStorage(await navigator.storage?.estimate?.().catch(() => ({})) ?? {});
-    if (!message && dirty.length) setMessage(dirty.length === 1 ? `Update ${dirty[0].path}` : `Update ${dirty.length} files`);
+    if (!message && dirty.length) setMessage(dirty.length === 1 ? t("repoStatus.defaultCommitSingle", { path: dirty[0].path }) : t("repoStatus.defaultCommitMany", { count: dirty.length }));
   }
 
   async function refreshBookStructure() {
@@ -254,7 +258,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                       onClick={() => setLogFilter(filter)}
                       className={logFilter === filter ? "rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium uppercase text-primary-foreground" : "rounded-full border px-2 py-0.5 text-[10px] uppercase text-muted-foreground hover:bg-muted"}
                     >
-                      {filter === "all" ? t("repoStatus.logAll") : filter}
+                      {filter === "all" ? t("repoStatus.logAll") : logKindLabel(t, filter)}
                     </button>
                   ))}
                 </div>
@@ -264,7 +268,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                   {visibleLogs.map((log) => (
                     <div key={log.id} className="rounded border px-2 py-1">
                       <div className="mb-1 flex flex-wrap items-center gap-2">
-                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase ${logTone(log.kind)}`}>{log.kind}</span>
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase ${logTone(log.kind)}`}>{logKindLabel(t, log.kind)}</span>
                         <span className="text-[10px] text-muted-foreground">{new Date(log.createdAt).toLocaleString()}</span>
                       </div>
                       <p className="break-words text-xs">{log.message}</p>

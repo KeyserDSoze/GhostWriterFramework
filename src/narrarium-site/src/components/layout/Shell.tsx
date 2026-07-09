@@ -2,6 +2,7 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Search } from "lucide-react";
+import i18n from "@/i18n";
 import { Sidebar, MobileSidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { DossierDock, DossierSearchDialog } from "./DossierDock";
@@ -182,12 +183,25 @@ function buildHistoryEntry(route: ReturnType<typeof parseAppRoute>, pathname: st
     return { pathname, bookId, kind: route.section, label: file?.name ?? route.slug, updatedAt: Date.now() };
   }
   if (route.kind === "research" || route.kind === "research-detail") {
-    return { pathname, bookId, kind: "research", label: route.kind === "research-detail" ? route.researchSlug : "Research", updatedAt: Date.now() };
+    return { pathname, bookId, kind: "research", label: route.kind === "research-detail" ? route.researchSlug : i18n.t("research.title"), updatedAt: Date.now() };
   }
   return null;
 }
 
 interface QuickItem { label: string; subtitle: string; path: string; kind: string }
+
+function navigationKindLabel(t: ReturnType<typeof useTranslation>["t"], kind: string): string {
+  if (kind === "chapter") return t("bookPage.chapters");
+  if (kind === "paragraph") return t("bookPage.paragraphLabel");
+  if (kind === "research") return t("research.title");
+  if (kind === "characters") return t("bookPage.characters");
+  if (kind === "locations") return t("bookPage.locations");
+  if (kind === "factions") return t("bookPage.factions");
+  if (kind === "items") return t("bookPage.items");
+  if (kind === "timelines") return t("bookPage.timelines");
+  if (kind === "secrets") return t("bookPage.secrets");
+  return kind;
+}
 
 function QuickSwitchDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { t } = useTranslation();
@@ -266,7 +280,7 @@ function QuickSwitchDialog({ open, onOpenChange }: { open: boolean; onOpenChange
                   <span className="block truncate text-sm font-medium">{item.label}</span>
                   <span className="block truncate text-xs text-muted-foreground">{item.subtitle}</span>
                 </span>
-                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{item.kind}</span>
+                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{navigationKindLabel(t, item.kind)}</span>
               </button>
             ))}
           </div>

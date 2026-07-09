@@ -81,8 +81,20 @@ const en = {
     actionFailed: "Repository operation failed",
     history: "Sync history",
     logAll: "All",
+    logKinds: {
+      clone: "clone",
+      fetch: "fetch",
+      pull: "pull",
+      commit: "commit",
+      push: "push",
+      backup: "backup",
+      reset: "reset",
+      error: "error",
+    },
     noHistory: "No operations recorded yet.",
     unpushedNotice: "You have {{count}} local commits that are not pushed. Push or back them up to avoid losing them.",
+    defaultCommitSingle: "Update {{path}}",
+    defaultCommitMany: "Update {{count}} files",
   },
   repoSettings: {
     title: "Local repositories",
@@ -200,6 +212,21 @@ const en = {
     noIntegrations: "No AI integrations configured yet.",
     costCurrency: "Cost display currency",
     costCurrencyHint: "Currency used to display AI costs in the Costs page. Enter the prices in your AI pricing settings in this currency.",
+    providers: {
+      azure_openai: "Azure OpenAI",
+      openai: "OpenAI / compatible",
+      github_models: "GitHub Models",
+      m365_copilot: "Microsoft 365 Copilot",
+    },
+    currencies: {
+      USD: "USD — US Dollar",
+      EUR: "EUR — Euro",
+      GBP: "GBP — British Pound",
+      JPY: "JPY — Japanese Yen",
+      CHF: "CHF — Swiss Franc",
+      CAD: "CAD — Canadian Dollar",
+      AUD: "AUD — Australian Dollar",
+    },
   },
   dossier: {
     pinned: "Dossier",
@@ -587,6 +614,11 @@ const en = {
     defaultToken: "default token",
     bookSettings: "Book settings",
     chapters: "Chapters",
+    chapterCountOne: "{{count}} chapter",
+    chapterCountMany: "{{count}} chapters",
+    paragraphLabel: "Paragraph",
+    paragraphCountOne: "{{count}} paragraph",
+    paragraphCountMany: "{{count}} paragraphs",
     characters: "Characters",
     locations: "Locations",
     factions: "Factions",
@@ -1264,7 +1296,13 @@ const en = {
     docs: "Docs",
     source: "Source:",
     page: "page",
-    pages: "pages"
+    pages: "pages",
+    groups: {
+      guides: "Guides",
+      overview: "Overview",
+      reference: "Reference",
+      packages: "Packages",
+    }
   },
   mcpPageContent: {
     integration: "Integration",
@@ -1276,7 +1314,14 @@ const en = {
     publicTools: "Public HTTP tools",
     tool: "Tool",
     description: "Description",
-    toolSuffix: "tool"
+    toolSingle: "tool",
+    toolPlural: "tools",
+    categories: {
+      other: "Other",
+      "guided-flows": "Guided flows",
+      "creation-and-assets": "Creation and assets",
+      "maintenance-and-output": "Maintenance and output",
+    }
   },
   legal: {
     lastUpdated: "Last updated: June 2026",
@@ -1450,6 +1495,14 @@ const en = {
     deleteFailed: "Failed to delete research",
     createFrom: "Create entity from research",
     createEntityKindLabel: "Entity type",
+    entityKinds: {
+      character: "Character",
+      location: "Location",
+      faction: "Faction",
+      item: "Item",
+      secret: "Secret",
+      "timeline-event": "Timeline event",
+    },
     createEntityCustomPromptLabel: "Custom prompt (optional)",
     createEntityCustomPromptPlaceholder: "Override the default creation prompt for this entity type…",
     creating: "Creating…",

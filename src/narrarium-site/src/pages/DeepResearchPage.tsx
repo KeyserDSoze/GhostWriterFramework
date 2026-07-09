@@ -27,7 +27,6 @@ import { createEntityFromResearch, DEFAULT_CREATE_PROMPTS } from "@/research/cre
 import { useRegisterPageActions } from "@/store/pageActionsStore";
 import { useRegisterPageSave } from "@/store/saveStore";
 import type { EntityKind } from "@/narrarium/canon";
-import { ENTITY_LABEL } from "@/narrarium/canon";
 import type { ResearchDepth, ResearchFrontmatter, ResearchIntent } from "@/research/types";
 import type { ResearchFile } from "@/types/book";
 import { integrationChatModels } from "@/assistant/llm";
@@ -49,6 +48,10 @@ const ENTITY_ICONS: Record<EntityKind, React.ReactNode> = {
   secret: <EyeOff className="h-4 w-4" />,
   "timeline-event": <Clock className="h-4 w-4" />,
 };
+
+function entityKindLabel(t: ReturnType<typeof useTranslation>["t"], kind: EntityKind): string {
+  return t(`research.entityKinds.${kind}`, { defaultValue: kind });
+}
 
 function splitResearchMarkdown(markdown: string): { frontmatterRaw: string; body: string } {
   const match = markdown.match(/^---\n([\s\S]*?)\n---\n*/);
@@ -371,7 +374,7 @@ function ResearchDetail({
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {ENTITY_KINDS.map((k) => (
-                      <SelectItem key={k} value={k}><span className="flex items-center gap-2">{ENTITY_ICONS[k]}{ENTITY_LABEL[k]}</span></SelectItem>
+                      <SelectItem key={k} value={k}><span className="flex items-center gap-2">{ENTITY_ICONS[k]}{entityKindLabel(t, k)}</span></SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

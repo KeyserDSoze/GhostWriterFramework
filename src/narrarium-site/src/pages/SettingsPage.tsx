@@ -21,12 +21,27 @@ import { DeepSearchSettingsBody } from "@/components/settings/DeepSearchSettings
 import { CopilotToolsSettingsBody } from "@/components/settings/CopilotToolsSettingsBody";
 import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
 
-const PROVIDERS: Array<{ value: AIProviderType; label: string }> = [
-  { value: "azure_openai", label: "Azure OpenAI" },
-  { value: "openai", label: "OpenAI / compatible" },
-  { value: "github_models", label: "GitHub Models" },
-  { value: "m365_copilot", label: "Microsoft 365 Copilot" },
+const PROVIDERS: Array<{ value: AIProviderType; labelKey: string; fallback: string }> = [
+  { value: "azure_openai", labelKey: "settings.providers.azure_openai", fallback: "Azure OpenAI" },
+  { value: "openai", labelKey: "settings.providers.openai", fallback: "OpenAI / compatible" },
+  { value: "github_models", labelKey: "settings.providers.github_models", fallback: "GitHub Models" },
+  { value: "m365_copilot", labelKey: "settings.providers.m365_copilot", fallback: "Microsoft 365 Copilot" },
 ];
+
+const COST_CURRENCIES = [
+  { value: "USD", labelKey: "settings.currencies.USD", fallback: "USD — US Dollar" },
+  { value: "EUR", labelKey: "settings.currencies.EUR", fallback: "EUR — Euro" },
+  { value: "GBP", labelKey: "settings.currencies.GBP", fallback: "GBP — British Pound" },
+  { value: "JPY", labelKey: "settings.currencies.JPY", fallback: "JPY — Japanese Yen" },
+  { value: "CHF", labelKey: "settings.currencies.CHF", fallback: "CHF — Swiss Franc" },
+  { value: "CAD", labelKey: "settings.currencies.CAD", fallback: "CAD — Canadian Dollar" },
+  { value: "AUD", labelKey: "settings.currencies.AUD", fallback: "AUD — Australian Dollar" },
+] as const;
+
+function providerLabel(t: ReturnType<typeof useTranslation>["t"], value: AIProviderType): string {
+  const provider = PROVIDERS.find((entry) => entry.value === value);
+  return provider ? t(provider.labelKey, { defaultValue: provider.fallback }) : value;
+}
 
 function useBrowserVoices(): SpeechSynthesisVoice[] {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
@@ -176,13 +191,11 @@ export function SettingsPage() {
                 <Select value={settings.costCurrency || "USD"} onValueChange={(value) => patchSettings({ costCurrency: value })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="USD">USD — US Dollar</SelectItem>
-                    <SelectItem value="EUR">EUR — Euro</SelectItem>
-                    <SelectItem value="GBP">GBP — British Pound</SelectItem>
-                    <SelectItem value="JPY">JPY — Japanese Yen</SelectItem>
-                    <SelectItem value="CHF">CHF — Swiss Franc</SelectItem>
-                    <SelectItem value="CAD">CAD — Canadian Dollar</SelectItem>
-                    <SelectItem value="AUD">AUD — Australian Dollar</SelectItem>
+                    {COST_CURRENCIES.map((currency) => (
+                      <SelectItem key={currency.value} value={currency.value}>
+                        {t(currency.labelKey, { defaultValue: currency.fallback })}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">{t("settings.costCurrencyHint")}</p>
@@ -398,7 +411,7 @@ function catalogMaxOutputTokens(model: GitHubCatalogModel): number | undefined {
 
 function IntegrationAccordion({ integration, children }: { integration: AIIntegration; children: ReactNode }) {
   const { t } = useTranslation();
-  const providerLabel = PROVIDERS.find((provider) => provider.value === integration.provider)?.label ?? integration.provider;
+  const providerText = providerLabel(t, integration.provider);
   const modelCount = integration.chatModels?.length ?? 0;
   return (
     <details className="group rounded-2xl border bg-card shadow-sm [&[open]>summary_.chev]:rotate-90">
@@ -407,10 +420,10 @@ function IntegrationAccordion({ integration, children }: { integration: AIIntegr
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">{integration.name || t("settings.unnamedIntegration")}</p>
           <p className="mt-1 truncate text-xs text-muted-foreground">
-            {providerLabel} · {t("settings.modelCount", { count: modelCount })}
+            {providerText} · {t("settings.modelCount", { count: modelCount })}
           </p>
         </div>
-        <Badge variant="secondary" className="shrink-0 text-xs">{providerLabel}</Badge>
+        <Badge variant="secondary" className="shrink-0 text-xs">{providerText}</Badge>
       </summary>
       <div className="border-t p-4">{children}</div>
     </details>
@@ -436,7 +449,7 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
             <Label>{t("settings.provider")}</Label>
             <Select value={integration.provider} onValueChange={(value) => onChange({ provider: value as AIProviderType })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{PROVIDERS.map((provider) => <SelectItem key={provider.value} value={provider.value}>{provider.label}</SelectItem>)}</SelectContent>
+              <SelectContent>{PROVIDERS.map((provider) => <SelectItem key={provider.value} value={provider.value}>{t(provider.labelKey, { defaultValue: provider.fallback })}</SelectItem>)}</SelectContent>
             </Select>
           </div>
         </div>
@@ -512,7 +525,7 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
           </div>
         </details>
       )}
-      <Badge variant="secondary" className="mt-3 text-xs">{PROVIDERS.find((provider) => provider.value === integration.provider)?.label}</Badge>
+      <Badge variant="secondary" className="mt-3 text-xs">{providerLabel(t, integration.provider)}</Badge>
     </div>
   );
 }

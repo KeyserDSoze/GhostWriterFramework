@@ -361,10 +361,7 @@ export function BookPage() {
           {/* ── Chapters ── */}
           <TabsContent value="chapters" className="mt-4">
             <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-muted-foreground">
-                {structure.chapters.length} chapter
-                {structure.chapters.length !== 1 ? "s" : ""}
-              </p>
+              <p className="text-sm text-muted-foreground">{structure.chapters.length === 1 ? t("bookPage.chapterCountOne", { count: structure.chapters.length }) : t("bookPage.chapterCountMany", { count: structure.chapters.length })}</p>
               <CreateChapterDialog
                 nextNumber={structure.chapters.length + 1}
                 onCreate={handleCreateChapter}
@@ -392,8 +389,7 @@ export function BookPage() {
                         <div>
                           <p className="font-medium">{ch.title}</p>
                           <p className="text-xs text-muted-foreground">
-                            {ch.paragraphs.length} paragraph
-                            {ch.paragraphs.length !== 1 ? "s" : ""}
+                            {ch.paragraphs.length === 1 ? t("bookPage.paragraphCountOne", { count: ch.paragraphs.length }) : t("bookPage.paragraphCountMany", { count: ch.paragraphs.length })}
                             {ch.draftPath && ` · ${t("bookPage.draft")}`}
                             {ch.hasResume && ` · ${t("bookPage.resume")}`}
                             {ch.hasEvaluation && ` · ${t("bookPage.eval")}`}
