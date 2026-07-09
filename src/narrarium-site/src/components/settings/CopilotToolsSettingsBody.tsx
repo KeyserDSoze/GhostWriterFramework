@@ -15,6 +15,19 @@ export function CopilotToolsSettingsBody({ settings, patchSettings }: { settings
   const safeTools = tools.filter((tool) => !tool.destructive);
   const dangerousTools = tools.filter((tool) => tool.destructive);
 
+  function localizePrerequisite(value: string): string {
+    const key = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    return t(`copilotTools.prerequisiteValues.${key}`, { defaultValue: value });
+  }
+
+  function localizeToolText(toolId: string, field: "name" | "description" | "output", fallback: string): string {
+    return t(`copilotTools.tools.${toolId}.${field}`, { defaultValue: fallback });
+  }
+
+  function localizeArea(area: string): string {
+    return t(`copilotTools.areas.${area}`, { defaultValue: area });
+  }
+
   function setToolEnabled(toolId: string, enabled: boolean) {
     patchSettings({
       copilotTools: {
@@ -29,20 +42,23 @@ export function CopilotToolsSettingsBody({ settings, patchSettings }: { settings
   function renderToolRow(toolId: string) {
     const tool = copilotToolRegistry.get(toolId)!;
     const enabled = isCopilotToolEnabled(settings, tool);
+    const name = localizeToolText(tool.id, "name", tool.name);
+    const description = localizeToolText(tool.id, "description", tool.description);
+    const output = localizeToolText(tool.id, "output", tool.output);
     return (
       <div key={tool.id} className="rounded-xl border p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="font-medium">{tool.name}</p>
+              <p className="font-medium">{name}</p>
               <Badge variant={enabled ? "secondary" : "outline"}>{enabled ? t("copilotTools.enabled") : t("copilotTools.disabled")}</Badge>
-              <Badge variant="outline">{tool.area}</Badge>
-              {tool.requiresLlm ? <Badge variant="outline">LLM</Badge> : <Badge variant="outline">Local</Badge>}
-              {tool.mutatesData ? <Badge variant="outline">Write</Badge> : <Badge variant="outline">Read</Badge>}
+              <Badge variant="outline">{localizeArea(tool.area)}</Badge>
+              {tool.requiresLlm ? <Badge variant="outline">{t("copilotTools.badges.llm", { defaultValue: "LLM" })}</Badge> : <Badge variant="outline">{t("copilotTools.badges.local", { defaultValue: "Local" })}</Badge>}
+              {tool.mutatesData ? <Badge variant="outline">{t("copilotTools.badges.write", { defaultValue: "Write" })}</Badge> : <Badge variant="outline">{t("copilotTools.badges.read", { defaultValue: "Read" })}</Badge>}
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">{tool.description}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{t("copilotTools.output")}: {tool.output}</p>
-            {tool.prerequisites.length > 0 && <p className="mt-1 text-xs text-muted-foreground">{t("copilotTools.prerequisites")}: {tool.prerequisites.join(", ")}</p>}
+            <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{t("copilotTools.output")}: {output}</p>
+            {tool.prerequisites.length > 0 && <p className="mt-1 text-xs text-muted-foreground">{t("copilotTools.prerequisites")}: {tool.prerequisites.map(localizePrerequisite).join(", ")}</p>}
           </div>
           <Button type="button" variant={enabled ? "default" : "outline"} size="sm" onClick={() => setToolEnabled(tool.id, !enabled)}>
             {enabled ? t("copilotTools.turnOff") : t("copilotTools.turnOn")}
