@@ -297,7 +297,9 @@ export async function loadBookStructure(
   const chapterMdPaths = allPaths.filter((p) => /^chapters\/[^/]+\/chapter\.md$/.test(p));
   const paragraphPaths = allPaths.filter((p) => /^chapters\/[^/]+\/\d{3}(?:-[^/]+)?\.md$/.test(p) && !p.includes("/drafts/"));
   const notePaths = allPaths.filter((p) => /^notes\/[^/]+\.md$/.test(p));
-  const metaMap = await fetchFrontmatterMetadata(octokit, owner, repo, branch, [...chapterMdPaths, ...paragraphPaths, ...canonPaths, ...notePaths]);
+  const personaPaths = allPaths.filter((p) => /^personas\/[^/]+\.md$/.test(p));
+  const ghostwriterPaths = allPaths.filter((p) => /^ghostwriters\/[^/]+\.md$/.test(p));
+  const metaMap = await fetchFrontmatterMetadata(octokit, owner, repo, branch, [...chapterMdPaths, ...paragraphPaths, ...canonPaths, ...notePaths, ...personaPaths, ...ghostwriterPaths]);
 
   // ── Canon sections ────────────────────────────────────────────────────────
   function filesUnder(prefix: string): BookFile[] {
@@ -406,9 +408,18 @@ export async function loadBookStructure(
       .filter((p) => /^ghostwriters\/[^/]+\.md$/.test(p))
       .map((p) => {
         const slug = p.replace(/^ghostwriters\//, "").replace(/\.md$/i, "");
-        return { slug, path: p, name: slugToTitle(slug) };
+        return { slug, path: p, name: metaMap[p]?.name ?? slugToTitle(slug) };
       })
       .sort((a, b) => a.name.localeCompare(b.name)),
+    readerPersonas: personaPaths
+      .map((p) => {
+        const slug = p.replace(/^personas\//, "").replace(/\.md$/i, "");
+        return { slug, path: p, name: metaMap[p]?.name ?? slugToTitle(slug) };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    readerEvaluationFiles: allPaths
+      .filter((p) => /^evaluations\/readers\/.+\.md$/.test(p))
+      .map((p) => ({ path: p, sha: treeData.tree.find((node) => node.path === p)?.sha ?? "", size: treeData.tree.find((node) => node.path === p)?.size ?? 0 })),
     plotPath: allPaths.includes("plot.md") ? "plot.md" : undefined,
     researchFiles: allPaths
       .filter((p) => /^research\/[^/]+\.md$/.test(p))
@@ -732,7 +743,9 @@ export async function reorderParagraphsInChapter(
 
   // Classify a repo path to the paragraph slug it belongs to (or null).
   const slugOfPath = (path: string): string | null => {
-    let m = new RegExp(`^chapters/${escapedChapter}/drafts/(\\d{3}(?:-[^/]+)?)\\.md$`).exec(path);
+    let m = new RegExp(`^drafts/${escapedChapter}/(\\d{3}(?:-[^/]+)?)\\.md$`).exec(path);
+    if (m) return m[1];
+    m = new RegExp(`^chapters/${escapedChapter}/drafts/(\\d{3}(?:-[^/]+)?)\\.md$`).exec(path);
     if (m) return m[1];
     m = new RegExp(`^chapters/${escapedChapter}/(\\d{3}(?:-[^/]+)?)\\.md$`).exec(path);
     if (m) return m[1];
@@ -741,6 +754,10 @@ export async function reorderParagraphsInChapter(
     m = new RegExp(`^evaluations/paragraphs/${escapedChapter}/(\\d{3}(?:-[^/]+)?)\\.md$`).exec(path);
     if (m) return m[1];
     m = new RegExp(`^assets/chapters/${escapedChapter}/paragraphs/([^/]+)/`).exec(path);
+    if (m) return m[1];
+    m = new RegExp(`^evaluations/readers/(?:paragraphs|selections)/${escapedChapter}/([^/]+)/`).exec(path);
+    if (m) return m[1];
+    m = new RegExp(`^evaluations/readers/summaries/(?:paragraphs|selections)/${escapedChapter}/([^/]+)/`).exec(path);
     if (m) return m[1];
     return null;
   };
@@ -752,10 +769,15 @@ export async function reorderParagraphsInChapter(
     const newSlug = remapBySlug.get(slug);
     if (!newSlug) return null;
     // Replace the slug segment while keeping the surrounding path.
+    if (path.startsWith(`drafts/${chapterSlug}/`)) return `drafts/${chapterSlug}/${newSlug}.md`;
     if (path.startsWith(`chapters/${chapterSlug}/drafts/`)) return `chapters/${chapterSlug}/drafts/${newSlug}.md`;
     if (path.startsWith(`chapters/${chapterSlug}/`)) return `chapters/${chapterSlug}/${newSlug}.md`;
     if (path.startsWith(`scripts/${chapterSlug}/`)) return `scripts/${chapterSlug}/${newSlug}.md`;
     if (path.startsWith(`evaluations/paragraphs/${chapterSlug}/`)) return `evaluations/paragraphs/${chapterSlug}/${newSlug}.md`;
+    const readerMatch = new RegExp(`^(evaluations/readers/(?:paragraphs|selections)/${escapedChapter}/)[^/]+(/.*)$`).exec(path);
+    if (readerMatch) return `${readerMatch[1]}${newSlug}${readerMatch[2]}`;
+    const readerSummaryMatch = new RegExp(`^(evaluations/readers/summaries/(?:paragraphs|selections)/${escapedChapter}/)[^/]+(/.*)$`).exec(path);
+    if (readerSummaryMatch) return `${readerSummaryMatch[1]}${newSlug}${readerSummaryMatch[2]}`;
     const assetMatch = new RegExp(`^(assets/chapters/${escapedChapter}/paragraphs/)[^/]+(/.*)$`).exec(path);
     if (assetMatch) return `${assetMatch[1]}${newSlug}${assetMatch[2]}`;
     return null;
@@ -922,9 +944,16 @@ export async function reorderChaptersInBook(
     for (const [oldSlug, newSlug] of remap) {
       const prefixes = [
         `chapters/${oldSlug}/`,
+        `drafts/${oldSlug}/`,
         `scripts/${oldSlug}/`,
         `assets/chapters/${oldSlug}/`,
         `evaluations/paragraphs/${oldSlug}/`,
+        `evaluations/readers/chapters/${oldSlug}/`,
+        `evaluations/readers/paragraphs/${oldSlug}/`,
+        `evaluations/readers/selections/${oldSlug}/`,
+        `evaluations/readers/summaries/chapters/${oldSlug}/`,
+        `evaluations/readers/summaries/paragraphs/${oldSlug}/`,
+        `evaluations/readers/summaries/selections/${oldSlug}/`,
       ];
       for (const prefix of prefixes) {
         if (path.startsWith(prefix)) {
@@ -933,6 +962,7 @@ export async function reorderChaptersInBook(
       }
       if (path === `resumes/chapters/${oldSlug}.md`) return `resumes/chapters/${newSlug}.md`;
       if (path === `evaluations/chapters/${oldSlug}.md`) return `evaluations/chapters/${newSlug}.md`;
+      if (path === `state/chapters/${oldSlug}.md`) return `state/chapters/${newSlug}.md`;
     }
     return null;
   };

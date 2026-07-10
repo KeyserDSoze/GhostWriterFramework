@@ -41,6 +41,8 @@ import {
 } from "@/narrarium/workspace";
 import { GITHUB_MODELS_INFERENCE_URL } from "@/config/githubModels";
 import { defaultEvaluationCriteria, defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
+import { emptyReaderPersona } from "@/narrarium/readerPersona";
+import { generateReaderEvaluationSummary, hashReaderSource, loadReaderPersonas, parseReaderEvaluation, runReaderEvaluations, saveReaderPersona, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
 
 async function completeForTask(
   settings: AppSettings,
@@ -150,6 +152,12 @@ export async function runAssistantPrompt(input: {
     "open-reader": () => openReaderNavigation({ ...promptInput, book }),
     "navigate": () => navigateFromPrompt({ ...promptInput, book }),
     "read-current-page": () => readCurrentPageFromPrompt({ ...promptInput, book }),
+    "list-simulated-readers": () => listSimulatedReaders({ ...promptInput, book, branch, token }),
+    "create-simulated-reader": () => createSimulatedReaderFromPrompt({ ...promptInput, book, branch, token }),
+    "toggle-simulated-reader": () => toggleSimulatedReaderFromPrompt({ ...promptInput, book, branch, token }),
+    "evaluate-with-readers": () => evaluateWithReadersFromPrompt({ ...promptInput, book, branch, token }),
+    "summarize-reader-evaluations": () => summarizeReaderEvaluationsFromPrompt({ ...promptInput, book, branch, token }),
+    "open-reader-evaluations": () => openReaderEvaluationsFromContext({ ...promptInput, book }),
     "list-branches": () => listBranchesMessage({ ...promptInput, book, token }),
     "show-branch-diff": () => showBranchDiffMessage({ ...promptInput, book, branch, token }),
     "list-commits": () => listCommitsMessage({ ...promptInput, book, branch, token }),
@@ -388,6 +396,120 @@ function extractPullRequestTitle(prompt: string): string | null {
   const match = prompt.match(/(?:titled?|title|dal titolo|con titolo|chiamala|call it)\s+["“']?([^"”'\n]+)["”']?/i);
   const title = match?.[1]?.trim();
   return title && title.length > 1 ? title : null;
+}
+
+async function listSimulatedReaders(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const structure = input.context.structure;
+  if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
+  const readers = await loadReaderPersonas({ token: input.token, book: input.book, branch: input.branch, structure });
+  return makeAssistantMessage("assistant", readers.map((reader) => `- ${reader.enabled ? "[on]" : "[off]"} **${reader.name}** (${reader.readerType}) — ${reader.description}`).join("\n"));
+}
+
+async function createSimulatedReaderFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const structure = input.context.structure;
+  if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
+  const answer = await completeForTask(input.settings, [
+    { role: "system", content: "Return ONLY JSON for a useful simulated reader profile: {\"name\":\"...\",\"description\":\"...\",\"profile\":\"...\",\"aspects\":[\"...\"],\"preferredGenres\":[\"...\"],\"dislikedGenres\":[],\"experienceLevel\":\"...\",\"severity\":1-10,\"audienceAge\":\"...\",\"interests\":[],\"appreciatedElements\":[],\"frequentCriticisms\":[],\"customPrompt\":\"...\"}. Keep it revision-useful, not theatrical roleplay." },
+    { role: "user", content: input.prompt },
+  ], "default", { signal: input.signal, label: "copilot:create-reader" });
+  if (!answer) return noAiMessage();
+  const parsed = parseJsonObject(answer);
+  const profile = emptyReaderPersona(structure.language ?? input.settings.ui.language);
+  const name = typeof parsed?.name === "string" ? parsed.name.trim() : "Custom Reader";
+  const next = {
+    ...profile,
+    name,
+    slug: slugToTitle(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+    description: typeof parsed?.description === "string" ? parsed.description : "",
+    profile: typeof parsed?.profile === "string" ? parsed.profile : "",
+    aspects: Array.isArray(parsed?.aspects) ? parsed.aspects.map(String) : [],
+    preferredGenres: Array.isArray(parsed?.preferredGenres) ? parsed.preferredGenres.map(String) : [],
+    dislikedGenres: Array.isArray(parsed?.dislikedGenres) ? parsed.dislikedGenres.map(String) : [],
+    experienceLevel: typeof parsed?.experienceLevel === "string" ? parsed.experienceLevel : "average",
+    severity: typeof parsed?.severity === "number" ? Math.max(1, Math.min(10, parsed.severity)) : 5,
+    audienceAge: typeof parsed?.audienceAge === "string" ? parsed.audienceAge : "adult",
+    interests: Array.isArray(parsed?.interests) ? parsed.interests.map(String) : [],
+    appreciatedElements: Array.isArray(parsed?.appreciatedElements) ? parsed.appreciatedElements.map(String) : [],
+    frequentCriticisms: Array.isArray(parsed?.frequentCriticisms) ? parsed.frequentCriticisms.map(String) : [],
+    customPrompt: typeof parsed?.customPrompt === "string" ? parsed.customPrompt : "",
+  };
+  const path = await saveReaderPersona({ token: input.token, book: input.book, branch: input.branch, profile: next });
+  return makeAssistantMessage("assistant", `Created simulated reader **${next.name}** at \`${path}\`.`);
+}
+
+async function toggleSimulatedReaderFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const structure = input.context.structure;
+  if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
+  const readers = await loadReaderPersonas({ token: input.token, book: input.book, branch: input.branch, structure });
+  const lower = input.prompt.toLowerCase();
+  const reader = readers.sort((a, b) => b.name.length - a.name.length).find((entry) => lower.includes(entry.name.toLowerCase()) || lower.includes(entry.slug.replace(/-/g, " ")));
+  if (!reader) return makeAssistantMessage("assistant", "Tell me which simulated reader to enable or disable.");
+  const enabled = !/\b(disable|disabilita|spegni|off)\b/.test(lower);
+  await saveReaderPersona({ token: input.token, book: input.book, branch: input.branch, profile: { ...reader, enabled } });
+  return makeAssistantMessage("assistant", `${reader.name} is now ${enabled ? "enabled" : "disabled"}.`);
+}
+
+async function evaluationTargetFromContext(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<ReaderEvaluationTarget | null> {
+  const chapter = resolveChapterFromPrompt(input);
+  if (!chapter) return null;
+  const paragraph = resolveParagraphFromPrompt(input);
+  if (paragraph) {
+    const file = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, paragraph.paragraph.path);
+    return { type: "paragraph", bookId: input.book.id, chapterId: chapter.slug, paragraphId: paragraph.paragraph.path.split("/").pop()?.replace(/\.md$/i, ""), title: paragraph.paragraph.title, text: parseMarkdown(file.content).body.trim(), sourcePath: paragraph.paragraph.path, sourceVersion: file.sha };
+  }
+  const files = await Promise.all(chapter.paragraphs.map((entry) => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, entry.path).catch(() => null)));
+  return { type: "chapter", bookId: input.book.id, chapterId: chapter.slug, title: chapter.title, text: files.map((file, index) => file ? `## ${chapter.paragraphs[index].title}\n\n${parseMarkdown(file.content).body.trim()}` : "").filter(Boolean).join("\n\n"), sourcePath: `${chapter.path}/chapter.md`, sourceVersion: files.map((file) => file?.sha ?? "").join(":") };
+}
+
+async function evaluateWithReadersFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const structure = input.context.structure;
+  if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
+  const [target, readers] = await Promise.all([evaluationTargetFromContext(input), loadReaderPersonas({ token: input.token, book: input.book, branch: input.branch, structure })]);
+  if (!target) return makeAssistantMessage("assistant", "Open or name a chapter or paragraph first.");
+  const lower = input.prompt.toLowerCase();
+  const named = readers.filter((reader) => lower.includes(reader.name.toLowerCase()) || reader.preferredGenres.some((genre) => lower.includes(genre.toLowerCase())));
+  const selected = named.length ? named.filter((reader) => reader.enabled) : readers.filter((reader) => reader.enabled);
+  if (!selected.length) return makeAssistantMessage("assistant", "No matching simulated readers are enabled.");
+  const result = await runReaderEvaluations({ token: input.token, book: input.book, branch: input.branch, structure, settings: input.settings, target, readers: selected, depth: /\b(deep|approfondit)\b/.test(lower) ? "deep" : "brief", includeContext: true, concurrency: 2, signal: input.signal, onProgress: (progress) => input.onText?.(`**${progress.readerName}**: ${progress.status} (${progress.completed}/${progress.total})`) });
+  return makeAssistantMessage("assistant", `Completed ${result.completed.length} reader evaluations${result.failed.length ? `; ${result.failed.length} failed` : ""}.\n\n${result.completed.map((record) => `- **${record.readerName}**: ${record.score ?? "-"}/10 — \`${record.path}\``).join("\n")}`);
+}
+
+function readerEvaluationPrefixes(target: ReaderEvaluationTarget): string[] {
+  if (target.type === "chapter") return [`evaluations/readers/chapters/${target.chapterId}/`];
+  const kind = target.type === "paragraph" ? "paragraphs" : "selections";
+  return [`evaluations/readers/${kind}/${target.chapterId}/${target.paragraphId ?? "chapter"}/`];
+}
+
+async function summarizeReaderEvaluationsFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const structure = input.context.structure;
+  if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
+  const target = await evaluationTargetFromContext(input);
+  if (!target) return makeAssistantMessage("assistant", "Open or name a chapter or paragraph first.");
+  const hash = await hashReaderSource(target.text);
+  const prefixes = readerEvaluationPrefixes(target);
+  const records = await Promise.all(structure.readerEvaluationFiles.filter((file) => prefixes.some((prefix) => file.path.startsWith(prefix))).map(async (file) => {
+    const raw = file.content ?? await loadFileContent(input.token, input.book.owner, input.book.repo, file.path, input.branch).catch(() => "");
+    return raw ? parseReaderEvaluation(file.path, raw, hash) : null;
+  }));
+  const seen = new Set<string>();
+  const latest = records
+    .filter((record): record is ReaderEvaluationRecord => record !== null)
+    .filter((record) => record.status === "completed" && record.readerId !== "summary" && !record.stale)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .filter((record) => !seen.has(record.readerId) && Boolean(seen.add(record.readerId)));
+  if (latest.length < 2) return makeAssistantMessage("assistant", "At least two current reader evaluations are needed to create a summary.");
+  const summary = await generateReaderEvaluationSummary({ token: input.token, book: input.book, branch: input.branch, settings: input.settings, target, evaluations: latest, language: structure.language, signal: input.signal });
+  return makeAssistantMessage("assistant", `Saved the simulated-reader summary to \`${summary.path}\`.\n\n${summary.body}`);
+}
+
+async function openReaderEvaluationsFromContext(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+  const chapter = resolveChapterFromPrompt(input);
+  if (!chapter) return makeAssistantMessage("assistant", "Open or name a chapter first.");
+  const paragraph = resolveParagraphFromPrompt(input);
+  const to = paragraph
+    ? `/app/books/${input.book.id}/chapters/${chapter.slug}/paragraphs/${paragraph.paragraph.number}/reader-evaluations`
+    : `/app/books/${input.book.id}/chapters/${chapter.slug}/reader-evaluations`;
+  return { id: crypto.randomUUID(), role: "assistant", text: "Opening reader evaluations.", action: { kind: "navigate", to, label: "Reader evaluations" } };
 }
 
 // ─── Local utility tools (no LLM) ────────────────────────────────────────────

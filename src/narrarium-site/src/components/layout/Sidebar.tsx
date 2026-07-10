@@ -88,6 +88,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         { label: t("ghostwriters.title"), href: `/app/books/${bookId}/ghostwriters`, icon: <Users className="h-4 w-4" /> },
         { label: t("writingStyle.title"), href: `/app/books/${bookId}/writing-style`, icon: <FileText className="h-4 w-4" /> },
         { label: t("evaluationStyle.title"), href: `/app/books/${bookId}/evaluation-style`, icon: <ClipboardCheck className="h-4 w-4" /> },
+        { label: t("readerPersonas.title"), href: `/app/books/${bookId}/simulated-readers`, icon: <Users className="h-4 w-4" /> },
         { label: t("assets.title"), href: `/app/books/${bookId}/assets`, icon: <Images className="h-4 w-4" /> },
         { label: t("research.title"), href: `/app/books/${bookId}/research`, icon: <Search className="h-4 w-4" /> },
         { label: t("reader.title"), href: `/app/books/${bookId}/reader`, icon: <BookOpen className="h-4 w-4" /> },
@@ -114,6 +115,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         { label: t("nav.scriptsIndex"), href: `/app/books/${bookId}/chapters/${chapterId}/scripts`, icon: <Network className="h-4 w-4" /> },
         { label: t("chapter.resume"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/resume`, icon: <NotebookText className="h-4 w-4" /> },
         { label: t("chapter.evaluation"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/evaluation`, icon: <ClipboardCheck className="h-4 w-4" /> },
+        { label: t("readerEvaluations.title"), href: `/app/books/${bookId}/chapters/${chapterId}/reader-evaluations`, icon: <Users className="h-4 w-4" /> },
         { label: t("writingStyle.chapterButton"), href: `/app/books/${bookId}/chapters/${chapterId}/writing-style`, icon: <PenLine className="h-4 w-4" /> },
       ]
     : [];
@@ -125,6 +127,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         { label: t("chapter.script"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/workspace/script`, icon: <Network className="h-4 w-4" /> },
         { label: t("paragraph.splitView"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/split`, icon: <Columns2 className="h-4 w-4" /> },
         { label: t("chapter.evaluation"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/workspace/evaluation`, icon: <ClipboardCheck className="h-4 w-4" /> },
+        { label: t("readerEvaluations.title"), href: `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/reader-evaluations`, icon: <Users className="h-4 w-4" /> },
       ]
     : [];
 

@@ -11,6 +11,7 @@ export type AppRouteContext =
   | { kind: "book-ghostwriters"; bookId: string }
   | { kind: "book-writing-style"; bookId: string }
   | { kind: "book-evaluation-style"; bookId: string }
+  | { kind: "book-simulated-readers"; bookId: string }
   | { kind: "reader"; bookId: string }
   | { kind: "book-export"; bookId: string }
   | { kind: "book-settings"; bookId: string }
@@ -21,6 +22,8 @@ export type AppRouteContext =
   | { kind: "chapter-workspace"; bookId: string; chapterId: string; workspaceKind: string }
   | { kind: "paragraph"; bookId: string; chapterId: string; paragraphNum: string }
   | { kind: "paragraph-workspace"; bookId: string; chapterId: string; paragraphNum: string; workspaceKind: string }
+  | { kind: "chapter-reader-evaluations"; bookId: string; chapterId: string }
+  | { kind: "paragraph-reader-evaluations"; bookId: string; chapterId: string; paragraphNum: string }
   | { kind: "other"; pathname: string };
 
 export interface AvailableFile {
@@ -67,6 +70,9 @@ export function parseAppRoute(pathname: string): AppRouteContext {
   match = /^\/app\/books\/([^/]+)\/evaluation-style$/.exec(clean);
   if (match) return { kind: "book-evaluation-style", bookId: decodeURIComponent(match[1]) };
 
+  match = /^\/app\/books\/([^/]+)\/simulated-readers$/.exec(clean);
+  if (match) return { kind: "book-simulated-readers", bookId: decodeURIComponent(match[1]) };
+
   match = /^\/app\/books\/([^/]+)\/research\/([^/]+)$/.exec(clean);
   if (match) return { kind: "research-detail", bookId: decodeURIComponent(match[1]), researchSlug: decodeURIComponent(match[2]) };
 
@@ -96,6 +102,12 @@ export function parseAppRoute(pathname: string): AppRouteContext {
       workspaceKind: decodeURIComponent(match[4]),
     };
   }
+
+  match = /^\/app\/books\/([^/]+)\/chapters\/([^/]+)\/paragraphs\/([^/]+)\/reader-evaluations$/.exec(clean);
+  if (match) return { kind: "paragraph-reader-evaluations", bookId: decodeURIComponent(match[1]), chapterId: decodeURIComponent(match[2]), paragraphNum: decodeURIComponent(match[3]) };
+
+  match = /^\/app\/books\/([^/]+)\/chapters\/([^/]+)\/reader-evaluations$/.exec(clean);
+  if (match) return { kind: "chapter-reader-evaluations", bookId: decodeURIComponent(match[1]), chapterId: decodeURIComponent(match[2]) };
 
   match = /^\/app\/books\/([^/]+)\/chapters\/([^/]+)\/workspace\/([^/]+)$/.exec(clean);
   if (match) {
@@ -200,6 +212,9 @@ export async function loadWriterContext(
         await pushFile("evaluation-guidelines.md");
         await pushFile("book.md");
         break;
+      case "book-simulated-readers":
+        await Promise.all(structure.readerPersonas.map((entry) => pushFile(entry.path)));
+        break;
       case "reader":
       case "book-export":
       case "research":
@@ -224,6 +239,12 @@ export async function loadWriterContext(
       case "paragraph-workspace":
         await pushFile(paragraph?.path);
         await pushFile(resolveWorkspacePath(chapter, paragraph, route.workspaceKind));
+        break;
+      case "chapter-reader-evaluations":
+        await Promise.all((chapter?.paragraphs ?? []).map((entry) => pushFile(entry.path)));
+        break;
+      case "paragraph-reader-evaluations":
+        await pushFile(paragraph?.path);
         break;
       case "canon":
         await pushFile(resolveCanonPath(route.section, route.slug));
@@ -262,6 +283,11 @@ function buildContextTitle(
     case "book-writing-style":
     case "book-evaluation-style":
       return "Evaluation Style";
+    case "book-simulated-readers":
+      return "Simulated Readers";
+    case "chapter-reader-evaluations":
+    case "paragraph-reader-evaluations":
+      return "Reader Evaluations";
     case "reader":
     case "research":
     case "research-detail":
@@ -300,6 +326,12 @@ function buildContextSummary(
     case "book-writing-style":
     case "book-evaluation-style":
       return `Editing evaluation style for ${structure?.title ?? book?.name ?? "book"}.`;
+    case "book-simulated-readers":
+      return `Managing simulated readers for ${structure?.title ?? book?.name ?? "book"}.`;
+    case "chapter-reader-evaluations":
+      return `Simulated-reader evaluations for chapter ${chapter?.title ?? route.chapterId}.`;
+    case "paragraph-reader-evaluations":
+      return `Simulated-reader evaluations for paragraph ${paragraph?.title ?? route.paragraphNum}.`;
     case "reader":
     case "book-export":
     case "research":
@@ -328,7 +360,7 @@ function buildNoteTargetPath(route: AppRouteContext, chapter: Chapter | null): s
   if (route.kind === "chapter" || route.kind === "paragraph" || route.kind === "chapter-workspace" || route.kind === "paragraph-workspace") {
     return chapter ? `drafts/${chapter.slug}/notes.md` : null;
   }
-  if (route.kind === "book" || route.kind === "book-dashboard" || route.kind === "book-assets" || route.kind === "book-ghostwriters" || route.kind === "book-writing-style" || route.kind === "book-evaluation-style" || route.kind === "reader" || route.kind === "book-export" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "app-home") {
+  if (route.kind === "book" || route.kind === "book-dashboard" || route.kind === "book-assets" || route.kind === "book-ghostwriters" || route.kind === "book-writing-style" || route.kind === "book-evaluation-style" || route.kind === "book-simulated-readers" || route.kind === "reader" || route.kind === "book-export" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "app-home") {
     return "notes.md";
   }
   return null;
@@ -384,6 +416,8 @@ function buildAvailableFileManifest(structure: BookStructure): AvailableFile[] {
   add(structure.plotPath, "plot");
   add(structure.globalWritingStylePath, "global writing style");
   add(structure.voicesPath, "voices/style reference");
+  structure.readerPersonas.forEach((file) => add(file.path, "simulated reader persona"));
+  structure.readerEvaluationFiles.forEach((file) => add(file.path, file.path.includes("/summaries/") ? "reader evaluation summary" : "reader evaluation"));
 
   for (const chapter of structure.chapters) {
     add(`${chapter.path}/chapter.md`, "chapter metadata/body");

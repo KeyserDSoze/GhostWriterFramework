@@ -39,6 +39,12 @@ export interface Ghostwriter {
   name: string;
 }
 
+export interface ReaderPersonaFile {
+  slug: string;
+  path: string;
+  name: string;
+}
+
 export type CanonSection =
   | "characters"
   | "locations"
@@ -118,6 +124,10 @@ export interface BookStructure {
   plotPath?: string;
   /** ghostwriters/<slug>.md profiles */
   ghostwriters: Ghostwriter[];
+  /** personas/<slug>.md reader persona overrides and custom profiles */
+  readerPersonas: ReaderPersonaFile[];
+  /** saved ReaderEvaluation and ReaderEvaluationSummary markdown files */
+  readerEvaluationFiles: BookFile[];
   /** research/*.md files */
   researchFiles: ResearchFile[];
   /** notes/*.md quick personal notes */

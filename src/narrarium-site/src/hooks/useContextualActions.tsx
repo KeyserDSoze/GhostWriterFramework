@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ClipboardCheck, Columns2, FileEdit, FileText, NotebookText, Network, PenLine, Search, Wand2 } from "lucide-react";
+import { ClipboardCheck, Columns2, FileEdit, FileText, NotebookText, Network, PenLine, Search, Users, Wand2 } from "lucide-react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useBookStructure } from "@/hooks/useBookStructure";
@@ -126,6 +126,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
       actions.push({ id: "split", label: t("paragraph.splitView"), to: `${base}/split`, icon: <Columns2 className="h-4 w-4" /> });
     }
     actions.push({ id: "eval", label: paragraph.evaluationPath ? t("chapter.openEvaluation") : t("chapter.createEvaluation"), run: () => openOrCreateParagraphEvaluation(), icon: <ClipboardCheck className="h-4 w-4" /> });
+    actions.push({ id: "reader-eval", label: t("readerEvaluations.evaluateWithReaders"), to: `${base}/reader-evaluations`, icon: <Users className="h-4 w-4" /> });
   } else if (chapter && chapterId) {
     const base = `/app/books/${bookId}/chapters/${chapterId}`;
     actions.push({ id: "scripts", label: t("nav.scriptsIndex"), to: `${base}/scripts`, icon: <Network className="h-4 w-4" /> });
@@ -133,6 +134,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
     actions.push({ id: "chDraft", label: chapter.draftPath ? t("chapter.openDraft") : t("chapter.createDraft"), run: () => openOrCreateChapter("draft"), icon: <FileEdit className="h-4 w-4" /> });
     actions.push({ id: "chResume", label: chapter.hasResume ? t("chapter.openResume") : t("chapter.createResume"), run: () => openOrCreateChapter("resume"), icon: <NotebookText className="h-4 w-4" /> });
     actions.push({ id: "chEval", label: chapter.hasEvaluation ? t("chapter.openEvaluation") : t("chapter.createEvaluation"), run: () => openOrCreateChapter("evaluation"), icon: <ClipboardCheck className="h-4 w-4" /> });
+    actions.push({ id: "chReaderEval", label: t("readerEvaluations.evaluateWithReaders"), to: `${base}/reader-evaluations`, icon: <Users className="h-4 w-4" /> });
     actions.push({ id: "chStyle", label: t("writingStyle.chapterButton"), to: `${base}/writing-style`, icon: <PenLine className="h-4 w-4" /> });
   } else if (bookId) {
     if (route.kind === "canon") {
@@ -148,6 +150,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
     actions.push({ id: "research", label: t("research.title"), to: `/app/books/${bookId}/research`, icon: <Search className="h-4 w-4" /> });
     actions.push({ id: "gw", label: t("ghostwriters.title"), to: `/app/books/${bookId}/ghostwriters`, icon: <Wand2 className="h-4 w-4" /> });
     actions.push({ id: "style", label: t("writingStyle.title"), to: `/app/books/${bookId}/writing-style`, icon: <PenLine className="h-4 w-4" /> });
+    actions.push({ id: "personas", label: t("readerPersonas.title"), to: `/app/books/${bookId}/simulated-readers`, icon: <Users className="h-4 w-4" /> });
   }
 
   // Book-level dialogs (image/commit/PR/export) exist whenever a book is in scope.

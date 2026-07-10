@@ -13,6 +13,30 @@ export interface LlmMessage {
   content: string | LlmContentPart[];
 }
 
+export interface LlmRunMetadata {
+  requestId: string;
+  task: ChatCapability;
+  provider: AIIntegration["provider"];
+  integrationId: string;
+  model: string;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  cost?: number;
+  currency?: string;
+}
+
+export interface LlmResult<T> {
+  output: T;
+  metadata: LlmRunMetadata;
+}
+
+export interface ForcedToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
 export function resolveWritingIntegration(settings: AppSettings): AIIntegration | null {
   const integrations = settings.aiIntegrations ?? [];
   if (integrations.length === 0) return null;
@@ -221,6 +245,63 @@ export async function completeText(
   }
 }
 
+export async function completeToolWith<T>(
+  integration: AIIntegration,
+  model: string,
+  pricing: AIPricing | undefined,
+  messages: LlmMessage[],
+  capability: ChatCapability,
+  tool: ForcedToolDefinition,
+  options?: { signal?: AbortSignal; label?: string; currency?: string },
+): Promise<LlmResult<T>> {
+  if (integration.provider === "m365_copilot") throw new Error("Microsoft 365 Copilot does not support browser tool calls.");
+  const normalizedMessages = messages.map((message) => ({
+    role: message.role,
+    content: Array.isArray(message.content)
+      ? message.content.map((part) => part.type === "text" ? { type: "text", text: part.text } : { type: "image_url", image_url: { url: part.dataUrl } })
+      : message.content,
+  }));
+  const debugMessages: LlmDebugMessage[] = messages.map((message) => ({ role: message.role, content: flattenLlmContent(message.content) }));
+  const debugId = useLlmDebugStore.getState().begin({ kind: "chat", label: options?.label ?? capability, model, messages: debugMessages });
+  try {
+    const client = integration.provider === "azure_openai"
+      ? new AzureOpenAI({ endpoint: integration.endpoint ?? "", apiKey: integration.apiKey, apiVersion: integration.apiVersion || "2024-10-21", dangerouslyAllowBrowser: true })
+      : new OpenAI({ apiKey: integration.apiKey, baseURL: openAiBaseUrl(integration), dangerouslyAllowBrowser: true });
+    const response = await client.chat.completions.create({
+      model,
+      messages: normalizedMessages as never,
+      tools: [{ type: "function", function: tool }],
+      tool_choice: { type: "function", function: { name: tool.name } },
+    } as never, { signal: options?.signal });
+    const usage = response.usage;
+    recordChatUsage(model, pricing, usage);
+    const call = (response as unknown as { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> }).choices?.[0]?.message?.tool_calls?.[0];
+    if (!call?.function?.arguments) throw new Error(`Model did not call forced tool ${tool.name}.`);
+    const output = JSON.parse(call.function.arguments) as T;
+    const normalized = normalizeUsage(usage);
+    const cost = pricing ? chatDelta({ inputTokens: normalized.inputTokens, cachedTokens: normalized.cachedInputTokens, outputTokens: normalized.outputTokens }, pricing).chatCost : undefined;
+    finishChatDebug(debugId, pricing, usage, call.function.arguments);
+    return {
+      output,
+      metadata: {
+        requestId: debugId,
+        task: capability,
+        provider: integration.provider,
+        integrationId: integration.id,
+        model,
+        inputTokens: normalized.inputTokens,
+        cachedInputTokens: normalized.cachedInputTokens,
+        outputTokens: normalized.outputTokens,
+        cost,
+        currency: options?.currency,
+      },
+    };
+  } catch (err) {
+    useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
+    throw err;
+  }
+}
+
 /**
  * Minimal yes/no understanding for a short user utterance, using a forced tool call.
  * Picks the "simple-tasks" model (falling back to "default") and sends no system prompt
@@ -296,6 +377,15 @@ function recordChatUsage(model: string, pricing: AIPricing | undefined, usage: u
   const cachedTokens = u.prompt_tokens_details?.cached_tokens ?? 0;
   if (!inputTokens && !outputTokens) return;
   useCostsStore.getState().recordCurrent(chatDelta({ inputTokens, cachedTokens, outputTokens }, pricing), model);
+}
+
+function normalizeUsage(usage: unknown): { inputTokens: number; cachedInputTokens: number; outputTokens: number } {
+  const value = usage as { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | undefined;
+  return {
+    inputTokens: value?.prompt_tokens ?? 0,
+    cachedInputTokens: value?.prompt_tokens_details?.cached_tokens ?? 0,
+    outputTokens: value?.completion_tokens ?? 0,
+  };
 }
 
 /** Complete a debug entry from a chat response, computing per-request cost. */

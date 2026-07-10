@@ -1,5 +1,5 @@
 import type { AIIntegration, AIPricing, AppSettings, ChatCapability, RoutingTarget, RoutingTaskKind } from "@/types/settings";
-import { integrationChatModels, resolveWritingIntegration, completeText, classifyConfirmationWith, type LlmMessage } from "@/assistant/llm";
+import { integrationChatModels, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, type ForcedToolDefinition, type LlmMessage, type LlmResult } from "@/assistant/llm";
 
 /** Reserved integrationId meaning "use the browser engine" (TTS/STT only). */
 export const BROWSER_ROUTING_ID = "__browser__";
@@ -13,7 +13,7 @@ export interface TaskCandidate {
   browser?: boolean;
 }
 
-const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(["default", "copilot", "simple-tasks", "review", "chat-resume", "deep-research", "create-from-research"]);
+const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "deep-research", "create-from-research"]);
 
 function isChatTask(task: RoutingTaskKind): task is ChatCapability {
   return CHAT_CAPABILITIES_SET.has(task);
@@ -165,6 +165,28 @@ export async function completeTextRouted(
       if (isAbort(err) || options?.signal?.aborted) throw err;
       lastError = err;
       // Move on to the next candidate (fallback).
+    }
+  }
+  throw lastError ?? new Error("All AI candidates failed for this task.");
+}
+
+export async function completeToolRouted<T>(
+  settings: AppSettings,
+  messages: LlmMessage[],
+  capability: ChatCapability,
+  tool: ForcedToolDefinition,
+  options?: { signal?: AbortSignal; label?: string },
+): Promise<LlmResult<T>> {
+  const candidates = resolveTaskCandidates(settings, capability);
+  if (!candidates.length) throw new Error("No AI integration configured for this task.");
+  let lastError: unknown = null;
+  for (const candidate of candidates) {
+    if (!candidate.integration || !candidate.model) continue;
+    try {
+      return await completeToolWith<T>(candidate.integration, candidate.model, candidate.pricing, messages, capability, tool, { signal: options?.signal, label: options?.label, currency: settings.costCurrency });
+    } catch (err) {
+      if (isAbort(err) || options?.signal?.aborted) throw err;
+      lastError = err;
     }
   }
   throw lastError ?? new Error("All AI candidates failed for this task.");

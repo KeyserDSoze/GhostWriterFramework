@@ -1,5 +1,6 @@
 import { stringify } from "yaml";
 import { defaultEvaluationGuidelinesMarkdown, defaultWritingStyleBody, defaultWritingStyleTitle } from "@/narrarium/defaultGuidelines";
+import { builtinReaderPersonas, serializeReaderPersona } from "@/narrarium/readerPersona";
 
 export interface InitialBookFile {
   path: string;
@@ -16,6 +17,7 @@ export function buildInitialBookFiles(input: InitialBookInput): InitialBookFile[
   const title = input.title.trim() || "Untitled Book";
   const language = input.language?.trim() || "en";
   const author = input.author?.trim();
+  const readerPersonas = builtinReaderPersonas(language).map((profile) => ({ path: `personas/${profile.slug}.md`, content: serializeReaderPersona(profile) }));
   return [
     {
       path: "README.md",
@@ -110,6 +112,7 @@ export function buildInitialBookFiles(input: InitialBookInput): InitialBookFile[
       path: "evaluation-guidelines.md",
       content: defaultEvaluationGuidelinesMarkdown(language),
     },
+    ...readerPersonas,
     {
       path: "state/status.md",
       content: renderMarkdown({ type: "story-state-status", id: "story-state:status", title: "Story State Status" }, "# Story State Status\n\n- Chapters tracked: 0\n- Last updated: not yet\n"),
