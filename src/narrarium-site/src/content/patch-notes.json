@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.67.2",
+    "date": "2026-07-10",
+    "en": {
+      "title": "Reliable Copilot chat panel and overlay close",
+      "summary": "The docked Copilot chat now sits correctly in the bottom-right corner at its real size, and clicking the dark overlay closes it again.",
+      "changes": [
+        "Rebuilt the compact desktop Copilot chat on a dedicated bare dialog shell so it is anchored bottom-right at exactly its intended width instead of overflowing to the right.",
+        "Fixed the rounded corners so the panel border no longer breaks partway across the top.",
+        "Restored closing the Copilot chat (and any modal) by clicking the dark overlay outside it, not only via the X button.",
+        "Kept the protection that prevents dismissing a dropdown or select from also closing the surrounding modal."
+      ]
+    },
+    "it": {
+      "title": "Pannello chat Copilot affidabile e chiusura da overlay",
+      "summary": "La chat Copilot agganciata sta ora correttamente in basso a destra alla sua dimensione reale e cliccando l'overlay nero si chiude di nuovo.",
+      "changes": [
+        "Ricostruita la chat Copilot compatta desktop su un contenitore dialog dedicato e pulito, così è ancorata in basso a destra esattamente alla larghezza prevista invece di debordare a destra.",
+        "Corretti gli angoli arrotondati: il bordo del pannello non si interrompe più a metà in alto.",
+        "Ripristinata la chiusura della chat Copilot (e di qualunque modale) cliccando sull'overlay nero esterno, non solo con il pulsante X.",
+        "Mantenuta la protezione che impedisce che chiudere una dropdown o select chiuda anche il modale circostante."
+      ]
+    }
+  },
+  {
     "version": "0.67.1",
     "date": "2026-07-10",
     "en": {

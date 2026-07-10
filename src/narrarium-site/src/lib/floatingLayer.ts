@@ -8,19 +8,15 @@
  * `data-state="open"` attribute is racy because Radix may have already flipped
  * it to "closed" by the time the Dialog handler runs.
  *
- * Solution: track how many floating layers are currently open and the moment
- * the last one closed. The Dialog outside-interaction guard can then ignore any
- * event that happens while a layer is open OR within a short grace window after
- * one just closed.
+ * Solution: track how many floating layers are currently open. The Dialog
+ * outside-interaction guard can then ignore any event that fires while a layer
+ * is open, which covers the click that dismisses the dropdown (Radix still has
+ * it mounted at pointer-down time, before React unmounts it).
  */
 
 import { useEffect } from "react";
 
 let openFloatingLayerCount = 0;
-let lastFloatingLayerClosedAt = 0;
-
-/** Grace period (ms) after a floating layer closes during which Dialog outside events are ignored. */
-const FLOATING_LAYER_CLOSE_GRACE_MS = 350;
 
 /** Called when a floating layer (dropdown/select content) mounts/opens. */
 export function registerFloatingLayerOpen(): void {
@@ -30,17 +26,11 @@ export function registerFloatingLayerOpen(): void {
 /** Called when a floating layer unmounts/closes. */
 export function registerFloatingLayerClose(): void {
   openFloatingLayerCount = Math.max(0, openFloatingLayerCount - 1);
-  lastFloatingLayerClosedAt = Date.now();
 }
 
 /** True while at least one floating layer is currently open. */
 export function hasOpenFloatingLayer(): boolean {
   return openFloatingLayerCount > 0;
-}
-
-/** True if a floating layer just closed within the grace window. */
-export function floatingLayerJustClosed(): boolean {
-  return Date.now() - lastFloatingLayerClosedAt < FLOATING_LAYER_CLOSE_GRACE_MS;
 }
 
 /**
