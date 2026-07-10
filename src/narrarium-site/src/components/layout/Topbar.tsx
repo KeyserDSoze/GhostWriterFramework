@@ -378,6 +378,14 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               <HelpCircle className="mr-2 h-4 w-4" />
               {t("nav.help")}
             </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => window.dispatchEvent(new Event("narrarium:open-onboarding"))}>
+              <Wand2 className="mr-2 h-4 w-4" />
+              {t("onboarding.open")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/app/patch-notes")}>
+              <History className="mr-2 h-4 w-4" />
+              {t("patchNotes.title")}
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleSignOut}>
               <LogOut className="mr-2 h-4 w-4" />

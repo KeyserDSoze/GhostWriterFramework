@@ -603,7 +603,45 @@ const en = {
     removeAria: "Remove {{name}}",
     emptyTitle: "No books yet",
     emptyDescription: "Connect a GitHub repository to start managing your Narrarium book.",
-    addFirst: "Add your first book"
+    addFirst: "Add your first book",
+    quickStart: {
+      step: "Step {{number}}",
+      githubTitle: "Create a GitHub account",
+      githubBody: "Narrarium books are GitHub repositories. Create a free account if you do not already have one.",
+      githubAction: "Open GitHub signup",
+      patTitle: "Create and save a PAT",
+      patBody: "Create a fine-grained token with Contents read/write and Metadata read, then save it under Settings → GitHub.",
+      patAction: "Configure GitHub access",
+      aiTitle: "Configure an AI model",
+      aiBody: "Add Azure OpenAI, an OpenAI-compatible provider or GitHub Models, then choose models for Router tasks.",
+      aiAction: "Configure AI Router",
+      bookTitle: "Create the repository book",
+      bookBody: "Create a fresh repository or connect an existing Narrarium book, then add chapters and their ordered paragraphs."
+    }
+  },
+  patchNotes: {
+    badge: "Release history",
+    title: "Patch notes",
+    description: "All versioned changes to the Narrarium application, in chronological order.",
+    whatsNew: "What's new in v{{version}}",
+    viewAll: "View all changes"
+  },
+  onboarding: {
+    title: "Welcome to Narrarium",
+    open: "Start guide",
+    stepOf: "Step {{step}} of {{total}}",
+    skip: "Skip guide",
+    next: "Next",
+    finish: "Start writing",
+    steps: {
+      "0": { title: "Your repository is the book", body: "Narrarium keeps chapters, paragraphs, canon, drafts, evaluations and assets as Markdown in your GitHub repository. Your Drive stores only private app settings and personal data." },
+      "1": { title: "Connect GitHub", body: "You need a GitHub account because every Narrarium book is a repository with real version history, branches, commits and pull requests.", action: "Create GitHub account" },
+      "2": { title: "Create a secure PAT", body: "Create a fine-grained GitHub Personal Access Token limited to the repositories you use. Grant Contents read/write and Metadata read, then save it in Narrarium Settings.", action: "Create fine-grained PAT" },
+      "3": { title: "Bring your AI model", body: "Configure Azure OpenAI, OpenAI-compatible providers or GitHub Models. The AI Router lets every task use its own primary model and fallbacks, including Copilot, reviews, research, speech and simulated readers.", action: "Open AI Router" },
+      "4": { title: "Create your first book", body: "Create a new repository or connect an existing one. A new book starts with book metadata, writing and evaluation styles, standard simulated readers, notes, plot and publishing structure.", action: "Add a book" },
+      "5": { title: "Write chapters and paragraphs", body: "A chapter contains ordered paragraph or scene files. Each paragraph can move through Script, Draft and Final, with context-aware AI editing, evaluations, canon and assets." },
+      "6": { title: "Copilot, Reader and publishing", body: "Use Copilot or Fantasmino to invoke tools, research, Git and evaluations. Read the manuscript with reader settings, then export Word, PDF, EPUB or a submission package." }
+    }
   },
   addBook: {
     title: "Add a Book",

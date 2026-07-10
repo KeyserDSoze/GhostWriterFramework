@@ -33,6 +33,7 @@ import { useUiStore } from "@/store/uiStore";
 import { parseAppRoute } from "@/assistant/context";
 import { APP_VERSION } from "@/config/version";
 import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
+import { getDocGroups, localizedDoc, normalizeDocLang } from "@/lib/docs";
 
 interface NavItem {
   label: string;
@@ -67,7 +68,7 @@ function NavLink({
 }
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const location = useLocation();
   const { settings } = useSettingsStore();
   const { structures } = useBooksStore();
@@ -132,6 +133,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     : [];
 
   const inSettings = location.pathname === "/app/settings" || location.pathname.startsWith("/app/settings/");
+  const inDocs = location.pathname === "/app/docs" || location.pathname.startsWith("/app/docs/");
+  const docsNav = getDocGroups().flatMap((group) => group.docs).map((doc) => ({ label: localizedDoc(doc, normalizeDocLang(i18n.language)).title, href: `/app/docs/${doc.slug}`, icon: <FileText className="h-4 w-4" /> }));
   const settingsNav: NavItem[] = [
     { label: t("settings.title"), href: "/app/settings", icon: <Settings className="h-4 w-4" /> },
     { label: t("settingsSection.aiRouterTitle"), href: "/app/settings/ai-router", icon: <Users className="h-4 w-4" /> },
@@ -147,9 +150,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <div className="flex items-center gap-2 px-4 py-4">
         <BookOpen className="h-6 w-6 text-primary" />
         <span className="font-semibold text-base leading-tight">Narrarium</span>
-        <span className="ml-auto rounded-full border px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+        <Link to="/app/patch-notes" onClick={onNavigate} title={t("patchNotes.title")} className="ml-auto rounded-full border px-2 py-0.5 font-mono text-[10px] text-muted-foreground transition hover:border-primary/40 hover:text-foreground">
           v{APP_VERSION}
-        </span>
+        </Link>
         <button
           type="button"
           onClick={() => useUiStore.getState().setSidebarCollapsed(true)}
@@ -178,7 +181,17 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </>
         )}
 
-        {!inSettings && paragraphNav.length > 0 && (
+        {inDocs && (
+          <>
+            <NavGroup label={t("docsPage.documentation")} first />
+            <nav className="px-2 space-y-1">
+              <NavLink item={{ label: t("public.docsTitle"), href: "/app/docs", icon: <Library className="h-4 w-4" /> }} active={location.pathname === "/app/docs"} onNavigate={onNavigate} />
+              {docsNav.map((item) => <NavLink key={item.href} item={item} active={location.pathname === item.href} onNavigate={onNavigate} />)}
+            </nav>
+          </>
+        )}
+
+        {!inSettings && !inDocs && paragraphNav.length > 0 && (
           <>
             <NavGroup label={paragraph?.title ?? t("nav.currentParagraph")} first />
             <nav className="px-2 space-y-1">
@@ -189,7 +202,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </>
         )}
 
-        {!inSettings && chapterNav.length > 0 && (
+        {!inSettings && !inDocs && chapterNav.length > 0 && (
           <>
             <NavGroup label={chapter?.title ?? t("nav.currentChapter")} first={paragraphNav.length === 0} />
             <nav className="px-2 space-y-1">
@@ -200,7 +213,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </>
         )}
 
-        {!inSettings && bookId && (
+        {!inSettings && !inDocs && bookId && (
           <>
             <NavGroup label={book?.name ?? t("nav.currentBook")} first={paragraphNav.length === 0 && chapterNav.length === 0} />
             <nav className="px-2 space-y-1">
@@ -217,8 +230,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </>
         )}
 
-        {!inSettings && <NavGroup label={t("nav.myBooks")} first={!bookId} />}
-        {!inSettings && <nav className="px-2 space-y-1">
+        {!inSettings && !inDocs && <NavGroup label={t("nav.myBooks")} first={!bookId} />}
+        {!inSettings && !inDocs && <nav className="px-2 space-y-1">
           <NavLink
             item={{ label: t("nav.allBooks"), href: "/app/books", icon: <Library className="h-4 w-4" /> }}
             active={location.pathname === "/app/books"}

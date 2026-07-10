@@ -1,4 +1,5 @@
-import { docEntries, mcpTools, type DocEntry, type DocGroup, type DocLang, type DocTranslation } from "./generated-docs";
+import { mcpTools, type DocEntry, type DocGroup, type DocLang, type DocTranslation } from "./generated-docs";
+import { appDocEntries } from "@/lib/appDocs";
 import i18n from "@/i18n";
 
 export type { DocEntry, DocGroup, DocLang, DocTranslation };
@@ -23,12 +24,12 @@ export function getDocGroups(): Array<{ key: DocGroup; label: string; docs: DocE
   return GROUPS.map((key) => ({
     key,
     label: groupLabel(key),
-    docs: docEntries.filter((entry) => entry.group === key),
+    docs: appDocEntries.filter((entry) => entry.group === key),
   })).filter((group) => group.docs.length > 0);
 }
 
 export function getDocBySlug(slug: string | undefined): DocEntry | undefined {
-  return docEntries.find((entry) => entry.slug === slug);
+  return appDocEntries.find((entry) => entry.slug === slug);
 }
 
 export function getMcpTools() {

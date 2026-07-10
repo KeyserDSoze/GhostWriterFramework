@@ -24,6 +24,15 @@ Use Narrarium as a book-writing framework where the repository is the source of 
 
 Narrarium MCP already auto-refreshes `plot.md` and the resume files after final chapter or paragraph mutations. Evaluations remain manual unless explicitly requested.
 
+## Versioning and patch notes
+
+- Every application change that is committed and pushed must bump `src/narrarium-site/package.json` and the root lockfile version according to the repository release workflow.
+- Before the version bump is committed, add a matching entry to `src/narrarium-site/src/content/patch-notes.json`.
+- Every patch-note entry must contain a title, summary, and non-empty change list in both English (`en`) and Italian (`it`).
+- Patch notes must describe user-visible behavior and navigation, not only internal implementation details.
+- Never commit or push a Narrarium site version without a matching bilingual patch note. `npm run bms:build` enforces this rule.
+- After each versioned commit, push `main` and monitor the `Deploy Narrarium Site` GitHub Actions workflow until completion, unless the user explicitly requests otherwise.
+
 ## Canon discipline
 
 - Do not duplicate canon if the fact already exists in another markdown file.

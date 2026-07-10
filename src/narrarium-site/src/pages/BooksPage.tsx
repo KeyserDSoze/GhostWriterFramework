@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { BookOpen, PlusCircle, Lock, Globe, Trash2 } from "lucide-react";
+import { Bot, BookOpen, Github, PlusCircle, Lock, Globe, KeyRound, Trash2 } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -147,18 +147,19 @@ export function BooksPage() {
 function EmptyState() {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-border py-20 text-center">
-      <BookOpen className="mb-4 h-12 w-12 text-muted-foreground" />
-      <h2 className="text-lg font-semibold">{t("books.emptyTitle")}</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {t("books.emptyDescription")}
-      </p>
-      <Button asChild className="mt-4">
-        <Link to="/app/books/add">
-          <PlusCircle className="mr-2 h-4 w-4" />
-          {t("books.addFirst")}
-        </Link>
-      </Button>
+    <div className="space-y-6 rounded-3xl border border-dashed p-5 sm:p-8">
+      <div className="text-center"><BookOpen className="mx-auto h-12 w-12 text-primary" /><h2 className="mt-4 font-serif text-2xl font-semibold">{t("books.emptyTitle")}</h2><p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{t("books.emptyDescription")}</p></div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <QuickStartCard icon={<Github className="h-5 w-5" />} step={t("books.quickStart.step", { number: 1 })} title={t("books.quickStart.githubTitle")} text={t("books.quickStart.githubBody")} action={<a href="https://github.com/signup" target="_blank" rel="noreferrer" className="text-sm font-medium text-primary underline">{t("books.quickStart.githubAction")}</a>} />
+        <QuickStartCard icon={<KeyRound className="h-5 w-5" />} step={t("books.quickStart.step", { number: 2 })} title={t("books.quickStart.patTitle")} text={t("books.quickStart.patBody")} action={<Link to="/app/settings/github" className="text-sm font-medium text-primary underline">{t("books.quickStart.patAction")}</Link>} />
+        <QuickStartCard icon={<Bot className="h-5 w-5" />} step={t("books.quickStart.step", { number: 3 })} title={t("books.quickStart.aiTitle")} text={t("books.quickStart.aiBody")} action={<Link to="/app/settings/ai-router" className="text-sm font-medium text-primary underline">{t("books.quickStart.aiAction")}</Link>} />
+        <QuickStartCard icon={<BookOpen className="h-5 w-5" />} step={t("books.quickStart.step", { number: 4 })} title={t("books.quickStart.bookTitle")} text={t("books.quickStart.bookBody")} action={<Link to="/app/books/add" className="text-sm font-medium text-primary underline">{t("books.addFirst")}</Link>} />
+      </div>
+      <div className="flex flex-wrap justify-center gap-2"><Button asChild><Link to="/app/books/add"><PlusCircle className="mr-2 h-4 w-4" />{t("books.addFirst")}</Link></Button><Button variant="outline" onClick={() => window.dispatchEvent(new Event("narrarium:open-onboarding"))}>{t("onboarding.open")}</Button></div>
     </div>
   );
+}
+
+function QuickStartCard({ icon, step, title, text, action }: { icon: React.ReactNode; step: string; title: string; text: string; action: React.ReactNode }) {
+  return <div className="rounded-2xl border bg-card p-4"><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">{icon}</div><div><p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{step}</p><p className="font-semibold">{title}</p></div></div><p className="mt-3 text-sm leading-6 text-muted-foreground">{text}</p><div className="mt-3">{action}</div></div>;
 }

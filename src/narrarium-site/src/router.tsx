@@ -20,6 +20,7 @@ import { WritingStylePage } from "@/pages/WritingStylePage";
 import { EvaluationStylePage } from "@/pages/EvaluationStylePage";
 import { ReaderPersonasPage } from "@/pages/ReaderPersonasPage";
 import { ReaderEvaluationsPage } from "@/pages/ReaderEvaluationsPage";
+import { PatchNotesPage } from "@/pages/PatchNotesPage";
 import { ChapterStageIndexPage } from "@/pages/ChapterStageIndexPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { MigratePage } from "@/pages/MigratePage";
@@ -70,6 +71,7 @@ export const router = createBrowserRouter([
       { path: "books", element: <BooksPage /> },
       { path: "books/add", element: <AddBookPage /> },
       { path: "chats", element: <AssistantChatsPage /> },
+      { path: "patch-notes", element: <PatchNotesPage /> },
       { path: "books/:bookId", element: <BookPage /> },
       { path: "books/:bookId/dashboard", element: <BookDashboardPage /> },
       { path: "books/:bookId/assets", element: <AssetGalleryPage /> },

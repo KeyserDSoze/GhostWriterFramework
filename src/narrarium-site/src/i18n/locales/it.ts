@@ -603,7 +603,45 @@ const it = {
     removeAria: "Rimuovi {{name}}",
     emptyTitle: "Ancora nessun libro",
     emptyDescription: "Collega un repository GitHub per iniziare a gestire il tuo libro Narrarium.",
-    addFirst: "Aggiungi il tuo primo libro"
+    addFirst: "Aggiungi il tuo primo libro",
+    quickStart: {
+      step: "Passo {{number}}",
+      githubTitle: "Crea un account GitHub",
+      githubBody: "I libri Narrarium sono repository GitHub. Crea un account gratuito se non ne possiedi già uno.",
+      githubAction: "Apri la registrazione GitHub",
+      patTitle: "Crea e salva un PAT",
+      patBody: "Crea un token fine-grained con Contents read/write e Metadata read, poi salvalo in Impostazioni → GitHub.",
+      patAction: "Configura accesso GitHub",
+      aiTitle: "Configura un modello AI",
+      aiBody: "Aggiungi Azure OpenAI, un provider compatibile OpenAI o GitHub Models, poi scegli i modelli per i task del Router.",
+      aiAction: "Configura AI Router",
+      bookTitle: "Crea il repository libro",
+      bookBody: "Crea un repository nuovo o collega un libro Narrarium esistente, poi aggiungi capitoli e paragrafi ordinati."
+    }
+  },
+  patchNotes: {
+    badge: "Storico release",
+    title: "Patch note",
+    description: "Tutti i cambiamenti versionati dell'app Narrarium, in ordine cronologico.",
+    whatsNew: "Novità della v{{version}}",
+    viewAll: "Vedi tutti i cambiamenti"
+  },
+  onboarding: {
+    title: "Benvenuto in Narrarium",
+    open: "Avvia guida",
+    stepOf: "Passo {{step}} di {{total}}",
+    skip: "Salta guida",
+    next: "Avanti",
+    finish: "Inizia a scrivere",
+    steps: {
+      "0": { title: "Il repository è il libro", body: "Narrarium conserva capitoli, paragrafi, canone, bozze, valutazioni e asset come Markdown nel repository GitHub. Il tuo Drive contiene soltanto impostazioni private e dati personali dell'app." },
+      "1": { title: "Collega GitHub", body: "Serve un account GitHub perché ogni libro Narrarium è un repository con cronologia reale, branch, commit e pull request.", action: "Crea account GitHub" },
+      "2": { title: "Crea un PAT sicuro", body: "Crea un Personal Access Token GitHub fine-grained limitato ai repository usati. Assegna Contents read/write e Metadata read, poi salvalo nelle Impostazioni Narrarium.", action: "Crea PAT fine-grained" },
+      "3": { title: "Porta il tuo modello AI", body: "Configura Azure OpenAI, provider compatibili OpenAI o GitHub Models. L'AI Router permette a ogni task di usare modello primario e fallback: Copilot, review, ricerca, voce e lettori simulati.", action: "Apri AI Router" },
+      "4": { title: "Crea il primo libro", body: "Crea un repository nuovo o collegane uno esistente. Un nuovo libro parte con metadati, stile di scrittura e valutazione, lettori simulati standard, note, plot e struttura di pubblicazione.", action: "Aggiungi un libro" },
+      "5": { title: "Scrivi capitoli e paragrafi", body: "Un capitolo contiene paragrafi o scene ordinati. Ogni paragrafo può attraversare Script, Bozza e Definitivo, con editing AI contestuale, valutazioni, canone e asset." },
+      "6": { title: "Copilot, Reader e pubblicazione", body: "Usa Copilot o Fantasmino per invocare tool, ricerca, Git e valutazioni. Leggi il manoscritto con le impostazioni reader ed esporta Word, PDF, EPUB o submission package." }
+    }
   },
   addBook: {
     title: "Aggiungi un libro",

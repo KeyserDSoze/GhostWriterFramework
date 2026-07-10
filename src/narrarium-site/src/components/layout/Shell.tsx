@@ -12,6 +12,8 @@ import { GlobalContextMenu } from "@/components/editor/GlobalContextMenu";
 import { LlmDebugPanel } from "@/components/debug/LlmDebugPanel";
 import { GenerateDiffDialog } from "@/components/book/GenerateDiffDialog";
 import { SessionStatusPill } from "@/components/layout/SessionStatusPill";
+import { PatchNotesDialog } from "@/components/layout/PatchNotesDialog";
+import { OnboardingDialog } from "@/components/layout/OnboardingDialog";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
@@ -150,6 +152,8 @@ export function Shell() {
       <GlobalContextMenu />
       <LlmDebugPanel />
       <GenerateDiffDialog />
+      <OnboardingDialog />
+      <PatchNotesDialog />
       <Suspense fallback={null}>
         <AssistantPanel />
       </Suspense>

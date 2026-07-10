@@ -1,0 +1,64 @@
+[
+  {
+    "version": "0.66.0",
+    "date": "2026-07-10",
+    "en": {
+      "title": "Documentation, onboarding and release history",
+      "summary": "Narrarium now has app-focused bilingual documentation, guided onboarding and mandatory versioned patch notes.",
+      "changes": [
+        "Replaced mixed framework/package documentation with a bilingual guide dedicated to the Narrarium application and its capabilities.",
+        "Moved documentation navigation into the main application sidebar and removed the nested menu inside documentation pages.",
+        "Added a bilingual patch-note page and an automatic one-time release dialog for each installed version.",
+        "Made the version label and user menu open the complete release history.",
+        "Added a guided first-run tour covering data ownership, GitHub/PAT setup, AI Router, book creation, chapters, paragraphs, Copilot and publishing.",
+        "Added a detailed quick-start guide when the book library is empty.",
+        "Added a build check and repository agent rule requiring patch notes for every versioned release."
+      ]
+    },
+    "it": {
+      "title": "Documentazione, onboarding e storico release",
+      "summary": "Narrarium dispone ora di documentazione applicativa bilingue, guida iniziale e patch note obbligatorie per versione.",
+      "changes": [
+        "Sostituita la documentazione mista di framework e package con una guida bilingue dedicata esclusivamente all'app Narrarium e alle sue capability.",
+        "Spostata la navigazione della documentazione nella sidebar principale ed eliminato il menu annidato dentro le pagine docs.",
+        "Aggiunta una pagina patch note bilingue e un dialog automatico mostrato una sola volta per ogni versione installata.",
+        "Resi cliccabili la versione e il menu utente per aprire l'intero storico release.",
+        "Aggiunta una guida iniziale per proprietà dei dati, GitHub/PAT, AI Router, creazione libro, capitoli, paragrafi, Copilot e pubblicazione.",
+        "Aggiunta una guida quick-start dettagliata quando la libreria libri è vuota.",
+        "Aggiunti controllo build e regola agent che rendono obbligatorie le patch note per ogni release versionata."
+      ]
+    }
+  },
+  {
+    "version": "0.65.55",
+    "date": "2026-07-10",
+    "en": {
+      "title": "Narrarium application foundation",
+      "summary": "Summary of the application capabilities delivered before versioned patch notes were introduced.",
+      "changes": [
+        "GitHub-backed books with local IndexedDB working copies, branches, commits, pull, push, pull requests, backup and recovery.",
+        "Structured books, chapters, paragraphs, canon, scripts, drafts, writing styles, evaluations, research, notes and assets.",
+        "Copilot and Fantasmino with Tool Registry, no-LLM navigation/read actions, Git tools, Markdown chat, streaming and exports.",
+        "Configurable AI Router for chat, review, research, reader evaluations, speech and images, with fallbacks and cost tracking.",
+        "Reader preview and Word, PDF, EPUB and submission-package publishing with shared metadata presentation settings.",
+        "Critical editorial evaluations with custom criteria, scores, chapter aggregation and evaluation-style contracts.",
+        "Standard, genre and custom simulated readers with separate version-aware evaluations, stale detection and panel summaries.",
+        "Intent-aware Deep Research with Wikipedia, Wikidata, GDELT and configurable internet providers."
+      ]
+    },
+    "it": {
+      "title": "Fondamenta dell'app Narrarium",
+      "summary": "Sunto delle capability applicative realizzate prima dell'introduzione delle patch note versionate.",
+      "changes": [
+        "Libri su GitHub con working copy locale IndexedDB, branch, commit, pull, push, pull request, backup e recupero.",
+        "Gestione strutturata di libri, capitoli, paragrafi, canone, script, bozze, stili, valutazioni, ricerche, note e asset.",
+        "Copilot e Fantasmino con Tool Registry, azioni locali di navigazione/lettura, tool Git, chat Markdown, streaming ed export.",
+        "AI Router configurabile per chat, review, ricerca, valutazioni lettore, voce e immagini, con fallback e tracciamento costi.",
+        "Reader preview e pubblicazione Word, PDF, EPUB e submission package con impostazioni condivise dei metadati editoriali.",
+        "Valutazioni editoriali critiche con criteri personalizzati, punteggi, aggregazione capitolo e contratto di stile valutativo.",
+        "Lettori simulati standard, di genere e custom con valutazioni separate, hash versione, stato stale e sintesi del panel.",
+        "Deep Research intent-aware con Wikipedia, Wikidata, GDELT e provider Internet configurabili."
+      ]
+    }
+  }
+]
