@@ -1137,6 +1137,19 @@ const en = {
     script: "Script {{slug}}",
     paragraphEvaluation: "Paragraph evaluation {{slug}}"
   },
+  evaluationView: {
+    scores: "Scores",
+    scoresHint: "Numeric criteria from the evaluation frontmatter, scored from 0 to 10 with explicit reasons.",
+    discursiveEvaluation: "Discursive evaluation",
+    chapterAverage: "Chapter average scores",
+    chapterAverageHint: "Average of the scores stored in all paragraph evaluations for this chapter.",
+    noParagraphScores: "No paragraph scores found yet. Generate paragraph evaluations to build the chapter average.",
+    paragraphEvaluations: "Paragraph evaluations",
+    paragraphEvaluationsHint: "Every paragraph evaluation is shown in reading order, with scores and descriptive notes.",
+    noParagraphEvaluations: "No paragraph evaluation files found for this chapter yet.",
+    chapterSourceEvaluation: "Chapter evaluation source",
+    sourceEditor: "Markdown source editor"
+  },
   createDialogs: {
     addChapter: "Add chapter",
     newChapter: "New chapter",

@@ -26,10 +26,26 @@ import { parseScript, serializeScript, type ScriptDoc } from "@/narrarium/script
 import { proseToScript, refineProse, scriptToProse, stripFrontmatter, generateChapterResume, generateChapterEvaluation, generateParagraphEvaluation, type PipelineSource } from "@/narrarium/pipeline";
 import { useGenerateDiffStore } from "@/store/generateDiffStore";
 import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
+import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
 
 interface MetaEntry {
   key: string;
   value: string | string[];
+}
+
+interface EvaluationScore {
+  key: string;
+  label: string;
+  score: number;
+  explanation: string;
+}
+
+interface ParagraphEvaluationView {
+  paragraphNumber: string;
+  paragraphTitle: string;
+  path: string;
+  body: string;
+  scores: EvaluationScore[];
 }
 
 const READONLY_KEYS = new Set(["type", "id", "chapter", "paragraph"]);
@@ -83,6 +99,178 @@ function paragraphSlug(path: string): string {
   return (path.split("/").pop() ?? "").replace(/\.md$/i, "");
 }
 
+function titleFromCriterion(key: string): string {
+  return key.replace(/[_-]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function parseScoresFromEntries(entries: MetaEntry[]): EvaluationScore[] {
+  const raw = entries.find((entry) => entry.key === "scores")?.value;
+  if (typeof raw !== "string" || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw) as Record<string, { score?: unknown; explanation?: unknown; description?: unknown }>;
+    return Object.entries(parsed).map(([key, value]) => ({
+      key,
+      label: titleFromCriterion(key),
+      score: typeof value?.score === "number" ? Math.max(0, Math.min(10, value.score)) : 0,
+      explanation: typeof value?.explanation === "string" && value.explanation.trim()
+        ? value.explanation.trim()
+        : typeof value?.description === "string" ? value.description.trim() : "",
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function scoreTone(score: number): { bar: string; badge: string } {
+  if (score >= 8) return { bar: "bg-emerald-500", badge: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" };
+  if (score >= 6) return { bar: "bg-primary", badge: "border-primary/40 bg-primary/10 text-primary" };
+  if (score >= 4) return { bar: "bg-amber-500", badge: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300" };
+  return { bar: "bg-destructive", badge: "border-destructive/40 bg-destructive/10 text-destructive" };
+}
+
+function averageScores(items: ParagraphEvaluationView[]): EvaluationScore[] {
+  const grouped = new Map<string, { label: string; total: number; count: number; explanations: string[] }>();
+  for (const item of items) {
+    for (const score of item.scores) {
+      const current = grouped.get(score.key) ?? { label: score.label, total: 0, count: 0, explanations: [] };
+      current.total += score.score;
+      current.count += 1;
+      if (score.explanation) current.explanations.push(`${item.paragraphNumber} ${item.paragraphTitle}: ${score.explanation}`);
+      grouped.set(score.key, current);
+    }
+  }
+  return [...grouped.entries()].map(([key, value]) => ({
+    key,
+    label: value.label,
+    score: value.count ? Math.round((value.total / value.count) * 10) / 10 : 0,
+    explanation: value.explanations.slice(0, 3).join("\n"),
+  })).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function ScoreCards({ scores }: { scores: EvaluationScore[] }) {
+  if (!scores.length) return null;
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {scores.map((score) => {
+        const tone = scoreTone(score.score);
+        return (
+          <div key={score.key} className="rounded-2xl border bg-card/70 p-4 shadow-sm">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold">{score.label}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{score.key}</p>
+              </div>
+              <span className={`rounded-full border px-2.5 py-1 text-sm font-semibold ${tone.badge}`}>{score.score.toFixed(score.score % 1 ? 1 : 0)}/10</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-muted">
+              <div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${Math.max(0, Math.min(100, score.score * 10))}%` }} />
+            </div>
+            {score.explanation && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-muted-foreground">{score.explanation}</p>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function EvaluationBody({ body }: { body: string }) {
+  if (!body.trim()) return null;
+  return <div className="doc-prose max-w-none" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(body) }} />;
+}
+
+function EvaluationOverview({
+  t,
+  body,
+  scores,
+  paragraphEvaluations,
+  loadingParagraphEvaluations,
+  isChapter,
+}: {
+  t: ReturnType<typeof useTranslation>["t"];
+  body: string;
+  scores: EvaluationScore[];
+  paragraphEvaluations: ParagraphEvaluationView[];
+  loadingParagraphEvaluations: boolean;
+  isChapter: boolean;
+}) {
+  if (!isChapter) {
+    return (
+      <div className="space-y-5">
+        {scores.length > 0 && (
+          <section className="space-y-3">
+            <div>
+              <p className="text-sm font-semibold">{t("evaluationView.scores")}</p>
+              <p className="text-xs text-muted-foreground">{t("evaluationView.scoresHint")}</p>
+            </div>
+            <ScoreCards scores={scores} />
+          </section>
+        )}
+        <section className="rounded-2xl border bg-card p-5 shadow-sm">
+          <p className="mb-3 text-sm font-semibold">{t("evaluationView.discursiveEvaluation")}</p>
+          <EvaluationBody body={body} />
+        </section>
+      </div>
+    );
+  }
+
+  const averages = averageScores(paragraphEvaluations);
+  return (
+    <div className="space-y-5">
+      <section className="space-y-3">
+        <div>
+          <p className="text-sm font-semibold">{t("evaluationView.chapterAverage")}</p>
+          <p className="text-xs text-muted-foreground">{t("evaluationView.chapterAverageHint")}</p>
+        </div>
+        {loadingParagraphEvaluations ? (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {[...Array(3)].map((_, index) => <Skeleton key={index} className="h-32 rounded-2xl" />)}
+          </div>
+        ) : averages.length ? (
+          <ScoreCards scores={averages} />
+        ) : (
+          <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">{t("evaluationView.noParagraphScores")}</div>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <p className="text-sm font-semibold">{t("evaluationView.paragraphEvaluations")}</p>
+          <p className="text-xs text-muted-foreground">{t("evaluationView.paragraphEvaluationsHint")}</p>
+        </div>
+        {loadingParagraphEvaluations ? (
+          <div className="space-y-3">
+            {[...Array(3)].map((_, index) => <Skeleton key={index} className="h-28 rounded-2xl" />)}
+          </div>
+        ) : paragraphEvaluations.length ? (
+          <div className="space-y-4">
+            {paragraphEvaluations.map((entry) => (
+              <article key={entry.path} className="rounded-2xl border bg-card p-5 shadow-sm">
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">{entry.paragraphNumber} · {entry.paragraphTitle}</p>
+                    <p className="font-mono text-xs text-muted-foreground">{entry.path}</p>
+                  </div>
+                </div>
+                {entry.scores.length > 0 && <div className="mb-5"><ScoreCards scores={entry.scores} /></div>}
+                <EvaluationBody body={entry.body} />
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">{t("evaluationView.noParagraphEvaluations")}</div>
+        )}
+      </section>
+
+      {body.trim() && (
+        <section className="rounded-2xl border bg-muted/20 p-5">
+          <p className="mb-3 text-sm font-semibold">{t("evaluationView.chapterSourceEvaluation")}</p>
+          <EvaluationBody body={body} />
+        </section>
+      )}
+    </div>
+  );
+}
+
 export function WorkspaceDocPage() {
   const { bookId, chapterId, paragraphNum, workspaceKind } = useParams<{
     bookId: string;
@@ -120,6 +308,8 @@ export function WorkspaceDocPage() {
   const [pipelineGw, setPipelineGw] = useState("");
   const [scriptDoc, setScriptDoc] = useState<ScriptDoc>({ nodes: [] });
   const [scriptGenLoading, setScriptGenLoading] = useState(false);
+  const [paragraphEvaluations, setParagraphEvaluations] = useState<ParagraphEvaluationView[]>([]);
+  const [loadingParagraphEvaluations, setLoadingParagraphEvaluations] = useState(false);
 
   const proseAssist = useProseAssist({
     textareaRef: bodyRef,
@@ -145,6 +335,7 @@ export function WorkspaceDocPage() {
   const paraSlug = paragraph ? paragraphSlug(paragraph.path) : null;
 
   const isDirty = body !== savedBody || JSON.stringify(entries) !== JSON.stringify(savedEntries);
+  const evaluationScores = parseScoresFromEntries(entries);
 
   useRegisterPageSave({ dirty: isDirty, enabled: Boolean(book && token), onSave: () => handleSave() });
   useRegisterPageActions([
@@ -177,6 +368,38 @@ export function WorkspaceDocPage() {
       })
       .finally(() => setLoading(false));
   }, [book, token, branch, path, t, toast]);
+
+  useEffect(() => {
+    if (!book || !token || !chapter || paragraph || workspaceKind !== "evaluation") {
+      setParagraphEvaluations([]);
+      return;
+    }
+    let active = true;
+    setLoadingParagraphEvaluations(true);
+    Promise.all(chapter.paragraphs.map(async (entry) => {
+      const slug = paragraphSlug(entry.path);
+      const evalPath = `evaluations/paragraphs/${chapter.slug}/${slug}.md`;
+      try {
+        const raw = await loadFileContent(token, book.owner, book.repo, evalPath, branch);
+        const parsed = parseFrontmatter(raw);
+        return {
+          paragraphNumber: entry.number,
+          paragraphTitle: entry.title,
+          path: evalPath,
+          body: parsed.body,
+          scores: parseScoresFromEntries(parsed.entries),
+        } satisfies ParagraphEvaluationView;
+      } catch {
+        return null;
+      }
+    }))
+      .then((items) => {
+        if (!active) return;
+        setParagraphEvaluations(items.filter((item): item is ParagraphEvaluationView => Boolean(item)));
+      })
+      .finally(() => { if (active) setLoadingParagraphEvaluations(false); });
+    return () => { active = false; };
+  }, [book, token, branch, chapter, paragraph, workspaceKind]);
 
   if (!book) {
     return (
@@ -320,8 +543,8 @@ export function WorkspaceDocPage() {
     }
   }
 
-  const readonlyEntries = entries.filter((entry) => READONLY_KEYS.has(entry.key));
-  const editableEntries = entries.filter((entry) => !READONLY_KEYS.has(entry.key) && entry.key !== "ghostwriter");
+  const readonlyEntries = entries.filter((entry) => READONLY_KEYS.has(entry.key) && entry.key !== "scores");
+  const editableEntries = entries.filter((entry) => !READONLY_KEYS.has(entry.key) && entry.key !== "ghostwriter" && entry.key !== "scores");
 
   function setGhostwriter(slug: string) {
     setEntries((prev) => {
@@ -562,6 +785,28 @@ export function WorkspaceDocPage() {
             <span className="text-xs text-muted-foreground">{t("script.generateHint")}</span>
           </div>
           <ScriptEditor doc={scriptDoc} structure={structure ?? undefined} bookId={bookId} onChange={(next) => { setScriptDoc(next); setBody(serializeScript(next)); }} />
+        </div>
+      ) : workspaceKind === "evaluation" ? (
+        <div className="space-y-5">
+          <EvaluationOverview
+            t={t}
+            body={body}
+            scores={evaluationScores}
+            paragraphEvaluations={paragraphEvaluations}
+            loadingParagraphEvaluations={loadingParagraphEvaluations}
+            isChapter={!paragraph}
+          />
+          <details className="rounded-2xl border bg-card p-4">
+            <summary className="cursor-pointer text-sm font-medium">{t("evaluationView.sourceEditor")}</summary>
+            <AutoTextarea
+              ref={bodyRef}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              className="mt-4 min-h-[42vh] font-mono text-sm leading-7"
+              placeholder={t("workspace.writeBodyPlaceholder")}
+              spellCheck={false}
+            />
+          </details>
         </div>
       ) : (
         <AutoTextarea

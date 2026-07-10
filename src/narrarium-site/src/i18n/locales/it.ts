@@ -1137,6 +1137,19 @@ const it = {
     script: "Script {{slug}}",
     paragraphEvaluation: "Valutazione paragrafo {{slug}}"
   },
+  evaluationView: {
+    scores: "Punteggi",
+    scoresHint: "Criteri numerici dal frontmatter della valutazione, con voto da 0 a 10 e motivazione esplicita.",
+    discursiveEvaluation: "Valutazione discorsiva",
+    chapterAverage: "Punteggi medi del capitolo",
+    chapterAverageHint: "Media dei punteggi salvati in tutte le valutazioni dei paragrafi di questo capitolo.",
+    noParagraphScores: "Nessun punteggio paragrafo trovato. Genera le valutazioni dei paragrafi per costruire la media del capitolo.",
+    paragraphEvaluations: "Valutazioni dei paragrafi",
+    paragraphEvaluationsHint: "Ogni valutazione paragrafo viene mostrata in ordine di lettura, con punteggi e note descrittive.",
+    noParagraphEvaluations: "Nessun file di valutazione paragrafo trovato per questo capitolo.",
+    chapterSourceEvaluation: "Sorgente valutazione capitolo",
+    sourceEditor: "Editor sorgente Markdown"
+  },
   createDialogs: {
     addChapter: "Aggiungi capitolo",
     newChapter: "Nuovo capitolo",
