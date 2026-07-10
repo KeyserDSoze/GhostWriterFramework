@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.69.1",
+    "date": "2026-07-10",
+    "en": {
+      "title": "Fix paragraph crash on mobile and expose merge in Actions",
+      "summary": "Reloading a paragraph on mobile no longer crashes, and the Improve and Merge draft + final actions now appear in the mobile Actions button.",
+      "changes": [
+        "Fixed a crash (React error #310) when refreshing a paragraph on mobile, caused by the merge feature initializing after the page's loading guards.",
+        "Added Improve paragraph and Merge draft + final to the mobile Actions button on the paragraph page, matching the right-click menu.",
+        "Kept the same actions available in the desktop toolbar and right-click menu."
+      ]
+    },
+    "it": {
+      "title": "Fix crash paragrafo su mobile e merge nel menu Azioni",
+      "summary": "Ricaricare un paragrafo su mobile non causa più il crash e le azioni Migliora e Unisci bozza + definitivo ora appaiono nel pulsante Azioni su mobile.",
+      "changes": [
+        "Corretto un crash (errore React #310) al ricaricamento di un paragrafo su mobile, causato dalla funzione di merge inizializzata dopo i controlli di caricamento della pagina.",
+        "Aggiunte Migliora paragrafo e Unisci bozza + definitivo al pulsante Azioni su mobile nella pagina del paragrafo, in linea con il menu del tasto destro.",
+        "Mantenute le stesse azioni nella toolbar desktop e nel menu del tasto destro."
+      ]
+    }
+  },
+  {
     "version": "0.69.0",
     "date": "2026-07-10",
     "en": {

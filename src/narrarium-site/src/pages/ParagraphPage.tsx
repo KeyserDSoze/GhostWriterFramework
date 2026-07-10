@@ -30,6 +30,7 @@ import { improveProse, synonymsFor, stripFrontmatter, type PipelineSource } from
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 import { useMergeDraftFinal } from "@/components/editor/useMergeDraftFinal";
 import { useRegisterPageSave } from "@/store/saveStore";
+import { useRegisterPageActions } from "@/store/pageActionsStore";
 import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
 import { presentMetadata } from "@/export/metadataPresentation";
 
@@ -207,11 +208,54 @@ export function ParagraphPage() {
     merge: () => proseHandlersRef.current.merge(),
   }, [viewMode]);
 
+  // ── Merge draft + final (hooks must stay above the early returns) ────────────
+  const currentGhostwriter = (() => {
+    const v = entries.find((e) => e.key === "ghostwriter")?.value;
+    return typeof v === "string" ? v : "";
+  })();
+  const draftBodyRef = useRef("");
+  const draftPath = paragraph?.draftPath ?? (chapter && paragraph ? `${chapter.path}/drafts/${(paragraph.path.split("/").pop() ?? "").replace(/\.md$/i, "")}.md` : "");
+  const merge = useMergeDraftFinal({
+    buildSource: () => (book && structure && chapter ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter } : null),
+    getDraftBody: () => draftBodyRef.current,
+    getFinalBody: () => body,
+    getFinalFrontmatter: () => buildFrontmatter(entries, "").replace(/\n*$/, "\n"),
+    draftPath,
+    finalPath: paragraph?.path ?? "",
+    ghostwriterSlug: currentGhostwriter || undefined,
+    onApplied: (side, mergedBody) => {
+      if (side === "final") {
+        setBody(mergedBody);
+        setSavedBody(mergedBody);
+        loadedTargetRef.current = null;
+      }
+      void reload();
+    },
+  });
+
+  async function runMerge() {
+    if (!book || !token) return;
+    let draftBody = "";
+    if (draftPath) {
+      try {
+        draftBody = stripFrontmatter(await loadFileContent(token, book.owner, book.repo, draftPath, branch));
+      } catch {
+        draftBody = "";
+      }
+    }
+    draftBodyRef.current = draftBody;
+    await merge.run();
+  }
+
   const isDirty =
     body !== savedBody ||
     JSON.stringify(entries) !== JSON.stringify(savedEntries);
 
   useRegisterPageSave({ dirty: isDirty, enabled: Boolean(paragraph && book), onSave: async () => { await handleSave(); } });
+  useRegisterPageActions([
+    { id: "improve-paragraph", label: t("paragraph.improveAll"), icon: <Wand2 className="h-4 w-4" />, run: () => void startImprove() },
+    { id: "merge-draft-final", label: t("merge.button"), icon: <Wand2 className="h-4 w-4" />, run: () => void runMerge(), disabled: merge.busy },
+  ], Boolean(paragraph && book && token));
 
   useEffect(() => {
     if (viewMode !== "reader") return;
@@ -491,51 +535,6 @@ export function ParagraphPage() {
         </AlertDescription>
       </Alert>
     );
-  }
-
-  // Separate entries by role
-  const currentGhostwriter = (() => {
-    const v = entries.find((e) => e.key === "ghostwriter")?.value;
-    return typeof v === "string" ? v : "";
-  })();
-
-  // ── Merge draft + final ─────────────────────────────────────────────────────
-  const draftBodyRef = useRef("");
-  const draftPath = paragraph?.draftPath ?? (chapter && paragraph ? `${chapter.path}/drafts/${(paragraph.path.split("/").pop() ?? "").replace(/\.md$/i, "")}.md` : "");
-  const merge = useMergeDraftFinal({
-    buildSource: () => (book && structure && chapter ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter } : null),
-    getDraftBody: () => draftBodyRef.current,
-    getFinalBody: () => body,
-    getFinalFrontmatter: () => {
-      const doc = buildFrontmatter(entries, "");
-      return doc.replace(/\n*$/, "\n");
-    },
-    draftPath,
-    finalPath: paragraph?.path ?? "",
-    ghostwriterSlug: currentGhostwriter || undefined,
-    onApplied: (side, mergedBody) => {
-      if (side === "final") {
-        setBody(mergedBody);
-        setSavedBody(mergedBody);
-        loadedTargetRef.current = null;
-      }
-      void reload();
-    },
-  });
-
-  async function runMerge() {
-    if (!book || !token) return;
-    // Fetch the current draft body so the AI can merge both sources.
-    let draftBody = "";
-    if (draftPath) {
-      try {
-        draftBody = stripFrontmatter(await loadFileContent(token, book.owner, book.repo, draftPath, branch));
-      } catch {
-        draftBody = "";
-      }
-    }
-    draftBodyRef.current = draftBody;
-    await merge.run();
   }
 
   async function startImprove() {
