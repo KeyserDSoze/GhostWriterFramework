@@ -330,10 +330,9 @@ async function buildDocxArtifact(snapshot: ExportBookSnapshot, scope: BookExport
     for (const entry of presentMetadata(record, keys)) {
       children.push(new Paragraph({
         children: [
-          new TextRun({ text: `${entry.key}: `, font: settings.fontName, size: Math.max(16, settings.fontSize * 2 - 2), bold: true }),
           new TextRun({ text: entry.value, font: settings.fontName, size: Math.max(16, settings.fontSize * 2 - 2) }),
         ],
-        spacing: { after: 80 },
+        spacing: { after: 20 },
       }));
     }
   };
@@ -504,7 +503,7 @@ async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportS
   }
 
   function writeMetadata(record: Record<string, unknown>, keys: string[]) {
-    for (const entry of presentMetadata(record, keys)) writeBlock(`${entry.key}: ${entry.value}`, { bold: true });
+    for (const entry of presentMetadata(record, keys)) writeBlock(entry.value);
   }
 
   function writeImage(asset: ExportAsset | undefined, fallbackAlt: string) {
@@ -670,7 +669,7 @@ function renderFrontmatterPre(frontmatterText: string | undefined, settings: Boo
 function renderMetadataHtml(record: Record<string, unknown>, keys: string[]): string {
   const entries = presentMetadata(record, keys);
   if (!entries.length) return "";
-  return `<div class="metadata">${entries.map((entry) => `${escapeHtml(entry.key)}: ${escapeHtml(entry.value)}`).join("\n")}</div>`;
+  return `<div class="metadata">${entries.map((entry) => escapeHtml(entry.value)).join("\n")}</div>`;
 }
 
 function epubCssFontFamily(fontFamily: BookExportSettings["fontFamily"]): string {

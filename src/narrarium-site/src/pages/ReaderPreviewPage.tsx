@@ -495,8 +495,8 @@ function ReaderFrontmatter({ value }: { value: string }) {
 function ReaderMetadata({ entries }: { entries: PresentedMetadata[] }) {
   if (!entries.length) return null;
   return (
-    <div className="reader-metadata mb-8 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
-      {entries.map((entry) => `${entry.key}: ${entry.value}`).join("\n")}
+    <div className="reader-metadata mb-5 whitespace-pre-wrap text-sm leading-5 text-muted-foreground">
+      {entries.map((entry) => entry.value).join("\n")}
     </div>
   );
 }
