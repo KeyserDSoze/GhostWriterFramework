@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.67.3",
+    "date": "2026-07-10",
+    "en": {
+      "title": "Improve selection returns in the paragraph editor",
+      "summary": "The right-click 'Improve selection' / 'Improve paragraph' action now appears again in the paragraph editor after switching from reading to editing.",
+      "changes": [
+        "Fixed the paragraph editor not registering its text area when you switch from reader mode to edit mode, which hid the right-click Improve options.",
+        "The context menu now reliably shows 'Improve selection' and 'Improve paragraph' while editing a paragraph.",
+        "Confirmed the improve action always keeps the reference writing style (global and chapter) and the paragraph, chapter or book ghostwriter in its instructions."
+      ]
+    },
+    "it": {
+      "title": "Migliora selezione torna nell'editor del paragrafo",
+      "summary": "L'azione da click destro 'Migliora selezione' / 'Migliora paragrafo' ricompare nell'editor del paragrafo dopo essere passati dalla lettura alla modifica.",
+      "changes": [
+        "Corretto il mancato aggancio dell'area di testo del paragrafo quando si passa dalla modalità lettura alla modifica, che nascondeva le opzioni Migliora del click destro.",
+        "Il menu contestuale mostra ora in modo affidabile 'Migliora selezione' e 'Migliora paragrafo' durante la modifica di un paragrafo.",
+        "Confermato che l'azione di miglioramento mantiene sempre nelle istruzioni lo stile di scrittura di riferimento (globale e di capitolo) e il ghostwriter di paragrafo, capitolo o libro."
+      ]
+    }
+  },
+  {
     "version": "0.67.2",
     "date": "2026-07-10",
     "en": {

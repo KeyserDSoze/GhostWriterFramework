@@ -202,7 +202,7 @@ export function ParagraphPage() {
   useRegisterProseEditor(bodyRef, {
     improve: (s) => proseHandlersRef.current.improve(s),
     synonym: (s) => proseHandlersRef.current.synonym(s),
-  });
+  }, [viewMode]);
 
   const isDirty =
     body !== savedBody ||
