@@ -1,5 +1,25 @@
 [
   {
+    "version": "0.66.1",
+    "date": "2026-07-10",
+    "en": {
+      "title": "Return to the book library from documentation",
+      "summary": "The documentation sidebar now keeps the main library exit visible.",
+      "changes": [
+        "Added All Books as the first fixed item in the documentation navigation.",
+        "Kept documentation sections in the main sidebar without trapping the user inside Help."
+      ]
+    },
+    "it": {
+      "title": "Ritorno alla libreria dalla documentazione",
+      "summary": "La sidebar della documentazione mantiene ora visibile l'uscita principale verso la libreria.",
+      "changes": [
+        "Aggiunta la voce Tutti i libri come primo elemento fisso della navigazione documentazione.",
+        "Mantenute le sezioni docs nella sidebar principale senza bloccare l'utente dentro l'Aiuto."
+      ]
+    }
+  },
+  {
     "version": "0.66.0",
     "date": "2026-07-10",
     "en": {

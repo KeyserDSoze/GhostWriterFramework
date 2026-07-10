@@ -185,6 +185,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <>
             <NavGroup label={t("docsPage.documentation")} first />
             <nav className="px-2 space-y-1">
+              <NavLink item={{ label: t("nav.allBooks"), href: "/app/books", icon: <Library className="h-4 w-4" /> }} active={false} onNavigate={onNavigate} />
+              <Separator className="my-2" />
               <NavLink item={{ label: t("public.docsTitle"), href: "/app/docs", icon: <Library className="h-4 w-4" /> }} active={location.pathname === "/app/docs"} onNavigate={onNavigate} />
               {docsNav.map((item) => <NavLink key={item.href} item={item} active={location.pathname === item.href} onNavigate={onNavigate} />)}
             </nav>
