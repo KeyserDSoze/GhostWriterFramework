@@ -1,5 +1,23 @@
 [
   {
+    "version": "0.69.2",
+    "date": "2026-07-10",
+    "en": {
+      "title": "Merge explanation follows the book language",
+      "summary": "The explanation of merge choices is now written in the book/interface language instead of always English.",
+      "changes": [
+        "Fixed the draft + final merge so the 'why these choices' explanation is written in the same language as the book (e.g. Italian), not only the merged text."
+      ]
+    },
+    "it": {
+      "title": "La spiegazione del merge segue la lingua del libro",
+      "summary": "La spiegazione delle scelte del merge è ora scritta nella lingua del libro/interfaccia invece che sempre in inglese.",
+      "changes": [
+        "Corretto il merge bozza + definitivo: la spiegazione 'perché queste scelte' viene scritta nella stessa lingua del libro (es. italiano), non solo il testo unito."
+      ]
+    }
+  },
+  {
     "version": "0.69.1",
     "date": "2026-07-10",
     "en": {

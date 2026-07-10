@@ -163,9 +163,10 @@ export async function mergeDraftAndFinal(
     `Rules:`,
     `- Preserve established canon, facts, names, chronology, and any reveal already present.`,
     `- Do not invent new plot facts. You may sharpen phrasing, rhythm, imagery, and clarity.`,
-    `- Keep the same language as the sources. Write in ${LANG(src)}.`,
+    `- Keep the same language as the sources for the merged body. Write in ${LANG(src)}.`,
     `- If one side is empty, treat the other as the base and improve it.`,
     `- Return the merged body via the tool "text", and a short markdown rationale via "explanation" describing what you took from the draft, what from the final, and what you improved and why.`,
+    `- IMPORTANT: write BOTH the merged "text" AND the "explanation" entirely in ${LANG(src)}. Never write the explanation in another language.`,
     ``,
     style,
   ].join("\n");
