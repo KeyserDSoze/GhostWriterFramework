@@ -3,6 +3,7 @@ import type { BookStructure, Chapter } from "@/types/book";
 import type { BookEntry, BookExportScope, BookExportSettings } from "@/types/settings";
 import { loadBinaryFileContent, loadFileContent } from "@/github/githubClient";
 import { slugify } from "@/narrarium/canon";
+import { paragraphSeparator, presentMetadata } from "@/export/metadataPresentation";
 
 const PARAGRAPH_BREAK_NEWLINES = 3;
 
@@ -11,6 +12,7 @@ interface ExportParagraph {
   title: string;
   summary?: string;
   frontmatterText?: string;
+  frontmatterRecord: Record<string, unknown>;
   body: string;
   asset?: ExportAsset;
 }
@@ -21,6 +23,7 @@ interface ExportChapter {
   title: string;
   summary?: string;
   frontmatterText?: string;
+  frontmatterRecord: Record<string, unknown>;
   body: string;
   paragraphs: ExportParagraph[];
   asset?: ExportAsset;
@@ -43,6 +46,7 @@ interface ExportBookSnapshot {
   language: string;
   description?: string;
   frontmatterText?: string;
+  frontmatterRecord: Record<string, unknown>;
   chapters: ExportChapter[];
   wordCount: number;
   coverAsset?: ExportAsset;
@@ -168,6 +172,11 @@ function outputBaseName(snapshot: ExportBookSnapshot, scope: BookExportScope): s
   return scope === "draft" ? `${base}-draft` : base;
 }
 
+function metadataKeys(settings: BookExportSettings, kind: "book" | "chapter" | "paragraph", titleAlreadyShown: boolean): string[] {
+  const keys = settings.metadataVisibility?.[kind] ?? [];
+  return titleAlreadyShown ? keys.filter((key) => key !== "title") : keys;
+}
+
 export async function loadBookExportSnapshot(input: {
   token: string;
   book: BookEntry;
@@ -195,6 +204,7 @@ export async function loadBookExportSnapshot(input: {
             title: asString(doc.frontmatter.title, paragraph.title),
             summary: asString(doc.frontmatter.summary) || undefined,
             frontmatterText: exportSettings.includeFrontmatter ? doc.frontmatterText : undefined,
+            frontmatterRecord: doc.frontmatter,
             body: doc.body,
             asset: includeImages ? await loadAsset({
               token,
@@ -211,6 +221,7 @@ export async function loadBookExportSnapshot(input: {
         title: asString(chapterDoc.frontmatter.title, chapter.title),
         summary: asString(chapterDoc.frontmatter.summary) || undefined,
         frontmatterText: exportSettings.includeFrontmatter ? chapterDoc.frontmatterText : undefined,
+        frontmatterRecord: chapterDoc.frontmatter,
         body: chapterDoc.body,
         paragraphs,
         asset: includeImages ? await loadAsset({ token, book, branch, markdownPath: `assets/chapters/${chapter.slug}/primary.md` }) : undefined,
@@ -224,6 +235,7 @@ export async function loadBookExportSnapshot(input: {
     language: asString(bookDoc.frontmatter.language, "en"),
     description: asString(bookDoc.frontmatter.description) || undefined,
     frontmatterText: exportSettings.includeFrontmatter ? bookDoc.frontmatterText : undefined,
+    frontmatterRecord: bookDoc.frontmatter,
     chapters,
     wordCount: 0,
     coverAsset: includeImages ? await loadAsset({ token, book, branch, markdownPath: "assets/book/cover.md" }) : undefined,
@@ -314,6 +326,18 @@ async function buildDocxArtifact(snapshot: ExportBookSnapshot, scope: BookExport
     }));
   };
 
+  const pushMetadata = (record: Record<string, unknown>, keys: string[]) => {
+    for (const entry of presentMetadata(record, keys)) {
+      children.push(new Paragraph({
+        children: [
+          new TextRun({ text: `${entry.key}: `, font: settings.fontName, size: Math.max(16, settings.fontSize * 2 - 2), bold: true }),
+          new TextRun({ text: entry.value, font: settings.fontName, size: Math.max(16, settings.fontSize * 2 - 2) }),
+        ],
+        spacing: { after: 80 },
+      }));
+    }
+  };
+
   const pushImage = (asset: ExportAsset | undefined, fallbackAlt: string) => {
     const type = docxImageType(asset?.extension);
     if (!asset || !type) return;
@@ -334,10 +358,12 @@ async function buildDocxArtifact(snapshot: ExportBookSnapshot, scope: BookExport
     for (let i = 0; i < 8; i++) children.push(new Paragraph({}));
     children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: snapshot.title, font: settings.fontName, size: settings.fontSize * 2, bold: true })] }));
     children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `by ${snapshot.author}`, font: settings.fontName, size: settings.fontSize * 2 })] }));
+    pushMetadata(snapshot.frontmatterRecord, metadataKeys(settings, "book", true));
     pushFrontmatter(snapshot.frontmatterText);
     pushImage(snapshot.coverAsset, `${snapshot.title} cover`);
     children.push(new Paragraph({ pageBreakBefore: true }));
   } else {
+    pushMetadata(snapshot.frontmatterRecord, metadataKeys(settings, "book", true));
     pushFrontmatter(snapshot.frontmatterText);
   }
 
@@ -353,14 +379,17 @@ async function buildDocxArtifact(snapshot: ExportBookSnapshot, scope: BookExport
     if (settings.showChapterSummary && chapter.summary) {
       children.push(new Paragraph({ children: [new TextRun({ text: chapter.summary, font: settings.fontName, size: settings.fontSize * 2, italics: true })], spacing: { after: 240 } }));
     }
+    pushMetadata(chapter.frontmatterRecord, metadataKeys(settings, "chapter", true));
     pushFrontmatter(chapter.frontmatterText);
     pushImage(chapter.asset, `${chapter.title} illustration`);
     chapter.paragraphs.forEach((paragraph, paragraphIndex) => {
       if (settings.showParagraphTitles && paragraph.title) {
         children.push(new Paragraph({ children: [new TextRun({ text: paragraph.title, font: settings.fontName, size: settings.fontSize * 2, bold: true })], spacing: { before: 240, after: 120 } }));
       } else if (paragraphIndex > 0) {
-        children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: settings.sceneBreak, font: settings.fontName, size: settings.fontSize * 2 })], spacing: { before: 240, after: 240 } }));
+        const separator = paragraphSeparator(settings);
+        if (separator) children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: separator, font: settings.fontName, size: settings.fontSize * 2 })], spacing: { before: 240, after: 240 } }));
       }
+      pushMetadata(paragraph.frontmatterRecord, metadataKeys(settings, "paragraph", settings.showParagraphTitles));
       pushFrontmatter(paragraph.frontmatterText);
       for (const plainParagraph of markdownToPlainParagraphs(paragraph.body, settings.lineBreakMode)) {
         children.push(new Paragraph({
@@ -474,6 +503,10 @@ async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportS
     writeBlock(`---\n${frontmatterText.trim()}\n---`, { firstLineIndent: 0 });
   }
 
+  function writeMetadata(record: Record<string, unknown>, keys: string[]) {
+    for (const entry of presentMetadata(record, keys)) writeBlock(`${entry.key}: ${entry.value}`, { bold: true });
+  }
+
   function writeImage(asset: ExportAsset | undefined, fallbackAlt: string) {
     if (!asset) return;
     const format = pdfImageFormat(asset.extension);
@@ -493,11 +526,13 @@ async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportS
     y += lineHeight * 6;
     writeBlock(snapshot.title, { align: "center", bold: true });
     writeBlock(`by ${snapshot.author}`, { align: "center" });
+    writeMetadata(snapshot.frontmatterRecord, metadataKeys(settings, "book", true));
     writeFrontmatter(snapshot.frontmatterText);
     writeImage(snapshot.coverAsset, `${snapshot.title} cover`);
     newPage();
   } else {
     drawHeader();
+    writeMetadata(snapshot.frontmatterRecord, metadataKeys(settings, "book", true));
     writeFrontmatter(snapshot.frontmatterText);
   }
 
@@ -509,6 +544,7 @@ async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportS
     writeBlock(heading, { align: "center", bold: true });
     if (chapter.number && chapter.title !== heading) writeBlock(chapter.title, { align: "center", italic: true });
     if (settings.showChapterSummary && chapter.summary) writeBlock(chapter.summary, { italic: true });
+    writeMetadata(chapter.frontmatterRecord, metadataKeys(settings, "chapter", true));
     writeFrontmatter(chapter.frontmatterText);
     writeImage(chapter.asset, `${chapter.title} illustration`);
     chapter.paragraphs.forEach((paragraph, paragraphIndex) => {
@@ -517,8 +553,10 @@ async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportS
         writeBlock(paragraph.title, { bold: true });
       } else if (paragraphIndex > 0) {
         y += lineHeight * 0.5;
-        writeBlock(settings.sceneBreak, { align: "center" });
+        const separator = paragraphSeparator(settings);
+        if (separator) writeBlock(separator, { align: "center" });
       }
+      writeMetadata(paragraph.frontmatterRecord, metadataKeys(settings, "paragraph", settings.showParagraphTitles));
       writeFrontmatter(paragraph.frontmatterText);
       for (const plainParagraph of markdownToPlainParagraphs(paragraph.body, settings.lineBreakMode)) {
         writeBlock(plainParagraph, { firstLineIndent: settings.paragraphIndentInches * 72 });
@@ -545,7 +583,7 @@ async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExport
   const oebps = zip.folder("OEBPS");
   if (!oebps) throw new Error("Failed to create EPUB archive.");
   const epubFont = epubCssFontFamily(settings.fontFamily);
-  oebps.file("styles.css", `body { font-family: ${epubFont}; line-height: ${settings.lineSpacing}; } h1, h2 { font-family: ${epubFont}; } article { margin: 0 auto; max-width: 40rem; } nav ol { padding-left: 1.2rem; } figure { margin: 2rem 0; text-align: center; page-break-inside: avoid; } figure img { max-width: 100%; height: auto; } figcaption { color: #555; font-size: 0.9em; margin-top: 0.5rem; } .frontmatter { border: 1px solid #ddd; background: #f7f7f7; padding: 0.75rem; white-space: pre-wrap; font-family: monospace; font-size: 0.85em; }`);
+  oebps.file("styles.css", `body { font-family: ${epubFont}; line-height: ${settings.lineSpacing}; } h1, h2 { font-family: ${epubFont}; } article { margin: 0 auto; max-width: 40rem; } nav ol { padding-left: 1.2rem; } figure { margin: 2rem 0; text-align: center; page-break-inside: avoid; } figure img { max-width: 100%; height: auto; } figcaption { color: #555; font-size: 0.9em; margin-top: 0.5em; } .frontmatter { border: 1px solid #ddd; background: #f7f7f7; padding: 0.75em; white-space: pre-wrap; font-family: monospace; font-size: 0.85em; } .metadata { border: 1px solid #ddd; background: #f7f7f7; padding: 0.75em; margin: 1em 0 1.5em; } .metadata div { margin: 0.35em 0; } .metadata dt { color: #666; font-size: 0.75em; text-transform: uppercase; } .metadata dd { margin: 0.15em 0 0; } .scene-break { text-align: center; letter-spacing: 0.5em; color: #777; margin: 2em 0; }`);
   oebps.folder("images");
 
   const imageItems: Array<{ id: string; fileName: string; mimeType: string; properties?: string }> = [];
@@ -557,7 +595,7 @@ async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExport
   };
 
   const coverPath = snapshot.coverAsset ? addImage("cover-image", "book-cover", snapshot.coverAsset) : undefined;
-  oebps.file("opening.xhtml", wrapXhtml("Opening", `<article><h1>${escapeHtml(snapshot.title)}</h1><p><em>${escapeHtml(snapshot.author)}</em></p>${renderFrontmatterPre(snapshot.frontmatterText, settings)}${coverPath ? renderEpubFigure(coverPath, snapshot.coverAsset, `${snapshot.title} cover`) : ""}</article>`));
+  oebps.file("opening.xhtml", wrapXhtml("Opening", `<article><h1>${escapeHtml(snapshot.title)}</h1><p><em>${escapeHtml(snapshot.author)}</em></p>${renderMetadataHtml(snapshot.frontmatterRecord, metadataKeys(settings, "book", true))}${renderFrontmatterPre(snapshot.frontmatterText, settings)}${coverPath ? renderEpubFigure(coverPath, snapshot.coverAsset, `${snapshot.title} cover`) : ""}</article>`));
 
   const chapterFiles = snapshot.chapters.map((chapter, index) => {
     const fileName = `chapter-${index + 1}.xhtml`;
@@ -568,11 +606,12 @@ async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExport
     const paragraphsHtml = chapter.paragraphs.map((paragraph, sceneIndex) => {
       const paragraphImagePath = paragraph.asset ? addImage(`chapter-${index + 1}-scene-${sceneIndex + 1}-image`, `chapter-${index + 1}-scene-${sceneIndex + 1}`, paragraph.asset) : undefined;
       const summary = paragraph.summary ? `<p><em>${escapeHtml(paragraph.summary)}</em></p>` : "";
-      return `<section id="scene-${sceneIndex + 1}"><h2>${escapeHtml(paragraph.title)}</h2>${summary}${renderFrontmatterPre(paragraph.frontmatterText, settings)}${marked.parse(paragraph.body, { async: false })}${paragraphImagePath ? renderEpubFigure(paragraphImagePath, paragraph.asset, `${paragraph.title} illustration`) : ""}</section>`;
+      const separator = sceneIndex > 0 ? paragraphSeparator(settings) : "";
+      return `<section id="scene-${sceneIndex + 1}">${separator ? `<p class="scene-break">${escapeHtml(separator)}</p>` : ""}<h2>${escapeHtml(paragraph.title)}</h2>${summary}${renderMetadataHtml(paragraph.frontmatterRecord, metadataKeys(settings, "paragraph", true))}${renderFrontmatterPre(paragraph.frontmatterText, settings)}${marked.parse(paragraph.body, { async: false })}${paragraphImagePath ? renderEpubFigure(paragraphImagePath, paragraph.asset, `${paragraph.title} illustration`) : ""}</section>`;
     }).join("\n");
     const summary = chapter.summary ? `<p><em>${escapeHtml(chapter.summary)}</em></p>` : "";
     const body = chapter.body ? marked.parse(chapter.body, { async: false }) : "";
-    const xhtml = wrapXhtml(chapter.title, `<article><h1>${escapeHtml(chapter.title)}</h1>${summary}${renderFrontmatterPre(chapter.frontmatterText, settings)}${body}${chapterImagePath ? renderEpubFigure(chapterImagePath, chapter.asset, `${chapter.title} illustration`) : ""}${sceneIndex}${paragraphsHtml}</article>`);
+     const xhtml = wrapXhtml(chapter.title, `<article><h1>${escapeHtml(chapter.title)}</h1>${summary}${renderMetadataHtml(chapter.frontmatterRecord, metadataKeys(settings, "chapter", true))}${renderFrontmatterPre(chapter.frontmatterText, settings)}${body}${chapterImagePath ? renderEpubFigure(chapterImagePath, chapter.asset, `${chapter.title} illustration`) : ""}${sceneIndex}${paragraphsHtml}</article>`);
     oebps.file(fileName, xhtml);
     return { fileName, title: chapter.title };
   });
@@ -626,6 +665,12 @@ function renderEpubFigure(imagePath: string, asset: ExportAsset | undefined, fal
 function renderFrontmatterPre(frontmatterText: string | undefined, settings: BookExportSettings): string {
   if (!settings.includeFrontmatter || !frontmatterText?.trim()) return "";
   return `<pre class="frontmatter">${escapeHtml(`---\n${frontmatterText.trim()}\n---`)}</pre>`;
+}
+
+function renderMetadataHtml(record: Record<string, unknown>, keys: string[]): string {
+  const entries = presentMetadata(record, keys);
+  if (!entries.length) return "";
+  return `<dl class="metadata">${entries.map((entry) => `<div><dt>${escapeHtml(entry.key)}</dt><dd>${escapeHtml(entry.value)}</dd></div>`).join("")}</dl>`;
 }
 
 function epubCssFontFamily(fontFamily: BookExportSettings["fontFamily"]): string {

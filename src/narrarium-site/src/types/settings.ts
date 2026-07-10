@@ -118,6 +118,16 @@ export type BookExportScope = "full" | "draft";
 export type BookExportPageSize = "letter" | "a4";
 export type BookExportAlignment = "left" | "justified";
 export type BookExportFontFamily = "serif" | "sans" | "mono";
+export type ParagraphSeparator = "none" | "star" | "asterisks" | "custom";
+
+export interface BookMetadataVisibility {
+  /** Frontmatter keys rendered as reader/export metadata for the book file. */
+  book: string[];
+  /** Frontmatter keys rendered as reader/export metadata for chapter files. */
+  chapter: string[];
+  /** Frontmatter keys rendered as reader/export metadata for paragraph files. */
+  paragraph: string[];
+}
 
 export interface BookExportSettings {
   defaultScope: BookExportScope;
@@ -137,6 +147,9 @@ export interface BookExportSettings {
   paragraphAlignment: BookExportAlignment;
   lineBreakMode: ReaderLineBreakMode;
   sceneBreak: string;
+  metadataVisibility: BookMetadataVisibility;
+  paragraphSeparator: ParagraphSeparator;
+  customParagraphSeparator: string;
   googleDriveFolderId?: string;
   googleDriveFolderName?: string;
   microsoftDriveFolderPath?: string;
@@ -166,6 +179,13 @@ export const DEFAULT_BOOK_EXPORT_SETTINGS: BookExportSettings = {
   paragraphAlignment: "left",
   lineBreakMode: "book",
   sceneBreak: "#",
+  metadataVisibility: {
+    book: ["title", "author", "date"],
+    chapter: ["title", "date", "summary"],
+    paragraph: ["title", "date"],
+  },
+  paragraphSeparator: "star",
+  customParagraphSeparator: "✦",
 };
 
 // ─── Book entry (one GitHub repository = one book) ───────────────────────────
@@ -211,7 +231,15 @@ export function resolveBookExportProfiles(book: BookEntry): BookExportProfile[] 
 export function resolveBookExportSettings(book: BookEntry, profileId?: string): BookExportSettings {
   const profiles = resolveBookExportProfiles(book);
   const selected = profiles.find((entry) => entry.id === (profileId ?? book.defaultExportProfileId)) ?? profiles[0];
-  return { ...DEFAULT_BOOK_EXPORT_SETTINGS, ...(selected?.settings ?? book.exportSettings ?? {}) };
+  const raw = selected?.settings ?? book.exportSettings ?? {};
+  return {
+    ...DEFAULT_BOOK_EXPORT_SETTINGS,
+    ...raw,
+    metadataVisibility: {
+      ...DEFAULT_BOOK_EXPORT_SETTINGS.metadataVisibility,
+      ...(raw.metadataVisibility ?? {}),
+    },
+  };
 }
 
 /**

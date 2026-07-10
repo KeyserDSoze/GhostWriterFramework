@@ -18,7 +18,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
-import { resolveBookToken, type BookEntry } from "@/types/settings";
+import { DEFAULT_BOOK_EXPORT_SETTINGS, resolveBookExportSettings, resolveBookToken, type BookEntry, type BookExportSettings, type ParagraphSeparator } from "@/types/settings";
 import { createBranchFromBase, getDefaultBranch, listBranches } from "@/github/githubClient";
 
 type TokenMode = "default" | "custom" | string;
@@ -51,6 +51,7 @@ export function BookSettingsPage() {
   const [baseBranch, setBaseBranch] = useState(structure?.defaultBranch ?? "main");
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [creatingBranch, setCreatingBranch] = useState(false);
+  const [presentation, setPresentation] = useState<BookExportSettings>(() => book ? resolveBookExportSettings(book) : DEFAULT_BOOK_EXPORT_SETTINGS);
 
   useEffect(() => {
     if (!book) return;
@@ -95,6 +96,10 @@ export function BookSettingsPage() {
       bookToken: usingCustom ? customToken.trim() || undefined : undefined,
       bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${currentBook.repo} PAT` : undefined,
       activeBranch: activeBranch === "__auto__" ? undefined : activeBranch,
+      exportSettings: {
+        ...currentBook.exportSettings,
+        ...presentation,
+      },
     };
 
     patchSettings({ books: settings.books.map((entry) => (entry.id === currentBook.id ? updated : entry)) });
@@ -150,6 +155,32 @@ export function BookSettingsPage() {
             <Label htmlFor="book-name">{t("bookSettings.name")}</Label>
             <Input id="book-name" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("bookSettings.metadataPresentation")}</CardTitle>
+          <CardDescription>{t("bookSettings.metadataPresentationDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <MetadataFieldInput label={t("bookSettings.bookMetadataFields")} value={presentation.metadataVisibility.book} onChange={(value) => setPresentation((current) => ({ ...current, metadataVisibility: { ...current.metadataVisibility, book: value } }))} placeholder="title, author, date" />
+          <MetadataFieldInput label={t("bookSettings.chapterMetadataFields")} value={presentation.metadataVisibility.chapter} onChange={(value) => setPresentation((current) => ({ ...current, metadataVisibility: { ...current.metadataVisibility, chapter: value } }))} placeholder="title, date, summary" />
+          <MetadataFieldInput label={t("bookSettings.paragraphMetadataFields")} value={presentation.metadataVisibility.paragraph} onChange={(value) => setPresentation((current) => ({ ...current, metadataVisibility: { ...current.metadataVisibility, paragraph: value } }))} placeholder="title, date" />
+          <div className="grid gap-2 sm:max-w-sm">
+            <Label>{t("bookSettings.paragraphSeparator")}</Label>
+            <Select value={presentation.paragraphSeparator} onValueChange={(value) => setPresentation((current) => ({ ...current, paragraphSeparator: value as ParagraphSeparator }))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">{t("bookSettings.separatorNone")}</SelectItem>
+                <SelectItem value="star">{t("bookSettings.separatorStar")}</SelectItem>
+                <SelectItem value="asterisks">{t("bookSettings.separatorAsterisks")}</SelectItem>
+                <SelectItem value="custom">{t("bookSettings.separatorCustom")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {presentation.paragraphSeparator === "custom" && <Input value={presentation.customParagraphSeparator} onChange={(event) => setPresentation((current) => ({ ...current, customParagraphSeparator: event.target.value }))} placeholder={t("bookSettings.customSeparatorPlaceholder")} className="sm:max-w-sm" />}
+          <p className="text-xs text-muted-foreground">{t("bookSettings.metadataPresentationHint")}</p>
         </CardContent>
       </Card>
 
@@ -231,6 +262,15 @@ export function BookSettingsPage() {
           {t("settings.save")}
         </Button>
       </div>
+    </div>
+  );
+}
+
+function MetadataFieldInput({ label, value, onChange, placeholder }: { label: string; value: string[]; onChange: (value: string[]) => void; placeholder: string }) {
+  return (
+    <div className="grid gap-2">
+      <Label>{label}</Label>
+      <Input value={value.join(", ")} onChange={(event) => onChange(event.target.value.split(",").map((entry) => entry.trim()).filter(Boolean))} placeholder={placeholder} />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseDocument, stringify } from "yaml";
@@ -22,13 +22,14 @@ import {
   slugToTitle,
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
-import { resolveBookToken, type ReaderSettings } from "@/types/settings";
+import { resolveBookExportSettings, resolveBookToken, type ReaderSettings } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { improveProse, synonymsFor, type PipelineSource } from "@/narrarium/pipeline";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
+import { presentMetadata } from "@/export/metadataPresentation";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
 
@@ -157,6 +158,7 @@ export function ParagraphPage() {
   const paragraph = chapter?.paragraphs.find((p) => p.number === paragraphNum);
 
   const token = book ? resolveBookToken(book, settings) : "";
+  const presentationSettings = useMemo(() => (book ? resolveBookExportSettings(book) : null), [book]);
 
   // ── Content state ─────────────────────────────────────────────────────────
   const [entries, setEntries] = useState<MetaEntry[]>([]);
@@ -601,6 +603,10 @@ export function ParagraphPage() {
     for (const entry of entries) record[entry.key] = Array.isArray(entry.value) ? entry.value : parseScalarMetaValue(entry.value);
     return stringify(record).trim();
   })();
+  const readerMetadata = presentMetadata(
+    Object.fromEntries(entries.map((entry) => [entry.key, Array.isArray(entry.value) ? entry.value : parseScalarMetaValue(entry.value)])),
+    presentationSettings?.metadataVisibility.paragraph ?? [],
+  );
 
   return (
     <div className="flex flex-col gap-5">
@@ -790,6 +796,7 @@ export function ParagraphPage() {
           }}
         >
           {settings.reader.showFrontmatter && readerFrontmatter && <pre className="mb-8 overflow-auto rounded-xl border bg-muted/30 p-4 text-xs leading-5">{readerFrontmatter}</pre>}
+          {readerMetadata.length > 0 && <div className="mb-8 grid gap-x-5 gap-y-2 rounded-xl border bg-muted/30 p-4 text-sm sm:grid-cols-2">{readerMetadata.map((entry) => <div key={entry.key}><p className="text-[10px] uppercase tracking-wide text-muted-foreground">{entry.key}</p><p className="mt-0.5 leading-6">{entry.value}</p></div>)}</div>}
           {readerLoading ? (
             <div className="flex min-h-[45vh] flex-col items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />{t("paragraph.loadingReader")}</div>
           ) : readerHtml ? (

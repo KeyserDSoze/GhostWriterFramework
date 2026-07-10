@@ -14,8 +14,9 @@ import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { loadBinaryFileContent, loadFileContent, slugToTitle } from "@/github/githubClient";
 import { canonSectionMeta, CANON_SECTION_ORDER, type CanonSection } from "@/lib/canonSections";
-import { resolveBookToken, type BookEntry, type ReaderBookmark, type ReaderSettings } from "@/types/settings";
+import { resolveBookExportSettings, resolveBookToken, type BookEntry, type BookExportSettings, type ReaderBookmark, type ReaderSettings } from "@/types/settings";
 import type { BookFile, BookStructure, Chapter, Paragraph } from "@/types/book";
+import { paragraphSeparator, presentMetadata, type PresentedMetadata } from "@/export/metadataPresentation";
 
 const PAGE_GAP = 32;
 
@@ -43,6 +44,7 @@ interface ReaderParagraph {
   chapterSlug: string;
   chapterTitle: string;
   frontmatter: string;
+  frontmatterRecord: Record<string, unknown>;
   html: string;
   text: string;
   images: ReaderImage[];
@@ -51,12 +53,14 @@ interface ReaderParagraph {
 interface ReaderChapter {
   chapter: Chapter;
   frontmatter: string;
+  frontmatterRecord: Record<string, unknown>;
   images: ReaderImage[];
   paragraphs: ReaderParagraph[];
 }
 
 interface ReaderBook {
   title: string;
+  frontmatterRecord: Record<string, unknown>;
   coverUrl?: string;
   coverPath?: string;
   chapters: ReaderChapter[];
@@ -85,6 +89,7 @@ export function ReaderPreviewPage() {
   const { book, structure, loading, error, reload } = useBookStructure(bookId);
   const { branch } = useWorkingBranch(bookId);
   const readerSettings = settings.reader;
+  const presentationSettings = useMemo(() => (book ? resolveBookExportSettings(book) : null), [book]);
   const token = book ? resolveBookToken(book, settings) : "";
   const [readerBook, setReaderBook] = useState<ReaderBook | null>(null);
   const [busy, setBusy] = useState(false);
@@ -118,6 +123,7 @@ export function ReaderPreviewPage() {
       token,
       branch,
       readerSettings,
+      presentationSettings: presentationSettings ?? resolveBookExportSettings({} as BookEntry),
       entities,
       objectUrls,
     })
@@ -135,7 +141,7 @@ export function ReaderPreviewPage() {
       active = false;
       objectUrls.forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [book, branch, entities, readerSettings.lineBreakMode, readerSettings.showFrontmatter, readerSettings.showImages, readerSettings.showRichEntityLinks, structure, t, toast, token]);
+  }, [book, branch, entities, presentationSettings, readerSettings.lineBreakMode, readerSettings.showFrontmatter, readerSettings.showImages, readerSettings.showRichEntityLinks, structure, t, toast, token]);
 
   useEffect(() => () => {
     entityImageUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
@@ -390,14 +396,16 @@ export function ReaderPreviewPage() {
                 }}
               >
                 <ReaderCover title={readerBook.title} coverUrl={readerBook.coverUrl} />
+                <ReaderMetadata entries={presentMetadata(readerBook.frontmatterRecord, presentationSettings?.metadataVisibility.book ?? [])} />
                 {readerBook.chapters.map((entry) => (
                   <section key={entry.chapter.slug} className="reader-chapter">
                     <header className="reader-chapter-title mb-8 text-center">
                       <BookOpen className="mx-auto h-6 w-6 opacity-50" />
                       <h2 className="mt-3 font-serif text-4xl font-semibold leading-tight tracking-tight">{entry.chapter.title}</h2>
                     </header>
+                    <ReaderMetadata entries={presentMetadata(entry.frontmatterRecord, presentationSettings?.metadataVisibility.chapter ?? [])} />
                     {readerSettings.showFrontmatter && entry.frontmatter.trim() && <ReaderFrontmatter value={entry.frontmatter} />}
-                    {entry.paragraphs.map((paragraph) => (
+                    {entry.paragraphs.map((paragraph, paragraphIndex) => (
                       <section
                         key={paragraph.paragraph.path}
                         data-reader-paragraph=""
@@ -406,9 +414,11 @@ export function ReaderPreviewPage() {
                         data-text-length={paragraph.text.length}
                         className="reader-paragraph"
                       >
+                        <ReaderMetadata entries={presentMetadata(paragraph.frontmatterRecord, presentationSettings?.metadataVisibility.paragraph ?? [])} />
                         {readerSettings.showFrontmatter && paragraph.frontmatter.trim() && <ReaderFrontmatter value={paragraph.frontmatter} />}
                         <div className="doc-prose reader-prose" dangerouslySetInnerHTML={{ __html: paragraph.html }} />
                         {readerSettings.showImages && paragraph.images.length > 0 && <ReaderImages images={paragraph.images} />}
+                        {paragraphIndex < entry.paragraphs.length - 1 && presentationSettings && paragraphSeparator(presentationSettings) && <div className="my-10 text-center text-xl tracking-[0.5em] text-muted-foreground/60">{paragraphSeparator(presentationSettings)}</div>}
                       </section>
                     ))}
                     {readerSettings.showImages && entry.images.length > 0 && <ReaderImages images={entry.images} chapter />}
@@ -482,6 +492,15 @@ function ReaderFrontmatter({ value }: { value: string }) {
   return <pre className="reader-frontmatter mb-6 whitespace-pre-wrap rounded-xl border bg-muted/70 p-3 font-mono text-xs leading-5 text-muted-foreground">{value.trim()}</pre>;
 }
 
+function ReaderMetadata({ entries }: { entries: PresentedMetadata[] }) {
+  if (!entries.length) return null;
+  return (
+    <div className="reader-metadata mb-8 grid gap-x-5 gap-y-2 rounded-xl border bg-muted/30 p-4 text-sm sm:grid-cols-2">
+      {entries.map((entry) => <div key={entry.key}><p className="text-[10px] uppercase tracking-wide text-muted-foreground">{entry.key}</p><p className="mt-0.5 leading-6">{entry.value}</p></div>)}
+    </div>
+  );
+}
+
 function ReaderImages({ images, chapter }: { images: ReaderImage[]; chapter?: boolean }) {
   return (
     <div className={chapter ? "reader-images reader-chapter-images" : "reader-images"}>
@@ -530,10 +549,13 @@ async function loadReaderBook(input: {
   token: string;
   branch: string;
   readerSettings: ReaderSettings;
+  presentationSettings: BookExportSettings;
   entities: ReaderEntity[];
   objectUrls: string[];
 }): Promise<ReaderBook> {
   const { marked } = await import("marked");
+  const rawBook = await loadFileContent(input.token, input.book.owner, input.book.repo, "book.md", input.branch).catch(() => "");
+  const bookDoc = splitMarkdown(rawBook);
   const cover = input.structure.bookCoverPath
     ? await loadImageUrl(input, input.structure.bookCoverPath, input.structure.title).catch(() => undefined)
     : undefined;
@@ -557,6 +579,7 @@ async function loadReaderBook(input: {
         chapterSlug: chapter.slug,
         chapterTitle: chapter.title,
         frontmatter: paragraphDoc.frontmatter,
+        frontmatterRecord: paragraphDoc.frontmatterRecord,
         html: rendered.html,
         text: rendered.text,
         images: [...rendered.images, ...(structureImage ? [structureImage] : [])],
@@ -566,11 +589,12 @@ async function loadReaderBook(input: {
     return {
       chapter,
       frontmatter: chapterDoc.frontmatter,
+      frontmatterRecord: chapterDoc.frontmatterRecord,
       images: [...(structureImage ? [structureImage] : [])],
       paragraphs,
     };
   }));
-  return { title: input.structure.title || input.book.name || input.book.repo, coverPath: input.structure.bookCoverPath, coverUrl: cover?.url, chapters };
+  return { title: input.structure.title || input.book.name || input.book.repo, frontmatterRecord: bookDoc.frontmatterRecord, coverPath: input.structure.bookCoverPath, coverUrl: cover?.url, chapters };
 }
 
 async function renderReaderMarkdown(input: {
