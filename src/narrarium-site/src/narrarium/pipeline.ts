@@ -2,8 +2,10 @@ import type { AppSettings } from "@/types/settings";
 import type { BookStructure, Chapter, Paragraph } from "@/types/book";
 import type { LlmMessage } from "@/assistant/llm";
 import { completeTextRouted } from "@/assistant/router";
+import { extractEvaluationCriteria, scoreEvaluationRouted, type EvaluationCriterionScore } from "@/assistant/service";
 import { loadFileContent } from "@/github/githubClient";
 import { ghostwriterPrompt, parseGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
+import { defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
 
 export function stripFrontmatter(raw: string): string {
   return raw.replace(/^---[\s\S]*?---\s*/, "").trim();
@@ -26,6 +28,14 @@ async function tryLoad(src: PipelineSource, path?: string): Promise<string> {
     return stripFrontmatter(await loadFileContent(src.token, src.owner, src.repo, path, src.branch));
   } catch {
     return "";
+  }
+}
+
+async function evaluationGuidelines(src: PipelineSource): Promise<string> {
+  try {
+    return await loadFileContent(src.token, src.owner, src.repo, EVALUATION_GUIDELINES_PATH, src.branch);
+  } catch {
+    return defaultEvaluationGuidelinesMarkdown(src.structure.language ?? src.settings.ui.language);
   }
 }
 
@@ -185,12 +195,12 @@ export async function generateChapterResume(src: PipelineSource, paragraphs: Arr
 
 /** Generate a chapter evaluation body (uses the review model when configured). */
 export async function generateChapterEvaluation(src: PipelineSource, paragraphs: Array<{ title: string; text: string }>): Promise<string> {
-  const { style, story } = await buildContext(src);
+  const [{ style, story }, guidelines] = await Promise.all([buildContext(src), evaluationGuidelines(src)]);
   const scenes = paragraphs
     .map((p, i) => `### ${i + 1}. ${p.title}\n${p.text.trim()}`)
     .join("\n\n");
   const messages: LlmMessage[] = [
-    { role: "system", content: `You are an editorial reviewer. Write a chapter evaluation using markdown headings and concise bullet points: strengths, weaknesses, pacing, characters, prose, and concrete revision suggestions. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src)}.\n\n${style}` },
+    { role: "system", content: `You are an editorial reviewer. Follow the evaluation-guidelines.md contract below. Be critical and specific: do not give comfort scores or generic praise. Write a chapter evaluation using the required markdown headings and concrete revision suggestions. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src)}.\n\n${guidelines}\n\n${style}` },
     { role: "user", content: `${story}\n\nCHAPTER SCENES:\n${scenes}\n\nWrite the chapter evaluation.` },
   ];
   return (await completeTextRouted(src.settings, messages, "review", { label: "evaluation:chapter" })).trim();
@@ -198,10 +208,37 @@ export async function generateChapterEvaluation(src: PipelineSource, paragraphs:
 
 /** Generate a paragraph evaluation body from its prose (uses the review model when configured). */
 export async function generateParagraphEvaluation(src: PipelineSource, title: string, prose: string): Promise<string> {
-  const { style, story } = await buildContext(src);
+  const [{ style, story }, guidelines] = await Promise.all([buildContext(src), evaluationGuidelines(src)]);
   const messages: LlmMessage[] = [
-    { role: "system", content: `You are an editorial reviewer. Write an evaluation of a single scene/paragraph using markdown headings and concise bullet points: what works, what to fix, prose/clarity, and concrete suggestions. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src)}.\n\n${style}` },
+    { role: "system", content: `You are an editorial reviewer. Follow the evaluation-guidelines.md contract below. Be critical and specific: do not give comfort scores or generic praise. Write an evaluation of a single scene/paragraph using the required markdown headings and concrete suggestions. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src)}.\n\n${guidelines}\n\n${style}` },
     { role: "user", content: `${story}\n\nSCENE (${title}):\n${stripFrontmatter(prose).trim()}\n\nWrite the evaluation.` },
   ];
   return (await completeTextRouted(src.settings, messages, "review", { label: "evaluation:paragraph" })).trim();
+}
+
+export async function generateChapterEvaluationWithScores(src: PipelineSource, paragraphs: Array<{ title: string; text: string }>): Promise<{ body: string; scores: Record<string, EvaluationCriterionScore> | null }> {
+  const body = await generateChapterEvaluation(src, paragraphs);
+  const guidelines = await evaluationGuidelines(src);
+  const criteria = extractEvaluationCriteria(guidelines);
+  const scores = await scoreEvaluationRouted(src.settings, [
+    "Score the chapter critically from 0 to 10 for every criterion. Every score must include a short evidence-based explanation. Do not be lenient.",
+    `Evaluation guidelines:\n${guidelines}`,
+    `Chapter evaluation body:\n${body}`,
+    `Chapter scenes:\n${paragraphs.map((paragraph) => `### ${paragraph.title}\n${paragraph.text}`).join("\n\n")}`,
+  ].join("\n\n"), criteria);
+  return { body, scores };
+}
+
+export async function generateParagraphEvaluationWithScores(src: PipelineSource, title: string, prose: string): Promise<{ body: string; scores: Record<string, EvaluationCriterionScore> | null }> {
+  const body = await generateParagraphEvaluation(src, title, prose);
+  const guidelines = await evaluationGuidelines(src);
+  const criteria = extractEvaluationCriteria(guidelines);
+  const scores = await scoreEvaluationRouted(src.settings, [
+    "Score the paragraph critically from 0 to 10 for every criterion. Every score must include a short evidence-based explanation. Do not be lenient.",
+    `Evaluation guidelines:\n${guidelines}`,
+    `Paragraph title: ${title}`,
+    `Paragraph prose:\n${stripFrontmatter(prose)}`,
+    `Evaluation body:\n${body}`,
+  ].join("\n\n"), criteria);
+  return { body, scores };
 }

@@ -721,9 +721,9 @@ async function ensureEvaluationGuidelines(input: { token: string; owner: string;
   }
 }
 
-type EvaluationCriterionScore = { score: number; explanation: string };
+export type EvaluationCriterionScore = { score: number; explanation: string };
 
-function extractEvaluationCriteria(guidelinesRaw: string): Record<string, string> {
+export function extractEvaluationCriteria(guidelinesRaw: string): Record<string, string> {
   const parsed = parseMarkdown(guidelinesRaw);
   const criteria = parsed.frontmatter.criteria;
   if (!criteria || typeof criteria !== "object" || Array.isArray(criteria)) return {};
@@ -800,7 +800,7 @@ async function scoreEvaluationWithTool(
   return out;
 }
 
-async function scoreEvaluationRouted(settings: AppSettings, prompt: string, criteria: Record<string, string>): Promise<Record<string, EvaluationCriterionScore> | null> {
+export async function scoreEvaluationRouted(settings: AppSettings, prompt: string, criteria: Record<string, string>): Promise<Record<string, EvaluationCriterionScore> | null> {
   if (!Object.keys(criteria).length) return null;
   const candidates = resolveTaskCandidates(settings, "review");
   let lastError: unknown = null;

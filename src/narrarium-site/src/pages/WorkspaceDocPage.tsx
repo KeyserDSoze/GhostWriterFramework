@@ -23,7 +23,7 @@ import { useRegisterPageSave } from "@/store/saveStore";
 import { useRegisterPageActions } from "@/store/pageActionsStore";
 import { useProseAssist } from "@/components/editor/useProseAssist";
 import { parseScript, serializeScript, type ScriptDoc } from "@/narrarium/script/model";
-import { proseToScript, refineProse, scriptToProse, stripFrontmatter, generateChapterResume, generateChapterEvaluation, generateParagraphEvaluation, type PipelineSource } from "@/narrarium/pipeline";
+import { proseToScript, refineProse, scriptToProse, stripFrontmatter, generateChapterResume, generateChapterEvaluationWithScores, generateParagraphEvaluationWithScores, type PipelineSource } from "@/narrarium/pipeline";
 import { useGenerateDiffStore } from "@/store/generateDiffStore";
 import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
 import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
@@ -665,24 +665,37 @@ export function WorkspaceDocPage() {
 
     useGenerateDiffStore.getState().start(async () => {
       let newBody = "";
+      let newScores: Record<string, { score: number; explanation: string }> | null = null;
       if (workspaceKind === "resume") {
         const scenes = await Promise.all(chapterRef.paragraphs.map(async (p) => ({ title: p.title, text: (await loadProse(p.draftPath)) || (await loadProse(p.path)) })));
         newBody = await generateChapterResume(src, scenes.filter((s) => s.text.trim()));
       } else if (paraSlug && paragraph) {
         const prose = (await loadProse(paragraph.draftPath)) || (await loadProse(paragraph.path));
-        newBody = await generateParagraphEvaluation(src, paragraph.title, prose);
+        const generated = await generateParagraphEvaluationWithScores(src, paragraph.title, prose);
+        newBody = generated.body;
+        newScores = generated.scores;
       } else {
         const scenes = await Promise.all(chapterRef.paragraphs.map(async (p) => ({ title: p.title, text: (await loadProse(p.draftPath)) || (await loadProse(p.path)) })));
-        newBody = await generateChapterEvaluation(src, scenes.filter((s) => s.text.trim()));
+        const generated = await generateChapterEvaluationWithScores(src, scenes.filter((s) => s.text.trim()));
+        newBody = generated.body;
+        newScores = generated.scores;
       }
       return {
         title,
         oldText: body,
         newText: newBody,
         apply: async () => {
-          const nextContent = buildFrontmatter(entries, newBody);
+          const nextEntries = workspaceKind === "evaluation"
+            ? [
+                ...entries.filter((entry) => entry.key !== "scores"),
+                ...(newScores ? [{ key: "scores", value: JSON.stringify(newScores) }] : []),
+              ]
+            : entries;
+          const nextContent = buildFrontmatter(nextEntries, newBody);
           const newSha = await updateFile(token, bookRef.owner, bookRef.repo, branch, currentPath, sha, nextContent, `Regenerate ${currentPath}`);
           setSha(newSha);
+          setEntries(nextEntries);
+          setSavedEntries(nextEntries);
           setBody(newBody);
           setSavedBody(newBody);
         },
