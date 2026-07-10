@@ -1157,6 +1157,7 @@ const en = {
     paragraphEvaluation: "Paragraph evaluation {{slug}}"
   },
   evaluationView: {
+    regenerate: "Regenerate evaluation",
     scores: "Scores",
     scoresHint: "Numeric criteria from the evaluation frontmatter, scored from 0 to 10 with explicit reasons.",
     discursiveEvaluation: "Discursive evaluation",

@@ -1157,6 +1157,7 @@ const it = {
     paragraphEvaluation: "Valutazione paragrafo {{slug}}"
   },
   evaluationView: {
+    regenerate: "Rigenera valutazione",
     scores: "Punteggi",
     scoresHint: "Criteri numerici dal frontmatter della valutazione, con voto da 0 a 10 e motivazione esplicita.",
     discursiveEvaluation: "Valutazione discorsiva",

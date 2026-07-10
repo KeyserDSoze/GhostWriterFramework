@@ -344,7 +344,7 @@ export function WorkspaceDocPage() {
       { id: "switch-to-final", label: t("paragraph.switchToFinal"), icon: switchingFinal ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowLeftRight className="h-4 w-4" />, run: () => handleSwitchToFinal(), disabled: switchingFinal || saving },
       { id: "draft-to-final", label: t("pipeline.draftToFinal"), icon: <Wand2 className="h-4 w-4" />, run: () => startPipeline("toFinal") },
     ] : []),
-    ...((workspaceKind === "resume" || workspaceKind === "evaluation") ? [{ id: "regenerate", label: t("pipeline.regenerate"), icon: <Wand2 className="h-4 w-4" />, run: () => regenerateDoc() }] : []),
+    ...((workspaceKind === "resume" || workspaceKind === "evaluation") ? [{ id: "regenerate", label: workspaceKind === "evaluation" ? t("evaluationView.regenerate") : t("pipeline.regenerate"), icon: <Wand2 className="h-4 w-4" />, run: () => regenerateDoc() }] : []),
   ], Boolean(book && token));
 
   useEffect(() => {
@@ -668,10 +668,11 @@ export function WorkspaceDocPage() {
             {t("common.back")}
           </Link>
         </Button>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className="font-mono text-xs">{branch}</Badge>
-          {isDirty && !saving && <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>}
-        </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className="font-mono text-xs">{branch}</Badge>
+            {isDirty && !saving && <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>}
+            {workspaceKind === "evaluation" && <Button size="sm" variant="outline" onClick={() => regenerateDoc()} disabled={saving || loading}><Wand2 className="mr-1.5 h-4 w-4" />{t("evaluationView.regenerate")}</Button>}
+          </div>
       </div>
 
       <div>
