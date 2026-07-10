@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget } from "@/types/settings";
 import type { AuthProvider } from "@/store/authStore";
+import { BROWSER_ROUTING_ID } from "@/assistant/router";
 
 export class TokenExpiredError extends Error {
   constructor() {
@@ -251,9 +252,12 @@ function normalizeTaskRouting(
 ): AppSettings["taskRouting"] {
   if (!raw || typeof raw !== "object") return undefined;
   const byId = new Map(integrations.map((i) => [i.id, i]));
-  const validTarget = (t: unknown): t is RoutingTarget => {
+  const validTarget = (t: unknown, task: string): t is RoutingTarget => {
     if (!t || typeof t !== "object") return false;
     const target = t as RoutingTarget;
+    if (target.integrationId === BROWSER_ROUTING_ID) {
+      return (task === "stt" || task === "tts") && Boolean(target.model?.trim());
+    }
     const integration = byId.get(target.integrationId);
     if (!integration || !target.model) return false;
     return true;
@@ -262,8 +266,8 @@ function normalizeTaskRouting(
   for (const [task, route] of Object.entries(raw as Record<string, unknown>)) {
     if (!route || typeof route !== "object") continue;
     const r = route as { primary?: unknown; fallbacks?: unknown };
-    const primary = validTarget(r.primary) ? (r.primary as RoutingTarget) : undefined;
-    const fallbacks = Array.isArray(r.fallbacks) ? r.fallbacks.filter(validTarget) as RoutingTarget[] : [];
+    const primary = validTarget(r.primary, task) ? (r.primary as RoutingTarget) : undefined;
+    const fallbacks = Array.isArray(r.fallbacks) ? r.fallbacks.filter((target) => validTarget(target, task)) as RoutingTarget[] : [];
     if (primary || fallbacks.length) out[task as keyof typeof out] = { primary, fallbacks };
   }
   return Object.keys(out).length ? out : undefined;
