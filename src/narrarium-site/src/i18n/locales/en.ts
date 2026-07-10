@@ -928,6 +928,8 @@ const en = {
     history: "Evaluation history",
     empty: "No reader evaluations for this target yet.",
     stale: "Outdated",
+    rerun: "Run again",
+    deleteConfirm: "Delete the evaluation by {{reader}}?",
     generateSummary: "Generate panel summary",
     summaryFailed: "Failed to generate reader summary",
     evaluateWithReaders: "Evaluate with readers",

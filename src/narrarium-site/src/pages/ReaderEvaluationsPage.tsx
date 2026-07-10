@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, CheckCircle2, Loader2, Play, Sparkles, Square, Users } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Play, RefreshCcw, Sparkles, Square, Trash2, Users } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { resolveBookToken } from "@/types/settings";
-import { loadFileContent, readFileWithSha } from "@/github/githubClient";
+import { deleteFile, loadFileContent, readFileWithSha } from "@/github/githubClient";
 import { generateReaderEvaluationSummary, hashReaderSource, loadReaderPersonas, parseReaderEvaluation, runReaderEvaluations, type ReaderEvaluationProgress, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
 import type { ReaderEvaluationDepth, ReaderPersonaProfile } from "@/narrarium/readerPersona";
 import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
@@ -80,9 +80,9 @@ export function ReaderEvaluationsPage() {
     return () => { active = false; };
   }, [book?.id, structure?.loadedBranch, chapter?.slug, paragraph?.path, selection, token, branch]);
 
-  async function run() {
+  async function run(readersOverride?: ReaderPersonaProfile[]) {
     if (!book || !structure || !target) return;
-    const readers = personas.filter((profile) => selected.has(profile.id) && profile.enabled);
+    const readers = readersOverride ?? personas.filter((profile) => selected.has(profile.id) && profile.enabled);
     if (!readers.length) return;
     setRunning(true);
     setProgress({});
@@ -90,11 +90,27 @@ export function ReaderEvaluationsPage() {
     abortRef.current = controller;
     try {
       const result = await runReaderEvaluations({ token, book, branch, structure, settings, target, readers, depth, includeContext, concurrency: 2, signal: controller.signal, onProgress: (entry) => setProgress((current) => ({ ...current, [entry.readerId]: entry })) });
-      setHistory((current) => [...result.completed, ...result.failed, ...current]);
+      const nextRecords = [...result.completed, ...result.failed];
+      const replacedPaths = new Set(nextRecords.map((record) => record.path));
+      setHistory((current) => [...nextRecords, ...current.filter((record) => !replacedPaths.has(record.path))]);
       await reload();
       toast({ title: t("readerEvaluations.runDone", { completed: result.completed.length, failed: result.failed.length }) });
     } catch (err) { toast({ title: t("readerEvaluations.runFailed"), description: String(err), variant: "destructive" }); }
     finally { abortRef.current = null; setRunning(false); }
+  }
+
+  async function rerun(record: ReaderEvaluationRecord) {
+    const reader = personas.find((profile) => profile.id === record.readerId);
+    if (reader) await run([reader]);
+  }
+
+  async function removeEvaluation(record: ReaderEvaluationRecord) {
+    if (!book || !window.confirm(t("readerEvaluations.deleteConfirm", { reader: record.readerName }))) return;
+    const file = await readFileWithSha(token, book.owner, book.repo, branch, record.path).catch(() => null);
+    if (!file) return;
+    await deleteFile(token, book.owner, book.repo, branch, record.path, file.sha, `Delete reader evaluation ${record.readerName}`);
+    setHistory((current) => current.filter((entry) => entry.path !== record.path));
+    await reload();
   }
 
   async function summarize() {
@@ -126,7 +142,7 @@ export function ReaderEvaluationsPage() {
     </CardContent></Card>
     {Object.keys(progress).length > 0 && <div className="grid gap-2 sm:grid-cols-2">{Object.values(progress).map((entry) => <div key={entry.readerId} className="flex items-center gap-3 rounded-xl border p-3">{entry.status === "completed" ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : entry.status === "failed" ? <AlertCircle className="h-4 w-4 text-destructive" /> : <Loader2 className="h-4 w-4 animate-spin" />}<span className="text-sm">{entry.readerName}</span><Badge variant="outline" className="ml-auto">{entry.status}</Badge></div>)}</div>}
     <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{t("readerEvaluations.history")}</h2><Button variant="outline" onClick={() => void summarize()} disabled={summaryBusy || latestCompletedByReader(history).length < 2}>{summaryBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}{t("readerEvaluations.generateSummary")}</Button></div>
-    <div className="space-y-4">{history.length ? history.map((record) => <article key={record.path} className="rounded-2xl border bg-card p-5 shadow-sm"><div className="mb-4 flex flex-wrap items-start justify-between gap-2"><div><p className="font-semibold">{record.readerName}</p><p className="text-xs text-muted-foreground">{new Date(record.createdAt).toLocaleString()}</p></div><div className="flex gap-2">{record.stale && <Badge variant="destructive">{t("readerEvaluations.stale")}</Badge>}<Badge variant="outline">{record.score !== undefined ? `${record.score}/10` : record.status}</Badge></div></div><div className="doc-prose max-w-none" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(record.body) }} /></article>) : <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">{t("readerEvaluations.empty")}</div>}</div>
+    <div className="space-y-4">{history.length ? history.map((record) => <article key={record.path} className="rounded-2xl border bg-card p-5 shadow-sm"><div className="mb-4 flex flex-wrap items-start justify-between gap-2"><div><p className="font-semibold">{record.readerName}</p><p className="text-xs text-muted-foreground">{new Date(record.createdAt).toLocaleString()}</p></div><div className="flex items-center gap-2">{record.stale && <Badge variant="destructive">{t("readerEvaluations.stale")}</Badge>}<Badge variant="outline">{record.score !== undefined ? `${record.score}/10` : record.status}</Badge>{record.readerId !== "summary" && <Button size="sm" variant="outline" onClick={() => void rerun(record)} disabled={running}><RefreshCcw className="mr-1.5 h-4 w-4" />{t("readerEvaluations.rerun")}</Button>}<Button size="icon" variant="ghost" onClick={() => void removeEvaluation(record)} disabled={running}><Trash2 className="h-4 w-4 text-destructive" /></Button></div></div><div className="doc-prose max-w-none" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(record.body) }} /></article>) : <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">{t("readerEvaluations.empty")}</div>}</div>
   </div>;
 }
 

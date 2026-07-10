@@ -57,7 +57,7 @@ export type AssistantAction =
   | {
       kind: "confirm-delete";
       bookId: string;
-      target: "note" | "paragraph" | "entity";
+      target: "note" | "paragraph" | "entity" | "reader-evaluation";
       path: string;
       title: string;
       chapterSlug?: string;

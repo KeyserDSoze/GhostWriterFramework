@@ -42,7 +42,7 @@ import {
 import { GITHUB_MODELS_INFERENCE_URL } from "@/config/githubModels";
 import { defaultEvaluationCriteria, defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
 import { emptyReaderPersona } from "@/narrarium/readerPersona";
-import { generateReaderEvaluationSummary, hashReaderSource, loadReaderPersonas, parseReaderEvaluation, runReaderEvaluations, saveReaderPersona, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
+import { generateReaderEvaluationSummary, hashReaderSource, loadReaderPersonas, parseReaderEvaluation, readerEvaluationPath, runReaderEvaluations, saveReaderPersona, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
 
 async function completeForTask(
   settings: AppSettings,
@@ -177,6 +177,7 @@ export async function runAssistantPrompt(input: {
     "delete-current-note": () => requestDeleteNote({ ...promptInput, book }),
     "delete-current-paragraph": () => requestDeleteParagraph({ ...promptInput, book }),
     "delete-current-entity": () => requestDeleteEntity({ ...promptInput, book }),
+    "delete-reader-evaluation": () => requestDeleteReaderEvaluation({ ...promptInput, book, branch, token }),
   } as const;
 
   const handlerId = chooseToolHandlerId({ prompt, lowered, settings, spokenMode }, new Set(Object.keys(handlers)));
@@ -726,6 +727,20 @@ async function requestDeleteEntity(input: PromptInput & { book: BookEntry }): Pr
     text: `This will delete the canon entity \`${path}\`. Confirm to proceed.`,
     action: { kind: "confirm-delete", bookId: input.book.id, target: "entity", path, title },
   };
+}
+
+async function requestDeleteReaderEvaluation(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const structure = input.context.structure;
+  if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
+  const [target, readers] = await Promise.all([evaluationTargetFromContext(input), loadReaderPersonas({ token: input.token, book: input.book, branch: input.branch, structure })]);
+  if (!target) return makeAssistantMessage("assistant", "Open or name the evaluated chapter or paragraph first.");
+  const lower = input.prompt.toLowerCase();
+  const reader = readers.sort((a, b) => b.name.length - a.name.length).find((entry) => lower.includes(entry.name.toLowerCase()) || lower.includes(entry.slug.replace(/-/g, " ")));
+  if (!reader) return makeAssistantMessage("assistant", "Tell me which reader evaluation to delete.");
+  const path = readerEvaluationPath(target, reader);
+  const existing = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path).catch(() => null);
+  if (!existing) return makeAssistantMessage("assistant", `No current evaluation by ${reader.name} exists for this target.`);
+  return { id: crypto.randomUUID(), role: "assistant", text: `This will delete the evaluation by **${reader.name}** for **${target.title}**. Confirm to proceed.`, action: { kind: "confirm-delete", bookId: input.book.id, target: "reader-evaluation", path, title: `${reader.name} — ${target.title}` } };
 }
 
 async function createChapterFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {

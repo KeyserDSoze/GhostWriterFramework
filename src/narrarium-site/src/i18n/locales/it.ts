@@ -928,6 +928,8 @@ const it = {
     history: "Storico valutazioni",
     empty: "Ancora nessuna valutazione dei lettori per questo target.",
     stale: "Non aggiornata",
+    rerun: "Rifai",
+    deleteConfirm: "Eliminare la valutazione di {{reader}}?",
     generateSummary: "Genera sintesi del panel",
     summaryFailed: "Generazione sintesi lettori non riuscita",
     evaluateWithReaders: "Valuta con i lettori",
@@ -1948,6 +1950,11 @@ const it = {
         name: "Apri valutazioni lettori",
         description: "Naviga alle valutazioni dei lettori del capitolo o paragrafo corrente.",
         output: "Navigazione",
+      },
+      "delete-reader-evaluation": {
+        name: "Elimina valutazione lettore",
+        description: "Elimina, dopo conferma, la ReaderEvaluation corrente di un lettore nominato.",
+        output: "ReaderEvaluation eliminata",
       },
       "open-reader": {
         name: "Apri reader",
