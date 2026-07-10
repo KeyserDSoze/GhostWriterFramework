@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -51,6 +51,7 @@ import {
   createParagraphScriptArtifact,
 } from "@/narrarium/workspace";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
+import { countChapterReaderEvaluations, countParagraphReaderEvaluations } from "@/narrarium/readerEvaluationCounts";
 import { parseDocument, stringify } from "yaml";
 
 function stringifyFrontmatter(frontmatter: Record<string, unknown>): string {
@@ -79,6 +80,8 @@ export function ChapterPage() {
   const { updateChapterParagraphs } = useBooksStore();
   const { book, structure, loading: structureLoading, error: structureError, reload } = useBookStructure(bookId);
   const chapter = structure?.chapters.find((c) => c.slug === chapterId);
+
+  const chapterReaderEvaluationCount = countChapterReaderEvaluations(structure, chapterId ?? "");
 
   const token = book ? resolveBookToken(book, settings) : "";
 
@@ -422,8 +425,7 @@ export function ChapterPage() {
             )}
           </div>
           <p className="text-muted-foreground text-sm">
-            {localParagraphs.length} paragraph
-            {localParagraphs.length !== 1 ? "s" : ""}
+            {t("chapter.paragraphCount", { count: localParagraphs.length })}
           </p>
           <div className="mt-3 max-w-xl rounded-lg border bg-muted/30 px-3 py-2">
             <GhostwriterField ghostwriters={structure?.ghostwriters ?? []} value={currentChapterGhostwriter} onChange={setChapterGhostwriter} />
@@ -439,22 +441,38 @@ export function ChapterPage() {
         </div>
       </div>
 
-      {/* Metadata badges */}
+      {/* Chapter overview actions */}
       <div className="flex flex-wrap gap-2">
-        {chapter.draftPath && (
-          <Badge variant="secondary">
-            <FileEdit className="mr-1 h-3 w-3" />
-            {t("chapter.hasDraft")}
-          </Badge>
-        )}
+        <ChapterActionChip
+          to={`/app/books/${bookId}/chapters/${chapterId}/workspace/draft`}
+          icon={<FileEdit className="h-3.5 w-3.5" />}
+          label={t("chapter.draft")}
+          active={!!chapter.draftPath}
+        />
         {chapter.writingStylePath && (
-          <Badge variant="secondary">
-            <PenLine className="mr-1 h-3 w-3" />
-            {t("chapter.writingStyle")}
-          </Badge>
+          <ChapterActionChip
+            to={`/app/books/${bookId}/chapters/${chapterId}/writing-style`}
+            icon={<PenLine className="h-3.5 w-3.5" />}
+            label={t("chapter.writingStyle")}
+            active
+          />
         )}
-        {chapter.hasResume && <Badge variant="secondary">{t("chapter.resume")}</Badge>}
-        {chapter.hasEvaluation && <Badge variant="secondary">{t("chapter.evaluation")}</Badge>}
+        <ChapterActionChip
+          to={`/app/books/${bookId}/chapters/${chapterId}/workspace/resume`}
+          label={t("chapter.resume")}
+          active={chapter.hasResume}
+        />
+        <ChapterActionChip
+          to={`/app/books/${bookId}/chapters/${chapterId}/workspace/evaluation`}
+          label={t("chapter.evaluation")}
+          active={chapter.hasEvaluation}
+        />
+        <ChapterActionChip
+          to={`/app/books/${bookId}/chapters/${chapterId}/reader-evaluations`}
+          label={t("chapter.readerEvaluations")}
+          count={chapterReaderEvaluationCount}
+          active={chapterReaderEvaluationCount > 0}
+        />
       </div>
 
       {/* Paragraph list */}
@@ -497,25 +515,31 @@ export function ChapterPage() {
               {p.title}
             </Link>
 
-            {p.draftPath && (
-              <Badge variant="secondary" className="shrink-0 text-[10px]">
-                {t("chapter.draft")}
-              </Badge>
-            )}
-
             <div className="flex items-center gap-1">
-              <Button asChild variant="ghost" size="sm" className="hidden h-7 px-2 text-[10px] sm:inline-flex">
-                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/draft`}>{t("chapter.draft")}</Link>
-              </Button>
-              <Button asChild variant="ghost" size="sm" className="hidden h-7 px-2 text-[10px] sm:inline-flex">
-                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/script`}>{t("chapter.script")}</Link>
-              </Button>
-              <Button asChild variant="ghost" size="sm" className="hidden h-7 px-2 text-[10px] sm:inline-flex">
-                <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/evaluation`}>{t("chapter.eval")}</Link>
-              </Button>
+              <ParagraphActionChip
+                to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/draft`}
+                label={t("chapter.draft")}
+                active={!!p.draftPath}
+              />
+              <ParagraphActionChip
+                to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/script`}
+                label={t("chapter.script")}
+                active={!!p.scriptPath}
+              />
+              <ParagraphActionChip
+                to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/evaluation`}
+                label={t("chapter.eval")}
+                active={!!p.evaluationPath}
+              />
+              <ParagraphActionChip
+                to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/reader-evaluations`}
+                label={t("chapter.readerEval")}
+                count={countParagraphReaderEvaluations(structure, chapterId ?? "", p.path)}
+                active={countParagraphReaderEvaluations(structure, chapterId ?? "", p.path) > 0}
+              />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-7 w-7 sm:hidden">
+                  <Button variant="ghost" size="icon" className="h-7 w-7">
                     <MoreHorizontal className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -524,13 +548,7 @@ export function ChapterPage() {
                   <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("script", p)}>{t("chapter.createScript")}</DropdownMenuItem>
                   <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("evaluation", p)}>{t("chapter.createEvaluation")}</DropdownMenuItem>
                   <DropdownMenuItem asChild>
-                    <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/draft`}>{t("chapter.openDraft")}</Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/script`}>{t("chapter.openScript")}</Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/evaluation`}>{t("chapter.openEvaluation")}</Link>
+                    <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/reader-evaluations`}>{t("chapter.readerEvaluations")}</Link>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -660,5 +678,73 @@ export function ChapterPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/** Overview action chip: a clickable link that greys out when the target file does not exist yet. */
+function ChapterActionChip({
+  to,
+  label,
+  icon,
+  active,
+  count,
+}: {
+  to: string;
+  label: string;
+  icon?: ReactNode;
+  active: boolean;
+  count?: number;
+}) {
+  return (
+    <Link
+      to={to}
+      className={[
+        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+        active
+          ? "border-primary/40 bg-secondary text-secondary-foreground hover:bg-secondary/80"
+          : "border-dashed border-muted-foreground/30 bg-transparent text-muted-foreground/60 hover:text-muted-foreground hover:border-muted-foreground/50",
+      ].join(" ")}
+    >
+      {icon}
+      <span>{label}</span>
+      {typeof count === "number" && count > 0 && (
+        <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary">
+          {count}
+        </span>
+      )}
+    </Link>
+  );
+}
+
+/** Compact per-paragraph action chip with the same active/greyed treatment. */
+function ParagraphActionChip({
+  to,
+  label,
+  active,
+  count,
+}: {
+  to: string;
+  label: string;
+  active: boolean;
+  count?: number;
+}) {
+  return (
+    <Link
+      to={to}
+      onClick={(e) => e.stopPropagation()}
+      className={[
+        "hidden shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors sm:inline-flex",
+        active
+          ? "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+          : "text-muted-foreground/50 hover:bg-accent/50 hover:text-muted-foreground",
+      ].join(" ")}
+    >
+      <span>{label}</span>
+      {typeof count === "number" && count > 0 && (
+        <span className="rounded-full bg-primary/15 px-1 text-[9px] font-semibold tabular-nums text-primary">
+          {count}
+        </span>
+      )}
+    </Link>
   );
 }

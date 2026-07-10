@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.67.0",
+    "date": "2026-07-10",
+    "en": {
+      "title": "Actionable chapter and paragraph views, floating chat fix",
+      "summary": "Chapter and paragraph overviews now expose clickable recap, evaluation and reader-evaluation shortcuts with counts, and the compact desktop chat stays inside the window.",
+      "changes": [
+        "Made the chapter overview recap, evaluation and reader-evaluation badges clickable shortcuts that open the related workspace or reader panel.",
+        "Greyed out actions whose file does not exist yet and showed a count next to saved reader evaluations.",
+        "Turned each paragraph row's draft, script, evaluation and reader-evaluation labels into direct links with the same greyed and counted states.",
+        "Reworked the chapter list so recap, evaluation and reader-evaluation actions sit on the right without the arrow icon, while the row still opens the chapter and drag reordering keeps working.",
+        "Localised the paragraph counts and the new action labels in English and Italian.",
+        "Fixed the compact desktop Copilot chat so it always stays inside the viewport and its close button remains reachable."
+      ]
+    },
+    "it": {
+      "title": "Viste capitolo e paragrafo cliccabili, fix chat flottante",
+      "summary": "Le panoramiche di capitolo e paragrafo mostrano ora scorciatoie cliccabili per riassunto, valutazione e valutazioni lettori con conteggi, e la chat compatta desktop resta dentro la finestra.",
+      "changes": [
+        "Resi cliccabili i badge di riassunto, valutazione e valutazioni lettori della panoramica capitolo, che aprono il relativo workspace o pannello lettori.",
+        "Rese grigie le azioni il cui file non esiste ancora e mostrato un conteggio accanto alle valutazioni lettori salvate.",
+        "Trasformate le etichette bozza, script, valutazione e valutazioni lettori di ogni riga paragrafo in link diretti con gli stessi stati grigi e conteggi.",
+        "Ridisegnata la lista capitoli: riassunto, valutazione e valutazioni lettori a destra senza freccia, mentre la riga apre comunque il capitolo e il riordino via trascinamento continua a funzionare.",
+        "Localizzati in inglese e italiano i conteggi dei paragrafi e le nuove etichette azione.",
+        "Corretta la chat Copilot compatta desktop così da restare sempre dentro la viewport con il pulsante di chiusura raggiungibile."
+      ]
+    }
+  },
+  {
     "version": "0.66.1",
     "date": "2026-07-10",
     "en": {

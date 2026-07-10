@@ -374,6 +374,7 @@ export function BookPage() {
                 token={token}
                 branch={branch}
                 chapters={structure.chapters}
+                structure={structure}
                 onReordered={() => void reload()}
               />
             ) : (

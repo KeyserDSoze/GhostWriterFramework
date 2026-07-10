@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ChevronRight, FileText, GripVertical, Loader2 } from "lucide-react";
+import { FileText, GripVertical, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { reorderChaptersInBook } from "@/github/githubClient";
+import { countChapterReaderEvaluations } from "@/narrarium/readerEvaluationCounts";
 import type { BookEntry } from "@/types/settings";
-import type { Chapter } from "@/types/book";
+import type { BookStructure, Chapter } from "@/types/book";
 
 export function ChapterReorderList({
   bookId,
@@ -16,6 +17,7 @@ export function ChapterReorderList({
   token,
   branch,
   chapters,
+  structure,
   onReordered,
 }: {
   bookId: string;
@@ -23,6 +25,7 @@ export function ChapterReorderList({
   token: string;
   branch: string;
   chapters: Chapter[];
+  structure?: BookStructure;
   onReordered: () => void;
 }) {
   const { t } = useTranslation();
@@ -117,13 +120,31 @@ export function ChapterReorderList({
             >
               <p className="truncate font-medium">{ch.title}</p>
               <p className="text-xs text-muted-foreground">
-                {ch.paragraphs.length} paragraph{ch.paragraphs.length !== 1 ? "s" : ""}
+                {ch.paragraphs.length === 1 ? t("bookPage.paragraphCountOne", { count: ch.paragraphs.length }) : t("bookPage.paragraphCountMany", { count: ch.paragraphs.length })}
                 {ch.draftPath && ` · ${t("bookPage.draft")}`}
-                {ch.hasResume && ` · ${t("bookPage.resume")}`}
-                {ch.hasEvaluation && ` · ${t("bookPage.eval")}`}
               </p>
             </Link>
-            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="flex shrink-0 items-center gap-1">
+              <ChapterRowAction
+                to={`/app/books/${bookId}/chapters/${ch.slug}/workspace/resume`}
+                label={t("bookPage.resume")}
+                active={ch.hasResume}
+                disabled={draggingIdx !== null}
+              />
+              <ChapterRowAction
+                to={`/app/books/${bookId}/chapters/${ch.slug}/workspace/evaluation`}
+                label={t("bookPage.eval")}
+                active={ch.hasEvaluation}
+                disabled={draggingIdx !== null}
+              />
+              <ChapterRowAction
+                to={`/app/books/${bookId}/chapters/${ch.slug}/reader-evaluations`}
+                label={t("bookPage.readerEval")}
+                count={countChapterReaderEvaluations(structure, ch.slug)}
+                active={countChapterReaderEvaluations(structure, ch.slug) > 0}
+                disabled={draggingIdx !== null}
+              />
+            </div>
           </li>
         ))}
       </ul>
@@ -152,5 +173,40 @@ export function ChapterReorderList({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/** Right-aligned chapter row action: clickable link, greyed out when the file is absent. */
+function ChapterRowAction({
+  to,
+  label,
+  active,
+  count,
+  disabled,
+}: {
+  to: string;
+  label: string;
+  active: boolean;
+  count?: number;
+  disabled?: boolean;
+}) {
+  return (
+    <Link
+      to={to}
+      onClick={(e) => { e.stopPropagation(); if (disabled) e.preventDefault(); }}
+      className={[
+        "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+        active
+          ? "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+          : "text-muted-foreground/50 hover:bg-accent/50 hover:text-muted-foreground",
+      ].join(" ")}
+    >
+      <span>{label}</span>
+      {typeof count === "number" && count > 0 && (
+        <span className="rounded-full bg-primary/15 px-1 text-[9px] font-semibold tabular-nums text-primary">
+          {count}
+        </span>
+      )}
+    </Link>
   );
 }
