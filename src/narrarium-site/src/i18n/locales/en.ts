@@ -766,6 +766,7 @@ const en = {
     toLoadStructure: "to load its structure first.",
     notFound: "Chapter \"{{id}}\" not found.",
     backToBook: "Back to book",
+    backToChapters: "Back to chapters",
     savingOrder: "Saving order…",
     draft: "Draft",
     resume: "Recap",

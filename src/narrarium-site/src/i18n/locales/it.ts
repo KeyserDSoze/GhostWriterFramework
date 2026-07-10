@@ -766,6 +766,7 @@ const it = {
     toLoadStructure: "per caricarne prima la struttura.",
     notFound: "Capitolo \"{{id}}\" non trovato.",
     backToBook: "Torna al libro",
+    backToChapters: "Torna ai capitoli",
     savingOrder: "Salvataggio ordine…",
     draft: "Bozza",
     resume: "Riassunto",
