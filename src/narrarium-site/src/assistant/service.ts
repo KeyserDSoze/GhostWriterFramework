@@ -40,7 +40,7 @@ import {
   createParagraphScriptArtifact,
 } from "@/narrarium/workspace";
 import { GITHUB_MODELS_INFERENCE_URL } from "@/config/githubModels";
-import { defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
+import { defaultEvaluationCriteria, defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
 
 async function completeForTask(
   settings: AppSettings,
@@ -735,6 +735,11 @@ export function extractEvaluationCriteria(guidelinesRaw: string): Record<string,
   return out;
 }
 
+export function resolveEvaluationCriteria(guidelinesRaw: string, language?: string): Record<string, string> {
+  const criteria = extractEvaluationCriteria(guidelinesRaw);
+  return Object.keys(criteria).length ? criteria : defaultEvaluationCriteria(language);
+}
+
 function openAiBaseUrlForIntegration(bookIntegration: { provider: string; endpoint?: string }): string {
   return bookIntegration.provider === "github_models" ? GITHUB_MODELS_INFERENCE_URL : (bookIntegration.endpoint || "https://api.openai.com/v1");
 }
@@ -867,7 +872,7 @@ async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: s
   const target = await resolveEvaluationTarget(input);
   if (!target) return makeAssistantMessage("assistant", "Tell me which chapter or paragraph to evaluate, for example: evaluate chapter 1 or evaluate paragraph 2 of chapter 1.");
   const guidelines = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, language: input.context.structure?.language });
-  const criteria = extractEvaluationCriteria(guidelines);
+  const criteria = resolveEvaluationCriteria(guidelines, input.context.structure?.language);
   const targetLabel = target.kind === "paragraph" ? `paragraph in chapter ${target.chapterSlug}` : `chapter ${target.chapterSlug}`;
   const evaluationPayload = [
     `Write or refresh the evaluation for ${targetLabel}. Request: ${input.prompt}`,

@@ -19,7 +19,7 @@ import { resolveBookToken } from "@/types/settings";
 import { createOrUpdateTextFile, loadFileContent } from "@/github/githubClient";
 import { appendAssistantNote } from "@/assistant/service";
 import { completeTextRouted } from "@/assistant/router";
-import { defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
+import { defaultEvaluationCriteria, defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
 
 interface Criterion {
   key: string;
@@ -52,6 +52,10 @@ function buildEvaluationDoc(frontmatter: Record<string, unknown>, criteria: Crit
 
 function normalizeCriterionKey(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9à-ÿ]+/gi, "_").replace(/^_+|_+$/g, "");
+}
+
+function criteriaFromDefaults(language: string): Criterion[] {
+  return Object.entries(defaultEvaluationCriteria(language)).map(([key, description]) => ({ key, description }));
 }
 
 function EvaluationCriterionEditor({
@@ -137,10 +141,11 @@ export function EvaluationStylePage() {
     loadFileContent(token, book.owner, book.repo, EVALUATION_GUIDELINES_PATH, branch)
       .then((raw) => {
         const parsed = parseEvaluationDoc(raw.trim() ? raw : defaultEvaluationGuidelinesMarkdown(language));
+        const nextCriteria = parsed.criteria.length ? parsed.criteria : criteriaFromDefaults(language);
         setFrontmatter(parsed.frontmatter);
-        setCriteria(parsed.criteria);
+        setCriteria(nextCriteria);
         setBody(parsed.body);
-        setSaved(buildEvaluationDoc(parsed.frontmatter, parsed.criteria, parsed.body));
+        setSaved(raw.trim() && parsed.criteria.length ? buildEvaluationDoc(parsed.frontmatter, nextCriteria, parsed.body) : "");
       })
       .catch(() => {
         const parsed = parseEvaluationDoc(defaultEvaluationGuidelinesMarkdown(language));

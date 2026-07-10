@@ -2,7 +2,7 @@ import type { AppSettings } from "@/types/settings";
 import type { BookStructure, Chapter, Paragraph } from "@/types/book";
 import type { LlmMessage } from "@/assistant/llm";
 import { completeTextRouted } from "@/assistant/router";
-import { extractEvaluationCriteria, scoreEvaluationRouted, type EvaluationCriterionScore } from "@/assistant/service";
+import { resolveEvaluationCriteria, scoreEvaluationRouted, type EvaluationCriterionScore } from "@/assistant/service";
 import { loadFileContent } from "@/github/githubClient";
 import { ghostwriterPrompt, parseGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
 import { defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
@@ -219,7 +219,7 @@ export async function generateParagraphEvaluation(src: PipelineSource, title: st
 export async function generateChapterEvaluationWithScores(src: PipelineSource, paragraphs: Array<{ title: string; text: string }>): Promise<{ body: string; scores: Record<string, EvaluationCriterionScore> | null }> {
   const body = await generateChapterEvaluation(src, paragraphs);
   const guidelines = await evaluationGuidelines(src);
-  const criteria = extractEvaluationCriteria(guidelines);
+  const criteria = resolveEvaluationCriteria(guidelines, src.structure.language ?? src.settings.ui.language);
   const scores = await scoreEvaluationRouted(src.settings, [
     "Score the chapter critically from 0 to 10 for every criterion. Every score must include a short evidence-based explanation. Do not be lenient.",
     `Evaluation guidelines:\n${guidelines}`,
@@ -232,7 +232,7 @@ export async function generateChapterEvaluationWithScores(src: PipelineSource, p
 export async function generateParagraphEvaluationWithScores(src: PipelineSource, title: string, prose: string): Promise<{ body: string; scores: Record<string, EvaluationCriterionScore> | null }> {
   const body = await generateParagraphEvaluation(src, title, prose);
   const guidelines = await evaluationGuidelines(src);
-  const criteria = extractEvaluationCriteria(guidelines);
+  const criteria = resolveEvaluationCriteria(guidelines, src.structure.language ?? src.settings.ui.language);
   const scores = await scoreEvaluationRouted(src.settings, [
     "Score the paragraph critically from 0 to 10 for every criterion. Every score must include a short evidence-based explanation. Do not be lenient.",
     `Evaluation guidelines:\n${guidelines}`,

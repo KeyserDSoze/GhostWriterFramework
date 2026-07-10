@@ -1,4 +1,4 @@
-import { stringify } from "yaml";
+import { parseDocument, stringify } from "yaml";
 
 export const EVALUATION_GUIDELINES_PATH = "evaluation-guidelines.md";
 
@@ -144,4 +144,19 @@ export function defaultEvaluationGuidelinesMarkdown(language: string | undefined
     },
     localized.body,
   );
+}
+
+export function defaultEvaluationCriteria(language: string | undefined): Record<string, string> {
+  const raw = defaultEvaluationGuidelinesMarkdown(language);
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
+  if (!match) return {};
+  const frontmatter = (parseDocument(match[1]).toJSON() as Record<string, unknown> | null) ?? {};
+  const rawCriteria = frontmatter.criteria;
+  if (!rawCriteria || typeof rawCriteria !== "object" || Array.isArray(rawCriteria)) return {};
+  return Object.fromEntries(Object.entries(rawCriteria as Record<string, unknown>).map(([key, value]) => [
+    key,
+    value && typeof value === "object" && typeof (value as Record<string, unknown>).description === "string"
+      ? String((value as Record<string, unknown>).description)
+      : String(value ?? ""),
+  ]));
 }
