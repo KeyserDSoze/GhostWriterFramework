@@ -54,6 +54,42 @@ async function completeForTask(
   }
 }
 
+const EVALUATION_GUIDELINES_PATH = "evaluation-guidelines.md";
+const DEFAULT_EVALUATION_GUIDELINES = [
+  "# Evaluation Guidelines",
+  "",
+  "Use this file as the contract for chapter and paragraph evaluations.",
+  "If the user customizes it, follow the customized version instead of these defaults.",
+  "",
+  "## Core principles",
+  "",
+  "- Stay faithful to the actual text and visible canon. Do not invent missing facts.",
+  "- Be concrete, editorial, and actionable. No generic praise.",
+  "- Distinguish what already works from what risks confusion or weakness.",
+  "- Flag canon, chronology, pacing, clarity, tone, and character issues when present.",
+  "- Prefer compact markdown with clear headings and bullet points.",
+  "",
+  "## Chapter evaluation output",
+  "",
+  "Produce these sections in order:",
+  "",
+  "1. `## Verdict` — short editorial verdict in 2-4 sentences.",
+  "2. `## Strengths` — bullet list of what works well.",
+  "3. `## Risks` — bullet list of problems, weaknesses, or reader confusion.",
+  "4. `## Canon And Continuity` — contradictions, chronology issues, or reveal timing risks.",
+  "5. `## Next Actions` — prioritized concrete rewrite actions.",
+  "",
+  "## Paragraph evaluation output",
+  "",
+  "Produce these sections in order:",
+  "",
+  "1. `## Verdict` — short judgment of the paragraph's effectiveness.",
+  "2. `## What Works` — concrete strengths.",
+  "3. `## What To Improve` — concrete weaknesses.",
+  "4. `## Canon And Continuity` — continuity or reveal issues if any.",
+  "5. `## Rewrite Priorities` — actionable next edits.",
+].join("\n");
+
 type PromptInput = {
   prompt: string;
   context: LoadedWriterContext;
@@ -121,6 +157,9 @@ export async function runAssistantPrompt(input: {
       "The current book structure is not loaded yet. Open the book page first so I can gather the right context.",
     );
   }
+
+  // Evaluation requests should always take the dedicated evaluation tool path.
+  if (looksLikeWriteEvaluation(lowered)) return writeEvaluation({ ...promptInput, book, branch, token });
 
   const handlers = {
     "search-book": () => searchCurrentBook({ ...promptInput, book, token }),
@@ -207,7 +246,7 @@ export async function compactAssistantSession(input: {
         "Summarize the conversation so far for future continuation. Keep goals, decisions, open questions, created notes, requested edits, and canon-sensitive facts. Return concise bullet points. Do not imply that full file contents are preserved; file contents must be reloaded when needed.",
     },
     { role: "user", content },
-  ], "default", { label: "copilot:compact" });
+  ], "chat-resume", { label: "copilot:compact" });
   if (!summary) return session;
 
   return { ...session, compactSummary: summary.trim(), compactedMessageCount: targetCount };
@@ -705,28 +744,117 @@ async function writeResume(input: PromptInput & { book: BookEntry; branch: strin
   return makeAssistantMessage("assistant", `I wrote the chapter resume to \`${targetPath}\`.\n\n${answer.trim()}`);
 }
 
-async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
-  if (input.context.paragraph && input.context.chapter) {
-    const paragraphSlug = input.context.paragraph.path.split("/").pop()?.replace(/\.md$/i, "") ?? input.context.paragraph.number;
-    const targetPath = `evaluations/paragraphs/${input.context.chapter.slug}/${paragraphSlug}.md`;
-    const answer = await completeForTask(input.settings, [
-      buildSystemMessage(input, "Write a paragraph evaluation suitable for the paragraph evaluation file. Use markdown headings and concise bullet points. Return only the body, no frontmatter.", "book"),
-      buildUserMessage(input, `Write or refresh the evaluation for paragraph ${paragraphSlug}. Request: ${input.prompt}`),
-    ], "review", { signal: input.signal, label: "copilot:write-paragraph-evaluation" });
-    if (!answer) return noAiMessage();
-    await upsertStructuredMarkdownFile({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, path: targetPath, frontmatter: { type: "evaluation", id: `evaluation:paragraph:${input.context.chapter.slug}:${paragraphSlug}`, title: `Evaluation ${input.context.chapter.slug} ${paragraphSlug}`, chapter: `chapter:${input.context.chapter.slug}`, paragraph: `paragraph:${input.context.chapter.slug}:${paragraphSlug}` }, body: answer.trim(), message: `Update paragraph evaluation ${paragraphSlug}` });
-    return makeAssistantMessage("assistant", `I wrote the paragraph evaluation to \`${targetPath}\`.\n\n${answer.trim()}`);
+async function ensureEvaluationGuidelines(input: { token: string; owner: string; repo: string; branch: string }): Promise<string> {
+  try {
+    return await loadFileContent(input.token, input.owner, input.repo, EVALUATION_GUIDELINES_PATH, input.branch);
+  } catch {
+    await createFile(input.token, input.owner, input.repo, input.branch, EVALUATION_GUIDELINES_PATH, `${DEFAULT_EVALUATION_GUIDELINES.trim()}\n`, "Add default evaluation guidelines").catch(() => undefined);
+    return DEFAULT_EVALUATION_GUIDELINES;
   }
-  const chapter = input.context.chapter;
-  if (!chapter) return makeAssistantMessage("assistant", "Evaluation writing works from a chapter or paragraph context.");
-  const targetPath = `evaluations/chapters/${chapter.slug}.md`;
+}
+
+async function resolveEvaluationTarget(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<
+  | { kind: "paragraph"; chapterSlug: string; title: string; targetPath: string; body: string; fileFrontmatter: Record<string, unknown> }
+  | { kind: "chapter"; chapterSlug: string; title: string; targetPath: string; body: string; fileFrontmatter: Record<string, unknown> }
+  | null
+> {
+  const lower = input.prompt.toLowerCase();
+  const explicitParagraph = /(?:paragrafo|paragraph|scena|scene)\s+\d+/.test(lower);
+  const explicitChapterOnly = /(?:capitolo|chapter)\s+\d+/.test(lower) && !explicitParagraph;
+
+  const paragraphTarget = resolveParagraphFromPrompt(input);
+  if (paragraphTarget && (explicitParagraph || (input.context.paragraph && !explicitChapterOnly))) {
+    const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, paragraphTarget.paragraph.path, input.branch).catch(() => "");
+    const parsed = parseMarkdown(raw);
+    const paragraphSlug = paragraphTarget.paragraph.path.split("/").pop()?.replace(/\.md$/i, "") ?? paragraphTarget.paragraph.number;
+    return {
+      kind: "paragraph",
+      chapterSlug: paragraphTarget.chapter.slug,
+      title: paragraphTarget.paragraph.title,
+      targetPath: `evaluations/paragraphs/${paragraphTarget.chapter.slug}/${paragraphSlug}.md`,
+      body: parsed.body.trim(),
+      fileFrontmatter: parsed.frontmatter,
+    };
+  }
+
+  const chapter = resolveChapterFromPrompt(input);
+  if (!chapter) return null;
+  const introRaw = await loadFileContent(input.token, input.book.owner, input.book.repo, `${chapter.path}/chapter.md`, input.branch).catch(() => "");
+  const introParsed = parseMarkdown(introRaw);
+  const paragraphRaws = await Promise.all(chapter.paragraphs.map((entry) => loadFileContent(input.token, input.book.owner, input.book.repo, entry.path, input.branch).catch(() => "")));
+  const body = [
+    introParsed.body.trim(),
+    ...paragraphRaws.map((raw, index) => {
+      const parsed = parseMarkdown(raw);
+      const title = chapter.paragraphs[index]?.title;
+      return parsed.body.trim() ? `### ${title}\n\n${parsed.body.trim()}` : "";
+    }),
+  ].filter(Boolean).join("\n\n");
+  return {
+    kind: "chapter",
+    chapterSlug: chapter.slug,
+    title: chapter.title,
+    targetPath: `evaluations/chapters/${chapter.slug}.md`,
+    body,
+    fileFrontmatter: introParsed.frontmatter,
+  };
+}
+
+async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const target = await resolveEvaluationTarget(input);
+  if (!target) return makeAssistantMessage("assistant", "Tell me which chapter or paragraph to evaluate, for example: evaluate chapter 1 or evaluate paragraph 2 of chapter 1.");
+  const guidelines = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch });
+  const targetLabel = target.kind === "paragraph" ? `paragraph in chapter ${target.chapterSlug}` : `chapter ${target.chapterSlug}`;
   const answer = await completeForTask(input.settings, [
-    buildSystemMessage(input, "Write a chapter evaluation suitable for the chapter evaluation file. Use markdown headings and concise bullet points. Return only the body, no frontmatter.", "book"),
-    buildUserMessage(input, `Write or refresh the evaluation for chapter ${chapter.slug}. Request: ${input.prompt}`),
-  ], "review", { signal: input.signal, label: "copilot:write-chapter-evaluation" });
+    buildSystemMessage(
+      input,
+      "You write Narrarium evaluation files. Follow the provided evaluation-guidelines.md as the evaluation contract. Use its structure, priorities, and sections unless the user explicitly asks otherwise. Return only the markdown body, no frontmatter, no code fences, no wrapper commentary.",
+      "book",
+    ),
+    buildUserMessage(
+      input,
+      [
+        `Write or refresh the evaluation for ${targetLabel}. Request: ${input.prompt}`,
+        "",
+        `Evaluation guidelines (${EVALUATION_GUIDELINES_PATH}):`,
+        guidelines.trim(),
+        "",
+        `Target title: ${target.title}`,
+        `Target kind: ${target.kind}`,
+        `Target frontmatter: ${JSON.stringify(target.fileFrontmatter, null, 2)}`,
+        "",
+        "Target body:",
+        target.body || "(empty)",
+      ].join("\n"),
+    ),
+  ], "review", { signal: input.signal, label: target.kind === "paragraph" ? "copilot:write-paragraph-evaluation" : "copilot:write-chapter-evaluation" });
   if (!answer) return noAiMessage();
-  await upsertStructuredMarkdownFile({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, path: targetPath, frontmatter: { type: "evaluation", id: `evaluation:chapter:${chapter.slug}`, title: `Evaluation ${chapter.slug}` }, body: answer.trim(), message: `Update chapter evaluation ${chapter.slug}` });
-  return makeAssistantMessage("assistant", `I wrote the chapter evaluation to \`${targetPath}\`.\n\n${answer.trim()}`);
+
+  const frontmatter = target.kind === "paragraph"
+    ? {
+        type: "evaluation",
+        id: `evaluation:paragraph:${target.chapterSlug}:${target.targetPath.split("/").pop()?.replace(/\.md$/i, "") ?? "unknown"}`,
+        title: `Evaluation ${target.chapterSlug} ${target.title}`,
+        chapter: `chapter:${target.chapterSlug}`,
+        paragraph: `paragraph:${target.chapterSlug}:${target.targetPath.split("/").pop()?.replace(/\.md$/i, "") ?? "unknown"}`,
+      }
+    : {
+        type: "evaluation",
+        id: `evaluation:chapter:${target.chapterSlug}`,
+        title: `Evaluation ${target.chapterSlug}`,
+      };
+
+  await upsertStructuredMarkdownFile({
+    token: input.token,
+    owner: input.book.owner,
+    repo: input.book.repo,
+    branch: input.branch,
+    path: target.targetPath,
+    frontmatter,
+    body: answer.trim(),
+    message: `Update ${target.kind} evaluation ${target.chapterSlug}`,
+  });
+  return makeAssistantMessage("assistant", `I wrote the ${target.kind} evaluation to \`${target.targetPath}\`.\n\n${answer.trim()}`);
 }
 
 async function writePlotUpdate(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -849,6 +977,18 @@ async function upsertNoteFile(input: { token: string; owner: string; repo: strin
       : chapterDraftNoteFrontmatter(input.path, input.title);
     await createFile(input.token, input.owner, input.repo, input.branch, input.path, renderMarkdown(frontmatter, section), `Add notes ${input.path}`);
   }
+}
+
+export async function appendAssistantNote(input: { token: string; owner: string; repo: string; branch: string; path: string; title?: string; noteBody: string }) {
+  await upsertNoteFile({
+    token: input.token,
+    owner: input.owner,
+    repo: input.repo,
+    branch: input.branch,
+    path: input.path,
+    title: input.title ?? defaultNoteTitle(input.path),
+    noteBody: input.noteBody,
+  });
 }
 
 function buildSystemMessage(input: PromptInput, instruction: string, taskLanguage?: "book" | "user"): LlmMessage {

@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ClipboardCheck,
   Copy,
+  Download,
   FileText,
   Ghost,
   GitBranch,
@@ -36,7 +37,8 @@ import {
   type AssistantFileUpdate,
   type AssistantMessage,
 } from "@/assistant/store";
-import { applyParagraphRewrite, compactAssistantSession, runAssistantPrompt } from "@/assistant/service";
+import { appendAssistantNote, applyParagraphRewrite, compactAssistantSession, runAssistantPrompt } from "@/assistant/service";
+import { assistantMarkdownToRichPlainText, buildAssistantSessionMarkdown, buildAssistantSessionPdfBlob, renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
 import { loadWriterContext, parseAppRoute } from "@/assistant/context";
 import { resolveNavigateAction, resolveReadAloudAction, type ReadAloudAction } from "@/assistant/planner";
 import { deleteAssistantSession, listAssistantSessions, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
@@ -61,7 +63,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { resolveBookToken } from "@/types/settings";
+import { resolveBookExportSettings, resolveBookToken } from "@/types/settings";
 import {
   compareBranches,
   createBranchFromBase,
@@ -74,6 +76,7 @@ import {
   updateFile,
   type BranchDiffFile,
 } from "@/github/githubClient";
+import { uploadDriveFile } from "@/drive/exportDriveClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { speakText, splitIntoStrofe, transcribeAudio, type SpeechController } from "@/assistant/speech";
 import { classifyConfirmationRouted, completeTextRouted, sttMode } from "@/assistant/router";
@@ -577,14 +580,145 @@ export function AssistantPanel() {
     await readText(reply.text);
   }
 
-  async function copyAssistantMessage(text: string) {
+  async function copyAssistantMessage(text: string, mode: "markdown" | "formatted" = "markdown") {
     try {
-      await navigator.clipboard.writeText(text);
-      toast({ title: t("assistant.copied") });
+      if (mode === "formatted" && "ClipboardItem" in window && navigator.clipboard.write) {
+        const html = renderAssistantMarkdownHtml(text);
+        const plain = assistantMarkdownToRichPlainText(text);
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/plain": new Blob([plain], { type: "text/plain" }),
+            "text/html": new Blob([html], { type: "text/html" }),
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(mode === "markdown" ? text : assistantMarkdownToRichPlainText(text));
+      }
+      toast({ title: mode === "markdown" ? t("assistant.copiedMarkdown") : t("assistant.copiedFormatted") });
     } catch (err) {
       toast({ title: t("assistant.copyFailed"), description: String(err), variant: "destructive" });
     }
   }
+
+  function downloadBlob(fileName: string, blob: Blob) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 5_000);
+  }
+
+  function sessionFileBaseName(session: NonNullable<typeof currentSession>) {
+    return (session.title || session.contextTitle || "chat")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gi, "-")
+      .replace(/^-+|-+$/g, "") || "chat";
+  }
+
+  async function summarizeLatestAssistantReplyText(text: string): Promise<string | null> {
+    try {
+      return await completeTextRouted(settings, [
+        {
+          role: "system",
+          content: `Summarize the assistant reply below as a concise writer note in markdown. Keep only the useful takeaways and next actions. No frontmatter, no wrapper commentary. Respond in ${settings.ui.language === "it" ? "Italian" : "English"}.`,
+        },
+        { role: "user", content: text },
+      ], "chat-resume", { label: "assistant:reply-summary" });
+    } catch (err) {
+      toast({ title: t("assistant.toastChatSummaryFailed"), description: String(err), variant: "destructive" });
+      return null;
+    }
+  }
+
+  async function deleteCurrentSavedChat() {
+    if (!user || !accessToken || !currentSession) return;
+    const fileId = currentSession.fileId;
+    if (fileId) await deleteAssistantSession(user.provider, accessToken, fileId);
+    setSessions(sessions.filter((session) => (session.fileId ?? session.id) !== (fileId ?? currentSession.id)));
+    setCurrentSession(null);
+  }
+
+  async function saveCurrentChatAsNote(options: { mode: "full" | "reply-summary"; deleteAfter?: boolean }) {
+    if (!currentSession || !bookId) return;
+    const book = settings.books.find((entry) => entry.id === bookId);
+    const token = book ? resolveBookToken(book, settings) : "";
+    if (!book || !token) {
+      toast({ title: t("assistant.toastNoBookToken"), variant: "destructive" });
+      return;
+    }
+    const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches);
+    if (!routeContext.noteTargetPath) {
+      toast({ title: t("assistant.toastNoNoteTarget"), variant: "destructive" });
+      return;
+    }
+    const latestReply = [...currentSession.messages].reverse().find((message) => message.role === "assistant" && message.text.trim());
+    let noteBody = "";
+    if (options.mode === "full") {
+      noteBody = [`**Chat:** ${currentSession.title}`, "", buildAssistantSessionMarkdown(currentSession)].join("\n");
+    } else {
+      if (!latestReply?.text.trim()) {
+        toast({ title: t("assistant.noLastReply"), variant: "destructive" });
+        return;
+      }
+      const summary = await summarizeLatestAssistantReplyText(latestReply.text);
+      if (!summary) return;
+      noteBody = [`**Chat:** ${currentSession.title}`, "", summary.trim()].join("\n");
+    }
+    setBusy(true);
+    try {
+      await appendAssistantNote({
+        token,
+        owner: book.owner,
+        repo: book.repo,
+        branch: routeContext.structure?.loadedBranch ?? branch,
+        path: routeContext.noteTargetPath,
+        noteBody,
+      });
+      if (options.deleteAfter) await deleteCurrentSavedChat();
+      toast({ title: t("assistant.toastChatNoteSaved") });
+    } catch (err) {
+      toast({ title: t("assistant.toastChatNoteSaveFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportCurrentChat(options: { format: "markdown" | "pdf"; destination: "download" | "drive" }) {
+    if (!currentSession) return;
+    const baseName = sessionFileBaseName(currentSession);
+    setBusy(true);
+    try {
+      const markdown = buildAssistantSessionMarkdown(currentSession);
+      const artifact = options.format === "markdown"
+        ? { fileName: `${baseName}.md`, mimeType: "text/markdown", blob: new Blob([markdown], { type: "text/markdown;charset=utf-8" }) }
+        : { fileName: `${baseName}.pdf`, mimeType: "application/pdf", blob: await buildAssistantSessionPdfBlob(currentSession) };
+
+      if (options.destination === "download") {
+        downloadBlob(artifact.fileName, artifact.blob);
+      } else {
+        if (!bookId) throw new Error(t("assistant.toastChatDriveBookRequired"));
+        const book = settings.books.find((entry) => entry.id === bookId);
+        if (!book || !user || !accessToken) throw new Error(t("assistant.toastChatDriveUnavailable"));
+        const exportSettings = resolveBookExportSettings(book);
+        if (user.provider === "google" && !exportSettings.googleDriveFolderId) throw new Error(t("assistant.toastChatDriveTargetMissing"));
+        if (user.provider === "microsoft" && !exportSettings.microsoftDriveFolderPath) throw new Error(t("assistant.toastChatDriveTargetMissing"));
+        await uploadDriveFile(user.provider, accessToken, {
+          googleFolderId: exportSettings.googleDriveFolderId,
+          microsoftFolderPath: exportSettings.microsoftDriveFolderPath,
+          fileName: artifact.fileName,
+          mimeType: artifact.mimeType,
+          blob: artifact.blob,
+        });
+      }
+      toast({ title: options.destination === "download" ? t("assistant.toastChatExported") : t("assistant.toastChatSavedToDrive") });
+    } catch (err) {
+      toast({ title: t("assistant.toastChatExportFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleVoiceTranscript(transcript: string) {
     setLastVoiceTranscript(transcript);
     setVoiceStatus("thinking");
@@ -1288,12 +1422,26 @@ export function AssistantPanel() {
       {(currentSession?.messages ?? []).map((message, index) => (
         <div key={message.id} className={message.role === "user" ? "flex justify-end" : "group flex justify-start"}>
           <div className={message.role === "user" ? "max-w-[85%]" : "w-full max-w-[92%]"}>
-            <div className={message.role === "user" ? "rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm leading-6 text-primary-foreground shadow-sm" : "rounded-2xl rounded-bl-sm border bg-background px-4 py-3 text-sm leading-7 whitespace-pre-wrap shadow-sm"}>{message.text}</div>
+            {message.role === "user" ? (
+              <div className="rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm leading-6 text-primary-foreground shadow-sm whitespace-pre-wrap">{message.text}</div>
+            ) : (
+              <div className="rounded-2xl rounded-bl-sm border bg-background px-4 py-3 shadow-sm">
+                <div className="doc-prose max-w-none text-sm leading-7" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(message.text) }} />
+              </div>
+            )}
             {message.role === "assistant" && message.text.trim() && (
               <div className="mt-1 flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100">
-                <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs text-muted-foreground" onClick={() => void copyAssistantMessage(message.text)}>
-                  <Copy className="h-3.5 w-3.5" />{t("assistant.copyMessage")}
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs text-muted-foreground">
+                      <Copy className="h-3.5 w-3.5" />{t("assistant.copyMessage")}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuItem onSelect={() => void copyAssistantMessage(message.text, "markdown")}>{t("assistant.copyMarkdown")}</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => void copyAssistantMessage(message.text, "formatted")}>{t("assistant.copyFormatted")}</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs text-muted-foreground" onClick={() => void readText(message.text)}>
                   <Volume2 className="h-3.5 w-3.5" />{t("assistant.listenMessage")}
                 </Button>
@@ -1427,6 +1575,26 @@ export function AssistantPanel() {
                 {speechController ? <Square className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                 <span className="hidden sm:inline">{speechController ? t("assistant.stopReading") : t("assistant.read")}</span>
               </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-8 gap-1" disabled={!currentSession?.messages.length || busy}>
+                    <FileText className="h-4 w-4" />{t("assistant.chatActions")}<ChevronDown className="h-3.5 w-3.5 opacity-70" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64">
+                  <DropdownMenuLabel className="text-xs">{currentSession?.title ?? t("assistant.title")}</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => void saveCurrentChatAsNote({ mode: "full" })}>{t("assistant.saveFullChatToNote")}</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void saveCurrentChatAsNote({ mode: "full", deleteAfter: true })}>{t("assistant.saveFullChatToNoteAndDelete")}</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void saveCurrentChatAsNote({ mode: "reply-summary" })}>{t("assistant.saveReplySummaryToNote")}</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void saveCurrentChatAsNote({ mode: "reply-summary", deleteAfter: true })}>{t("assistant.saveReplySummaryToNoteAndDelete")}</DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "markdown", destination: "download" })}><Download className="mr-2 h-4 w-4" />{t("assistant.downloadChatMarkdown")}</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "pdf", destination: "download" })}><Download className="mr-2 h-4 w-4" />{t("assistant.downloadChatPdf")}</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "markdown", destination: "drive" })}><FileText className="mr-2 h-4 w-4" />{t("assistant.saveChatMarkdownToDrive")}</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "pdf", destination: "drive" })}><FileText className="mr-2 h-4 w-4" />{t("assistant.saveChatPdfToDrive")}</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm" className="ml-auto h-8 text-xs text-muted-foreground">{t("assistant.contextInspector")}</Button>
