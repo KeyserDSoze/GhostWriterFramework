@@ -121,11 +121,11 @@ function parseScoresFromEntries(entries: MetaEntry[]): EvaluationScore[] {
   }
 }
 
-function scoreTone(score: number): { bar: string; badge: string } {
-  if (score >= 8) return { bar: "bg-emerald-500", badge: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" };
-  if (score >= 6) return { bar: "bg-primary", badge: "border-primary/40 bg-primary/10 text-primary" };
-  if (score >= 4) return { bar: "bg-amber-500", badge: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300" };
-  return { bar: "bg-destructive", badge: "border-destructive/40 bg-destructive/10 text-destructive" };
+function scoreTone(score: number): { bar: string; badge: string; ring: string } {
+  if (score >= 8) return { bar: "bg-emerald-500", badge: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300", ring: "#10b981" };
+  if (score >= 6) return { bar: "bg-primary", badge: "border-primary/40 bg-primary/10 text-primary", ring: "hsl(var(--primary))" };
+  if (score >= 4) return { bar: "bg-amber-500", badge: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300", ring: "#f59e0b" };
+  return { bar: "bg-destructive", badge: "border-destructive/40 bg-destructive/10 text-destructive", ring: "hsl(var(--destructive))" };
 }
 
 function averageScores(items: ParagraphEvaluationView[]): EvaluationScore[] {
@@ -147,28 +147,62 @@ function averageScores(items: ParagraphEvaluationView[]): EvaluationScore[] {
   })).sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function ScoreCards({ scores }: { scores: EvaluationScore[] }) {
+function ScoreCards({ scores, t }: { scores: EvaluationScore[]; t: ReturnType<typeof useTranslation>["t"] }) {
   if (!scores.length) return null;
+  const overall = scores.reduce((total, score) => total + score.score, 0) / scores.length;
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-      {scores.map((score) => {
-        const tone = scoreTone(score.score);
-        return (
-          <div key={score.key} className="rounded-2xl border bg-card/70 p-4 shadow-sm">
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold">{score.label}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">{score.key}</p>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-4 rounded-2xl border bg-muted/20 p-4">
+        <div className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-full" style={{ background: `conic-gradient(hsl(var(--primary)) ${overall * 10}%, hsl(var(--muted)) 0)` }}>
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-card text-lg font-bold">{overall.toFixed(1)}</div>
+        </div>
+        <div>
+          <p className="text-sm font-semibold">{t("evaluationView.overallScore")}</p>
+          <p className="text-xs text-muted-foreground">{t("evaluationView.averageAcross", { count: scores.length })}</p>
+        </div>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {scores.map((score) => {
+          const tone = scoreTone(score.score);
+          return (
+            <div key={score.key} className="overflow-hidden rounded-2xl border bg-card/70 p-4 shadow-sm">
+              <div className="mb-3 flex items-center gap-3">
+                <div className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full" style={{ background: `conic-gradient(${tone.ring} ${score.score * 10}%, hsl(var(--muted)) 0)` }}>
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-card text-sm font-bold">{score.score.toFixed(score.score % 1 ? 1 : 0)}</div>
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">{score.label}</p>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{score.key} · /10</p>
+                </div>
               </div>
-              <span className={`rounded-full border px-2.5 py-1 text-sm font-semibold ${tone.badge}`}>{score.score.toFixed(score.score % 1 ? 1 : 0)}/10</span>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${Math.max(0, Math.min(100, score.score * 10))}%` }} />
+              </div>
+              {score.explanation && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-muted-foreground">{score.explanation}</p>}
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-muted">
-              <div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${Math.max(0, Math.min(100, score.score * 10))}%` }} />
-            </div>
-            {score.explanation && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-muted-foreground">{score.explanation}</p>}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function evaluationMetaValue(entries: MetaEntry[], keys: string[]): string {
+  const entry = entries.find((candidate) => keys.includes(candidate.key.toLowerCase()));
+  if (!entry) return "";
+  return Array.isArray(entry.value) ? entry.value.join(", ") : entry.value;
+}
+
+function EvaluationHighlights({ t, entries }: { t: ReturnType<typeof useTranslation>["t"]; entries: MetaEntry[] }) {
+  const wordCount = evaluationMetaValue(entries, ["word_count", "word-count", "wordcount", "wordcounttotal"]);
+  const verdict = evaluationMetaValue(entries, ["verdict", "final_verdict", "final-verdict", "finalverdict"]);
+  const focus = evaluationMetaValue(entries, ["focus", "evaluation_focus", "evaluation-focus"]);
+  if (!wordCount && !verdict && !focus) return null;
+  return (
+    <div className="grid gap-3 md:grid-cols-[0.7fr_1.6fr_1.2fr]">
+      {wordCount && <div className="rounded-2xl border bg-card p-4 shadow-sm"><p className="text-xs uppercase tracking-wide text-muted-foreground">{t("evaluationView.wordCount")}</p><p className="mt-1 text-2xl font-bold tabular-nums">{wordCount}</p></div>}
+      {verdict && <div className="rounded-2xl border bg-card p-4 shadow-sm"><p className="text-xs uppercase tracking-wide text-muted-foreground">{t("evaluationView.verdict")}</p><p className="mt-2 text-sm font-medium leading-6">{verdict}</p></div>}
+      {focus && <div className="rounded-2xl border bg-card p-4 shadow-sm"><p className="text-xs uppercase tracking-wide text-muted-foreground">{t("evaluationView.focus")}</p><p className="mt-2 text-sm leading-6 text-muted-foreground">{focus}</p></div>}
     </div>
   );
 }
@@ -202,13 +236,10 @@ function EvaluationOverview({
               <p className="text-sm font-semibold">{t("evaluationView.scores")}</p>
               <p className="text-xs text-muted-foreground">{t("evaluationView.scoresHint")}</p>
             </div>
-            <ScoreCards scores={scores} />
+            <ScoreCards scores={scores} t={t} />
           </section>
         )}
-        <section className="rounded-2xl border bg-card p-5 shadow-sm">
-          <p className="mb-3 text-sm font-semibold">{t("evaluationView.discursiveEvaluation")}</p>
-          <EvaluationBody body={body} />
-        </section>
+        <section className="rounded-2xl border bg-card p-5 shadow-sm"><EvaluationBody body={body} /></section>
       </div>
     );
   }
@@ -226,7 +257,7 @@ function EvaluationOverview({
             {[...Array(3)].map((_, index) => <Skeleton key={index} className="h-32 rounded-2xl" />)}
           </div>
         ) : averages.length ? (
-          <ScoreCards scores={averages} />
+          <ScoreCards scores={averages} t={t} />
         ) : (
           <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">{t("evaluationView.noParagraphScores")}</div>
         )}
@@ -251,7 +282,7 @@ function EvaluationOverview({
                     <p className="font-mono text-xs text-muted-foreground">{entry.path}</p>
                   </div>
                 </div>
-                {entry.scores.length > 0 && <div className="mb-5"><ScoreCards scores={entry.scores} /></div>}
+                {entry.scores.length > 0 && <div className="mb-5"><ScoreCards scores={entry.scores} t={t} /></div>}
                 <EvaluationBody body={entry.body} />
               </article>
             ))}
@@ -687,6 +718,8 @@ export function WorkspaceDocPage() {
             <Skeleton className="h-4 w-3/4" />
             <Skeleton className="h-4 w-1/2" />
           </div>
+        ) : workspaceKind === "evaluation" ? (
+          <EvaluationHighlights t={t} entries={entries} />
         ) : (
           <>
             {readonlyEntries.map((entry) => (

@@ -1158,6 +1158,11 @@ const it = {
   },
   evaluationView: {
     regenerate: "Rigenera valutazione",
+    wordCount: "Conteggio parole",
+    verdict: "Verdetto finale",
+    focus: "Focus",
+    overallScore: "Punteggio complessivo",
+    averageAcross: "Media su {{count}} criteri · 0–10",
     scores: "Punteggi",
     scoresHint: "Criteri numerici dal frontmatter della valutazione, con voto da 0 a 10 e motivazione esplicita.",
     discursiveEvaluation: "Valutazione discorsiva",

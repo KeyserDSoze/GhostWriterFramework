@@ -1158,6 +1158,11 @@ const en = {
   },
   evaluationView: {
     regenerate: "Regenerate evaluation",
+    wordCount: "Word count",
+    verdict: "Final verdict",
+    focus: "Focus",
+    overallScore: "Overall score",
+    averageAcross: "Average across {{count}} criteria · 0–10",
     scores: "Scores",
     scoresHint: "Numeric criteria from the evaluation frontmatter, scored from 0 to 10 with explicit reasons.",
     discursiveEvaluation: "Discursive evaluation",
