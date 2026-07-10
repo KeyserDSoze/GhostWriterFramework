@@ -401,6 +401,7 @@ export async function loadBookStructure(
     secrets: filesUnder("secrets"),
     globalWritingStylePath: allPaths.find((p) => p === "writing-style.md")
       ?? allPaths.find((p) => p.match(/^guidelines\/(writing-style|style)\.md$/)),
+    globalPunctuationStylePath: allPaths.includes("punctuation-style.md") ? "punctuation-style.md" : undefined,
     voicesPath: allPaths.includes("guidelines/voices.md")
       ? "guidelines/voices.md"
       : undefined,

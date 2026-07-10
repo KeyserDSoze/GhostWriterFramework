@@ -193,6 +193,7 @@ export async function loadWriterContext(
     };
 
     await pushFile(structure.globalWritingStylePath);
+    await pushFile(structure.globalPunctuationStylePath);
     await pushFile(structure.voicesPath);
     await pushFile(structure.plotPath);
 
@@ -415,6 +416,7 @@ function buildAvailableFileManifest(structure: BookStructure): AvailableFile[] {
   add("book.md", "book metadata");
   add(structure.plotPath, "plot");
   add(structure.globalWritingStylePath, "global writing style");
+  add(structure.globalPunctuationStylePath, "global punctuation style");
   add(structure.voicesPath, "voices/style reference");
   structure.readerPersonas.forEach((file) => add(file.path, "simulated reader persona"));
   structure.readerEvaluationFiles.forEach((file) => add(file.path, file.path.includes("/summaries/") ? "reader evaluation summary" : "reader evaluation"));

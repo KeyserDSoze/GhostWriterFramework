@@ -575,6 +575,7 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
     timelines: filesUnder("timelines"),
     secrets: filesUnder("secrets"),
     globalWritingStylePath: allPaths.find((p) => p === "writing-style.md") ?? allPaths.find((p) => p === "guidelines/writing-style.md" || p === "guidelines/style.md"),
+    globalPunctuationStylePath: allPaths.includes("punctuation-style.md") ? "punctuation-style.md" : undefined,
     voicesPath: allPaths.find((p) => p === "guidelines/voices.md"),
     plotPath: allPaths.includes("plot.md") ? "plot.md" : undefined,
     ghostwriters: allPaths

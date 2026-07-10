@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.68.0",
+    "date": "2026-07-10",
+    "en": {
+      "title": "Punctuation style: a binding punctuation contract",
+      "summary": "A new Punctuation style page lets you define binding punctuation rules (like guillemets for dialogue) that are always injected into every prompt that writes or rewrites prose.",
+      "changes": [
+        "Added a Punctuation style page in the book sidebar, next to Writing style and Evaluation style, saved as punctuation-style.md at the book root.",
+        "Seeded a sensible default: guillemets « » for dialogue with every punctuation mark inside except the final full stop, which stays outside the guillemets.",
+        "The punctuation style is now always included in the instructions for improving a paragraph or selection, refining drafts, script-to-prose, synonyms, and the Copilot paragraph rewrite.",
+        "Extended custom actions and the Copilot context so they also carry the punctuation rules.",
+        "Added bilingual labels and the default punctuation contract in English and Italian."
+      ]
+    },
+    "it": {
+      "title": "Stile di punteggiatura: un contratto vincolante",
+      "summary": "Una nuova pagina Stile di punteggiatura permette di definire regole di punteggiatura vincolanti (come le caporali per i dialoghi) che vengono sempre inserite in ogni prompt che scrive o riscrive prosa.",
+      "changes": [
+        "Aggiunta la pagina Stile di punteggiatura nella sidebar del libro, accanto a Stile di scrittura e Stile di valutazione, salvata come punctuation-style.md nella root del libro.",
+        "Inserito un default sensato: caporali « » per i dialoghi con tutti i segni di punteggiatura dentro tranne il punto finale, che resta fuori dalle caporali.",
+        "Lo stile di punteggiatura è ora sempre incluso nelle istruzioni per migliorare un paragrafo o una selezione, rifinire le bozze, trasformare lo script in prosa, generare sinonimi e nella riscrittura paragrafo del Copilot.",
+        "Estese le azioni personalizzate e il contesto del Copilot così da trasportare anche le regole di punteggiatura.",
+        "Aggiunte etichette bilingui e il contratto di punteggiatura predefinito in inglese e italiano."
+      ]
+    }
+  },
+  {
     "version": "0.67.3",
     "date": "2026-07-10",
     "en": {

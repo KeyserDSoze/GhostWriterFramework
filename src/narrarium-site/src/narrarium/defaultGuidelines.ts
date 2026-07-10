@@ -47,6 +47,69 @@ export function defaultWritingStyleTitle(language: string | undefined): string {
   return normalizeBookLanguage(language) === "it" ? "Stile di scrittura" : "Writing Style";
 }
 
+export const PUNCTUATION_STYLE_PATH = "punctuation-style.md";
+
+export function defaultPunctuationStyleTitle(language: string | undefined): string {
+  return normalizeBookLanguage(language) === "it" ? "Stile di punteggiatura" : "Punctuation Style";
+}
+
+export function defaultPunctuationStyleBody(language: string | undefined): string {
+  if (normalizeBookLanguage(language) === "it") {
+    return `# Stile di punteggiatura
+
+Queste regole di punteggiatura sono vincolanti e vanno rispettate SEMPRE quando scrivi, riscrivi o modifichi prosa, dialoghi, bozze o paragrafi. Applicale in modo coerente anche se non vengono ripetute nella singola richiesta.
+
+## Dialoghi
+
+- Usa le virgolette caporali (parentesi francesi) « » per aprire e chiudere ogni battuta di dialogo. Non usare "virgolette dritte" né 'apici' né “virgolette curve” per i dialoghi.
+- Tieni TUTTI i segni di punteggiatura DENTRO le caporali (virgola, punto e virgola, due punti, punto interrogativo, punto esclamativo, puntini di sospensione), TRANNE il punto fermo finale, che va SEMPRE FUORI dalle caporali.
+  - Esempio corretto: «Vieni con me».
+  - Esempio corretto: «Vieni con me?» chiese lei.
+  - Esempio corretto: «Vieni con me!»
+  - Esempio corretto: «Aspetta…».
+  - Esempio ERRATO: «Vieni con me.»  (il punto non deve stare dentro)
+  - Esempio ERRATO: "Vieni con me".  (non usare virgolette dritte)
+- Quando la battuta è seguita da un inciso (dice, chiese, mormorò), chiudi le caporali, poi metti l'inciso, e il punto finale va alla fine della frase completa: «Vieni con me», disse.
+
+## Regole generali
+
+- Non lasciare spazi subito dopo « né subito prima di ».
+- Usa i puntini di sospensione come carattere unico … (tre punti), senza spazio prima.
+- Mantieni coerenza in tutto il testo: non alternare stili di virgolette diversi.
+
+## Priorità
+
+Se una richiesta contraddice queste regole senza motivo esplicito, dai priorità a queste regole di punteggiatura.
+`;
+  }
+  return `# Punctuation Style
+
+These punctuation rules are binding and must ALWAYS be respected when you write, rewrite, or edit prose, dialogue, drafts, or paragraphs. Apply them consistently even when they are not repeated in the individual request.
+
+## Dialogue
+
+- Use guillemets (French angle quotes) « » to open and close every line of dialogue. Do not use "straight quotes", 'apostrophes', or “curly quotes” for dialogue.
+- Keep ALL punctuation marks INSIDE the guillemets (comma, semicolon, colon, question mark, exclamation mark, ellipsis) EXCEPT the final full stop (period), which must ALWAYS stay OUTSIDE the guillemets.
+  - Correct: «Come with me».
+  - Correct: «Come with me?» she asked.
+  - Correct: «Come with me!»
+  - Correct: «Wait…».
+  - WRONG: «Come with me.»  (the full stop must not be inside)
+  - WRONG: "Come with me".  (do not use straight quotes)
+- When a dialogue tag follows (said, asked, whispered), close the guillemets, add the tag, and place the final full stop at the end of the whole sentence: «Come with me», she said.
+
+## General rules
+
+- Do not leave a space right after « or right before ».
+- Use a single ellipsis character … (not three separate dots) with no space before it.
+- Stay consistent across the whole text: never mix different quote styles.
+
+## Priority
+
+If a request contradicts these rules without an explicit reason, give priority to these punctuation rules.
+`;
+}
+
 function renderMarkdown(frontmatter: Record<string, unknown>, body: string): string {
   return `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${body.replace(/^\n+/, "").trimEnd()}\n`;
 }

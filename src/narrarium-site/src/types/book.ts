@@ -119,6 +119,8 @@ export interface BookStructure {
   secrets: BookFile[];
   /** writing-style.md, or legacy guidelines/writing-style.md / guidelines/style.md */
   globalWritingStylePath?: string;
+  /** punctuation-style.md at the repo root: binding punctuation rules for prose */
+  globalPunctuationStylePath?: string;
   /** guidelines/voices.md */
   voicesPath?: string;
   plotPath?: string;

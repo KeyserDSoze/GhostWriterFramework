@@ -18,6 +18,7 @@ import { WorkspaceDocPage } from "@/pages/WorkspaceDocPage";
 import { GhostwritersPage } from "@/pages/GhostwritersPage";
 import { WritingStylePage } from "@/pages/WritingStylePage";
 import { EvaluationStylePage } from "@/pages/EvaluationStylePage";
+import { PunctuationStylePage } from "@/pages/PunctuationStylePage";
 import { ReaderPersonasPage } from "@/pages/ReaderPersonasPage";
 import { ReaderEvaluationsPage } from "@/pages/ReaderEvaluationsPage";
 import { PatchNotesPage } from "@/pages/PatchNotesPage";
@@ -81,6 +82,7 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/ghostwriters", element: <GhostwritersPage /> },
       { path: "books/:bookId/writing-style", element: <WritingStylePage /> },
       { path: "books/:bookId/evaluation-style", element: <EvaluationStylePage /> },
+      { path: "books/:bookId/punctuation-style", element: <PunctuationStylePage /> },
       { path: "books/:bookId/simulated-readers", element: <ReaderPersonasPage /> },
       { path: "books/:bookId/settings", element: <BookSettingsPage /> },
       { path: "books/:bookId/canon/:section/:slug", element: <CanonEntityPage /> },

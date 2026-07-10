@@ -1138,6 +1138,13 @@ const en = {
     editorHint: "Write the rules that should guide drafting, revision, dialogue, rhythm, viewpoint, and prose consistency.",
     placeholder: "Write the style rules here…"
   },
+  punctuationStyle: {
+    title: "Punctuation style",
+    badge: "Punctuation contract",
+    intro: "Always-on punctuation rules for prose and dialogue: which quote marks to use and where each punctuation mark goes. These rules are injected into every prompt that writes, rewrites, or edits paragraphs and drafts.",
+    editorHint: "Define your punctuation rules, for example guillemets « » for dialogue with every mark inside except the final full stop, which stays outside. Keep them concrete so Copilot applies them consistently.",
+    placeholder: "Write the punctuation rules here…"
+  },
   evaluationStyle: {
     title: "Evaluation style",
     badge: "AI evaluation contract",

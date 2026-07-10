@@ -234,7 +234,7 @@ function splitMarkdown(raw: string): MarkdownParts {
 
 async function loadWritingStyle(target: CustomActionTargetContext): Promise<string> {
   if (!target.book || !target.structure || !target.token || !target.branch) return "";
-  const paths = [target.structure.globalWritingStylePath, target.chapter?.writingStylePath].filter(Boolean) as string[];
+  const paths = [target.structure.globalWritingStylePath, target.chapter?.writingStylePath, target.structure.globalPunctuationStylePath].filter(Boolean) as string[];
   const blocks = await Promise.all(paths.map(async (path) => {
     const raw = await loadFileContent(target.token, target.book!.owner, target.book!.repo, path, target.branch).catch(() => "");
     return raw ? `${path}:\n${stripFrontmatter(raw)}` : "";

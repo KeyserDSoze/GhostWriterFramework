@@ -56,9 +56,10 @@ function resolveGhostwriterSlug(src: PipelineSource, ghostwriterSlug?: string): 
 
 /** Common style + story context shared by every generation/improve call. */
 async function buildContext(src: PipelineSource, ghostwriterSlug?: string): Promise<{ style: string; story: string }> {
-  const [globalStyle, chapterStyle, bookResume, chapterResume] = await Promise.all([
+  const [globalStyle, chapterStyle, punctuationStyle, bookResume, chapterResume] = await Promise.all([
     tryLoad(src, src.structure.globalWritingStylePath),
     tryLoad(src, src.chapter?.writingStylePath),
+    tryLoad(src, src.structure.globalPunctuationStylePath),
     tryLoad(src, "resumes/total.md"),
     src.chapter ? tryLoad(src, `resumes/chapters/${src.chapter.slug}.md`) : Promise.resolve(""),
   ]);
@@ -67,6 +68,7 @@ async function buildContext(src: PipelineSource, ghostwriterSlug?: string): Prom
     globalStyle ? `WRITING STYLE (global):\n${globalStyle}` : "",
     chapterStyle ? `WRITING STYLE (chapter override):\n${chapterStyle}` : "",
     ghost ? `GHOSTWRITER:\n${ghostwriterPrompt(ghost)}` : "",
+    punctuationStyle ? `PUNCTUATION STYLE (binding, always apply):\n${punctuationStyle}` : "",
   ].filter(Boolean).join("\n\n");
   const story = [
     bookResume ? `BOOK SO FAR:\n${bookResume}` : "",

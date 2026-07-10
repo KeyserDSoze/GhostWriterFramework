@@ -1136,7 +1136,14 @@ const it = {
     intro: "Lo stile sempre attivo del libro: narrazione, dialoghi, ritmo, cosa preservare e cosa migliorare.",
     chapterIntro: "Eccezione di stile per questo capitolo, applicata sopra lo stile globale.",
     editorHint: "Scrivi le regole che devono guidare stesura, revisione, dialoghi, ritmo, punto di vista e coerenza della prosa.",
-    placeholder: "Scrivi qui le regole di stile…"
+     placeholder: "Scrivi qui le regole di stile…"
+  },
+  punctuationStyle: {
+    title: "Stile di punteggiatura",
+    badge: "Contratto di punteggiatura",
+    intro: "Regole di punteggiatura sempre attive per prosa e dialoghi: quali virgolette usare e dove va ogni segno di punteggiatura. Queste regole vengono inserite in ogni prompt che scrive, riscrive o modifica paragrafi e bozze.",
+    editorHint: "Definisci le tue regole di punteggiatura, ad esempio le caporali « » per i dialoghi con tutti i segni dentro tranne il punto finale, che resta fuori. Tienile concrete così Copilot le applica in modo coerente.",
+    placeholder: "Scrivi qui le regole di punteggiatura…"
   },
   evaluationStyle: {
     title: "Stile di valutazione",
