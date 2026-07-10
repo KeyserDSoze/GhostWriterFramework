@@ -136,6 +136,8 @@ export function CanonEntityPage() {
                   : null;
     return sectionPath;
   }, [section, slug]);
+  const sectionLabel = section ? t(`bookPage.${section}`, { defaultValue: section }) : t("bookPage.bookMetadata");
+  const sectionHref = section ? `/app/books/${bookId}#${section}` : `/app/books/${bookId}`;
 
   const isDirty =
     body !== savedBody || JSON.stringify(entries) !== JSON.stringify(savedEntries);
@@ -192,7 +194,7 @@ export function CanonEntityPage() {
     return (
       <Alert variant="destructive">
         <AlertDescription>
-          {t("canon.notFound")} <Link to={`/app/books/${bookId}`} className="underline">{t("canon.backToBook")}</Link>
+          {t("canon.notFound")} <Link to={sectionHref} className="underline">{t("canon.backToSection", { section: sectionLabel })}</Link>
         </AlertDescription>
       </Alert>
     );
@@ -270,10 +272,10 @@ export function CanonEntityPage() {
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Button asChild variant="ghost" size="sm" className="-ml-2 w-fit">
-          <Link to={`/app/books/${bookId}`}>
-            <ArrowLeft className="mr-1 h-4 w-4" />
-            {t("canon.backToBook")}
-          </Link>
+            <Link to={sectionHref}>
+              <ArrowLeft className="mr-1 h-4 w-4" />
+              {t("canon.backToSection", { section: sectionLabel })}
+            </Link>
         </Button>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="font-mono text-xs">{branch}</Badge>

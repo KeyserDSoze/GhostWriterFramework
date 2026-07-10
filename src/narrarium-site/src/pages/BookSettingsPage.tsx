@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, GitBranch, KeyRound, Loader2, Plus, Save } from "lucide-react";
+import { GitBranch, KeyRound, Loader2, Plus, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -137,13 +137,6 @@ export function BookSettingsPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <Button asChild variant="ghost" size="sm" className="-ml-2">
-        <Link to={`/app/books/${currentBook.id}`}>
-          <ArrowLeft className="mr-1 h-4 w-4" />
-          {currentBook.name}
-        </Link>
-      </Button>
-
       <div>
         <h1 className="font-serif text-3xl font-semibold tracking-tight">{t("bookSettings.title")}</h1>
         <p className="text-muted-foreground">{currentBook.owner}/{currentBook.repo}</p>

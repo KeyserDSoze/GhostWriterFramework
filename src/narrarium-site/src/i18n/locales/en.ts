@@ -1020,10 +1020,14 @@ const en = {
   },
   writingStyle: {
     title: "Writing style",
+    badge: "Writing contract",
+    bookScope: "Book-wide",
+    chapterScope: "Chapter override",
     chapterTitle: "Chapter style {{slug}}",
     chapterButton: "Chapter style",
     intro: "The always-on writing contract: narration, dialogue, rhythm, what to preserve and what to improve.",
     chapterIntro: "Style exception for this chapter, layered on top of the global style.",
+    editorHint: "Write the rules that should guide drafting, revision, dialogue, rhythm, viewpoint, and prose consistency.",
     placeholder: "Write the style rules here…"
   },
   evaluationStyle: {
@@ -1144,6 +1148,7 @@ const en = {
   canon: {
     notFound: "Canon file not found.",
     backToBook: "Back to book",
+    backToSection: "Back to {{section}}",
     writeBodyPlaceholder: "Write the canon body…",
     loadFailed: "Failed to load canon file",
     removeAria: "Remove {{key}}",

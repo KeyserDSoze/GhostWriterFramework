@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
-  ArrowLeft,
   GripVertical,
   Plus,
   Trash2,
@@ -396,14 +395,6 @@ export function ChapterPage() {
 
   return (
     <div className="space-y-6">
-      {/* Back */}
-      <Button asChild variant="ghost" size="sm" className="-ml-2">
-        <Link to={`/app/books/${bookId}`}>
-          <ArrowLeft className="mr-1 h-4 w-4" />
-          {t("chapter.backToBook")}
-        </Link>
-      </Button>
-
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { parseDocument, stringify } from "yaml";
 import { Loader2, PenLine, Save } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { useToast } from "@/components/ui/use-toast";
@@ -92,18 +93,26 @@ export function WritingStylePage() {
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="flex items-center gap-2 font-serif text-2xl font-semibold"><PenLine className="h-5 w-5" />{chapter ? t("writingStyle.chapterTitle", { slug: chapter.slug }) : t("writingStyle.title")}</h1>
-          <p className="text-xs text-muted-foreground">{path}</p>
+    <div className="flex flex-col gap-6">
+      <div className="overflow-hidden rounded-3xl border bg-gradient-to-br from-primary/15 via-card to-card shadow-sm">
+        <div className="flex flex-col gap-5 p-6 sm:p-8 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <Badge variant="secondary"><PenLine className="mr-1.5 h-3.5 w-3.5" />{t("writingStyle.badge")}</Badge>
+              <Badge variant="outline">{structure?.language ?? settings.ui.language}</Badge>
+              <Badge variant="outline">{chapter ? t("writingStyle.chapterScope") : t("writingStyle.bookScope")}</Badge>
+            </div>
+            <h1 className="font-serif text-3xl font-semibold tracking-tight sm:text-4xl">{chapter ? t("writingStyle.chapterTitle", { slug: chapter.slug }) : t("writingStyle.title")}</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">{chapter ? t("writingStyle.chapterIntro") : t("writingStyle.intro")}</p>
+          </div>
+          <Button size="lg" onClick={() => void save()} disabled={saving || !dirty} className="shrink-0">{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}{t("common.save")}</Button>
         </div>
-        <Button size="sm" onClick={() => void save()} disabled={saving || !dirty}>{saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}{t("common.save")}</Button>
+        <div className="border-t bg-background/35 px-6 py-3 text-xs text-muted-foreground sm:px-8"><span className="font-mono">{path}</span></div>
       </div>
-      <p className="text-sm text-muted-foreground">{chapter ? t("writingStyle.chapterIntro") : t("writingStyle.intro")}</p>
-      {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : (
-        <AutoTextarea value={body} onChange={(e) => setBody(e.target.value)} className="min-h-[55vh] text-sm leading-7" placeholder={t("writingStyle.placeholder")} />
-      )}
+      <section className="rounded-2xl border bg-card p-5 shadow-sm sm:p-6">
+        <p className="mb-4 text-sm text-muted-foreground">{t("writingStyle.editorHint")}</p>
+        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <AutoTextarea value={body} onChange={(e) => setBody(e.target.value)} className="min-h-[55vh] text-sm leading-7" placeholder={t("writingStyle.placeholder")} />}
+      </section>
     </div>
   );
 }

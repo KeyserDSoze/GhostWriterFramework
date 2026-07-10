@@ -1020,10 +1020,14 @@ const it = {
   },
   writingStyle: {
     title: "Stile di scrittura",
+    badge: "Contratto di scrittura",
+    bookScope: "Valido per il libro",
+    chapterScope: "Override capitolo",
     chapterTitle: "Stile capitolo {{slug}}",
     chapterButton: "Stile capitolo",
     intro: "Lo stile sempre attivo del libro: narrazione, dialoghi, ritmo, cosa preservare e cosa migliorare.",
     chapterIntro: "Eccezione di stile per questo capitolo, applicata sopra lo stile globale.",
+    editorHint: "Scrivi le regole che devono guidare stesura, revisione, dialoghi, ritmo, punto di vista e coerenza della prosa.",
     placeholder: "Scrivi qui le regole di stile…"
   },
   evaluationStyle: {
@@ -1144,6 +1148,7 @@ const it = {
   canon: {
     notFound: "File canone non trovato.",
     backToBook: "Torna al libro",
+    backToSection: "Torna a {{section}}",
     writeBodyPlaceholder: "Scrivi il corpo del canone…",
     loadFailed: "Caricamento file canone non riuscito",
     removeAria: "Rimuovi {{key}}",

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Download, FileText, Image, PackageCheck, Settings } from "lucide-react";
+import { useParams } from "react-router-dom";
+import { Download, FileText, Image, PackageCheck, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -58,9 +58,6 @@ export function BookExportPage() {
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <Button asChild variant="ghost" size="sm" className="-ml-2 mb-2">
-            <Link to={`/app/books/${book.id}`}><ArrowLeft className="mr-1 h-4 w-4" />{book.name}</Link>
-          </Button>
           <h1 className="flex items-center gap-2 font-serif text-3xl font-semibold tracking-tight"><Download className="h-6 w-6" />{t("export.pageTitle")}</h1>
           <p className="text-muted-foreground">{t("export.pageDescription")}</p>
         </div>

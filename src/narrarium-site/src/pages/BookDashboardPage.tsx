@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, ArrowLeft, BookOpen, CheckCircle2, GitBranch, Image, PackageCheck, Wand2 } from "lucide-react";
+import { AlertCircle, BookOpen, CheckCircle2, GitBranch, Image, PackageCheck, Wand2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -92,9 +92,6 @@ export function BookDashboardPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <Button asChild variant="ghost" size="sm" className="-ml-2 mb-2">
-            <Link to={`/app/books/${book.id}`}><ArrowLeft className="mr-1 h-4 w-4" />{book.name}</Link>
-          </Button>
           <h1 className="font-serif text-3xl font-semibold tracking-tight">{t("dashboard.title")}</h1>
           <p className="text-muted-foreground">{t("dashboard.description")}</p>
         </div>
