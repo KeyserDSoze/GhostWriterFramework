@@ -5,6 +5,8 @@ export interface ProseEditorActions {
   el: HTMLTextAreaElement;
   /** Open the improve flow for the current selection (or whole body if none) */
   improve: (selection: string | null) => void;
+  /** Open a summary flow for the current selection (or whole body if none). */
+  summarize?: (selection: string | null) => void;
   /** Open the synonym flow for a short selection */
   synonym: (selection: string) => void;
 }
