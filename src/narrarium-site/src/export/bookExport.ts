@@ -583,7 +583,7 @@ async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExport
   const oebps = zip.folder("OEBPS");
   if (!oebps) throw new Error("Failed to create EPUB archive.");
   const epubFont = epubCssFontFamily(settings.fontFamily);
-  oebps.file("styles.css", `body { font-family: ${epubFont}; line-height: ${settings.lineSpacing}; } h1, h2 { font-family: ${epubFont}; } article { margin: 0 auto; max-width: 40rem; } nav ol { padding-left: 1.2rem; } figure { margin: 2rem 0; text-align: center; page-break-inside: avoid; } figure img { max-width: 100%; height: auto; } figcaption { color: #555; font-size: 0.9em; margin-top: 0.5em; } .frontmatter { border: 1px solid #ddd; background: #f7f7f7; padding: 0.75em; white-space: pre-wrap; font-family: monospace; font-size: 0.85em; } .metadata { border: 1px solid #ddd; background: #f7f7f7; padding: 0.75em; margin: 1em 0 1.5em; } .metadata div { margin: 0.35em 0; } .metadata dt { color: #666; font-size: 0.75em; text-transform: uppercase; } .metadata dd { margin: 0.15em 0 0; } .scene-break { text-align: center; letter-spacing: 0.5em; color: #777; margin: 2em 0; }`);
+  oebps.file("styles.css", `body { font-family: ${epubFont}; line-height: ${settings.lineSpacing}; } h1, h2 { font-family: ${epubFont}; } article { margin: 0 auto; max-width: 40rem; } nav ol { padding-left: 1.2rem; } figure { margin: 2rem 0; text-align: center; page-break-inside: avoid; } figure img { max-width: 100%; height: auto; } figcaption { color: #555; font-size: 0.9em; margin-top: 0.5em; } .frontmatter { border: 1px solid #ddd; background: #f7f7f7; padding: 0.75em; white-space: pre-wrap; font-family: monospace; font-size: 0.85em; } .metadata { white-space: pre-wrap; margin: 1em 0 1.5em; color: #555; } .scene-break { text-align: center; color: #777; margin: 2em 0; }`);
   oebps.folder("images");
 
   const imageItems: Array<{ id: string; fileName: string; mimeType: string; properties?: string }> = [];
@@ -670,7 +670,7 @@ function renderFrontmatterPre(frontmatterText: string | undefined, settings: Boo
 function renderMetadataHtml(record: Record<string, unknown>, keys: string[]): string {
   const entries = presentMetadata(record, keys);
   if (!entries.length) return "";
-  return `<dl class="metadata">${entries.map((entry) => `<div><dt>${escapeHtml(entry.key)}</dt><dd>${escapeHtml(entry.value)}</dd></div>`).join("")}</dl>`;
+  return `<div class="metadata">${entries.map((entry) => `${escapeHtml(entry.key)}: ${escapeHtml(entry.value)}`).join("\n")}</div>`;
 }
 
 function epubCssFontFamily(fontFamily: BookExportSettings["fontFamily"]): string {

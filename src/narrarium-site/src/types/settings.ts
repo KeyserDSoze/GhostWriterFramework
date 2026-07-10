@@ -185,7 +185,7 @@ export const DEFAULT_BOOK_EXPORT_SETTINGS: BookExportSettings = {
     paragraph: ["title", "date"],
   },
   paragraphSeparator: "star",
-  customParagraphSeparator: "✦",
+  customParagraphSeparator: "*",
 };
 
 // ─── Book entry (one GitHub repository = one book) ───────────────────────────
@@ -231,14 +231,21 @@ export function resolveBookExportProfiles(book: BookEntry): BookExportProfile[] 
 export function resolveBookExportSettings(book: BookEntry, profileId?: string): BookExportSettings {
   const profiles = resolveBookExportProfiles(book);
   const selected = profiles.find((entry) => entry.id === (profileId ?? book.defaultExportProfileId)) ?? profiles[0];
-  const raw = selected?.settings ?? book.exportSettings ?? {};
+  const bookPresentation = book.exportSettings ?? {};
+  const profileSettings = selected?.settings ?? {};
   return {
     ...DEFAULT_BOOK_EXPORT_SETTINGS,
-    ...raw,
+    ...bookPresentation,
+    ...profileSettings,
     metadataVisibility: {
       ...DEFAULT_BOOK_EXPORT_SETTINGS.metadataVisibility,
-      ...(raw.metadataVisibility ?? {}),
+      // These are book-level editorial presentation settings. A legacy profile
+      // must not silently replace values saved from Book Settings.
+      ...(profileSettings.metadataVisibility ?? {}),
+      ...(bookPresentation.metadataVisibility ?? {}),
     },
+    paragraphSeparator: bookPresentation.paragraphSeparator ?? profileSettings.paragraphSeparator ?? DEFAULT_BOOK_EXPORT_SETTINGS.paragraphSeparator,
+    customParagraphSeparator: bookPresentation.customParagraphSeparator ?? profileSettings.customParagraphSeparator ?? DEFAULT_BOOK_EXPORT_SETTINGS.customParagraphSeparator,
   };
 }
 

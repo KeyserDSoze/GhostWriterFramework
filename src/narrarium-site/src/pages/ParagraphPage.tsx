@@ -796,7 +796,7 @@ export function ParagraphPage() {
           }}
         >
           {settings.reader.showFrontmatter && readerFrontmatter && <pre className="mb-8 overflow-auto rounded-xl border bg-muted/30 p-4 text-xs leading-5">{readerFrontmatter}</pre>}
-          {readerMetadata.length > 0 && <div className="mb-8 grid gap-x-5 gap-y-2 rounded-xl border bg-muted/30 p-4 text-sm sm:grid-cols-2">{readerMetadata.map((entry) => <div key={entry.key}><p className="text-[10px] uppercase tracking-wide text-muted-foreground">{entry.key}</p><p className="mt-0.5 leading-6">{entry.value}</p></div>)}</div>}
+          {readerMetadata.length > 0 && <div className="mb-8 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{readerMetadata.map((entry) => `${entry.key}: ${entry.value}`).join("\n")}</div>}
           {readerLoading ? (
             <div className="flex min-h-[45vh] flex-col items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />{t("paragraph.loadingReader")}</div>
           ) : readerHtml ? (

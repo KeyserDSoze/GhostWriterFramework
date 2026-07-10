@@ -495,8 +495,8 @@ function ReaderFrontmatter({ value }: { value: string }) {
 function ReaderMetadata({ entries }: { entries: PresentedMetadata[] }) {
   if (!entries.length) return null;
   return (
-    <div className="reader-metadata mb-8 grid gap-x-5 gap-y-2 rounded-xl border bg-muted/30 p-4 text-sm sm:grid-cols-2">
-      {entries.map((entry) => <div key={entry.key}><p className="text-[10px] uppercase tracking-wide text-muted-foreground">{entry.key}</p><p className="mt-0.5 leading-6">{entry.value}</p></div>)}
+    <div className="reader-metadata mb-8 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+      {entries.map((entry) => `${entry.key}: ${entry.value}`).join("\n")}
     </div>
   );
 }

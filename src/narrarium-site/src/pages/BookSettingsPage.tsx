@@ -54,6 +54,10 @@ export function BookSettingsPage() {
   const [presentation, setPresentation] = useState<BookExportSettings>(() => book ? resolveBookExportSettings(book) : DEFAULT_BOOK_EXPORT_SETTINGS);
 
   useEffect(() => {
+    if (book) setPresentation(resolveBookExportSettings(book));
+  }, [book?.id]);
+
+  useEffect(() => {
     if (!book) return;
     const token = resolveBookToken(book, settings);
     if (!token) return;

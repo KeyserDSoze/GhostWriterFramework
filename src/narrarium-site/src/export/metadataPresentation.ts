@@ -24,6 +24,6 @@ export function formatMetadataValue(value: unknown): string {
 export function paragraphSeparator(settings: BookExportSettings): string {
   if (settings.paragraphSeparator === "none") return "";
   if (settings.paragraphSeparator === "asterisks") return "* * *";
-  if (settings.paragraphSeparator === "custom") return settings.customParagraphSeparator || "✦";
-  return "✦";
+  if (settings.paragraphSeparator === "custom") return settings.customParagraphSeparator || "*";
+  return "*";
 }
