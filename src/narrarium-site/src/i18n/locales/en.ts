@@ -823,7 +823,15 @@ const en = {
     improve: "Improve",
     improveAll: "Improve paragraph",
     improveSelection: "Improve selection",
-    improveWith: "Ghostwriter: {{name}}"
+    improveWith: "Ghostwriter: {{name}}",
+    reader: "Back to reader",
+    edit: "Edit paragraph",
+    loadingReader: "Preparing reader view…",
+    empty: "This paragraph is empty.",
+    switchToReaderTitle: "Leave edit mode?",
+    switchToReaderDescription: "This paragraph has unsaved changes. Do you want to save them before returning to reader mode?",
+    discardAndReader: "Discard and read",
+    saveAndReader: "Save and read"
   },
   ghostwriters: {
     title: "Ghostwriters",

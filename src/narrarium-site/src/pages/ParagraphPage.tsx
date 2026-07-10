@@ -2,14 +2,14 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseDocument, stringify } from "yaml";
-import { ArrowLeft, ArrowLeftRight, Save, Loader2, MoreHorizontal, Plus, X, Lock } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, BookOpen, FileEdit, Save, Loader2, MoreHorizontal, Plus, X, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { FileDiff } from "@/components/diff/DiffView";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -22,7 +22,7 @@ import {
   slugToTitle,
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
-import { resolveBookToken } from "@/types/settings";
+import { resolveBookToken, type ReaderSettings } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { improveProse, synonymsFor, type PipelineSource } from "@/narrarium/pipeline";
@@ -103,6 +103,40 @@ function splitEdges(text: string): { lead: string; core: string; trail: string }
   return { lead, core, trail };
 }
 
+function readerFontFamily(value: ReaderSettings["fontFamily"]): string {
+  if (value === "sans") return "ui-sans-serif, system-ui, sans-serif";
+  if (value === "mono") return "ui-monospace, SFMono-Regular, Menlo, monospace";
+  return "Georgia, Cambria, Times New Roman, serif";
+}
+
+function normalizeReaderLineBreaks(markdown: string, mode: ReaderSettings["lineBreakMode"]): string {
+  if (mode === "source") return markdown.trim();
+  const blocks = markdown.replace(/\r\n/g, "\n").split(/\n\s*\n+/);
+  const output: string[] = [];
+  const prose: string[] = [];
+  const flush = () => {
+    const text = prose.join(" ").replace(/\s+/g, " ").trim();
+    if (text) output.push(text);
+    prose.length = 0;
+  };
+  for (const block of blocks) {
+    const trimmed = block.trim();
+    if (!trimmed) continue;
+    if (/^(#{1,6}\s+|```|~~~|>\s+|[-*+ ]\s+|\d+\.\s+|---+$|\*\*\*+$)/m.test(trimmed)) {
+      flush();
+      output.push(trimmed);
+      continue;
+    }
+    const compact = trimmed.split("\n").map((line) => line.trim()).filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    if (mode === "dialogue" && /^[«“"—–]/.test(compact)) {
+      flush();
+      output.push(compact);
+    } else if (compact) prose.push(compact);
+  }
+  flush();
+  return output.join("\n\n").trim();
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function ParagraphPage() {
@@ -136,6 +170,10 @@ export function ParagraphPage() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [switchingDraft, setSwitchingDraft] = useState(false);
+  const [viewMode, setViewMode] = useState<"reader" | "edit">("reader");
+  const [readerHtml, setReaderHtml] = useState("");
+  const [readerLoading, setReaderLoading] = useState(false);
+  const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
   const loadedTargetRef = useRef<string | null>(null);
 
   // Add-field form
@@ -168,7 +206,21 @@ export function ParagraphPage() {
     body !== savedBody ||
     JSON.stringify(entries) !== JSON.stringify(savedEntries);
 
-  useRegisterPageSave({ dirty: isDirty, enabled: Boolean(paragraph && book), onSave: () => handleSave() });
+  useRegisterPageSave({ dirty: isDirty, enabled: Boolean(paragraph && book), onSave: async () => { await handleSave(); } });
+
+  useEffect(() => {
+    if (viewMode !== "reader") return;
+    let active = true;
+    setReaderLoading(true);
+    void import("marked")
+      .then(({ marked }) => {
+        if (!active) return;
+        const normalized = normalizeReaderLineBreaks(body, settings.reader.lineBreakMode);
+        setReaderHtml(marked.parse(normalized, { async: false }) as string);
+      })
+      .finally(() => { if (active) setReaderLoading(false); });
+    return () => { active = false; };
+  }, [body, settings.reader.lineBreakMode, viewMode]);
 
   // ── Load ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -290,8 +342,8 @@ export function ParagraphPage() {
   }
 
   // ── Save ──────────────────────────────────────────────────────────────────
-  async function handleSave() {
-    if (!paragraph || !book || !isDirty) return;
+  async function handleSave(): Promise<boolean> {
+    if (!paragraph || !book || !isDirty) return true;
     setSaving(true);
     try {
       const currentTitle = titleValue;
@@ -363,11 +415,38 @@ export function ParagraphPage() {
       setSavedEntries(finalEntries);
       setSavedBody(body);
       toast({ title: t("common.saved") });
+      return true;
     } catch (err) {
       toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
+      return false;
     } finally {
       setSaving(false);
     }
+  }
+
+  function requestReaderMode() {
+    if (viewMode === "reader") {
+      setViewMode("edit");
+      return;
+    }
+    if (isDirty) {
+      setSwitchConfirmOpen(true);
+      return;
+    }
+    setViewMode("reader");
+  }
+
+  async function switchToReaderAndSave() {
+    const saved = await handleSave();
+    if (!saved) return;
+    setSwitchConfirmOpen(false);
+    setViewMode("reader");
+  }
+
+  function switchToReaderWithoutSaving() {
+    setSwitchConfirmOpen(false);
+    // Reload the server version before showing reader mode, so discarded edits are not read aloud.
+    void reloadCurrentParagraphFile().then(() => setViewMode("reader"));
   }
 
   // ── Guards ────────────────────────────────────────────────────────────────
@@ -517,6 +596,11 @@ export function ParagraphPage() {
   const editableEntries = entries.filter(
     (e) => !READONLY_KEYS.has(e.key) && e.key !== "title" && e.key !== "ghostwriter",
   );
+  const readerFrontmatter = (() => {
+    const record: Record<string, unknown> = {};
+    for (const entry of entries) record[entry.key] = Array.isArray(entry.value) ? entry.value : parseScalarMetaValue(entry.value);
+    return stringify(record).trim();
+  })();
 
   return (
     <div className="flex flex-col gap-5">
@@ -535,6 +619,10 @@ export function ParagraphPage() {
           {isDirty && !saving && (
             <span className="hidden text-xs text-muted-foreground sm:inline">{t("common.unsaved")}</span>
           )}
+          <Button size="sm" variant="outline" onClick={requestReaderMode} disabled={saving || loading}>
+            {viewMode === "reader" ? <FileEdit className="mr-1 h-4 w-4" /> : <BookOpen className="mr-1 h-4 w-4" />}
+            {viewMode === "reader" ? t("paragraph.edit") : t("paragraph.reader")}
+          </Button>
           <Button className="hidden sm:inline-flex" size="sm" variant="outline" onClick={() => void handleSwitchToDraft()} disabled={switchingDraft || saving}>
             {switchingDraft ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-1 h-4 w-4" />}
             {t("paragraph.switchToDraft")}
@@ -543,7 +631,7 @@ export function ParagraphPage() {
             className="hidden sm:inline-flex"
             size="sm"
             onClick={() => void handleSave()}
-            disabled={!isDirty || saving}
+            disabled={viewMode !== "edit" || !isDirty || saving}
           >
             {saving ? (
               <Loader2 className="mr-1 h-4 w-4 animate-spin" />
@@ -563,17 +651,20 @@ export function ParagraphPage() {
                 {switchingDraft ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-2 h-4 w-4" />}
                 {t("paragraph.switchToDraft")}
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => void handleSave()} disabled={!isDirty || saving}>
+              <DropdownMenuItem onSelect={() => void handleSave()} disabled={viewMode !== "edit" || !isDirty || saving}>
                 {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                 {t("common.save")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={requestReaderMode} disabled={saving || loading}>
+                {viewMode === "reader" ? <FileEdit className="mr-2 h-4 w-4" /> : <BookOpen className="mr-2 h-4 w-4" />}
+                {viewMode === "reader" ? t("paragraph.edit") : t("paragraph.reader")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
 
-      {/* Metadata section */}
-      <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-2 text-sm">
+      {viewMode === "edit" && <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-2 text-sm">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
           {t("common.metadata")}
         </p>
@@ -686,10 +777,28 @@ export function ParagraphPage() {
             )}
           </>
         )}
-      </div>
+      </div>}
 
-      {/* Prose editor */}
-      {loading ? (
+      {viewMode === "reader" ? (
+        <article
+          className="reader-prose rounded-2xl border bg-card px-6 py-8 shadow-sm sm:px-10 sm:py-12"
+          style={{
+            padding: `${settings.reader.pageMargin}px`,
+            fontFamily: readerFontFamily(settings.reader.fontFamily),
+            fontSize: `${settings.reader.fontSize}px`,
+            lineHeight: settings.reader.lineHeight,
+          }}
+        >
+          {settings.reader.showFrontmatter && readerFrontmatter && <pre className="mb-8 overflow-auto rounded-xl border bg-muted/30 p-4 text-xs leading-5">{readerFrontmatter}</pre>}
+          {readerLoading ? (
+            <div className="flex min-h-[45vh] flex-col items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />{t("paragraph.loadingReader")}</div>
+          ) : readerHtml ? (
+            <div className="doc-prose reader-prose max-w-none" dangerouslySetInnerHTML={{ __html: readerHtml }} />
+          ) : (
+            <p className="min-h-[45vh] text-muted-foreground">{t("paragraph.empty")}</p>
+          )}
+        </article>
+      ) : loading ? (
         <div className="space-y-2">
           {[...Array(6)].map((_, i) => (
             <Skeleton key={i} className="h-4" style={{ width: `${70 + (i % 3) * 10}%` }} />
@@ -752,6 +861,18 @@ export function ParagraphPage() {
               <Button variant="outline" size="sm" onClick={() => void loadSynonyms(synonymSeen)} disabled={synonymLoading}>{synonymLoading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}{t("ctx.moreSynonyms")}</Button>
               <Button variant="ghost" size="sm" onClick={() => setSynonymOpen(false)}>{t("common.cancel")}</Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={switchConfirmOpen} onOpenChange={setSwitchConfirmOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>{t("paragraph.switchToReaderTitle")}</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">{t("paragraph.switchToReaderDescription")}</p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="ghost" onClick={() => setSwitchConfirmOpen(false)}>{t("common.cancel")}</Button>
+            <Button variant="outline" onClick={switchToReaderWithoutSaving}>{t("paragraph.discardAndReader")}</Button>
+            <Button onClick={() => void switchToReaderAndSave()} disabled={saving}>{saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}{t("paragraph.saveAndReader")}</Button>
           </div>
         </DialogContent>
       </Dialog>

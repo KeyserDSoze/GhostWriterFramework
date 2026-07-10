@@ -823,7 +823,15 @@ const it = {
     improve: "Migliora",
     improveAll: "Migliora il paragrafo",
     improveSelection: "Migliora la selezione",
-    improveWith: "Ghostwriter: {{name}}"
+    improveWith: "Ghostwriter: {{name}}",
+    reader: "Torna al reader",
+    edit: "Modifica paragrafo",
+    loadingReader: "Preparo la vista reader…",
+    empty: "Questo paragrafo è vuoto.",
+    switchToReaderTitle: "Uscire dalla modifica?",
+    switchToReaderDescription: "Il paragrafo contiene modifiche non salvate. Vuoi salvarle prima di tornare alla modalità reader?",
+    discardAndReader: "Scarta e leggi",
+    saveAndReader: "Salva e leggi"
   },
   ghostwriters: {
     title: "Ghostwriter",
