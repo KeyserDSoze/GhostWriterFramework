@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useGoogleLogin } from "@react-oauth/google";
 import { useMsal } from "@azure/msal-react";
 import { Loader2 } from "lucide-react";
@@ -27,6 +28,7 @@ const HARD_GOOGLE_ERRORS = new Set([
 ]);
 
 export function AuthGuard({ children }: AuthGuardProps) {
+  const { t } = useTranslation();
   const { accessToken, accessTokenExpiry, user, setAuth, clearAuth } =
     useAuthStore();
   const { instance } = useMsal();
@@ -213,8 +215,10 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
   if (status === "checking") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm font-medium">{t("auth.checkingSession")}</p>
+        <p className="max-w-md text-sm text-muted-foreground">{t("auth.checkingSessionHint")}</p>
       </div>
     );
   }

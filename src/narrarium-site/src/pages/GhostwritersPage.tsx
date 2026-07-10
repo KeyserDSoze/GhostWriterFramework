@@ -108,7 +108,7 @@ export function GhostwritersPage() {
             <Button size="sm" onClick={() => void createGhostwriter()} disabled={!newName.trim() || busy}>{t("common.add")}</Button>
           </div>
         )}
-        {loading && !structure ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+        {loading && !structure ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("ghostwriters.loading")}</div> : null}
         {list.length === 0 && <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">{t("ghostwriters.empty")}</p>}
         <div className="space-y-1">
           {list.map((g) => (

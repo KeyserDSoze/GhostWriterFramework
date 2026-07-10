@@ -196,7 +196,7 @@ export function LoginScreen() {
                 />
               </svg>
             )}
-            {t("auth.google")}
+            {loadingProvider === "google" ? t("auth.signingInGoogle") : t("auth.google")}
           </Button>
 
           <Button
@@ -215,7 +215,7 @@ export function LoginScreen() {
                 <path fill="#ffba08" d="M12 12h10v10H12z" />
               </svg>
             )}
-            {t("auth.microsoft")}
+            {loadingProvider === "microsoft" ? t("auth.signingInMicrosoft") : t("auth.microsoft")}
           </Button>
         </div>
 

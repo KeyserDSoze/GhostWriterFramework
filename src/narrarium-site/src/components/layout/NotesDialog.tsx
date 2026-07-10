@@ -211,7 +211,10 @@ export function NotesDialog({ open, onOpenChange }: { open: boolean; onOpenChang
               </Button>
             </div>
             {loadingNote ? (
-              <div className="flex flex-1 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">{t("notes.loading")}</p>
+              </div>
             ) : (
               <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
                 <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} placeholder={t("notes.titlePlaceholder")} />
