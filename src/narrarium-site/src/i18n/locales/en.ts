@@ -1001,6 +1001,12 @@ const en = {
     chapterIntro: "Style exception for this chapter, layered on top of the global style.",
     placeholder: "Write the style rules here…"
   },
+  evaluationStyle: {
+    title: "Evaluation style",
+    intro: "The always-on evaluation contract: discursive structure, scoring criteria, and how strict Copilot should be when reviewing chapters and paragraphs.",
+    hint: "Edit the full markdown document, including frontmatter criteria and the descriptive body. If the file is missing or empty, Narrarium starts from the default template in the book language.",
+    placeholder: "Write the evaluation rules here…"
+  },
   stageIndex: {
     draftsIntro: "All chapter drafts, mirroring the paragraph structure. Connects script, draft and final paragraph.",
     scriptsIntro: "All chapter scripts, mirroring the paragraph structure. Connects script, draft and final paragraph.",

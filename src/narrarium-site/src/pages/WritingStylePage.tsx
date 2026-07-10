@@ -13,23 +13,7 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { resolveBookToken } from "@/types/settings";
 import { createOrUpdateTextFile, loadFileContent } from "@/github/githubClient";
-
-const DEFAULT_WRITING_STYLE = `# Writing Style
-
-## Core Contract
-
-- Preserve established canon, chronology, names, and visible facts.
-- Write concrete scene prose with clear viewpoint, sensory grounding, and purposeful rhythm.
-- Keep dialogue readable: each spoken line should have clear speaker ownership through voice, context, or restrained action beats.
-- Prefer specific verbs and images over generic summary.
-- Improve clarity, tension, pacing, and emotional precision without changing story intent.
-
-## Revision Rules
-
-- Do not invent new canon while revising unless the user explicitly asks.
-- Keep the same language as the source text unless a task explicitly requests translation.
-- Return only the requested prose or markdown body, without commentary or code fences.
-`;
+import { defaultWritingStyleBody, defaultWritingStyleTitle } from "@/narrarium/defaultGuidelines";
 
 function splitMarkdownDoc(raw: string): { frontmatter: Record<string, unknown>; body: string } {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
@@ -60,7 +44,7 @@ export function WritingStylePage() {
   const path = chapter ? `${chapter.path}/writing-style.md` : (structure?.globalWritingStylePath ?? "writing-style.md");
   const defaultFrontmatter = chapter
     ? { type: "writing-style", scope: "chapter", chapter: `chapter:${chapter.slug}`, title: `${chapter.title} Style` }
-    : { type: "writing-style", scope: "book", title: "Writing Style" };
+    : { type: "writing-style", scope: "book", title: defaultWritingStyleTitle(structure?.language ?? settings.ui.language) };
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});
   const [body, setBody] = useState("");
   const [savedFrontmatter, setSavedFrontmatter] = useState<Record<string, unknown>>({});
@@ -81,12 +65,12 @@ export function WritingStylePage() {
       })
       .catch(() => {
         setFrontmatter(defaultFrontmatter);
-        setBody(DEFAULT_WRITING_STYLE);
+        setBody(defaultWritingStyleBody(structure?.language ?? settings.ui.language));
         setSavedFrontmatter({});
         setSaved("");
       })
       .finally(() => setLoading(false));
-  }, [book, token, branch, path]);
+  }, [book, token, branch, path, settings.ui.language, structure?.language]);
 
   async function save() {
     if (!book || !token) return;

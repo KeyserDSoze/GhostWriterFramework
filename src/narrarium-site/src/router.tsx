@@ -17,6 +17,7 @@ import { ParagraphSplitPage } from "@/pages/ParagraphSplitPage";
 import { WorkspaceDocPage } from "@/pages/WorkspaceDocPage";
 import { GhostwritersPage } from "@/pages/GhostwritersPage";
 import { WritingStylePage } from "@/pages/WritingStylePage";
+import { EvaluationStylePage } from "@/pages/EvaluationStylePage";
 import { ChapterStageIndexPage } from "@/pages/ChapterStageIndexPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { MigratePage } from "@/pages/MigratePage";
@@ -75,6 +76,7 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/research", element: <DeepResearchPage /> },
       { path: "books/:bookId/ghostwriters", element: <GhostwritersPage /> },
       { path: "books/:bookId/writing-style", element: <WritingStylePage /> },
+      { path: "books/:bookId/evaluation-style", element: <EvaluationStylePage /> },
       { path: "books/:bookId/settings", element: <BookSettingsPage /> },
       { path: "books/:bookId/canon/:section/:slug", element: <CanonEntityPage /> },
       { path: "books/:bookId/chapters/:chapterId/workspace/:workspaceKind", element: <WorkspaceDocPage /> },

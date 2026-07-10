@@ -1,4 +1,5 @@
 import { stringify } from "yaml";
+import { defaultEvaluationGuidelinesMarkdown, defaultWritingStyleBody, defaultWritingStyleTitle } from "@/narrarium/defaultGuidelines";
 
 export interface InitialBookFile {
   path: string;
@@ -66,20 +67,8 @@ export function buildInitialBookFiles(input: InitialBookInput): InitialBookFile[
     {
       path: "writing-style.md",
       content: renderMarkdown(
-        { type: "guideline", id: "guideline:writing-style", title: "Writing Style", scope: "writing-style" },
-        [
-          "# Voice Contract",
-          "",
-          "- Define narrative distance, tense, rhythm, imagery, and dialogue rules for this book.",
-          "",
-          "# Prose Rules",
-          "",
-          "- Keep scene prose consistent with this contract unless a chapter-specific style overrides it.",
-          "",
-          "# Revision Watchpoints",
-          "",
-          "- Track recurring issues to avoid during drafting and rewriting.",
-        ].join("\n"),
+        { type: "guideline", id: "guideline:writing-style", title: defaultWritingStyleTitle(language), scope: "writing-style" },
+        defaultWritingStyleBody(language),
       ),
     },
     {
@@ -119,37 +108,7 @@ export function buildInitialBookFiles(input: InitialBookInput): InitialBookFile[
     },
     {
       path: "evaluation-guidelines.md",
-      content: [
-        "# Evaluation Guidelines",
-        "",
-        "Customize this file to control how Copilot writes chapter and paragraph evaluations.",
-        "If you leave it unchanged, the default contract stays concise, editorial, and action-oriented.",
-        "",
-        "## Core principles",
-        "",
-        "- Evaluate only what is present in the text and visible canon.",
-        "- Be concrete and editorial, not generic.",
-        "- Distinguish strengths, risks, canon/continuity issues, and next actions.",
-        "",
-        "## Chapter evaluation output",
-        "",
-        "Use these sections:",
-        "- `## Verdict`",
-        "- `## Strengths`",
-        "- `## Risks`",
-        "- `## Canon And Continuity`",
-        "- `## Next Actions`",
-        "",
-        "## Paragraph evaluation output",
-        "",
-        "Use these sections:",
-        "- `## Verdict`",
-        "- `## What Works`",
-        "- `## What To Improve`",
-        "- `## Canon And Continuity`",
-        "- `## Rewrite Priorities`",
-        "",
-      ].join("\n"),
+      content: defaultEvaluationGuidelinesMarkdown(language),
     },
     {
       path: "state/status.md",

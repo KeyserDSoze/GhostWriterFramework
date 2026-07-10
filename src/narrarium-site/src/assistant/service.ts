@@ -1,3 +1,4 @@
+import OpenAI, { AzureOpenAI } from "openai";
 import { parseDocument, stringify } from "yaml";
 import {
   compareBranches,
@@ -18,7 +19,7 @@ import {
   type LlmContentPart,
   type LlmMessage,
 } from "@/assistant/llm";
-import { completeTextRouted } from "@/assistant/router";
+import { completeTextRouted, resolveTaskCandidates } from "@/assistant/router";
 import { buildCapabilitiesMessage, chooseToolHandlerId, isCapabilityQuestion } from "@/assistant/orchestrator";
 import { resolveNavigateAction, resolveReadAloudAction } from "@/assistant/planner";
 import type {
@@ -38,6 +39,8 @@ import {
   createParagraphDraftArtifact,
   createParagraphScriptArtifact,
 } from "@/narrarium/workspace";
+import { GITHUB_MODELS_INFERENCE_URL } from "@/config/githubModels";
+import { defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
 
 async function completeForTask(
   settings: AppSettings,
@@ -53,42 +56,6 @@ async function completeForTask(
     throw err;
   }
 }
-
-const EVALUATION_GUIDELINES_PATH = "evaluation-guidelines.md";
-const DEFAULT_EVALUATION_GUIDELINES = [
-  "# Evaluation Guidelines",
-  "",
-  "Use this file as the contract for chapter and paragraph evaluations.",
-  "If the user customizes it, follow the customized version instead of these defaults.",
-  "",
-  "## Core principles",
-  "",
-  "- Stay faithful to the actual text and visible canon. Do not invent missing facts.",
-  "- Be concrete, editorial, and actionable. No generic praise.",
-  "- Distinguish what already works from what risks confusion or weakness.",
-  "- Flag canon, chronology, pacing, clarity, tone, and character issues when present.",
-  "- Prefer compact markdown with clear headings and bullet points.",
-  "",
-  "## Chapter evaluation output",
-  "",
-  "Produce these sections in order:",
-  "",
-  "1. `## Verdict` — short editorial verdict in 2-4 sentences.",
-  "2. `## Strengths` — bullet list of what works well.",
-  "3. `## Risks` — bullet list of problems, weaknesses, or reader confusion.",
-  "4. `## Canon And Continuity` — contradictions, chronology issues, or reveal timing risks.",
-  "5. `## Next Actions` — prioritized concrete rewrite actions.",
-  "",
-  "## Paragraph evaluation output",
-  "",
-  "Produce these sections in order:",
-  "",
-  "1. `## Verdict` — short judgment of the paragraph's effectiveness.",
-  "2. `## What Works` — concrete strengths.",
-  "3. `## What To Improve` — concrete weaknesses.",
-  "4. `## Canon And Continuity` — continuity or reveal issues if any.",
-  "5. `## Rewrite Priorities` — actionable next edits.",
-].join("\n");
 
 type PromptInput = {
   prompt: string;
@@ -744,13 +711,109 @@ async function writeResume(input: PromptInput & { book: BookEntry; branch: strin
   return makeAssistantMessage("assistant", `I wrote the chapter resume to \`${targetPath}\`.\n\n${answer.trim()}`);
 }
 
-async function ensureEvaluationGuidelines(input: { token: string; owner: string; repo: string; branch: string }): Promise<string> {
+async function ensureEvaluationGuidelines(input: { token: string; owner: string; repo: string; branch: string; language?: string }): Promise<string> {
   try {
     return await loadFileContent(input.token, input.owner, input.repo, EVALUATION_GUIDELINES_PATH, input.branch);
   } catch {
-    await createFile(input.token, input.owner, input.repo, input.branch, EVALUATION_GUIDELINES_PATH, `${DEFAULT_EVALUATION_GUIDELINES.trim()}\n`, "Add default evaluation guidelines").catch(() => undefined);
-    return DEFAULT_EVALUATION_GUIDELINES;
+    const fallback = defaultEvaluationGuidelinesMarkdown(input.language);
+    await createFile(input.token, input.owner, input.repo, input.branch, EVALUATION_GUIDELINES_PATH, fallback, "Add default evaluation guidelines").catch(() => undefined);
+    return fallback;
   }
+}
+
+type EvaluationCriterionScore = { score: number; explanation: string };
+
+function extractEvaluationCriteria(guidelinesRaw: string): Record<string, string> {
+  const parsed = parseMarkdown(guidelinesRaw);
+  const criteria = parsed.frontmatter.criteria;
+  if (!criteria || typeof criteria !== "object" || Array.isArray(criteria)) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(criteria as Record<string, unknown>)) {
+    if (typeof value === "string" && value.trim()) out[key] = value.trim();
+    else if (value && typeof value === "object" && typeof (value as Record<string, unknown>).description === "string") out[key] = ((value as Record<string, unknown>).description as string).trim();
+  }
+  return out;
+}
+
+function openAiBaseUrlForIntegration(bookIntegration: { provider: string; endpoint?: string }): string {
+  return bookIntegration.provider === "github_models" ? GITHUB_MODELS_INFERENCE_URL : (bookIntegration.endpoint || "https://api.openai.com/v1");
+}
+
+async function scoreEvaluationWithTool(
+  integration: { provider: string; endpoint?: string; apiKey: string; apiVersion?: string },
+  model: string,
+  prompt: string,
+  criteria: Record<string, string>,
+): Promise<Record<string, EvaluationCriterionScore>> {
+  const toolSchema = {
+    type: "object",
+    properties: {
+      criteria: {
+        type: "object",
+        properties: Object.fromEntries(Object.entries(criteria).map(([key, description]) => [key, {
+          type: "object",
+          description,
+          properties: {
+            score: { type: "number", minimum: 0, maximum: 10 },
+            explanation: { type: "string", description: `Short reason for the score of ${key}.` },
+          },
+          required: ["score", "explanation"],
+          additionalProperties: false,
+        }])),
+        required: Object.keys(criteria),
+        additionalProperties: false,
+      },
+    },
+    required: ["criteria"],
+    additionalProperties: false,
+  };
+
+  const client = integration.provider === "azure_openai"
+    ? new AzureOpenAI({ endpoint: integration.endpoint ?? "", apiKey: integration.apiKey, apiVersion: integration.apiVersion || "2024-10-21", dangerouslyAllowBrowser: true })
+    : new OpenAI({ apiKey: integration.apiKey, baseURL: openAiBaseUrlForIntegration(integration), dangerouslyAllowBrowser: true });
+
+  const response = await client.chat.completions.create({
+    model,
+    messages: [{ role: "user", content: prompt }],
+    tools: [{
+      type: "function",
+      function: {
+        name: "set_scores",
+        description: "Return critical numeric evaluation scores with a short reason for each criterion.",
+        parameters: toolSchema as never,
+      },
+    }],
+    tool_choice: { type: "function", function: { name: "set_scores" } },
+  } as never);
+
+  const call = (response as { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> }).choices?.[0]?.message?.tool_calls?.[0];
+  const args = call?.function?.arguments ? JSON.parse(call.function.arguments) as { criteria?: Record<string, { score?: number; explanation?: string }> } : null;
+  const scored = args?.criteria ?? {};
+  const out: Record<string, EvaluationCriterionScore> = {};
+  for (const [key, description] of Object.entries(criteria)) {
+    const entry = scored[key];
+    out[key] = {
+      score: typeof entry?.score === "number" ? Math.max(0, Math.min(10, entry.score)) : 0,
+      explanation: typeof entry?.explanation === "string" && entry.explanation.trim() ? entry.explanation.trim() : description,
+    };
+  }
+  return out;
+}
+
+async function scoreEvaluationRouted(settings: AppSettings, prompt: string, criteria: Record<string, string>): Promise<Record<string, EvaluationCriterionScore> | null> {
+  if (!Object.keys(criteria).length) return null;
+  const candidates = resolveTaskCandidates(settings, "review");
+  let lastError: unknown = null;
+  for (const candidate of candidates) {
+    if (!candidate.integration || !candidate.model) continue;
+    try {
+      return await scoreEvaluationWithTool(candidate.integration, candidate.model, prompt, criteria);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  if (lastError) throw lastError;
+  return null;
 }
 
 async function resolveEvaluationTarget(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<
@@ -803,32 +866,39 @@ async function resolveEvaluationTarget(input: PromptInput & { book: BookEntry; b
 async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const target = await resolveEvaluationTarget(input);
   if (!target) return makeAssistantMessage("assistant", "Tell me which chapter or paragraph to evaluate, for example: evaluate chapter 1 or evaluate paragraph 2 of chapter 1.");
-  const guidelines = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch });
+  const guidelines = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, language: input.context.structure?.language });
+  const criteria = extractEvaluationCriteria(guidelines);
   const targetLabel = target.kind === "paragraph" ? `paragraph in chapter ${target.chapterSlug}` : `chapter ${target.chapterSlug}`;
+  const evaluationPayload = [
+    `Write or refresh the evaluation for ${targetLabel}. Request: ${input.prompt}`,
+    "",
+    `Evaluation guidelines (${EVALUATION_GUIDELINES_PATH}):`,
+    guidelines.trim(),
+    "",
+    `Target title: ${target.title}`,
+    `Target kind: ${target.kind}`,
+    `Target frontmatter: ${JSON.stringify(target.fileFrontmatter, null, 2)}`,
+    "",
+    "Target body:",
+    target.body || "(empty)",
+  ].join("\n");
   const answer = await completeForTask(input.settings, [
     buildSystemMessage(
       input,
-      "You write Narrarium evaluation files. Follow the provided evaluation-guidelines.md as the evaluation contract. Use its structure, priorities, and sections unless the user explicitly asks otherwise. Return only the markdown body, no frontmatter, no code fences, no wrapper commentary.",
+      "You write Narrarium evaluation files. Follow the provided evaluation-guidelines.md as the evaluation contract. Use its structure, priorities, and sections unless the user explicitly asks otherwise. Be genuinely critical: do not hand out comforting praise, do not soften real flaws, and do not inflate scores implicitly in the prose. Surface weaknesses clearly and precisely. Return only the markdown body, no frontmatter, no code fences, no wrapper commentary.",
       "book",
     ),
-    buildUserMessage(
-      input,
-      [
-        `Write or refresh the evaluation for ${targetLabel}. Request: ${input.prompt}`,
-        "",
-        `Evaluation guidelines (${EVALUATION_GUIDELINES_PATH}):`,
-        guidelines.trim(),
-        "",
-        `Target title: ${target.title}`,
-        `Target kind: ${target.kind}`,
-        `Target frontmatter: ${JSON.stringify(target.fileFrontmatter, null, 2)}`,
-        "",
-        "Target body:",
-        target.body || "(empty)",
-      ].join("\n"),
-    ),
+    buildUserMessage(input, evaluationPayload),
   ], "review", { signal: input.signal, label: target.kind === "paragraph" ? "copilot:write-paragraph-evaluation" : "copilot:write-chapter-evaluation" });
   if (!answer) return noAiMessage();
+  const scorePrompt = [
+    "You must assign critical scores from 0 to 10 for each criterion.",
+    "Do not be lenient. A high score requires clearly sustained excellence in the actual text.",
+    "Give each criterion a short explanation tied to the evidence in the text.",
+    "",
+    evaluationPayload,
+  ].join("\n");
+  const scores = await scoreEvaluationRouted(input.settings, scorePrompt, criteria);
 
   const frontmatter = target.kind === "paragraph"
     ? {
@@ -837,11 +907,13 @@ async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: s
         title: `Evaluation ${target.chapterSlug} ${target.title}`,
         chapter: `chapter:${target.chapterSlug}`,
         paragraph: `paragraph:${target.chapterSlug}:${target.targetPath.split("/").pop()?.replace(/\.md$/i, "") ?? "unknown"}`,
+        ...(scores ? { scores } : {}),
       }
     : {
         type: "evaluation",
         id: `evaluation:chapter:${target.chapterSlug}`,
         title: `Evaluation ${target.chapterSlug}`,
+        ...(scores ? { scores } : {}),
       };
 
   await upsertStructuredMarkdownFile({

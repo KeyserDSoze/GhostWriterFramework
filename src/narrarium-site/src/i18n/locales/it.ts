@@ -1001,6 +1001,12 @@ const it = {
     chapterIntro: "Eccezione di stile per questo capitolo, applicata sopra lo stile globale.",
     placeholder: "Scrivi qui le regole di stile…"
   },
+  evaluationStyle: {
+    title: "Stile di valutazione",
+    intro: "Il contratto sempre attivo per le valutazioni: struttura discorsiva, criteri di punteggio e livello di severità che Copilot deve usare su capitoli e paragrafi.",
+    hint: "Modifica l'intero documento markdown, inclusi i criteri nel frontmatter e il body descrittivo. Se il file manca o è vuoto, Narrarium parte dal template predefinito nella lingua del libro.",
+    placeholder: "Scrivi qui le regole di valutazione…"
+  },
   stageIndex: {
     draftsIntro: "Tutte le bozze del capitolo, con la stessa struttura dei paragrafi. Collega script, bozza e paragrafo definitivo.",
     scriptsIntro: "Tutti gli script del capitolo, con la stessa struttura dei paragrafi. Collega script, bozza e paragrafo definitivo.",

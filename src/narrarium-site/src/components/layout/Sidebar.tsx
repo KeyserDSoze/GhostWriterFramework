@@ -87,6 +87,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         { label: t("dashboard.title"), href: `/app/books/${bookId}/dashboard`, icon: <LayoutDashboard className="h-4 w-4" /> },
         { label: t("ghostwriters.title"), href: `/app/books/${bookId}/ghostwriters`, icon: <Users className="h-4 w-4" /> },
         { label: t("writingStyle.title"), href: `/app/books/${bookId}/writing-style`, icon: <FileText className="h-4 w-4" /> },
+        { label: t("evaluationStyle.title"), href: `/app/books/${bookId}/evaluation-style`, icon: <ClipboardCheck className="h-4 w-4" /> },
         { label: t("assets.title"), href: `/app/books/${bookId}/assets`, icon: <Images className="h-4 w-4" /> },
         { label: t("research.title"), href: `/app/books/${bookId}/research`, icon: <Search className="h-4 w-4" /> },
         { label: t("reader.title"), href: `/app/books/${bookId}/reader`, icon: <BookOpen className="h-4 w-4" /> },
