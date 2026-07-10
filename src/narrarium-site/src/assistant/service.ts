@@ -46,7 +46,7 @@ async function completeForTask(
   settings: AppSettings,
   messages: LlmMessage[],
   capability: ChatCapability,
-  options?: { signal?: AbortSignal; label?: string },
+  options?: { signal?: AbortSignal; label?: string; onText?: (text: string) => void },
 ): Promise<string | null> {
   try {
     return await completeTextRouted(settings, messages, capability, options);
@@ -67,6 +67,7 @@ type PromptInput = {
   attachments: AssistantAttachment[];
   spokenMode?: boolean;
   signal?: AbortSignal;
+  onText?: (text: string) => void;
 };
 
 export async function runAssistantPrompt(input: {
@@ -80,8 +81,9 @@ export async function runAssistantPrompt(input: {
   compactSummary: string;
   compactedMessageCount: number;
   attachments: AssistantAttachment[];
-  spokenMode?: boolean;
-  signal?: AbortSignal;
+    spokenMode?: boolean;
+    signal?: AbortSignal;
+    onText?: (text: string) => void;
 }): Promise<AssistantMessage> {
   const {
     prompt,
@@ -96,6 +98,7 @@ export async function runAssistantPrompt(input: {
     attachments,
     spokenMode,
     signal,
+    onText,
   } = input;
   const lowered = prompt.toLowerCase();
   const promptInput: PromptInput = {
@@ -108,6 +111,7 @@ export async function runAssistantPrompt(input: {
     attachments,
     spokenMode,
     signal,
+    onText,
   };
 
   if (isCapabilityQuestion(prompt)) return buildCapabilitiesMessage(prompt, settings);
@@ -125,9 +129,6 @@ export async function runAssistantPrompt(input: {
     );
   }
 
-  // Evaluation requests should always take the dedicated evaluation tool path.
-  if (looksLikeWriteEvaluation(lowered)) return writeEvaluation({ ...promptInput, book, branch, token });
-
   const handlers = {
     "search-book": () => searchCurrentBook({ ...promptInput, book, token }),
     "switch-branch": () => switchBookBranchFromPrompt({ ...promptInput, book, branch, token }),
@@ -140,6 +141,7 @@ export async function runAssistantPrompt(input: {
     "update-plot": () => writePlotUpdate({ ...promptInput, book, branch, token }),
     "write-resume": () => writeResume({ ...promptInput, book, branch, token }),
     "write-evaluation": () => writeEvaluation({ ...promptInput, book, branch, token }),
+    "evaluate-chapter-paragraphs": () => writeAllParagraphEvaluations({ ...promptInput, book, branch, token }),
     "rewrite-paragraph": () => rewriteCurrentParagraph({ ...promptInput, book, branch, token }),
     "create-note": () => createContextNote({ ...promptInput, book, branch, token }),
     "review-context": () => reviewCurrentContext(promptInput),
@@ -183,7 +185,6 @@ export async function runAssistantPrompt(input: {
   if (looksLikeCreateDraft(lowered)) return createDraftFromPrompt({ ...promptInput, book, branch, token });
   if (looksLikeUpdatePlot(lowered)) return writePlotUpdate({ ...promptInput, book, branch, token });
   if (looksLikeWriteResume(lowered)) return writeResume({ ...promptInput, book, branch, token });
-  if (looksLikeWriteEvaluation(lowered)) return writeEvaluation({ ...promptInput, book, branch, token });
   if (looksLikeMultiFileEdit(lowered)) return proposeMultiFileUpdates({ ...promptInput, book, token });
   if (looksLikeRewrite(lowered)) return rewriteCurrentParagraph({ ...promptInput, book, branch, token });
   if (looksLikeNote(lowered)) return createContextNote({ ...promptInput, book, branch, token });
@@ -249,13 +250,13 @@ async function summarizeCurrentContext(input: PromptInput, token?: string): Prom
     const answer = await completeForTask(input.settings, [
       { role: "system", content: `You summarize the provided text clearly and concisely. Keep the key facts, characters, and events. Return a compact summary.${languageInstruction(input, "user")}` },
       { role: "user", content: `Summarize this ${target.kind} titled "${target.title}":\n\n${target.body}` },
-    ], "copilot", { signal: input.signal, label: "copilot:summarize-body" });
+    ], "copilot", { signal: input.signal, label: "copilot:summarize-body", onText: input.onText });
     if (answer) return makeAssistantMessage("assistant", answer.trim());
   }
   const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "You are Narrarium's writing assistant. Summarize the current context clearly and concretely. Use compact paragraphs and bullet points when useful."),
     buildUserMessage(input, `Request: ${input.prompt}`),
-  ], "copilot", { signal: input.signal, label: "copilot:summarize" });
+  ], "copilot", { signal: input.signal, label: "copilot:summarize", onText: input.onText });
   if (!answer) return noAiMessage();
   return makeAssistantMessage("assistant", answer.trim());
 }
@@ -264,7 +265,7 @@ async function reviewCurrentContext(input: PromptInput): Promise<AssistantMessag
   const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "You are Narrarium's editorial reviewer. Review the current context with concrete strengths, issues, and specific next actions. Preserve facts; do not invent canon."),
     buildUserMessage(input, `Review request: ${input.prompt}`),
-  ], "review", { signal: input.signal, label: "copilot:review" });
+  ], "review", { signal: input.signal, label: "copilot:review", onText: input.onText });
   if (!answer) return noAiMessage();
   return makeAssistantMessage("assistant", answer.trim());
 }
@@ -273,7 +274,7 @@ async function answerFromContext(input: PromptInput): Promise<AssistantMessage> 
   const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "You are Narrarium's contextual writing copilot. Answer only from the provided repository context and current location. The manifest lists available files; only LOADED FILE contents are available in full. If needed content is not loaded, say which file you need."),
     buildUserMessage(input, `User request: ${input.prompt}`),
-  ], "copilot", { signal: input.signal, label: "copilot" });
+  ], "copilot", { signal: input.signal, label: "copilot", onText: input.onText });
   if (!answer) return noAiMessage();
   return makeAssistantMessage("assistant", answer.trim());
 }
@@ -868,11 +869,14 @@ async function resolveEvaluationTarget(input: PromptInput & { book: BookEntry; b
   };
 }
 
-async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
-  const target = await resolveEvaluationTarget(input);
-  if (!target) return makeAssistantMessage("assistant", "Tell me which chapter or paragraph to evaluate, for example: evaluate chapter 1 or evaluate paragraph 2 of chapter 1.");
-  const guidelines = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, language: input.context.structure?.language });
-  const criteria = resolveEvaluationCriteria(guidelines, input.context.structure?.language);
+type ResolvedEvaluationTarget = NonNullable<Awaited<ReturnType<typeof resolveEvaluationTarget>>>;
+
+async function evaluateAndWriteTarget(
+  input: PromptInput & { book: BookEntry; branch: string; token: string },
+  target: ResolvedEvaluationTarget,
+  guidelines: string,
+  criteria: Record<string, string>,
+): Promise<{ answer: string; path: string }> {
   const targetLabel = target.kind === "paragraph" ? `paragraph in chapter ${target.chapterSlug}` : `chapter ${target.chapterSlug}`;
   const evaluationPayload = [
     `Write or refresh the evaluation for ${targetLabel}. Request: ${input.prompt}`,
@@ -895,7 +899,7 @@ async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: s
     ),
     buildUserMessage(input, evaluationPayload),
   ], "review", { signal: input.signal, label: target.kind === "paragraph" ? "copilot:write-paragraph-evaluation" : "copilot:write-chapter-evaluation" });
-  if (!answer) return noAiMessage();
+  if (!answer) throw new Error("No AI integration configured for evaluation.");
   const scorePrompt = [
     "You must assign critical scores from 0 to 10 for each criterion.",
     "Do not be lenient. A high score requires clearly sustained excellence in the actual text.",
@@ -931,7 +935,71 @@ async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: s
     body: answer.trim(),
     message: `Update ${target.kind} evaluation ${target.chapterSlug}`,
   });
-  return makeAssistantMessage("assistant", `I wrote the ${target.kind} evaluation to \`${target.targetPath}\`.\n\n${answer.trim()}`);
+  return { answer: answer.trim(), path: target.targetPath };
+}
+
+async function writeAllParagraphEvaluations(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const chapter = resolveChapterFromPrompt(input);
+  if (!chapter) return makeAssistantMessage("assistant", "Tell me which chapter to evaluate, for example: evaluate all paragraphs of chapter 1.");
+  if (!chapter.paragraphs.length) return makeAssistantMessage("assistant", `Chapter \`${chapter.slug}\` has no paragraphs to evaluate.`);
+
+  const language = input.context.structure?.language;
+  const guidelines = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, language });
+  const criteria = resolveEvaluationCriteria(guidelines, language);
+  const italian = /\b(tutti|paragraf|capitolo|valutazione|scene)\b/i.test(input.prompt);
+  const paragraphBodies: Array<{ title: string; body: string }> = [];
+  const paths: string[] = [];
+
+  for (let index = 0; index < chapter.paragraphs.length; index++) {
+    const paragraph = chapter.paragraphs[index];
+    input.onText?.(italian
+      ? `Sto valutando il paragrafo ${index + 1} di ${chapter.paragraphs.length}: **${paragraph.title}**…`
+      : `Evaluating paragraph ${index + 1} of ${chapter.paragraphs.length}: **${paragraph.title}**…`);
+    const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, paragraph.path, input.branch).catch(() => "");
+    const parsed = parseMarkdown(raw);
+    const slug = paragraph.path.split("/").pop()?.replace(/\.md$/i, "") ?? paragraph.number;
+    const target: ResolvedEvaluationTarget = {
+      kind: "paragraph",
+      chapterSlug: chapter.slug,
+      title: paragraph.title,
+      targetPath: `evaluations/paragraphs/${chapter.slug}/${slug}.md`,
+      body: parsed.body.trim(),
+      fileFrontmatter: parsed.frontmatter,
+    };
+    const result = await evaluateAndWriteTarget(input, target, guidelines, criteria);
+    paths.push(result.path);
+    paragraphBodies.push({ title: paragraph.title, body: parsed.body.trim() });
+  }
+
+  input.onText?.(italian
+    ? `Ho completato ${chapter.paragraphs.length} valutazioni. Ora preparo la valutazione complessiva del capitolo…`
+    : `Completed ${chapter.paragraphs.length} paragraph evaluations. Now preparing the overall chapter evaluation…`);
+  const chapterRaw = await loadFileContent(input.token, input.book.owner, input.book.repo, `${chapter.path}/chapter.md`, input.branch).catch(() => "");
+  const chapterParsed = parseMarkdown(chapterRaw);
+  const chapterTarget: ResolvedEvaluationTarget = {
+    kind: "chapter",
+    chapterSlug: chapter.slug,
+    title: chapter.title,
+    targetPath: `evaluations/chapters/${chapter.slug}.md`,
+    body: [chapterParsed.body.trim(), ...paragraphBodies.map((paragraph) => `### ${paragraph.title}\n\n${paragraph.body}`)].filter(Boolean).join("\n\n"),
+    fileFrontmatter: chapterParsed.frontmatter,
+  };
+  const total = await evaluateAndWriteTarget(input, chapterTarget, guidelines, criteria);
+  paths.push(total.path);
+
+  const intro = italian
+    ? `Ho valutato tutti i ${chapter.paragraphs.length} paragrafi del capitolo e salvato anche la valutazione complessiva.`
+    : `I evaluated all ${chapter.paragraphs.length} paragraphs and saved the overall chapter evaluation.`;
+  return makeAssistantMessage("assistant", `${intro}\n\n${total.answer}\n\n${paths.map((path) => `- \`${path}\``).join("\n")}`);
+}
+
+async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const target = await resolveEvaluationTarget(input);
+  if (!target) return makeAssistantMessage("assistant", "Tell me which chapter or paragraph to evaluate, for example: evaluate chapter 1 or evaluate paragraph 2 of chapter 1.");
+  const guidelines = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, language: input.context.structure?.language });
+  const criteria = resolveEvaluationCriteria(guidelines, input.context.structure?.language);
+  const result = await evaluateAndWriteTarget(input, target, guidelines, criteria);
+  return makeAssistantMessage("assistant", `I wrote the ${target.kind} evaluation to \`${result.path}\`.\n\n${result.answer}`);
 }
 
 async function writePlotUpdate(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -1174,7 +1242,6 @@ function detectSectionHint(prompt: string): "characters" | "paragraphs" | "canon
 function looksLikeSummary(prompt: string): boolean { return /\b(summary|summar|riassunt|recap|overview)\b/.test(prompt); }
 function looksLikeBranchSwitch(prompt: string): boolean { return /\b(branch)\b/.test(prompt) && /\b(switch|checkout|go to|usa il branch|vai sul branch|cambia branch|create|crea|new)\b/.test(prompt); }
 function looksLikeWriteResume(prompt: string): boolean { return /\b(resume|riassunto)\b/.test(prompt) && /\b(write|save|refresh|aggiorna|scrivi|salva|crea)\b/.test(prompt); }
-function looksLikeWriteEvaluation(prompt: string): boolean { return /\b(evaluation|evaluate|review file|valutazione)\b/.test(prompt) && /\b(write|save|refresh|aggiorna|scrivi|salva|crea)\b/.test(prompt); }
 function looksLikeUpdatePlot(prompt: string): boolean { return /\b(plot)\b/.test(prompt) && /\b(update|refresh|aggiorna|scrivi|salva|sync)\b/.test(prompt); }
 function looksLikeReview(prompt: string): boolean { return /\b(review|critique|feedback|editorial|analy[sz]e|valuta|reviewa)\b/.test(prompt); }
 function looksLikeNote(prompt: string): boolean { return /\b(note|notes|appunto|appunti|memo)\b/.test(prompt); }

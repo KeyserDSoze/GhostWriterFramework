@@ -133,7 +133,7 @@ export async function completeText(
   integration: AIIntegration,
   messages: LlmMessage[],
   purpose: "writing" | "review" = "writing",
-  options?: { signal?: AbortSignal; capability?: ChatCapability; modelName?: string; label?: string },
+  options?: { signal?: AbortSignal; capability?: ChatCapability; modelName?: string; label?: string; onText?: (text: string) => void },
 ): Promise<string> {
   const { model, pricing } = resolveModelForCall(integration, purpose, options);
 
@@ -159,6 +159,22 @@ export async function completeText(
         apiVersion: integration.apiVersion || "2024-10-21",
         dangerouslyAllowBrowser: true,
       });
+      if (options?.onText) {
+        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true } } as never, { signal: options.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null } }>; usage?: unknown }>;
+        let text = "";
+        let usage: unknown;
+        for await (const chunk of stream) {
+          const delta = chunk.choices?.[0]?.delta?.content ?? "";
+          if (delta) {
+            text += delta;
+            options.onText(text);
+          }
+          if (chunk.usage) usage = chunk.usage;
+        }
+        recordChatUsage(model, pricing, usage);
+        finishChatDebug(debugId, pricing, usage, text);
+        return text;
+      }
       const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
       recordChatUsage(model, pricing, response.usage);
       const text = response.choices[0]?.message?.content ?? "";
@@ -172,6 +188,22 @@ export async function completeText(
         baseURL: openAiBaseUrl(integration),
         dangerouslyAllowBrowser: true,
       });
+      if (options?.onText) {
+        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true } } as never, { signal: options.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null } }>; usage?: unknown }>;
+        let text = "";
+        let usage: unknown;
+        for await (const chunk of stream) {
+          const delta = chunk.choices?.[0]?.delta?.content ?? "";
+          if (delta) {
+            text += delta;
+            options.onText(text);
+          }
+          if (chunk.usage) usage = chunk.usage;
+        }
+        recordChatUsage(model, pricing, usage);
+        finishChatDebug(debugId, pricing, usage, text);
+        return text;
+      }
       const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
       recordChatUsage(model, pricing, response.usage);
       const text = response.choices[0]?.message?.content ?? "";

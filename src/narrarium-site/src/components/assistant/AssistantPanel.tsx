@@ -137,6 +137,7 @@ export function AssistantPanel() {
   const liveStrofeRef = useRef<string[]>([]);
   const liveStrofeIndexRef = useRef(0);
   const speechControllerRef = useRef<SpeechController | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const manualEndRef = useRef(false);
   const pendingRewriteRef = useRef<{ from: number; to: number; segments: string[] } | null>(null);
   const {
@@ -197,6 +198,11 @@ export function AssistantPanel() {
   useEffect(() => {
     manualEndRef.current = manualEnd;
   }, [manualEnd]);
+
+  const lastMessageText = currentSession?.messages[currentSession.messages.length - 1]?.text;
+  useEffect(() => {
+    if (busy) messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [busy, lastMessageText]);
 
   useEffect(() => {
     let active = true;
@@ -816,6 +822,17 @@ export function AssistantPanel() {
     const token = book ? resolveBookToken(book, settings) : "";
     const session = ensureSession();
     const userMessage = { id: crypto.randomUUID(), role: "user" as const, text: trimmed };
+    let streamedMessageId: string | null = null;
+    const updateStreamedReply = (text: string) => {
+      if (!text && !streamedMessageId) return;
+      if (!streamedMessageId) {
+        streamedMessageId = crypto.randomUUID();
+        const streamedMessage: AssistantMessage = { id: streamedMessageId, role: "assistant", text };
+        updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, streamedMessage] }));
+      } else {
+        useAssistantStore.getState().updateMessage(streamedMessageId, { text });
+      }
+    };
     updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage] }));
     setDraft("");
     setBusy(true);
@@ -845,8 +862,14 @@ export function AssistantPanel() {
         attachments: session.attachments,
         spokenMode: options?.spokenMode,
         signal: options?.signal,
+        onText: updateStreamedReply,
       });
-      updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, reply] }));
+      const finalReply = streamedMessageId ? { ...reply, id: streamedMessageId } : reply;
+      if (streamedMessageId) {
+        useAssistantStore.getState().updateMessage(streamedMessageId, { text: reply.text, action: reply.action });
+      } else {
+        updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, reply] }));
+      }
       setOpen(true);
       if (reply.action?.kind === "navigate") {
         navigate(reply.action.to);
@@ -854,15 +877,12 @@ export function AssistantPanel() {
         const readBranch = routeContext.structure?.loadedBranch ?? branch;
         await speakReadAloud(reply.action, book, token, readBranch);
       }
-      return reply;
+      return finalReply;
     } catch (err) {
       if (options?.signal?.aborted) return null;
-      const errorMessage = { id: crypto.randomUUID(), role: "assistant" as const, text: err instanceof Error ? err.message : t("assistant.requestFailed") };
-      updateCurrentSession((current) => ({
-        ...current,
-        updatedAt: new Date().toISOString(),
-        messages: [...current.messages, errorMessage],
-      }));
+      const errorMessage = { id: streamedMessageId ?? crypto.randomUUID(), role: "assistant" as const, text: err instanceof Error ? err.message : t("assistant.requestFailed") };
+      if (streamedMessageId) useAssistantStore.getState().updateMessage(streamedMessageId, { text: errorMessage.text });
+      else updateCurrentSession((current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, errorMessage] }));
       return errorMessage;
     } finally {
       setBusy(false);
@@ -1492,6 +1512,7 @@ export function AssistantPanel() {
         </div>
       ))}
       {busy && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("assistant.thinking")}</div>}
+      <div ref={messagesEndRef} />
     </div>
   );
 
@@ -1630,7 +1651,18 @@ export function AssistantPanel() {
             <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(event) => void attachFiles(event.target.files)} accept=".pdf,.docx,.md,.markdown,.txt,image/png,image/jpeg,.jpg,.jpeg" />
             <div className="border-t p-3">
               <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void sendPrompt(draft); }}>
-                <Textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={t("assistant.placeholder")} className="min-h-[76px] resize-none" />
+                <Textarea
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && event.shiftKey && !event.nativeEvent.isComposing) {
+                      event.preventDefault();
+                      void sendPrompt(draft);
+                    }
+                  }}
+                  placeholder={t("assistant.placeholder")}
+                  className="min-h-[76px] resize-none"
+                />
                 <div className="flex items-center gap-1.5">
                   <Button type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0" title={t("assistant.attachFiles")} onClick={() => fileInputRef.current?.click()}><Paperclip className="h-4 w-4" /></Button>
                   <Button type="button" variant={listening ? "default" : "ghost"} size="icon" className="h-9 w-9 shrink-0" title={listening ? t("assistant.stopMic") : t("assistant.microphone")} onClick={() => void startSpeechToText()} disabled={busy || voiceMode}>
@@ -1771,7 +1803,7 @@ export function AssistantPanel() {
         </div>
       )}
       <Dialog open={syncOpen} onOpenChange={setSyncOpen}><DialogContent hideCloseButton className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[920px]">{syncPanel}</DialogContent></Dialog>
-      <Dialog open={open} onOpenChange={(next) => { if (!next) interruptLiveVoice(); setOpen(next); }}><DialogContent hideCloseButton className={voiceMode || fullScreen ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0" : "left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[720px] lg:right-4 lg:left-auto lg:top-auto lg:bottom-4 lg:h-[80dvh] lg:w-[420px] lg:max-w-[calc(100vw-2rem)] lg:translate-x-0 lg:translate-y-0 xl:right-6 xl:bottom-6"}>{voiceMode ? liveVoicePanel : panel}</DialogContent></Dialog>
+      <Dialog open={open} onOpenChange={(next) => { if (!next) interruptLiveVoice(); setOpen(next); }}><DialogContent hideCloseButton style={!voiceMode && !fullScreen && !isMobile ? { left: "auto", right: "16px", top: "auto", bottom: "16px", width: "min(420px, calc(100vw - 32px))", maxWidth: "calc(100vw - 32px)", transform: "none" } : undefined} className={voiceMode || fullScreen || isMobile ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0" : "!animate-none h-[80dvh] max-h-[calc(100dvh-2rem)] p-0"}>{voiceMode ? liveVoicePanel : panel}</DialogContent></Dialog>
     </>
   );
 }

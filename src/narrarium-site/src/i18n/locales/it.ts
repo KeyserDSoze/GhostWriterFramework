@@ -1754,8 +1754,13 @@ const it = {
       },
       "write-evaluation": {
         name: "Scrivi valutazione",
-        description: "Scrive le valutazioni di capitolo o paragrafo.",
-        output: "File di valutazione aggiornato",
+        description: "Scrive una valutazione di capitolo o paragrafo risolvendo il target dal contesto o dalla richiesta.",
+        output: "Valutazione discorsiva e punteggi aggiornati",
+      },
+      "evaluate-chapter-paragraphs": {
+        name: "Valuta tutti i paragrafi del capitolo",
+        description: "Esegue il tool di valutazione per ogni paragrafo e poi scrive la valutazione complessiva del capitolo.",
+        output: "Valutazioni dei paragrafi e valutazione complessiva del capitolo",
       },
       "rewrite-current-paragraph": {
         name: "Riscrivi paragrafo corrente",

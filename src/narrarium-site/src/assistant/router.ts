@@ -144,7 +144,7 @@ export async function completeTextRouted(
   settings: AppSettings,
   messages: LlmMessage[],
   capability: ChatCapability,
-  options?: { signal?: AbortSignal; label?: string },
+  options?: { signal?: AbortSignal; label?: string; onText?: (text: string) => void },
 ): Promise<string> {
   const candidates = resolveTaskCandidates(settings, capability);
   if (!candidates.length) throw new Error("No AI integration configured for this task.");
@@ -153,11 +153,13 @@ export async function completeTextRouted(
   for (const candidate of candidates) {
     if (!candidate.integration || !candidate.model) continue; // browser has no chat model
     try {
+      options?.onText?.("");
       return await completeText(candidate.integration, messages, purpose, {
         modelName: candidate.model,
         capability,
         signal: options?.signal,
         label: options?.label,
+        onText: options?.onText,
       });
     } catch (err) {
       if (isAbort(err) || options?.signal?.aborted) throw err;
