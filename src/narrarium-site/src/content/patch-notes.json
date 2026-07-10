@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.69.0",
+    "date": "2026-07-10",
+    "en": {
+      "title": "Merge draft + final with AI",
+      "summary": "A new AI action reads your draft and your final version of a paragraph, merges the best of both into one improved text, explains its choices, and lets you apply the result to either the draft or the final.",
+      "changes": [
+        "Added a Merge draft + final action in the split view, the draft workspace, and the final paragraph page, plus a right-click menu entry and a mobile action on those pages.",
+        "The AI blends the strongest sentences, imagery, rhythm, and intentions from both versions while preserving canon, names, and facts.",
+        "The review dialog shows a diff (comparable against the draft or the final) next to a clear explanation of what was taken from each source and what was improved.",
+        "You can apply the merged text to the draft or to the final, choosing after reading the proposal, or regenerate it.",
+        "The merge always respects the writing style, punctuation style, and ghostwriter of the paragraph, chapter, or book.",
+        "Added bilingual labels for the new merge flow."
+      ]
+    },
+    "it": {
+      "title": "Unisci bozza + definitivo con l'IA",
+      "summary": "Una nuova azione IA legge la tua bozza e il tuo definitivo di un paragrafo, unisce il meglio di entrambi in un testo migliorato, spiega le scelte e ti lascia applicare il risultato alla bozza o al definitivo.",
+      "changes": [
+        "Aggiunta l'azione Unisci bozza + definitivo nella vista affiancata, nel workspace della bozza e nella pagina del paragrafo definitivo, con voce nel menu del tasto destro e azione su mobile in quelle pagine.",
+        "L'IA fonde le frasi, le immagini, il ritmo e le intenzioni migliori delle due versioni preservando canone, nomi e fatti.",
+        "Il dialogo di revisione mostra un confronto (paragonabile con la bozza o con il definitivo) accanto a una spiegazione chiara di cosa è stato preso da ciascuna fonte e cosa è stato migliorato.",
+        "Puoi applicare il testo unito alla bozza o al definitivo, scegliendo dopo aver letto la proposta, oppure rigenerarlo.",
+        "Il merge rispetta sempre lo stile di scrittura, lo stile di punteggiatura e il ghostwriter di paragrafo, capitolo o libro.",
+        "Aggiunte etichette bilingui per il nuovo flusso di merge."
+      ]
+    }
+  },
+  {
     "version": "0.68.0",
     "date": "2026-07-10",
     "en": {

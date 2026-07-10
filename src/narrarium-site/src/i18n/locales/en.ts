@@ -1145,6 +1145,21 @@ const en = {
     editorHint: "Define your punctuation rules, for example guillemets « » for dialogue with every mark inside except the final full stop, which stays outside. Keep them concrete so Copilot applies them consistently.",
     placeholder: "Write the punctuation rules here…"
   },
+  merge: {
+    button: "Merge draft + final",
+    title: "Merge draft and final",
+    subtitle: "AI blends the strengths of both versions into one and explains its choices.",
+    generating: "Merging draft and final…",
+    mergedResult: "Merged result",
+    compareWith: "Compare with:",
+    explanation: "Why these choices",
+    applyToDraft: "Apply to draft",
+    applyToFinal: "Apply to final",
+    appliedToDraft: "Merge applied to the draft.",
+    appliedToFinal: "Merge applied to the final.",
+    bothEmpty: "Both the draft and the final are empty.",
+    failed: "Merge failed"
+  },
   evaluationStyle: {
     title: "Evaluation style",
     badge: "AI evaluation contract",

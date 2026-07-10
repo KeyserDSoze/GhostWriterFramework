@@ -1,7 +1,7 @@
 import type { AppSettings } from "@/types/settings";
 import type { BookStructure, Chapter, Paragraph } from "@/types/book";
 import type { LlmMessage } from "@/assistant/llm";
-import { completeTextRouted } from "@/assistant/router";
+import { completeTextRouted, completeToolRouted } from "@/assistant/router";
 import { resolveEvaluationCriteria, scoreEvaluationRouted, type EvaluationCriterionScore } from "@/assistant/service";
 import { loadFileContent } from "@/github/githubClient";
 import { ghostwriterPrompt, parseGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
@@ -116,6 +116,79 @@ export async function improveProse(
     { role: "user", content: `${story}\n\nFULL PARAGRAPH:\n${fullBody}\n\nTEXT TO IMPROVE:\n${target}\n\nReturn the improved text.` },
   ];
   return (await completeTextRouted(src.settings, messages, "default", { label: "pipeline:improve-prose" })).trim();
+}
+
+export interface MergeDraftFinalResult {
+  /** The merged, improved prose body (no frontmatter). */
+  text: string;
+  /** A markdown explanation of what was taken from each source and why. */
+  explanation: string;
+}
+
+const MERGE_TOOL = {
+  name: "merge_draft_and_final",
+  description: "Return one merged, improved paragraph body that blends the best of the draft and the final version, plus a clear explanation of the editorial choices.",
+  parameters: {
+    type: "object",
+    properties: {
+      text: {
+        type: "string",
+        description: "The final merged prose body only. No frontmatter, no headings, no commentary, no code fences.",
+      },
+      explanation: {
+        type: "string",
+        description: "A concise markdown explanation of which parts were taken from the draft, which from the final, and what was improved and why. Use short bullet points.",
+      },
+    },
+    required: ["text", "explanation"],
+    additionalProperties: false,
+  },
+};
+
+/**
+ * Merge a paragraph's draft and final versions into one improved body.
+ * Reads the strengths of BOTH sources, keeps canon and facts intact, and
+ * returns the merged prose together with an explanation of the choices.
+ */
+export async function mergeDraftAndFinal(
+  src: PipelineSource,
+  draftBody: string,
+  finalBody: string,
+  ghostwriterSlug?: string,
+): Promise<MergeDraftFinalResult> {
+  const { style, story } = await buildContext(src, ghostwriterSlug);
+  const system = [
+    `You are Narrarium's senior prose editor. You are given two versions of the same paragraph: a DRAFT and a FINAL.`,
+    `Produce ONE superior merged version that takes the strongest sentences, images, rhythm, and intentions from BOTH, and improves weak spots.`,
+    `Rules:`,
+    `- Preserve established canon, facts, names, chronology, and any reveal already present.`,
+    `- Do not invent new plot facts. You may sharpen phrasing, rhythm, imagery, and clarity.`,
+    `- Keep the same language as the sources. Write in ${LANG(src)}.`,
+    `- If one side is empty, treat the other as the base and improve it.`,
+    `- Return the merged body via the tool "text", and a short markdown rationale via "explanation" describing what you took from the draft, what from the final, and what you improved and why.`,
+    ``,
+    style,
+  ].join("\n");
+  const user = [
+    story,
+    `DRAFT VERSION:\n${draftBody?.trim() || "(empty)"}`,
+    `FINAL VERSION:\n${finalBody?.trim() || "(empty)"}`,
+    `Merge and improve them into one best version, and explain your choices.`,
+  ].filter(Boolean).join("\n\n");
+  const result = await completeToolRouted<MergeDraftFinalResult>(
+    src.settings,
+    [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    "default",
+    MERGE_TOOL,
+    { label: "pipeline:merge-draft-final" },
+  );
+  return {
+    text: String(result.output.text ?? "").trim(),
+    explanation: String(result.output.explanation ?? "").trim(),
+  };
 }
 
 /** Suggest several synonym/short replacements for a selected word or short phrase, keeping context and style. */

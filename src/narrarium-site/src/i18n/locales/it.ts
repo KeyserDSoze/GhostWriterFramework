@@ -1145,6 +1145,21 @@ const it = {
     editorHint: "Definisci le tue regole di punteggiatura, ad esempio le caporali « » per i dialoghi con tutti i segni dentro tranne il punto finale, che resta fuori. Tienile concrete così Copilot le applica in modo coerente.",
     placeholder: "Scrivi qui le regole di punteggiatura…"
   },
+  merge: {
+    button: "Unisci bozza + definitivo",
+    title: "Unisci bozza e definitivo",
+    subtitle: "L'IA fonde i punti di forza delle due versioni in una sola e spiega le sue scelte.",
+    generating: "Sto unendo bozza e definitivo…",
+    mergedResult: "Risultato unito",
+    compareWith: "Confronta con:",
+    explanation: "Perché queste scelte",
+    applyToDraft: "Applica alla bozza",
+    applyToFinal: "Applica al definitivo",
+    appliedToDraft: "Merge applicato alla bozza.",
+    appliedToFinal: "Merge applicato al definitivo.",
+    bothEmpty: "Sia la bozza sia il definitivo sono vuoti.",
+    failed: "Merge non riuscito"
+  },
   evaluationStyle: {
     title: "Stile di valutazione",
     badge: "Contratto AI per le valutazioni",

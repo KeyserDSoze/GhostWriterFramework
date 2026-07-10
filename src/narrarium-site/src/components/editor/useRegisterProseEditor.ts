@@ -3,7 +3,7 @@ import { useProseEditorStore } from "@/components/editor/proseEditorStore";
 
 export function useRegisterProseEditor(
   ref: React.RefObject<HTMLTextAreaElement | null>,
-  handlers: { improve: (selection: string | null) => void; summarize?: (selection: string | null) => void; synonym: (selection: string) => void; enabled?: boolean },
+  handlers: { improve: (selection: string | null) => void; summarize?: (selection: string | null) => void; synonym: (selection: string) => void; merge?: () => void; enabled?: boolean },
   /**
    * Extra reactive dependencies that should re-run registration. Pass values
    * that gate whether the textarea is mounted (e.g. a reader/edit view mode),
@@ -16,7 +16,7 @@ export function useRegisterProseEditor(
   useEffect(() => {
     const el = ref.current;
     if (!el || handlers.enabled === false) return;
-    return register({ el, improve: handlers.improve, summarize: handlers.summarize, synonym: handlers.synonym });
+    return register({ el, improve: handlers.improve, summarize: handlers.summarize, synonym: handlers.synonym, merge: handlers.merge });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ref.current, handlers.enabled, ...deps]);
+  }, [ref.current, handlers.enabled, handlers.merge, ...deps]);
 }

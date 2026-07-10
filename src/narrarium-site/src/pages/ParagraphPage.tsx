@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseDocument, stringify } from "yaml";
-import { ArrowLeft, ArrowLeftRight, BookOpen, FileEdit, Save, Loader2, MoreHorizontal, Plus, X, Lock } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, BookOpen, FileEdit, Save, Loader2, MoreHorizontal, Plus, X, Lock, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
@@ -20,13 +20,15 @@ import {
   updateFile,
   renameAndUpdateFile,
   slugToTitle,
+  loadFileContent,
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { resolveBookExportSettings, resolveBookToken, type ReaderSettings } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
-import { improveProse, synonymsFor, type PipelineSource } from "@/narrarium/pipeline";
+import { improveProse, synonymsFor, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
+import { useMergeDraftFinal } from "@/components/editor/useMergeDraftFinal";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
 import { presentMetadata } from "@/export/metadataPresentation";
@@ -198,10 +200,11 @@ export function ParagraphPage() {
   const [synonymOptions, setSynonymOptions] = useState<string[]>([]);
   const [synonymSeen, setSynonymSeen] = useState<string[]>([]);
 
-  const proseHandlersRef = useRef<{ improve: (s: string | null) => void; synonym: (s: string) => void }>({ improve: () => undefined, synonym: () => undefined });
+  const proseHandlersRef = useRef<{ improve: (s: string | null) => void; synonym: (s: string) => void; merge: () => void }>({ improve: () => undefined, synonym: () => undefined, merge: () => undefined });
   useRegisterProseEditor(bodyRef, {
     improve: (s) => proseHandlersRef.current.improve(s),
     synonym: (s) => proseHandlersRef.current.synonym(s),
+    merge: () => proseHandlersRef.current.merge(),
   }, [viewMode]);
 
   const isDirty =
@@ -496,6 +499,45 @@ export function ParagraphPage() {
     return typeof v === "string" ? v : "";
   })();
 
+  // ── Merge draft + final ─────────────────────────────────────────────────────
+  const draftBodyRef = useRef("");
+  const draftPath = paragraph?.draftPath ?? (chapter && paragraph ? `${chapter.path}/drafts/${(paragraph.path.split("/").pop() ?? "").replace(/\.md$/i, "")}.md` : "");
+  const merge = useMergeDraftFinal({
+    buildSource: () => (book && structure && chapter ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter } : null),
+    getDraftBody: () => draftBodyRef.current,
+    getFinalBody: () => body,
+    getFinalFrontmatter: () => {
+      const doc = buildFrontmatter(entries, "");
+      return doc.replace(/\n*$/, "\n");
+    },
+    draftPath,
+    finalPath: paragraph?.path ?? "",
+    ghostwriterSlug: currentGhostwriter || undefined,
+    onApplied: (side, mergedBody) => {
+      if (side === "final") {
+        setBody(mergedBody);
+        setSavedBody(mergedBody);
+        loadedTargetRef.current = null;
+      }
+      void reload();
+    },
+  });
+
+  async function runMerge() {
+    if (!book || !token) return;
+    // Fetch the current draft body so the AI can merge both sources.
+    let draftBody = "";
+    if (draftPath) {
+      try {
+        draftBody = stripFrontmatter(await loadFileContent(token, book.owner, book.repo, draftPath, branch));
+      } catch {
+        draftBody = "";
+      }
+    }
+    draftBodyRef.current = draftBody;
+    await merge.run();
+  }
+
   async function startImprove() {
     if (!book || !token || !structure || !chapter) return;
     const node = bodyRef.current;
@@ -594,7 +636,7 @@ export function ParagraphPage() {
   }
 
   const readonlyEntries = entries.filter((e) => READONLY_KEYS.has(e.key));
-  proseHandlersRef.current = { improve: () => void startImprove(), synonym: (s) => void openSynonyms(s) };
+  proseHandlersRef.current = { improve: () => void startImprove(), synonym: (s) => void openSynonyms(s), merge: () => void runMerge() };
   const editableEntries = entries.filter(
     (e) => !READONLY_KEYS.has(e.key) && e.key !== "title" && e.key !== "ghostwriter",
   );
@@ -629,6 +671,10 @@ export function ParagraphPage() {
             {viewMode === "reader" ? <FileEdit className="mr-1 h-4 w-4" /> : <BookOpen className="mr-1 h-4 w-4" />}
             {viewMode === "reader" ? t("paragraph.edit") : t("paragraph.reader")}
           </Button>
+          <Button className="hidden sm:inline-flex" size="sm" variant="outline" onClick={() => void runMerge()} disabled={merge.busy || saving || loading}>
+            <Wand2 className="mr-1 h-4 w-4" />
+            {t("merge.button")}
+          </Button>
           <Button className="hidden sm:inline-flex" size="sm" variant="outline" onClick={() => void handleSwitchToDraft()} disabled={switchingDraft || saving}>
             {switchingDraft ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-1 h-4 w-4" />}
             {t("paragraph.switchToDraft")}
@@ -653,6 +699,10 @@ export function ParagraphPage() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => void runMerge()} disabled={merge.busy || saving || loading}>
+                <Wand2 className="mr-2 h-4 w-4" />
+                {t("merge.button")}
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void handleSwitchToDraft()} disabled={switchingDraft || saving}>
                 {switchingDraft ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-2 h-4 w-4" />}
                 {t("paragraph.switchToDraft")}
@@ -883,6 +933,7 @@ export function ParagraphPage() {
           </div>
         </DialogContent>
       </Dialog>
+      {merge.dialog}
     </div>
   );
 }

@@ -9,6 +9,8 @@ export interface ProseEditorActions {
   summarize?: (selection: string | null) => void;
   /** Open the synonym flow for a short selection */
   synonym: (selection: string) => void;
+  /** Open the merge draft+final flow. Present only on split/draft/final pages. */
+  merge?: () => void;
 }
 
 interface ProseEditorState {

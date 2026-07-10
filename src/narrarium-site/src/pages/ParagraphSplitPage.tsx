@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeftRight, Loader2, Save, Columns2 } from "lucide-react";
+import { ArrowLeftRight, Loader2, Save, Columns2, Wand2 } from "lucide-react";
 import { stringify } from "yaml";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { readFileWithSha, createOrUpdateTextFile } from "@/github/githubClient";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { useProseAssist } from "@/components/editor/useProseAssist";
+import { useMergeDraftFinal } from "@/components/editor/useMergeDraftFinal";
 import type { PipelineSource } from "@/narrarium/pipeline";
 
 /** Split a markdown file into its frontmatter block (kept verbatim) and the body. */
@@ -84,6 +85,23 @@ export function ParagraphSplitPage() {
 
   useRegisterProseEditor(draftRef, { improve: draftAssist.improve, synonym: draftAssist.synonym });
   useRegisterProseEditor(finalRef, { improve: finalAssist.improve, synonym: finalAssist.synonym });
+
+  const merge = useMergeDraftFinal({
+    buildSource,
+    getDraftBody: () => draft.body,
+    getFinalBody: () => final.body,
+    getDraftFrontmatter: () => draft.frontmatter,
+    getFinalFrontmatter: () => final.frontmatter,
+    draftPath,
+    finalPath,
+    defaultDraftFrontmatter: () => defaultDraftFrontmatter(),
+    defaultFinalFrontmatter: () => defaultFinalFrontmatter(),
+    onApplied: (side, body) => {
+      if (side === "draft") setDraft((s) => ({ ...s, body, savedBody: body }));
+      else setFinal((s) => ({ ...s, body, savedBody: body }));
+      void reload();
+    },
+  });
 
   // Load both files.
   useEffect(() => {
@@ -210,7 +228,12 @@ export function ParagraphSplitPage() {
         <h1 className="flex items-center gap-2 font-serif text-xl font-semibold">
           <Columns2 className="h-5 w-5" />{t("paragraph.splitTitle", { title: paragraph.title })}
         </h1>
-        <Link to={backBase} className="text-sm text-muted-foreground underline">{t("paragraph.backToFinal")}</Link>
+        <div className="flex items-center gap-3">
+          <Button size="sm" variant="outline" onClick={() => void merge.run()} disabled={merge.busy || draft.loading || final.loading}>
+            <Wand2 className="mr-1.5 h-4 w-4" />{t("merge.button")}
+          </Button>
+          <Link to={backBase} className="text-sm text-muted-foreground underline">{t("paragraph.backToFinal")}</Link>
+        </div>
       </div>
 
       {/* Desktop-only split. Panes flow with the page (no inner scroll) and grow with content. */}
@@ -262,6 +285,7 @@ export function ParagraphSplitPage() {
 
       {draftAssist.dialogs}
       {finalAssist.dialogs}
+      {merge.dialog}
     </div>
   );
 }

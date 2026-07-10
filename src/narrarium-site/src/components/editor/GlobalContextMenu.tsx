@@ -445,6 +445,7 @@ export function GlobalContextMenu() {
               {menu.prose && (
                 <>
                   <MenuItem icon={<Wand2 className="h-4 w-4" />} label={menu.selection ? t("ctx.improveSelection") : t("ctx.improveAll")} onClick={() => { menu.prose!.improve(menu.selection || null); close(); }} />
+                  {menu.prose.merge && <MenuItem icon={<Wand2 className="h-4 w-4" />} label={t("merge.button")} onClick={() => { menu.prose!.merge!(); close(); }} />}
                   {menu.prose.summarize && <MenuItem icon={<Sparkles className="h-4 w-4" />} label={menu.selection ? t("ctx.summarySelection") : t("ctx.summaryAll")} onClick={() => { menu.prose!.summarize?.(menu.selection || null); close(); }} />}
                   {canSynonym && <MenuItem icon={<Sparkles className="h-4 w-4" />} label={t("ctx.synonym")} onClick={() => { menu.prose!.synonym(menu.selection); close(); }} />}
                   <div className="my-1 h-px bg-border" />

@@ -24,6 +24,7 @@ import { useRegisterPageActions } from "@/store/pageActionsStore";
 import { useProseAssist } from "@/components/editor/useProseAssist";
 import { parseScript, serializeScript, type ScriptDoc } from "@/narrarium/script/model";
 import { proseToScript, refineProse, scriptToProse, stripFrontmatter, generateChapterResume, generateChapterEvaluationWithScores, generateParagraphEvaluationWithScores, type PipelineSource } from "@/narrarium/pipeline";
+import { useMergeDraftFinal } from "@/components/editor/useMergeDraftFinal";
 import { useGenerateDiffStore } from "@/store/generateDiffStore";
 import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
 import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
@@ -352,6 +353,7 @@ export function WorkspaceDocPage() {
   useRegisterProseEditor(bodyRef, {
     improve: (s) => proseAssist.improve(s),
     synonym: (s) => proseAssist.synonym(s),
+    merge: workspaceKind === "draft" && paragraph ? () => void runMerge() : undefined,
     enabled: workspaceKind !== "script",
   });
 
@@ -365,6 +367,38 @@ export function WorkspaceDocPage() {
     : `/app/books/${bookId}/chapters/${chapterId}`;
   const paraSlug = paragraph ? paragraphSlug(paragraph.path) : null;
 
+  // Merge draft + final (paragraph draft workspace only).
+  const finalBodyRef = useRef("");
+  const merge = useMergeDraftFinal({
+    buildSource: () => (book && structure && chapter && token ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter } : null),
+    getDraftBody: () => body,
+    getFinalBody: () => finalBodyRef.current,
+    getDraftFrontmatter: () => buildFrontmatter(entries, "").replace(/\n*$/, "\n"),
+    draftPath: path ?? "",
+    finalPath: paragraph?.path ?? "",
+    ghostwriterSlug: (entries.find((e) => e.key === "ghostwriter")?.value as string) || undefined,
+    onApplied: (side, mergedBody) => {
+      if (side === "draft") {
+        setBody(mergedBody);
+        setSavedBody(mergedBody);
+        loadedTargetRef.current = null;
+      }
+      void reload();
+    },
+  });
+
+  async function runMerge() {
+    if (!book || !token || !paragraph) return;
+    let finalBody = "";
+    try {
+      finalBody = stripFrontmatter(await loadFileContent(token, book.owner, book.repo, paragraph.path, branch));
+    } catch {
+      finalBody = "";
+    }
+    finalBodyRef.current = finalBody;
+    await merge.run();
+  }
+
   const isDirty = body !== savedBody || JSON.stringify(entries) !== JSON.stringify(savedEntries);
   const evaluationScores = parseScoresFromEntries(entries);
 
@@ -372,6 +406,7 @@ export function WorkspaceDocPage() {
   useRegisterPageActions([
     ...(paraSlug && workspaceKind === "script" ? [{ id: "script-to-draft", label: t("pipeline.scriptToDraft"), icon: <Wand2 className="h-4 w-4" />, run: () => startPipeline("toDraft") }] : []),
     ...(paraSlug && workspaceKind === "draft" ? [
+      { id: "merge-draft-final", label: t("merge.button"), icon: <Wand2 className="h-4 w-4" />, run: () => runMerge(), disabled: merge.busy },
       { id: "switch-to-final", label: t("paragraph.switchToFinal"), icon: switchingFinal ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowLeftRight className="h-4 w-4" />, run: () => handleSwitchToFinal(), disabled: switchingFinal || saving },
       { id: "draft-to-final", label: t("pipeline.draftToFinal"), icon: <Wand2 className="h-4 w-4" />, run: () => startPipeline("toFinal") },
     ] : []),
@@ -866,6 +901,7 @@ export function WorkspaceDocPage() {
         />
       )}
       {workspaceKind !== "script" && proseAssist.dialogs}
+      {merge.dialog}
       <GeneratePreviewDialog
         open={pipelineOpen}
         title={pipelineMode === "toDraft" ? t("pipeline.scriptToDraft") : t("pipeline.draftToFinal")}
