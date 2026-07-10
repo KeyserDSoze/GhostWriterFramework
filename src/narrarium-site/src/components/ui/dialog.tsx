@@ -2,6 +2,7 @@ import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { floatingLayerJustClosed, hasOpenFloatingLayer } from "@/lib/floatingLayer";
 
 const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
@@ -27,11 +28,6 @@ function isInsideFloatingLayer(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest("[data-narrarium-floating-layer]"));
 }
 
-/** True while any Radix popper (Select/Dropdown) is currently open in the document. */
-function hasOpenFloatingLayer(): boolean {
-  return Boolean(document.querySelector('[data-narrarium-floating-layer][data-state="open"]'));
-}
-
 /** Radix exposes the real DOM target differently per event; check both. */
 function floatingEventTarget(event: { target?: EventTarget | null; detail?: { originalEvent?: { target?: EventTarget | null } } }): EventTarget | null {
   return event.detail?.originalEvent?.target ?? event.target ?? null;
@@ -39,8 +35,9 @@ function floatingEventTarget(event: { target?: EventTarget | null; detail?: { or
 
 /** Should this outside-interaction be ignored (not close the dialog)? */
 function shouldIgnoreOutside(target: EventTarget | null): boolean {
-  // Ignore clicks inside a popper, AND the first click that merely dismisses an open popper.
-  return isInsideFloatingLayer(target) || hasOpenFloatingLayer();
+  // Ignore clicks inside a popper, while any popper is open, or right after one
+  // closed (the same click that dismissed the dropdown must not close the modal).
+  return isInsideFloatingLayer(target) || hasOpenFloatingLayer() || floatingLayerJustClosed();
 }
 
 const DialogContent = React.forwardRef<

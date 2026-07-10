@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.67.1",
+    "date": "2026-07-10",
+    "en": {
+      "title": "Copilot chat placement and dropdown-in-modal fixes",
+      "summary": "The compact desktop Copilot chat now stays anchored in the bottom-right corner, and closing a dropdown inside a modal no longer closes the modal itself.",
+      "changes": [
+        "Anchored the compact desktop Copilot chat to the bottom-right of the screen with robust positioning so it no longer drifts off to the right or hides its controls.",
+        "Fixed the long-standing issue where opening a dropdown inside the Copilot chat, a popup or a modal and clicking outside the dropdown also closed the popup or modal.",
+        "Dropdown and select menus now reliably absorb the dismissing click so the underlying modal stays open.",
+        "Applied the same protection to nested submenus and select menus."
+      ]
+    },
+    "it": {
+      "title": "Correzioni posizione chat Copilot e dropdown nei modali",
+      "summary": "La chat Copilot compatta desktop resta ora ancorata in basso a destra e chiudere una dropdown dentro un modale non chiude più il modale stesso.",
+      "changes": [
+        "Ancorata la chat Copilot compatta desktop in basso a destra con un posizionamento robusto, così non scivola più verso destra né nasconde i controlli.",
+        "Corretto il problema storico per cui aprire una dropdown dentro la chat Copilot, un popup o un modale e cliccare fuori dalla dropdown chiudeva anche il popup o il modale.",
+        "I menu dropdown e select assorbono ora in modo affidabile il click di chiusura, lasciando aperto il modale sottostante.",
+        "Estesa la stessa protezione ai sottomenu annidati e ai menu select."
+      ]
+    }
+  },
+  {
     "version": "0.67.0",
     "date": "2026-07-10",
     "en": {
