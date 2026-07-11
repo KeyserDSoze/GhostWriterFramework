@@ -6,6 +6,9 @@ import fg from "fast-glob";
 import matter from "./frontmatter.js";
 import { marked } from "marked";
 import {
+  AUDIT_BOOK_FILE,
+  AUDIT_CHAPTERS_DIRECTORY,
+  AUDIT_DIRECTORY,
   BOOK_DIRECTORIES,
   BOOK_FILE,
   CONTEXT_FILE,
@@ -2275,13 +2278,27 @@ export async function renameChapter(
   const oldFolderPath = path.join(root, "chapters", oldChapterSlug);
   const newFolderPath = path.join(root, "chapters", newChapterSlug);
   const newFilePath = path.join(newFolderPath, "chapter.md");
+  const oldAuditFolderPath = path.join(root, AUDIT_CHAPTERS_DIRECTORY, oldChapterSlug);
+  const newAuditFolderPath = path.join(root, AUDIT_CHAPTERS_DIRECTORY, newChapterSlug);
 
   if (oldFolderPath !== newFolderPath && (await pathExists(newFolderPath))) {
     throw new Error(`Chapter already exists at destination: ${newFolderPath}`);
   }
 
+  if (
+    oldAuditFolderPath !== newAuditFolderPath &&
+    (await pathExists(oldAuditFolderPath)) &&
+    (await pathExists(newAuditFolderPath))
+  ) {
+    throw new Error(`Chapter Audit already exists at destination: ${newAuditFolderPath}`);
+  }
+
   if (oldFolderPath !== newFolderPath) {
     await rename(oldFolderPath, newFolderPath);
+  }
+
+  if (oldAuditFolderPath !== newAuditFolderPath && (await pathExists(oldAuditFolderPath))) {
+    await rename(oldAuditFolderPath, newAuditFolderPath);
   }
 
   const validated = chapterSchema.parse({
@@ -2394,13 +2411,23 @@ export async function renameParagraph(
   const nextNumber = options.newNumber ?? current.number;
   const newParagraphSlug = paragraphFilename(nextNumber, options.newTitle).replace(/\.md$/i, "");
   const newFilePath = path.join(root, "chapters", chapterSlugValue, `${newParagraphSlug}.md`);
+  const oldAuditPath = path.join(root, AUDIT_CHAPTERS_DIRECTORY, chapterSlugValue, "paragraphs", `${oldParagraphSlug}.md`);
+  const newAuditPath = path.join(root, AUDIT_CHAPTERS_DIRECTORY, chapterSlugValue, "paragraphs", `${newParagraphSlug}.md`);
 
   if (oldFilePath !== newFilePath && (await pathExists(newFilePath))) {
     throw new Error(`Paragraph already exists at destination: ${newFilePath}`);
   }
 
+  if (oldAuditPath !== newAuditPath && (await pathExists(oldAuditPath)) && (await pathExists(newAuditPath))) {
+    throw new Error(`Paragraph Audit already exists at destination: ${newAuditPath}`);
+  }
+
   if (oldFilePath !== newFilePath) {
     await rename(oldFilePath, newFilePath);
+  }
+
+  if (oldAuditPath !== newAuditPath && (await pathExists(oldAuditPath))) {
+    await rename(oldAuditPath, newAuditPath);
   }
 
   const validated = paragraphSchema.parse({
@@ -7342,6 +7369,58 @@ export async function doctorBook(rootPath: string): Promise<{
     }
   }
 
+  for (const filePath of contentFiles) {
+    const relativePath = toPosixPath(path.relative(root, filePath));
+    if (!relativePath.startsWith(`${AUDIT_DIRECTORY}/`)) continue;
+
+    if (relativePath === AUDIT_BOOK_FILE) {
+      if (!(await pathExists(path.join(root, BOOK_FILE)))) {
+        addDoctorIssue(issues, seen, {
+          severity: "warning",
+          code: "orphan-audit-book",
+          path: relativePath,
+          message: `Audit companion has no source book at ${BOOK_FILE}.`,
+        });
+      }
+      continue;
+    }
+
+    const chapterMatch = relativePath.match(/^audit\/chapters\/([^/]+)\/chapter\.md$/);
+    if (chapterMatch) {
+      const sourcePath = toPosixPath(path.join("chapters", chapterMatch[1], "chapter.md"));
+      if (!(await pathExists(path.join(root, sourcePath)))) {
+        addDoctorIssue(issues, seen, {
+          severity: "warning",
+          code: "orphan-audit-chapter",
+          path: relativePath,
+          message: `Audit chapter has no source chapter at ${sourcePath}.`,
+        });
+      }
+      continue;
+    }
+
+    const paragraphMatch = relativePath.match(/^audit\/chapters\/([^/]+)\/paragraphs\/([^/]+)\.md$/);
+    if (paragraphMatch) {
+      const sourcePath = toPosixPath(path.join("chapters", paragraphMatch[1], `${paragraphMatch[2]}.md`));
+      if (!(await pathExists(path.join(root, sourcePath)))) {
+        addDoctorIssue(issues, seen, {
+          severity: "warning",
+          code: "orphan-audit-paragraph",
+          path: relativePath,
+          message: `Audit paragraph has no source paragraph at ${sourcePath}.`,
+        });
+      }
+      continue;
+    }
+
+    addDoctorIssue(issues, seen, {
+      severity: "error",
+      code: "malformed-audit-path",
+      path: relativePath,
+      message: "Audit file is outside the canonical book, chapter, or paragraph companion paths.",
+    });
+  }
+
   const currentScriptLedger = await readLooseMarkdownIfExists(path.join(root, SCRIPT_LEDGER_FILE));
   const expectedScriptLedger = await buildScriptLedgerDocument(root, {
     generatedAt: normalizeOptionalDateishString(currentScriptLedger?.frontmatter.generated_at) ?? new Date(0).toISOString(),
@@ -10351,6 +10430,10 @@ async function validateFile(root: string, filePath: string): Promise<void> {
 
   if (relativePath.startsWith("assets/")) {
     assetSchema.parse(data);
+    return;
+  }
+
+  if (relativePath.startsWith(`${AUDIT_DIRECTORY}/`)) {
     return;
   }
 

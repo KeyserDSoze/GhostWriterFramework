@@ -10,6 +10,7 @@ import {
   FileEdit,
   PenLine,
   Save,
+  ShieldAlert,
   MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -466,6 +467,12 @@ export function ChapterPage() {
           to={`/app/books/${bookId}/chapters/${chapterId}/workspace/evaluation`}
           label={t("chapter.evaluation")}
           active={chapter.hasEvaluation}
+        />
+        <ChapterActionChip
+          to={`/app/books/${bookId}/chapters/${chapterId}/audit`}
+          icon={<ShieldAlert className="h-3.5 w-3.5" />}
+          label={t("audit.title")}
+          active={!!chapter.auditPath}
         />
         <ChapterActionChip
           to={`/app/books/${bookId}/chapters/${chapterId}/reader-evaluations`}

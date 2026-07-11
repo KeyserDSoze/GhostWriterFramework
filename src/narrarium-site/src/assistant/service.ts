@@ -43,6 +43,7 @@ import { GITHUB_MODELS_INFERENCE_URL } from "@/config/githubModels";
 import { defaultEvaluationCriteria, defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
 import { emptyReaderPersona } from "@/narrarium/readerPersona";
 import { generateReaderEvaluationSummary, hashReaderSource, loadReaderPersonas, parseReaderEvaluation, readerEvaluationPath, runReaderEvaluations, saveReaderPersona, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
+import { AUDIT_CATEGORIES, auditTargetHref, loadAuditReport, resolveAuditTarget, updateAuditFinding, type AuditCertainty, type AuditFindingStatus, type AuditSeverity, type AuditTarget } from "@/narrarium/audit";
 
 async function completeForTask(
   settings: AppSettings,
@@ -158,6 +159,11 @@ export async function runAssistantPrompt(input: {
     "evaluate-with-readers": () => evaluateWithReadersFromPrompt({ ...promptInput, book, branch, token }),
     "summarize-reader-evaluations": () => summarizeReaderEvaluationsFromPrompt({ ...promptInput, book, branch, token }),
     "open-reader-evaluations": () => openReaderEvaluationsFromContext({ ...promptInput, book }),
+    "run-audit": () => auditNavigationFromPrompt({ ...promptInput, book }, "run"),
+    "open-audit": () => auditNavigationFromPrompt({ ...promptInput, book }, "open"),
+    "update-audit": () => auditNavigationFromPrompt({ ...promptInput, book }, "update"),
+    "delete-audit": () => auditNavigationFromPrompt({ ...promptInput, book }, "delete"),
+    "set-audit-finding-status": () => setAuditFindingStatusFromPrompt({ ...promptInput, book, branch, token }),
     "list-branches": () => listBranchesMessage({ ...promptInput, book, token }),
     "show-branch-diff": () => showBranchDiffMessage({ ...promptInput, book, branch, token }),
     "list-commits": () => listCommitsMessage({ ...promptInput, book, branch, token }),
@@ -511,6 +517,139 @@ async function openReaderEvaluationsFromContext(input: PromptInput & { book: Boo
     ? `/app/books/${input.book.id}/chapters/${chapter.slug}/paragraphs/${paragraph.paragraph.number}/reader-evaluations`
     : `/app/books/${input.book.id}/chapters/${chapter.slug}/reader-evaluations`;
   return { id: crypto.randomUUID(), role: "assistant", text: "Opening reader evaluations.", action: { kind: "navigate", to, label: "Reader evaluations" } };
+}
+
+function auditTargetFromPrompt(input: PromptInput & { book: BookEntry }): AuditTarget | null {
+  const lower = input.prompt.toLowerCase();
+  const wantsParagraph = /\b(paragraph|paragrafo|scene|scena)\b/.test(lower);
+  const wantsChapter = /\b(chapter|capitolo)\b/.test(lower);
+  const wantsBook = /\b(book|libro)\b/.test(lower);
+  const requestedChapter = lower.match(/(?:capitolo|chapter)\s+(\d+)/)?.[1].padStart(3, "0");
+  const requestedParagraph = lower.match(/(?:paragrafo|paragraph|scena|scene)\s+(\d+)/)?.[1].padStart(3, "0");
+
+  if (wantsParagraph) {
+    const resolved = resolveParagraphFromPrompt(input);
+    if (resolved && requestedChapter && !resolved.chapter.slug.startsWith(`${requestedChapter}-`)) return null;
+    if (resolved && requestedParagraph && resolved.paragraph.number !== requestedParagraph) return null;
+    return resolved ? { scope: "paragraph", bookId: input.book.id, chapterId: resolved.chapter.slug, paragraphNum: resolved.paragraph.number } : null;
+  }
+  if (wantsChapter) {
+    const chapter = resolveChapterFromPrompt(input);
+    if (chapter && requestedChapter && !chapter.slug.startsWith(`${requestedChapter}-`)) return null;
+    return chapter ? { scope: "chapter", bookId: input.book.id, chapterId: chapter.slug } : null;
+  }
+  if (wantsBook) return { scope: "book", bookId: input.book.id };
+  if (input.context.paragraph && input.context.chapter) {
+    return { scope: "paragraph", bookId: input.book.id, chapterId: input.context.chapter.slug, paragraphNum: input.context.paragraph.number };
+  }
+  if (input.context.chapter) return { scope: "chapter", bookId: input.book.id, chapterId: input.context.chapter.slug };
+  return { scope: "book", bookId: input.book.id };
+}
+
+function auditFiltersFromPrompt(prompt: string): URLSearchParams {
+  const lower = prompt.toLowerCase();
+  const params = new URLSearchParams();
+  const severityPatterns: Array<[AuditSeverity, RegExp]> = [
+    ["critical", /\b(critical|critico|critica|critici|critiche)\b/],
+    ["high", /\b(high|alto|alta|alti|alte)\b/],
+    ["medium", /\b(medium|medio|media|medi|medie)\b/],
+    ["low", /\b(low|basso|bassa|bassi|basse)\b/],
+    ["informational", /\b(informational|informativo|informativa|informativi|informative)\b/],
+  ];
+  const certaintyPatterns: Array<[AuditCertainty, RegExp]> = [
+    ["confirmed", /\b(confirmed|confermato|confermata|confermati|confermate)\b/],
+    ["probable", /\b(probable|probabile|probabili)\b/],
+    ["possible", /\b(possible|possibile|possibili)\b/],
+    ["needs-context", /\b(needs context|richiede contesto|da contestualizzare)\b/],
+  ];
+  const severity = severityPatterns.find(([, pattern]) => pattern.test(lower))?.[0];
+  const certainty = certaintyPatterns.find(([, pattern]) => pattern.test(lower))?.[0];
+  if (severity) params.set("severity", severity);
+  if (certainty) params.set("certainty", certainty);
+
+  const status: AuditFindingStatus | undefined = /\b(false positive|falso positivo|falsa positiva)\b/.test(lower)
+    ? "false-positive"
+    : /\b(needs review|need review|da verificare|richiede revisione)\b/.test(lower)
+      ? "needs-review"
+      : /\b(resolved|risolto|risolta|risolti|risolte)\b/.test(lower)
+        ? "resolved"
+        : /\b(ignored|ignorato|ignorata|ignorati|ignorate)\b/.test(lower)
+          ? "ignored"
+          : /\b(open findings?|unresolved findings?|problemi aperti|segnalazioni aperte|stato aperto)\b/.test(lower)
+            ? "open"
+            : undefined;
+  if (status) params.set("status", status);
+
+  const categoryAliases: Partial<Record<(typeof AUDIT_CATEGORIES)[number], string[]>> = {
+    character: ["character", "personaggio"],
+    location: ["location", "luogo"],
+    item: ["item", "oggetto"],
+    faction: ["faction", "fazione"],
+    secret: ["secret", "segreto"],
+    plot: ["plot", "trama"],
+    timeline: ["timeline"],
+    terminology: ["terminology", "terminologia"],
+    metadata: ["metadata", "metadati"],
+  };
+  const category = AUDIT_CATEGORIES.find((value) => [value.replace(/-/g, " "), ...(categoryAliases[value] ?? [])].some((alias) => lower.includes(alias)));
+  if (category) params.set("category", category);
+  return params;
+}
+
+async function auditNavigationFromPrompt(input: PromptInput & { book: BookEntry }, operation: "run" | "open" | "update" | "delete"): Promise<AssistantMessage> {
+  const structure = input.context.structure;
+  if (!structure) return makeAssistantMessage("assistant", "Open a book first so I can resolve the audit target.");
+  const target = auditTargetFromPrompt(input);
+  if (!target) return makeAssistantMessage("assistant", "Open or name the chapter or paragraph whose audit you want to use.");
+  let resolved;
+  try {
+    resolved = resolveAuditTarget(structure, target);
+  } catch (error) {
+    return makeAssistantMessage("assistant", `I could not resolve that audit target: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (operation === "delete" && !structure.auditFiles.some((file) => file.path === resolved.reportPath)) {
+    return makeAssistantMessage("assistant", `There is no saved audit report for **${resolved.title}** to delete.`);
+  }
+  const params = operation === "open" ? auditFiltersFromPrompt(input.prompt) : new URLSearchParams();
+  if (operation === "run" || operation === "update") params.set("action", "run");
+  if (operation === "delete") params.set("action", "delete");
+  const query = params.toString();
+  const href = `${auditTargetHref(structure, target)}${query ? `?${query}` : ""}`;
+  const verb = operation === "delete" ? "Opening the audit deletion confirmation for" : operation === "open" ? "Opening the audit for" : operation === "update" ? "Opening and updating the audit for" : "Opening and running the audit for";
+  return { id: crypto.randomUUID(), role: "assistant", text: `${verb} **${resolved.title}**.`, action: { kind: "navigate", to: href, label: "Audit" } };
+}
+
+function auditFindingStatusFromPrompt(prompt: string): AuditFindingStatus | null {
+  const lower = prompt.toLowerCase();
+  if (/\b(false positive|falso positivo|falsa positiva)\b/.test(lower)) return "false-positive";
+  if (/\b(needs review|need review|da verificare|richiede revisione)\b/.test(lower)) return "needs-review";
+  if (/\b(resolved|risolto|risolta)\b/.test(lower)) return "resolved";
+  if (/\b(ignored|ignorato|ignorata)\b/.test(lower)) return "ignored";
+  if (/\b(open|aperto|aperta)\b/.test(lower)) return "open";
+  return null;
+}
+
+async function setAuditFindingStatusFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const structure = input.context.structure;
+  if (!structure) return makeAssistantMessage("assistant", "Open a book first so I can resolve the audit report.");
+  const target = auditTargetFromPrompt(input);
+  if (!target) return makeAssistantMessage("assistant", "Open or name the chapter or paragraph that owns the audit finding.");
+  const findingId = input.prompt.match(/\baudit-[a-f0-9]{20}\b/i)?.[0].toLowerCase();
+  if (!findingId) return makeAssistantMessage("assistant", "Include the complete finding ID, for example `audit-0123456789abcdef0123`. No finding was changed.");
+  const status = auditFindingStatusFromPrompt(input.prompt);
+  if (!status) return makeAssistantMessage("assistant", "Specify one status: open, resolved, ignored, false positive, or needs review. No finding was changed.");
+  let report;
+  try {
+    report = await loadAuditReport({ token: input.token, book: input.book, branch: input.branch, structure, target });
+  } catch (error) {
+    return makeAssistantMessage("assistant", `I could not safely load that audit report: ${error instanceof Error ? error.message : String(error)}. No finding was changed.`);
+  }
+  if (!report) return makeAssistantMessage("assistant", "No saved audit report exists for that target. No finding was changed.");
+  if (!report.findings.some((finding) => finding.id === findingId)) {
+    return makeAssistantMessage("assistant", `Finding \`${findingId}\` does not exist in the resolved report. No finding was changed.`);
+  }
+  await updateAuditFinding({ token: input.token, book: input.book, branch: input.branch, structure, target, findingId, status });
+  return makeAssistantMessage("assistant", `Updated finding \`${findingId}\` to **${status}**.`);
 }
 
 // ─── Local utility tools (no LLM) ────────────────────────────────────────────

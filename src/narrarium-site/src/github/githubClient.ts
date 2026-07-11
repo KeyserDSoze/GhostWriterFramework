@@ -1,7 +1,13 @@
 import { Octokit } from "@octokit/rest";
 import { BookStructure, Chapter, Paragraph, BookFile, ResearchFile } from "@/types/book";
-import { deleteLocalFile, getLocalFile, getLocalRepository, listLocalFiles, writeLocalBinary, writeLocalText } from "@/repository/localRepository";
+import { applyLocalFileChangesAtomically, deleteLocalFile, getLocalFile, getLocalRepository, listLocalFiles, writeLocalBinary, writeLocalText, type LocalFileAtomicWrite } from "@/repository/localRepository";
 import { buildInitialBookFiles } from "@/narrarium/bookScaffold";
+import {
+  buildBookAuditPath,
+  buildChapterAuditPath,
+  buildParagraphAuditPath,
+  extractParagraphSlug,
+} from "@/narrarium/auditPaths";
 
 export function createGitHubClient(token: string): Octokit {
   return new Octokit({ auth: token });
@@ -269,6 +275,15 @@ export async function loadBookStructure(
     .filter((n) => n.type === "blob")
     .map((n) => n.path ?? "");
 
+  const auditFiles: BookFile[] = allPaths
+    .filter((path) => path.startsWith("audit/") && path.endsWith(".md"))
+    .map((path) => {
+      const node = treeData.tree.find((entry) => entry.path === path);
+      return { path, sha: node?.sha ?? "", size: node?.size ?? 0 };
+    })
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const auditPathSet = new Set(auditFiles.map((file) => file.path));
+
   const imageExtensions = ["png", "jpg", "jpeg", "webp", "gif"];
   const firstExistingImage = (basePath: string): string | undefined =>
     imageExtensions.map((extension) => `${basePath}.${extension}`).find((candidate) => allPaths.includes(candidate));
@@ -343,18 +358,20 @@ export async function loadBookStructure(
       const filename = p.split("/").pop() ?? "";
       const num = filename.match(/^(\d{3})(?:-[^/]+)?\.md$/)?.[1] ?? "";
       const paragraphSlug = filename.replace(/\.md$/i, "");
-      // Draft lives in the drafts/ subfolder with the same filename
-      const draftPath = `${folder}/drafts/${filename}`;
+      const canonicalDraftPath = `drafts/${slug}/${filename}`;
+      const legacyDraftPath = `${folder}/drafts/${filename}`;
       const scriptPath = `scripts/${slug}/${paragraphSlug}.md`;
       const evaluationPath = `evaluations/paragraphs/${slug}/${paragraphSlug}.md`;
+      const auditPath = buildParagraphAuditPath(slug, paragraphSlug);
       const imagePromptPath = `assets/chapters/${slug}/paragraphs/${paragraphSlug}/primary.md`;
       return {
         number: num,
         title: metaMap[p]?.name ?? slugToTitle(filename.replace(/\.md$/, "")),
         path: p,
-        draftPath: allPaths.includes(draftPath) ? draftPath : undefined,
+        draftPath: allPaths.includes(canonicalDraftPath) ? canonicalDraftPath : allPaths.includes(legacyDraftPath) ? legacyDraftPath : undefined,
         scriptPath: allPaths.includes(scriptPath) ? scriptPath : undefined,
         evaluationPath: allPaths.includes(evaluationPath) ? evaluationPath : undefined,
+        auditPath: auditPathSet.has(auditPath) ? auditPath : undefined,
         imagePromptPath: allPaths.includes(imagePromptPath) ? imagePromptPath : undefined,
         imagePath: firstExistingImage(`assets/chapters/${slug}/paragraphs/${paragraphSlug}/primary`),
       };
@@ -363,7 +380,9 @@ export async function loadBookStructure(
     const writingStylePath = folderPaths.find((p) =>
       p.endsWith("writing-style.md")
     );
-    const draftPath = folderPaths.find((p) => p.endsWith("draft.md"));
+    const draftPath = allPaths.includes(`drafts/${slug}/chapter.md`)
+      ? `drafts/${slug}/chapter.md`
+      : folderPaths.find((p) => p.endsWith("draft.md"));
     const imagePromptPath = `assets/chapters/${slug}/primary.md`;
 
     return {
@@ -374,6 +393,7 @@ export async function loadBookStructure(
       paragraphs,
       writingStylePath,
       draftPath,
+      auditPath: auditPathSet.has(buildChapterAuditPath(slug)) ? buildChapterAuditPath(slug) : undefined,
       imagePromptPath: allPaths.includes(imagePromptPath) ? imagePromptPath : undefined,
       imagePath: firstExistingImage(`assets/chapters/${slug}/primary`),
       hasResume: allPaths.includes(`resumes/chapters/${slug}.md`),
@@ -392,6 +412,7 @@ export async function loadBookStructure(
     loadedBranch: branch,
     bookCoverPromptPath: allPaths.includes("assets/book/cover.md") ? "assets/book/cover.md" : undefined,
     bookCoverPath: firstExistingImage("assets/book/cover"),
+    bookAuditPath: auditPathSet.has(buildBookAuditPath()) ? buildBookAuditPath() : undefined,
     chapters,
     characters: filesUnder("characters"),
     locations: filesUnder("locations"),
@@ -421,6 +442,7 @@ export async function loadBookStructure(
     readerEvaluationFiles: allPaths
       .filter((p) => /^evaluations\/readers\/.+\.md$/.test(p))
       .map((p) => ({ path: p, sha: treeData.tree.find((node) => node.path === p)?.sha ?? "", size: treeData.tree.find((node) => node.path === p)?.size ?? 0 })),
+    auditFiles,
     plotPath: allPaths.includes("plot.md") ? "plot.md" : undefined,
     researchFiles: allPaths
       .filter((p) => /^research\/[^/]+\.md$/.test(p))
@@ -678,6 +700,207 @@ export async function createFileIfAbsent(
   return true;
 }
 
+/** Rename a final paragraph and every artifact owned by its chapter/slug. */
+export async function renameParagraphWithCompanions(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  chapterPath: string,
+  oldParagraph: Paragraph,
+  newParagraphPath: string,
+  updatedPrimaryContent: string,
+  commitMessage: string,
+): Promise<Paragraph> {
+  const normalizedChapterPath = chapterPath.replace(/\/+$/, "");
+  const chapterMatch = /^chapters\/([^/]+)$/.exec(normalizedChapterPath);
+  if (!chapterMatch) throw new Error(`Invalid chapter path: ${chapterPath}`);
+  const chapterSlug = chapterMatch[1];
+  const oldSlug = extractParagraphSlug(oldParagraph.path);
+  const newSlug = extractParagraphSlug(newParagraphPath);
+  if (!oldSlug || !newSlug || newParagraphPath !== `${normalizedChapterPath}/${newSlug}.md`) {
+    throw new Error(`Invalid paragraph destination: ${newParagraphPath}`);
+  }
+  if (oldParagraph.path !== `${normalizedChapterPath}/${oldSlug}.md`) {
+    throw new Error(`Paragraph ${oldParagraph.path} does not belong to ${normalizedChapterPath}.`);
+  }
+  if (oldSlug === newSlug) throw new Error(`Paragraph slug is unchanged: ${oldSlug}`);
+
+  const exactMoves = new Map<string, string>([
+    [oldParagraph.path, newParagraphPath],
+    [`drafts/${chapterSlug}/${oldSlug}.md`, `drafts/${chapterSlug}/${newSlug}.md`],
+    [`${normalizedChapterPath}/drafts/${oldSlug}.md`, `${normalizedChapterPath}/drafts/${newSlug}.md`],
+    [`scripts/${chapterSlug}/${oldSlug}.md`, `scripts/${chapterSlug}/${newSlug}.md`],
+    [`evaluations/paragraphs/${chapterSlug}/${oldSlug}.md`, `evaluations/paragraphs/${chapterSlug}/${newSlug}.md`],
+    [buildParagraphAuditPath(chapterSlug, oldSlug), buildParagraphAuditPath(chapterSlug, newSlug)],
+    [`evaluations/readers/summaries/paragraphs/${chapterSlug}/${oldSlug}.md`, `evaluations/readers/summaries/paragraphs/${chapterSlug}/${newSlug}.md`],
+    [`evaluations/readers/summaries/selections/${chapterSlug}/${oldSlug}.md`, `evaluations/readers/summaries/selections/${chapterSlug}/${newSlug}.md`],
+  ]);
+  const prefixMoves: Array<[string, string]> = [
+    [`assets/chapters/${chapterSlug}/paragraphs/${oldSlug}/`, `assets/chapters/${chapterSlug}/paragraphs/${newSlug}/`],
+    [`evaluations/readers/paragraphs/${chapterSlug}/${oldSlug}/`, `evaluations/readers/paragraphs/${chapterSlug}/${newSlug}/`],
+    [`evaluations/readers/selections/${chapterSlug}/${oldSlug}/`, `evaluations/readers/selections/${chapterSlug}/${newSlug}/`],
+    [`evaluations/readers/summaries/paragraphs/${chapterSlug}/${oldSlug}/`, `evaluations/readers/summaries/paragraphs/${chapterSlug}/${newSlug}/`],
+    [`evaluations/readers/summaries/selections/${chapterSlug}/${oldSlug}/`, `evaluations/readers/summaries/selections/${chapterSlug}/${newSlug}/`],
+  ];
+
+  const remapPath = (path: string): string | null => {
+    const exact = exactMoves.get(path);
+    if (exact) return exact;
+    for (const [oldPrefix, newPrefix] of prefixMoves) {
+      if (path.startsWith(oldPrefix)) return `${newPrefix}${path.slice(oldPrefix.length)}`;
+    }
+    return null;
+  };
+
+  const oldRef = `paragraph:${chapterSlug}:${oldSlug}`;
+  const newRef = `paragraph:${chapterSlug}:${newSlug}`;
+  const rewriteRefs = (text: string): string => text.split(oldRef).join(newRef);
+  const rewriteMovedText = (text: string): string => {
+    let next = rewriteRefs(text);
+    const pathReplacements = [...exactMoves, ...prefixMoves].sort((left, right) => right[0].length - left[0].length);
+    for (const [oldValue, newValue] of pathReplacements) next = next.split(oldValue).join(newValue);
+    next = next.split(`script:${chapterSlug}:${oldSlug}`).join(`script:${chapterSlug}:${newSlug}`);
+    next = next.split(`selection:${chapterSlug}:${oldSlug}`).join(`selection:${chapterSlug}:${newSlug}`);
+    const escapedOldSlug = oldSlug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return next.replace(
+      new RegExp(`(^[ \\t-]*(?:paragraphId|paragraph_id):\\s*)(["']?)${escapedOldSlug}\\2(?=\\s*(?:#.*)?$)`, "gm"),
+      `$1$2${newSlug}$2`,
+    );
+  };
+
+  const preflight = (paths: string[]): Set<string> => {
+    const existingPaths = new Set(paths);
+    const sourcePaths = new Set<string>();
+    const destinationSources = new Map<string, string>();
+    for (const path of paths) {
+      const destination = remapPath(path);
+      if (!destination || destination === path) continue;
+      sourcePaths.add(path);
+      const duplicate = destinationSources.get(destination);
+      if (duplicate && duplicate !== path) {
+        throw new Error(`Paragraph rename maps both ${duplicate} and ${path} to ${destination}.`);
+      }
+      destinationSources.set(destination, path);
+    }
+    if (!sourcePaths.has(oldParagraph.path)) throw new Error(`Paragraph file not found: ${oldParagraph.path}`);
+    const destinationExactPaths = new Set(exactMoves.values());
+    const destinationPrefixes = prefixMoves.map((move) => move[1]);
+    const unrelatedDestination = paths.find((path) =>
+      !sourcePaths.has(path)
+      && (destinationExactPaths.has(path) || destinationPrefixes.some((prefix) => path.startsWith(prefix))));
+    if (unrelatedDestination) {
+      throw new Error(`Cannot rename paragraph: destination already contains ${unrelatedDestination}.`);
+    }
+    for (const [destination, source] of destinationSources) {
+      if (existingPaths.has(destination) && !sourcePaths.has(destination)) {
+        throw new Error(`Cannot rename ${source}: destination already exists at ${destination}.`);
+      }
+    }
+    return sourcePaths;
+  };
+
+  const updatedParagraph = (sourcePaths: Set<string>): Paragraph => {
+    const movedExistingPath = (path: string | undefined): string | undefined => {
+      if (!path || !sourcePaths.has(path)) return undefined;
+      return remapPath(path) ?? undefined;
+    };
+    const firstMoved = (paths: string[]): string | undefined => {
+      const source = paths.find((path) => sourcePaths.has(path));
+      return source ? remapPath(source) ?? undefined : undefined;
+    };
+    const assetPrefix = `assets/chapters/${chapterSlug}/paragraphs/${oldSlug}/`;
+    const discoveredImage = [...sourcePaths].find((path) => path.startsWith(assetPrefix) && /\/primary\.(?:png|jpe?g|webp|gif)$/i.test(path));
+    const finalContent = rewriteMovedText(updatedPrimaryContent);
+    return {
+      ...oldParagraph,
+      title: titleFromFrontmatter(finalContent, slugToTitle(newSlug)),
+      path: newParagraphPath,
+      draftPath: movedExistingPath(oldParagraph.draftPath) ?? firstMoved([
+        `drafts/${chapterSlug}/${oldSlug}.md`,
+        `${normalizedChapterPath}/drafts/${oldSlug}.md`,
+      ]),
+      scriptPath: movedExistingPath(oldParagraph.scriptPath) ?? firstMoved([`scripts/${chapterSlug}/${oldSlug}.md`]),
+      evaluationPath: movedExistingPath(oldParagraph.evaluationPath) ?? firstMoved([`evaluations/paragraphs/${chapterSlug}/${oldSlug}.md`]),
+      auditPath: movedExistingPath(oldParagraph.auditPath) ?? firstMoved([buildParagraphAuditPath(chapterSlug, oldSlug)]),
+      imagePath: movedExistingPath(oldParagraph.imagePath) ?? movedExistingPath(discoveredImage),
+      imagePromptPath: movedExistingPath(oldParagraph.imagePromptPath) ?? firstMoved([`${assetPrefix}primary.md`]),
+    };
+  };
+
+  const localId = await localRepoId(owner, repo, branch);
+  if (localId) {
+    const files = await listLocalFiles(localId);
+    const sourcePaths = preflight(files.map((file) => file.path));
+    if (files.find((file) => file.path === oldParagraph.path)?.kind !== "text") {
+      throw new Error(`Paragraph file is not text: ${oldParagraph.path}`);
+    }
+    const writes: LocalFileAtomicWrite[] = [];
+    const deletes = new Set<string>();
+
+    // Capture every original before opening the mutation transaction.
+    for (const file of files) {
+      const destination = remapPath(file.path);
+      const moved = destination !== null && destination !== file.path;
+      if (file.kind === "text") {
+        const original = file.text ?? "";
+        const source = file.path === oldParagraph.path ? updatedPrimaryContent : original;
+        const next = moved ? rewriteMovedText(source) : rewriteRefs(source);
+        if (moved || next !== original) {
+          writes.push({ path: destination ?? file.path, kind: "text", text: next });
+          if (moved) deletes.add(file.path);
+        }
+      } else if (moved) {
+        if (!file.blob) throw new Error(`Missing local binary content: ${file.path}`);
+        writes.push({ path: destination, kind: "binary", bytes: new Uint8Array(await file.blob.arrayBuffer()) });
+        deletes.add(file.path);
+      }
+    }
+
+    await applyLocalFileChangesAtomically(localId, deletes, writes);
+    return updatedParagraph(sourcePaths);
+  }
+
+  const octokit = createGitHubClient(token);
+  const { data: branchData } = await octokit.rest.repos.getBranch({ owner, repo, branch });
+  const currentCommitSha = branchData.commit.sha;
+  const currentTreeSha = branchData.commit.commit.tree.sha;
+  const { data: fullTree } = await octokit.rest.git.getTree({ owner, repo, tree_sha: currentTreeSha, recursive: "1" });
+  if (fullTree.truncated) throw new Error("Repository tree is truncated; paragraph rename cannot safely continue.");
+
+  const blobs = fullTree.tree.filter((node) => node.type === "blob" && node.path);
+  const sourcePaths = preflight(blobs.map((node) => node.path!));
+  const isTextPath = (path: string) => /\.(?:md|mdx|json|txt|ya?ml|toml|xml|opf|ncx|xhtml|css|html|js|jsx|ts|tsx)$/i.test(path);
+  type TreeEntry = { path: string; mode: "100644"; type: "blob"; sha?: string | null; content?: string };
+  const treeUpdates: TreeEntry[] = [];
+
+  for (const node of blobs) {
+    const path = node.path!;
+    const destination = remapPath(path);
+    const moved = destination !== null && destination !== path;
+    if (moved) {
+      treeUpdates.push({ path, mode: "100644", type: "blob", sha: null });
+      if (path === oldParagraph.path) {
+        treeUpdates.push({ path: destination, mode: "100644", type: "blob", content: rewriteMovedText(updatedPrimaryContent) });
+      } else if (isTextPath(path)) {
+        const original = await loadFileContent(token, owner, repo, path, branch);
+        treeUpdates.push({ path: destination, mode: "100644", type: "blob", content: rewriteMovedText(original) });
+      } else if (node.sha) {
+        treeUpdates.push({ path: destination, mode: "100644", type: "blob", sha: node.sha });
+      }
+    } else if (isTextPath(path)) {
+      const original = await loadFileContent(token, owner, repo, path, branch);
+      const next = rewriteRefs(original);
+      if (next !== original) treeUpdates.push({ path, mode: "100644", type: "blob", content: next });
+    }
+  }
+
+  const { data: newTree } = await octokit.rest.git.createTree({ owner, repo, base_tree: currentTreeSha, tree: treeUpdates });
+  const { data: newCommit } = await octokit.rest.git.createCommit({ owner, repo, message: commitMessage, tree: newTree.sha, parents: [currentCommitSha] });
+  await octokit.rest.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha: newCommit.sha });
+  return updatedParagraph(sourcePaths);
+}
+
 /**
  * Commit a reorder (and optional deletion) of chapter paragraphs atomically.
  *
@@ -706,8 +929,6 @@ export async function reorderParagraphsInChapter(
   const chapterSlug = chapterPath.replace(/^chapters\//, "");
   const escapedChapter = chapterSlug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  const paragraphSlug = (path: string): string => (path.split("/").pop() ?? "").replace(/\.md$/i, "");
-
   // Build the slug remap and per-slug new number.
   const remapBySlug = new Map<string, string>(); // oldSlug -> newSlug (only when changed)
   const newNumberByNewSlug = new Map<string, number>();
@@ -715,7 +936,7 @@ export async function reorderParagraphsInChapter(
 
   newOrderedParagraphs.forEach((p, index) => {
     const newNumber = index + 1;
-    const oldSlug = paragraphSlug(p.path);
+    const oldSlug = extractParagraphSlug(p.path);
     const m = oldSlug.match(/^(\d{3})(?:-(.+))?$/);
     const slugPart = m?.[2];
     const numStr = String(newNumber).padStart(3, "0");
@@ -730,15 +951,19 @@ export async function reorderParagraphsInChapter(
       number: numStr,
       title: slugToTitle(newSlug),
       path: `${chapterPath}/${newSlug}.md`,
-      draftPath: rename(p.draftPath, (s) => `${chapterPath}/drafts/${s}.md`),
+      draftPath: rename(p.draftPath, (s) => p.draftPath?.startsWith(`drafts/${chapterSlug}/`)
+        ? `drafts/${chapterSlug}/${s}.md`
+        : `${chapterPath}/drafts/${s}.md`),
       scriptPath: rename(p.scriptPath, (s) => `scripts/${chapterSlug}/${s}.md`),
       evaluationPath: rename(p.evaluationPath, (s) => `evaluations/paragraphs/${chapterSlug}/${s}.md`),
-      imagePath: p.imagePath ? p.imagePath.replace(`/paragraphs/${paragraphSlug(p.path)}/`, `/paragraphs/${newSlug}/`) : undefined,
+      auditPath: rename(p.auditPath, (s) => buildParagraphAuditPath(chapterSlug, s)),
+      imagePath: p.imagePath ? p.imagePath.replace(`/paragraphs/${extractParagraphSlug(p.path)}/`, `/paragraphs/${newSlug}/`) : undefined,
+      imagePromptPath: p.imagePromptPath ? p.imagePromptPath.replace(`/paragraphs/${extractParagraphSlug(p.path)}/`, `/paragraphs/${newSlug}/`) : undefined,
     });
   });
 
-  const newSlugs = new Set(newOrderedParagraphs.map((p) => paragraphSlug(p.path)));
-  const deleteSlugs = new Set(oldParagraphs.map((p) => paragraphSlug(p.path)).filter((slug) => !newSlugs.has(slug)));
+  const newSlugs = new Set(newOrderedParagraphs.map((p) => extractParagraphSlug(p.path)));
+  const deleteSlugs = new Set(oldParagraphs.map((p) => extractParagraphSlug(p.path)).filter((slug) => !newSlugs.has(slug)));
 
   if (remapBySlug.size === 0 && deleteSlugs.size === 0) return result;
 
@@ -753,6 +978,8 @@ export async function reorderParagraphsInChapter(
     m = new RegExp(`^scripts/${escapedChapter}/(\\d{3}(?:-[^/]+)?)\\.md$`).exec(path);
     if (m) return m[1];
     m = new RegExp(`^evaluations/paragraphs/${escapedChapter}/(\\d{3}(?:-[^/]+)?)\\.md$`).exec(path);
+    if (m) return m[1];
+    m = new RegExp(`^audit/chapters/${escapedChapter}/paragraphs/(\\d{3}(?:-[^/]+)?)\\.md$`).exec(path);
     if (m) return m[1];
     m = new RegExp(`^assets/chapters/${escapedChapter}/paragraphs/([^/]+)/`).exec(path);
     if (m) return m[1];
@@ -775,6 +1002,7 @@ export async function reorderParagraphsInChapter(
     if (path.startsWith(`chapters/${chapterSlug}/`)) return `chapters/${chapterSlug}/${newSlug}.md`;
     if (path.startsWith(`scripts/${chapterSlug}/`)) return `scripts/${chapterSlug}/${newSlug}.md`;
     if (path.startsWith(`evaluations/paragraphs/${chapterSlug}/`)) return `evaluations/paragraphs/${chapterSlug}/${newSlug}.md`;
+    if (path.startsWith(`audit/chapters/${chapterSlug}/paragraphs/`)) return buildParagraphAuditPath(chapterSlug, newSlug);
     const readerMatch = new RegExp(`^(evaluations/readers/(?:paragraphs|selections)/${escapedChapter}/)[^/]+(/.*)$`).exec(path);
     if (readerMatch) return `${readerMatch[1]}${newSlug}${readerMatch[2]}`;
     const readerSummaryMatch = new RegExp(`^(evaluations/readers/summaries/(?:paragraphs|selections)/${escapedChapter}/)[^/]+(/.*)$`).exec(path);
@@ -790,10 +1018,24 @@ export async function reorderParagraphsInChapter(
   };
 
   const rewriteRefs = (text: string): string => {
-    let out = text;
+    const replacements: Array<[string, string]> = [];
     for (const [oldSlug, newSlug] of remapBySlug) {
-      out = out.split(`paragraph:${chapterSlug}:${oldSlug}`).join(`paragraph:${chapterSlug}:${newSlug}`);
+      replacements.push(
+        [`paragraph:${chapterSlug}:${oldSlug}`, `paragraph:${chapterSlug}:${newSlug}`],
+        [`chapters/${chapterSlug}/${oldSlug}.md`, `chapters/${chapterSlug}/${newSlug}.md`],
+        [`drafts/${chapterSlug}/${oldSlug}.md`, `drafts/${chapterSlug}/${newSlug}.md`],
+        [`chapters/${chapterSlug}/drafts/${oldSlug}.md`, `chapters/${chapterSlug}/drafts/${newSlug}.md`],
+        [`scripts/${chapterSlug}/${oldSlug}.md`, `scripts/${chapterSlug}/${newSlug}.md`],
+        [`evaluations/paragraphs/${chapterSlug}/${oldSlug}.md`, `evaluations/paragraphs/${chapterSlug}/${newSlug}.md`],
+        [buildParagraphAuditPath(chapterSlug, oldSlug), buildParagraphAuditPath(chapterSlug, newSlug)],
+        [`/${chapterSlug}/${oldSlug}/`, `/${chapterSlug}/${newSlug}/`],
+        [`/paragraphs/${oldSlug}/`, `/paragraphs/${newSlug}/`],
+      );
     }
+    let out = text;
+    const placeholders = replacements.map((_, index) => `__NARRARIUM_PARAGRAPH_REMAP_${index}_${crypto.randomUUID()}__`);
+    replacements.forEach(([oldValue], index) => { out = out.split(oldValue).join(placeholders[index]); });
+    replacements.forEach(([, newValue], index) => { out = out.split(placeholders[index]).join(newValue); });
     return out;
   };
 
@@ -910,7 +1152,7 @@ export interface ChapterReorderEntry {
 /**
  * Reorder chapters by renumbering their folder slug prefix (001-, 002-, …).
  * Moves every file that lives under a renamed chapter across the six chapter-scoped
- * path prefixes (chapters/, scripts/, assets/chapters/, evaluations/paragraphs/,
+ * path prefixes (chapters/, scripts/, assets/chapters/, evaluations/paragraphs/, audit/chapters/,
  * resumes/chapters/*.md, evaluations/chapters/*.md), updates the `number` field in
  * each moved chapter.md, and rewrites `chapter:<slug>` / `paragraph:<slug>:`
  * references repo-wide so canon links stay intact.
@@ -949,6 +1191,7 @@ export async function reorderChaptersInBook(
         `scripts/${oldSlug}/`,
         `assets/chapters/${oldSlug}/`,
         `evaluations/paragraphs/${oldSlug}/`,
+        `audit/chapters/${oldSlug}/`,
         `evaluations/readers/chapters/${oldSlug}/`,
         `evaluations/readers/paragraphs/${oldSlug}/`,
         `evaluations/readers/selections/${oldSlug}/`,
@@ -970,11 +1213,26 @@ export async function reorderChaptersInBook(
 
   // Rewrite slug references inside file content.
   const rewriteRefs = (text: string): string => {
-    let out = text;
+    const replacements: Array<[string, string]> = [];
     for (const [oldSlug, newSlug] of remap) {
-      out = out.split(`chapter:${oldSlug}`).join(`chapter:${newSlug}`);
-      out = out.split(`paragraph:${oldSlug}:`).join(`paragraph:${newSlug}:`);
+      replacements.push(
+        [`chapter:${oldSlug}`, `chapter:${newSlug}`],
+        [`paragraph:${oldSlug}:`, `paragraph:${newSlug}:`],
+        [`chapters/${oldSlug}/`, `chapters/${newSlug}/`],
+        [`drafts/${oldSlug}/`, `drafts/${newSlug}/`],
+        [`scripts/${oldSlug}/`, `scripts/${newSlug}/`],
+        [`assets/chapters/${oldSlug}/`, `assets/chapters/${newSlug}/`],
+        [`evaluations/paragraphs/${oldSlug}/`, `evaluations/paragraphs/${newSlug}/`],
+        [`audit/chapters/${oldSlug}/`, `audit/chapters/${newSlug}/`],
+        [`resumes/chapters/${oldSlug}.md`, `resumes/chapters/${newSlug}.md`],
+        [`evaluations/chapters/${oldSlug}.md`, `evaluations/chapters/${newSlug}.md`],
+        [`state/chapters/${oldSlug}.md`, `state/chapters/${newSlug}.md`],
+      );
     }
+    let out = text;
+    const placeholders = replacements.map((_, index) => `__NARRARIUM_CHAPTER_REMAP_${index}_${crypto.randomUUID()}__`);
+    replacements.forEach(([oldValue], index) => { out = out.split(oldValue).join(placeholders[index]); });
+    replacements.forEach(([, newValue], index) => { out = out.split(placeholders[index]).join(newValue); });
     return out;
   };
 

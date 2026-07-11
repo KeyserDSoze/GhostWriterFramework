@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { GitBranch, KeyRound, Loader2, Plus, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,11 +15,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
-import { DEFAULT_BOOK_EXPORT_SETTINGS, resolveBookExportSettings, resolveBookToken, type BookEntry, type BookExportSettings, type ParagraphSeparator } from "@/types/settings";
+import { DEFAULT_AUDIT_SETTINGS, DEFAULT_BOOK_EXPORT_SETTINGS, resolveBookAuditSettings, resolveBookExportSettings, resolveBookToken, type AuditSettings, type BookEntry, type BookExportSettings, type ParagraphSeparator } from "@/types/settings";
 import { createBranchFromBase, getDefaultBranch, listBranches } from "@/github/githubClient";
 
 type TokenMode = "default" | "custom" | string;
@@ -52,9 +54,13 @@ export function BookSettingsPage() {
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [creatingBranch, setCreatingBranch] = useState(false);
   const [presentation, setPresentation] = useState<BookExportSettings>(() => book ? resolveBookExportSettings(book) : DEFAULT_BOOK_EXPORT_SETTINGS);
+  const [auditSettings, setAuditSettings] = useState<AuditSettings>(() => book ? resolveBookAuditSettings(book) : DEFAULT_AUDIT_SETTINGS);
 
   useEffect(() => {
-    if (book) setPresentation(resolveBookExportSettings(book));
+    if (book) {
+      setPresentation(resolveBookExportSettings(book));
+      setAuditSettings(resolveBookAuditSettings(book));
+    }
   }, [book?.id]);
 
   useEffect(() => {
@@ -91,6 +97,10 @@ export function BookSettingsPage() {
   const currentToken = resolveBookToken(currentBook, settings);
   const currentAutoBranch = workingBranches[currentBook.id] ?? (structure?.defaultBranch ?? "main");
 
+  function patchAuditSettings(patch: Partial<AuditSettings>) {
+    setAuditSettings((current) => ({ ...current, ...patch }));
+  }
+
   async function handleSave() {
     const usingCustom = mode === "custom";
     const updated: BookEntry = {
@@ -104,6 +114,7 @@ export function BookSettingsPage() {
         ...currentBook.exportSettings,
         ...presentation,
       },
+      auditSettings: resolveBookAuditSettings({ ...currentBook, auditSettings }),
     };
 
     patchSettings({ books: settings.books.map((entry) => (entry.id === currentBook.id ? updated : entry)) });
@@ -151,6 +162,81 @@ export function BookSettingsPage() {
           <div className="grid gap-2">
             <Label htmlFor="book-name">{t("bookSettings.name")}</Label>
             <Input id="book-name" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("bookSettings.auditSettings")}</CardTitle>
+          <CardDescription>{t("bookSettings.auditSettingsDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <AuditSwitch label={t("bookSettings.auditEnabled")} checked={auditSettings.enabled} onChange={(enabled) => patchAuditSettings({ enabled })} />
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-2">
+              <Label>{t("bookSettings.auditReportLanguage")}</Label>
+              <Select value={auditSettings.reportLanguage} onValueChange={(reportLanguage) => patchAuditSettings({ reportLanguage: reportLanguage as AuditSettings["reportLanguage"] })} disabled={!auditSettings.enabled}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="book">{t("bookSettings.auditLanguageBook")}</SelectItem>
+                  <SelectItem value="en">{t("bookSettings.auditLanguageEnglish")}</SelectItem>
+                  <SelectItem value="it">{t("bookSettings.auditLanguageItalian")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>{t("bookSettings.auditDefaultDepth")}</Label>
+              <Select value={auditSettings.defaultDepth} onValueChange={(defaultDepth) => patchAuditSettings({ defaultDepth: defaultDepth as AuditSettings["defaultDepth"] })} disabled={!auditSettings.enabled}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="quick">{t("bookSettings.auditDepthQuick")}</SelectItem>
+                  <SelectItem value="standard">{t("bookSettings.auditDepthStandard")}</SelectItem>
+                  <SelectItem value="deep">{t("bookSettings.auditDepthDeep")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>{t("bookSettings.auditSeverityThreshold")}</Label>
+              <Select value={auditSettings.severityThreshold} onValueChange={(severityThreshold) => patchAuditSettings({ severityThreshold: severityThreshold as AuditSettings["severityThreshold"] })} disabled={!auditSettings.enabled}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="critical">{t("bookSettings.auditSeverityCritical")}</SelectItem>
+                  <SelectItem value="high">{t("bookSettings.auditSeverityHigh")}</SelectItem>
+                  <SelectItem value="medium">{t("bookSettings.auditSeverityMedium")}</SelectItem>
+                  <SelectItem value="low">{t("bookSettings.auditSeverityLow")}</SelectItem>
+                  <SelectItem value="informational">{t("bookSettings.auditSeverityInformational")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <AuditSwitch label={t("bookSettings.auditIncludeTimeline")} checked={auditSettings.includeTimeline} onChange={(includeTimeline) => patchAuditSettings({ includeTimeline })} disabled={!auditSettings.enabled} />
+            <AuditSwitch label={t("bookSettings.auditIncludeSecrets")} checked={auditSettings.includeSecrets} onChange={(includeSecrets) => patchAuditSettings({ includeSecrets })} disabled={!auditSettings.enabled} />
+            <AuditSwitch label={t("bookSettings.auditIncludeCharacters")} checked={auditSettings.includeCharacters} onChange={(includeCharacters) => patchAuditSettings({ includeCharacters })} disabled={!auditSettings.enabled} />
+            <AuditSwitch label={t("bookSettings.auditIncludeLocations")} checked={auditSettings.includeLocations} onChange={(includeLocations) => patchAuditSettings({ includeLocations })} disabled={!auditSettings.enabled} />
+            <AuditSwitch label={t("bookSettings.auditIncludeItems")} checked={auditSettings.includeItems} onChange={(includeItems) => patchAuditSettings({ includeItems })} disabled={!auditSettings.enabled} />
+            <AuditSwitch label={t("bookSettings.auditIncludeFactions")} checked={auditSettings.includeFactions} onChange={(includeFactions) => patchAuditSettings({ includeFactions })} disabled={!auditSettings.enabled} />
+            <AuditSwitch label={t("bookSettings.auditIncludeWritingStyle")} checked={auditSettings.includeWritingStyle} onChange={(includeWritingStyle) => patchAuditSettings({ includeWritingStyle })} disabled={!auditSettings.enabled} />
+            <AuditSwitch label={t("bookSettings.auditIncludeSummary")} checked={auditSettings.includeSummary} onChange={(includeSummary) => patchAuditSettings({ includeSummary })} disabled={!auditSettings.enabled} />
+            <AuditSwitch label={t("bookSettings.auditIncludePreviousContext")} checked={auditSettings.includePreviousContext} onChange={(includePreviousContext) => patchAuditSettings({ includePreviousContext })} disabled={!auditSettings.enabled} />
+            <AuditSwitch label={t("bookSettings.auditIncludeNextContext")} checked={auditSettings.includeNextContext} onChange={(includeNextContext) => patchAuditSettings({ includeNextContext })} disabled={!auditSettings.enabled} />
+            <AuditSwitch label={t("bookSettings.auditGenerateFixSuggestions")} checked={auditSettings.generateFixSuggestions} onChange={(generateFixSuggestions) => patchAuditSettings({ generateFixSuggestions })} disabled={!auditSettings.enabled} />
+          </div>
+
+          <div className="grid gap-2 sm:max-w-xs">
+            <Label htmlFor="audit-max-findings">{t("bookSettings.auditMaxFindings")}</Label>
+            <Input id="audit-max-findings" type="number" min={1} max={500} value={auditSettings.maxFindings} onChange={(event) => {
+              const maxFindings = Number(event.target.value);
+              if (Number.isFinite(maxFindings)) patchAuditSettings({ maxFindings: Math.max(1, Math.min(500, Math.round(maxFindings))) });
+            }} disabled={!auditSettings.enabled} />
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="audit-custom-prompt">{t("bookSettings.auditCustomPrompt")}</Label>
+            <AutoTextarea id="audit-custom-prompt" value={auditSettings.customPrompt} onChange={(event) => patchAuditSettings({ customPrompt: event.target.value })} placeholder={t("bookSettings.auditCustomPromptPlaceholder")} className="min-h-24" disabled={!auditSettings.enabled} />
           </div>
         </CardContent>
       </Card>
@@ -268,6 +354,15 @@ function MetadataFieldInput({ label, value, onChange, placeholder }: { label: st
     <div className="grid gap-2">
       <Label>{label}</Label>
       <Input value={value.join(", ")} onChange={(event) => onChange(event.target.value.split(",").map((entry) => entry.trim()).filter(Boolean))} placeholder={placeholder} />
+    </div>
+  );
+}
+
+function AuditSwitch({ label, checked, onChange, disabled }: { label: string; checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+      <span className="text-sm font-medium">{label}</span>
+      <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} />
     </div>
   );
 }

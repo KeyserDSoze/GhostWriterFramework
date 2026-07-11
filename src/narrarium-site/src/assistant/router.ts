@@ -13,7 +13,7 @@ export interface TaskCandidate {
   browser?: boolean;
 }
 
-const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "deep-research", "create-from-research"]);
+const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "deep-research", "create-from-research", "audit"]);
 
 function isChatTask(task: RoutingTaskKind): task is ChatCapability {
   return CHAT_CAPABILITIES_SET.has(task);

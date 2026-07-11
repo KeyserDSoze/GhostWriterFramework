@@ -1,5 +1,8 @@
 export const SKILL_NAME = "narrarium-book";
 export const DEEP_RESEARCH_SKILL_NAME = "deep-research";
+export const AUDIT_DIRECTORY = "audit";
+export const AUDIT_BOOK_FILE = "audit/book.md";
+export const AUDIT_CHAPTERS_DIRECTORY = "audit/chapters";
 
 export const BOOK_DIRECTORIES = [
   "guidelines",
@@ -11,6 +14,8 @@ export const BOOK_DIRECTORIES = [
   "timelines/events",
   "secrets",
   "chapters",
+  AUDIT_DIRECTORY,
+  AUDIT_CHAPTERS_DIRECTORY,
   "drafts",
   "scripts",
   "conversations",
@@ -104,6 +109,7 @@ export const CONTENT_GLOB = [
   "timelines/**/*.md",
   "secrets/**/*.md",
   "chapters/**/*.md",
+  "audit/**/*.md",
   "drafts/**/*.md",
   "scripts/**/*.md",
   "resumes/**/*.md",

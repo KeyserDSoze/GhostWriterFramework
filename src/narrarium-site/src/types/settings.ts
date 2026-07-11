@@ -17,14 +17,14 @@ export type AIProviderType = "azure_openai" | "openai" | "m365_copilot" | "githu
  * - simple-tasks: cheap micro-decisions (yes/no confirmation, tiny classifications)
  * - review: evaluations and editorial scoring
  */
-export type ChatCapability = "default" | "copilot" | "simple-tasks" | "review" | "chat-resume" | "reader-evaluation" | "reader-evaluation-summary" | "deep-research" | "create-from-research";
+export type ChatCapability = "default" | "copilot" | "simple-tasks" | "review" | "chat-resume" | "reader-evaluation" | "reader-evaluation-summary" | "deep-research" | "create-from-research" | "audit";
 
-export const CHAT_CAPABILITIES: ChatCapability[] = ["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "deep-research", "create-from-research"];
+export const CHAT_CAPABILITIES: ChatCapability[] = ["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "deep-research", "create-from-research", "audit"];
 
 /** Task kinds the configurable router can target: the 4 chat capabilities plus media tasks. */
 export type RoutingTaskKind = ChatCapability | "tts" | "stt" | "image";
 
-export const ROUTING_TASKS: RoutingTaskKind[] = ["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "deep-research", "create-from-research", "tts", "stt", "image"];
+export const ROUTING_TASKS: RoutingTaskKind[] = ["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "deep-research", "create-from-research", "audit", "tts", "stt", "image"];
 
 /** A concrete integration+model target the router points a task at. */
 export interface RoutingTarget {
@@ -119,6 +119,29 @@ export type BookExportPageSize = "letter" | "a4";
 export type BookExportAlignment = "left" | "justified";
 export type BookExportFontFamily = "serif" | "sans" | "mono";
 export type ParagraphSeparator = "none" | "star" | "asterisks" | "custom";
+export type AuditDepth = "quick" | "standard" | "deep";
+export type AuditSeverityThreshold = "critical" | "high" | "medium" | "low" | "informational";
+export type AuditReportLanguage = "book" | "en" | "it";
+
+export interface AuditSettings {
+  enabled: boolean;
+  reportLanguage: AuditReportLanguage;
+  defaultDepth: AuditDepth;
+  severityThreshold: AuditSeverityThreshold;
+  includeTimeline: boolean;
+  includeSecrets: boolean;
+  includeCharacters: boolean;
+  includeLocations: boolean;
+  includeItems: boolean;
+  includeFactions: boolean;
+  includeWritingStyle: boolean;
+  includeSummary: boolean;
+  includePreviousContext: boolean;
+  includeNextContext: boolean;
+  generateFixSuggestions: boolean;
+  maxFindings: number;
+  customPrompt: string;
+}
 
 export interface BookMetadataVisibility {
   /** Frontmatter keys rendered as reader/export metadata for the book file. */
@@ -188,6 +211,26 @@ export const DEFAULT_BOOK_EXPORT_SETTINGS: BookExportSettings = {
   customParagraphSeparator: "*",
 };
 
+export const DEFAULT_AUDIT_SETTINGS: AuditSettings = {
+  enabled: true,
+  reportLanguage: "book",
+  defaultDepth: "standard",
+  severityThreshold: "low",
+  includeTimeline: true,
+  includeSecrets: true,
+  includeCharacters: true,
+  includeLocations: true,
+  includeItems: true,
+  includeFactions: true,
+  includeWritingStyle: true,
+  includeSummary: true,
+  includePreviousContext: true,
+  includeNextContext: true,
+  generateFixSuggestions: true,
+  maxFindings: 50,
+  customPrompt: "",
+};
+
 // ─── Book entry (one GitHub repository = one book) ───────────────────────────
 
 export interface BookEntry {
@@ -216,11 +259,55 @@ export interface BookEntry {
   activeBranch?: string;
   /** Optional export settings and saved Drive target for this book. */
   exportSettings?: Partial<BookExportSettings>;
+  /** Per-book audit behavior. The model/provider is selected by the fixed audit router task. */
+  auditSettings?: Partial<AuditSettings>;
   /** Optional named export presets for this book. */
   exportProfiles?: BookExportProfile[];
   /** Optional default preset id for export dialogs. */
   defaultExportProfileId?: string;
   addedAt: string; // ISO-8601
+}
+
+export function resolveBookAuditSettings(book: BookEntry): AuditSettings {
+  const raw = (book.auditSettings ?? {}) as Record<string, unknown>;
+  const resolved = { ...DEFAULT_AUDIT_SETTINGS };
+  const booleanKeys = [
+    "enabled",
+    "includeTimeline",
+    "includeSecrets",
+    "includeCharacters",
+    "includeLocations",
+    "includeItems",
+    "includeFactions",
+    "includeWritingStyle",
+    "includeSummary",
+    "includePreviousContext",
+    "includeNextContext",
+    "generateFixSuggestions",
+  ] as const;
+
+  for (const key of booleanKeys) {
+    const value = raw[key];
+    if (typeof value === "boolean") resolved[key] = value;
+  }
+
+  const reportLanguage = typeof raw.reportLanguage === "string" ? raw.reportLanguage.toLowerCase() : "";
+  if (reportLanguage === "book" || reportLanguage === "en" || reportLanguage === "it") resolved.reportLanguage = reportLanguage;
+
+  const defaultDepth = typeof raw.defaultDepth === "string" ? raw.defaultDepth.toLowerCase() : "";
+  if (defaultDepth === "quick" || defaultDepth === "standard" || defaultDepth === "deep") resolved.defaultDepth = defaultDepth;
+
+  const severityThreshold = typeof raw.severityThreshold === "string" ? raw.severityThreshold.toLowerCase() : "";
+  if (severityThreshold === "critical" || severityThreshold === "high" || severityThreshold === "medium" || severityThreshold === "low" || severityThreshold === "informational") {
+    resolved.severityThreshold = severityThreshold;
+  }
+
+  if (typeof raw.maxFindings === "number" && Number.isFinite(raw.maxFindings)) {
+    resolved.maxFindings = Math.max(1, Math.min(500, Math.round(raw.maxFindings)));
+  }
+  if (typeof raw.customPrompt === "string") resolved.customPrompt = raw.customPrompt;
+
+  return resolved;
 }
 
 export function resolveBookExportProfiles(book: BookEntry): BookExportProfile[] {

@@ -31,6 +31,7 @@ import { ReaderSettingsPage } from "@/pages/ReaderSettingsPage";
 import { DeepResearchPage } from "@/pages/DeepResearchPage";
 import { AppDocsIndexPage, AppDocPage } from "@/pages/AppDocsPage";
 import { AssistantChatsPage } from "@/pages/AssistantChatsPage";
+import { AuditPage } from "@/pages/AuditPage";
 import {
   DocPage,
   DocsIndexPage,
@@ -85,6 +86,7 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/punctuation-style", element: <PunctuationStylePage /> },
       { path: "books/:bookId/simulated-readers", element: <ReaderPersonasPage /> },
       { path: "books/:bookId/settings", element: <BookSettingsPage /> },
+      { path: "books/:bookId/audit", element: <AuditPage /> },
       { path: "books/:bookId/canon/:section/:slug", element: <CanonEntityPage /> },
       { path: "books/:bookId/chapters/:chapterId/workspace/:workspaceKind", element: <WorkspaceDocPage /> },
       { path: "books/:bookId/chapters/:chapterId/writing-style", element: <WritingStylePage /> },
@@ -93,6 +95,8 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/workspace/:workspaceKind", element: <WorkspaceDocPage /> },
       { path: "books/:bookId/chapters/:chapterId/reader-evaluations", element: <ReaderEvaluationsPage /> },
       { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/reader-evaluations", element: <ReaderEvaluationsPage /> },
+      { path: "books/:bookId/chapters/:chapterId/audit", element: <AuditPage /> },
+      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/audit", element: <AuditPage /> },
       { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/split", element: <ParagraphSplitPage /> },
       {
         path: "books/:bookId/chapters/:chapterId",

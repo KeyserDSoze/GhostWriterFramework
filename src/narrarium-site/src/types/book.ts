@@ -73,6 +73,7 @@ export interface Paragraph {
   draftPath?: string;
   scriptPath?: string;
   evaluationPath?: string;
+  auditPath?: string;
   imagePath?: string;
   imagePromptPath?: string;
   body?: string;
@@ -90,6 +91,7 @@ export interface Chapter {
   /** Path to the chapter-level writing style file, if present */
   writingStylePath?: string;
   draftPath?: string;
+  auditPath?: string;
   imagePath?: string;
   imagePromptPath?: string;
   hasResume: boolean;
@@ -110,6 +112,7 @@ export interface BookStructure {
   loadedBranch: string;
   bookCoverPath?: string;
   bookCoverPromptPath?: string;
+  bookAuditPath?: string;
   chapters: Chapter[];
   characters: BookFile[];
   locations: BookFile[];
@@ -130,6 +133,8 @@ export interface BookStructure {
   readerPersonas: ReaderPersonaFile[];
   /** saved ReaderEvaluation and ReaderEvaluationSummary markdown files */
   readerEvaluationFiles: BookFile[];
+  /** Markdown files below audit/ */
+  auditFiles: BookFile[];
   /** research/*.md files */
   researchFiles: ResearchFile[];
   /** notes/*.md quick personal notes */

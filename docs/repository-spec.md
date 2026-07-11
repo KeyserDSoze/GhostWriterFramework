@@ -28,6 +28,14 @@ chapters/
     chapter.md
     001-paragraph-title.md
     002-paragraph-title.md
+audit/
+  book.md
+  chapters/
+    001-chapter-title/
+      chapter.md
+      paragraphs/
+        001-paragraph-title.md
+        002-paragraph-title.md
 drafts/
   001-chapter-title/
     chapter.md
@@ -80,6 +88,20 @@ assets/
 - chapter directories begin with a three-digit ordinal, for example `001-the-arrival`
 - paragraph files begin with a three-digit ordinal inside each chapter directory
 - entities use stable ids in frontmatter such as `character:lyra-vale`
+
+## Audit companions
+
+The `audit/` tree stores the current author-facing Audit companion for a canonical source file. Audit documents are support content, not chapter or paragraph prose.
+
+Mappings are deterministic:
+
+- `book.md` maps to `audit/book.md`
+- `chapters/<chapter>/chapter.md` maps to `audit/chapters/<chapter>/chapter.md`
+- `chapters/<chapter>/<paragraph>.md` maps to `audit/chapters/<chapter>/paragraphs/<paragraph>.md`
+
+Keep at most one current Audit companion at each mapped path. Source renames move the corresponding Audit file or chapter subtree and rewrite `chapter:` and `paragraph:` references. Do not retain timestamped copies or old-path duplicates in `audit/`; Git history is the history of prior Audit results.
+
+Core does not currently expose semantic `deleteChapter`, `deleteParagraph`, `deleteEntity`, or `deleteBook` operations. `NarrariumBookWorkspace.deleteDocument(path)` is a generic single-document change and does not cascade. A caller deleting source files directly must also delete their mapped Audit companions; `doctorBook()` reports malformed and orphan Audit files but never removes them automatically.
 
 ## Markdown frontmatter
 

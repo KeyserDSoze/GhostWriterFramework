@@ -208,6 +208,7 @@ const it = {
       copilot: "Copilot",
       "simple-tasks": "Task semplici",
       review: "Revisione",
+      audit: "Audit",
       "chat-resume": "Resume chat",
       "reader-evaluation": "Valutazione lettore",
       "reader-evaluation-summary": "Sintesi valutazioni lettori"
@@ -283,6 +284,7 @@ const it = {
       "reader-evaluation-summary": "Sintesi valutazioni lettori",
       "deep-research": "Deep Research",
       "create-from-research": "Crea da Ricerca",
+      audit: "Audit",
       tts: "Sintesi vocale (TTS)",
       stt: "Trascrizione (STT)",
       image: "Immagini",
@@ -769,6 +771,37 @@ const it = {
     general: "Generale",
     generalDescription: "Nome visualizzato nella tua libreria.",
     name: "Nome",
+    auditSettings: "Impostazioni audit",
+    auditSettingsDescription: "Configura come verificare la coerenza del libro e quale contesto includere. Il modello AI viene selezionato dal routing del task Audit nelle Impostazioni.",
+    auditEnabled: "Abilita audit",
+    auditReportLanguage: "Lingua del report",
+    auditLanguageBook: "Lingua del libro",
+    auditLanguageEnglish: "Inglese",
+    auditLanguageItalian: "Italiano",
+    auditDefaultDepth: "Profondità predefinita",
+    auditDepthQuick: "Rapido",
+    auditDepthStandard: "Standard",
+    auditDepthDeep: "Approfondito",
+    auditSeverityThreshold: "Severità minima",
+    auditSeverityCritical: "Critica",
+    auditSeverityHigh: "Alta",
+    auditSeverityMedium: "Media",
+    auditSeverityLow: "Bassa",
+    auditSeverityInformational: "Informativa",
+    auditIncludeTimeline: "Includi timeline",
+    auditIncludeSecrets: "Includi segreti",
+    auditIncludeCharacters: "Includi personaggi",
+    auditIncludeLocations: "Includi luoghi",
+    auditIncludeItems: "Includi oggetti",
+    auditIncludeFactions: "Includi fazioni",
+    auditIncludeWritingStyle: "Includi stile di scrittura",
+    auditIncludeSummary: "Includi riepilogo",
+    auditIncludePreviousContext: "Includi contesto precedente",
+    auditIncludeNextContext: "Includi contesto successivo",
+    auditGenerateFixSuggestions: "Genera suggerimenti di correzione",
+    auditMaxFindings: "Numero massimo di problemi",
+    auditCustomPrompt: "Prompt audit personalizzato",
+    auditCustomPromptPlaceholder: "Istruzioni facoltative aggiunte a ogni audit di questo libro.",
     metadataPresentation: "Metadati reader ed export",
     metadataPresentationDescription: "Scegli quali campi dell'intestazione di libro, capitolo e paragrafo mostrare nel reader e nei file Word/PDF/EPUB esportati.",
     bookMetadataFields: "Campi libro",
@@ -978,6 +1011,149 @@ const it = {
     summaryFailed: "Generazione sintesi lettori non riuscita",
     evaluateWithReaders: "Valuta con i lettori",
     evaluateSelection: "Valuta la selezione con i lettori"
+  },
+  audit: {
+    title: "Audit",
+    badge: "Audit di coerenza del manoscritto",
+    orphans: "La manutenzione repository ha trovato {{count}} report audit il cui contenuto sorgente non esiste più.",
+    scopes: {
+      book: "Libro",
+      chapter: "Capitolo",
+      paragraph: "Paragrafo"
+    },
+    stale: "Non aggiornato",
+    staleDescription: "Il contenuto o una delle sue dipendenze è cambiato dopo la generazione del report. Aggiorna l'audit per valutare le fonti correnti.",
+    disabled: "L'audit è disabilitato nelle impostazioni di questo libro.",
+    none: "Nessuno.",
+    depth: {
+      label: "Profondità audit",
+      quick: "Rapido",
+      standard: "Standard",
+      deep: "Approfondito"
+    },
+    actions: {
+      run: "Avvia audit",
+      open: "Apri audit",
+      update: "Aggiorna audit",
+      rerun: "Ripeti audit",
+      cancel: "Annulla",
+      openSource: "Apri fonte",
+      delete: "Elimina audit",
+      saveNote: "Salva nota"
+    },
+    messages: {
+      runComplete: "Audit completato",
+      deleted: "Report audit eliminato",
+      findingSaved: "Problema aggiornato"
+    },
+    errors: {
+      runFailed: "Audit non riuscito",
+      loadFailed: "Caricamento report audit non riuscito",
+      deleteFailed: "Eliminazione report audit non riuscita",
+      updateFailed: "Aggiornamento problema non riuscito"
+    },
+    progress: {
+      pending: "Pronto",
+      preparingContext: "Preparazione del contesto completo",
+      running: "Analisi dei documenti sorgente",
+      synthesizing: "Sintesi dei problemi tra le fonti",
+      completed: "Audit completato",
+      failed: "Audit non riuscito",
+      cancelled: "Audit annullato",
+      loading: "Caricamento report audit"
+    },
+    empty: {
+      title: "Nessun report audit",
+      description: "Avvia un audit a copertura completa per questo contenuto. Il report viene scritto solo se ogni passaggio di analisi e sintesi riesce."
+    },
+    cards: {
+      result: "Esito",
+      total: "Problemi totali",
+      open: "Aperti",
+      critical: "Critici"
+    },
+    results: {
+      passed: "Superato",
+      "passed-with-warnings": "Superato con avvisi",
+      "needs-review": "Richiede revisione",
+      failed: "Fallito"
+    },
+    summary: {
+      title: "Sintesi esecutiva",
+      fixOrder: "Ordine di correzione consigliato",
+      finalAssessment: "Valutazione finale",
+      strategy: "Copertura completa: {{passes}} passaggi del modello su {{chunks}} blocchi sorgente."
+    },
+    filters: {
+      title: "Filtra problemi",
+      all: "Tutti",
+      severity: "Severità",
+      certainty: "Certezza",
+      category: "Categoria",
+      status: "Stato",
+      open: "Aperti",
+      resolved: "Risolti",
+      falsePositive: "Falso positivo",
+      clear: "Rimuovi filtro stato"
+    },
+    severities: {
+      critical: "Critica",
+      high: "Alta",
+      medium: "Media",
+      low: "Bassa",
+      informational: "Informativa"
+    },
+    certainties: {
+      confirmed: "Confermato",
+      probable: "Probabile",
+      possible: "Possibile",
+      "needs-context": "Richiede contesto"
+    },
+    statuses: {
+      open: "Aperto",
+      resolved: "Risolto",
+      ignored: "Ignorato",
+      "false-positive": "Falso positivo",
+      "needs-review": "Da verificare"
+    },
+    categories: {
+      timeline: "Timeline",
+      secret: "Segreto",
+      character: "Personaggio",
+      "character-voice": "Voce del personaggio",
+      "character-knowledge": "Conoscenze del personaggio",
+      relationship: "Relazione",
+      location: "Luogo",
+      item: "Oggetto",
+      faction: "Fazione",
+      worldbuilding: "Worldbuilding",
+      plot: "Trama",
+      "spatial-continuity": "Continuità spaziale",
+      "narrative-continuity": "Continuità narrativa",
+      "point-of-view": "Punto di vista",
+      "writing-style": "Stile di scrittura",
+      terminology: "Terminologia",
+      metadata: "Metadati",
+      "missing-information": "Informazioni mancanti",
+      "punctuation-consistency": "Coerenza della punteggiatura",
+      other: "Altro"
+    },
+    findings: {
+      title: "Problemi",
+      noMatches: "Nessun problema corrisponde ai filtri correnti.",
+      evidence: "Evidenza",
+      source: "Fonte",
+      conflict: "Spiegazione del conflitto",
+      fix: "Suggerimento di correzione",
+      status: "Stato",
+      authorNote: "Nota dell'autore",
+      authorNotePlaceholder: "Registra una decisione, un'eccezione o una nota di follow-up."
+    },
+    delete: {
+      title: "Eliminare il report audit?",
+      description: "Questa operazione rimuove il report salvato, gli stati dei problemi e le note dell'autore. I file sorgente del manoscritto non vengono modificati.",
+      confirm: "Elimina report"
+    }
   },
   pipeline: {
     scriptToDraft: "Genera bozza",
@@ -1832,6 +2008,31 @@ const it = {
       "canon-entity-open": "entità canonica aperta",
     },
     tools: {
+      "run-audit": {
+        name: "Avvia audit",
+        description: "Apre Audit per il libro, capitolo o paragrafo risolto e avvia una nuova esecuzione.",
+        output: "Navigazione Audit e richiesta di esecuzione",
+      },
+      "open-audit": {
+        name: "Apri audit",
+        description: "Apre Audit per il target risolto e può filtrare i problemi visualizzati.",
+        output: "Navigazione Audit",
+      },
+      "update-audit": {
+        name: "Aggiorna audit",
+        description: "Apre Audit per il target risolto e lo esegue di nuovo.",
+        output: "Navigazione Audit e richiesta di aggiornamento",
+      },
+      "set-audit-finding-status": {
+        name: "Imposta stato problema audit",
+        description: "Aggiorna un problema identificato dal suo ID completo nel report audit risolto in sicurezza.",
+        output: "Problema audit aggiornato",
+      },
+      "delete-audit": {
+        name: "Elimina audit",
+        description: "Apre Audit per il target risolto e chiede conferma prima di eliminare il report.",
+        output: "Navigazione Audit e conferma eliminazione",
+      },
       "search-book": {
         name: "Cerca nel libro",
         description: "Cerca capitoli, paragrafi, canone e file di ricerca all'interno del libro corrente.",

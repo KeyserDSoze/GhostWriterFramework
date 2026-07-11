@@ -1,5 +1,43 @@
 [
   {
+    "version": "0.71.0",
+    "date": "2026-07-11",
+    "en": {
+      "title": "Audit for books, chapters and paragraphs",
+      "summary": "Narrarium can now run strict, evidence-based consistency audits over a whole book, one chapter or one paragraph, save the current report under audit/, and track every finding through review and resolution.",
+      "changes": [
+        "Added the dedicated Audit Router task and per-book Audit Settings for depth, language, severity threshold, context sources, fix suggestions, finding limits and custom instructions.",
+        "Added complete-coverage hierarchical Audit execution: large manuscripts are split into tracked source chunks and recursively synthesized without silently dropping chapters or paragraphs.",
+        "Added structured findings with category, severity, certainty, status, source evidence, conflict explanation, correction suggestion and author notes.",
+        "Added the Audit report page for book, chapter and paragraph scopes with result cards, stale detection, progress/cancellation, filters, source navigation, status editing, author notes, rerun and deletion.",
+        "Saved deterministic reports to audit/book.md, audit/chapters/<chapter>/chapter.md and audit/chapters/<chapter>/paragraphs/<paragraph>.md, using Git history instead of timestamped files.",
+        "Recorded source hashes, dependency hashes, model/provider, token usage, request metadata and costs in report frontmatter; failed or cancelled runs leave the previous valid report untouched.",
+        "Added Run/Open/Update/Delete Audit to desktop context menus, mobile Actions, the book sidebar, chapter/paragraph controls, Copilot and Fantasmino.",
+        "Added Copilot commands for filtering Audit findings and safely changing a finding status by its explicit ID.",
+        "Made paragraph/chapter reorder, paragraph deletion and paragraph/chapter rename move or remove their Audit companions; paragraph rename now also moves every draft, script, evaluation, reader evaluation and asset companion atomically.",
+        "Added malformed/orphan Audit detection to repository maintenance and core doctor checks, plus canonical audit/ documentation and focused lifecycle tests.",
+        "Fixed canonical root draft discovery and made chained reorder reference rewrites collision-safe while updating saved Audit source paths."
+      ]
+    },
+    "it": {
+      "title": "Audit per libri, capitoli e paragrafi",
+      "summary": "Narrarium può ora eseguire Audit severi e motivati sulla coerenza di un intero libro, di un capitolo o di un paragrafo, salvare il report corrente sotto audit/ e seguire ogni finding fino alla revisione o risoluzione.",
+      "changes": [
+        "Aggiunto il task Router dedicato Audit e le Impostazioni Audit per libro: profondità, lingua, soglia di severità, fonti di contesto, suggerimenti, limite finding e istruzioni personalizzate.",
+        "Aggiunta l'esecuzione Audit gerarchica a copertura completa: i manoscritti grandi vengono divisi in blocchi sorgente tracciati e sintetizzati ricorsivamente senza troncare silenziosamente capitoli o paragrafi.",
+        "Aggiunti finding strutturati con categoria, severità, certezza, stato, evidenza sorgente, spiegazione del conflitto, suggerimento di correzione e nota dell'autore.",
+        "Aggiunta la pagina report Audit per libro, capitolo e paragrafo con esito, rilevazione stale, avanzamento/annullamento, filtri, apertura della fonte, modifica stato, note, riesecuzione e cancellazione.",
+        "Salvati report deterministici in audit/book.md, audit/chapters/<chapter>/chapter.md e audit/chapters/<chapter>/paragraphs/<paragraph>.md, usando Git come storico invece di file con timestamp.",
+        "Registrati nel frontmatter hash delle fonti e dipendenze, modello/provider, token, metadati richiesta e costi; esecuzioni fallite o annullate non sostituiscono il report valido precedente.",
+        "Aggiunte le azioni Avvia/Apri/Aggiorna/Elimina Audit a menu contestuale desktop, Azioni mobile, sidebar libro, controlli capitolo/paragrafo, Copilot e Fantasmino.",
+        "Aggiunti comandi Copilot per filtrare i finding Audit e cambiare in sicurezza lo stato di un finding tramite ID esplicito.",
+        "Reorder di paragrafi/capitoli, eliminazione paragrafo e rename di paragrafo/capitolo ora spostano o eliminano gli Audit collegati; il rename paragrafo sposta atomicamente anche bozze, script, valutazioni, reader evaluation e asset.",
+        "Aggiunta la rilevazione di Audit malformati/orfani nei controlli repository e nel doctor del core, con documentazione canonica di audit/ e test mirati sul ciclo di vita.",
+        "Corretta la scoperta delle bozze nella root canonica e resa sicura da collisioni la riscrittura dei riferimenti durante reorder a catena, aggiornando anche i path sorgente salvati negli Audit."
+      ]
+    }
+  },
+  {
     "version": "0.70.0",
     "date": "2026-07-10",
     "en": {

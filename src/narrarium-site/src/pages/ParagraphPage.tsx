@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useLocation, useNavigate, useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseDocument, stringify } from "yaml";
-import { ArrowLeft, ArrowLeftRight, BookOpen, FileEdit, Save, Loader2, MoreHorizontal, Plus, X, Lock, Wand2 } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, BookOpen, FileEdit, Save, Loader2, MoreHorizontal, Plus, ShieldAlert, X, Lock, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
@@ -18,8 +18,7 @@ import { useToast } from "@/components/ui/use-toast";
 import {
   readFileWithSha,
   updateFile,
-  renameAndUpdateFile,
-  slugToTitle,
+  renameParagraphWithCompanions,
   loadFileContent,
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
@@ -151,6 +150,8 @@ export function ParagraphPage() {
   }>();
   const { toast } = useToast();
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const { settings } = useSettingsStore();
   const { updateChapterParagraphs } = useBooksStore();
@@ -162,6 +163,8 @@ export function ParagraphPage() {
 
   const token = book ? resolveBookToken(book, settings) : "";
   const presentationSettings = useMemo(() => (book ? resolveBookExportSettings(book) : null), [book]);
+  const auditHref = `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/audit`;
+  const auditActionHref = paragraph?.auditPath ? auditHref : `${auditHref}?action=run`;
 
   // ── Content state ─────────────────────────────────────────────────────────
   const [entries, setEntries] = useState<MetaEntry[]>([]);
@@ -180,6 +183,7 @@ export function ParagraphPage() {
   const [readerLoading, setReaderLoading] = useState(false);
   const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
   const loadedTargetRef = useRef<string | null>(null);
+  const auditNavigationHandledRef = useRef("");
 
   // Add-field form
   const [showAddMeta, setShowAddMeta] = useState(false);
@@ -255,6 +259,7 @@ export function ParagraphPage() {
   useRegisterPageActions([
     { id: "improve-paragraph", label: t("paragraph.improveAll"), icon: <Wand2 className="h-4 w-4" />, run: () => void startImprove() },
     { id: "merge-draft-final", label: t("merge.button"), icon: <Wand2 className="h-4 w-4" />, run: () => void runMerge(), disabled: merge.busy },
+    { id: paragraph?.auditPath ? "open-audit" : "run-audit", label: t(paragraph?.auditPath ? "audit.actions.open" : "audit.actions.run"), icon: <ShieldAlert className="h-4 w-4" />, run: () => navigate(auditActionHref) },
   ], Boolean(paragraph && book && token));
 
   useEffect(() => {
@@ -293,6 +298,30 @@ export function ParagraphPage() {
       })
       .finally(() => setLoading(false));
   }, [paragraph, book, token, branch, toast, t]);
+
+  useEffect(() => {
+    const navigationState = location.state as { auditTextOffset?: number; auditExcerpt?: string } | null;
+    if (!navigationState || loading || !paragraph) return;
+    const operationKey = `${location.key}:${paragraph.path}:${navigationState.auditTextOffset ?? ""}:${navigationState.auditExcerpt ?? ""}`;
+    if (auditNavigationHandledRef.current === operationKey) return;
+    auditNavigationHandledRef.current = operationKey;
+    const excerpt = navigationState.auditExcerpt?.trim() ?? "";
+    let start = typeof navigationState.auditTextOffset === "number"
+      ? Math.max(0, Math.min(body.length, Math.floor(navigationState.auditTextOffset)))
+      : -1;
+    if (excerpt && (start < 0 || body.slice(start, start + excerpt.length) !== excerpt)) start = body.indexOf(excerpt);
+    if (start < 0) start = 0;
+    const end = excerpt ? Math.min(body.length, start + excerpt.length) : start;
+    setViewMode("edit");
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const node = bodyRef.current;
+      if (!node) return;
+      node.focus();
+      node.setSelectionRange(start, end);
+      node.scrollIntoView({ behavior: "smooth", block: "center" });
+      navigate(location.pathname, { replace: true, state: null });
+    }));
+  }, [body, loading, location.key, location.pathname, location.state, navigate, paragraph]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const titleEntry = entries.find((e) => e.key === "title");
@@ -422,29 +451,24 @@ export function ParagraphPage() {
 
       let newSha: string;
       if (needsRename) {
-        const result = await renameAndUpdateFile(
+        const updatedParagraph = await renameParagraphWithCompanions(
           token,
           book.owner,
           book.repo,
           branch,
-          paragraph.path,
+          chapter!.path,
+          paragraph,
           newPath,
           rawContent,
           `Rename paragraph ${slotNum}: ${currentTitle}`,
         );
-        newSha = result.sha;
+        newSha = (await readFileWithSha(token, book.owner, book.repo, branch, updatedParagraph.path)).sha;
+        loadedTargetRef.current = `${branch}:${updatedParagraph.path}`;
 
         // Update chapter paragraphs in store
         const updatedParagraphs =
           chapter!.paragraphs.map((p) =>
-            p.number === slotNum
-              ? {
-                  ...p,
-                  path: newPath,
-                  title: slugToTitle(`${slotNum}-${newSlug}`),
-                  draftPath: p.draftPath?.replace(oldFilename, newFilename),
-                }
-              : p,
+            p.path === paragraph.path ? updatedParagraph : p,
           );
         updateChapterParagraphs(bookId!, chapterId!, updatedParagraphs);
       } else {
@@ -674,6 +698,9 @@ export function ParagraphPage() {
             <Wand2 className="mr-1 h-4 w-4" />
             {t("merge.button")}
           </Button>
+          <Button asChild className="hidden sm:inline-flex" size="sm" variant="outline">
+            <Link to={auditActionHref}><ShieldAlert className="mr-1 h-4 w-4" />{t(paragraph.auditPath ? "audit.actions.open" : "audit.actions.run")}</Link>
+          </Button>
           <Button className="hidden sm:inline-flex" size="sm" variant="outline" onClick={() => void handleSwitchToDraft()} disabled={switchingDraft || saving}>
             {switchingDraft ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-1 h-4 w-4" />}
             {t("paragraph.switchToDraft")}
@@ -701,6 +728,9 @@ export function ParagraphPage() {
               <DropdownMenuItem onSelect={() => void runMerge()} disabled={merge.busy || saving || loading}>
                 <Wand2 className="mr-2 h-4 w-4" />
                 {t("merge.button")}
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link to={auditActionHref}><ShieldAlert className="mr-2 h-4 w-4" />{t(paragraph.auditPath ? "audit.actions.open" : "audit.actions.run")}</Link>
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void handleSwitchToDraft()} disabled={switchingDraft || saving}>
                 {switchingDraft ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-2 h-4 w-4" />}

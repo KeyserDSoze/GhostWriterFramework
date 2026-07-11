@@ -1,4 +1,9 @@
 import type { BookStructure, BookFile, Chapter, Paragraph } from "@/types/book";
+import {
+  buildBookAuditPath,
+  buildChapterAuditPath,
+  buildParagraphAuditPath,
+} from "@/narrarium/auditPaths";
 
 const DB_NAME = "narrarium-local-repositories";
 const DB_VERSION = 4;
@@ -306,6 +311,63 @@ export async function writeLocalBinary(repoIdValue: string, path: string, bytes:
   return file;
 }
 
+export type LocalFileAtomicWrite =
+  | { path: string; kind: "text"; text: string }
+  | { path: string; kind: "binary"; bytes: Uint8Array };
+
+/** Apply a prepared set of local file moves/updates in one IndexedDB transaction. */
+export async function applyLocalFileChangesAtomically(
+  repoIdValue: string,
+  deletePaths: Iterable<string>,
+  writes: LocalFileAtomicWrite[],
+): Promise<void> {
+  const originals = await allFromIndex<LocalRepositoryFile>("files", "repoId", repoIdValue);
+  const originalsByPath = new Map(originals.map((file) => [file.path, file]));
+  const deletes = new Set(deletePaths);
+  const writePaths = new Set<string>();
+  for (const write of writes) {
+    if (writePaths.has(write.path)) throw new Error(`Duplicate local file write: ${write.path}`);
+    if (deletes.has(write.path)) throw new Error(`Cannot delete and write local file in one operation: ${write.path}`);
+    writePaths.add(write.path);
+  }
+
+  const now = new Date().toISOString();
+  const prepared = await Promise.all(writes.map(async (write): Promise<LocalRepositoryFile> => {
+    const existing = originalsByPath.get(write.path);
+    const currentHash = write.kind === "text" ? await hashText(write.text) : await hashBytes(write.bytes);
+    return {
+      key: fileKey(repoIdValue, write.path),
+      repoId: repoIdValue,
+      path: write.path,
+      kind: write.kind,
+      ...(write.kind === "text" ? { text: write.text } : { blob: new Blob([bytesToArrayBuffer(write.bytes)]) }),
+      baseSha: existing?.baseSha,
+      baseHash: existing?.baseHash,
+      currentHash,
+      status: statusAfterWrite(existing, currentHash),
+      committed: false,
+      size: write.kind === "text" ? new TextEncoder().encode(write.text).byteLength : write.bytes.byteLength,
+      updatedAt: now,
+    };
+  }));
+
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("files", "readwrite");
+    const store = tx.objectStore("files");
+    for (const path of deletes) {
+      const existing = originalsByPath.get(path);
+      if (!existing) continue;
+      if (existing.status === "new") store.delete(existing.key);
+      else store.put({ ...existing, status: "deleted", committed: false, updatedAt: now });
+    }
+    for (const file of prepared) store.put(file);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error("Local file transaction aborted."));
+  });
+}
+
 export async function deleteLocalFile(repoIdValue: string, path: string): Promise<void> {
   const existing = await txStore<LocalRepositoryFile | undefined>("files", "readonly", (store) => store.get(fileKey(repoIdValue, path)));
   if (!existing) return;
@@ -504,6 +566,16 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
     return (typeof fm.title === "string" && fm.title) || (typeof fm.name === "string" && fm.name) || fallback;
   };
   const bookFm = splitFrontmatter(textMap.get("book.md") ?? "");
+  const auditFiles: BookFile[] = files
+    .filter((file) => file.path.startsWith("audit/") && file.path.endsWith(".md"))
+    .map((file) => ({
+      path: file.path,
+      sha: file.baseSha ?? file.currentHash,
+      size: file.size,
+      content: file.kind === "text" ? file.text : undefined,
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const auditPathSet = new Set(auditFiles.map((file) => file.path));
 
   const canonPrefixes = ["characters", "locations", "factions", "items", "timelines", "secrets"] as const;
   const filesUnder = (prefix: typeof canonPrefixes[number]): BookFile[] => allPaths
@@ -525,17 +597,20 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
       const filename = p.split("/").pop() ?? "";
       const num = filename.match(/^(\d{3})(?:-[^/]+)?\.md$/)?.[1] ?? "";
       const paragraphSlug = filename.replace(/\.md$/i, "");
-      const draftPath = `${folder}/drafts/${filename}`;
+      const canonicalDraftPath = `drafts/${slug}/${filename}`;
+      const legacyDraftPath = `${folder}/drafts/${filename}`;
       const scriptPath = `scripts/${slug}/${paragraphSlug}.md`;
       const evaluationPath = `evaluations/paragraphs/${slug}/${paragraphSlug}.md`;
+      const auditPath = buildParagraphAuditPath(slug, paragraphSlug);
       const imagePromptPath = `assets/chapters/${slug}/paragraphs/${paragraphSlug}/primary.md`;
       return {
         number: num,
         title: titleName(p, slugToTitle(filename.replace(/\.md$/, ""))),
         path: p,
-        draftPath: allPaths.includes(draftPath) ? draftPath : undefined,
+        draftPath: allPaths.includes(canonicalDraftPath) ? canonicalDraftPath : allPaths.includes(legacyDraftPath) ? legacyDraftPath : undefined,
         scriptPath: allPaths.includes(scriptPath) ? scriptPath : undefined,
         evaluationPath: allPaths.includes(evaluationPath) ? evaluationPath : undefined,
+        auditPath: auditPathSet.has(auditPath) ? auditPath : undefined,
         imagePromptPath: allPaths.includes(imagePromptPath) ? imagePromptPath : undefined,
         imagePath: firstExistingImage(`assets/chapters/${slug}/paragraphs/${paragraphSlug}/primary`),
       };
@@ -548,7 +623,10 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
       ghostwriter: typeof chapterFm.ghostwriter === "string" && chapterFm.ghostwriter ? chapterFm.ghostwriter : undefined,
       paragraphs,
       writingStylePath: folderPaths.find((p) => p.endsWith("writing-style.md")),
-      draftPath: folderPaths.find((p) => p.endsWith("draft.md")),
+      draftPath: allPaths.includes(`drafts/${slug}/chapter.md`)
+        ? `drafts/${slug}/chapter.md`
+        : folderPaths.find((p) => p.endsWith("draft.md")),
+      auditPath: auditPathSet.has(buildChapterAuditPath(slug)) ? buildChapterAuditPath(slug) : undefined,
       imagePromptPath: allPaths.includes(imagePromptPath) ? imagePromptPath : undefined,
       imagePath: firstExistingImage(`assets/chapters/${slug}/primary`),
       hasResume: allPaths.includes(`resumes/chapters/${slug}.md`),
@@ -567,6 +645,7 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
     loadedBranch: meta.branch,
     bookCoverPath: firstExistingImage("assets/book/cover"),
     bookCoverPromptPath: allPaths.includes("assets/book/cover.md") ? "assets/book/cover.md" : undefined,
+    bookAuditPath: auditPathSet.has(buildBookAuditPath()) ? buildBookAuditPath() : undefined,
     chapters,
     characters: filesUnder("characters"),
     locations: filesUnder("locations"),
@@ -595,6 +674,7 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
     readerEvaluationFiles: files
       .filter((file) => /^evaluations\/readers\/.+\.md$/.test(file.path))
       .map((file) => ({ path: file.path, sha: file.baseSha ?? "", size: file.size, content: file.kind === "text" ? file.text : undefined })),
+    auditFiles,
     researchFiles: allPaths
       .filter((p) => /^research\/[^/]+\.md$/.test(p))
       .map((p) => {

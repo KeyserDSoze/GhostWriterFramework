@@ -17,6 +17,7 @@ import { resolveBookToken } from "@/types/settings";
 import { deleteReaderPersonaOverride, findOrphanReaderEvaluationPaths, loadReaderPersonas, saveReaderPersona } from "@/narrarium/readerEvaluations";
 import { emptyReaderPersona, type ReaderPersonaProfile } from "@/narrarium/readerPersona";
 import { slugify } from "@/narrarium/canon";
+import { findOrphanAuditPaths } from "@/narrarium/auditPaths";
 
 export function ReaderPersonasPage() {
   const { bookId } = useParams<{ bookId: string }>();
@@ -48,6 +49,7 @@ export function ReaderPersonasPage() {
   useEffect(() => { void load(); }, [book?.id, structure?.loadedBranch, token]);
   const visible = useMemo(() => profiles.filter((profile) => filter === "all" || profile.readerType === filter), [filter, profiles]);
   const orphanPaths = structure ? findOrphanReaderEvaluationPaths(structure) : [];
+  const orphanAuditPaths = structure ? findOrphanAuditPaths(structure) : [];
 
   function select(profile: ReaderPersonaProfile) {
     setSelectedId(profile.id);
@@ -119,6 +121,7 @@ export function ReaderPersonasPage() {
       </div>
       <div className="flex flex-wrap gap-2">{(["all", "standard", "genre", "custom"] as const).map((value) => <Button key={value} size="sm" variant={filter === value ? "default" : "outline"} onClick={() => setFilter(value)}>{t(`readerPersonas.filters.${value}`)}</Button>)}</div>
       {orphanPaths.length > 0 && <Alert variant="destructive"><AlertDescription>{t("readerPersonas.orphans", { count: orphanPaths.length })}</AlertDescription></Alert>}
+      {orphanAuditPaths.length > 0 && <Alert variant="destructive"><AlertDescription>{t("audit.orphans", { count: orphanAuditPaths.length })}</AlertDescription></Alert>}
       <div className="grid gap-5 lg:grid-cols-[340px_minmax(0,1fr)]">
         <div className="space-y-2">
           <Button variant="outline" className="w-full justify-start" onClick={() => { const next = emptyReaderPersona(structure?.language, 1000 + profiles.length); setProfiles((current) => [...current, next]); select(next); }}><Plus className="mr-2 h-4 w-4" />{t("readerPersonas.new")}</Button>

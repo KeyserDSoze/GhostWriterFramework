@@ -16,6 +16,9 @@ import { PullRequestsDialog } from "@/components/github/PullRequestsDialog";
 import { createChapterDraftArtifacts, createChapterEvaluationArtifact, createChapterResumeArtifact, createParagraphDraftArtifact, createParagraphScriptArtifact } from "@/narrarium/workspace";
 import { useSaveStore } from "@/store/saveStore";
 import { usePageActionsStore } from "@/store/pageActionsStore";
+import { useContextualActions } from "@/hooks/useContextualActions";
+
+const AUDIT_ACTION_IDS = new Set(["run-audit", "open-audit", "update-audit", "delete-audit"]);
 
 interface ActionRow {
   label: string;
@@ -37,6 +40,7 @@ export function FloatingActions() {
   const { structures } = useBooksStore();
   const saveReg = useSaveStore((s) => s.current);
   const pageActions = usePageActionsStore((s) => s.actions);
+  const { actions: contextualActions } = useContextualActions();
 
   const route = parseAppRoute(location.pathname);
   const bookId = "bookId" in route ? route.bookId : undefined;
@@ -92,7 +96,18 @@ export function FloatingActions() {
     navigate(target);
   }
 
-  const rows: ActionRow[] = pageActions.map((action) => ({ label: action.label, icon: action.icon, onClick: () => { setOpen(false); void action.run(); }, disabled: action.disabled }));
+  const rows: ActionRow[] = pageActions
+    .filter((action) => !AUDIT_ACTION_IDS.has(action.id))
+    .map((action) => ({ label: action.label, icon: action.icon, onClick: () => { setOpen(false); void action.run(); }, disabled: action.disabled }));
+  for (const action of contextualActions.filter((entry) => AUDIT_ACTION_IDS.has(entry.id))) {
+    rows.push({
+      label: action.label,
+      icon: action.icon,
+      to: action.to,
+      disabled: action.disabled,
+      onClick: action.run ? () => { setOpen(false); void action.run?.(); } : undefined,
+    });
+  }
   if (saveReg) rows.push({ label: t("common.save"), icon: <Save className="h-4 w-4" />, disabled: !saveReg.dirty, onClick: () => { setOpen(false); void saveReg.save(); } });
   if (paragraph && chapterId) {
     const base = `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}`;

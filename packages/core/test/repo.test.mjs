@@ -509,6 +509,57 @@ test("doctorBook detects broken refs and stale maintenance files", async () => {
   }
 });
 
+test("doctorBook detects malformed and orphan Audit companions", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-audit-doctor-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Audit Doctor Book",
+      language: "en",
+    });
+    await createChapter(rootPath, {
+      number: 1,
+      title: "Opening Bell",
+    });
+    await createParagraph(rootPath, {
+      chapter: "chapter:001-opening-bell",
+      number: 1,
+      title: "At Dawn",
+    });
+
+    await mkdir(path.join(rootPath, "audit", "chapters", "001-opening-bell", "paragraphs"), { recursive: true });
+    await mkdir(path.join(rootPath, "audit", "chapters", "999-missing", "paragraphs"), { recursive: true });
+    await writeFile(path.join(rootPath, "audit", "book.md"), "# Book Audit\n", "utf8");
+    await writeFile(path.join(rootPath, "audit", "chapters", "001-opening-bell", "chapter.md"), "# Chapter Audit\n", "utf8");
+    await writeFile(path.join(rootPath, "audit", "chapters", "001-opening-bell", "paragraphs", "001-at-dawn.md"), "# Paragraph Audit\n", "utf8");
+    await writeFile(path.join(rootPath, "audit", "chapters", "999-missing", "chapter.md"), "# Orphan Chapter Audit\n", "utf8");
+    await writeFile(path.join(rootPath, "audit", "chapters", "001-opening-bell", "paragraphs", "999-missing.md"), "# Orphan Paragraph Audit\n", "utf8");
+    await writeFile(path.join(rootPath, "audit", "chapters", "001-opening-bell", "unexpected.md"), "# Misplaced Audit\n", "utf8");
+
+    const doctor = await doctorBook(rootPath);
+    const auditIssues = doctor.issues.filter((issue) => issue.code.includes("audit"));
+
+    assert.deepEqual(
+      auditIssues.map((issue) => [issue.code, issue.path]).sort(),
+      [
+        ["malformed-audit-path", "audit/chapters/001-opening-bell/unexpected.md"],
+        ["orphan-audit-chapter", "audit/chapters/999-missing/chapter.md"],
+        ["orphan-audit-paragraph", "audit/chapters/001-opening-bell/paragraphs/999-missing.md"],
+      ],
+    );
+
+    await rm(path.join(rootPath, "book.md"));
+    const doctorWithoutBook = await doctorBook(rootPath);
+    assert.ok(
+      doctorWithoutBook.issues.some(
+        (issue) => issue.code === "orphan-audit-book" && issue.path === "audit/book.md",
+      ),
+    );
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
 test("queryCanon can describe arcs across chapter ranges", async () => {
   const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-query-arc-"));
 
@@ -888,6 +939,69 @@ test("asset prompts and renames keep asset folders aligned", async () => {
     assert.match(paragraphAssetPrompt, /subject: paragraph:001-the-crossing:001-at-the-bridge/);
     assert.equal(coverImage, "fake-image");
     assert.equal(validation.valid, true);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("chapter and paragraph renames move Audit companions and rewrite references", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-audit-rename-"));
+
+  try {
+    await initializeBookRepo(rootPath, {
+      title: "Audit Rename Book",
+      language: "en",
+    });
+    await access(path.join(rootPath, "audit", "chapters"));
+    await createChapter(rootPath, {
+      number: 1,
+      title: "The Arrival",
+    });
+    await createParagraph(rootPath, {
+      chapter: "chapter:001-the-arrival",
+      number: 1,
+      title: "At The Gate",
+    });
+
+    const oldAuditRoot = path.join(rootPath, "audit", "chapters", "001-the-arrival");
+    await mkdir(path.join(oldAuditRoot, "paragraphs"), { recursive: true });
+    await mkdir(path.join(oldAuditRoot, "evidence"), { recursive: true });
+    await writeFile(
+      path.join(oldAuditRoot, "chapter.md"),
+      "# Chapter Audit\n\nKeep this finding for chapter:001-the-arrival and paragraph:001-the-arrival:001-at-the-gate.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(oldAuditRoot, "paragraphs", "001-at-the-gate.md"),
+      "# Paragraph Audit\n\nPreserve this analysis for paragraph:001-the-arrival:001-at-the-gate.\n",
+      "utf8",
+    );
+    await writeFile(path.join(oldAuditRoot, "evidence", "raw.txt"), "unchanged evidence", "utf8");
+
+    await renameChapter(rootPath, {
+      chapter: "chapter:001-the-arrival",
+      newTitle: "The Crossing",
+    });
+    await renameParagraph(rootPath, {
+      chapter: "chapter:001-the-crossing",
+      paragraph: "001-at-the-gate",
+      newTitle: "At The Bridge",
+    });
+
+    const newAuditRoot = path.join(rootPath, "audit", "chapters", "001-the-crossing");
+    const chapterAudit = await readFile(path.join(newAuditRoot, "chapter.md"), "utf8");
+    const paragraphAudit = await readFile(path.join(newAuditRoot, "paragraphs", "001-at-the-bridge.md"), "utf8");
+    const evidence = await readFile(path.join(newAuditRoot, "evidence", "raw.txt"), "utf8");
+    const validation = await validateBook(rootPath);
+
+    assert.match(chapterAudit, /chapter:001-the-crossing/);
+    assert.match(chapterAudit, /paragraph:001-the-crossing:001-at-the-bridge/);
+    assert.match(paragraphAudit, /Preserve this analysis/);
+    assert.match(paragraphAudit, /paragraph:001-the-crossing:001-at-the-bridge/);
+    assert.equal(evidence, "unchanged evidence");
+    assert.equal(validation.valid, true);
+    await assert.rejects(access(oldAuditRoot));
+    await assert.rejects(access(path.join(newAuditRoot, "paragraphs", "001-at-the-gate.md")));
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }

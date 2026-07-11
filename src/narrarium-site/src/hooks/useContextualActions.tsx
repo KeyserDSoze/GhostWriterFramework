@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ClipboardCheck, Columns2, FileEdit, FileText, NotebookText, Network, PenLine, Search, Users, Wand2 } from "lucide-react";
+import { ClipboardCheck, Columns2, FileEdit, FileText, NotebookText, Network, PenLine, Play, RefreshCcw, Search, ShieldAlert, Trash2, Users, Wand2 } from "lucide-react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useBookStructure } from "@/hooks/useBookStructure";
@@ -11,6 +11,7 @@ import { resolveBookToken } from "@/types/settings";
 import { useToast } from "@/components/ui/use-toast";
 import { createChapterDraftArtifacts, createChapterEvaluationArtifact, createChapterResumeArtifact, createParagraphDraftArtifact, createParagraphEvaluationArtifact, createParagraphScriptArtifact } from "@/narrarium/workspace";
 import { usePageActionsStore } from "@/store/pageActionsStore";
+import { auditTargetHref, type AuditTarget } from "@/narrarium/audit";
 
 export interface ContextualAction {
   id: string;
@@ -37,7 +38,7 @@ export interface ContextualImageProps {
 
 /**
  * The contextual navigable actions for the current route (script/draft/final/evaluation,
- * indexes, resume, writing-style, ghostwriters). Shared by FloatingActions and the right-click menu.
+ * indexes, resume, writing-style, ghostwriters, audit). Shared by FloatingActions and the right-click menu.
  */
 export function useContextualActions(): { actions: ContextualAction[]; hasBookActions: boolean; imageProps: ContextualImageProps | null } {
   const { t } = useTranslation();
@@ -59,6 +60,27 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
   const paragraph = paragraphNum && chapter ? chapter.paragraphs.find((p) => p.number === paragraphNum) : undefined;
   const book = bookId ? settings.books.find((b) => b.id === bookId) : undefined;
   const token = book ? resolveBookToken(book, settings) : "";
+
+  const auditScope = (() => {
+    if (route.kind === "paragraph" || route.kind === "paragraph-workspace" || route.kind === "paragraph-reader-evaluations" || route.kind === "paragraph-audit") return "paragraph";
+    if (route.kind === "chapter" || route.kind === "chapter-workspace" || route.kind === "chapter-reader-evaluations" || route.kind === "chapter-audit") return "chapter";
+    if (["book", "book-dashboard", "book-assets", "book-ghostwriters", "book-writing-style", "book-evaluation-style", "book-simulated-readers", "reader", "book-export", "research", "research-detail", "canon", "book-audit"].includes(route.kind)) return "book";
+    return null;
+  })();
+  const auditTarget: AuditTarget | null = auditScope === "paragraph" && paragraph && chapterId
+    ? { scope: "paragraph", bookId: bookId ?? "", chapterId, paragraphNum: paragraph.number }
+    : auditScope === "chapter" && chapter && chapterId
+      ? { scope: "chapter", bookId: bookId ?? "", chapterId }
+      : auditScope === "book" && bookId
+        ? { scope: "book", bookId }
+        : null;
+  const auditReportExists = auditTarget?.scope === "paragraph"
+    ? Boolean(paragraph?.auditPath)
+    : auditTarget?.scope === "chapter"
+      ? Boolean(chapter?.auditPath)
+      : auditTarget?.scope === "book"
+        ? Boolean(structure?.bookAuditPath)
+        : false;
 
   async function openOrCreate(kind: "draft" | "script") {
     if (!chapter || !paragraph || !book || !token) return;
@@ -153,6 +175,17 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
     actions.push({ id: "personas", label: t("readerPersonas.title"), to: `/app/books/${bookId}/simulated-readers`, icon: <Users className="h-4 w-4" /> });
   }
 
+  if (structure && auditTarget) {
+    const href = auditTargetHref(structure, auditTarget);
+    if (auditReportExists) {
+      actions.push({ id: "open-audit", label: t("audit.actions.open"), to: href, icon: <ShieldAlert className="h-4 w-4" /> });
+      actions.push({ id: "update-audit", label: t("audit.actions.update"), to: `${href}?action=run`, icon: <RefreshCcw className="h-4 w-4" /> });
+      actions.push({ id: "delete-audit", label: t("audit.actions.delete"), to: `${href}?action=delete`, icon: <Trash2 className="h-4 w-4" /> });
+    } else {
+      actions.push({ id: "run-audit", label: t("audit.actions.run"), to: `${href}?action=run`, icon: <Play className="h-4 w-4" /> });
+    }
+  }
+
   // Book-level dialogs (image/commit/PR/export) exist whenever a book is in scope.
   const hasBookActions = Boolean(book && token);
 
@@ -174,5 +207,8 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
     }
   }
 
-  return { actions, hasBookActions, imageProps };
+  // Page-specific actions can overlap shared actions (for example on ParagraphPage).
+  // Keep their position while letting the shared action provide the canonical label and URL.
+  const deduplicatedActions = [...new Map(actions.map((action) => [action.id, action])).values()];
+  return { actions: deduplicatedActions, hasBookActions, imageProps };
 }
