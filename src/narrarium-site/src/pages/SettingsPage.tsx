@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Search, Trash2, Volume2, Wand2 } from "lucide-react";
+import { ArrowUpDown, Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Search, Trash2, Volume2, Wand2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -779,6 +779,18 @@ function modelChoicesFor(integrations: AIIntegration[], integrationId: string | 
   return media?.trim() ? [media.trim()] : [];
 }
 
+/** Browser-routed TTS/STT must always persist with a concrete sentinel model. */
+function normalizeRoutingTarget(target: RoutingTarget | undefined, task: RoutingTaskKind): RoutingTarget | undefined {
+  if (!target) return undefined;
+  if (target.integrationId === BROWSER_ROUTING_ID) {
+    return (task === "tts" || task === "stt")
+      ? { integrationId: BROWSER_ROUTING_ID, model: "browser" }
+      : undefined;
+  }
+  const model = target.model?.trim();
+  return model ? { integrationId: target.integrationId, model } : undefined;
+}
+
 function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
   const integrations = settings.aiIntegrations ?? [];
   const routing = settings.taskRouting ?? {};
@@ -811,23 +823,47 @@ function TaskRouteEditor({ task, integrations, route, onChange }: { task: Routin
   const firstChoice = taskIntegrationChoices(integrations, task, t)[0];
 
   function setPrimary(target: RoutingTarget | undefined) {
-    onChange({ ...current, primary: target });
+    onChange({ ...current, primary: normalizeRoutingTarget(target, task) });
   }
   function setFallback(index: number, target: RoutingTarget | undefined) {
     const fallbacks = [...current.fallbacks];
-    if (target) fallbacks[index] = target; else fallbacks.splice(index, 1);
+    const normalized = normalizeRoutingTarget(target, task);
+    if (normalized) fallbacks[index] = normalized; else fallbacks.splice(index, 1);
     onChange({ ...current, fallbacks });
   }
   function addFallback() {
     const model = modelChoicesFor(integrations, firstChoice?.id, task)[0] ?? "";
-    onChange({ ...current, fallbacks: [...current.fallbacks, { integrationId: firstChoice?.id ?? "", model }] });
+    const target = normalizeRoutingTarget({ integrationId: firstChoice?.id ?? "", model }, task);
+    if (!target) return;
+    onChange({ ...current, fallbacks: [...current.fallbacks, target] });
+  }
+  function swapPrimaryWithFirstFallback() {
+    if (!current.primary || current.fallbacks.length === 0) return;
+    const [firstFallback, ...rest] = current.fallbacks;
+    onChange({
+      primary: normalizeRoutingTarget(firstFallback, task),
+      fallbacks: [normalizeRoutingTarget(current.primary, task), ...rest].filter((entry): entry is RoutingTarget => Boolean(entry)),
+    });
   }
 
   const label = t(`routing.task.${task}`);
 
   return (
     <div className="rounded-lg border bg-muted/10 p-3">
-      <p className="mb-2 text-sm font-medium">{label}</p>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-sm font-medium">{label}</p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 px-2 text-[11px]"
+          onClick={swapPrimaryWithFirstFallback}
+          disabled={!current.primary || current.fallbacks.length === 0}
+        >
+          <ArrowUpDown className="mr-1 h-3.5 w-3.5" />
+          {t("routing.swapPrimaryFallback")}
+        </Button>
+      </div>
       <div className="grid gap-2">
         <div className="grid gap-1">
           <Label className="text-xs">{t("routing.primary")}</Label>

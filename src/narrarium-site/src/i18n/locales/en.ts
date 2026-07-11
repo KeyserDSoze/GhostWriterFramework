@@ -268,6 +268,7 @@ const en = {
     primary: "Primary",
     fallbackN: "Fallback {{n}}",
     addFallback: "Add fallback",
+    swapPrimaryFallback: "Swap with fallback 1",
     pickIntegration: "Pick integration",
     pickModel: "Pick model",
     browser: "Browser (built-in)",

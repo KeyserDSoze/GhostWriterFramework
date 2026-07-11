@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.70.0",
+    "date": "2026-07-10",
+    "en": {
+      "title": "Router fixes for Browser TTS/STT and quick primary swap",
+      "summary": "Browser-based TTS/STT routes now persist correctly in the AI Router, and each task can quickly swap its primary target with the first fallback.",
+      "changes": [
+        "Fixed the AI Router so Browser stays saved as the primary route for TTS and STT after saving and refreshing the page.",
+        "Normalized older or incomplete browser-routed entries during settings load instead of dropping them.",
+        "Added a quick 'Swap with fallback 1' button for every routed task, so you can instantly invert the current primary target with the first fallback when testing or reprioritising models."
+      ]
+    },
+    "it": {
+      "title": "Fix router per Browser TTS/STT e scambio rapido del primario",
+      "summary": "Le route TTS/STT basate sul Browser ora vengono salvate correttamente nell'AI Router e ogni task può scambiare rapidamente il target primario con il primo fallback.",
+      "changes": [
+        "Corretto l'AI Router: Browser resta salvato come route primaria per TTS e STT anche dopo salvataggio e refresh della pagina.",
+        "Normalizzate al caricamento delle impostazioni anche le vecchie voci Browser incomplete, invece di scartarle.",
+        "Aggiunto per ogni task il pulsante rapido 'Scambia con fallback 1', così puoi invertire subito il target primario corrente con il primo fallback per fare prove o cambiare priorità ai modelli."
+      ]
+    }
+  },
+  {
     "version": "0.69.2",
     "date": "2026-07-10",
     "en": {

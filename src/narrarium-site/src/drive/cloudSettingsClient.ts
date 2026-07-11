@@ -256,18 +256,26 @@ function normalizeTaskRouting(
     if (!t || typeof t !== "object") return false;
     const target = t as RoutingTarget;
     if (target.integrationId === BROWSER_ROUTING_ID) {
-      return (task === "stt" || task === "tts") && Boolean(target.model?.trim());
+      return task === "stt" || task === "tts";
     }
     const integration = byId.get(target.integrationId);
     if (!integration || !target.model) return false;
     return true;
   };
+  const normalizeTarget = (target: RoutingTarget): RoutingTarget => {
+    if (target.integrationId === BROWSER_ROUTING_ID) {
+      return { integrationId: BROWSER_ROUTING_ID, model: "browser" };
+    }
+    return { integrationId: target.integrationId, model: target.model.trim() };
+  };
   const out: NonNullable<AppSettings["taskRouting"]> = {};
   for (const [task, route] of Object.entries(raw as Record<string, unknown>)) {
     if (!route || typeof route !== "object") continue;
     const r = route as { primary?: unknown; fallbacks?: unknown };
-    const primary = validTarget(r.primary, task) ? (r.primary as RoutingTarget) : undefined;
-    const fallbacks = Array.isArray(r.fallbacks) ? r.fallbacks.filter((target) => validTarget(target, task)) as RoutingTarget[] : [];
+    const primary = validTarget(r.primary, task) ? normalizeTarget(r.primary as RoutingTarget) : undefined;
+    const fallbacks = Array.isArray(r.fallbacks)
+      ? r.fallbacks.filter((target) => validTarget(target, task)).map((target) => normalizeTarget(target as RoutingTarget))
+      : [];
     if (primary || fallbacks.length) out[task as keyof typeof out] = { primary, fallbacks };
   }
   return Object.keys(out).length ? out : undefined;
