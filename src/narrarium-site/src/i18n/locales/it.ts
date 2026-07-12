@@ -1069,9 +1069,13 @@ const it = {
     fileStatus: { pending: "In attesa", completed: "Completato", failed: "Non riuscito", "kept-current": "Corrente mantenuto", restored: "Ripristinato", conflict: "Conflitto" },
     result: { completed: "Operazione completata", failed: "Operazione non riuscita", cancelled: "Operazione annullata; le bozze completate sono state mantenute" },
     continueRewrite: "Riprova il paragrafo fallito e continua",
+    retryFinalize: "Riprova finalizzazione",
     resumeWarning: "Questa azione continua la stessa operazione dal primo paragrafo fallito o in attesa. Le bozze completate non verranno generate di nuovo. Ogni nuova bozza completata viene salvata subito.",
     confirmContinue: "Conferma, riprova e continua",
     keepCompleted: "Annulla e mantieni le bozze completate",
+    recoveryTitle: "Checkpoint di recupero disponibile",
+    recoveryDescription: "Un commit di sicurezza conserva il manifest e le istantanee di recupero. Il checkpoint da solo non sostituisce alcuna bozza; sono stati applicati solo i file indicati come completati.",
+    recovery: { operationId: "ID operazione", baseRef: "Riferimento Git checkpoint/base", completed: "Completati", stage: "Fase corrente", current: "Paragrafo corrente", originalError: "Errore originale", none: "Nessuno" },
     restoreConfirmTitle: "Ripristinare le bozze precedenti?",
     restoreWarning: {
       paragraph: "La bozza generata dai feedback verrà rimossa e sarà ripristinata la versione precedente del paragrafo. Se la bozza è cambiata in seguito, dovrai prima risolvere il conflitto.",

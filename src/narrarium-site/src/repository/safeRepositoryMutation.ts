@@ -9,7 +9,7 @@ import {
   sha256Text,
   type LocalTextFileMutation,
 } from "@/repository/localRepository";
-import { pushLocalCommits } from "@/repository/repositoryService";
+import { pushLocalCommits, RemoteHeadMismatchError } from "@/repository/repositoryService";
 import { loadRemoteFileContentAtRef } from "@/github/githubClient";
 
 export type RepositoryTextMutation = LocalTextFileMutation;
@@ -119,7 +119,21 @@ export async function commitAndPushTextFileMutation(input: {
   }
   if (!input.mutations.some((mutation) => mutation.content !== undefined)) return { commitSha: input.expectedRemoteHeadSha, mode: "local" };
   await createLocalCommit(local.id, input.message);
-  const pushed = await pushLocalCommits({ bookId: input.book.id, token: input.token, expectedRemoteHeadSha: input.expectedRemoteHeadSha });
+  let pushed;
+  try {
+    pushed = await pushLocalCommits({
+      bookId: input.book.id,
+      token: input.token,
+      expectedRemoteHeadSha: input.expectedRemoteHeadSha,
+      repoId: local.id,
+      owner: input.book.owner,
+      repo: input.book.repo,
+      branch: input.branch,
+    });
+  } catch (error) {
+    if (error instanceof RemoteHeadMismatchError) throw new RepositoryConflictError(error.message);
+    throw error;
+  }
   return { commitSha: pushed.commitSha, mode: "local" };
 }
 

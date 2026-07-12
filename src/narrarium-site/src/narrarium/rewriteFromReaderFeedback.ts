@@ -61,6 +61,8 @@ export interface RewriteModifiedFile {
   beforeHash: string | null;
   sourceDraftPath?: string;
   sourceDraftHash?: string | null;
+  finalSourcePath?: string;
+  finalSourceHash?: string;
   appliedHash?: string;
   status: RewriteModifiedFileStatus;
 }
@@ -132,6 +134,17 @@ export class StaleReaderFeedbackConfirmationError extends Error {
   constructor() {
     super("The selected reader feedback is stale and requires explicit confirmation.");
     this.name = "StaleReaderFeedbackConfirmationError";
+  }
+}
+
+export class RewriteFinalizationError extends Error {
+  readonly code = "REWRITE_FINALIZATION_FAILED";
+  readonly cause: unknown;
+  constructor(readonly manifest: RewriteOperationManifest, readonly manifestPath: string, cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(`The drafts were saved, but finalizing the rewrite manifest failed: ${detail}`);
+    this.name = "RewriteFinalizationError";
+    this.cause = cause;
   }
 }
 
@@ -252,9 +265,24 @@ export function parseRewriteOperationManifest(path: string, raw: string, fallbac
   const paragraphIds = Array.isArray(parsed.paragraphIds)
     ? parsed.paragraphIds.filter((value): value is string => typeof value === "string")
     : modifiedFiles.map((file) => file.paragraphSlug).filter(Boolean);
-  const terminalSuccess = parsed.status === "completed" || parsed.status === "rolledBack";
   const hasCompletedAt = Object.prototype.hasOwnProperty.call(parsed, "completedAt");
   const hasResultGitReference = Object.prototype.hasOwnProperty.call(parsed, "resultGitReference");
+  const terminalMetadataComplete = hasCompletedAt && typeof parsed.completedAt === "string" && Boolean(parsed.completedAt)
+    && hasResultGitReference && typeof parsed.resultGitReference === "string" && Boolean(parsed.resultGitReference);
+  const statuses: RewriteOperationStatus[] = ["preparing", "rewriting", "saving", "completed", "failed", "cancelled", "rollingBack", "rolledBack", "conflict"];
+  const parsedStatus: RewriteOperationStatus = typeof parsed.status === "string" && statuses.includes(parsed.status as RewriteOperationStatus)
+    ? parsed.status as RewriteOperationStatus
+    : "failed";
+  const terminalFilesComplete = parsedStatus === "completed"
+    ? modifiedFiles.length > 0 && modifiedFiles.every((file) => file.status === "completed")
+    : parsedStatus === "rolledBack"
+      ? modifiedFiles.every((file) => file.status === "restored" || file.status === "kept-current")
+      : true;
+  const terminalStateComplete = terminalMetadataComplete && terminalFilesComplete;
+  const invalidTerminalState = (parsedStatus === "completed" || parsedStatus === "rolledBack") && !terminalStateComplete;
+  const status: RewriteOperationStatus = (parsedStatus === "completed" || parsedStatus === "rolledBack") && !terminalStateComplete
+    ? parsedStatus === "completed" && modifiedFiles.length > 0 && modifiedFiles.every((file) => file.status === "completed") ? "saving" : "failed"
+    : parsedStatus;
   const latestReference = typeof parsed.latestRemoteHeadSha === "string" ? parsed.latestRemoteHeadSha : "";
   const baseReference = typeof parsed.baseRemoteHeadSha === "string" ? parsed.baseRemoteHeadSha : latestReference;
   const feedbackMode: FeedbackSourceMode = parsed.feedbackMode === "reader-opinion" ? "reader-opinion" : "panel-summary";
@@ -269,13 +297,14 @@ export function parseRewriteOperationManifest(path: string, raw: string, fallbac
     chapterSlug,
     paragraphIds,
     startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : createdAt,
-    completedAt: hasCompletedAt && (typeof parsed.completedAt === "string" || parsed.completedAt === null)
+    completedAt: !invalidTerminalState && hasCompletedAt && (typeof parsed.completedAt === "string" || parsed.completedAt === null)
       ? parsed.completedAt
-      : terminalSuccess ? updatedAt : null,
+      : null,
     baseGitReference: typeof parsed.baseGitReference === "string" ? parsed.baseGitReference : baseReference,
-    resultGitReference: hasResultGitReference && (typeof parsed.resultGitReference === "string" || parsed.resultGitReference === null)
+    resultGitReference: !invalidTerminalState && hasResultGitReference && (typeof parsed.resultGitReference === "string" || parsed.resultGitReference === null)
       ? parsed.resultGitReference
-      : terminalSuccess ? latestReference || null : null,
+      : null,
+    status,
     createdAt,
     updatedAt,
     baseRemoteHeadSha: baseReference,
@@ -326,8 +355,8 @@ async function loadCurrentDraft(context: RewriteRepositoryContext, chapter: Chap
   };
 }
 
-async function chapterReaderTarget(context: RewriteRepositoryContext, chapter: Chapter): Promise<ReaderEvaluationTarget> {
-  const files = await Promise.all(chapter.paragraphs.map((paragraph) => loadParagraphSource(context, paragraph)));
+async function chapterReaderTarget(context: RewriteRepositoryContext, chapter: Chapter, frozenSources?: Array<{ raw: string; body: string; hash: string }>): Promise<ReaderEvaluationTarget> {
+  const files = frozenSources ?? await Promise.all(chapter.paragraphs.map((paragraph) => loadParagraphSource(context, paragraph)));
   const text = files.map((file, index) => `## ${chapter.paragraphs[index].title}\n\n${file.body}`).join("\n\n");
   return {
     type: "chapter",
@@ -682,22 +711,29 @@ async function finalizeSuccessfulManifest(input: RewriteRepositoryContext & {
   message: string;
 }): Promise<void> {
   const completedAt = new Date().toISOString();
-  input.manifest.status = input.status;
-  input.manifest.completedAt = completedAt;
-  input.manifest.updatedAt = completedAt;
-  input.manifest.resultGitReference = input.resultCommitSha;
-  input.manifest.latestRemoteHeadSha = input.resultCommitSha;
-  const finalized = await commitAndPushTextFileMutation({
-    ...input,
-    expectedRemoteHeadSha: input.resultCommitSha,
-    message: input.message,
-    mutations: [{
-      path: input.manifestPath,
-      content: renderManifest(input.manifest),
-      expectedCurrentHash: await sha256Text(input.persistedManifestContent),
-    }],
-  });
-  input.manifest.latestRemoteHeadSha = finalized.commitSha;
+  const terminalManifest = structuredClone(input.manifest);
+  terminalManifest.status = input.status;
+  terminalManifest.completedAt = completedAt;
+  terminalManifest.updatedAt = completedAt;
+  terminalManifest.resultGitReference = input.resultCommitSha;
+  terminalManifest.latestRemoteHeadSha = input.resultCommitSha;
+  try {
+    const finalized = await commitAndPushTextFileMutation({
+      ...input,
+      expectedRemoteHeadSha: input.resultCommitSha,
+      message: input.message,
+      mutations: [{
+        path: input.manifestPath,
+        content: renderManifest(terminalManifest),
+        expectedCurrentHash: await sha256Text(input.persistedManifestContent),
+      }],
+    });
+    terminalManifest.latestRemoteHeadSha = finalized.commitSha;
+    Object.assign(input.manifest, terminalManifest);
+  } catch (error) {
+    input.manifest.error = `Finalization failed: ${error instanceof Error ? error.message : String(error)}`;
+    throw new RewriteFinalizationError(input.manifest, input.manifestPath, error);
+  }
 }
 
 export async function applyParagraphFeedbackProposal(input: RewriteRepositoryContext & {
@@ -729,6 +765,8 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
     beforeHash: proposal.beforeDraftHash,
     sourceDraftPath: proposal.canonicalDraftExisted ? proposal.draftPath : proposal.legacyDraftPath,
     sourceDraftHash: proposal.canonicalDraftExisted ? proposal.beforeDraftHash : proposal.legacyDraftHash,
+    finalSourcePath: proposal.finalSourcePath,
+    finalSourceHash: proposal.finalSourceHash,
     status: "pending",
   };
   const manifest = newManifest({
@@ -762,7 +800,7 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
       { path: proposal.finalSourcePath, expectedCurrentHash: proposal.finalSourceHash },
     ],
   });
-  manifest.status = "completed";
+  manifest.status = "saving";
   manifest.updatedAt = new Date().toISOString();
   manifest.latestRemoteHeadSha = checkpoint.commitSha;
   manifest.progress = { completed: 1, total: 1, currentParagraphSlug: proposal.paragraphSlug };
@@ -783,6 +821,7 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
         { path: manifestPath, content: appliedManifestContent, expectedCurrentHash: await sha256Text(checkpointContent) },
         { path: proposal.feedbackPath, expectedCurrentHash: proposal.feedbackFileHash },
         { path: proposal.finalSourcePath, expectedCurrentHash: proposal.finalSourceHash },
+        ...(!proposal.canonicalDraftExisted ? [{ path: proposal.legacyDraftPath, expectedCurrentHash: proposal.legacyDraftHash }] : []),
       ],
     });
     resultCommitSha = saved.commitSha;
@@ -790,13 +829,17 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
     manifest.status = error instanceof RepositoryConflictError ? "conflict" : "failed";
     manifest.error = error instanceof Error ? error.message : String(error);
     modifiedFile.status = manifest.status === "conflict" ? "conflict" : "failed";
-    const failed = await commitAndPushTextFileMutation({
-      ...input,
-      expectedRemoteHeadSha: checkpoint.commitSha,
-      message: `Record ${manifest.status} reader feedback rewrite ${proposal.paragraphSlug}`,
-      mutations: [{ path: manifestPath, content: renderManifest(manifest), expectedCurrentHash: await sha256Text(checkpointContent) }],
-    });
-    manifest.latestRemoteHeadSha = failed.commitSha;
+    try {
+      const failed = await commitAndPushTextFileMutation({
+        ...input,
+        expectedRemoteHeadSha: checkpoint.commitSha,
+        message: `Record ${manifest.status} reader feedback rewrite ${proposal.paragraphSlug}`,
+        mutations: [{ path: manifestPath, content: renderManifest(manifest), expectedCurrentHash: await sha256Text(checkpointContent) }],
+      });
+      manifest.latestRemoteHeadSha = failed.commitSha;
+    } catch (saveError) {
+      manifest.error += `\n\nAdditionally, recording this failure failed: ${saveError instanceof Error ? saveError.message : String(saveError)}`;
+    }
     return manifest;
   }
   await finalizeSuccessfulManifest({
@@ -821,7 +864,8 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
 }): Promise<RewriteOperationManifest> {
   if (!input.confirmed) throw new Error("Explicit confirmation is required before rewriting a chapter.");
   const { chapter } = resolveTarget(input.structure, input.chapterSlug);
-  const chapterTarget = await chapterReaderTarget(input, chapter);
+  const finalSources = await Promise.all(chapter.paragraphs.map((paragraph) => loadParagraphSource(input, paragraph)));
+  const chapterTarget = await chapterReaderTarget(input, chapter, finalSources);
   const chapterFeedback = await loadFeedbackSource(input, chapterTarget, input.feedbackSource);
   if (chapterFeedback.primary.stale && !input.confirmStaleFeedback) throw new StaleReaderFeedbackConfirmationError();
   const preflight = await preflightRepositoryOperation(input);
@@ -839,6 +883,8 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
       beforeHash: drafts[index].canonicalHash,
       sourceDraftPath: drafts[index].canonicalContent !== null ? drafts[index].canonicalPath : drafts[index].legacyPath,
       sourceDraftHash: drafts[index].canonicalContent !== null ? drafts[index].canonicalHash : drafts[index].legacyHash,
+      finalSourcePath: paragraph.path,
+      finalSourceHash: finalSources[index].hash,
       status: "pending",
     };
   });
@@ -871,6 +917,7 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
     });
     checkpointMutations.push({ path: drafts[index].canonicalPath, expectedCurrentHash: drafts[index].canonicalHash });
     checkpointMutations.push({ path: drafts[index].legacyPath, expectedCurrentHash: drafts[index].legacyHash });
+    checkpointMutations.push({ path: chapter.paragraphs[index].path, expectedCurrentHash: finalSources[index].hash });
   }
   const checkpoint = await commitAndPushTextFileMutation({ ...input, expectedRemoteHeadSha: preflight.remoteHeadSha, message: `Checkpoint chapter reader feedback rewrite ${chapter.slug}`, mutations: checkpointMutations });
   manifest.latestRemoteHeadSha = checkpoint.commitSha;
@@ -885,7 +932,7 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
       const slug = paragraphSlug(paragraph);
       manifest.progress.currentParagraphSlug = slug;
       input.onProgress?.({ ...manifest.progress }, manifest);
-      const final = await loadParagraphSource(input, paragraph);
+      const final = finalSources[index];
       const paragraphTarget = paragraphReaderTarget(input, chapter, paragraph, final);
       let paragraphFeedback: Awaited<ReturnType<typeof loadFeedback>> | null = null;
       let paragraphEvaluations: ReaderEvaluationRecord[] = [];
@@ -902,8 +949,8 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
           paragraphFeedback = null;
         }
       }
-      const previous = index > 0 ? (rewritten[index - 1] ?? (await loadParagraphSource(input, chapter.paragraphs[index - 1])).body) : "";
-      const next = index + 1 < chapter.paragraphs.length ? (await loadParagraphSource(input, chapter.paragraphs[index + 1])).body : "";
+      const previous = index > 0 ? (rewritten[index - 1] ?? finalSources[index - 1].body) : "";
+      const next = index + 1 < chapter.paragraphs.length ? finalSources[index + 1].body : "";
       const paragraphOpinion = selectedParagraphOpinion?.record ?? paragraphFeedback?.primary;
       const writingContext = await loadWritingContext(input, chapter, { previous, next, alreadyRewritten: rewritten }, `${chapterFeedback.primary.body}\n${paragraphOpinion?.body ?? ""}\n${final.body}`);
       const generated = await generateParagraph({
@@ -924,7 +971,7 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
         : canonicalDraftContent(chapter, paragraph, final.raw, generated.output.body);
       rewritten.push(generated.output.body);
       const nextManifest = structuredClone(manifest);
-      nextManifest.status = index === chapter.paragraphs.length - 1 ? "completed" : "rewriting";
+      nextManifest.status = index === chapter.paragraphs.length - 1 ? "saving" : "rewriting";
       nextManifest.progress.completed = index + 1;
       nextManifest.updatedAt = new Date().toISOString();
       nextManifest.modifiedFiles[index].appliedHash = await sha256Text(generatedContent);
@@ -942,6 +989,7 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
           { path: manifestPath, content: nextManifestContent, expectedCurrentHash: await sha256Text(manifestContent) },
           { path: paragraph.path, expectedCurrentHash: final.hash },
           { path: chapterFeedback.primary.path, expectedCurrentHash: chapterFeedback.fileHash },
+          ...(drafts[index].canonicalContent === null ? [{ path: drafts[index].legacyPath, expectedCurrentHash: drafts[index].legacyHash }] : []),
           ...(selectedParagraphOpinion ? [{ path: selectedParagraphOpinion.record.path, expectedCurrentHash: selectedParagraphOpinion.fileHash }] : []),
         ],
       });
@@ -955,7 +1003,7 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
     manifest.error = error instanceof Error ? error.message : String(error);
     manifest.updatedAt = new Date().toISOString();
     const current = manifest.modifiedFiles[manifest.progress.completed];
-    if (current && current.status === "pending") current.status = "failed";
+    if (current && current.status === "pending") current.status = manifest.status === "conflict" ? "conflict" : "failed";
     const failedContent = renderManifest(manifest);
     try {
       const saved = await commitAndPushTextFileMutation({
@@ -966,7 +1014,7 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
       });
       manifest.latestRemoteHeadSha = saved.commitSha;
     } catch (saveError) {
-      if (!(error instanceof RepositoryConflictError)) throw saveError;
+      manifest.error += `\n\nAdditionally, recording this failure failed: ${saveError instanceof Error ? saveError.message : String(saveError)}`;
     }
     return manifest;
   }
@@ -995,7 +1043,31 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
   const manifest = parseRewriteOperationManifest(input.manifestPath, manifestRaw, input.book.id);
   if (manifest.scope !== "chapter") throw new Error("Only chapter feedback rewrites can be resumed.");
   const { chapter } = resolveTarget(input.structure, manifest.chapterSlug);
+  const allFilesCompleted = manifest.modifiedFiles.length > 0 && manifest.modifiedFiles.every((file) => file.status === "completed");
+  if (allFilesCompleted && manifest.status === "saving") {
+    const preflight = await preflightRepositoryOperation(input);
+    await finalizeSuccessfulManifest({
+      ...input,
+      manifest,
+      manifestPath: input.manifestPath,
+      persistedManifestContent: manifestRaw,
+      resultCommitSha: preflight.remoteHeadSha,
+      status: "completed",
+      message: `Finalize resumed reader feedback rewrite ${chapter.slug}`,
+    });
+    return manifest;
+  }
   if (!manifest.modifiedFiles.some((file) => file.status === "pending" || file.status === "failed" || file.status === "conflict")) return manifest;
+
+  const finalSources = await Promise.all(chapter.paragraphs.map((paragraph) => loadParagraphSource(input, paragraph)));
+  for (let index = 0; index < chapter.paragraphs.length; index++) {
+    const file = manifest.modifiedFiles[index];
+    if (!file || file.paragraphSlug !== paragraphSlug(chapter.paragraphs[index])) throw new Error("The chapter structure no longer matches this rewrite operation.");
+    if (!file.finalSourceHash || file.finalSourcePath !== chapter.paragraphs[index].path) {
+      throw new RepositoryConflictError(`The rewrite checkpoint does not contain a frozen final source for ${chapter.paragraphs[index].path}.`, chapter.paragraphs[index].path);
+    }
+    if (finalSources[index].hash !== file.finalSourceHash) throw new RepositoryConflictError(`Final paragraph source changed after this operation started: ${file.finalSourcePath}`, file.finalSourcePath);
+  }
 
   const manifestSelection: FeedbackSourceSelection = {
     feedbackMode: manifest.feedbackMode,
@@ -1011,7 +1083,7 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
       throw new RepositoryConflictError("The selected reader feedback does not match the original operation.");
     }
   }
-  const chapterFeedback = await loadFeedbackSource(input, await chapterReaderTarget(input, chapter), manifestSelection);
+  const chapterFeedback = await loadFeedbackSource(input, await chapterReaderTarget(input, chapter, finalSources), manifestSelection);
   const feedbackHashChanged = chapterFeedback.sourceHash !== manifest.feedbackSourceHash
     || Boolean(manifest.feedbackFileHash && chapterFeedback.fileHash !== manifest.feedbackFileHash);
   if (chapterFeedback.primary.path !== manifest.feedbackPath
@@ -1049,7 +1121,7 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
       manifest.progress.completed = manifest.modifiedFiles.filter((entry) => entry.status === "completed").length;
       input.onProgress?.({ ...manifest.progress }, manifest);
 
-      const final = await loadParagraphSource(input, paragraph);
+      const final = finalSources[index];
       const draft = await loadCurrentDraft(input, chapter, paragraph);
       if (draft.canonicalHash !== file.beforeHash) throw new RepositoryConflictError(`Pending draft changed after this operation started: ${file.path}`, file.path);
       const sourceHash = file.sourceDraftPath === draft.legacyPath ? draft.legacyHash : draft.canonicalHash;
@@ -1070,8 +1142,8 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
           paragraphFeedback = null;
         }
       }
-      const previous = index > 0 ? (rewritten[index - 1] ?? (await loadParagraphSource(input, chapter.paragraphs[index - 1])).body) : "";
-      const next = index + 1 < chapter.paragraphs.length ? (await loadParagraphSource(input, chapter.paragraphs[index + 1])).body : "";
+      const previous = index > 0 ? (rewritten[index - 1] ?? finalSources[index - 1].body) : "";
+      const next = index + 1 < chapter.paragraphs.length ? finalSources[index + 1].body : "";
       const paragraphOpinion = selectedParagraphOpinion?.record ?? paragraphFeedback?.primary;
       const writingContext = await loadWritingContext(input, chapter, { previous, next, alreadyRewritten: rewritten.filter(Boolean) }, `${chapterFeedback.primary.body}\n${paragraphOpinion?.body ?? ""}\n${final.body}`);
       const generated = await generateParagraph({
@@ -1094,7 +1166,7 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
       nextManifest.modifiedFiles[index].status = "completed";
       nextManifest.modifiedFiles[index].appliedHash = await sha256Text(generatedContent);
       nextManifest.progress.completed = nextManifest.modifiedFiles.filter((entry) => entry.status === "completed").length;
-      nextManifest.status = nextManifest.progress.completed === nextManifest.progress.total ? "completed" : "rewriting";
+      nextManifest.status = nextManifest.progress.completed === nextManifest.progress.total ? "saving" : "rewriting";
       nextManifest.updatedAt = new Date().toISOString();
       nextManifest.error = undefined;
       nextManifest.generationRuns.push({ paragraphSlug: slug, feedbackApplied: generated.output.feedbackApplied, metadata: generated.metadata });
@@ -1110,6 +1182,7 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
           { path: input.manifestPath, content: nextContent, expectedCurrentHash: await sha256Text(manifestContent) },
           { path: paragraph.path, expectedCurrentHash: final.hash },
           { path: chapterFeedback.primary.path, expectedCurrentHash: chapterFeedback.fileHash },
+          ...(file.sourceDraftPath && file.sourceDraftPath !== file.path ? [{ path: file.sourceDraftPath, expectedCurrentHash: file.sourceDraftHash }] : []),
           ...(selectedParagraphOpinion ? [{ path: selectedParagraphOpinion.record.path, expectedCurrentHash: selectedParagraphOpinion.fileHash }] : []),
         ],
       });
@@ -1135,7 +1208,7 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
       });
       manifest.latestRemoteHeadSha = saved.commitSha;
     } catch (saveError) {
-      if (!(error instanceof RepositoryConflictError)) throw saveError;
+      manifest.error += `\n\nAdditionally, recording this failure failed: ${saveError instanceof Error ? saveError.message : String(saveError)}`;
     }
     return manifest;
   }
@@ -1222,7 +1295,7 @@ export async function restorePreviousDrafts(input: RewriteRepositoryContext & {
     return { manifest, conflicts };
   }
 
-  manifest.status = "rolledBack";
+  manifest.status = "rollingBack";
   const mutations: RepositoryTextMutation[] = [];
   for (const file of manifest.modifiedFiles.filter((entry) => entry.status === "completed")) {
     const current = currentByPath.get(file.path)!;

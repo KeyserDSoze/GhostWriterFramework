@@ -17,6 +17,7 @@ import {
   MissingReaderFeedbackOpinionError,
   MissingReaderFeedbackSummaryError,
   prepareParagraphFeedbackProposal,
+  RewriteFinalizationError,
   restorePreviousDrafts,
   resumeChapterFeedbackRewrite,
   runChapterFeedbackRewrite,
@@ -48,7 +49,7 @@ export function FeedbackRewriteWorkflowDialog() {
   const busy = Boolean(state.abortController);
 
   useEffect(() => {
-    if (!state.open || !state.intent || !context) return;
+    if (!state.open || !state.intent || !context || state.phase !== "loading") return;
     let active = true;
     const intent = state.intent;
     void (async () => {
@@ -95,6 +96,20 @@ export function FeedbackRewriteWorkflowDialog() {
     state.patch({ abortController: controller, abortable: Boolean(controller && abortable) });
   }
 
+  function patchOperationError(error: unknown, phase: "failed" | "cancelled") {
+    if (error instanceof RewriteFinalizationError) {
+      state.patch({
+        manifest: error.manifest,
+        manifestPath: error.manifestPath,
+        progress: error.manifest.progress,
+        error: error.message,
+        phase,
+      });
+      return;
+    }
+    state.patch({ error: errorMessage(error), phase });
+  }
+
   async function startGeneration() {
     if (!context) return;
     const controller = new AbortController();
@@ -118,7 +133,7 @@ export function FeedbackRewriteWorkflowDialog() {
         await reload();
       }
     } catch (error) {
-      state.patch({ error: errorMessage(error), phase: controller.signal.aborted ? "cancelled" : "failed" });
+      patchOperationError(error, controller.signal.aborted ? "cancelled" : "failed");
     } finally {
       setController(null);
     }
@@ -134,7 +149,7 @@ export function FeedbackRewriteWorkflowDialog() {
       state.patch({ manifest, manifestPath: manifestPath(manifest), progress: manifest.progress, phase: resultPhase(manifest) });
       await reload();
     } catch (error) {
-      state.patch({ error: errorMessage(error), phase: "failed" });
+      patchOperationError(error, "failed");
     } finally {
       setController(null);
     }
@@ -158,7 +173,7 @@ export function FeedbackRewriteWorkflowDialog() {
       state.patch({ manifest, progress: manifest.progress, phase: resultPhase(manifest) });
       await reload();
     } catch (error) {
-      state.patch({ error: errorMessage(error), phase: controller.signal.aborted ? "cancelled" : "failed" });
+      patchOperationError(error, controller.signal.aborted ? "cancelled" : "failed");
     } finally {
       setController(null);
     }
@@ -187,7 +202,7 @@ export function FeedbackRewriteWorkflowDialog() {
       }));
       state.patch({ manifest: result.manifest, conflicts, rollbackPolicies: Object.fromEntries(conflicts.map((entry) => [entry.path, "cancel"])), phase: "rollback-conflicts" });
     } catch (error) {
-      state.patch({ error: errorMessage(error), phase: "failed" });
+      patchOperationError(error, "failed");
     } finally {
       setController(null);
     }
@@ -205,7 +220,7 @@ export function FeedbackRewriteWorkflowDialog() {
       state.patch({ manifest: result.manifest, conflicts: [], phase: "completed" });
       await reload();
     } catch (error) {
-      state.patch({ error: errorMessage(error), phase: "failed" });
+      patchOperationError(error, "failed");
     } finally {
       setController(null);
     }
@@ -217,7 +232,7 @@ export function FeedbackRewriteWorkflowDialog() {
 
   return (
     <Dialog open={state.open} onOpenChange={(open) => { if (!open && !busy) state.closeWorkflow(); }}>
-      <DialogContent hideCloseButton={busy} className="max-h-[92dvh] !w-[calc(100vw-1rem)] !max-w-4xl overflow-x-hidden overflow-y-auto p-4 sm:p-6">
+      <DialogContent hideCloseButton={busy} className="max-h-[92dvh] min-w-0 !w-[calc(100vw-1rem)] !max-w-4xl overflow-x-hidden overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>{t(`feedbackRewrite.title.${intent.mode}`)}</DialogTitle>
           <DialogDescription>{chapter?.title}{paragraph ? ` / ${paragraph.title}` : ""}</DialogDescription>
@@ -287,6 +302,7 @@ export function FeedbackRewriteWorkflowDialog() {
         {(state.phase === "completed" || state.phase === "failed" || state.phase === "cancelled") && state.manifest && (
           <DialogFooter className="gap-2 sm:space-x-0">
             {(state.phase === "failed" || state.phase === "cancelled") && state.manifest.scope === "chapter" && state.manifest.modifiedFiles.some((file) => file.status !== "completed") && <Button onClick={() => state.patch({ phase: "resume-confirmation" })}>{t("feedbackRewrite.continueRewrite")}</Button>}
+            {state.manifest.scope === "chapter" && state.manifest.status === "saving" && state.manifest.modifiedFiles.length > 0 && state.manifest.modifiedFiles.every((file) => file.status === "completed") && <Button onClick={() => void resumeChapter()}>{t("feedbackRewrite.retryFinalize")}</Button>}
             {state.manifest.modifiedFiles.some((file) => file.status === "completed") && state.manifest.status !== "rolledBack" && <Button variant="destructive" onClick={openRestore}><RotateCcw className="mr-2 h-4 w-4" />{t("feedbackRewrite.restore")}</Button>}
             {(state.phase === "failed" || state.phase === "cancelled") && <Button variant="outline" onClick={state.closeWorkflow}>{t("feedbackRewrite.keepCompleted")}</Button>}
             {state.phase === "completed" && <Button variant="outline" onClick={state.closeWorkflow}>{t("common.close")}</Button>}
@@ -315,7 +331,8 @@ function ResultState({ phase, manifest, error }: { phase: "completed" | "failed"
   const { t } = useTranslation();
   const restored = manifest?.status === "rolledBack";
   const partial = restored && manifest.modifiedFiles.some((file) => file.status === "kept-current");
-  return <div className="space-y-4"><Alert variant={phase === "completed" ? "default" : "destructive"}>{phase === "completed" ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}<AlertTitle>{restored ? t(partial ? "feedbackRewrite.partialRestore" : "feedbackRewrite.rolledBack") : t(`feedbackRewrite.result.${phase}`)}</AlertTitle>{(error || manifest?.error) && <AlertDescription>{error ?? manifest?.error}</AlertDescription>}</Alert>{manifest && <><div><h3 className="mb-2 text-sm font-semibold">{t("feedbackRewrite.modifiedFiles")}</h3><div className="space-y-1">{manifest.modifiedFiles.filter((file) => file.status !== "pending").map((file) => <div key={file.path} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm"><span className="min-w-0 truncate">{file.path}</span><Badge variant="outline">{t(`feedbackRewrite.fileStatus.${file.status}`)}</Badge></div>)}</div></div><p className="text-xs text-muted-foreground">{t("feedbackRewrite.usage", { input: manifest.aggregateInputTokens, output: manifest.aggregateOutputTokens, cost: manifest.aggregateCost.toFixed(4), currency: manifest.currency ?? "" })}</p></>}</div>;
+  const completed = manifest?.modifiedFiles.filter((file) => file.status === "completed").length ?? 0;
+  return <div className="space-y-4"><Alert variant={phase === "completed" ? "default" : "destructive"}>{phase === "completed" ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}<AlertTitle>{restored ? t(partial ? "feedbackRewrite.partialRestore" : "feedbackRewrite.rolledBack") : t(`feedbackRewrite.result.${phase}`)}</AlertTitle>{(error || manifest?.error) && <AlertDescription>{error ?? manifest?.error}</AlertDescription>}</Alert>{manifest && phase !== "completed" && <Alert><FileClock className="h-4 w-4" /><AlertTitle>{t("feedbackRewrite.recoveryTitle")}</AlertTitle><AlertDescription className="space-y-3"><p>{t("feedbackRewrite.recoveryDescription")}</p><dl className="grid min-w-0 gap-x-4 gap-y-1 text-xs sm:grid-cols-[auto_1fr]"><dt className="font-medium">{t("feedbackRewrite.recovery.operationId")}</dt><dd className="break-all">{manifest.operationId}</dd><dt className="font-medium">{t("feedbackRewrite.recovery.baseRef")}</dt><dd className="break-all">{manifest.baseGitReference}</dd><dt className="font-medium">{t("feedbackRewrite.recovery.completed")}</dt><dd>{t("feedbackRewrite.progress", { completed, total: manifest.modifiedFiles.length })}</dd><dt className="font-medium">{t("feedbackRewrite.recovery.stage")}</dt><dd>{t(`feedbackRewrite.operationStatus.${manifest.status}`)}</dd><dt className="font-medium">{t("feedbackRewrite.recovery.current")}</dt><dd className="break-all">{manifest.progress.currentParagraphSlug ?? t("feedbackRewrite.recovery.none")}</dd><dt className="font-medium">{t("feedbackRewrite.recovery.originalError")}</dt><dd className="break-words">{error ?? manifest.error ?? t("feedbackRewrite.recovery.none")}</dd></dl></AlertDescription></Alert>}{manifest && <><div><h3 className="mb-2 text-sm font-semibold">{t("feedbackRewrite.modifiedFiles")}</h3><div className="space-y-1">{manifest.modifiedFiles.filter((file) => file.status !== "pending").map((file) => <div key={file.path} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm"><span className="min-w-0 truncate">{file.path}</span><Badge variant="outline">{t(`feedbackRewrite.fileStatus.${file.status}`)}</Badge></div>)}</div></div><p className="text-xs text-muted-foreground">{t("feedbackRewrite.usage", { input: manifest.aggregateInputTokens, output: manifest.aggregateOutputTokens, cost: manifest.aggregateCost.toFixed(4), currency: manifest.currency ?? "" })}</p></>}</div>;
 }
 
 function resultPhase(manifest: RewriteOperationManifest): "completed" | "failed" | "cancelled" {

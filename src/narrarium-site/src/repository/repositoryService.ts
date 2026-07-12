@@ -8,6 +8,7 @@ import {
   discardUnpushedLocalCommits,
   getLocalRepository,
   getLocalRepositoryByBook,
+  getLocalRepositoryById,
   listAllLocalFiles,
   listDirtyLocalFiles,
   listLocalFiles,
@@ -41,6 +42,24 @@ export interface RemoteStatusResult {
 export interface PushResult {
   commitSha: string;
   files: number;
+}
+
+export class RemoteHeadMismatchError extends Error {
+  readonly code = "REMOTE_HEAD_MISMATCH";
+  constructor(readonly expectedRemoteHeadSha: string, readonly actualRemoteHeadSha: string) {
+    super(`Remote head changed: expected ${expectedRemoteHeadSha}, found ${actualRemoteHeadSha}.`);
+    this.name = "RemoteHeadMismatchError";
+  }
+}
+
+export interface PushLocalCommitsInput {
+  bookId: string;
+  token: string;
+  expectedRemoteHeadSha?: string;
+  repoId?: string;
+  owner?: string;
+  repo?: string;
+  branch?: string;
 }
 
 export interface SyncResult {
@@ -350,9 +369,21 @@ async function removePulledFile(repoId: string, path: string): Promise<void> {
   await removeLocalFileEntry(repoId, path);
 }
 
-export async function pushLocalCommits(input: { bookId: string; token: string; expectedRemoteHeadSha?: string }): Promise<PushResult> {
-  const meta = await getLocalRepositoryByBook(input.bookId);
+export async function pushLocalCommits(input: PushLocalCommitsInput): Promise<PushResult> {
+  const exactRepositorySupplied = Boolean(input.owner || input.repo || input.branch);
+  if (exactRepositorySupplied && !(input.owner && input.repo && input.branch)) {
+    throw new Error("owner, repo, and branch must all be supplied for an exact repository push.");
+  }
+  const meta = input.repoId
+    ? await getLocalRepositoryById(input.repoId)
+    : input.owner && input.repo && input.branch
+      ? await getLocalRepository(input.owner, input.repo, input.branch)
+      : await getLocalRepositoryByBook(input.bookId);
   if (!meta) throw new Error("Local repository is not ready.");
+  if (meta.bookId !== input.bookId) throw new Error("The selected local repository does not belong to this book.");
+  if (input.owner && (meta.owner !== input.owner || meta.repo !== input.repo || meta.branch !== input.branch)) {
+    throw new Error("The selected local repository does not match the requested owner, repository, and branch.");
+  }
   const dirty = await listDirtyLocalFiles(meta.id);
   if (dirty.length) throw new Error("Commit local changes before pushing.");
   const commits = await listUnpushedLocalCommits(meta.id);
@@ -362,7 +393,7 @@ export async function pushLocalCommits(input: { bookId: string; token: string; e
   const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
   const remoteHeadSha = ref.data.object.sha;
   if (input.expectedRemoteHeadSha && remoteHeadSha !== input.expectedRemoteHeadSha) {
-    throw new Error(`Remote head changed: expected ${input.expectedRemoteHeadSha}, found ${remoteHeadSha}.`);
+    throw new RemoteHeadMismatchError(input.expectedRemoteHeadSha, remoteHeadSha);
   }
   const baseCommit = await octokit.rest.git.getCommit({ owner: meta.owner, repo: meta.repo, commit_sha: remoteHeadSha });
   const files = await listAllLocalFiles(meta.id);

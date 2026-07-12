@@ -193,6 +193,10 @@ export async function getLocalRepository(owner: string, repo: string, branch: st
   return (await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(repoId(owner, repo, branch)))) ?? null;
 }
 
+export async function getLocalRepositoryById(repoIdValue: string): Promise<LocalRepositoryMeta | null> {
+  return (await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(repoIdValue))) ?? null;
+}
+
 export async function getLocalRepositoryByBook(bookId: string): Promise<LocalRepositoryMeta | null> {
   const rows = await allFromIndex<LocalRepositoryMeta>("repositories", "bookId", bookId);
   return rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;

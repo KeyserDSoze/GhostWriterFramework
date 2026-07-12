@@ -1,5 +1,35 @@
 [
   {
+    "version": "0.73.2",
+    "date": "2026-07-13",
+    "en": {
+      "title": "Chapter feedback rewrite checkpoint and branch fixes",
+      "summary": "Chapter rewrites now push checkpoints and generated drafts through the exact active repository branch, preserve the original failure, and can retry manifest finalization without regenerating completed drafts.",
+      "changes": [
+        "Fixed feedback-rewrite pushes so they target the exact owner/repository/branch local clone instead of resolving a possibly different branch only by book ID.",
+        "Classified remote-head changes as explicit repository conflicts and preserved the original generation/save error even when recording the failure also fails.",
+        "Changed the last paragraph stage to Saving and mark an operation Completed only after the final manifest commit succeeds.",
+        "Added Retry finalization for operations whose drafts were all saved but whose final manifest commit failed, without regenerating any paragraph.",
+        "Frozen and revalidated every final paragraph source and legacy draft input from checkpoint through each sequential save.",
+        "Prevented repository reloads from resetting or hiding the visible completed/failed workflow state.",
+        "Expanded failure details to explain the safety checkpoint, operation ID, base Git reference, completed drafts, current stage and original error."
+      ]
+    },
+    "it": {
+      "title": "Fix checkpoint e branch nella riscrittura capitolo dai feedback",
+      "summary": "Le riscritture capitolo ora pushano checkpoint e bozze generate sul branch repository attivo esatto, preservano l'errore originale e possono ritentare la finalizzazione del manifest senza rigenerare le bozze completate.",
+      "changes": [
+        "Corretto il push delle riscritture dai feedback: ora usa il clone locale esatto owner/repository/branch invece di risolvere un possibile branch diverso soltanto tramite book ID.",
+        "Classificati i cambi del remote head come conflitti repository espliciti e preservato l'errore originale di generazione/salvataggio anche se fallisce anche la registrazione dell'errore.",
+        "Impostato lo stato Saving per l'ultimo paragrafo e marcata l'operazione Completed solo dopo il successo del commit finale del manifest.",
+        "Aggiunto Riprova finalizzazione per operazioni con tutte le bozze salvate ma commit finale del manifest fallito, senza rigenerare alcun paragrafo.",
+        "Congelata e riverificata ogni sorgente finale del paragrafo e ogni bozza legacy dal checkpoint fino al salvataggio sequenziale.",
+        "Impedito al reload del repository di reimpostare o nascondere lo stato visibile completato/fallito del workflow.",
+        "Ampliati i dettagli di errore per spiegare checkpoint di sicurezza, ID operazione, riferimento Git base, bozze completate, fase corrente ed errore originale."
+      ]
+    }
+  },
+  {
     "version": "0.73.1",
     "date": "2026-07-12",
     "en": {

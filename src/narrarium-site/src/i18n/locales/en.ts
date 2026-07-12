@@ -1069,9 +1069,13 @@ const en = {
     fileStatus: { pending: "Pending", completed: "Completed", failed: "Failed", "kept-current": "Current kept", restored: "Restored", conflict: "Conflict" },
     result: { completed: "Operation completed", failed: "Operation failed", cancelled: "Operation cancelled; completed drafts were kept" },
     continueRewrite: "Retry failed and continue",
+    retryFinalize: "Retry finalization",
     resumeWarning: "This continues the same operation at its first failed or pending paragraph. Completed drafts will not be generated again. Each newly completed draft is committed immediately.",
     confirmContinue: "Confirm retry and continue",
     keepCompleted: "Cancel and keep completed",
+    recoveryTitle: "Recovery checkpoint available",
+    recoveryDescription: "A safety checkpoint commit stores the manifest and recovery snapshots. The checkpoint itself does not replace any draft; only files listed as completed were applied.",
+    recovery: { operationId: "Operation ID", baseRef: "Checkpoint/base Git ref", completed: "Completed", stage: "Current stage", current: "Current paragraph", originalError: "Original error", none: "None" },
     restoreConfirmTitle: "Restore previous drafts?",
     restoreWarning: {
       paragraph: "The draft generated from feedback will be removed and the previous paragraph draft will be restored. If the draft changed later, you must resolve the conflict first.",
