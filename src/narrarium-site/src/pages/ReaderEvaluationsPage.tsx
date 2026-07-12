@@ -44,7 +44,6 @@ export function ReaderEvaluationsPage() {
   const [openCards, setOpenCards] = useState<Record<string, boolean>>({});
   const [setupOpen, setSetupOpen] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
-  const setupStateKeyRef = useRef("");
 
   useEffect(() => {
     if (!book || !structure || !token || !chapter) return;
@@ -77,7 +76,11 @@ export function ReaderEvaluationsPage() {
         const raw = file.content ?? await loadFileContent(token, book.owner, book.repo, file.path, branch).catch(() => "");
         return raw ? parseReaderEvaluation(file.path, raw, currentHash) : null;
       }));
-      if (active) setHistory(records.filter((record): record is ReaderEvaluationRecord => Boolean(record)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+      if (active) {
+        const nextHistory = records.filter((record): record is ReaderEvaluationRecord => Boolean(record)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        setHistory(nextHistory);
+        setSetupOpen(nextHistory.filter((record) => record.readerId !== "summary").length === 0);
+      }
     };
     void build().catch((err) => toast({ title: t("readerEvaluations.loadFailed"), description: String(err), variant: "destructive" }));
     return () => { active = false; };
@@ -148,12 +151,6 @@ export function ReaderEvaluationsPage() {
   function toggleCard(key: string) {
     setOpenCards((current) => ({ ...current, [key]: !current[key] }));
   }
-  useEffect(() => {
-    const stateKey = `${bookId ?? ""}:${chapterId ?? ""}:${paragraphNum ?? ""}:${selection}`;
-    if (setupStateKeyRef.current === stateKey) return;
-    setupStateKeyRef.current = stateKey;
-    setSetupOpen(!(latestSummary && readerHistory.length > 0));
-  }, [bookId, chapterId, latestSummary, paragraphNum, readerHistory.length, selection]);
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   if (!chapter) return <Alert variant="destructive"><AlertDescription>{t("chapter.notFound", { id: chapterId })}</AlertDescription></Alert>;
   return <div className="space-y-6">
@@ -162,7 +159,7 @@ export function ReaderEvaluationsPage() {
       <button type="button" onClick={() => setSetupOpen((current) => !current)} className="flex w-full items-center justify-between gap-3 px-6 py-5 text-left">
         <div className="min-w-0">
           <p className="font-semibold">{t("readerEvaluations.runPanelTitle")}</p>
-          <p className="text-sm text-muted-foreground">{latestSummary && readerHistory.length > 0 ? t("readerEvaluations.runPanelCollapsed") : t("readerEvaluations.runPanelIntro")}</p>
+          <p className="text-sm text-muted-foreground">{readerHistory.length > 0 ? t("readerEvaluations.runPanelCollapsed") : t("readerEvaluations.runPanelIntro")}</p>
         </div>
         <ChevronDown className={setupOpen ? "h-4 w-4 shrink-0 rotate-180 transition-transform" : "h-4 w-4 shrink-0 transition-transform"} />
       </button>
@@ -208,7 +205,7 @@ export function ReaderEvaluationsPage() {
         )}
       </div>
 
-      <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{t("readerEvaluations.history")}</h2>{averageScore && <Badge variant="outline">{t("readerEvaluations.averageScore", { score: averageScore })}</Badge>}</div>
+      <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{t("readerEvaluations.readerOpinions")}</h2>{averageScore && <Badge variant="outline">{t("readerEvaluations.averageScore", { score: averageScore })}</Badge>}</div>
       <div className="space-y-4">{readerHistory.length ? readerHistory.map((record) => {
         const isOpen = Boolean(openCards[record.path]);
         return <article key={record.path} className="overflow-hidden rounded-2xl border bg-card shadow-sm"><button type="button" onClick={() => toggleCard(record.path)} className="flex w-full items-start justify-between gap-3 px-5 py-4 text-left"><div className="min-w-0"><p className="font-semibold">{record.readerName}</p><p className="text-xs text-muted-foreground">{new Date(record.createdAt).toLocaleString()}</p></div><div className="flex items-center gap-2">{record.stale && <Badge variant="destructive">{t("readerEvaluations.stale")}</Badge>}<Badge variant="outline">{record.score !== undefined ? `${record.score}/10` : record.status}</Badge><ChevronDown className={isOpen ? "h-4 w-4 shrink-0 rotate-180 transition-transform" : "h-4 w-4 shrink-0 transition-transform"} /></div></button>{isOpen && <div className="space-y-4 border-t px-5 py-4"><div className="flex flex-wrap items-center justify-end gap-2">{record.readerId !== "summary" && <Button size="sm" variant="outline" onClick={() => void rerun(record)} disabled={running}><RefreshCcw className="mr-1.5 h-4 w-4" />{t("readerEvaluations.rerun")}</Button>}<Button size="icon" variant="ghost" onClick={() => void removeEvaluation(record)} disabled={running}><Trash2 className="h-4 w-4 text-destructive" /></Button></div><div className="doc-prose max-w-none" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(record.body) }} /></div>}</article>;

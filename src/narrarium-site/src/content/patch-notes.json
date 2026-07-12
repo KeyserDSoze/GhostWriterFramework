@@ -1,5 +1,25 @@
 [
   {
+    "version": "0.71.4",
+    "date": "2026-07-12",
+    "en": {
+      "title": "Reader setup stays open only when no opinions exist",
+      "summary": "The reader-run setup now stays open only when the current target has no reader opinions yet, while the main list is explicitly labelled as reader opinions.",
+      "changes": [
+        "Adjusted the reader-run setup so it opens only when there is no saved reader opinion yet for the current target; otherwise it starts closed so you land directly on the existing content.",
+        "Renamed the lower section from generic history wording to Reader opinions for a clearer distinction from the panel summary."
+      ]
+    },
+    "it": {
+      "title": "Setup lettori aperto solo se non esistono ancora pareri",
+      "summary": "Il setup della run lettori ora resta aperto solo quando il target corrente non ha ancora alcun parere lettore salvato, mentre la lista principale è etichettata esplicitamente come Pareri dei lettori.",
+      "changes": [
+        "Regolato il setup della run lettori: si apre solo quando non esiste ancora alcun parere lettore salvato per il target corrente; altrimenti parte chiuso così arrivi subito al contenuto già esistente.",
+        "Rinominata la sezione inferiore da storico generico a Pareri dei lettori, per distinguerla meglio dalla sintesi del panel."
+      ]
+    }
+  },
+  {
     "version": "0.71.3",
     "date": "2026-07-12",
     "en": {
