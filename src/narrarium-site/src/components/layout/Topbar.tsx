@@ -17,9 +17,10 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
-import { useRegisterRepositorySync } from "@/store/repositorySyncStore";
+import { triggerCurrentRepositorySync, useRegisterRepositorySync } from "@/store/repositorySyncStore";
 import { speakText, type SpeechController } from "@/assistant/speech";
 import { useToast } from "@/components/ui/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useSettings } from "@/drive/useSettings";
 import { parseAppRoute } from "@/assistant/context";
 import { getLocalRepository, listUnpushedLocalCommits, localStatus } from "@/repository/localRepository";
@@ -141,7 +142,13 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           const key = remoteChangedNoticeKey(currentBook.id, result.remoteHeadSha);
           if (!sessionStorage.getItem(key)) {
             sessionStorage.setItem(key, "1");
-            toast({ title: t("repoStatus.remoteBehindTitle"), description: t("repoStatus.remoteBehindDescription") });
+            toast({
+              title: t("repoStatus.remoteBehindTitle"),
+              description: t("repoStatus.remoteBehindDescription"),
+              action: currentBook
+                ? <ToastAction altText={t("repoStatus.syncNow")} onClick={() => { void triggerCurrentRepositorySync(); }}>{t("repoStatus.syncNow")}</ToastAction>
+                : undefined,
+            });
           }
         }
       } catch {

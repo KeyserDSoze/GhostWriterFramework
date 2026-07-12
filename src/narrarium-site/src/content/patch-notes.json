@@ -1,5 +1,23 @@
 [
   {
+    "version": "0.71.6",
+    "date": "2026-07-12",
+    "en": {
+      "title": "Sync button inside the remote-change toast",
+      "summary": "When Narrarium detects that the remote repository moved ahead, the toast now includes a direct Sync action so you can react immediately.",
+      "changes": [
+        "Added a Sync now button inside the remote-changed toast, wired to the same repository sync flow already used elsewhere in the app."
+      ]
+    },
+    "it": {
+      "title": "Pulsante Sync dentro il toast di remoto cambiato",
+      "summary": "Quando Narrarium rileva che il repository remoto è andato avanti, il toast mostra ora un'azione Sync diretta così puoi reagire subito.",
+      "changes": [
+        "Aggiunto il pulsante Fai sync dentro il toast di remoto cambiato, collegato allo stesso flusso di sync repository già usato nel resto dell'app."
+      ]
+    }
+  },
+  {
     "version": "0.71.5",
     "date": "2026-07-12",
     "en": {

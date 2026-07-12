@@ -33,6 +33,7 @@ const en = {
     title: "Repository status",
     quickActions: "Git actions",
     sync: "Full sync",
+    syncNow: "Sync now",
     syncDone: "Sync complete: pulled {{pulled}}, kept local {{kept}}, committed {{committed}}, pushed {{pushed}}.",
     viewStatus: "View status",
     viewChangedFiles: "View changed files",
