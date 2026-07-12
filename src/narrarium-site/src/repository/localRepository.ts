@@ -485,7 +485,7 @@ export async function markLocalCommitsPushed(repoIdValue: string, commitIds: str
     const repoReq = repoStore.get(repoIdValue);
     repoReq.onsuccess = () => {
       const repo = repoReq.result as LocalRepositoryMeta | undefined;
-      if (repo) repoStore.put({ ...repo, remoteHeadSha, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString() });
+      if (repo) repoStore.put({ ...repo, remoteHeadSha, remoteChanged: false, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString() });
     };
     for (const id of commitIds) {
       const req = commitStore.get(id);

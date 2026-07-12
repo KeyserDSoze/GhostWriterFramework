@@ -468,7 +468,13 @@ export async function syncFullRepository(input: { bookId: string; token: string 
   }
   const ahead = await listUnpushedLocalCommits(meta.id);
   let pushed = 0;
-  if (ahead.length) pushed = (await pushLocalCommits(input)).files;
+  if (ahead.length) {
+    pushed = (await pushLocalCommits(input)).files;
+    // Re-read the branch head after push. This closes the race where the periodic
+    // remote check sees the new commit between updateRef and the IndexedDB update.
+    const finalRef = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
+    await updateLocalRepositoryHead(meta.id, finalRef.data.object.sha);
+  }
   await addLocalRepoLog(meta.id, "push", `Full sync complete: pulled ${pulled}, kept local ${keptLocal}, committed ${committed}, pushed ${pushed}`);
   return { pulled, keptLocal, committed, pushed };
 }

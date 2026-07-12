@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.71.7",
+    "date": "2026-07-12",
+    "en": {
+      "title": "Post-sync remote state fixed and Git dialog made mobile-safe",
+      "summary": "Repository sync now clears stale remote-change state after pushing and re-reads the final Git head, while the Git status dialog no longer causes horizontal overflow on mobile.",
+      "changes": [
+        "Cleared the persisted remoteChanged flag atomically when local commits are marked as pushed, closing a race with the periodic remote-status poll.",
+        "Re-read the branch head after a sync push and stored the final remote SHA so the top bar does not incorrectly report that the remote changed immediately after a successful sync.",
+        "Constrained the Git repository status dialog to the mobile viewport, hid horizontal overflow, and made long repository/file paths shrink or truncate instead of widening the page."
+      ]
+    },
+    "it": {
+      "title": "Fix stato remoto post-sync e dialog Git sicura su mobile",
+      "summary": "Il sync repository ora azzera correttamente lo stato remoto obsoleto dopo il push e rilegge l'head Git finale, mentre la dialog dello stato Git non provoca più overflow orizzontale su mobile.",
+      "changes": [
+        "Azzerato atomicamente il flag persistito remoteChanged quando i commit locali vengono marcati come pushati, chiudendo una race con il controllo periodico dello stato remoto.",
+        "Riletto l'head del branch dopo il push del sync e salvato lo SHA remoto finale, così la topbar non segnala erroneamente un nuovo cambio remoto subito dopo un sync riuscito.",
+        "Limitata la dialog dello stato repository Git alla viewport mobile, nascosto l'overflow orizzontale e resi comprimibili/troncabili i path lunghi di repository e file invece di allargare la pagina."
+      ]
+    }
+  },
+  {
     "version": "0.71.6",
     "date": "2026-07-12",
     "en": {

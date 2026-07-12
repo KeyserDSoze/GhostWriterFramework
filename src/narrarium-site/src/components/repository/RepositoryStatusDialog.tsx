@@ -176,14 +176,14 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-h-[90dvh] !w-[calc(100vw-1rem)] !max-w-2xl overflow-x-hidden overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>{t("repoStatus.title")}</DialogTitle>
         </DialogHeader>
         {!book ? <p className="text-sm text-muted-foreground">{t("repoStatus.noBook")}</p> : (
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             <div className="rounded-xl border bg-muted/20 p-3 text-sm">
-              <p className="font-medium">{book.owner}/{book.repo}</p>
+              <p className="break-all font-medium">{book.owner}/{book.repo}</p>
               <p className="text-xs text-muted-foreground">{status ? t("repoStatus.summary", { dirty: status.dirty, ahead }) : t("repoStatus.notCloned")}</p>
               {cloneProgress && (
                 <div className="mt-3 space-y-1">
@@ -234,8 +234,8 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
             <div className="space-y-2 rounded-xl border p-3">
               <p className="text-sm font-medium">{t("repoStatus.localChanges")}</p>
               {dirtyFiles.length ? (
-                <div className="max-h-56 space-y-1 overflow-auto text-xs">
-                  {dirtyFiles.map((file) => <div key={file.path} className="flex items-center gap-2 rounded border px-2 py-1"><span className="w-16 shrink-0 uppercase text-muted-foreground">{file.status}</span><span className="truncate font-mono">{file.path}</span></div>)}
+                <div className="max-h-56 min-w-0 space-y-1 overflow-y-auto text-xs">
+                  {dirtyFiles.map((file) => <div key={file.path} className="flex min-w-0 items-center gap-2 rounded border px-2 py-1"><span className="w-16 shrink-0 uppercase text-muted-foreground">{file.status}</span><span className="min-w-0 flex-1 truncate font-mono" title={file.path}>{file.path}</span></div>)}
                 </div>
               ) : <p className="text-sm text-muted-foreground">{t("repoStatus.noLocalChanges")}</p>}
               <div className="flex flex-col gap-2 sm:flex-row">
