@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.71.8",
+    "date": "2026-07-12",
+    "en": {
+      "title": "Faster expired-session recovery",
+      "summary": "When an expired token cannot be restored silently, Narrarium now asks for an interactive sign-in immediately instead of repeating several silent retries.",
+      "changes": [
+        "Reduced expired-token recovery to one silent authentication attempt for both Google and Microsoft while online.",
+        "Redirected immediately to interactive login after that single online attempt fails, avoiding several seconds of repeated session checks.",
+        "Kept proactive pre-expiry refresh retries in the background and preserved offline sessions until connectivity returns.",
+        "Updated the restoring-session message to describe the single silent check accurately."
+      ]
+    },
+    "it": {
+      "title": "Recupero più rapido della sessione scaduta",
+      "summary": "Quando un token scaduto non può essere ripristinato silenziosamente, Narrarium ora richiede subito un accesso interattivo invece di ripetere più tentativi silenziosi.",
+      "changes": [
+        "Ridotto il recupero del token scaduto a un solo tentativo di autenticazione silenziosa per Google e Microsoft quando il dispositivo è online.",
+        "Aggiunto il passaggio immediato alla login interattiva dopo il fallimento di quel singolo tentativo online, evitando diversi secondi di controlli ripetuti.",
+        "Mantenuti i retry preventivi in background prima della scadenza e la conservazione della sessione offline fino al ritorno della connessione.",
+        "Aggiornato il messaggio di ripristino sessione per descrivere correttamente il singolo controllo silenzioso."
+      ]
+    }
+  },
+  {
     "version": "0.71.7",
     "date": "2026-07-12",
     "en": {

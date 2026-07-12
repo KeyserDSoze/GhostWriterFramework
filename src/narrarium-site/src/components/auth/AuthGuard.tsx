@@ -15,17 +15,6 @@ interface AuthGuardProps {
 
 type Status = "checking" | "ok" | "unauthenticated";
 const SILENT_AUTH_TIMEOUT_MS = 12000;
-const GOOGLE_MAX_RETRIES = 3;
-const GOOGLE_BACKOFF_MS = [700, 1600, 3200];
-
-/** Errors that mean the Google session is really gone → interactive login is required. */
-const HARD_GOOGLE_ERRORS = new Set([
-  "interaction_required",
-  "login_required",
-  "consent_required",
-  "account_selection_required",
-  "access_denied",
-]);
 
 export function AuthGuard({ children }: AuthGuardProps) {
   const { t } = useTranslation();
@@ -34,9 +23,9 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const { instance } = useMsal();
   const location = useLocation();
   const [status, setStatus] = useState<Status>("checking");
+  const [silentAttemptNonce, setSilentAttemptNonce] = useState(0);
   const lastAttemptKeyRef = useRef("");
   const silentAuthTimeoutRef = useRef<number | null>(null);
-  const googleRetryRef = useRef(0);
 
   function clearSilentAuthTimeout() {
     if (silentAuthTimeoutRef.current != null) {
@@ -91,38 +80,20 @@ export function AuthGuard({ children }: AuthGuardProps) {
               ? (tokenResponse as { expires_in: number }).expires_in
               : 3600,
           );
-          googleRetryRef.current = 0;
           useUiStore.getState().setAuthActivity("idle");
           setStatus("ok");
         })
         .catch(() => {
           // Userinfo fetch failed (often a transient network hiccup) → keep the token,
           // it is still valid for Drive; do not force a logout.
-          googleRetryRef.current = 0;
           clearSilentAuthTimeout();
           useUiStore.getState().setAuthActivity("idle");
           setStatus("ok");
         });
     },
-    onError: (err?: { error?: string }) => {
-      const code = err?.error ?? "";
-      // Real "session gone" → interactive login. Transient errors → backoff retries.
-      if (HARD_GOOGLE_ERRORS.has(code)) {
-        clearSilentAuthTimeout();
-        useUiStore.getState().setAuthActivity("idle");
-        clearAuth();
-        setStatus("unauthenticated");
-        return;
-      }
-      if (googleRetryRef.current < GOOGLE_MAX_RETRIES) {
-        const delay = GOOGLE_BACKOFF_MS[googleRetryRef.current] ?? 3200;
-        googleRetryRef.current += 1;
-        startSilentAuthTimeout();
-        window.setTimeout(() => silentLogin(), delay);
-        return;
-      }
-      giveUpSilent();
-    },
+    // The token is already unusable here. One silent attempt is enough while
+    // online; offline keeps the known user and retries when connectivity returns.
+    onError: () => giveUpSilent(),
   });
 
   useEffect(() => {
@@ -143,9 +114,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
         setAuth(result.accessToken, user!, expiresIn);
         setStatus("ok");
       } catch {
-        clearSilentAuthTimeout();
-        clearAuth();
-        setStatus("unauthenticated");
+        giveUpSilent();
       }
     }
 
@@ -163,7 +132,6 @@ export function AuthGuard({ children }: AuthGuardProps) {
       const attemptKey = `google:${user.email}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
       if (lastAttemptKeyRef.current === attemptKey) return;
       lastAttemptKeyRef.current = attemptKey;
-      googleRetryRef.current = 0;
       useUiStore.getState().setAuthActivity(navigator.onLine === false ? "offline" : "refreshing");
       setStatus("checking");
       startSilentAuthTimeout();
@@ -180,18 +148,19 @@ export function AuthGuard({ children }: AuthGuardProps) {
       setStatus("unauthenticated");
     }
     return () => clearSilentAuthTimeout();
-  }, [accessToken, accessTokenExpiry, clearAuth, instance, setAuth, silentLogin, user]);
+  }, [accessToken, accessTokenExpiry, clearAuth, instance, setAuth, silentAttemptNonce, silentLogin, user]);
 
-  // When the PWA comes back online or to the foreground, allow a fresh silent attempt
-  // (reset the dedupe key + retry counter so the main effect re-runs the silent login).
+  // When the PWA comes back online or to the foreground after an offline wait,
+  // explicitly re-run the single silent attempt.
   useEffect(() => {
     const retry = () => {
       const valid = !!accessToken && !!accessTokenExpiry && Date.now() < accessTokenExpiry;
-      if (user && !valid) {
+      const activity = useUiStore.getState().authActivity;
+      if (user && !valid && navigator.onLine !== false && activity !== "refreshing") {
         lastAttemptKeyRef.current = "";
-        googleRetryRef.current = 0;
-        // Nudge a re-render by touching status; the main effect will re-attempt.
-        setStatus((s) => (s === "unauthenticated" ? "checking" : s));
+        useUiStore.getState().setAuthActivity("refreshing");
+        setStatus("checking");
+        setSilentAttemptNonce((value) => value + 1);
       }
     };
     const onVisible = () => { if (document.visibilityState === "visible") retry(); };

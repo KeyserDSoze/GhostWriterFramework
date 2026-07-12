@@ -163,7 +163,7 @@ const it = {
     signingInGoogle: "Connessione a Google in corso…",
     signingInMicrosoft: "Connessione a Microsoft in corso…",
     checkingSession: "Sto ripristinando la tua sessione…",
-    checkingSessionHint: "Narrarium sta riprovando l'accesso in background e riconnettendo le tue impostazioni cloud.",
+    checkingSessionHint: "Narrarium esegue un solo controllo silenzioso della sessione prima di chiederti di accedere di nuovo.",
     consent: "Richiede accesso a Google Drive o OneDrive per salvare le tue impostazioni private.",
     missingMicrosoft: "Manca VITE_MICROSOFT_CLIENT_ID.",
   },

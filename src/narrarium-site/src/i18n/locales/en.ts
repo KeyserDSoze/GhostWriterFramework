@@ -163,7 +163,7 @@ const en = {
     signingInGoogle: "Connecting to Google…",
     signingInMicrosoft: "Connecting to Microsoft…",
     checkingSession: "Restoring your session…",
-    checkingSessionHint: "Narrarium is retrying the sign-in in the background and reconnecting your cloud settings.",
+    checkingSessionHint: "Narrarium is making one silent session check before asking you to sign in again.",
     consent: "Requires Google Drive or OneDrive access to store your private settings.",
     missingMicrosoft: "Missing VITE_MICROSOFT_CLIENT_ID.",
   },
