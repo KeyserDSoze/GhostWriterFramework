@@ -1,5 +1,35 @@
 [
   {
+    "version": "0.73.0",
+    "date": "2026-07-12",
+    "en": {
+      "title": "Generate drafts from one reader opinion",
+      "summary": "Draft generation can now use one selected simulated reader's opinion instead of requiring the complete panel summary.",
+      "changes": [
+        "Added Generate draft from this opinion inside every expanded reader-opinion card for chapter and paragraph evaluations.",
+        "Added a feedback-source mode that records whether an operation used the panel summary or one exact reader opinion, including reader identity, file path, content hash and stale state in the operation manifest.",
+        "Paragraph rewrites based on one reader now inject only that opinion, never the panel summary or other readers' feedback.",
+        "Chapter rewrites based on one reader use that reader's chapter opinion plus only that same reader's current paragraph-specific opinions when available.",
+        "Resume/retry keeps the original selected reader pinned and refuses to continue if that feedback source changed or disappeared.",
+        "Added explicit selected-reader labels, missing-opinion errors and stale-opinion warnings to the confirmation and preview workflow.",
+        "Extended Copilot and Fantasmino requests such as 'rewrite using only <reader>'s feedback' to resolve one unambiguous current opinion and open the same visual confirmation workflow."
+      ]
+    },
+    "it": {
+      "title": "Generazione bozze da un singolo parere lettore",
+      "summary": "La generazione delle bozze può ora usare il parere di un singolo lettore simulato selezionato, senza richiedere la sintesi completa del panel.",
+      "changes": [
+        "Aggiunta l'azione Genera bozza da questo parere dentro ogni card espansa dei pareri lettore per valutazioni di capitolo e paragrafo.",
+        "Aggiunta una modalità sorgente feedback che registra se l'operazione usa la sintesi panel o un singolo parere esatto, includendo identità lettore, path file, hash contenuto e stato stale nel manifest.",
+        "Le riscritture paragrafo basate su un lettore iniettano solo quel parere, mai la sintesi panel o i feedback degli altri lettori.",
+        "Le riscritture capitolo basate su un lettore usano il suo parere sul capitolo e soltanto gli eventuali suoi pareri correnti specifici dei paragrafi.",
+        "Resume e retry mantengono fissato il lettore selezionato in origine e rifiutano di proseguire se quella sorgente feedback cambia o scompare.",
+        "Aggiunte etichette esplicite del lettore selezionato, errori per parere mancante e warning per parere stale nel workflow di conferma e anteprima.",
+        "Estese le richieste Copilot e Fantasmino come 'riscrivi usando solo il feedback di <lettore>' per risolvere un solo parere corrente non ambiguo e aprire lo stesso workflow di conferma visuale."
+      ]
+    }
+  },
+  {
     "version": "0.72.0",
     "date": "2026-07-12",
     "en": {

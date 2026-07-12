@@ -160,7 +160,7 @@ export async function runAssistantPrompt(input: {
     "evaluate-with-readers": () => evaluateWithReadersFromPrompt({ ...promptInput, book, branch, token }),
     "summarize-reader-evaluations": () => summarizeReaderEvaluationsFromPrompt({ ...promptInput, book, branch, token }),
     "open-reader-evaluations": () => openReaderEvaluationsFromContext({ ...promptInput, book }),
-    "generate-draft-from-feedback": () => feedbackRewriteNavigation({ ...promptInput, book }, "generate"),
+    "generate-draft-from-feedback": () => feedbackRewriteNavigation({ ...promptInput, book, branch, token }, "generate"),
     "restore-previous-drafts": () => feedbackRewriteNavigation({ ...promptInput, book }, "restore"),
     "feedback-rewrite-status": () => feedbackRewriteNavigation({ ...promptInput, book }, "status"),
     "cancel-feedback-rewrite": () => cancelFeedbackRewrite({ ...promptInput, book }),
@@ -524,7 +524,7 @@ async function openReaderEvaluationsFromContext(input: PromptInput & { book: Boo
   return { id: crypto.randomUUID(), role: "assistant", text: "Opening reader evaluations.", action: { kind: "navigate", to, label: "Reader evaluations" } };
 }
 
-function feedbackRewriteNavigation(input: PromptInput & { book: BookEntry }, workflow: "generate" | "restore" | "status"): AssistantMessage {
+async function feedbackRewriteNavigation(input: PromptInput & { book: BookEntry; branch?: string; token?: string }, workflow: "generate" | "restore" | "status"): Promise<AssistantMessage> {
   const lower = input.prompt.toLowerCase();
   const structure = input.context.structure;
   const namedChapter = structure?.chapters
@@ -545,10 +545,48 @@ function feedbackRewriteNavigation(input: PromptInput & { book: BookEntry }, wor
     ? `/app/books/${input.book.id}/chapters/${chapter.slug}/paragraphs/${paragraph.number}/reader-evaluations`
     : `/app/books/${input.book.id}/chapters/${chapter.slug}/reader-evaluations`;
   const label = workflow === "generate" ? "Generate draft from feedback" : workflow === "restore" ? "Restore previous drafts" : "Feedback rewrite status";
+  if (workflow === "generate" && input.branch && input.token && /\b(?:using|use)\s+only\b|\busando\s+solo\b|\bsolo\s+(?:il\s+)?feedback\b/.test(lower)) {
+    const target = await feedbackTargetForResolvedContext(input, chapter, paragraph);
+    const sourceHash = await hashReaderSource(target.text);
+    const prefixes = readerEvaluationPrefixes(target);
+    const records = await Promise.all(input.context.structure!.readerEvaluationFiles
+      .filter((file) => prefixes.some((prefix) => file.path.startsWith(prefix)))
+      .map(async (file) => {
+        const raw = file.content ?? await loadFileContent(input.token!, input.book.owner, input.book.repo, file.path, input.branch!).catch(() => "");
+        return raw ? parseReaderEvaluation(file.path, raw, sourceHash) : null;
+      }));
+    const matching = records.filter((record): record is ReaderEvaluationRecord => {
+      if (!record || record.readerId === "summary" || record.status !== "completed" || record.sourceContentHash !== sourceHash) return false;
+      const expectedTargetId = target.type === "chapter" ? `chapter:${target.chapterId}` : `paragraph:${target.chapterId}:${target.paragraphId}`;
+      if (record.targetType !== target.type || record.targetId !== expectedTargetId) return false;
+      const slug = record.path.split("/").pop()?.replace(/\.md$/i, "").replace(/-/g, " ") ?? "";
+      return [record.readerName, record.readerId, slug].some((name) => name.length >= 3 && lower.includes(name.toLowerCase()));
+    });
+    const unique = [...new Map(matching.map((record) => [record.readerId, record])).values()];
+    if (unique.length === 1) {
+      const record = unique[0];
+      const params = new URLSearchParams({ workflow, feedbackMode: "reader-opinion", feedbackPath: record.path, readerId: record.readerId, readerName: record.readerName });
+      return { id: crypto.randomUUID(), role: "assistant", text: `${label} will use only ${record.readerName}'s current opinion and requires visual confirmation.`, action: { kind: "navigate", to: `${base}?${params.toString()}`, label } };
+    }
+    return { id: crypto.randomUUID(), role: "assistant", text: "I could not resolve one unambiguous current reader opinion. Choose the opinion in Reader Evaluations.", action: { kind: "navigate", to: base, label: "Reader evaluations" } };
+  }
   return { id: crypto.randomUUID(), role: "assistant", text: `${label} requires confirmation in Reader Evaluations.`, action: { kind: "navigate", to: `${base}?workflow=${workflow}`, label } };
 }
 
-function cancelFeedbackRewrite(input: PromptInput & { book: BookEntry }): AssistantMessage {
+async function feedbackTargetForResolvedContext(
+  input: PromptInput & { book: BookEntry; branch?: string; token?: string },
+  chapter: NonNullable<LoadedWriterContext["chapter"]>,
+  paragraph: NonNullable<LoadedWriterContext["paragraph"]> | null | undefined,
+): Promise<ReaderEvaluationTarget> {
+  if (paragraph) {
+    const file = await readFileWithSha(input.token!, input.book.owner, input.book.repo, input.branch!, paragraph.path);
+    return { type: "paragraph", bookId: input.book.id, chapterId: chapter.slug, paragraphId: slugFromPath(paragraph.path), title: paragraph.title, text: parseMarkdown(file.content).body.trim(), sourcePath: paragraph.path, sourceVersion: file.sha };
+  }
+  const files = await Promise.all(chapter.paragraphs.map((entry) => readFileWithSha(input.token!, input.book.owner, input.book.repo, input.branch!, entry.path).catch(() => null)));
+  return { type: "chapter", bookId: input.book.id, chapterId: chapter.slug, title: chapter.title, text: files.map((file, index) => file ? `## ${chapter.paragraphs[index].title}\n\n${parseMarkdown(file.content).body.trim()}` : "").filter(Boolean).join("\n\n"), sourcePath: `${chapter.path}/chapter.md`, sourceVersion: files.map((file) => file?.sha ?? "").join(":") };
+}
+
+async function cancelFeedbackRewrite(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
   if (useFeedbackRewriteWorkflowStore.getState().cancelActive()) return makeAssistantMessage("assistant", "Cancellation requested. Completed paragraph drafts are kept and remain available in the operation status.");
   if (useFeedbackRewriteWorkflowStore.getState().abortController) return makeAssistantMessage("assistant", "The confirmed repository save is already in progress and cannot be interrupted safely.");
   return feedbackRewriteNavigation(input, "status");

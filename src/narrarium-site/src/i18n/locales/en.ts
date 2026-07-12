@@ -1030,6 +1030,7 @@ const en = {
   },
   feedbackRewrite: {
     generate: "Generate Draft from Feedback",
+    generateFromOpinion: "Generate draft from this opinion",
     restore: "Restore Previous Drafts",
     status: "Feedback rewrite status",
     title: { generate: "Generate Draft from Feedback", restore: "Restore Previous Drafts", status: "Feedback rewrite status" },
@@ -1040,10 +1041,18 @@ const en = {
       chapter: "This operation will rewrite every paragraph in the chapter one at a time and replace all existing drafts. You can restore all modified drafts through Git.",
     },
     staleTitle: "Outdated feedback summary",
+    staleOpinionTitle: "Outdated reader opinion",
     staleSummary: "The source changed after this panel summary was created. The generated draft may apply feedback to an older version. Continue only if that is intentional.",
+    staleOpinion: "The source changed after {{reader}}'s opinion was created. The generated draft may apply feedback to an older version. Continue only if that is intentional.",
     confirmGenerate: "Confirm and generate",
     missingSummaryTitle: "Panel summary required",
     missingSummary: "Generate a current panel summary on Reader Evaluations before creating a draft from feedback.",
+    missingOpinionTitle: "Reader opinion unavailable",
+    missingOpinion: "The selected opinion from {{reader}} is missing, incomplete, or no longer belongs to this target.",
+    source: {
+      "panel-summary": { title: "Using the panel summary", description: "The panel recap and current supporting reader evaluations will guide this draft." },
+      "reader-opinion": { title: "Using {{reader}}'s opinion only", description: "Only this selected reader opinion, plus that reader's current paragraph-specific opinion when available, will guide the draft." },
+    },
     openEvaluations: "Open Reader Evaluations",
     unavailable: "Workflow unavailable",
     noOperation: "No feedback rewrite operation exists for this target.",
@@ -2100,7 +2109,7 @@ const en = {
       },
       "generate-draft-from-feedback": {
         name: "Generate Draft from Feedback",
-        description: "Opens the confirmed draft-generation workflow for reader feedback on the resolved chapter or paragraph.",
+        description: "Opens the confirmed draft-generation workflow for a panel summary or one explicitly named reader opinion on the resolved chapter or paragraph.",
         output: "Reader Evaluations workflow navigation",
       },
       "restore-previous-drafts": {

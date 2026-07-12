@@ -53,18 +53,35 @@ export function ReaderEvaluationsPage() {
     : `operations/rewrite-from-reader-feedback/chapters/${chapterId}/`;
   const hasRewriteOperation = Boolean(structure?.operationManifestFiles.some((file) => file.path.startsWith(operationPrefix)));
 
-  function openRewrite(mode: FeedbackRewriteMode) {
+  function openRewrite(mode: FeedbackRewriteMode, record?: Pick<ReaderEvaluationRecord, "path" | "readerId" | "readerName">) {
     if (!bookId || !chapterId || selection) return;
-    openFeedbackRewriteWorkflow({ mode, scope: rewriteScope, bookId, chapterSlug: chapterId, paragraphSlug: paragraphSlugValue });
+    openFeedbackRewriteWorkflow({
+      mode,
+      scope: rewriteScope,
+      bookId,
+      chapterSlug: chapterId,
+      paragraphSlug: paragraphSlugValue,
+      feedbackMode: record ? "reader-opinion" : "panel-summary",
+      feedbackPath: record?.path,
+      readerId: record?.readerId,
+      readerName: record?.readerName,
+    });
   }
 
   useEffect(() => {
-    const mode = new URLSearchParams(location.search).get("workflow");
+    const params = new URLSearchParams(location.search);
+    const mode = params.get("workflow");
     if (mode !== "generate" && mode !== "restore" && mode !== "status") return;
     if (!chapter || (paragraphNum && !paragraph)) return;
-    openRewrite(mode);
-    const params = new URLSearchParams(location.search);
+    const readerRecord = mode === "generate" && params.get("feedbackMode") === "reader-opinion" && params.get("feedbackPath") && params.get("readerId")
+      ? { path: params.get("feedbackPath")!, readerId: params.get("readerId")!, readerName: params.get("readerName") ?? params.get("readerId")! }
+      : undefined;
+    openRewrite(mode, readerRecord);
     params.delete("workflow");
+    params.delete("feedbackMode");
+    params.delete("feedbackPath");
+    params.delete("readerId");
+    params.delete("readerName");
     navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
   }, [location.search, bookId, chapterId, chapter?.slug, paragraphNum, paragraphSlugValue, selection]);
 
@@ -236,7 +253,7 @@ export function ReaderEvaluationsPage() {
       <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{t("readerEvaluations.readerOpinions")}</h2>{latestByReader.length > 0 && <Badge variant="outline">{t("readerEvaluations.completedReaders", { count: latestByReader.length })}</Badge>}</div>
       <div className="space-y-4">{readerHistory.length ? readerHistory.map((record) => {
         const isOpen = Boolean(openCards[record.path]);
-        return <article key={record.path} className="overflow-hidden rounded-2xl border bg-card shadow-sm"><button type="button" onClick={() => toggleCard(record.path)} className="flex w-full items-start justify-between gap-3 px-5 py-4 text-left"><div className="min-w-0"><p className="font-semibold">{record.readerName}</p><p className="text-xs text-muted-foreground">{new Date(record.createdAt).toLocaleString()}</p></div><div className="flex items-center gap-2">{record.stale && <Badge variant="destructive">{t("readerEvaluations.stale")}</Badge>}<Badge variant="outline">{record.score !== undefined ? `${record.score}/10` : record.status}</Badge><ChevronDown className={isOpen ? "h-4 w-4 shrink-0 rotate-180 transition-transform" : "h-4 w-4 shrink-0 transition-transform"} /></div></button>{isOpen && <div className="space-y-4 border-t px-5 py-4"><div className="flex flex-wrap items-center justify-end gap-2">{record.readerId !== "summary" && <Button size="sm" variant="outline" onClick={() => void rerun(record)} disabled={running}><RefreshCcw className="mr-1.5 h-4 w-4" />{t("readerEvaluations.rerun")}</Button>}<Button size="icon" variant="ghost" onClick={() => void removeEvaluation(record)} disabled={running}><Trash2 className="h-4 w-4 text-destructive" /></Button></div><div className="doc-prose max-w-none" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(record.body) }} /></div>}</article>;
+        return <article key={record.path} className="overflow-hidden rounded-2xl border bg-card shadow-sm"><button type="button" onClick={() => toggleCard(record.path)} className="flex w-full items-start justify-between gap-3 px-5 py-4 text-left"><div className="min-w-0"><p className="font-semibold">{record.readerName}</p><p className="text-xs text-muted-foreground">{new Date(record.createdAt).toLocaleString()}</p></div><div className="flex items-center gap-2">{record.stale && <Badge variant="destructive">{t("readerEvaluations.stale")}</Badge>}<Badge variant="outline">{record.score !== undefined ? `${record.score}/10` : record.status}</Badge><ChevronDown className={isOpen ? "h-4 w-4 shrink-0 rotate-180 transition-transform" : "h-4 w-4 shrink-0 transition-transform"} /></div></button>{isOpen && <div className="space-y-4 border-t px-5 py-4"><div className="flex flex-wrap items-center justify-end gap-2"><Button size="sm" onClick={() => openRewrite("generate", record)} disabled={Boolean(selection) || running || record.status !== "completed"}><Sparkles className="mr-1.5 h-4 w-4" />{t("feedbackRewrite.generateFromOpinion")}</Button>{record.readerId !== "summary" && <Button size="sm" variant="outline" onClick={() => void rerun(record)} disabled={running}><RefreshCcw className="mr-1.5 h-4 w-4" />{t("readerEvaluations.rerun")}</Button>}<Button size="icon" variant="ghost" onClick={() => void removeEvaluation(record)} disabled={running}><Trash2 className="h-4 w-4 text-destructive" /></Button></div><div className="doc-prose max-w-none" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(record.body) }} /></div>}</article>;
       }) : <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">{t("readerEvaluations.empty")}</div>}</div>
     </div>
   </div>;

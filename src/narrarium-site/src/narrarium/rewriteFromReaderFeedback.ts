@@ -30,6 +30,14 @@ import type { AppSettings, BookEntry } from "@/types/settings";
 export type RewriteOperationStatus = "preparing" | "rewriting" | "saving" | "completed" | "failed" | "cancelled" | "rollingBack" | "rolledBack" | "conflict";
 export type RewriteModifiedFileStatus = "pending" | "completed" | "failed" | "kept-current" | "restored" | "conflict";
 export type RewriteRollbackPolicy = "keep-current" | "force-restore" | "cancel";
+export type FeedbackSourceMode = "panel-summary" | "reader-opinion";
+
+export interface FeedbackSourceSelection {
+  feedbackMode?: FeedbackSourceMode;
+  feedbackPath?: string;
+  readerId?: string;
+  readerName?: string;
+}
 
 export interface RewriteOperationProgress {
   completed: number;
@@ -83,8 +91,13 @@ export interface RewriteOperationManifest {
   chapterSlug: string;
   paragraphSlug?: string;
   targetIds: string[];
+  feedbackMode: FeedbackSourceMode;
+  feedbackPath: string;
   feedbackSummaryPath: string;
+  feedbackReaderId?: string;
+  feedbackReaderName?: string;
   feedbackSourceHash: string;
+  feedbackFileHash?: string;
   staleFeedback: boolean;
   progress: RewriteOperationProgress;
   modifiedFiles: RewriteModifiedFile[];
@@ -106,10 +119,18 @@ export class MissingReaderFeedbackSummaryError extends Error {
   }
 }
 
+export class MissingReaderFeedbackOpinionError extends Error {
+  readonly code = "MISSING_READER_FEEDBACK_OPINION";
+  constructor(readonly path: string) {
+    super(`A completed reader opinion is required at ${path}.`);
+    this.name = "MissingReaderFeedbackOpinionError";
+  }
+}
+
 export class StaleReaderFeedbackConfirmationError extends Error {
   readonly code = "STALE_READER_FEEDBACK_CONFIRMATION_REQUIRED";
   constructor() {
-    super("The reader feedback summary is stale and requires explicit confirmation.");
+    super("The selected reader feedback is stale and requires explicit confirmation.");
     this.name = "StaleReaderFeedbackConfirmationError";
   }
 }
@@ -138,9 +159,14 @@ export interface ParagraphFeedbackProposal {
   feedbackApplied: string[];
   generation: LlmRunMetadata;
   staleFeedback: boolean;
+  feedbackMode: FeedbackSourceMode;
+  feedbackPath: string;
+  feedbackReaderId?: string;
+  feedbackReaderName?: string;
   feedbackSummaryPath: string;
   feedbackSummaryHash: string;
   feedbackSourceHash: string;
+  feedbackFileHash: string;
   finalSourcePath: string;
   finalSourceHash: string;
   beforeDraftContent: string | null;
@@ -153,6 +179,9 @@ export interface ParagraphFeedbackProposal {
 export interface ReaderFeedbackSummaryState {
   path: string;
   stale: boolean;
+  feedbackMode: FeedbackSourceMode;
+  readerId?: string;
+  readerName?: string;
 }
 
 const GENERATED_DRAFT_TOOL = {
@@ -228,6 +257,10 @@ export function parseRewriteOperationManifest(path: string, raw: string, fallbac
   const hasResultGitReference = Object.prototype.hasOwnProperty.call(parsed, "resultGitReference");
   const latestReference = typeof parsed.latestRemoteHeadSha === "string" ? parsed.latestRemoteHeadSha : "";
   const baseReference = typeof parsed.baseRemoteHeadSha === "string" ? parsed.baseRemoteHeadSha : latestReference;
+  const feedbackMode: FeedbackSourceMode = parsed.feedbackMode === "reader-opinion" ? "reader-opinion" : "panel-summary";
+  const feedbackPath = typeof parsed.feedbackPath === "string"
+    ? parsed.feedbackPath
+    : typeof parsed.feedbackSummaryPath === "string" ? parsed.feedbackSummaryPath : "";
   return {
     ...parsed,
     operation: "rewriteFromReaderFeedback",
@@ -247,6 +280,9 @@ export function parseRewriteOperationManifest(path: string, raw: string, fallbac
     updatedAt,
     baseRemoteHeadSha: baseReference,
     latestRemoteHeadSha: latestReference || baseReference,
+    feedbackMode,
+    feedbackPath,
+    feedbackSummaryPath: typeof parsed.feedbackSummaryPath === "string" ? parsed.feedbackSummaryPath : feedbackPath,
     modifiedFiles,
   } as RewriteOperationManifest;
 }
@@ -317,34 +353,66 @@ function paragraphReaderTarget(context: RewriteRepositoryContext, chapter: Chapt
   };
 }
 
-async function loadFeedback(context: RewriteRepositoryContext, target: ReaderEvaluationTarget): Promise<{
-  summary: ReaderEvaluationRecord;
-  summaryRaw: string;
-  summaryHash: string;
+interface LoadedFeedbackSource {
+  mode: FeedbackSourceMode;
+  primary: ReaderEvaluationRecord;
+  raw: string;
+  fileHash: string;
   sourceHash: string;
   evaluations: ReaderEvaluationRecord[];
-}> {
-  const sourceHash = await hashReaderSource(target.text);
-  const summaryPath = readerEvaluationSummaryPath(target);
-  const summaryFile = context.structure.readerEvaluationFiles.find((file) => file.path === summaryPath);
-  const summaryRaw = summaryFile?.content ?? await readOptional(context, summaryPath);
-  if (!summaryRaw) throw new MissingReaderFeedbackSummaryError(summaryPath);
-  const summary = parseReaderEvaluation(summaryPath, summaryRaw, sourceHash);
-  const expectedTargetId = target.type === "chapter"
+}
+
+function expectedReaderTargetId(target: ReaderEvaluationTarget): string {
+  return target.type === "chapter"
     ? `chapter:${target.chapterId}`
     : `${target.type}:${target.chapterId}:${target.paragraphId ?? "chapter"}`;
-  if (summary.status !== "completed" || summary.targetType !== target.type || summary.targetId !== expectedTargetId) {
-    throw new MissingReaderFeedbackSummaryError(summaryPath);
+}
+
+function normalizedFeedbackMode(selection?: FeedbackSourceSelection): FeedbackSourceMode {
+  return selection?.feedbackMode === "reader-opinion" ? "reader-opinion" : "panel-summary";
+}
+
+async function loadFeedbackSource(
+  context: RewriteRepositoryContext,
+  target: ReaderEvaluationTarget,
+  selection?: FeedbackSourceSelection,
+): Promise<LoadedFeedbackSource> {
+  const sourceHash = await hashReaderSource(target.text);
+  const mode = normalizedFeedbackMode(selection);
+  const path = mode === "reader-opinion" ? selection?.feedbackPath ?? "" : selection?.feedbackPath ?? readerEvaluationSummaryPath(target);
+  if (!path) throw new MissingReaderFeedbackOpinionError(path);
+  const [opinionPrefix] = readerEvaluationTargetPrefixes(target);
+  if (mode === "panel-summary" && path !== readerEvaluationSummaryPath(target)) throw new MissingReaderFeedbackSummaryError(path);
+  if (mode === "reader-opinion" && !path.startsWith(opinionPrefix)) throw new MissingReaderFeedbackOpinionError(path);
+  const file = context.structure.readerEvaluationFiles.find((entry) => entry.path === path);
+  const raw = file?.content ?? await readOptional(context, path);
+  if (!raw) {
+    if (mode === "reader-opinion") throw new MissingReaderFeedbackOpinionError(path);
+    throw new MissingReaderFeedbackSummaryError(path);
   }
-  summary.stale = !summary.sourceContentHash || summary.sourceContentHash !== sourceHash;
-  const evaluations = await loadCurrentEvaluations(context, target, sourceHash, summaryPath);
+  const primary = parseReaderEvaluation(path, raw, sourceHash);
+  const validTarget = primary.status === "completed" && primary.targetType === target.type && primary.targetId === expectedReaderTargetId(target);
+  const validReader = mode === "panel-summary"
+    ? primary.readerId === "summary"
+    : primary.readerId !== "summary" && Boolean(selection?.readerId) && primary.readerId === selection?.readerId;
+  if (!validTarget || !validReader) {
+    if (mode === "reader-opinion") throw new MissingReaderFeedbackOpinionError(path);
+    throw new MissingReaderFeedbackSummaryError(path);
+  }
+  primary.stale = !primary.sourceContentHash || primary.sourceContentHash !== sourceHash;
+  const evaluations = mode === "panel-summary" ? await loadCurrentEvaluations(context, target, sourceHash, path) : [];
   return {
-    summary,
-    summaryRaw,
-    summaryHash: await sha256Text(summaryRaw),
+    mode,
+    primary,
+    raw,
+    fileHash: await sha256Text(raw),
     sourceHash,
     evaluations,
   };
+}
+
+async function loadFeedback(context: RewriteRepositoryContext, target: ReaderEvaluationTarget): Promise<LoadedFeedbackSource> {
+  return loadFeedbackSource(context, target);
 }
 
 async function loadCurrentEvaluations(
@@ -363,6 +431,20 @@ async function loadCurrentEvaluations(
   return latestNonStaleCompletedReaderEvaluations(records
     .filter((record): record is ReaderEvaluationRecord => Boolean(record))
     .map((record) => ({ ...record, stale: !record.sourceContentHash || record.sourceContentHash !== sourceHash })));
+}
+
+async function loadCurrentReaderOpinion(
+  context: RewriteRepositoryContext,
+  target: ReaderEvaluationTarget,
+  readerId: string,
+): Promise<{ record: ReaderEvaluationRecord; fileHash: string } | null> {
+  const sourceHash = await hashReaderSource(target.text);
+  const records = await loadCurrentEvaluations(context, target, sourceHash);
+  const record = records.find((entry) => entry.readerId === readerId);
+  if (!record) return null;
+  const file = context.structure.readerEvaluationFiles.find((entry) => entry.path === record.path);
+  const raw = file?.content ?? await readOptional(context, record.path);
+  return raw ? { record, fileHash: await sha256Text(raw) } : null;
 }
 
 async function loadWritingContext(
@@ -410,8 +492,9 @@ async function generateParagraph(input: {
   paragraph: Paragraph;
   draftBody: string;
   finalBody: string;
-  chapterSummary: ReaderEvaluationRecord;
-  paragraphSummary?: ReaderEvaluationRecord;
+  feedbackMode: FeedbackSourceMode;
+  primaryFeedback: ReaderEvaluationRecord;
+  paragraphFeedback?: ReaderEvaluationRecord;
   evaluations: ReaderEvaluationRecord[];
   writingContext: string;
   signal?: AbortSignal;
@@ -427,8 +510,14 @@ async function generateParagraph(input: {
       role: "user",
       content: [
         input.writingContext,
-        `REQUIRED TARGET FEEDBACK RECAP:\n${input.chapterSummary.body}`,
-        input.paragraphSummary ? `PARAGRAPH FEEDBACK RECAP:\n${input.paragraphSummary.body}` : "",
+        input.feedbackMode === "panel-summary"
+          ? `REQUIRED TARGET FEEDBACK RECAP:\n${input.primaryFeedback.body}`
+          : `REQUIRED SELECTED READER OPINION (${input.primaryFeedback.readerName}):\n${input.primaryFeedback.body}`,
+        input.paragraphFeedback
+          ? input.feedbackMode === "panel-summary"
+            ? `PARAGRAPH FEEDBACK RECAP:\n${input.paragraphFeedback.body}`
+            : `PARAGRAPH-SPECIFIC OPINION FROM ${input.primaryFeedback.readerName}:\n${input.paragraphFeedback.body}`
+          : "",
         input.evaluations.length ? `CURRENT INDIVIDUAL READER EVALUATIONS:\n${input.evaluations.map((record) => `${record.readerName}:\n${record.body}`).join("\n\n")}` : "",
         `FINAL PARAGRAPH SOURCE (canon and continuity baseline):\n${input.finalBody}`,
         input.draftBody ? `CURRENT DRAFT TO REVISE:\n${input.draftBody}` : "No draft exists. Create one from the final source and feedback.",
@@ -452,42 +541,45 @@ function resolveTarget(structure: BookStructure, chapterSlug: string, paragraphS
 export async function inspectReaderFeedbackSummary(input: RewriteRepositoryContext & {
   chapterSlug: string;
   paragraphSlug?: string;
+  feedbackSource?: FeedbackSourceSelection;
 }): Promise<ReaderFeedbackSummaryState> {
   const { chapter, paragraph } = resolveTarget(input.structure, input.chapterSlug, input.paragraphSlug);
   if (paragraph) {
     const source = await loadParagraphSource(input, paragraph);
-    const feedback = await loadFeedback(input, paragraphReaderTarget(input, chapter, paragraph, source));
-    return { path: feedback.summary.path, stale: Boolean(feedback.summary.stale) };
+    const feedback = await loadFeedbackSource(input, paragraphReaderTarget(input, chapter, paragraph, source), input.feedbackSource);
+    return { path: feedback.primary.path, stale: Boolean(feedback.primary.stale), feedbackMode: feedback.mode, readerId: feedback.primary.readerId, readerName: feedback.primary.readerName };
   }
-  const feedback = await loadFeedback(input, await chapterReaderTarget(input, chapter));
-  return { path: feedback.summary.path, stale: Boolean(feedback.summary.stale) };
+  const feedback = await loadFeedbackSource(input, await chapterReaderTarget(input, chapter), input.feedbackSource);
+  return { path: feedback.primary.path, stale: Boolean(feedback.primary.stale), feedbackMode: feedback.mode, readerId: feedback.primary.readerId, readerName: feedback.primary.readerName };
 }
 
 export async function prepareParagraphFeedbackProposal(input: RewriteRepositoryContext & {
   chapterSlug: string;
   paragraphSlug: string;
+  feedbackSource?: FeedbackSourceSelection;
   signal?: AbortSignal;
 }): Promise<ParagraphFeedbackProposal> {
   await preflightRepositoryOperation(input);
   const { chapter, paragraph } = resolveTarget(input.structure, input.chapterSlug, input.paragraphSlug);
   const final = await loadParagraphSource(input, paragraph!);
   const target = paragraphReaderTarget(input, chapter, paragraph!, final);
-  const feedback = await loadFeedback(input, target);
+  const feedback = await loadFeedbackSource(input, target, input.feedbackSource);
   const draft = await loadCurrentDraft(input, chapter, paragraph!);
   const index = chapter.paragraphs.indexOf(paragraph!);
   const [previous, next] = await Promise.all([
     index > 0 ? loadParagraphSource(input, chapter.paragraphs[index - 1]).then((value) => value.body) : "",
     index + 1 < chapter.paragraphs.length ? loadParagraphSource(input, chapter.paragraphs[index + 1]).then((value) => value.body) : "",
   ]);
-  const writingContext = await loadWritingContext(input, chapter, { previous, next }, `${final.body}\n${feedback.summary.body}`);
+  const writingContext = await loadWritingContext(input, chapter, { previous, next }, `${final.body}\n${feedback.primary.body}`);
   const generated = await generateParagraph({
     context: input,
     chapter,
     paragraph: paragraph!,
     draftBody: splitMarkdown(draft.sourceContent ?? "").body,
     finalBody: final.body,
-    chapterSummary: feedback.summary,
-    paragraphSummary: undefined,
+    feedbackMode: feedback.mode,
+    primaryFeedback: feedback.primary,
+    paragraphFeedback: undefined,
     evaluations: feedback.evaluations,
     writingContext,
     signal: input.signal,
@@ -505,10 +597,15 @@ export async function prepareParagraphFeedbackProposal(input: RewriteRepositoryC
     generatedDraftContent,
     feedbackApplied: generated.output.feedbackApplied,
     generation: generated.metadata,
-    staleFeedback: Boolean(feedback.summary.stale),
-    feedbackSummaryPath: feedback.summary.path,
-    feedbackSummaryHash: feedback.summaryHash,
+    staleFeedback: Boolean(feedback.primary.stale),
+    feedbackMode: feedback.mode,
+    feedbackPath: feedback.primary.path,
+    feedbackReaderId: feedback.mode === "reader-opinion" ? feedback.primary.readerId : undefined,
+    feedbackReaderName: feedback.mode === "reader-opinion" ? feedback.primary.readerName : undefined,
+    feedbackSummaryPath: feedback.primary.path,
+    feedbackSummaryHash: feedback.fileHash,
     feedbackSourceHash: feedback.sourceHash,
+    feedbackFileHash: feedback.fileHash,
     finalSourcePath: paragraph!.path,
     finalSourceHash: final.hash,
     beforeDraftContent: draft.canonicalContent,
@@ -527,8 +624,12 @@ function newManifest(input: {
   chapterSlug: string;
   paragraphSlug?: string;
   targetIds: string[];
-  feedbackSummaryPath: string;
+  feedbackMode: FeedbackSourceMode;
+  feedbackPath: string;
+  feedbackReaderId?: string;
+  feedbackReaderName?: string;
   feedbackSourceHash: string;
+  feedbackFileHash: string;
   staleFeedback: boolean;
   modifiedFiles: RewriteModifiedFile[];
 }): RewriteOperationManifest {
@@ -553,8 +654,13 @@ function newManifest(input: {
     chapterSlug: input.chapterSlug,
     paragraphSlug: input.paragraphSlug,
     targetIds: input.targetIds,
-    feedbackSummaryPath: input.feedbackSummaryPath,
+    feedbackMode: input.feedbackMode,
+    feedbackPath: input.feedbackPath,
+    feedbackSummaryPath: input.feedbackPath,
+    feedbackReaderId: input.feedbackReaderId,
+    feedbackReaderName: input.feedbackReaderName,
     feedbackSourceHash: input.feedbackSourceHash,
+    feedbackFileHash: input.feedbackFileHash,
     staleFeedback: input.staleFeedback,
     progress: { completed: 0, total: input.modifiedFiles.length },
     modifiedFiles: input.modifiedFiles,
@@ -596,9 +702,18 @@ async function finalizeSuccessfulManifest(input: RewriteRepositoryContext & {
 
 export async function applyParagraphFeedbackProposal(input: RewriteRepositoryContext & {
   proposal: ParagraphFeedbackProposal;
+  feedbackSource?: FeedbackSourceSelection;
   confirmStaleFeedback?: boolean;
 }): Promise<RewriteOperationManifest> {
   const proposal = input.proposal;
+  if (input.feedbackSource) {
+    const mode = normalizedFeedbackMode(input.feedbackSource);
+    if (mode !== proposal.feedbackMode
+      || (input.feedbackSource.feedbackPath && input.feedbackSource.feedbackPath !== proposal.feedbackPath)
+      || (mode === "reader-opinion" && input.feedbackSource.readerId !== proposal.feedbackReaderId)) {
+      throw new RepositoryConflictError("The selected reader feedback changed after the proposal was generated.");
+    }
+  }
   if (proposal.staleFeedback && !input.confirmStaleFeedback) throw new StaleReaderFeedbackConfirmationError();
   resolveTarget(input.structure, proposal.chapterSlug, proposal.paragraphSlug);
   const preflight = await preflightRepositoryOperation(input);
@@ -624,8 +739,12 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
     chapterSlug: proposal.chapterSlug,
     paragraphSlug: proposal.paragraphSlug,
     targetIds: [`paragraph:${proposal.chapterSlug}:${proposal.paragraphSlug}`],
-    feedbackSummaryPath: proposal.feedbackSummaryPath,
+    feedbackMode: proposal.feedbackMode,
+    feedbackPath: proposal.feedbackPath,
+    feedbackReaderId: proposal.feedbackReaderId,
+    feedbackReaderName: proposal.feedbackReaderName,
     feedbackSourceHash: proposal.feedbackSourceHash,
+    feedbackFileHash: proposal.feedbackFileHash,
     staleFeedback: proposal.staleFeedback,
     modifiedFiles: [modifiedFile],
   });
@@ -639,7 +758,7 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
       { path: beforePath, content: proposal.beforeDraftContent ?? "---\ntype: rewriteSnapshot\nexists: false\n---\n", expectedCurrentHash: null },
       { path: proposal.draftPath, expectedCurrentHash: proposal.beforeDraftHash },
       { path: proposal.legacyDraftPath, expectedCurrentHash: proposal.legacyDraftHash },
-      { path: proposal.feedbackSummaryPath, expectedCurrentHash: proposal.feedbackSummaryHash },
+      { path: proposal.feedbackPath, expectedCurrentHash: proposal.feedbackFileHash },
       { path: proposal.finalSourcePath, expectedCurrentHash: proposal.finalSourceHash },
     ],
   });
@@ -662,6 +781,8 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
         { path: proposal.draftPath, content: proposal.generatedDraftContent, expectedCurrentHash: proposal.beforeDraftHash },
         { path: generatedPath, content: proposal.generatedDraftContent, expectedCurrentHash: null },
         { path: manifestPath, content: appliedManifestContent, expectedCurrentHash: await sha256Text(checkpointContent) },
+        { path: proposal.feedbackPath, expectedCurrentHash: proposal.feedbackFileHash },
+        { path: proposal.finalSourcePath, expectedCurrentHash: proposal.finalSourceHash },
       ],
     });
     resultCommitSha = saved.commitSha;
@@ -692,6 +813,7 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
 
 export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext & {
   chapterSlug: string;
+  feedbackSource?: FeedbackSourceSelection;
   confirmed: boolean;
   confirmStaleFeedback?: boolean;
   signal?: AbortSignal;
@@ -700,8 +822,8 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
   if (!input.confirmed) throw new Error("Explicit confirmation is required before rewriting a chapter.");
   const { chapter } = resolveTarget(input.structure, input.chapterSlug);
   const chapterTarget = await chapterReaderTarget(input, chapter);
-  const chapterFeedback = await loadFeedback(input, chapterTarget);
-  if (chapterFeedback.summary.stale && !input.confirmStaleFeedback) throw new StaleReaderFeedbackConfirmationError();
+  const chapterFeedback = await loadFeedbackSource(input, chapterTarget, input.feedbackSource);
+  if (chapterFeedback.primary.stale && !input.confirmStaleFeedback) throw new StaleReaderFeedbackConfirmationError();
   const preflight = await preflightRepositoryOperation(input);
   const operationId = crypto.randomUUID();
   const manifestPath = rewriteOperationManifestPath("chapter", chapter.slug, operationId);
@@ -727,15 +849,19 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
     head: preflight.remoteHeadSha,
     chapterSlug: chapter.slug,
     targetIds: [`chapter:${chapter.slug}`, ...chapter.paragraphs.map((paragraph) => `paragraph:${chapter.slug}:${paragraphSlug(paragraph)}`)],
-    feedbackSummaryPath: chapterFeedback.summary.path,
+    feedbackMode: chapterFeedback.mode,
+    feedbackPath: chapterFeedback.primary.path,
+    feedbackReaderId: chapterFeedback.mode === "reader-opinion" ? chapterFeedback.primary.readerId : undefined,
+    feedbackReaderName: chapterFeedback.mode === "reader-opinion" ? chapterFeedback.primary.readerName : undefined,
     feedbackSourceHash: chapterFeedback.sourceHash,
-    staleFeedback: Boolean(chapterFeedback.summary.stale),
+    feedbackFileHash: chapterFeedback.fileHash,
+    staleFeedback: Boolean(chapterFeedback.primary.stale),
     modifiedFiles,
   });
   let manifestContent = renderManifest(manifest);
   const checkpointMutations: RepositoryTextMutation[] = [
     { path: manifestPath, content: manifestContent, expectedCurrentHash: null },
-    { path: chapterFeedback.summary.path, expectedCurrentHash: chapterFeedback.summaryHash },
+    { path: chapterFeedback.primary.path, expectedCurrentHash: chapterFeedback.fileHash },
   ];
   for (let index = 0; index < modifiedFiles.length; index++) {
     checkpointMutations.push({
@@ -763,26 +889,33 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
       const paragraphTarget = paragraphReaderTarget(input, chapter, paragraph, final);
       let paragraphFeedback: Awaited<ReturnType<typeof loadFeedback>> | null = null;
       let paragraphEvaluations: ReaderEvaluationRecord[] = [];
-      try { paragraphFeedback = await loadFeedback(input, paragraphTarget); } catch (error) {
-        if (!(error instanceof MissingReaderFeedbackSummaryError)) throw error;
-        paragraphEvaluations = await loadCurrentEvaluations(input, paragraphTarget, await hashReaderSource(paragraphTarget.text));
-      }
-      if (paragraphFeedback?.summary.stale) {
-        paragraphEvaluations = paragraphFeedback.evaluations;
-        paragraphFeedback = null;
+      let selectedParagraphOpinion: Awaited<ReturnType<typeof loadCurrentReaderOpinion>> = null;
+      if (chapterFeedback.mode === "reader-opinion") {
+        selectedParagraphOpinion = await loadCurrentReaderOpinion(input, paragraphTarget, chapterFeedback.primary.readerId);
+      } else {
+        try { paragraphFeedback = await loadFeedback(input, paragraphTarget); } catch (error) {
+          if (!(error instanceof MissingReaderFeedbackSummaryError)) throw error;
+          paragraphEvaluations = await loadCurrentEvaluations(input, paragraphTarget, await hashReaderSource(paragraphTarget.text));
+        }
+        if (paragraphFeedback?.primary.stale) {
+          paragraphEvaluations = paragraphFeedback.evaluations;
+          paragraphFeedback = null;
+        }
       }
       const previous = index > 0 ? (rewritten[index - 1] ?? (await loadParagraphSource(input, chapter.paragraphs[index - 1])).body) : "";
       const next = index + 1 < chapter.paragraphs.length ? (await loadParagraphSource(input, chapter.paragraphs[index + 1])).body : "";
-      const writingContext = await loadWritingContext(input, chapter, { previous, next, alreadyRewritten: rewritten }, `${chapterFeedback.summary.body}\n${paragraphFeedback?.summary.body ?? ""}\n${final.body}`);
+      const paragraphOpinion = selectedParagraphOpinion?.record ?? paragraphFeedback?.primary;
+      const writingContext = await loadWritingContext(input, chapter, { previous, next, alreadyRewritten: rewritten }, `${chapterFeedback.primary.body}\n${paragraphOpinion?.body ?? ""}\n${final.body}`);
       const generated = await generateParagraph({
         context: input,
         chapter,
         paragraph,
         draftBody: splitMarkdown(drafts[index].sourceContent ?? "").body,
         finalBody: final.body,
-        chapterSummary: chapterFeedback.summary,
-        paragraphSummary: paragraphFeedback?.summary,
-        evaluations: paragraphFeedback?.evaluations ?? (paragraphEvaluations.length ? paragraphEvaluations : chapterFeedback.evaluations),
+        feedbackMode: chapterFeedback.mode,
+        primaryFeedback: chapterFeedback.primary,
+        paragraphFeedback: paragraphOpinion,
+        evaluations: chapterFeedback.mode === "reader-opinion" ? [] : paragraphFeedback?.evaluations ?? (paragraphEvaluations.length ? paragraphEvaluations : chapterFeedback.evaluations),
         writingContext,
         signal: input.signal,
       });
@@ -808,6 +941,8 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
           { path: manifest.modifiedFiles[index].generatedSnapshotPath, content: generatedContent, expectedCurrentHash: null },
           { path: manifestPath, content: nextManifestContent, expectedCurrentHash: await sha256Text(manifestContent) },
           { path: paragraph.path, expectedCurrentHash: final.hash },
+          { path: chapterFeedback.primary.path, expectedCurrentHash: chapterFeedback.fileHash },
+          ...(selectedParagraphOpinion ? [{ path: selectedParagraphOpinion.record.path, expectedCurrentHash: selectedParagraphOpinion.fileHash }] : []),
         ],
       });
       expectedHead = saved.commitSha;
@@ -849,6 +984,7 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
 
 export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryContext & {
   manifestPath: string;
+  feedbackSource?: FeedbackSourceSelection;
   confirmed: boolean;
   confirmStaleFeedback?: boolean;
   signal?: AbortSignal;
@@ -861,11 +997,30 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
   const { chapter } = resolveTarget(input.structure, manifest.chapterSlug);
   if (!manifest.modifiedFiles.some((file) => file.status === "pending" || file.status === "failed" || file.status === "conflict")) return manifest;
 
-  const chapterFeedback = await loadFeedback(input, await chapterReaderTarget(input, chapter));
-  if (chapterFeedback.summary.path !== manifest.feedbackSummaryPath || chapterFeedback.sourceHash !== manifest.feedbackSourceHash) {
+  const manifestSelection: FeedbackSourceSelection = {
+    feedbackMode: manifest.feedbackMode,
+    feedbackPath: manifest.feedbackPath,
+    readerId: manifest.feedbackReaderId,
+    readerName: manifest.feedbackReaderName,
+  };
+  if (input.feedbackSource) {
+    const requestedMode = normalizedFeedbackMode(input.feedbackSource);
+    if (requestedMode !== manifest.feedbackMode
+      || (input.feedbackSource.feedbackPath && input.feedbackSource.feedbackPath !== manifest.feedbackPath)
+      || (requestedMode === "reader-opinion" && input.feedbackSource.readerId !== manifest.feedbackReaderId)) {
+      throw new RepositoryConflictError("The selected reader feedback does not match the original operation.");
+    }
+  }
+  const chapterFeedback = await loadFeedbackSource(input, await chapterReaderTarget(input, chapter), manifestSelection);
+  const feedbackHashChanged = chapterFeedback.sourceHash !== manifest.feedbackSourceHash
+    || Boolean(manifest.feedbackFileHash && chapterFeedback.fileHash !== manifest.feedbackFileHash);
+  if (chapterFeedback.primary.path !== manifest.feedbackPath
+    || chapterFeedback.primary.readerId !== (manifest.feedbackMode === "reader-opinion" ? manifest.feedbackReaderId : "summary")
+    || (manifest.feedbackReaderName && chapterFeedback.primary.readerName !== manifest.feedbackReaderName)
+    || feedbackHashChanged) {
     throw new RepositoryConflictError("The reader feedback or chapter source changed after this operation started.");
   }
-  if (chapterFeedback.summary.stale && !input.confirmStaleFeedback) throw new StaleReaderFeedbackConfirmationError();
+  if (chapterFeedback.primary.stale && !input.confirmStaleFeedback) throw new StaleReaderFeedbackConfirmationError();
   const preflight = await preflightRepositoryOperation(input);
   let expectedHead = preflight.remoteHeadSha;
   let manifestContent = manifestRaw;
@@ -902,26 +1057,33 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
       const paragraphTarget = paragraphReaderTarget(input, chapter, paragraph, final);
       let paragraphFeedback: Awaited<ReturnType<typeof loadFeedback>> | null = null;
       let paragraphEvaluations: ReaderEvaluationRecord[] = [];
-      try { paragraphFeedback = await loadFeedback(input, paragraphTarget); } catch (error) {
-        if (!(error instanceof MissingReaderFeedbackSummaryError)) throw error;
-        paragraphEvaluations = await loadCurrentEvaluations(input, paragraphTarget, await hashReaderSource(paragraphTarget.text));
-      }
-      if (paragraphFeedback?.summary.stale) {
-        paragraphEvaluations = paragraphFeedback.evaluations;
-        paragraphFeedback = null;
+      let selectedParagraphOpinion: Awaited<ReturnType<typeof loadCurrentReaderOpinion>> = null;
+      if (chapterFeedback.mode === "reader-opinion") {
+        selectedParagraphOpinion = await loadCurrentReaderOpinion(input, paragraphTarget, chapterFeedback.primary.readerId);
+      } else {
+        try { paragraphFeedback = await loadFeedback(input, paragraphTarget); } catch (error) {
+          if (!(error instanceof MissingReaderFeedbackSummaryError)) throw error;
+          paragraphEvaluations = await loadCurrentEvaluations(input, paragraphTarget, await hashReaderSource(paragraphTarget.text));
+        }
+        if (paragraphFeedback?.primary.stale) {
+          paragraphEvaluations = paragraphFeedback.evaluations;
+          paragraphFeedback = null;
+        }
       }
       const previous = index > 0 ? (rewritten[index - 1] ?? (await loadParagraphSource(input, chapter.paragraphs[index - 1])).body) : "";
       const next = index + 1 < chapter.paragraphs.length ? (await loadParagraphSource(input, chapter.paragraphs[index + 1])).body : "";
-      const writingContext = await loadWritingContext(input, chapter, { previous, next, alreadyRewritten: rewritten.filter(Boolean) }, `${chapterFeedback.summary.body}\n${paragraphFeedback?.summary.body ?? ""}\n${final.body}`);
+      const paragraphOpinion = selectedParagraphOpinion?.record ?? paragraphFeedback?.primary;
+      const writingContext = await loadWritingContext(input, chapter, { previous, next, alreadyRewritten: rewritten.filter(Boolean) }, `${chapterFeedback.primary.body}\n${paragraphOpinion?.body ?? ""}\n${final.body}`);
       const generated = await generateParagraph({
         context: input,
         chapter,
         paragraph,
         draftBody: splitMarkdown(draft.sourceContent ?? "").body,
         finalBody: final.body,
-        chapterSummary: chapterFeedback.summary,
-        paragraphSummary: paragraphFeedback?.summary,
-        evaluations: paragraphFeedback?.evaluations ?? (paragraphEvaluations.length ? paragraphEvaluations : chapterFeedback.evaluations),
+        feedbackMode: chapterFeedback.mode,
+        primaryFeedback: chapterFeedback.primary,
+        paragraphFeedback: paragraphOpinion,
+        evaluations: chapterFeedback.mode === "reader-opinion" ? [] : paragraphFeedback?.evaluations ?? (paragraphEvaluations.length ? paragraphEvaluations : chapterFeedback.evaluations),
         writingContext,
         signal: input.signal,
       });
@@ -947,6 +1109,8 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
           { path: file.generatedSnapshotPath, content: generatedContent, expectedCurrentHash: existingGeneratedSnapshotHash },
           { path: input.manifestPath, content: nextContent, expectedCurrentHash: await sha256Text(manifestContent) },
           { path: paragraph.path, expectedCurrentHash: final.hash },
+          { path: chapterFeedback.primary.path, expectedCurrentHash: chapterFeedback.fileHash },
+          ...(selectedParagraphOpinion ? [{ path: selectedParagraphOpinion.record.path, expectedCurrentHash: selectedParagraphOpinion.fileHash }] : []),
         ],
       });
       expectedHead = saved.commitSha;

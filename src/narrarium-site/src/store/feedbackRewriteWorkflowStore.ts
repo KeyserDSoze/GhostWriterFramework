@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ParagraphFeedbackProposal, RewriteConflict, RewriteOperationManifest, RewriteOperationProgress, RewriteRollbackPolicy } from "@/narrarium/rewriteFromReaderFeedback";
+import type { FeedbackSourceMode, ParagraphFeedbackProposal, RewriteConflict, RewriteOperationManifest, RewriteOperationProgress, RewriteRollbackPolicy } from "@/narrarium/rewriteFromReaderFeedback";
 
 export type FeedbackRewriteMode = "generate" | "restore" | "status";
 export type FeedbackRewriteScope = "chapter" | "paragraph";
@@ -25,6 +25,10 @@ export interface FeedbackRewriteIntent {
   bookId: string;
   chapterSlug: string;
   paragraphSlug?: string;
+  feedbackMode?: FeedbackSourceMode;
+  feedbackPath?: string;
+  readerId?: string;
+  readerName?: string;
 }
 
 export interface RollbackConflictPreview extends RewriteConflict {

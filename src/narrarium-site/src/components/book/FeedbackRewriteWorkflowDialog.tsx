@@ -14,6 +14,7 @@ import {
   applyParagraphFeedbackProposal,
   inspectReaderFeedbackSummary,
   loadLatestRewriteOperation,
+  MissingReaderFeedbackOpinionError,
   MissingReaderFeedbackSummaryError,
   prepareParagraphFeedbackProposal,
   restorePreviousDrafts,
@@ -22,10 +23,11 @@ import {
   type RewriteOperationManifest,
   type RewriteRepositoryContext,
   type RewriteRollbackPolicy,
+  type FeedbackSourceSelection,
 } from "@/narrarium/rewriteFromReaderFeedback";
 import { rewriteOperationManifestPath } from "@/narrarium/rewriteOperationPaths";
 import { useSettingsStore } from "@/store/settingsStore";
-import { useFeedbackRewriteWorkflowStore } from "@/store/feedbackRewriteWorkflowStore";
+import { useFeedbackRewriteWorkflowStore, type FeedbackRewriteIntent } from "@/store/feedbackRewriteWorkflowStore";
 import { resolveBookToken } from "@/types/settings";
 
 function manifestPath(manifest: RewriteOperationManifest): string {
@@ -66,12 +68,12 @@ export function FeedbackRewriteWorkflowDialog() {
             phase: intent.mode === "restore" ? "rollback-confirmation" : resultPhase(latest),
           });
           return;
-        }
-        const summary = await inspectReaderFeedbackSummary({ ...context, chapterSlug: intent.chapterSlug, paragraphSlug: intent.paragraphSlug });
+       }
+        const summary = await inspectReaderFeedbackSummary({ ...context, chapterSlug: intent.chapterSlug, paragraphSlug: intent.paragraphSlug, feedbackSource: sourceFromIntent(intent) });
         if (active) state.patch({ staleFeedback: summary.stale, phase: "mandatory-warning" });
       } catch (error) {
         if (!active) return;
-        if (error instanceof MissingReaderFeedbackSummaryError) state.patch({ missingSummary: true, phase: "configure" });
+        if (error instanceof MissingReaderFeedbackSummaryError || error instanceof MissingReaderFeedbackOpinionError) state.patch({ missingSummary: true, phase: "configure" });
         else state.patch({ error: errorMessage(error), phase: "failed" });
       }
     })();
@@ -80,6 +82,9 @@ export function FeedbackRewriteWorkflowDialog() {
 
   if (!state.intent) return null;
   const intent = state.intent;
+  const feedbackSource = sourceFromIntent(intent);
+  const displayedMode = state.manifest?.feedbackMode ?? feedbackSource.feedbackMode ?? "panel-summary";
+  const displayedReaderName = state.manifest?.feedbackReaderName ?? feedbackSource.readerName;
   const chapter = structure?.chapters.find((entry) => entry.slug === intent.chapterSlug);
   const paragraph = chapter?.paragraphs.find((entry) => slugOf(entry.path) === intent.paragraphSlug);
   const evaluationsHref = paragraph
@@ -97,12 +102,13 @@ export function FeedbackRewriteWorkflowDialog() {
     state.patch({ error: null, phase: intent.scope === "paragraph" ? "preparing" : "chapter-progress", progress: intent.scope === "chapter" ? { completed: 0, total: chapter?.paragraphs.length ?? 0 } : null });
     try {
       if (intent.scope === "paragraph" && intent.paragraphSlug) {
-        const proposal = await prepareParagraphFeedbackProposal({ ...context, chapterSlug: intent.chapterSlug, paragraphSlug: intent.paragraphSlug, signal: controller.signal });
+        const proposal = await prepareParagraphFeedbackProposal({ ...context, chapterSlug: intent.chapterSlug, paragraphSlug: intent.paragraphSlug, feedbackSource, signal: controller.signal });
         state.patch({ proposal, staleFeedback: proposal.staleFeedback, phase: "paragraph-preview" });
       } else {
         const manifest = await runChapterFeedbackRewrite({
           ...context,
           chapterSlug: intent.chapterSlug,
+          feedbackSource,
           confirmed: true,
           confirmStaleFeedback: state.staleFeedback,
           signal: controller.signal,
@@ -124,7 +130,7 @@ export function FeedbackRewriteWorkflowDialog() {
     const controller = new AbortController();
     setController(controller);
     try {
-      const manifest = await applyParagraphFeedbackProposal({ ...context, proposal: state.proposal, confirmStaleFeedback: state.staleFeedback });
+      const manifest = await applyParagraphFeedbackProposal({ ...context, proposal: state.proposal, feedbackSource, confirmStaleFeedback: state.staleFeedback });
       state.patch({ manifest, manifestPath: manifestPath(manifest), progress: manifest.progress, phase: resultPhase(manifest) });
       await reload();
     } catch (error) {
@@ -141,8 +147,9 @@ export function FeedbackRewriteWorkflowDialog() {
     state.patch({ phase: "chapter-progress", error: null });
     try {
       const manifest = await resumeChapterFeedbackRewrite({
-        ...context,
-        manifestPath: state.manifestPath,
+          ...context,
+          manifestPath: state.manifestPath,
+          feedbackSource: state.manifest ? undefined : feedbackSource,
         confirmed: true,
         confirmStaleFeedback: state.staleFeedback || state.manifest?.staleFeedback,
         signal: controller.signal,
@@ -216,14 +223,16 @@ export function FeedbackRewriteWorkflowDialog() {
           <DialogDescription>{chapter?.title}{paragraph ? ` / ${paragraph.title}` : ""}</DialogDescription>
         </DialogHeader>
 
+        {intent.mode === "generate" && <Alert><AlertTitle>{t(`feedbackRewrite.source.${displayedMode}.title`, { reader: displayedReaderName })}</AlertTitle><AlertDescription>{t(`feedbackRewrite.source.${displayedMode}.description`, { reader: displayedReaderName })}</AlertDescription></Alert>}
+
         {(state.phase === "loading" || state.phase === "preparing" || state.phase === "generating" || state.phase === "rolling-back") && <BusyState label={t(`feedbackRewrite.phase.${state.phase}`)} cancellable={state.phase === "preparing"} />}
 
         {state.phase === "configure" && (
           <Alert variant={state.missingSummary ? "destructive" : "default"}>
             <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>{state.missingSummary ? t("feedbackRewrite.missingSummaryTitle") : t("feedbackRewrite.unavailable")}</AlertTitle>
+            <AlertTitle>{state.missingSummary ? t(displayedMode === "reader-opinion" ? "feedbackRewrite.missingOpinionTitle" : "feedbackRewrite.missingSummaryTitle") : t("feedbackRewrite.unavailable")}</AlertTitle>
             <AlertDescription className="mt-2 space-y-3">
-              <p>{state.missingSummary ? t("feedbackRewrite.missingSummary") : state.error}</p>
+              <p>{state.missingSummary ? t(displayedMode === "reader-opinion" ? "feedbackRewrite.missingOpinion" : "feedbackRewrite.missingSummary", { reader: displayedReaderName }) : state.error}</p>
               {state.missingSummary && <Button variant="outline" onClick={() => { state.closeWorkflow(); navigate(evaluationsHref); }}>{t("feedbackRewrite.openEvaluations")}</Button>}
             </AlertDescription>
           </Alert>
@@ -232,14 +241,14 @@ export function FeedbackRewriteWorkflowDialog() {
         {state.phase === "mandatory-warning" && (
           <div className="space-y-4">
             <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>{t("feedbackRewrite.warningTitle")}</AlertTitle><AlertDescription>{t(`feedbackRewrite.warning.${intent.scope}`)}</AlertDescription></Alert>
-            {state.staleFeedback && <Alert><FileClock className="h-4 w-4" /><AlertTitle>{t("feedbackRewrite.staleTitle")}</AlertTitle><AlertDescription>{t("feedbackRewrite.staleSummary")}</AlertDescription></Alert>}
+            {state.staleFeedback && <Alert><FileClock className="h-4 w-4" /><AlertTitle>{t(displayedMode === "reader-opinion" ? "feedbackRewrite.staleOpinionTitle" : "feedbackRewrite.staleTitle")}</AlertTitle><AlertDescription>{t(displayedMode === "reader-opinion" ? "feedbackRewrite.staleOpinion" : "feedbackRewrite.staleSummary", { reader: displayedReaderName })}</AlertDescription></Alert>}
             <DialogFooter><Button variant="outline" onClick={state.closeWorkflow}>{t("common.cancel")}</Button><Button onClick={() => void startGeneration()}><Sparkles className="mr-2 h-4 w-4" />{t("feedbackRewrite.confirmGenerate")}</Button></DialogFooter>
           </div>
         )}
 
         {state.phase === "paragraph-preview" && state.proposal && (
           <div className="space-y-4">
-            {state.proposal.staleFeedback && <Alert><FileClock className="h-4 w-4" /><AlertDescription>{t("feedbackRewrite.staleSummary")}</AlertDescription></Alert>}
+            {state.proposal.staleFeedback && <Alert><FileClock className="h-4 w-4" /><AlertDescription>{t(state.proposal.feedbackMode === "reader-opinion" ? "feedbackRewrite.staleOpinion" : "feedbackRewrite.staleSummary", { reader: state.proposal.feedbackReaderName })}</AlertDescription></Alert>}
             <div><h3 className="mb-2 text-sm font-semibold">{t("feedbackRewrite.preview")}</h3><FileDiff previous={state.proposal.currentDraftContent ?? ""} next={state.proposal.generatedDraftContent} className="max-h-[45vh]" /></div>
             <div><h3 className="mb-2 text-sm font-semibold">{t("feedbackRewrite.feedbackApplied")}</h3>{state.proposal.feedbackApplied.length ? <ul className="list-disc space-y-1 pl-5 text-sm">{state.proposal.feedbackApplied.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="text-sm text-muted-foreground">{t("feedbackRewrite.noFeedbackApplied")}</p>}</div>
             <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>{t("feedbackRewrite.replaceWarning")}</AlertDescription></Alert>
@@ -321,4 +330,13 @@ function slugOf(path: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function sourceFromIntent(intent: FeedbackRewriteIntent): FeedbackSourceSelection {
+  return {
+    feedbackMode: intent.feedbackMode ?? "panel-summary",
+    feedbackPath: intent.feedbackPath,
+    readerId: intent.readerId,
+    readerName: intent.readerName,
+  };
 }

@@ -1030,6 +1030,7 @@ const it = {
   },
   feedbackRewrite: {
     generate: "Genera bozza dai feedback",
+    generateFromOpinion: "Genera bozza da questo parere",
     restore: "Ripristina bozze precedenti",
     status: "Stato riscrittura dai feedback",
     title: { generate: "Genera bozza dai feedback", restore: "Ripristina bozze precedenti", status: "Stato riscrittura dai feedback" },
@@ -1040,10 +1041,18 @@ const it = {
       chapter: "Questa operazione riscriverà, uno alla volta, tutti i paragrafi del capitolo e sostituirà tutte le bozze esistenti. Potrai ripristinare tutte le bozze modificate tramite Git.",
     },
     staleTitle: "Sintesi dei feedback non aggiornata",
+    staleOpinionTitle: "Parere del lettore non aggiornato",
     staleSummary: "Il testo sorgente è cambiato dopo la creazione di questa sintesi del panel. La bozza generata potrebbe applicare feedback riferiti a una versione precedente. Continua solo se è intenzionale.",
+    staleOpinion: "Il testo sorgente è cambiato dopo la creazione del parere di {{reader}}. La bozza generata potrebbe applicare feedback riferiti a una versione precedente. Continua solo se è intenzionale.",
     confirmGenerate: "Conferma e genera",
     missingSummaryTitle: "È richiesta la sintesi del panel",
     missingSummary: "Genera una sintesi aggiornata del panel nelle Valutazioni dei lettori prima di creare una bozza dai feedback.",
+    missingOpinionTitle: "Parere del lettore non disponibile",
+    missingOpinion: "Il parere selezionato di {{reader}} manca, non è completo o non appartiene più a questo contenuto.",
+    source: {
+      "panel-summary": { title: "Uso della sintesi del panel", description: "La sintesi del panel e le valutazioni correnti di supporto guideranno questa bozza." },
+      "reader-opinion": { title: "Uso del solo parere di {{reader}}", description: "Solo il parere selezionato e, quando disponibile, il parere corrente dello stesso lettore sul singolo paragrafo guideranno la bozza." },
+    },
     openEvaluations: "Apri Valutazioni dei lettori",
     unavailable: "Flusso non disponibile",
     noOperation: "Non esiste alcuna operazione di riscrittura dai feedback per questo contenuto.",
@@ -2285,7 +2294,7 @@ const it = {
       },
       "generate-draft-from-feedback": {
         name: "Genera bozza dai feedback",
-        description: "Apre il flusso con conferma per generare una bozza dai feedback dei lettori sul capitolo o paragrafo individuato.",
+        description: "Apre il flusso con conferma per generare una bozza dalla sintesi del panel o dal parere di un solo lettore nominato sul capitolo o paragrafo individuato.",
         output: "Navigazione al flusso nelle Valutazioni dei lettori",
       },
       "restore-previous-drafts": {
