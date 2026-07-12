@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.71.1",
+    "date": "2026-07-11",
+    "en": {
+      "title": "Collapsible reader evaluations with instant score overview",
+      "summary": "Reader evaluations now open as compact collapsed cards, show the average score immediately, and expose the panel summary as a dedicated expandable block at the top.",
+      "changes": [
+        "Collapsed every reader-evaluation card by default so the history is readable at a glance and each entry expands only when you click its header.",
+        "Added the average score of the latest reader evaluations immediately at the top, without waiting for the panel summary to be generated.",
+        "Moved the panel summary into a dedicated top accordion that can be opened, generated, regenerated, or deleted independently from the individual reader cards.",
+        "Prevented duplicate panel-summary entries when regenerating the summary."
+      ]
+    },
+    "it": {
+      "title": "Valutazioni lettori collassabili con media immediata",
+      "summary": "Le valutazioni lettori ora si aprono come card compatte chiuse, mostrano subito la media dei voti e hanno la sintesi del panel come blocco espandibile dedicato in testa.",
+      "changes": [
+        "Rese tutte le card delle valutazioni lettori chiuse di default, così lo storico resta leggibile a colpo d'occhio e ogni entry si espande solo cliccando il suo header.",
+        "Aggiunta subito in alto la media dei voti delle ultime valutazioni lettori, senza dover prima generare la sintesi del panel.",
+        "Spostata la sintesi del panel in un blocco dedicato in testa, apribile, generabile, rigenerabile o cancellabile indipendentemente dalle singole card lettore.",
+        "Evitata la duplicazione delle entry di sintesi panel durante la rigenerazione."
+      ]
+    }
+  },
+  {
     "version": "0.71.0",
     "date": "2026-07-11",
     "en": {

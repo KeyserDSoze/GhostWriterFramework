@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, CheckCircle2, Loader2, Play, RefreshCcw, Sparkles, Square, Trash2, Users } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown, Loader2, Play, RefreshCcw, Sparkles, Square, Trash2, Users } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,6 +41,7 @@ export function ReaderEvaluationsPage() {
   const [progress, setProgress] = useState<Record<string, ReaderEvaluationProgress>>({});
   const [running, setRunning] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
+  const [openCards, setOpenCards] = useState<Record<string, boolean>>({});
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -120,7 +121,7 @@ export function ReaderEvaluationsPage() {
     setSummaryBusy(true);
     try {
       const summary = await generateReaderEvaluationSummary({ token, book, branch, settings, target, evaluations, language: structure?.language });
-      setHistory((current) => [summary, ...current]);
+      setHistory((current) => [summary, ...current.filter((entry) => entry.path !== summary.path)]);
       await reload();
     } catch (err) { toast({ title: t("readerEvaluations.summaryFailed"), description: String(err), variant: "destructive" }); }
     finally { setSummaryBusy(false); }
@@ -132,6 +133,19 @@ export function ReaderEvaluationsPage() {
   ], Boolean(book && target));
 
   const groups = useMemo(() => ({ standard: personas.filter((profile) => profile.readerType === "standard"), genre: personas.filter((profile) => profile.readerType === "genre"), custom: personas.filter((profile) => profile.readerType === "custom") }), [personas]);
+  const latestSummary = useMemo(() => history.filter((record) => record.readerId === "summary" && record.status === "completed").sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null, [history]);
+  const readerHistory = useMemo(() => history.filter((record) => record.readerId !== "summary"), [history]);
+  const latestByReader = useMemo(() => latestCompletedByReader(history), [history]);
+  const averageScore = useMemo(() => {
+    const scores = latestByReader.map((record) => record.score).filter((score): score is number => typeof score === "number");
+    if (!scores.length) return null;
+    const average = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+    return average % 1 === 0 ? `${average.toFixed(0)}/10` : `${average.toFixed(1)}/10`;
+  }, [latestByReader]);
+  const summaryOpen = latestSummary ? Boolean(openCards[latestSummary.path]) : Boolean(openCards.__panelSummary__);
+  function toggleCard(key: string) {
+    setOpenCards((current) => ({ ...current, [key]: !current[key] }));
+  }
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   if (!chapter) return <Alert variant="destructive"><AlertDescription>{t("chapter.notFound", { id: chapterId })}</AlertDescription></Alert>;
   return <div className="space-y-6">
@@ -141,8 +155,48 @@ export function ReaderEvaluationsPage() {
       <div className="grid gap-4 sm:grid-cols-3"><div><Label>{t("readerEvaluations.depth")}</Label><Select value={depth} onValueChange={(value) => setDepth(value as ReaderEvaluationDepth)}><SelectTrigger className="mt-2"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="brief">{t("readerEvaluations.depthBrief")}</SelectItem><SelectItem value="normal">{t("readerEvaluations.depthNormal")}</SelectItem><SelectItem value="deep">{t("readerEvaluations.depthDeep")}</SelectItem></SelectContent></Select></div><label className="flex items-center gap-3 pt-7"><Switch checked={includeContext} onCheckedChange={setIncludeContext} /><span className="text-sm">{t("readerEvaluations.includeContext")}</span></label><div className="flex items-end gap-2">{running ? <Button variant="destructive" onClick={() => abortRef.current?.abort()}><Square className="mr-2 h-4 w-4" />{t("common.cancel")}</Button> : <Button onClick={() => void run()} disabled={!selected.size || !target}><Play className="mr-2 h-4 w-4" />{t("readerEvaluations.runSelected")}</Button>}</div></div>
     </CardContent></Card>
     {Object.keys(progress).length > 0 && <div className="grid gap-2 sm:grid-cols-2">{Object.values(progress).map((entry) => <div key={entry.readerId} className="flex items-center gap-3 rounded-xl border p-3">{entry.status === "completed" ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : entry.status === "failed" ? <AlertCircle className="h-4 w-4 text-destructive" /> : <Loader2 className="h-4 w-4 animate-spin" />}<span className="text-sm">{entry.readerName}</span><Badge variant="outline" className="ml-auto">{entry.status}</Badge></div>)}</div>}
-    <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{t("readerEvaluations.history")}</h2><Button variant="outline" onClick={() => void summarize()} disabled={summaryBusy || latestCompletedByReader(history).length < 2}>{summaryBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}{t("readerEvaluations.generateSummary")}</Button></div>
-    <div className="space-y-4">{history.length ? history.map((record) => <article key={record.path} className="rounded-2xl border bg-card p-5 shadow-sm"><div className="mb-4 flex flex-wrap items-start justify-between gap-2"><div><p className="font-semibold">{record.readerName}</p><p className="text-xs text-muted-foreground">{new Date(record.createdAt).toLocaleString()}</p></div><div className="flex items-center gap-2">{record.stale && <Badge variant="destructive">{t("readerEvaluations.stale")}</Badge>}<Badge variant="outline">{record.score !== undefined ? `${record.score}/10` : record.status}</Badge>{record.readerId !== "summary" && <Button size="sm" variant="outline" onClick={() => void rerun(record)} disabled={running}><RefreshCcw className="mr-1.5 h-4 w-4" />{t("readerEvaluations.rerun")}</Button>}<Button size="icon" variant="ghost" onClick={() => void removeEvaluation(record)} disabled={running}><Trash2 className="h-4 w-4 text-destructive" /></Button></div></div><div className="doc-prose max-w-none" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(record.body) }} /></article>) : <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">{t("readerEvaluations.empty")}</div>}</div>
+    <div className="space-y-4">
+      <div className="rounded-2xl border bg-card shadow-sm">
+        <button type="button" onClick={() => toggleCard(latestSummary?.path ?? "__panelSummary__")} className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left">
+          <div className="min-w-0">
+            <p className="font-semibold">{t("readerEvaluations.panelSummaryTitle")}</p>
+            <p className="text-xs text-muted-foreground">{latestSummary ? t("readerEvaluations.panelSummaryReady") : t("readerEvaluations.panelSummaryMissing")}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {averageScore && <Badge variant="secondary">{t("readerEvaluations.averageScore", { score: averageScore })}</Badge>}
+            {latestSummary?.stale && <Badge variant="destructive">{t("readerEvaluations.stale")}</Badge>}
+            <ChevronDown className={summaryOpen ? "h-4 w-4 shrink-0 rotate-180 transition-transform" : "h-4 w-4 shrink-0 transition-transform"} />
+          </div>
+        </button>
+        {summaryOpen && (
+          <div className="space-y-4 border-t px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">{latestSummary ? new Date(latestSummary.createdAt).toLocaleString() : t("readerEvaluations.summaryHint")}</p>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => void summarize()} disabled={summaryBusy || latestByReader.length < 2 || running}>
+                  {summaryBusy ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Sparkles className="mr-1.5 h-4 w-4" />}
+                  {latestSummary ? t("readerEvaluations.regenerateSummary") : t("readerEvaluations.generateSummary")}
+                </Button>
+                {latestSummary && (
+                  <Button size="icon" variant="ghost" onClick={() => void removeEvaluation(latestSummary)} disabled={running || summaryBusy}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                )}
+              </div>
+            </div>
+            {latestSummary
+              ? <div className="doc-prose max-w-none" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(latestSummary.body) }} />
+              : <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">{t("readerEvaluations.summaryEmptyState")}</div>}
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{t("readerEvaluations.history")}</h2>{averageScore && <Badge variant="outline">{t("readerEvaluations.averageScore", { score: averageScore })}</Badge>}</div>
+      <div className="space-y-4">{readerHistory.length ? readerHistory.map((record) => {
+        const isOpen = Boolean(openCards[record.path]);
+        return <article key={record.path} className="overflow-hidden rounded-2xl border bg-card shadow-sm"><button type="button" onClick={() => toggleCard(record.path)} className="flex w-full items-start justify-between gap-3 px-5 py-4 text-left"><div className="min-w-0"><p className="font-semibold">{record.readerName}</p><p className="text-xs text-muted-foreground">{new Date(record.createdAt).toLocaleString()}</p></div><div className="flex items-center gap-2">{record.stale && <Badge variant="destructive">{t("readerEvaluations.stale")}</Badge>}<Badge variant="outline">{record.score !== undefined ? `${record.score}/10` : record.status}</Badge><ChevronDown className={isOpen ? "h-4 w-4 shrink-0 rotate-180 transition-transform" : "h-4 w-4 shrink-0 transition-transform"} /></div></button>{isOpen && <div className="space-y-4 border-t px-5 py-4"><div className="flex flex-wrap items-center justify-end gap-2">{record.readerId !== "summary" && <Button size="sm" variant="outline" onClick={() => void rerun(record)} disabled={running}><RefreshCcw className="mr-1.5 h-4 w-4" />{t("readerEvaluations.rerun")}</Button>}<Button size="icon" variant="ghost" onClick={() => void removeEvaluation(record)} disabled={running}><Trash2 className="h-4 w-4 text-destructive" /></Button></div><div className="doc-prose max-w-none" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(record.body) }} /></div>}</article>;
+      }) : <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">{t("readerEvaluations.empty")}</div>}</div>
+    </div>
   </div>;
 }
 
