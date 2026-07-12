@@ -5,7 +5,7 @@ import { AlertCircle, CheckCircle2, ChevronDown, Loader2, Play, RefreshCcw, Spar
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -42,7 +42,9 @@ export function ReaderEvaluationsPage() {
   const [running, setRunning] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [openCards, setOpenCards] = useState<Record<string, boolean>>({});
+  const [setupOpen, setSetupOpen] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
+  const setupStateKeyRef = useRef("");
 
   useEffect(() => {
     if (!book || !structure || !token || !chapter) return;
@@ -146,14 +148,29 @@ export function ReaderEvaluationsPage() {
   function toggleCard(key: string) {
     setOpenCards((current) => ({ ...current, [key]: !current[key] }));
   }
+  useEffect(() => {
+    const stateKey = `${bookId ?? ""}:${chapterId ?? ""}:${paragraphNum ?? ""}:${selection}`;
+    if (setupStateKeyRef.current === stateKey) return;
+    setupStateKeyRef.current = stateKey;
+    setSetupOpen(readerHistory.length === 0);
+  }, [bookId, chapterId, paragraphNum, readerHistory.length, selection]);
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   if (!chapter) return <Alert variant="destructive"><AlertDescription>{t("chapter.notFound", { id: chapterId })}</AlertDescription></Alert>;
   return <div className="space-y-6">
     <div className="overflow-hidden rounded-3xl border bg-gradient-to-br from-primary/15 via-card to-card p-6 shadow-sm sm:p-8"><Badge variant="secondary"><Users className="mr-1.5 h-3.5 w-3.5" />{t("readerEvaluations.badge")}</Badge><h1 className="mt-4 font-serif text-3xl font-semibold sm:text-4xl">{t("readerEvaluations.title")}</h1><p className="mt-2 text-muted-foreground">{target?.title ?? chapter.title}</p></div>
-    <Card><CardHeader><CardTitle>{t("readerEvaluations.chooseReaders")}</CardTitle></CardHeader><CardContent className="space-y-5"><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => setSelected(new Set(personas.filter((profile) => profile.enabled).map((profile) => profile.id)))}>{t("readerEvaluations.allActive")}</Button><Button size="sm" variant="outline" onClick={() => setSelected(new Set(groups.standard.filter((profile) => profile.enabled).map((profile) => profile.id)))}>{t("readerEvaluations.onlyStandard")}</Button><Button size="sm" variant="outline" onClick={() => setSelected(new Set(groups.genre.filter((profile) => profile.enabled).map((profile) => profile.id)))}>{t("readerEvaluations.onlyGenre")}</Button></div>
-      {(["standard", "genre", "custom"] as const).map((group) => groups[group].length ? <div key={group}><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t(`readerPersonas.filters.${group}`)}</p><div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{groups[group].map((profile) => <label key={profile.id} className={profile.enabled ? "flex items-start gap-3 rounded-xl border p-3" : "flex items-start gap-3 rounded-xl border bg-muted/30 p-3 opacity-60"}><input type="checkbox" checked={selected.has(profile.id)} disabled={!profile.enabled || running} onChange={(event) => setSelected((current) => { const next = new Set(current); event.target.checked ? next.add(profile.id) : next.delete(profile.id); return next; })} className="mt-1" /><span><span className="block text-sm font-medium">{profile.name}</span><span className="mt-1 line-clamp-2 block text-xs text-muted-foreground">{profile.description}</span></span></label>)}</div></div> : null)}
-      <div className="grid gap-4 sm:grid-cols-3"><div><Label>{t("readerEvaluations.depth")}</Label><Select value={depth} onValueChange={(value) => setDepth(value as ReaderEvaluationDepth)}><SelectTrigger className="mt-2"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="brief">{t("readerEvaluations.depthBrief")}</SelectItem><SelectItem value="normal">{t("readerEvaluations.depthNormal")}</SelectItem><SelectItem value="deep">{t("readerEvaluations.depthDeep")}</SelectItem></SelectContent></Select></div><label className="flex items-center gap-3 pt-7"><Switch checked={includeContext} onCheckedChange={setIncludeContext} /><span className="text-sm">{t("readerEvaluations.includeContext")}</span></label><div className="flex items-end gap-2">{running ? <Button variant="destructive" onClick={() => abortRef.current?.abort()}><Square className="mr-2 h-4 w-4" />{t("common.cancel")}</Button> : <Button onClick={() => void run()} disabled={!selected.size || !target}><Play className="mr-2 h-4 w-4" />{t("readerEvaluations.runSelected")}</Button>}</div></div>
-    </CardContent></Card>
+    <Card className="overflow-hidden">
+      <button type="button" onClick={() => setSetupOpen((current) => !current)} className="flex w-full items-center justify-between gap-3 px-6 py-5 text-left">
+        <div className="min-w-0">
+          <p className="font-semibold">{t("readerEvaluations.runPanelTitle")}</p>
+          <p className="text-sm text-muted-foreground">{readerHistory.length === 0 ? t("readerEvaluations.runPanelIntro") : t("readerEvaluations.runPanelCollapsed")}</p>
+        </div>
+        <ChevronDown className={setupOpen ? "h-4 w-4 shrink-0 rotate-180 transition-transform" : "h-4 w-4 shrink-0 transition-transform"} />
+      </button>
+      {setupOpen && <CardContent className="space-y-5 border-t pt-6"><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => setSelected(new Set(personas.filter((profile) => profile.enabled).map((profile) => profile.id)))}>{t("readerEvaluations.allActive")}</Button><Button size="sm" variant="outline" onClick={() => setSelected(new Set(groups.standard.filter((profile) => profile.enabled).map((profile) => profile.id)))}>{t("readerEvaluations.onlyStandard")}</Button><Button size="sm" variant="outline" onClick={() => setSelected(new Set(groups.genre.filter((profile) => profile.enabled).map((profile) => profile.id)))}>{t("readerEvaluations.onlyGenre")}</Button></div>
+        {(["standard", "genre", "custom"] as const).map((group) => groups[group].length ? <div key={group}><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t(`readerPersonas.filters.${group}`)}</p><div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{groups[group].map((profile) => <label key={profile.id} className={profile.enabled ? "flex items-start gap-3 rounded-xl border p-3" : "flex items-start gap-3 rounded-xl border bg-muted/30 p-3 opacity-60"}><input type="checkbox" checked={selected.has(profile.id)} disabled={!profile.enabled || running} onChange={(event) => setSelected((current) => { const next = new Set(current); event.target.checked ? next.add(profile.id) : next.delete(profile.id); return next; })} className="mt-1" /><span><span className="block text-sm font-medium">{profile.name}</span><span className="mt-1 line-clamp-2 block text-xs text-muted-foreground">{profile.description}</span></span></label>)}</div></div> : null)}
+        <div className="grid gap-4 sm:grid-cols-3"><div><Label>{t("readerEvaluations.depth")}</Label><Select value={depth} onValueChange={(value) => setDepth(value as ReaderEvaluationDepth)}><SelectTrigger className="mt-2"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="brief">{t("readerEvaluations.depthBrief")}</SelectItem><SelectItem value="normal">{t("readerEvaluations.depthNormal")}</SelectItem><SelectItem value="deep">{t("readerEvaluations.depthDeep")}</SelectItem></SelectContent></Select></div><label className="flex items-center gap-3 pt-7"><Switch checked={includeContext} onCheckedChange={setIncludeContext} /><span className="text-sm">{t("readerEvaluations.includeContext")}</span></label><div className="flex items-end gap-2">{running ? <Button variant="destructive" onClick={() => abortRef.current?.abort()}><Square className="mr-2 h-4 w-4" />{t("common.cancel")}</Button> : <Button onClick={() => void run()} disabled={!selected.size || !target}><Play className="mr-2 h-4 w-4" />{t("readerEvaluations.runSelected")}</Button>}</div></div>
+      </CardContent>}
+    </Card>
     {Object.keys(progress).length > 0 && <div className="grid gap-2 sm:grid-cols-2">{Object.values(progress).map((entry) => <div key={entry.readerId} className="flex items-center gap-3 rounded-xl border p-3">{entry.status === "completed" ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : entry.status === "failed" ? <AlertCircle className="h-4 w-4 text-destructive" /> : <Loader2 className="h-4 w-4 animate-spin" />}<span className="text-sm">{entry.readerName}</span><Badge variant="outline" className="ml-auto">{entry.status}</Badge></div>)}</div>}
     <div className="space-y-4">
       <div className="rounded-2xl border bg-card shadow-sm">

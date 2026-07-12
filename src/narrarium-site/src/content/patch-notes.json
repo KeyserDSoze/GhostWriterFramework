@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.71.2",
+    "date": "2026-07-12",
+    "en": {
+      "title": "Collapsible reader-run setup",
+      "summary": "The reader-selection setup panel now stays open only when there is no evaluation history yet, and otherwise collapses into a clearer run configuration header.",
+      "changes": [
+        "Made the reader-run setup panel collapsible with a clearer title explaining that it is used to choose readers and start a new panel run.",
+        "Kept the setup open by default only when the current target has no reader evaluations yet; otherwise it starts collapsed for a cleaner overview.",
+        "Preserved the same controls for selected readers, depth, controlled context, and run/cancel actions inside the expandable setup block."
+      ]
+    },
+    "it": {
+      "title": "Setup run lettori collassabile",
+      "summary": "Il pannello di scelta lettori per la run ora resta aperto solo quando non esiste ancora uno storico valutazioni, altrimenti si richiude in un header più chiaro di configurazione run.",
+      "changes": [
+        "Reso collassabile il pannello di setup della run lettori con un titolo più esplicito che chiarisce che serve a scegliere i lettori e lanciare un nuovo panel.",
+        "Lasciato aperto di default solo quando il target corrente non ha ancora valutazioni lettori; altrimenti parte chiuso per dare una vista d'insieme più pulita.",
+        "Mantenuti dentro il blocco espandibile gli stessi controlli per lettori selezionati, profondità, contesto controllato e azioni di avvio/annullamento della run."
+      ]
+    }
+  },
+  {
     "version": "0.71.1",
     "date": "2026-07-11",
     "en": {
