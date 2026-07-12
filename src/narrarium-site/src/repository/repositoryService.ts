@@ -50,6 +50,11 @@ export interface SyncResult {
   pushed: number;
 }
 
+interface RemoteChangeState {
+  remoteHeadSha: string;
+  changed: boolean;
+}
+
 function extension(path: string): string {
   return (path.split(".").pop() ?? "").toLowerCase();
 }
@@ -272,12 +277,25 @@ export async function fetchRemoteStatus(input: { bookId: string; token: string }
   const meta = await getLocalRepositoryByBook(input.bookId);
   if (!meta) throw new Error("Local repository is not ready.");
   const octokit = new Octokit({ auth: input.token });
-  const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
-  const remoteHeadSha = ref.data.object.sha;
-  const changed = remoteHeadSha !== meta.remoteHeadSha;
+  const { remoteHeadSha, changed } = await resolveRemoteChangeState(octokit, meta);
   await markLocalRepositoryRemoteCheck(meta.id, remoteHeadSha, changed);
   await addLocalRepoLog(meta.id, "fetch", changed ? `Remote changed: ${remoteHeadSha.slice(0, 7)}` : "Remote up to date");
   return { remoteHeadSha, changed };
+}
+
+async function resolveRemoteChangeState(octokit: Octokit, meta: LocalRepositoryMeta): Promise<RemoteChangeState> {
+  const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
+  const remoteHeadSha = ref.data.object.sha;
+  if (remoteHeadSha === meta.remoteHeadSha) return { remoteHeadSha, changed: false };
+  try {
+    const [currentCommit, remoteCommit] = await Promise.all([
+      octokit.rest.git.getCommit({ owner: meta.owner, repo: meta.repo, commit_sha: meta.remoteHeadSha }),
+      octokit.rest.git.getCommit({ owner: meta.owner, repo: meta.repo, commit_sha: remoteHeadSha }),
+    ]);
+    return { remoteHeadSha, changed: currentCommit.data.tree.sha !== remoteCommit.data.tree.sha };
+  } catch {
+    return { remoteHeadSha, changed: true };
+  }
 }
 
 export async function pullRemoteChanges(input: { bookId: string; token: string }): Promise<{ updated: number; remoteHeadSha: string }> {
@@ -287,9 +305,13 @@ export async function pullRemoteChanges(input: { bookId: string; token: string }
   const ahead = await listUnpushedLocalCommits(meta.id);
 
   const octokit = new Octokit({ auth: input.token });
-  const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
-  const remoteHeadSha = ref.data.object.sha;
+  const { remoteHeadSha, changed } = await resolveRemoteChangeState(octokit, meta);
   if (remoteHeadSha === meta.remoteHeadSha && !dirty.length && !ahead.length) return { updated: 0, remoteHeadSha };
+  if (!changed) {
+    await updateLocalRepositoryHead(meta.id, remoteHeadSha);
+    await addLocalRepoLog(meta.id, "pull", `Remote head changed to ${remoteHeadSha.slice(0, 7)} with no file-content differences`);
+    return { updated: 0, remoteHeadSha };
+  }
   const comparison = await octokit.rest.repos.compareCommitsWithBasehead({ owner: meta.owner, repo: meta.repo, basehead: `${meta.remoteHeadSha}...${remoteHeadSha}` });
   const remoteTree = await octokit.rest.git.getTree({ owner: meta.owner, repo: meta.repo, tree_sha: remoteHeadSha, recursive: "1" });
   const remoteBlobEntries = (remoteTree.data.tree ?? []).filter((entry) => entry.type === "blob" && entry.path);
@@ -396,9 +418,7 @@ export async function syncFullRepository(input: { bookId: string; token: string 
   if (!meta) throw new Error("Local repository is not ready.");
   await restoreUnpushedCommitsAsDirty(meta.id);
   const octokit = new Octokit({ auth: input.token });
-  const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
-  const remoteHeadSha = ref.data.object.sha;
-  const remoteChanged = remoteHeadSha !== meta.remoteHeadSha;
+  const { remoteHeadSha, changed: remoteChanged } = await resolveRemoteChangeState(octokit, meta);
   let pulled = 0;
   let keptLocal = 0;
   if (remoteChanged) {
@@ -435,7 +455,9 @@ export async function syncFullRepository(input: { bookId: string; token: string 
     await updateLocalRepositoryHead(meta.id, remoteHeadSha);
     await addLocalRepoLog(meta.id, "pull", `Sync pulled ${pulled} remote files, kept ${keptLocal} local files by timestamp`);
   } else {
-    await markLocalRepositoryRemoteCheck(meta.id, remoteHeadSha, false);
+    await updateLocalRepositoryHead(meta.id, remoteHeadSha);
+    if (remoteHeadSha !== meta.remoteHeadSha) await addLocalRepoLog(meta.id, "pull", `Remote head changed to ${remoteHeadSha.slice(0, 7)} with no file-content differences`);
+    else await markLocalRepositoryRemoteCheck(meta.id, remoteHeadSha, false);
   }
   const dirtyAfterMerge = await listDirtyLocalFiles(meta.id);
   let committed = 0;

@@ -152,8 +152,8 @@ export function ReaderEvaluationsPage() {
     const stateKey = `${bookId ?? ""}:${chapterId ?? ""}:${paragraphNum ?? ""}:${selection}`;
     if (setupStateKeyRef.current === stateKey) return;
     setupStateKeyRef.current = stateKey;
-    setSetupOpen(readerHistory.length === 0);
-  }, [bookId, chapterId, paragraphNum, readerHistory.length, selection]);
+    setSetupOpen(!(latestSummary && readerHistory.length > 0));
+  }, [bookId, chapterId, latestSummary, paragraphNum, readerHistory.length, selection]);
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   if (!chapter) return <Alert variant="destructive"><AlertDescription>{t("chapter.notFound", { id: chapterId })}</AlertDescription></Alert>;
   return <div className="space-y-6">
@@ -162,7 +162,7 @@ export function ReaderEvaluationsPage() {
       <button type="button" onClick={() => setSetupOpen((current) => !current)} className="flex w-full items-center justify-between gap-3 px-6 py-5 text-left">
         <div className="min-w-0">
           <p className="font-semibold">{t("readerEvaluations.runPanelTitle")}</p>
-          <p className="text-sm text-muted-foreground">{readerHistory.length === 0 ? t("readerEvaluations.runPanelIntro") : t("readerEvaluations.runPanelCollapsed")}</p>
+          <p className="text-sm text-muted-foreground">{latestSummary && readerHistory.length > 0 ? t("readerEvaluations.runPanelCollapsed") : t("readerEvaluations.runPanelIntro")}</p>
         </div>
         <ChevronDown className={setupOpen ? "h-4 w-4 shrink-0 rotate-180 transition-transform" : "h-4 w-4 shrink-0 transition-transform"} />
       </button>

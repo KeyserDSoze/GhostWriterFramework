@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.71.3",
+    "date": "2026-07-12",
+    "en": {
+      "title": "Smarter reader setup collapse and accurate remote-change detection",
+      "summary": "The reader setup panel now collapses only when both a panel summary and reader history already exist, and repository sync no longer warns about remote changes when the remote commit changed but the file tree did not.",
+      "changes": [
+        "Adjusted the reader-evaluation setup panel so it starts collapsed only when the current target already has both a generated panel summary and reader-evaluation history; otherwise it stays open.",
+        "Fixed repository sync status so 'remote changed' is shown only when the remote file tree is actually different, not merely because the remote head commit SHA changed.",
+        "Updated sync and pull flows to absorb metadata-only remote head advances without pretending that files changed."
+      ]
+    },
+    "it": {
+      "title": "Collasso più intelligente del setup lettori e rilevazione remota corretta",
+      "summary": "Il pannello di setup lettori ora si chiude solo quando esistono già sia una sintesi panel sia uno storico valutazioni, e il sync repository non segnala più cambi remoti quando cambia il commit remoto ma non l'albero dei file.",
+      "changes": [
+        "Regolato il pannello di setup delle valutazioni lettori: parte chiuso solo quando il target corrente ha già sia una sintesi panel generata sia uno storico di valutazioni lettori; negli altri casi resta aperto.",
+        "Corretto lo stato del sync repository: 'remote changed' viene mostrato solo quando l'albero remoto dei file è davvero diverso, non solo perché cambia lo SHA del commit remoto in testa.",
+        "Aggiornati i flussi di sync e pull per assorbire correttamente gli avanzamenti del remote head che non introducono differenze reali nei file."
+      ]
+    }
+  },
+  {
     "version": "0.71.2",
     "date": "2026-07-12",
     "en": {
