@@ -154,7 +154,7 @@ export function ReaderEvaluationsPage() {
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   if (!chapter) return <Alert variant="destructive"><AlertDescription>{t("chapter.notFound", { id: chapterId })}</AlertDescription></Alert>;
   return <div className="space-y-6">
-    <div className="overflow-hidden rounded-3xl border bg-gradient-to-br from-primary/15 via-card to-card p-6 shadow-sm sm:p-8"><Badge variant="secondary"><Users className="mr-1.5 h-3.5 w-3.5" />{t("readerEvaluations.badge")}</Badge><h1 className="mt-4 font-serif text-3xl font-semibold sm:text-4xl">{t("readerEvaluations.title")}</h1><p className="mt-2 text-muted-foreground">{target?.title ?? chapter.title}</p></div>
+    <div className="overflow-hidden rounded-3xl border bg-gradient-to-br from-primary/15 via-card to-card p-6 shadow-sm sm:p-8"><div className="flex flex-wrap items-start justify-between gap-4"><div><Badge variant="secondary"><Users className="mr-1.5 h-3.5 w-3.5" />{t("readerEvaluations.badge")}</Badge><h1 className="mt-4 font-serif text-3xl font-semibold sm:text-4xl">{t("readerEvaluations.title")}</h1><p className="mt-2 text-muted-foreground">{target?.title ?? chapter.title}</p></div><div className="flex flex-wrap items-center gap-2">{typeof latestByReader.length === "number" && latestByReader.length > 0 && <Badge variant="outline">{t("readerEvaluations.completedReaders", { count: latestByReader.length })}</Badge>}{averageScore && <Badge variant="secondary">{t("readerEvaluations.averageScore", { score: averageScore })}</Badge>}</div></div></div>
     <Card className="overflow-hidden">
       <button type="button" onClick={() => setSetupOpen((current) => !current)} className="flex w-full items-center justify-between gap-3 px-6 py-5 text-left">
         <div className="min-w-0">
@@ -205,7 +205,7 @@ export function ReaderEvaluationsPage() {
         )}
       </div>
 
-      <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{t("readerEvaluations.readerOpinions")}</h2>{averageScore && <Badge variant="outline">{t("readerEvaluations.averageScore", { score: averageScore })}</Badge>}</div>
+      <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{t("readerEvaluations.readerOpinions")}</h2>{latestByReader.length > 0 && <Badge variant="outline">{t("readerEvaluations.completedReaders", { count: latestByReader.length })}</Badge>}</div>
       <div className="space-y-4">{readerHistory.length ? readerHistory.map((record) => {
         const isOpen = Boolean(openCards[record.path]);
         return <article key={record.path} className="overflow-hidden rounded-2xl border bg-card shadow-sm"><button type="button" onClick={() => toggleCard(record.path)} className="flex w-full items-start justify-between gap-3 px-5 py-4 text-left"><div className="min-w-0"><p className="font-semibold">{record.readerName}</p><p className="text-xs text-muted-foreground">{new Date(record.createdAt).toLocaleString()}</p></div><div className="flex items-center gap-2">{record.stale && <Badge variant="destructive">{t("readerEvaluations.stale")}</Badge>}<Badge variant="outline">{record.score !== undefined ? `${record.score}/10` : record.status}</Badge><ChevronDown className={isOpen ? "h-4 w-4 shrink-0 rotate-180 transition-transform" : "h-4 w-4 shrink-0 transition-transform"} /></div></button>{isOpen && <div className="space-y-4 border-t px-5 py-4"><div className="flex flex-wrap items-center justify-end gap-2">{record.readerId !== "summary" && <Button size="sm" variant="outline" onClick={() => void rerun(record)} disabled={running}><RefreshCcw className="mr-1.5 h-4 w-4" />{t("readerEvaluations.rerun")}</Button>}<Button size="icon" variant="ghost" onClick={() => void removeEvaluation(record)} disabled={running}><Trash2 className="h-4 w-4 text-destructive" /></Button></div><div className="doc-prose max-w-none" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(record.body) }} /></div>}</article>;
@@ -217,8 +217,8 @@ export function ReaderEvaluationsPage() {
 function stripFrontmatter(raw: string): string { return raw.replace(/^---[\s\S]*?---\s*/, "").trim(); }
 function paragraphSlug(path: string): string { return (path.split("/").pop() ?? "").replace(/\.md$/i, ""); }
 function targetPrefixes(target: ReaderEvaluationTarget): string[] {
-  if (target.type === "chapter") return [`evaluations/readers/chapters/${target.chapterId}/`, `evaluations/readers/summaries/chapters/${target.chapterId}/`];
-  if (target.type === "paragraph") return [`evaluations/readers/paragraphs/${target.chapterId}/${target.paragraphId}/`, `evaluations/readers/summaries/paragraphs/${target.chapterId}/${target.paragraphId}/`];
-  return [`evaluations/readers/selections/${target.chapterId}/${target.paragraphId ?? "chapter"}/`, `evaluations/readers/summaries/selections/${target.chapterId}/${target.paragraphId ?? "chapter"}/`];
+  if (target.type === "chapter") return [`evaluations/readers/chapters/${target.chapterId}/`, `evaluations/readers/summaries/chapters/${target.chapterId}.md`];
+  if (target.type === "paragraph") return [`evaluations/readers/paragraphs/${target.chapterId}/${target.paragraphId}/`, `evaluations/readers/summaries/paragraphs/${target.chapterId}/${target.paragraphId}.md`];
+  return [`evaluations/readers/selections/${target.chapterId}/${target.paragraphId ?? "chapter"}/`, `evaluations/readers/summaries/selections/${target.chapterId}/${target.paragraphId ?? "chapter"}.md`];
 }
 function latestCompletedByReader(records: ReaderEvaluationRecord[]): ReaderEvaluationRecord[] { const seen = new Set<string>(); return records.filter((record) => { if (record.status !== "completed" || record.readerId === "summary" || seen.has(record.readerId)) return false; seen.add(record.readerId); return true; }); }

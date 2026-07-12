@@ -1020,6 +1020,8 @@ const en = {
     summaryHint: "Generate a synthesis across the latest reader evaluations from here.",
     summaryEmptyState: "No panel summary exists yet. Generate it from the latest reader evaluations to read the synthesis here.",
     averageScore: "Average {{score}}",
+    completedReaders_one: "{{count}} reader completed",
+    completedReaders_other: "{{count}} readers completed",
     evaluateWithReaders: "Evaluate with readers",
     evaluateSelection: "Evaluate selection with readers"
   },

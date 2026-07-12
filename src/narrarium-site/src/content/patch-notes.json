@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.71.5",
+    "date": "2026-07-12",
+    "en": {
+      "title": "Reader summary lookup fixed and header overview improved",
+      "summary": "The panel summary now reloads from its saved file correctly, and the reader-evaluation header shows the average score and how many readers already completed their opinions.",
+      "changes": [
+        "Fixed the panel-summary lookup path so a generated summary saved to Git is found again and displayed inside the reader-evaluations page instead of appearing missing.",
+        "Moved the average score and completed-reader count into the main reader-evaluations header for a faster overview.",
+        "Removed the redundant average badge from the Reader opinions section header."
+      ]
+    },
+    "it": {
+      "title": "Fix lookup sintesi lettori e overview migliorata nell'header",
+      "summary": "La sintesi del panel viene ora riletta correttamente dal file salvato e l'header delle valutazioni lettori mostra media voti e quanti lettori hanno già lasciato il loro parere.",
+      "changes": [
+        "Corretto il path di lookup della sintesi panel: quando la sintesi viene generata e salvata su Git, la pagina delle valutazioni lettori la ritrova e la mostra correttamente invece di segnalarla come mancante.",
+        "Spostati nell'header principale delle valutazioni lettori sia la media dei voti sia il numero di lettori che hanno già completato il loro parere, per avere un colpo d'occhio più rapido.",
+        "Tolto il badge ridondante della media dall'header della sezione Pareri dei lettori."
+      ]
+    }
+  },
+  {
     "version": "0.71.4",
     "date": "2026-07-12",
     "en": {

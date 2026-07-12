@@ -1020,6 +1020,8 @@ const it = {
     summaryHint: "Genera da qui una sintesi delle ultime valutazioni dei lettori.",
     summaryEmptyState: "Non esiste ancora una sintesi del panel. Generala dalle ultime valutazioni dei lettori per leggerla qui.",
     averageScore: "Media {{score}}",
+    completedReaders_one: "{{count}} lettore completato",
+    completedReaders_other: "{{count}} lettori completati",
     evaluateWithReaders: "Valuta con i lettori",
     evaluateSelection: "Valuta la selezione con i lettori"
   },
