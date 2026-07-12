@@ -3,6 +3,7 @@ export const DEEP_RESEARCH_SKILL_NAME = "deep-research";
 export const AUDIT_DIRECTORY = "audit";
 export const AUDIT_BOOK_FILE = "audit/book.md";
 export const AUDIT_CHAPTERS_DIRECTORY = "audit/chapters";
+export const REWRITE_OPERATIONS_DIRECTORY = "operations/rewrite-from-reader-feedback";
 
 export const BOOK_DIRECTORIES = [
   "guidelines",
@@ -27,6 +28,10 @@ export const BOOK_DIRECTORIES = [
   "evaluations",
   "evaluations/chapters",
   "evaluations/paragraphs",
+  "operations",
+  REWRITE_OPERATIONS_DIRECTORY,
+  `${REWRITE_OPERATIONS_DIRECTORY}/chapters`,
+  `${REWRITE_OPERATIONS_DIRECTORY}/paragraphs`,
   "personas",
   "research",
   "research/wikipedia",
@@ -115,6 +120,7 @@ export const CONTENT_GLOB = [
   "resumes/**/*.md",
   "state/**/*.md",
   "evaluations/**/*.md",
+  "operations/**/*.md",
   "research/**/*.md",
   "assets/**/*.md",
 ];

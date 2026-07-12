@@ -133,6 +133,8 @@ export interface BookStructure {
   readerPersonas: ReaderPersonaFile[];
   /** saved ReaderEvaluation and ReaderEvaluationSummary markdown files */
   readerEvaluationFiles: BookFile[];
+  /** Canonical rewrite-from-reader-feedback operation manifest files. */
+  operationManifestFiles: BookFile[];
   /** Markdown files below audit/ */
   auditFiles: BookFile[];
   /** research/*.md files */

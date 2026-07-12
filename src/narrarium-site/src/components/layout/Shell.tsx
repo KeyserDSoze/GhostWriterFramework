@@ -28,6 +28,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useNavigationHistoryStore, type NavigationHistoryEntry } from "@/store/navigationHistoryStore";
+import { FeedbackRewriteWorkflowDialog } from "@/components/book/FeedbackRewriteWorkflowDialog";
 
 const AssistantPanel = lazy(() =>
   import("@/components/assistant/AssistantPanel").then((module) => ({ default: module.AssistantPanel })),
@@ -152,6 +153,7 @@ export function Shell() {
       <GlobalContextMenu />
       <LlmDebugPanel />
       <GenerateDiffDialog />
+      <FeedbackRewriteWorkflowDialog />
       <OnboardingDialog />
       <PatchNotesDialog />
       <Suspense fallback={null}>

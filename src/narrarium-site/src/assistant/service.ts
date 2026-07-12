@@ -44,6 +44,7 @@ import { defaultEvaluationCriteria, defaultEvaluationGuidelinesMarkdown, EVALUAT
 import { emptyReaderPersona } from "@/narrarium/readerPersona";
 import { generateReaderEvaluationSummary, hashReaderSource, loadReaderPersonas, parseReaderEvaluation, readerEvaluationPath, runReaderEvaluations, saveReaderPersona, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
 import { AUDIT_CATEGORIES, auditTargetHref, loadAuditReport, resolveAuditTarget, updateAuditFinding, type AuditCertainty, type AuditFindingStatus, type AuditSeverity, type AuditTarget } from "@/narrarium/audit";
+import { useFeedbackRewriteWorkflowStore } from "@/store/feedbackRewriteWorkflowStore";
 
 async function completeForTask(
   settings: AppSettings,
@@ -159,6 +160,10 @@ export async function runAssistantPrompt(input: {
     "evaluate-with-readers": () => evaluateWithReadersFromPrompt({ ...promptInput, book, branch, token }),
     "summarize-reader-evaluations": () => summarizeReaderEvaluationsFromPrompt({ ...promptInput, book, branch, token }),
     "open-reader-evaluations": () => openReaderEvaluationsFromContext({ ...promptInput, book }),
+    "generate-draft-from-feedback": () => feedbackRewriteNavigation({ ...promptInput, book }, "generate"),
+    "restore-previous-drafts": () => feedbackRewriteNavigation({ ...promptInput, book }, "restore"),
+    "feedback-rewrite-status": () => feedbackRewriteNavigation({ ...promptInput, book }, "status"),
+    "cancel-feedback-rewrite": () => cancelFeedbackRewrite({ ...promptInput, book }),
     "run-audit": () => auditNavigationFromPrompt({ ...promptInput, book }, "run"),
     "open-audit": () => auditNavigationFromPrompt({ ...promptInput, book }, "open"),
     "update-audit": () => auditNavigationFromPrompt({ ...promptInput, book }, "update"),
@@ -517,6 +522,36 @@ async function openReaderEvaluationsFromContext(input: PromptInput & { book: Boo
     ? `/app/books/${input.book.id}/chapters/${chapter.slug}/paragraphs/${paragraph.paragraph.number}/reader-evaluations`
     : `/app/books/${input.book.id}/chapters/${chapter.slug}/reader-evaluations`;
   return { id: crypto.randomUUID(), role: "assistant", text: "Opening reader evaluations.", action: { kind: "navigate", to, label: "Reader evaluations" } };
+}
+
+function feedbackRewriteNavigation(input: PromptInput & { book: BookEntry }, workflow: "generate" | "restore" | "status"): AssistantMessage {
+  const lower = input.prompt.toLowerCase();
+  const structure = input.context.structure;
+  const namedChapter = structure?.chapters
+    .map((chapter) => ({ chapter, names: [chapter.title.toLowerCase(), chapter.slug.toLowerCase().replace(/-/g, " ")] }))
+    .filter((entry) => entry.names.some((name) => name.length >= 3 && lower.includes(name)))
+    .sort((left, right) => Math.max(...right.names.map((name) => name.length)) - Math.max(...left.names.map((name) => name.length)))[0]?.chapter;
+  const chapter = namedChapter ?? resolveChapterFromPrompt(input);
+  if (!chapter) return makeAssistantMessage("assistant", "Open or name a chapter first.");
+  const explicitlyChapter = /\b(chapter|capitolo)\b/.test(lower) && !/\b(paragraph|paragrafo|scene|scena)\b/.test(lower);
+  const paragraphNumber = lower.match(/(?:paragrafo|paragraph|scena|scene)\s+(\d+)/)?.[1].padStart(3, "0");
+  const namedParagraph = chapter.paragraphs
+    .map((paragraph) => ({ paragraph, names: [paragraph.title.toLowerCase(), slugFromPath(paragraph.path).toLowerCase().replace(/-/g, " ")] }))
+    .filter((entry) => entry.names.some((name) => name.length >= 3 && lower.includes(name)))
+    .sort((left, right) => Math.max(...right.names.map((name) => name.length)) - Math.max(...left.names.map((name) => name.length)))[0]?.paragraph;
+  const currentParagraph = input.context.chapter?.slug === chapter.slug ? input.context.paragraph : null;
+  const paragraph = explicitlyChapter ? null : paragraphNumber ? chapter.paragraphs.find((entry) => entry.number === paragraphNumber) : namedParagraph ?? currentParagraph;
+  const base = paragraph
+    ? `/app/books/${input.book.id}/chapters/${chapter.slug}/paragraphs/${paragraph.number}/reader-evaluations`
+    : `/app/books/${input.book.id}/chapters/${chapter.slug}/reader-evaluations`;
+  const label = workflow === "generate" ? "Generate draft from feedback" : workflow === "restore" ? "Restore previous drafts" : "Feedback rewrite status";
+  return { id: crypto.randomUUID(), role: "assistant", text: `${label} requires confirmation in Reader Evaluations.`, action: { kind: "navigate", to: `${base}?workflow=${workflow}`, label } };
+}
+
+function cancelFeedbackRewrite(input: PromptInput & { book: BookEntry }): AssistantMessage {
+  if (useFeedbackRewriteWorkflowStore.getState().cancelActive()) return makeAssistantMessage("assistant", "Cancellation requested. Completed paragraph drafts are kept and remain available in the operation status.");
+  if (useFeedbackRewriteWorkflowStore.getState().abortController) return makeAssistantMessage("assistant", "The confirmed repository save is already in progress and cannot be interrupted safely.");
+  return feedbackRewriteNavigation(input, "status");
 }
 
 function auditTargetFromPrompt(input: PromptInput & { book: BookEntry }): AuditTarget | null {

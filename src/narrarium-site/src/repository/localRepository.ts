@@ -4,6 +4,7 @@ import {
   buildChapterAuditPath,
   buildParagraphAuditPath,
 } from "@/narrarium/auditPaths";
+import { isRewriteOperationManifestPath } from "@/narrarium/rewriteOperationPaths";
 
 const DB_NAME = "narrarium-local-repositories";
 const DB_VERSION = 4;
@@ -154,15 +155,15 @@ function allFromIndex<T>(storeName: string, indexName: string, query: IDBValidKe
   }));
 }
 
-async function hashText(text: string): Promise<string> {
-  return hashBytes(new TextEncoder().encode(text));
+export async function sha256Text(text: string): Promise<string> {
+  return sha256Bytes(new TextEncoder().encode(text));
 }
 
 async function hashBlob(blob: Blob): Promise<string> {
-  return hashBytes(new Uint8Array(await blob.arrayBuffer()));
+  return sha256Bytes(new Uint8Array(await blob.arrayBuffer()));
 }
 
-async function hashBytes(bytes: Uint8Array): Promise<string> {
+export async function sha256Bytes(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytesToArrayBuffer(bytes));
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
@@ -248,7 +249,7 @@ export async function putCleanLocalFile(input: {
   baseSha?: string;
   size: number;
 }): Promise<LocalRepositoryFile> {
-  const currentHash = input.kind === "text" ? await hashText(input.text ?? "") : await hashBlob(input.blob ?? new Blob());
+  const currentHash = input.kind === "text" ? await sha256Text(input.text ?? "") : await hashBlob(input.blob ?? new Blob());
   const file: LocalRepositoryFile = {
     key: fileKey(input.repoId, input.path),
     repoId: input.repoId,
@@ -270,7 +271,7 @@ export async function putCleanLocalFile(input: {
 
 export async function writeLocalText(repoIdValue: string, path: string, text: string): Promise<LocalRepositoryFile> {
   const existing = await txStore<LocalRepositoryFile | undefined>("files", "readonly", (store) => store.get(fileKey(repoIdValue, path)));
-  const currentHash = await hashText(text);
+  const currentHash = await sha256Text(text);
   const file: LocalRepositoryFile = {
     key: fileKey(repoIdValue, path),
     repoId: repoIdValue,
@@ -292,7 +293,7 @@ export async function writeLocalText(repoIdValue: string, path: string, text: st
 export async function writeLocalBinary(repoIdValue: string, path: string, bytes: Uint8Array): Promise<LocalRepositoryFile> {
   const existing = await txStore<LocalRepositoryFile | undefined>("files", "readonly", (store) => store.get(fileKey(repoIdValue, path)));
   const blob = new Blob([bytesToArrayBuffer(bytes)]);
-  const currentHash = await hashBytes(bytes);
+  const currentHash = await sha256Bytes(bytes);
   const file: LocalRepositoryFile = {
     key: fileKey(repoIdValue, path),
     repoId: repoIdValue,
@@ -334,7 +335,7 @@ export async function applyLocalFileChangesAtomically(
   const now = new Date().toISOString();
   const prepared = await Promise.all(writes.map(async (write): Promise<LocalRepositoryFile> => {
     const existing = originalsByPath.get(write.path);
-    const currentHash = write.kind === "text" ? await hashText(write.text) : await hashBytes(write.bytes);
+    const currentHash = write.kind === "text" ? await sha256Text(write.text) : await sha256Bytes(write.bytes);
     return {
       key: fileKey(repoIdValue, write.path),
       repoId: repoIdValue,
@@ -365,6 +366,95 @@ export async function applyLocalFileChangesAtomically(
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error ?? new Error("Local file transaction aborted."));
+  });
+}
+
+export interface LocalTextFileMutation {
+  path: string;
+  /** undefined validates only, null deletes, and a string creates or updates. */
+  content?: string | null;
+  /** undefined skips validation, null requires absence, string requires this SHA-256. */
+  expectedCurrentHash?: string | null;
+}
+
+/** Validate and apply text mutations in the same IndexedDB transaction. */
+export async function mutateLocalTextFilesAtomically(repoIdValue: string, mutations: LocalTextFileMutation[]): Promise<void> {
+  const paths = new Set<string>();
+  for (const mutation of mutations) {
+    if (paths.has(mutation.path)) throw new Error(`Duplicate local file mutation: ${mutation.path}`);
+    paths.add(mutation.path);
+  }
+  const preparedHashes = new Map<string, string>();
+  await Promise.all(mutations.map(async (mutation) => {
+    if (typeof mutation.content === "string") preparedHashes.set(mutation.path, await sha256Text(mutation.content));
+  }));
+
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("files", "readwrite");
+    const store = tx.objectStore("files");
+    const existing = new Map<string, LocalRepositoryFile | undefined>();
+    let pending = mutations.length;
+    let validationError: Error | null = null;
+    const now = new Date().toISOString();
+
+    const apply = () => {
+      for (const mutation of mutations) {
+        const row = existing.get(mutation.path);
+        const logicalRow = row?.status === "deleted" ? undefined : row;
+        if (mutation.expectedCurrentHash !== undefined) {
+          const actual = logicalRow?.currentHash ?? null;
+          if (actual !== mutation.expectedCurrentHash) {
+            validationError = new Error(`File changed since it was read: ${mutation.path}`);
+            tx.abort();
+            return;
+          }
+        }
+      }
+      for (const mutation of mutations) {
+        if (mutation.content === undefined) continue;
+        const row = existing.get(mutation.path);
+        if (mutation.content === null) {
+          if (!row || row.status === "deleted") continue;
+          if (row.status === "new") store.delete(row.key);
+          else store.put({ ...row, status: "deleted", committed: false, updatedAt: now });
+          continue;
+        }
+        const currentHash = preparedHashes.get(mutation.path)!;
+        const file: LocalRepositoryFile = {
+          key: fileKey(repoIdValue, mutation.path),
+          repoId: repoIdValue,
+          path: mutation.path,
+          kind: "text",
+          text: mutation.content,
+          baseSha: row?.baseSha,
+          baseHash: row?.baseHash,
+          currentHash,
+          status: statusAfterWrite(row, currentHash),
+          committed: false,
+          size: new TextEncoder().encode(mutation.content).byteLength,
+          updatedAt: now,
+        };
+        store.put(file);
+      }
+    };
+
+    if (!pending) apply();
+    for (const mutation of mutations) {
+      const request = store.get(fileKey(repoIdValue, mutation.path));
+      request.onsuccess = () => {
+        existing.set(mutation.path, request.result as LocalRepositoryFile | undefined);
+        pending -= 1;
+        if (pending === 0) apply();
+      };
+      request.onerror = () => {
+        validationError = request.error ?? new Error(`Failed to read ${mutation.path} during transaction.`);
+        tx.abort();
+      };
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error ?? new Error("Local file transaction failed."));
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local file transaction aborted."));
   });
 }
 
@@ -674,6 +764,9 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
     readerEvaluationFiles: files
       .filter((file) => /^evaluations\/readers\/.+\.md$/.test(file.path))
       .map((file) => ({ path: file.path, sha: file.baseSha ?? "", size: file.size, content: file.kind === "text" ? file.text : undefined })),
+    operationManifestFiles: files
+      .filter((file) => isRewriteOperationManifestPath(file.path))
+      .map((file) => ({ path: file.path, sha: file.baseSha ?? file.currentHash, size: file.size, content: file.kind === "text" ? file.text : undefined })),
     auditFiles,
     researchFiles: allPaths
       .filter((p) => /^research\/[^/]+\.md$/.test(p))

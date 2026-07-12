@@ -34,6 +34,7 @@ import {
   TOTAL_EVALUATION_FILE,
   TOTAL_RESUME_FILE,
 } from "./constants.js";
+import { parseRewriteOperationPath, rewriteOperationManifestPath, REWRITE_FROM_READER_FEEDBACK_ROOT } from "./rewrite-operations.js";
 import {
   assetSchema,
   bookSchema,
@@ -2254,6 +2255,14 @@ export async function renameEntity(
   };
 }
 
+async function movePathIfPresent(source: string, destination: string, label: string): Promise<boolean> {
+  if (source === destination || !(await pathExists(source))) return false;
+  if (await pathExists(destination)) throw new Error(`${label} already exists at destination: ${destination}`);
+  await mkdir(path.dirname(destination), { recursive: true });
+  await rename(source, destination);
+  return true;
+}
+
 export async function renameChapter(
   rootPath: string,
   options: {
@@ -2300,6 +2309,25 @@ export async function renameChapter(
   if (oldAuditFolderPath !== newAuditFolderPath && (await pathExists(oldAuditFolderPath))) {
     await rename(oldAuditFolderPath, newAuditFolderPath);
   }
+
+  const chapterScopedMoves: Array<[string, string, string]> = [
+    [path.join(root, "drafts", oldChapterSlug), path.join(root, "drafts", newChapterSlug), "Chapter drafts"],
+    [path.join(root, "scripts", oldChapterSlug), path.join(root, "scripts", newChapterSlug), "Chapter scripts"],
+    [path.join(root, "evaluations", "paragraphs", oldChapterSlug), path.join(root, "evaluations", "paragraphs", newChapterSlug), "Paragraph evaluations"],
+    [path.join(root, "evaluations", "readers", "chapters", oldChapterSlug), path.join(root, "evaluations", "readers", "chapters", newChapterSlug), "Chapter reader evaluations"],
+    [path.join(root, "evaluations", "readers", "paragraphs", oldChapterSlug), path.join(root, "evaluations", "readers", "paragraphs", newChapterSlug), "Paragraph reader evaluations"],
+    [path.join(root, "evaluations", "readers", "selections", oldChapterSlug), path.join(root, "evaluations", "readers", "selections", newChapterSlug), "Selection reader evaluations"],
+    [path.join(root, "evaluations", "readers", "summaries", "paragraphs", oldChapterSlug), path.join(root, "evaluations", "readers", "summaries", "paragraphs", newChapterSlug), "Paragraph reader summaries"],
+    [path.join(root, "evaluations", "readers", "summaries", "selections", oldChapterSlug), path.join(root, "evaluations", "readers", "summaries", "selections", newChapterSlug), "Selection reader summaries"],
+    [path.join(root, REWRITE_FROM_READER_FEEDBACK_ROOT, "chapters", oldChapterSlug), path.join(root, REWRITE_FROM_READER_FEEDBACK_ROOT, "chapters", newChapterSlug), "Chapter rewrite operations"],
+    [path.join(root, REWRITE_FROM_READER_FEEDBACK_ROOT, "paragraphs", oldChapterSlug), path.join(root, REWRITE_FROM_READER_FEEDBACK_ROOT, "paragraphs", newChapterSlug), "Paragraph rewrite operations"],
+  ];
+  for (const [source, destination, label] of chapterScopedMoves) await movePathIfPresent(source, destination, label);
+  await movePathIfPresent(
+    path.join(root, "evaluations", "readers", "summaries", "chapters", `${oldChapterSlug}.md`),
+    path.join(root, "evaluations", "readers", "summaries", "chapters", `${newChapterSlug}.md`),
+    "Chapter reader summary",
+  );
 
   const validated = chapterSchema.parse({
     ...current,
@@ -2371,6 +2399,11 @@ export async function renameChapter(
     [`asset:paragraph:${oldChapterSlug}:`, `asset:paragraph:${newChapterSlug}:`],
     [`resume:chapter:${oldChapterSlug}`, `resume:chapter:${newChapterSlug}`],
     [`evaluation:chapter:${oldChapterSlug}`, `evaluation:chapter:${newChapterSlug}`],
+    [`evaluations/readers/summaries/chapters/${oldChapterSlug}.md`, `evaluations/readers/summaries/chapters/${newChapterSlug}.md`],
+    [`evaluations/readers/summaries/paragraphs/${oldChapterSlug}/`, `evaluations/readers/summaries/paragraphs/${newChapterSlug}/`],
+    [`evaluations/readers/summaries/selections/${oldChapterSlug}/`, `evaluations/readers/summaries/selections/${newChapterSlug}/`],
+    [`${REWRITE_FROM_READER_FEEDBACK_ROOT}/chapters/${oldChapterSlug}/`, `${REWRITE_FROM_READER_FEEDBACK_ROOT}/chapters/${newChapterSlug}/`],
+    [`${REWRITE_FROM_READER_FEEDBACK_ROOT}/paragraphs/${oldChapterSlug}/`, `${REWRITE_FROM_READER_FEEDBACK_ROOT}/paragraphs/${newChapterSlug}/`],
     [assetDirectoryPrefix(oldChapterId), assetDirectoryPrefix(newChapterId)],
   ]);
 
@@ -2430,6 +2463,35 @@ export async function renameParagraph(
     await rename(oldAuditPath, newAuditPath);
   }
 
+  const paragraphScopedMoves: Array<[string, string, string]> = [
+    [path.join(root, "drafts", chapterSlugValue, `${oldParagraphSlug}.md`), path.join(root, "drafts", chapterSlugValue, `${newParagraphSlug}.md`), "Paragraph draft"],
+    [path.join(root, "chapters", chapterSlugValue, "drafts", `${oldParagraphSlug}.md`), path.join(root, "chapters", chapterSlugValue, "drafts", `${newParagraphSlug}.md`), "Legacy paragraph draft"],
+    [path.join(root, "scripts", chapterSlugValue, `${oldParagraphSlug}.md`), path.join(root, "scripts", chapterSlugValue, `${newParagraphSlug}.md`), "Paragraph script"],
+    [path.join(root, "evaluations", "readers", "paragraphs", chapterSlugValue, oldParagraphSlug), path.join(root, "evaluations", "readers", "paragraphs", chapterSlugValue, newParagraphSlug), "Paragraph reader evaluations"],
+    [path.join(root, "evaluations", "readers", "selections", chapterSlugValue, oldParagraphSlug), path.join(root, "evaluations", "readers", "selections", chapterSlugValue, newParagraphSlug), "Selection reader evaluations"],
+    [path.join(root, REWRITE_FROM_READER_FEEDBACK_ROOT, "paragraphs", chapterSlugValue, oldParagraphSlug), path.join(root, REWRITE_FROM_READER_FEEDBACK_ROOT, "paragraphs", chapterSlugValue, newParagraphSlug), "Paragraph rewrite operations"],
+  ];
+  for (const [source, destination, label] of paragraphScopedMoves) await movePathIfPresent(source, destination, label);
+  await movePathIfPresent(
+    path.join(root, "evaluations", "readers", "summaries", "paragraphs", chapterSlugValue, `${oldParagraphSlug}.md`),
+    path.join(root, "evaluations", "readers", "summaries", "paragraphs", chapterSlugValue, `${newParagraphSlug}.md`),
+    "Paragraph reader summary",
+  );
+  await movePathIfPresent(
+    path.join(root, "evaluations", "readers", "summaries", "selections", chapterSlugValue, `${oldParagraphSlug}.md`),
+    path.join(root, "evaluations", "readers", "summaries", "selections", chapterSlugValue, `${newParagraphSlug}.md`),
+    "Selection reader summary",
+  );
+
+  const chapterOperationSnapshots = await fg(
+    `${REWRITE_FROM_READER_FEEDBACK_ROOT}/chapters/${chapterSlugValue}/*/snapshots/${oldParagraphSlug}-{before,generated}.md`,
+    { cwd: root, absolute: true, onlyFiles: true },
+  );
+  for (const source of chapterOperationSnapshots) {
+    const destination = path.join(path.dirname(source), path.basename(source).replace(`${oldParagraphSlug}-`, `${newParagraphSlug}-`));
+    await movePathIfPresent(source, destination, "Chapter operation snapshot");
+  }
+
   const validated = paragraphSchema.parse({
     ...current,
     id: `paragraph:${chapterSlugValue}:${newParagraphSlug}`,
@@ -2478,6 +2540,9 @@ export async function renameParagraph(
       `evaluation:paragraph:${chapterSlugValue}:${oldParagraphSlug}`,
       `evaluation:paragraph:${chapterSlugValue}:${newParagraphSlug}`,
     ],
+    [`evaluations/readers/summaries/paragraphs/${chapterSlugValue}/${oldParagraphSlug}.md`, `evaluations/readers/summaries/paragraphs/${chapterSlugValue}/${newParagraphSlug}.md`],
+    [`evaluations/readers/summaries/selections/${chapterSlugValue}/${oldParagraphSlug}.md`, `evaluations/readers/summaries/selections/${chapterSlugValue}/${newParagraphSlug}.md`],
+    [`${REWRITE_FROM_READER_FEEDBACK_ROOT}/paragraphs/${chapterSlugValue}/${oldParagraphSlug}/`, `${REWRITE_FROM_READER_FEEDBACK_ROOT}/paragraphs/${chapterSlugValue}/${newParagraphSlug}/`],
     [assetDirectoryPrefix(oldParagraphId), assetDirectoryPrefix(newParagraphId)],
   ]);
 
@@ -7419,6 +7484,45 @@ export async function doctorBook(rootPath: string): Promise<{
       path: relativePath,
       message: "Audit file is outside the canonical book, chapter, or paragraph companion paths.",
     });
+  }
+
+  const operationFiles = contentFiles.filter((filePath) =>
+    toPosixPath(path.relative(root, filePath)).startsWith(`${REWRITE_FROM_READER_FEEDBACK_ROOT}/`),
+  );
+  const operationRelativePaths = new Set(operationFiles.map((filePath) => toPosixPath(path.relative(root, filePath))));
+  for (const filePath of operationFiles) {
+    const relativePath = toPosixPath(path.relative(root, filePath));
+    const parsed = parseRewriteOperationPath(relativePath);
+    if (!parsed) {
+      addDoctorIssue(issues, seen, {
+        severity: "error",
+        code: "malformed-rewrite-operation-path",
+        path: relativePath,
+        message: "Rewrite operation file is outside a canonical manifest or snapshot path.",
+      });
+      continue;
+    }
+    const manifestPath = rewriteOperationManifestPath(parsed.scope, parsed.chapterSlug, parsed.operationId, parsed.paragraphSlug);
+    if (parsed.kind !== "manifest" && !operationRelativePaths.has(manifestPath)) {
+      addDoctorIssue(issues, seen, {
+        severity: "warning",
+        code: "orphan-rewrite-operation-subtree",
+        path: relativePath,
+        message: `Rewrite operation snapshot has no manifest at ${manifestPath}.`,
+      });
+    }
+    if (parsed.kind !== "manifest") continue;
+    const sourcePath = parsed.scope === "chapter"
+      ? `chapters/${parsed.chapterSlug}/chapter.md`
+      : `chapters/${parsed.chapterSlug}/${parsed.paragraphSlug}.md`;
+    if (!(await pathExists(path.join(root, sourcePath)))) {
+      addDoctorIssue(issues, seen, {
+        severity: "warning",
+        code: "orphan-rewrite-operation",
+        path: relativePath,
+        message: `Rewrite operation has no source target at ${sourcePath}.`,
+      });
+    }
   }
 
   const currentScriptLedger = await readLooseMarkdownIfExists(path.join(root, SCRIPT_LEDGER_FILE));

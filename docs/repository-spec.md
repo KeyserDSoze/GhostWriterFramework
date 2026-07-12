@@ -65,6 +65,16 @@ evaluations/
   total.md
   chapters/
   paragraphs/
+operations/
+  rewrite-from-reader-feedback/
+    chapters/<chapter-slug>/<operation-id>/
+      manifest.md
+      snapshots/<paragraph-slug>-before.md
+      snapshots/<paragraph-slug>-generated.md
+    paragraphs/<chapter-slug>/<paragraph-slug>/<operation-id>/
+      manifest.md
+      snapshots/<paragraph-slug>-before.md
+      snapshots/<paragraph-slug>-generated.md
 research/
   wikipedia/
     en/
@@ -102,6 +112,16 @@ Mappings are deterministic:
 Keep at most one current Audit companion at each mapped path. Source renames move the corresponding Audit file or chapter subtree and rewrite `chapter:` and `paragraph:` references. Do not retain timestamped copies or old-path duplicates in `audit/`; Git history is the history of prior Audit results.
 
 Core does not currently expose semantic `deleteChapter`, `deleteParagraph`, `deleteEntity`, or `deleteBook` operations. `NarrariumBookWorkspace.deleteDocument(path)` is a generic single-document change and does not cascade. A caller deleting source files directly must also delete their mapped Audit companions; `doctorBook()` reports malformed and orphan Audit files but never removes them automatically.
+
+## Reader-feedback rewrite operations
+
+Generated prose drafts use the canonical path `drafts/<chapter-slug>/<paragraph-slug>.md`. Implementations may read the legacy `chapters/<chapter-slug>/drafts/<paragraph-slug>.md` path as a fallback, but all new writes use the canonical path.
+
+Every applied rewrite has a regular Git-tracked operation directory under `operations/rewrite-from-reader-feedback/`. The manifest records the target ids, base remote head, progress, full LLM run metadata, aggregate token/cost data, source hashes, and every modified draft. Before any draft changes, the operation commits and pushes its manifest plus a `before` snapshot for each target file. An absent original draft is represented in the manifest with `existedBefore: false` and an empty marker snapshot.
+
+Each successfully generated paragraph is committed and pushed with its `generated` snapshot and updated manifest. Chapter rewrites make one routed generation call per paragraph in chapter order; incomplete operations remain `failed`, `cancelled`, or `conflict` and retain the list of successfully modified files.
+
+Rollback is targeted, never a branch reset. A draft is restored only when its current SHA-256 matches the operation's applied hash, unless the caller explicitly selects force-restore for that file. Conflicts may instead keep the current file or cancel rollback. Restored files and the final manifest status are written in one commit and push. Chapter and paragraph renames/reorders move these operation trees and rewrite stored target references; `doctorBook()` reports malformed paths, missing manifests, and operations whose source target no longer exists.
 
 ## Markdown frontmatter
 

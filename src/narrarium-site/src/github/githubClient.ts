@@ -8,6 +8,7 @@ import {
   buildParagraphAuditPath,
   extractParagraphSlug,
 } from "@/narrarium/auditPaths";
+import { isRewriteOperationManifestPath } from "@/narrarium/rewriteOperationPaths";
 
 export function createGitHubClient(token: string): Octokit {
   return new Octokit({ auth: token });
@@ -442,6 +443,9 @@ export async function loadBookStructure(
     readerEvaluationFiles: allPaths
       .filter((p) => /^evaluations\/readers\/.+\.md$/.test(p))
       .map((p) => ({ path: p, sha: treeData.tree.find((node) => node.path === p)?.sha ?? "", size: treeData.tree.find((node) => node.path === p)?.size ?? 0 })),
+    operationManifestFiles: allPaths
+      .filter(isRewriteOperationManifestPath)
+      .map((p) => ({ path: p, sha: treeData.tree.find((node) => node.path === p)?.sha ?? "", size: treeData.tree.find((node) => node.path === p)?.size ?? 0 })),
     auditFiles,
     plotPath: allPaths.includes("plot.md") ? "plot.md" : undefined,
     researchFiles: allPaths
@@ -484,6 +488,19 @@ export async function loadFileContent(
   const data = await fetchContentJson(token, owner, repo, path, ref);
   if (data.content) return decodeContent(data.content);
   throw new Error(`${path} is not a file`);
+}
+
+/** Read text from GitHub at an exact branch, tag, or commit without consulting IndexedDB. */
+export async function loadRemoteFileContentAtRef(
+  token: string,
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string,
+): Promise<FileContent> {
+  const data = await fetchContentJson(token, owner, repo, path, ref, true);
+  if (data.content && data.sha) return { content: decodeContent(data.content), sha: data.sha };
+  throw new Error(`${path} is not a file at ${ref}`);
 }
 
 export async function loadBinaryFileContent(
@@ -742,6 +759,7 @@ export async function renameParagraphWithCompanions(
     [`evaluations/readers/selections/${chapterSlug}/${oldSlug}/`, `evaluations/readers/selections/${chapterSlug}/${newSlug}/`],
     [`evaluations/readers/summaries/paragraphs/${chapterSlug}/${oldSlug}/`, `evaluations/readers/summaries/paragraphs/${chapterSlug}/${newSlug}/`],
     [`evaluations/readers/summaries/selections/${chapterSlug}/${oldSlug}/`, `evaluations/readers/summaries/selections/${chapterSlug}/${newSlug}/`],
+    [`operations/rewrite-from-reader-feedback/paragraphs/${chapterSlug}/${oldSlug}/`, `operations/rewrite-from-reader-feedback/paragraphs/${chapterSlug}/${newSlug}/`],
   ];
 
   const remapPath = (path: string): string | null => {
@@ -750,6 +768,8 @@ export async function renameParagraphWithCompanions(
     for (const [oldPrefix, newPrefix] of prefixMoves) {
       if (path.startsWith(oldPrefix)) return `${newPrefix}${path.slice(oldPrefix.length)}`;
     }
+    const chapterOperationSnapshot = new RegExp(`^(operations/rewrite-from-reader-feedback/chapters/${chapterSlug}/[^/]+/snapshots/)${oldSlug}-(before|generated)\\.md$`).exec(path);
+    if (chapterOperationSnapshot) return `${chapterOperationSnapshot[1]}${newSlug}-${chapterOperationSnapshot[2]}.md`;
     return null;
   };
 
@@ -987,6 +1007,12 @@ export async function reorderParagraphsInChapter(
     if (m) return m[1];
     m = new RegExp(`^evaluations/readers/summaries/(?:paragraphs|selections)/${escapedChapter}/([^/]+)/`).exec(path);
     if (m) return m[1];
+    m = new RegExp(`^evaluations/readers/summaries/(?:paragraphs|selections)/${escapedChapter}/([^/]+)\\.md$`).exec(path);
+    if (m) return m[1];
+    m = new RegExp(`^operations/rewrite-from-reader-feedback/paragraphs/${escapedChapter}/([^/]+)/`).exec(path);
+    if (m) return m[1];
+    m = new RegExp(`^operations/rewrite-from-reader-feedback/chapters/${escapedChapter}/[^/]+/snapshots/([^/]+)-(?:before|generated)\\.md$`).exec(path);
+    if (m) return m[1];
     return null;
   };
 
@@ -1007,6 +1033,12 @@ export async function reorderParagraphsInChapter(
     if (readerMatch) return `${readerMatch[1]}${newSlug}${readerMatch[2]}`;
     const readerSummaryMatch = new RegExp(`^(evaluations/readers/summaries/(?:paragraphs|selections)/${escapedChapter}/)[^/]+(/.*)$`).exec(path);
     if (readerSummaryMatch) return `${readerSummaryMatch[1]}${newSlug}${readerSummaryMatch[2]}`;
+    const exactReaderSummaryMatch = new RegExp(`^(evaluations/readers/summaries/(?:paragraphs|selections)/${escapedChapter}/)[^/]+(\\.md)$`).exec(path);
+    if (exactReaderSummaryMatch) return `${exactReaderSummaryMatch[1]}${newSlug}${exactReaderSummaryMatch[2]}`;
+    const paragraphOperationMatch = new RegExp(`^(operations/rewrite-from-reader-feedback/paragraphs/${escapedChapter}/)[^/]+(/.*)$`).exec(path);
+    if (paragraphOperationMatch) return `${paragraphOperationMatch[1]}${newSlug}${paragraphOperationMatch[2]}`;
+    const chapterOperationSnapshot = new RegExp(`^(operations/rewrite-from-reader-feedback/chapters/${escapedChapter}/[^/]+/snapshots/)[^/]+(-(before|generated)\\.md)$`).exec(path);
+    if (chapterOperationSnapshot) return `${chapterOperationSnapshot[1]}${newSlug}${chapterOperationSnapshot[2]}`;
     const assetMatch = new RegExp(`^(assets/chapters/${escapedChapter}/paragraphs/)[^/]+(/.*)$`).exec(path);
     if (assetMatch) return `${assetMatch[1]}${newSlug}${assetMatch[2]}`;
     return null;
@@ -1027,6 +1059,9 @@ export async function reorderParagraphsInChapter(
         [`chapters/${chapterSlug}/drafts/${oldSlug}.md`, `chapters/${chapterSlug}/drafts/${newSlug}.md`],
         [`scripts/${chapterSlug}/${oldSlug}.md`, `scripts/${chapterSlug}/${newSlug}.md`],
         [`evaluations/paragraphs/${chapterSlug}/${oldSlug}.md`, `evaluations/paragraphs/${chapterSlug}/${newSlug}.md`],
+        [`evaluations/readers/summaries/paragraphs/${chapterSlug}/${oldSlug}.md`, `evaluations/readers/summaries/paragraphs/${chapterSlug}/${newSlug}.md`],
+        [`evaluations/readers/summaries/selections/${chapterSlug}/${oldSlug}.md`, `evaluations/readers/summaries/selections/${chapterSlug}/${newSlug}.md`],
+        [`operations/rewrite-from-reader-feedback/paragraphs/${chapterSlug}/${oldSlug}/`, `operations/rewrite-from-reader-feedback/paragraphs/${chapterSlug}/${newSlug}/`],
         [buildParagraphAuditPath(chapterSlug, oldSlug), buildParagraphAuditPath(chapterSlug, newSlug)],
         [`/${chapterSlug}/${oldSlug}/`, `/${chapterSlug}/${newSlug}/`],
         [`/paragraphs/${oldSlug}/`, `/paragraphs/${newSlug}/`],
@@ -1198,6 +1233,8 @@ export async function reorderChaptersInBook(
         `evaluations/readers/summaries/chapters/${oldSlug}/`,
         `evaluations/readers/summaries/paragraphs/${oldSlug}/`,
         `evaluations/readers/summaries/selections/${oldSlug}/`,
+        `operations/rewrite-from-reader-feedback/chapters/${oldSlug}/`,
+        `operations/rewrite-from-reader-feedback/paragraphs/${oldSlug}/`,
       ];
       for (const prefix of prefixes) {
         if (path.startsWith(prefix)) {
@@ -1207,6 +1244,7 @@ export async function reorderChaptersInBook(
       if (path === `resumes/chapters/${oldSlug}.md`) return `resumes/chapters/${newSlug}.md`;
       if (path === `evaluations/chapters/${oldSlug}.md`) return `evaluations/chapters/${newSlug}.md`;
       if (path === `state/chapters/${oldSlug}.md`) return `state/chapters/${newSlug}.md`;
+      if (path === `evaluations/readers/summaries/chapters/${oldSlug}.md`) return `evaluations/readers/summaries/chapters/${newSlug}.md`;
     }
     return null;
   };
@@ -1227,6 +1265,11 @@ export async function reorderChaptersInBook(
         [`resumes/chapters/${oldSlug}.md`, `resumes/chapters/${newSlug}.md`],
         [`evaluations/chapters/${oldSlug}.md`, `evaluations/chapters/${newSlug}.md`],
         [`state/chapters/${oldSlug}.md`, `state/chapters/${newSlug}.md`],
+        [`evaluations/readers/summaries/chapters/${oldSlug}.md`, `evaluations/readers/summaries/chapters/${newSlug}.md`],
+        [`evaluations/readers/summaries/paragraphs/${oldSlug}/`, `evaluations/readers/summaries/paragraphs/${newSlug}/`],
+        [`evaluations/readers/summaries/selections/${oldSlug}/`, `evaluations/readers/summaries/selections/${newSlug}/`],
+        [`operations/rewrite-from-reader-feedback/chapters/${oldSlug}/`, `operations/rewrite-from-reader-feedback/chapters/${newSlug}/`],
+        [`operations/rewrite-from-reader-feedback/paragraphs/${oldSlug}/`, `operations/rewrite-from-reader-feedback/paragraphs/${newSlug}/`],
       );
     }
     let out = text;

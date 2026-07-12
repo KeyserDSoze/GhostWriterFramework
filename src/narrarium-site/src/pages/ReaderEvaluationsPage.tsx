@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, CheckCircle2, ChevronDown, Loader2, Play, RefreshCcw, Sparkles, Square, Trash2, Users } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown, Loader2, Play, RefreshCcw, RotateCcw, Sparkles, Square, Trash2, Users } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,10 +19,12 @@ import { generateReaderEvaluationSummary, hashReaderSource, loadReaderPersonas, 
 import type { ReaderEvaluationDepth, ReaderPersonaProfile } from "@/narrarium/readerPersona";
 import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
 import { useRegisterPageActions } from "@/store/pageActionsStore";
+import { openFeedbackRewriteWorkflow, type FeedbackRewriteMode } from "@/store/feedbackRewriteWorkflowStore";
 
 export function ReaderEvaluationsPage() {
   const { bookId, chapterId, paragraphNum } = useParams<{ bookId: string; chapterId: string; paragraphNum?: string }>();
   const location = useLocation();
+  const navigate = useNavigate();
   const { t } = useTranslation();
   const { toast } = useToast();
   const { settings } = useSettingsStore();
@@ -44,6 +46,27 @@ export function ReaderEvaluationsPage() {
   const [openCards, setOpenCards] = useState<Record<string, boolean>>({});
   const [setupOpen, setSetupOpen] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
+  const paragraphSlugValue = paragraph ? paragraphSlug(paragraph.path) : undefined;
+  const rewriteScope = paragraph ? "paragraph" as const : "chapter" as const;
+  const operationPrefix = paragraphSlugValue
+    ? `operations/rewrite-from-reader-feedback/paragraphs/${chapterId}/${paragraphSlugValue}/`
+    : `operations/rewrite-from-reader-feedback/chapters/${chapterId}/`;
+  const hasRewriteOperation = Boolean(structure?.operationManifestFiles.some((file) => file.path.startsWith(operationPrefix)));
+
+  function openRewrite(mode: FeedbackRewriteMode) {
+    if (!bookId || !chapterId || selection) return;
+    openFeedbackRewriteWorkflow({ mode, scope: rewriteScope, bookId, chapterSlug: chapterId, paragraphSlug: paragraphSlugValue });
+  }
+
+  useEffect(() => {
+    const mode = new URLSearchParams(location.search).get("workflow");
+    if (mode !== "generate" && mode !== "restore" && mode !== "status") return;
+    if (!chapter || (paragraphNum && !paragraph)) return;
+    openRewrite(mode);
+    const params = new URLSearchParams(location.search);
+    params.delete("workflow");
+    navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
+  }, [location.search, bookId, chapterId, chapter?.slug, paragraphNum, paragraphSlugValue, selection]);
 
   useEffect(() => {
     if (!book || !structure || !token || !chapter) return;
@@ -132,13 +155,16 @@ export function ReaderEvaluationsPage() {
     finally { setSummaryBusy(false); }
   }
 
+  const latestSummary = useMemo(() => history.filter((record) => record.readerId === "summary" && record.status === "completed").sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null, [history]);
+
   useRegisterPageActions([
     { id: "run-readers", label: t("readerEvaluations.runSelected"), icon: <Users className="h-4 w-4" />, run: () => run(), disabled: running || !target },
     { id: "summary-readers", label: t("readerEvaluations.generateSummary"), icon: <Sparkles className="h-4 w-4" />, run: () => summarize(), disabled: running || summaryBusy || latestCompletedByReader(history).length < 2 },
+    { id: "generate-draft-from-feedback", label: t("feedbackRewrite.generate"), icon: <Sparkles className="h-4 w-4" />, run: () => openRewrite("generate"), disabled: Boolean(selection) || !latestSummary },
+    { id: "restore-previous-drafts", label: t("feedbackRewrite.restore"), icon: <RotateCcw className="h-4 w-4" />, run: () => openRewrite("restore"), disabled: Boolean(selection) || !hasRewriteOperation },
   ], Boolean(book && target));
 
   const groups = useMemo(() => ({ standard: personas.filter((profile) => profile.readerType === "standard"), genre: personas.filter((profile) => profile.readerType === "genre"), custom: personas.filter((profile) => profile.readerType === "custom") }), [personas]);
-  const latestSummary = useMemo(() => history.filter((record) => record.readerId === "summary" && record.status === "completed").sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null, [history]);
   const readerHistory = useMemo(() => history.filter((record) => record.readerId !== "summary"), [history]);
   const latestByReader = useMemo(() => latestCompletedByReader(history), [history]);
   const averageScore = useMemo(() => {
@@ -191,6 +217,8 @@ export function ReaderEvaluationsPage() {
                   {summaryBusy ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Sparkles className="mr-1.5 h-4 w-4" />}
                   {latestSummary ? t("readerEvaluations.regenerateSummary") : t("readerEvaluations.generateSummary")}
                 </Button>
+                <Button size="sm" onClick={() => openRewrite("generate")} disabled={Boolean(selection) || !latestSummary || running || summaryBusy}><Sparkles className="mr-1.5 h-4 w-4" />{t("feedbackRewrite.generate")}</Button>
+                {hasRewriteOperation && <Button variant="outline" size="sm" onClick={() => openRewrite("restore")} disabled={Boolean(selection) || running || summaryBusy}><RotateCcw className="mr-1.5 h-4 w-4" />{t("feedbackRewrite.restore")}</Button>}
                 {latestSummary && (
                   <Button size="icon" variant="ghost" onClick={() => void removeEvaluation(latestSummary)} disabled={running || summaryBusy}>
                     <Trash2 className="h-4 w-4 text-destructive" />

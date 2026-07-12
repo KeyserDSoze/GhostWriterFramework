@@ -8,3 +8,4 @@ export * from "./skill-template.js";
 export * from "./templates.js";
 export * from "./utils.js";
 export * from "./repo.js";
+export * from "./rewrite-operations.js";

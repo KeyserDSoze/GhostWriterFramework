@@ -129,14 +129,14 @@ export async function hashReaderSource(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-function targetPathParts(target: ReaderEvaluationTarget): string[] {
+export function readerEvaluationTargetPathParts(target: ReaderEvaluationTarget): string[] {
   if (target.type === "chapter") return ["chapters", target.chapterId];
   if (target.type === "paragraph") return ["paragraphs", target.chapterId, target.paragraphId ?? "unknown"];
   return ["selections", target.chapterId, target.paragraphId ?? "chapter"];
 }
 
 function evaluationPath(target: ReaderEvaluationTarget, reader: ReaderPersonaProfile): string {
-  return ["evaluations", "readers", ...targetPathParts(target), `${reader.slug}.md`].join("/");
+  return ["evaluations", "readers", ...readerEvaluationTargetPathParts(target), `${reader.slug}.md`].join("/");
 }
 
 export function readerEvaluationPath(target: ReaderEvaluationTarget, reader: ReaderPersonaProfile): string {
@@ -144,13 +144,37 @@ export function readerEvaluationPath(target: ReaderEvaluationTarget, reader: Rea
 }
 
 function legacyEvaluationPrefix(target: ReaderEvaluationTarget, reader: ReaderPersonaProfile): string {
-  return ["evaluations", "readers", ...targetPathParts(target), reader.slug, ""].join("/");
+  return ["evaluations", "readers", ...readerEvaluationTargetPathParts(target), reader.slug, ""].join("/");
 }
 
-function summaryPath(target: ReaderEvaluationTarget): string {
-  const parts = targetPathParts(target);
+export function readerEvaluationSummaryPath(target: ReaderEvaluationTarget): string {
+  const parts = readerEvaluationTargetPathParts(target);
   const leaf = parts.pop() ?? "summary";
   return ["evaluations", "readers", "summaries", ...parts, `${leaf}.md`].join("/");
+}
+
+export function isCurrentReaderEvaluationSummaryPath(path: string, target: ReaderEvaluationTarget): boolean {
+  return path === readerEvaluationSummaryPath(target);
+}
+
+export function readerEvaluationTargetPrefixes(target: ReaderEvaluationTarget): string[] {
+  const parts = readerEvaluationTargetPathParts(target);
+  return [
+    ["evaluations", "readers", ...parts, ""].join("/"),
+    readerEvaluationSummaryPath(target),
+  ];
+}
+
+/** Latest completed, current-source evaluation for each simulated reader. */
+export function latestNonStaleCompletedReaderEvaluations(records: ReaderEvaluationRecord[]): ReaderEvaluationRecord[] {
+  const seen = new Set<string>();
+  return [...records]
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .filter((record) => {
+      if (record.readerId === "summary" || record.status !== "completed" || record.stale || seen.has(record.readerId)) return false;
+      seen.add(record.readerId);
+      return true;
+    });
 }
 
 function renderEvaluationBody(output: ReaderEvaluationOutput, language: string): string {
@@ -335,7 +359,7 @@ export async function generateReaderEvaluationSummary(input: { token: string; bo
     { role: "system", content: `Compare the separate simulated-reader evaluations. Preserve disagreements rather than flattening them. Return the summary in ${language}.` },
     { role: "user", content: input.evaluations.map((evaluation) => `READER: ${evaluation.readerName}\nSCORE: ${evaluation.score ?? "n/a"}\n${evaluation.body}`).join("\n\n---\n\n") },
   ], "reader-evaluation-summary", SUMMARY_TOOL, { signal: input.signal, label: "reader-evaluation-summary" });
-  const path = summaryPath(input.target);
+  const path = readerEvaluationSummaryPath(input.target);
   const existing = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path).catch(() => null);
   const originalCreatedAt = createdAtFromFile(existing?.content, createdAt);
   const id = `reader-evaluation-summary:${input.target.type}:${input.target.chapterId}:${input.target.paragraphId ?? "chapter"}`;
@@ -404,9 +428,11 @@ export function defaultReaders(language?: string): ReaderPersonaProfile[] {
 export function findOrphanReaderEvaluationPaths(structure: BookStructure): string[] {
   const chapters = new Map(structure.chapters.map((chapter) => [chapter.slug, new Set(chapter.paragraphs.map((paragraph) => paragraphSlugFromPath(paragraph.path)))]));
   return structure.readerEvaluationFiles.map((file) => file.path).filter((path) => {
-    const chapterMatch = /^evaluations\/readers\/(?:chapters|summaries\/chapters)\/([^/]+)\//.exec(path);
+    const chapterMatch = /^evaluations\/readers\/chapters\/([^/]+)\//.exec(path)
+      ?? /^evaluations\/readers\/summaries\/chapters\/([^/]+)\.md$/.exec(path);
     if (chapterMatch) return !chapters.has(chapterMatch[1]);
-    const paragraphMatch = /^evaluations\/readers\/(?:paragraphs|selections|summaries\/(?:paragraphs|selections))\/([^/]+)\/([^/]+)\//.exec(path);
+    const paragraphMatch = /^evaluations\/readers\/(?:paragraphs|selections)\/([^/]+)\/([^/]+)\//.exec(path)
+      ?? /^evaluations\/readers\/summaries\/(?:paragraphs|selections)\/([^/]+)\/([^/]+)\.md$/.exec(path);
     if (paragraphMatch) return !chapters.get(paragraphMatch[1])?.has(paragraphMatch[2]);
     return false;
   });

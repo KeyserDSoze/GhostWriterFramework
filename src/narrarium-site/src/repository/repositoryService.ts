@@ -350,7 +350,7 @@ async function removePulledFile(repoId: string, path: string): Promise<void> {
   await removeLocalFileEntry(repoId, path);
 }
 
-export async function pushLocalCommits(input: { bookId: string; token: string }): Promise<PushResult> {
+export async function pushLocalCommits(input: { bookId: string; token: string; expectedRemoteHeadSha?: string }): Promise<PushResult> {
   const meta = await getLocalRepositoryByBook(input.bookId);
   if (!meta) throw new Error("Local repository is not ready.");
   const dirty = await listDirtyLocalFiles(meta.id);
@@ -361,6 +361,9 @@ export async function pushLocalCommits(input: { bookId: string; token: string })
   const octokit = new Octokit({ auth: input.token });
   const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
   const remoteHeadSha = ref.data.object.sha;
+  if (input.expectedRemoteHeadSha && remoteHeadSha !== input.expectedRemoteHeadSha) {
+    throw new Error(`Remote head changed: expected ${input.expectedRemoteHeadSha}, found ${remoteHeadSha}.`);
+  }
   const baseCommit = await octokit.rest.git.getCommit({ owner: meta.owner, repo: meta.repo, commit_sha: remoteHeadSha });
   const files = await listAllLocalFiles(meta.id);
   const fileByPath = new Map(files.map((file) => [file.path, file]));

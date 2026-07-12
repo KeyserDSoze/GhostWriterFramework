@@ -1,5 +1,41 @@
 [
   {
+    "version": "0.72.0",
+    "date": "2026-07-12",
+    "en": {
+      "title": "Generate drafts from simulated-reader feedback",
+      "summary": "Narrarium can now rewrite one paragraph draft or every draft in a chapter from the saved reader-panel recap, with previews, sequential progress, Git checkpoints and targeted restore.",
+      "changes": [
+        "Added the dedicated Rewrite from Reader Feedback Router task so generation, fallback selection, token tracking and costs use the existing AI Router.",
+        "Added Generate Draft from Feedback to the reader-panel summary, desktop context menu, mobile Actions, Copilot and Fantasmino for paragraph and chapter targets.",
+        "Paragraph rewrites now show current-versus-generated draft diff, applied feedback points and an explicit replacement warning before any draft is changed.",
+        "Chapter rewrites process paragraphs one at a time in narrative order, save only complete outputs, show total/completed/current progress and keep already completed drafts identifiable after cancellation or failure.",
+        "Added retry-and-continue for failed or cancelled chapter operations without regenerating already completed paragraphs.",
+        "Added durable operation manifests and before/generated snapshots under operations/rewrite-from-reader-feedback, committed to Git before draft replacement and updated after every completed paragraph.",
+        "Added Restore Previous Drafts for paragraph and chapter operations with targeted rollback only, later-edit conflict detection, per-file Keep current / Restore anyway choices and no global reset.",
+        "Added operation status, token/model/cost metadata, base/result Git references and exact modified-file manifests for resumability and auditability.",
+        "Made operation files follow paragraph/chapter rename, reorder and paragraph deletion, with orphan checks in the repository lifecycle and core doctor tooling.",
+        "Added reader-summary path helpers and current non-stale feedback selection so generation is enabled only when a recap exists and warns explicitly when that recap refers to an older source version."
+      ]
+    },
+    "it": {
+      "title": "Generazione bozze dai feedback dei lettori simulati",
+      "summary": "Narrarium può ora riscrivere la bozza di un paragrafo o tutte le bozze di un capitolo usando il recap salvato del panel lettori, con anteprima, avanzamento sequenziale, checkpoint Git e ripristino mirato.",
+      "changes": [
+        "Aggiunto il task Router dedicato Riscrittura dal feedback lettori, così generazione, fallback, token e costi riutilizzano l'AI Router esistente.",
+        "Aggiunta l'azione Genera bozza dai feedback nella sintesi panel, nel Context Menu desktop, nelle Azioni mobile, nel Copilot e nel Fantasmino per target paragrafo e capitolo.",
+        "La riscrittura del paragrafo mostra ora il diff tra bozza corrente e generata, i feedback applicati e un warning esplicito prima di sostituire qualsiasi bozza.",
+        "La riscrittura del capitolo elabora i paragrafi uno alla volta in ordine narrativo, salva solo output completi, mostra totale/completati/corrente e mantiene identificabili le bozze già completate dopo annullamento o errore.",
+        "Aggiunto Riprova e continua per operazioni capitolo fallite o annullate, senza rigenerare i paragrafi già completati.",
+        "Aggiunti manifest operazione e snapshot prima/generato persistenti sotto operations/rewrite-from-reader-feedback, committati su Git prima della sostituzione e aggiornati dopo ogni paragrafo completato.",
+        "Aggiunto Ripristina bozze precedenti per paragrafo e capitolo con rollback solo dei file coinvolti, rilevazione modifiche successive, scelte Mantieni corrente / Ripristina comunque per file e nessun reset globale.",
+        "Aggiunti stato operazione, metadati token/modello/costo, riferimenti Git base/risultato e manifest esatto dei file modificati per ripresa e tracciabilità.",
+        "I file operazione ora seguono rename e reorder di paragrafi/capitoli e la cancellazione paragrafo, con controlli orfani nel lifecycle repository e nel doctor del core.",
+        "Aggiunti helper canonici per i path delle sintesi lettori e la selezione dei feedback correnti non stale: la generazione è disponibile solo se esiste un recap e avvisa esplicitamente quando il recap riguarda una versione precedente."
+      ]
+    }
+  },
+  {
     "version": "0.71.8",
     "date": "2026-07-12",
     "en": {

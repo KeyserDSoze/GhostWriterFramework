@@ -17,14 +17,14 @@ export type AIProviderType = "azure_openai" | "openai" | "m365_copilot" | "githu
  * - simple-tasks: cheap micro-decisions (yes/no confirmation, tiny classifications)
  * - review: evaluations and editorial scoring
  */
-export type ChatCapability = "default" | "copilot" | "simple-tasks" | "review" | "chat-resume" | "reader-evaluation" | "reader-evaluation-summary" | "deep-research" | "create-from-research" | "audit";
+export type ChatCapability = "default" | "copilot" | "simple-tasks" | "review" | "chat-resume" | "reader-evaluation" | "reader-evaluation-summary" | "rewrite-from-reader-feedback" | "deep-research" | "create-from-research" | "audit";
 
-export const CHAT_CAPABILITIES: ChatCapability[] = ["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "deep-research", "create-from-research", "audit"];
+export const CHAT_CAPABILITIES: ChatCapability[] = ["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit"];
 
 /** Task kinds the configurable router can target: the 4 chat capabilities plus media tasks. */
 export type RoutingTaskKind = ChatCapability | "tts" | "stt" | "image";
 
-export const ROUTING_TASKS: RoutingTaskKind[] = ["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "deep-research", "create-from-research", "audit", "tts", "stt", "image"];
+export const ROUTING_TASKS: RoutingTaskKind[] = ["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "tts", "stt", "image"];
 
 /** A concrete integration+model target the router points a task at. */
 export interface RoutingTarget {

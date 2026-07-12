@@ -19,6 +19,7 @@ import { usePageActionsStore } from "@/store/pageActionsStore";
 import { useContextualActions } from "@/hooks/useContextualActions";
 
 const AUDIT_ACTION_IDS = new Set(["run-audit", "open-audit", "update-audit", "delete-audit"]);
+const DIRECT_CONTEXT_ACTION_IDS = new Set([...AUDIT_ACTION_IDS, "generate-draft-from-feedback", "feedback-rewrite-status", "restore-previous-drafts"]);
 
 interface ActionRow {
   label: string;
@@ -97,9 +98,9 @@ export function FloatingActions() {
   }
 
   const rows: ActionRow[] = pageActions
-    .filter((action) => !AUDIT_ACTION_IDS.has(action.id))
+    .filter((action) => !DIRECT_CONTEXT_ACTION_IDS.has(action.id))
     .map((action) => ({ label: action.label, icon: action.icon, onClick: () => { setOpen(false); void action.run(); }, disabled: action.disabled }));
-  for (const action of contextualActions.filter((entry) => AUDIT_ACTION_IDS.has(entry.id))) {
+  for (const action of contextualActions.filter((entry) => DIRECT_CONTEXT_ACTION_IDS.has(entry.id))) {
     rows.push({
       label: action.label,
       icon: action.icon,

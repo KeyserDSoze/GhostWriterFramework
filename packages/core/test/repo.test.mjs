@@ -29,6 +29,8 @@ import {
   renameChapter,
   renameEntity,
   renameParagraph,
+  parseRewriteOperationPath,
+  rewriteOperationManifestPath,
   queryCanon,
   parseScriptBody,
   readChapter,
@@ -1002,6 +1004,48 @@ test("chapter and paragraph renames move Audit companions and rewrite references
     assert.equal(validation.valid, true);
     await assert.rejects(access(oldAuditRoot));
     await assert.rejects(access(path.join(newAuditRoot, "paragraphs", "001-at-the-gate.md")));
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("rewrite operation paths follow chapter and paragraph lifecycle and doctor reports orphans", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-rewrite-operation-"));
+  try {
+    await initializeBookRepo(rootPath, { title: "Rewrite Operations", language: "en" });
+    await createChapter(rootPath, { number: 1, title: "The Arrival" });
+    await createParagraph(rootPath, { chapter: "chapter:001-the-arrival", number: 1, title: "At The Gate" });
+
+    const chapterManifest = rewriteOperationManifestPath("chapter", "001-the-arrival", "chapter-op");
+    const paragraphManifest = rewriteOperationManifestPath("paragraph", "001-the-arrival", "paragraph-op", "001-at-the-gate");
+    const chapterSnapshot = path.join(path.dirname(chapterManifest), "snapshots", "001-at-the-gate-before.md");
+    await mkdir(path.join(rootPath, path.dirname(chapterSnapshot)), { recursive: true });
+    await mkdir(path.join(rootPath, path.dirname(paragraphManifest)), { recursive: true });
+    await writeFile(path.join(rootPath, chapterManifest), "---\ntype: rewriteFromReaderFeedbackOperation\n---\n\nchapter:001-the-arrival\n", "utf8");
+    await writeFile(path.join(rootPath, chapterSnapshot), "before", "utf8");
+    await writeFile(path.join(rootPath, paragraphManifest), "---\ntype: rewriteFromReaderFeedbackOperation\n---\n\nparagraph:001-the-arrival:001-at-the-gate\n", "utf8");
+    await mkdir(path.join(rootPath, "drafts", "001-the-arrival"), { recursive: true });
+    await writeFile(path.join(rootPath, "drafts", "001-the-arrival", "001-at-the-gate.md"), "draft", "utf8");
+    await mkdir(path.join(rootPath, "evaluations", "readers", "summaries", "paragraphs", "001-the-arrival"), { recursive: true });
+    await writeFile(path.join(rootPath, "evaluations", "readers", "summaries", "paragraphs", "001-the-arrival", "001-at-the-gate.md"), "summary", "utf8");
+
+    await renameChapter(rootPath, { chapter: "chapter:001-the-arrival", newTitle: "The Crossing" });
+    await renameParagraph(rootPath, { chapter: "chapter:001-the-crossing", paragraph: "001-at-the-gate", newTitle: "At The Bridge" });
+
+    const movedChapterManifest = rewriteOperationManifestPath("chapter", "001-the-crossing", "chapter-op");
+    const movedParagraphManifest = rewriteOperationManifestPath("paragraph", "001-the-crossing", "paragraph-op", "001-at-the-bridge");
+    await access(path.join(rootPath, movedChapterManifest));
+    await access(path.join(rootPath, path.dirname(movedChapterManifest), "snapshots", "001-at-the-bridge-before.md"));
+    await access(path.join(rootPath, movedParagraphManifest));
+    await access(path.join(rootPath, "drafts", "001-the-crossing", "001-at-the-bridge.md"));
+    await access(path.join(rootPath, "evaluations", "readers", "summaries", "paragraphs", "001-the-crossing", "001-at-the-bridge.md"));
+    assert.equal(parseRewriteOperationPath(movedParagraphManifest)?.paragraphSlug, "001-at-the-bridge");
+
+    const orphan = rewriteOperationManifestPath("paragraph", "999-missing", "orphan-op", "001-missing");
+    await mkdir(path.join(rootPath, path.dirname(orphan)), { recursive: true });
+    await writeFile(path.join(rootPath, orphan), "---\ntype: rewriteFromReaderFeedbackOperation\n---\n", "utf8");
+    const doctor = await doctorBook(rootPath);
+    assert.ok(doctor.issues.some((issue) => issue.code === "orphan-rewrite-operation" && issue.path === orphan));
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }

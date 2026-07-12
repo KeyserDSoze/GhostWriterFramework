@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ClipboardCheck, Columns2, FileEdit, FileText, NotebookText, Network, PenLine, Play, RefreshCcw, Search, ShieldAlert, Trash2, Users, Wand2 } from "lucide-react";
+import { ClipboardCheck, Columns2, FileEdit, FileText, History, NotebookText, Network, PenLine, Play, RefreshCcw, RotateCcw, Search, ShieldAlert, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useBookStructure } from "@/hooks/useBookStructure";
@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { createChapterDraftArtifacts, createChapterEvaluationArtifact, createChapterResumeArtifact, createParagraphDraftArtifact, createParagraphEvaluationArtifact, createParagraphScriptArtifact } from "@/narrarium/workspace";
 import { usePageActionsStore } from "@/store/pageActionsStore";
 import { auditTargetHref, type AuditTarget } from "@/narrarium/audit";
+import { openFeedbackRewriteWorkflow } from "@/store/feedbackRewriteWorkflowStore";
 
 export interface ContextualAction {
   id: string;
@@ -60,6 +61,16 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
   const paragraph = paragraphNum && chapter ? chapter.paragraphs.find((p) => p.number === paragraphNum) : undefined;
   const book = bookId ? settings.books.find((b) => b.id === bookId) : undefined;
   const token = book ? resolveBookToken(book, settings) : "";
+  const paragraphSlug = paragraph ? (paragraph.path.split("/").pop() ?? "").replace(/\.md$/i, "") : undefined;
+  const rewriteScope = paragraph ? "paragraph" as const : chapter ? "chapter" as const : null;
+  const summaryPath = paragraphSlug && chapter
+    ? `evaluations/readers/summaries/paragraphs/${chapter.slug}/${paragraphSlug}.md`
+    : chapter ? `evaluations/readers/summaries/chapters/${chapter.slug}.md` : null;
+  const hasFeedbackSummary = Boolean(summaryPath && structure?.readerEvaluationFiles.some((file) => file.path === summaryPath));
+  const operationPrefix = paragraphSlug && chapter
+    ? `operations/rewrite-from-reader-feedback/paragraphs/${chapter.slug}/${paragraphSlug}/`
+    : chapter ? `operations/rewrite-from-reader-feedback/chapters/${chapter.slug}/` : null;
+  const hasRewriteOperation = Boolean(operationPrefix && structure?.operationManifestFiles.some((file) => file.path.startsWith(operationPrefix)));
 
   const auditScope = (() => {
     if (route.kind === "paragraph" || route.kind === "paragraph-workspace" || route.kind === "paragraph-reader-evaluations" || route.kind === "paragraph-audit") return "paragraph";
@@ -183,6 +194,15 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
       actions.push({ id: "delete-audit", label: t("audit.actions.delete"), to: `${href}?action=delete`, icon: <Trash2 className="h-4 w-4" /> });
     } else {
       actions.push({ id: "run-audit", label: t("audit.actions.run"), to: `${href}?action=run`, icon: <Play className="h-4 w-4" /> });
+    }
+  }
+
+  if (bookId && chapter && rewriteScope) {
+    const target = { scope: rewriteScope, bookId, chapterSlug: chapter.slug, paragraphSlug };
+    actions.push({ id: "generate-draft-from-feedback", label: t("feedbackRewrite.generate"), icon: <Sparkles className="h-4 w-4" />, disabled: !hasFeedbackSummary, run: () => openFeedbackRewriteWorkflow({ ...target, mode: "generate" }) });
+    if (hasRewriteOperation) {
+      actions.push({ id: "feedback-rewrite-status", label: t("feedbackRewrite.status"), icon: <History className="h-4 w-4" />, run: () => openFeedbackRewriteWorkflow({ ...target, mode: "status" }) });
+      actions.push({ id: "restore-previous-drafts", label: t("feedbackRewrite.restore"), icon: <RotateCcw className="h-4 w-4" />, run: () => openFeedbackRewriteWorkflow({ ...target, mode: "restore" }) });
     }
   }
 
