@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.73.1",
+    "date": "2026-07-12",
+    "en": {
+      "title": "Feedback draft actions fit mobile screens",
+      "summary": "Generate Draft from Feedback actions now wrap and stack correctly on narrow screens instead of widening reader-opinion cards beyond the viewport.",
+      "changes": [
+        "Made the single-reader Generate draft from this opinion button full-width with wrapped text on mobile and restored the compact horizontal layout from the small breakpoint upward.",
+        "Applied the same responsive stacking to panel-summary generation, restore and summary actions.",
+        "Kept rerun and delete controls grouped separately so long primary action labels cannot cause horizontal overflow."
+      ]
+    },
+    "it": {
+      "title": "Azioni bozza dai feedback adattate agli schermi mobile",
+      "summary": "Le azioni Genera bozza dai feedback ora vanno a capo e si impilano correttamente sugli schermi stretti, senza allargare le card dei pareri oltre la viewport.",
+      "changes": [
+        "Reso full-width con testo a capo su mobile il pulsante Genera bozza da questo parere, mantenendo il layout orizzontale compatto dal breakpoint small in su.",
+        "Applicato lo stesso impilamento responsive alle azioni di generazione da sintesi panel, ripristino e gestione sintesi.",
+        "Mantenuti i controlli Rifai ed Elimina in un gruppo separato, così le etichette lunghe delle azioni principali non possono causare overflow orizzontale."
+      ]
+    }
+  },
+  {
     "version": "0.73.0",
     "date": "2026-07-12",
     "en": {
