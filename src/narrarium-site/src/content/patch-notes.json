@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.75.3",
+    "date": "2026-07-13",
+    "en": {
+      "title": "Fixed Ctrl+N notes leak and Shift+Tab reverse view switch",
+      "summary": "Contextual navigation no longer falls through to opening notes when there is no next target, and reverse view switching now uses Shift+Tab as requested while leaving normal form navigation intact.",
+      "changes": [
+        "Removed the old Shell-level Ctrl+N notes shortcut that was still firing behind the new contextual navigation shortcuts.",
+        "Kept quick notes on Ctrl+M only.",
+        "Made reverse view switching use Shift+Tab while guarding against interference inside editable inputs and textareas."
+      ]
+    },
+    "it": {
+      "title": "Fix fuga di Ctrl+N sulle note e cambio vista inverso con Shift+Tab",
+      "summary": "La navigazione contestuale non apre più le note quando non esiste un target successivo, e il cambio vista inverso usa ora Shift+Tab come richiesto senza rompere la normale navigazione dei form.",
+      "changes": [
+        "Rimosso il vecchio shortcut Ctrl+N delle note a livello Shell, che continuava a scattare dietro ai nuovi shortcut contestuali di navigazione.",
+        "Mantenute le note rapide solo su Ctrl+M.",
+        "Impostato il cambio vista inverso su Shift+Tab, con protezione per non interferire dentro input e textarea editabili."
+      ]
+    }
+  },
+  {
     "version": "0.75.2",
     "date": "2026-07-13",
     "en": {

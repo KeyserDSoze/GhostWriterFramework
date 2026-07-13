@@ -19,6 +19,15 @@ function selectionFromElement(el: Element | null): string {
   return "";
 }
 
+function isFocusableEditorTarget(target: EventTarget | null): boolean {
+  const el = target instanceof Element ? target : document.activeElement;
+  return Boolean(
+    el instanceof HTMLInputElement
+    || el instanceof HTMLTextAreaElement
+    || (el instanceof HTMLElement && (el.isContentEditable || !!el.closest("[contenteditable='true']"))),
+  );
+}
+
 /** Global keyboard shortcuts mounted once in the Shell. */
 export function useGlobalShortcuts() {
   const navigate = useNavigate();
@@ -62,6 +71,7 @@ export function useGlobalShortcuts() {
       if (key === "tab") {
         const href = event.shiftKey ? target.previousViewHref : target.nextViewHref;
         if (!href) return;
+        if (event.shiftKey && isFocusableEditorTarget(event.target)) return;
         event.preventDefault();
         navigate(href);
         return;

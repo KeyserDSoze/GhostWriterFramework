@@ -86,18 +86,12 @@ export function Shell() {
         return;
       }
 
-      if (key === "n") {
-        if (!bookId) return;
-        event.preventDefault();
-        setNotesOpen(true);
-        return;
-      }
-
-      if (key === "tab") {
+      if (event.code === "Backquote") {
         const previous = useNavigationHistoryStore.getState().previous;
         if (!previous) return;
         event.preventDefault();
         navigate(previous.pathname);
+        return;
       }
     }
     window.addEventListener("keydown", onKeyDown);
