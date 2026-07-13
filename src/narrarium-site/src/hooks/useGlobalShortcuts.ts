@@ -8,6 +8,7 @@ import { useUiStore } from "@/store/uiStore";
 import { useBooksStore } from "@/store/booksStore";
 import { parseAppRoute } from "@/assistant/context";
 import { resolveContextualNavigation } from "@/lib/contextualNavigation";
+import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
 
 function selectionFromElement(el: Element | null): string {
   if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
@@ -86,6 +87,15 @@ export function useGlobalShortcuts() {
       if (key === "m") {
         event.preventDefault();
         useUiStore.getState().setNotesOpen(true);
+        return;
+      }
+
+      // Ctrl/Cmd+` → jump back to the previous document in the quick-switch stack.
+      if (event.code === "Backquote") {
+        const previous = useNavigationHistoryStore.getState().previous;
+        if (!previous) return;
+        event.preventDefault();
+        navigate(previous.pathname);
         return;
       }
 

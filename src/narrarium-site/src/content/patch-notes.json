@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.75.2",
+    "date": "2026-07-13",
+    "en": {
+      "title": "Contextual navigation fixed in chapter draft/script views",
+      "summary": "Contextual navigation now keeps working inside chapter draft and script indexes, paragraph draft pages can be opened even before the draft file exists, and the quick previous-document switch moved from Ctrl+Tab to Ctrl+`.",
+      "changes": [
+        "Fixed contextual previous/next and view cycling so chapter Drafts and Scripts keep the chapter context instead of dropping navigation actions after Ctrl+Tab.",
+        "Made paragraph draft pages open even when no draft file exists yet, so you can enter the draft view first and start writing from scratch there.",
+        "Moved the quick previous-document switch from Ctrl+Tab to Ctrl+` and updated the top-bar hint accordingly.",
+        "Removed the remaining active chapter-style entry points from the current UI while keeping the global writing-style flow intact."
+      ]
+    },
+    "it": {
+      "title": "Navigazione contestuale corretta nelle viste bozze/script del capitolo",
+      "summary": "La navigazione contestuale ora continua a funzionare dentro gli indici Bozze e Script del capitolo, le pagine bozza del paragrafo si aprono anche se il file non esiste ancora e il cambio rapido al documento precedente passa da Ctrl+Tab a Ctrl+`.",
+      "changes": [
+        "Corretta la navigazione contestuale precedente/successivo e il cambio vista così le pagine Bozze e Script del capitolo mantengono il contesto del capitolo invece di perdere le azioni di navigazione dopo Ctrl+Tab.",
+        "Reso possibile entrare nella pagina bozza del paragrafo anche quando il file di bozza non esiste ancora, così puoi aprire prima la vista bozza e iniziare a scrivere da zero direttamente lì.",
+        "Spostato il cambio rapido al documento precedente da Ctrl+Tab a Ctrl+` e aggiornato di conseguenza il suggerimento nella top bar.",
+        "Rimossi gli ultimi punti di accesso attivi allo stile capitolo dalla UI corrente, mantenendo invece il flusso di stile globale."
+      ]
+    }
+  },
+  {
     "version": "0.75.1",
     "date": "2026-07-13",
     "en": {

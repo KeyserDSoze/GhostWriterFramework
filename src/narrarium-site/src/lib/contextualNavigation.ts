@@ -92,7 +92,7 @@ export function resolveContextualNavigation(structure: BookStructure | undefined
           ? []
           : suffix === "/audit"
             ? [resolved.paragraph.auditPath ?? buildParagraphAuditPath(resolved.chapter.slug, paragraphSlug)]
-            : suffix === "/workspace/draft"
+      : suffix === "/workspace/draft"
               ? [resolved.paragraph.draftPath ?? canonicalParagraphDraftPath(resolved.chapter.slug, resolved.paragraph)]
               : suffix === "/workspace/script"
                 ? [resolved.paragraph.scriptPath ?? `scripts/${resolved.chapter.slug}/${paragraphSlug}.md`]
@@ -102,7 +102,7 @@ export function resolveContextualNavigation(structure: BookStructure | undefined
     const currentView = suffix || "overview";
     const views = [
       { key: "overview", href: paragraphHref(bookId, chapterSlug, paragraphNumber) },
-      ...(resolved.paragraph.draftPath ? [{ key: "/workspace/draft", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/workspace/draft") }] : []),
+      { key: "/workspace/draft", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/workspace/draft") },
       { key: "/workspace/script", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/workspace/script") },
       ...(typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches ? [{ key: "/split", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/split") }] : []),
       { key: "/workspace/evaluation", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/workspace/evaluation") },

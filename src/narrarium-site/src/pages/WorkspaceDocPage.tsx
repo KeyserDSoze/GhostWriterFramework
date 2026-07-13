@@ -934,8 +934,8 @@ function resolveWorkspacePath(
   if (!chapter || !kind) return null;
   if (expectsParagraph && !paragraph) return null;
   if (!paragraph) {
-    if (kind === "draft" && chapter.draftPath) {
-      return { path: chapter.draftPath, titleKey: "workspace.chapterDraft", titleParams: { slug: chapter.slug } };
+    if (kind === "draft") {
+      return { path: chapter.draftPath ?? `drafts/${chapter.slug}/chapter.md`, titleKey: "workspace.chapterDraft", titleParams: { slug: chapter.slug } };
     }
     if (kind === "resume") {
       return { path: `resumes/chapters/${chapter.slug}.md`, titleKey: "workspace.chapterResume", titleParams: { slug: chapter.slug } };
@@ -947,8 +947,8 @@ function resolveWorkspacePath(
   }
 
   const slug = paragraphSlug(paragraph.path);
-  if (kind === "draft" && paragraph.draftPath) {
-    return { path: paragraph.draftPath, titleKey: "workspace.paragraphDraft", titleParams: { slug } };
+  if (kind === "draft") {
+    return { path: paragraph.draftPath ?? `drafts/${chapter.slug}/${slug}.md`, titleKey: "workspace.paragraphDraft", titleParams: { slug } };
   }
   if (kind === "script") {
     return { path: `scripts/${chapter.slug}/${slug}.md`, titleKey: "workspace.script", titleParams: { slug } };

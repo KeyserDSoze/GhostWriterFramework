@@ -177,10 +177,20 @@ function buildHistoryEntry(route: ReturnType<typeof parseAppRoute>, pathname: st
   const structure = structures[bookId];
   if (!structure) return null;
 
-  if (route.kind === "paragraph") {
+  if (route.kind === "paragraph" || route.kind === "paragraph-workspace" || route.kind === "paragraph-reader-evaluations" || route.kind === "paragraph-audit") {
     const chapter = structure.chapters.find((entry) => entry.slug === route.chapterId);
     const paragraph = chapter?.paragraphs.find((entry) => entry.number === route.paragraphNum);
-    return { pathname, bookId, kind: "paragraph", label: paragraph ? `${chapter?.title ?? route.chapterId} / ${paragraph.title}` : pathname, updatedAt: Date.now() };
+    return {
+      pathname,
+      bookId,
+      kind: "paragraph",
+      label: paragraph ? `${chapter?.title ?? route.chapterId} / ${paragraph.title}` : pathname,
+      updatedAt: Date.now(),
+    };
+  }
+  if (route.kind === "chapter" || route.kind === "chapter-workspace" || route.kind === "chapter-reader-evaluations" || route.kind === "chapter-audit") {
+    const chapter = structure.chapters.find((entry) => entry.slug === route.chapterId);
+    return { pathname, bookId, kind: "chapter", label: chapter?.title ?? route.chapterId, updatedAt: Date.now() };
   }
   if (route.kind === "canon") {
     const files = structure[route.section as keyof typeof structure] as Array<{ path: string; name?: string }> | undefined;

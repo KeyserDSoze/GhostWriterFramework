@@ -131,6 +131,15 @@ export function parseAppRoute(pathname: string): AppRouteContext {
     };
   }
 
+  match = /^\/app\/books\/([^/]+)\/chapters\/([^/]+)\/(drafts|scripts)$/.exec(clean);
+  if (match) {
+    return {
+      kind: "chapter",
+      bookId: decodeURIComponent(match[1]),
+      chapterId: decodeURIComponent(match[2]),
+    };
+  }
+
   match = /^\/app\/books\/([^/]+)\/chapters\/([^/]+)\/paragraphs\/([^/]+)\/split$/.exec(clean);
   if (match) {
     return {

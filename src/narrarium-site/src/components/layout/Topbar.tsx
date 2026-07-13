@@ -257,7 +257,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           >
             <History className="h-3.5 w-3.5" />
             <span className="truncate">{previousDocument.label}</span>
-            <span className="ml-1 text-[10px] text-muted-foreground">Ctrl+Tab</span>
+            <span className="ml-1 text-[10px] text-muted-foreground">Ctrl+`</span>
           </Button>
         )}
         {currentBook && visibleRepoStatus.tone !== "none" && (
@@ -307,11 +307,10 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         )}
         {pendingCurrentObject.pending && (
           <span
-            className="inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 motion-safe:animate-pulse dark:text-amber-300"
+            className="inline-flex min-w-6 items-center justify-center rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 motion-safe:animate-pulse dark:text-amber-300"
             title={pendingCurrentObject.paths.join("\n")}
           >
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-            {t("quickNav.localPending", { count: pendingCurrentObject.count })}
+            {pendingCurrentObject.count}
           </span>
         )}
         <Button variant="ghost" size="icon" aria-label={floatingHidden ? t("shell.showFloating") : t("shell.hideFloating")} onClick={toggleFloating}>

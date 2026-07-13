@@ -2056,6 +2056,8 @@ const it = {
   quickNav: {
     previous: "Precedente",
     next: "Successivo",
+    previousView: "Vista precedente",
+    nextView: "Vista successiva",
     openNotes: "Apri note",
     localPending_one: "{{count}} bozza locale",
     localPending_other: "{{count}} bozze locali"
