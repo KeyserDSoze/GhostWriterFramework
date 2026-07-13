@@ -5,7 +5,9 @@ import {
   addLocalRepoLog,
   buildLocalBookStructure,
   createLocalCommit,
+  deleteLocalFile,
   discardUnpushedLocalCommits,
+  getLocalFileEntry,
   getLocalRepository,
   getLocalRepositoryByBook,
   getLocalRepositoryById,
@@ -22,6 +24,8 @@ import {
   removeLocalRepository,
   restoreUnpushedCommitsAsDirty,
   updateLocalRepositoryHead,
+  writeLocalBinary,
+  writeLocalText,
   type LocalRepositoryMeta,
   type LocalRepositoryFile,
 } from "@/repository/localRepository";
@@ -212,6 +216,44 @@ async function fetchBlobBytes(octokit: Octokit, owner: string, repo: string, fil
     return bytes;
   }
   return new TextEncoder().encode(blob.data.content);
+}
+
+export async function restoreLocalFilesToBase(input: {
+  repoId: string;
+  owner: string;
+  repo: string;
+  paths: string[];
+  token?: string;
+}): Promise<{ restored: number }> {
+  const uniquePaths = [...new Set(input.paths)];
+  if (!uniquePaths.length) return { restored: 0 };
+
+  const remote = input.token ? new Octokit({ auth: input.token }) : null;
+  let restored = 0;
+
+  for (const path of uniquePaths) {
+    const file = await getLocalFileEntry(input.repoId, path);
+    if (!file || file.committed || file.status === "clean") continue;
+
+    if (file.status === "new") {
+      await deleteLocalFile(input.repoId, path);
+      restored += 1;
+      continue;
+    }
+
+    if (!file.baseSha) throw new Error(`Cannot restore ${path} because its clean base snapshot is unavailable.`);
+    if (!remote) throw new Error(`Cannot restore ${path} without a GitHub token for its clean base snapshot.`);
+
+    const bytes = await fetchBlobBytes(remote, input.owner, input.repo, file.baseSha);
+    if (file.kind === "binary") await writeLocalBinary(input.repoId, path, bytes);
+    else await writeLocalText(input.repoId, path, new TextDecoder().decode(bytes));
+    restored += 1;
+  }
+
+  if (restored) {
+    await addLocalRepoLog(input.repoId, "reset", `Restored ${restored} local file${restored === 1 ? "" : "s"} to the clean base state`);
+  }
+  return { restored };
 }
 
 /**

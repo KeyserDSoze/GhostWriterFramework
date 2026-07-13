@@ -96,6 +96,13 @@ const it = {
     unpushedNotice: "Hai {{count}} commit locali non pushati. Fai push o backup per evitare di perderli.",
     defaultCommitSingle: "Aggiorna {{path}}",
     defaultCommitMany: "Aggiorna {{count}} file",
+    draftRestoreHelp: "Seleziona i file bozza sotto drafts/ per ripristinarli allo stato base pulito prima del commit. Le bozze non selezionate restano come sono.",
+    draftRestoreSummary: "{{selected}} selezionate da ripristinare, {{kept}} mantenute per il commit.",
+    selectAllDrafts: "Seleziona tutte le bozze",
+    clearDraftSelection: "Pulisci selezione",
+    selectDraftToRestore: "Ripristina {{path}} allo stato base pulito",
+    restoreSelectedDrafts: "Ripristina bozze selezionate",
+    restoreSelectedDraftsDone: "Ripristinate {{count}} bozze selezionate.",
   },
   repoSettings: {
     title: "Repository locali",
@@ -1089,6 +1096,16 @@ const it = {
     applyRestoreChoices: "Applica scelte di ripristino",
     rolledBack: "Bozze precedenti ripristinate",
     partialRestore: "Ripristino parziale completato; le bozze correnti selezionate sono state mantenute",
+    fileRowStatus: "Stato: {{status}}",
+    previewSource: {
+      current: "Mostra la bozza locale corrente",
+      generated: "Mostra l'istantanea salvata della bozza riscritta",
+      unavailable: "Nessuna istantanea salvata della bozza riscritta disponibile"
+    },
+    previewChangedSinceGenerated: "La bozza locale corrente differisce dall'istantanea salvata della riscrittura.",
+    noDiffPreview: "Nessuna differenza da mostrare per questo file.",
+    noSavedRewrite: "Per questo file non e stata salvata alcuna istantanea della bozza riscritta.",
+    restoreThisDraft: "Ripristina questa bozza",
   },
   audit: {
     title: "Audit",

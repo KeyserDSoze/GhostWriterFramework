@@ -1,7 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, CheckCircle2, FileClock, Loader2, RotateCcw, Sparkles, Square, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, FileClock, Loader2, RotateCcw, Sparkles, Square, XCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,10 +21,10 @@ import {
   restorePreviousDrafts,
   resumeChapterFeedbackRewrite,
   runChapterFeedbackRewrite,
+  type FeedbackSourceSelection,
   type RewriteOperationManifest,
   type RewriteRepositoryContext,
   type RewriteRollbackPolicy,
-  type FeedbackSourceSelection,
 } from "@/narrarium/rewriteFromReaderFeedback";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useFeedbackRewriteWorkflowStore, type FeedbackRewriteIntent } from "@/store/feedbackRewriteWorkflowStore";
@@ -42,6 +42,13 @@ export function FeedbackRewriteWorkflowDialog() {
     ? { token, book, branch, structure, settings }
     : null;
   const busy = Boolean(state.abortController);
+  const [restoreScopePaths, setRestoreScopePaths] = useState<string[] | null>(null);
+  const [rollbackReturnPhase, setRollbackReturnPhase] = useState<"completed" | "failed" | "cancelled">("completed");
+
+  useEffect(() => {
+    setRestoreScopePaths(null);
+    setRollbackReturnPhase("completed");
+  }, [state.requestId, state.open]);
 
   useEffect(() => {
     if (!state.open || !state.intent || !context || state.phase !== "loading") return;
@@ -64,7 +71,7 @@ export function FeedbackRewriteWorkflowDialog() {
             phase: intent.mode === "restore" ? "rollback-confirmation" : resultPhase(latest),
           });
           return;
-       }
+        }
         const summary = await inspectReaderFeedbackSummary({ ...context, chapterSlug: intent.chapterSlug, paragraphSlug: intent.paragraphSlug, feedbackSource: sourceFromIntent(intent) });
         if (active) state.patch({ staleFeedback: summary.stale, phase: "mandatory-warning" });
       } catch (error) {
@@ -103,6 +110,18 @@ export function FeedbackRewriteWorkflowDialog() {
       return;
     }
     state.patch({ error: errorMessage(error), phase });
+  }
+
+  function buildRestorePolicies(selectedPaths: string[] | null, conflictPolicies?: Record<string, RewriteRollbackPolicy>): Record<string, RewriteRollbackPolicy> | undefined {
+    if (!state.manifest) return undefined;
+    const restorable = state.manifest.modifiedFiles.filter(isRestorableRewriteFile);
+    if (!restorable.length) return undefined;
+    if (selectedPaths?.length) {
+      const selected = new Set(selectedPaths);
+      return Object.fromEntries(restorable.map((file) => [file.path, selected.has(file.path) ? (conflictPolicies?.[file.path] ?? "cancel") : "keep-current"]));
+    }
+    if (!conflictPolicies) return undefined;
+    return Object.fromEntries(restorable.map((file) => [file.path, conflictPolicies[file.path] ?? "cancel"]));
   }
 
   async function startGeneration() {
@@ -157,9 +176,9 @@ export function FeedbackRewriteWorkflowDialog() {
     state.patch({ phase: "chapter-progress", error: null });
     try {
       const manifest = await resumeChapterFeedbackRewrite({
-          ...context,
-          operationId: state.operationId,
-          feedbackSource: state.manifest ? undefined : feedbackSource,
+        ...context,
+        operationId: state.operationId,
+        feedbackSource: state.manifest ? undefined : feedbackSource,
         confirmed: true,
         confirmStaleFeedback: state.staleFeedback || state.manifest?.staleFeedback,
         signal: controller.signal,
@@ -174,20 +193,30 @@ export function FeedbackRewriteWorkflowDialog() {
     }
   }
 
-  async function beginRestore() {
+  async function beginRestore(selectedPaths: string[] | null = null) {
     if (!context || !state.operationId) return;
+    setRestoreScopePaths(selectedPaths);
+    setRollbackReturnPhase(state.phase === "completed" || state.phase === "failed" || state.phase === "cancelled" ? state.phase : resultPhase(state.manifest));
     const controller = new AbortController();
     setController(controller);
     state.patch({ error: null, phase: "rolling-back" });
     try {
-      const result = await restorePreviousDrafts({ ...context, operationId: state.operationId, defaultPolicy: "cancel" });
-      if (!result.conflicts.length) {
+      const selected = selectedPaths ? new Set(selectedPaths) : null;
+      const result = await restorePreviousDrafts({
+        ...context,
+        operationId: state.operationId,
+        policies: buildRestorePolicies(selectedPaths),
+        defaultPolicy: selectedPaths?.length ? "keep-current" : "cancel",
+      });
+      const relevantConflicts = selected ? result.conflicts.filter((conflict) => selected.has(conflict.path)) : result.conflicts;
+      if (!relevantConflicts.length) {
         state.patch({ manifest: result.manifest, phase: "completed" });
+        setRestoreScopePaths(null);
         await reload();
         return;
       }
       const files = new Map(result.manifest.modifiedFiles.map((file) => [file.path, file]));
-      const conflicts = await Promise.all(result.conflicts.map(async (conflict) => {
+      const conflicts = await Promise.all(relevantConflicts.map(async (conflict) => {
         const file = files.get(conflict.path);
         const [currentContent, beforeContent] = await Promise.all([
           loadRewriteWorkingCopyText(context, conflict.path).then((value) => value ?? ""),
@@ -211,8 +240,14 @@ export function FeedbackRewriteWorkflowDialog() {
     setController(controller);
     state.patch({ phase: "rolling-back" });
     try {
-      const result = await restorePreviousDrafts({ ...context, operationId: state.operationId, policies, defaultPolicy: "keep-current" });
+      const result = await restorePreviousDrafts({
+        ...context,
+        operationId: state.operationId,
+        policies: buildRestorePolicies(restoreScopePaths, policies),
+        defaultPolicy: restoreScopePaths?.length ? "keep-current" : "cancel",
+      });
       state.patch({ manifest: result.manifest, conflicts: [], phase: "completed" });
+      setRestoreScopePaths(null);
       await reload();
     } catch (error) {
       patchOperationError(error, "failed");
@@ -222,7 +257,9 @@ export function FeedbackRewriteWorkflowDialog() {
   }
 
   function openRestore() {
-    if (state.manifest) state.patch({ phase: "rollback-confirmation" });
+    if (!state.manifest) return;
+    setRestoreScopePaths(null);
+    state.patch({ phase: "rollback-confirmation" });
   }
 
   return (
@@ -269,7 +306,7 @@ export function FeedbackRewriteWorkflowDialog() {
         {state.phase === "chapter-progress" && <ChapterProgress manifest={state.manifest} progress={state.progress} title={chapter?.paragraphs.find((entry) => slugOf(entry.path) === state.progress?.currentParagraphSlug)?.title} />}
 
         {(state.phase === "completed" || state.phase === "failed" || state.phase === "cancelled") && (
-          <ResultState phase={state.phase} manifest={state.manifest} error={state.error} />
+          <ResultState phase={state.phase} manifest={state.manifest} error={state.error} context={context} busy={busy} onRestoreFile={(path) => void beginRestore([path])} />
         )}
 
         {state.phase === "rollback-confirmation" && (
@@ -290,7 +327,7 @@ export function FeedbackRewriteWorkflowDialog() {
           <div className="space-y-5">
             <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>{t("feedbackRewrite.conflictsTitle")}</AlertTitle><AlertDescription>{t("feedbackRewrite.conflictsDescription")}</AlertDescription></Alert>
             {state.conflicts.map((conflict) => <div key={conflict.path} className="space-y-3 rounded-xl border p-3"><p className="break-all text-sm font-medium">{conflict.path}</p><FileDiff previous={conflict.currentContent} next={conflict.beforeContent} className="max-h-72" /><div className="flex flex-wrap gap-2">{(["keep-current", "force-restore", "cancel"] as RewriteRollbackPolicy[]).map((policy) => <Button key={policy} size="sm" variant={state.rollbackPolicies[conflict.path] === policy ? (policy === "force-restore" ? "destructive" : "default") : "outline"} onClick={() => state.patch({ rollbackPolicies: { ...state.rollbackPolicies, [conflict.path]: policy } })}>{t(`feedbackRewrite.policy.${policy}`)}</Button>)}</div></div>)}
-            <DialogFooter><Button variant="outline" onClick={() => state.patch({ phase: "cancelled" })}>{t("feedbackRewrite.cancelRollback")}</Button><Button variant="destructive" disabled={state.conflicts.some((conflict) => state.rollbackPolicies[conflict.path] === "cancel")} onClick={() => void resolveRestoreConflicts()}>{t("feedbackRewrite.applyRestoreChoices")}</Button></DialogFooter>
+            <DialogFooter><Button variant="outline" onClick={() => state.patch({ phase: rollbackReturnPhase })}>{t("feedbackRewrite.cancelRollback")}</Button><Button variant="destructive" disabled={state.conflicts.some((conflict) => state.rollbackPolicies[conflict.path] === "cancel")} onClick={() => void resolveRestoreConflicts()}>{t("feedbackRewrite.applyRestoreChoices")}</Button></DialogFooter>
           </div>
         )}
 
@@ -298,7 +335,7 @@ export function FeedbackRewriteWorkflowDialog() {
           <DialogFooter className="gap-2 sm:space-x-0">
             {(state.phase === "failed" || state.phase === "cancelled") && state.manifest.scope === "chapter" && state.manifest.modifiedFiles.some((file) => file.status !== "completed") && <Button onClick={() => state.patch({ phase: "resume-confirmation" })}>{t("feedbackRewrite.continueRewrite")}</Button>}
             {state.manifest.scope === "chapter" && state.manifest.status === "saving" && state.manifest.modifiedFiles.length > 0 && state.manifest.modifiedFiles.every((file) => file.status === "completed") && <Button onClick={() => void resumeChapter()}>{t("feedbackRewrite.retryFinalize")}</Button>}
-            {state.manifest.modifiedFiles.some((file) => file.status === "completed") && state.manifest.status !== "rolledBack" && <Button variant="destructive" onClick={openRestore}><RotateCcw className="mr-2 h-4 w-4" />{t("feedbackRewrite.restore")}</Button>}
+            {state.manifest.modifiedFiles.some(isRestorableRewriteFile) && <Button variant="destructive" onClick={openRestore}><RotateCcw className="mr-2 h-4 w-4" />{t("feedbackRewrite.restore")}</Button>}
             {(state.phase === "failed" || state.phase === "cancelled") && <Button variant="outline" onClick={state.closeWorkflow}>{t("feedbackRewrite.keepCompleted")}</Button>}
             {state.phase === "completed" && <Button variant="outline" onClick={state.closeWorkflow}>{t("common.close")}</Button>}
           </DialogFooter>
@@ -322,18 +359,161 @@ function ChapterProgress({ manifest, progress, title }: { manifest: RewriteOpera
   return <div className="space-y-4"><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary transition-all" style={{ width: `${percent}%` }} /></div><div className="flex flex-wrap justify-between gap-2 text-sm"><span>{t("feedbackRewrite.progress", { completed: current?.completed ?? 0, total: current?.total ?? 0 })}</span><Badge variant="outline">{t(`feedbackRewrite.operationStatus.${manifest?.status ?? "rewriting"}`)}</Badge></div>{current?.currentParagraphSlug && <p className="text-sm text-muted-foreground">{t("feedbackRewrite.currentParagraph", { title: title ?? current.currentParagraphSlug, slug: current.currentParagraphSlug })}</p>}<Button variant="destructive" onClick={cancel}><Square className="mr-2 h-4 w-4" />{t("common.cancel")}</Button></div>;
 }
 
-function ResultState({ phase, manifest, error }: { phase: "completed" | "failed" | "cancelled"; manifest: RewriteOperationManifest | null; error: string | null }) {
+function ResultState({
+  phase,
+  manifest,
+  error,
+  context,
+  busy,
+  onRestoreFile,
+}: {
+  phase: "completed" | "failed" | "cancelled";
+  manifest: RewriteOperationManifest | null;
+  error: string | null;
+  context: RewriteRepositoryContext | null;
+  busy: boolean;
+  onRestoreFile: (path: string) => void;
+}) {
   const { t } = useTranslation();
+  const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
+  const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
+  const [currentDrafts, setCurrentDrafts] = useState<Record<string, string | null>>({});
+
+  useEffect(() => {
+    setExpandedPaths({});
+    setLoadingPaths({});
+    setCurrentDrafts({});
+  }, [manifest?.operationId, manifest?.updatedAt]);
+
   const restored = manifest?.status === "rolledBack";
-  const partial = restored && manifest.modifiedFiles.some((file) => file.status === "kept-current");
+  const partial = manifest?.modifiedFiles.some((file) => file.status === "kept-current") ?? false;
   const completed = manifest?.modifiedFiles.filter((file) => file.status === "completed").length ?? 0;
-  return <div className="space-y-4"><Alert variant={phase === "completed" ? "default" : "destructive"}>{phase === "completed" ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}<AlertTitle>{restored ? t(partial ? "feedbackRewrite.partialRestore" : "feedbackRewrite.rolledBack") : t(`feedbackRewrite.result.${phase}`)}</AlertTitle>{(error || manifest?.error) && <AlertDescription>{error ?? manifest?.error}</AlertDescription>}</Alert>{manifest && phase !== "completed" && <Alert><FileClock className="h-4 w-4" /><AlertTitle>{t("feedbackRewrite.recoveryTitle")}</AlertTitle><AlertDescription className="space-y-3"><p>{t("feedbackRewrite.recoveryDescription")}</p><dl className="grid min-w-0 gap-x-4 gap-y-1 text-xs sm:grid-cols-[auto_1fr]"><dt className="font-medium">{t("feedbackRewrite.recovery.operationId")}</dt><dd className="break-all">{manifest.operationId}</dd><dt className="font-medium">{t("feedbackRewrite.recovery.repository")}</dt><dd className="break-all">{manifest.owner}/{manifest.repo}</dd><dt className="font-medium">{t("feedbackRewrite.recovery.branch")}</dt><dd className="break-all">{manifest.branch}</dd><dt className="font-medium">{t("feedbackRewrite.recovery.completed")}</dt><dd>{t("feedbackRewrite.progress", { completed, total: manifest.modifiedFiles.length })}</dd><dt className="font-medium">{t("feedbackRewrite.recovery.stage")}</dt><dd>{t(`feedbackRewrite.operationStatus.${manifest.status}`)}</dd><dt className="font-medium">{t("feedbackRewrite.recovery.current")}</dt><dd className="break-all">{manifest.progress.currentParagraphSlug ?? t("feedbackRewrite.recovery.none")}</dd><dt className="font-medium">{t("feedbackRewrite.recovery.originalError")}</dt><dd className="break-words">{error ?? manifest.error ?? t("feedbackRewrite.recovery.none")}</dd></dl></AlertDescription></Alert>}{manifest && <><div><h3 className="mb-2 text-sm font-semibold">{t("feedbackRewrite.modifiedFiles")}</h3><div className="space-y-1">{manifest.modifiedFiles.filter((file) => file.status !== "pending").map((file) => <div key={file.path} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm"><span className="min-w-0 truncate">{file.path}</span><Badge variant="outline">{t(`feedbackRewrite.fileStatus.${file.status}`)}</Badge></div>)}</div></div><p className="text-xs text-muted-foreground">{t("feedbackRewrite.usage", { input: manifest.aggregateInputTokens, output: manifest.aggregateOutputTokens, cost: manifest.aggregateCost.toFixed(4), currency: manifest.currency ?? "" })}</p></>}</div>;
+
+  async function toggleExpanded(file: RewriteOperationManifest["modifiedFiles"][number]) {
+    const expanded = !expandedPaths[file.path];
+    setExpandedPaths((current) => ({ ...current, [file.path]: expanded }));
+    if (!expanded || currentDrafts[file.path] !== undefined || !context || file.status === "restored") return;
+    setLoadingPaths((current) => ({ ...current, [file.path]: true }));
+    try {
+      const currentDraft = await loadRewriteWorkingCopyText(context, file.path);
+      setCurrentDrafts((current) => ({ ...current, [file.path]: currentDraft }));
+    } finally {
+      setLoadingPaths((current) => ({ ...current, [file.path]: false }));
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Alert variant={phase === "completed" ? "default" : "destructive"}>
+        {phase === "completed" ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+        <AlertTitle>{restored ? t(partial ? "feedbackRewrite.partialRestore" : "feedbackRewrite.rolledBack") : t(`feedbackRewrite.result.${phase}`)}</AlertTitle>
+        {(error || manifest?.error) && <AlertDescription>{error ?? manifest?.error}</AlertDescription>}
+      </Alert>
+
+      {manifest && phase !== "completed" && (
+        <Alert>
+          <FileClock className="h-4 w-4" />
+          <AlertTitle>{t("feedbackRewrite.recoveryTitle")}</AlertTitle>
+          <AlertDescription className="space-y-3">
+            <p>{t("feedbackRewrite.recoveryDescription")}</p>
+            <dl className="grid min-w-0 gap-x-4 gap-y-1 text-xs sm:grid-cols-[auto_1fr]">
+              <dt className="font-medium">{t("feedbackRewrite.recovery.operationId")}</dt>
+              <dd className="break-all">{manifest.operationId}</dd>
+              <dt className="font-medium">{t("feedbackRewrite.recovery.repository")}</dt>
+              <dd className="break-all">{manifest.owner}/{manifest.repo}</dd>
+              <dt className="font-medium">{t("feedbackRewrite.recovery.branch")}</dt>
+              <dd className="break-all">{manifest.branch}</dd>
+              <dt className="font-medium">{t("feedbackRewrite.recovery.completed")}</dt>
+              <dd>{t("feedbackRewrite.progress", { completed, total: manifest.modifiedFiles.length })}</dd>
+              <dt className="font-medium">{t("feedbackRewrite.recovery.stage")}</dt>
+              <dd>{t(`feedbackRewrite.operationStatus.${manifest.status}`)}</dd>
+              <dt className="font-medium">{t("feedbackRewrite.recovery.current")}</dt>
+              <dd className="break-all">{manifest.progress.currentParagraphSlug ?? t("feedbackRewrite.recovery.none")}</dd>
+              <dt className="font-medium">{t("feedbackRewrite.recovery.originalError")}</dt>
+              <dd className="break-words">{error ?? manifest.error ?? t("feedbackRewrite.recovery.none")}</dd>
+            </dl>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {manifest && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold">{t("feedbackRewrite.modifiedFiles")}</h3>
+          <div className="space-y-2">
+            {manifest.modifiedFiles.map((file) => {
+              const expanded = Boolean(expandedPaths[file.path]);
+              const liveCurrent = currentDrafts[file.path] ?? null;
+              const nextContent = file.status === "restored"
+                ? (file.generatedContent ?? null)
+                : (liveCurrent ?? file.generatedContent ?? null);
+              const previewSource = file.status === "restored" || liveCurrent === null ? (file.generatedContent ? "generated" : "unavailable") : "current";
+              const currentDiffersFromSaved = liveCurrent !== null && file.generatedContent !== undefined && file.generatedContent !== null && liveCurrent !== file.generatedContent;
+              const hasDiff = nextContent !== null && (file.beforeContent ?? "") !== nextContent;
+
+              return (
+                <div key={file.path} className="overflow-hidden rounded-xl border">
+                  <button type="button" className="w-full min-w-0 px-3 py-3 text-left sm:px-4" onClick={() => void toggleExpanded(file)}>
+                    <div className="flex min-w-0 items-start gap-3">
+                      <ChevronRight className={`mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`} />
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <p className="break-all text-sm font-medium">{file.path}</p>
+                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                          <span>{t("feedbackRewrite.fileRowStatus", { status: t(`feedbackRewrite.fileStatus.${file.status}`) })}</span>
+                          {expanded && <span>{t(`feedbackRewrite.previewSource.${previewSource}`)}</span>}
+                        </div>
+                      </div>
+                      <Badge variant="outline" className="shrink-0">{t(`feedbackRewrite.fileStatus.${file.status}`)}</Badge>
+                    </div>
+                  </button>
+
+                  {expanded && (
+                    <div className="space-y-3 border-t px-3 py-3 sm:px-4">
+                      {loadingPaths[file.path] ? (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</div>
+                      ) : hasDiff ? (
+                        <>
+                          {currentDiffersFromSaved && <p className="text-xs text-muted-foreground">{t("feedbackRewrite.previewChangedSinceGenerated")}</p>}
+                          <FileDiff previous={file.beforeContent ?? ""} next={nextContent ?? ""} className="max-h-72" />
+                        </>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">{nextContent === null ? t("feedbackRewrite.noSavedRewrite") : t("feedbackRewrite.noDiffPreview")}</p>
+                      )}
+
+                      {isRestorableRewriteFile(file) && (
+                        <div className="flex flex-wrap gap-2">
+                          <Button size="sm" variant="destructive" disabled={busy} onClick={(event) => { event.stopPropagation(); onRestoreFile(file.path); }}>
+                            <RotateCcw className="mr-2 h-4 w-4" />
+                            {t("feedbackRewrite.restoreThisDraft")}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {manifest.aggregateOutputTokens > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {t("feedbackRewrite.usage", { input: manifest.aggregateInputTokens, output: manifest.aggregateOutputTokens, cost: manifest.aggregateCost.toFixed(4), currency: manifest.currency ?? "USD" })}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
-function resultPhase(manifest: RewriteOperationManifest): "completed" | "failed" | "cancelled" {
+function resultPhase(manifest: RewriteOperationManifest | null): "completed" | "failed" | "cancelled" {
+  if (!manifest) return "failed";
   if (manifest.status === "completed" || manifest.status === "rolledBack") return "completed";
   if (manifest.status === "cancelled") return "cancelled";
   return "failed";
+}
+
+function isRestorableRewriteFile(file: RewriteOperationManifest["modifiedFiles"][number]): boolean {
+  return file.status === "completed" || file.status === "kept-current";
 }
 
 function slugOf(path: string): string {

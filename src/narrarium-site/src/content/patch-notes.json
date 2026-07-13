@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.74.2",
+    "date": "2026-07-13",
+    "en": {
+      "title": "Per-file draft review and selective restore",
+      "summary": "You can now inspect each rewritten draft individually, restore only the drafts you do not want, and selectively revert local draft changes from the repository dialog before committing.",
+      "changes": [
+        "In the feedback rewrite result dialog, each modified file is now expandable so you can read a per-file diff instead of only seeing a path list.",
+        "Added Restore this draft inside the result screen so one rewritten draft can be rolled back without restoring all other drafts from the same operation.",
+        "Added selective local restore for changed draft files in the Git repository status dialog, so you can choose which draft changes to keep and which to revert before creating a commit.",
+        "Kept the existing full-operation restore flow available for restoring all rewritten drafts together."
+      ]
+    },
+    "it": {
+      "title": "Review per-file delle bozze e ripristino selettivo",
+      "summary": "Ora puoi ispezionare ogni bozza riscritta singolarmente, ripristinare solo le bozze che non ti convincono e annullare selettivamente le modifiche locali dei draft dalla dialog repository prima del commit.",
+      "changes": [
+        "Nel dialog del risultato della riscrittura dai feedback, ogni file modificato è ora espandibile così puoi leggere un diff per singolo file invece di vedere solo la lista dei path.",
+        "Aggiunto Ripristina questa bozza dentro la schermata finale, così puoi annullare una sola bozza riscritta senza ripristinare tutte le altre della stessa operazione.",
+        "Aggiunto il ripristino selettivo dei draft modificati nella dialog dello stato repository Git, così puoi scegliere quali modifiche ai draft tenere e quali annullare prima di creare un commit.",
+        "Mantenuto disponibile il flusso di ripristino completo dell'operazione per riportare insieme tutte le bozze riscritte."
+      ]
+    }
+  },
+  {
     "version": "0.74.1",
     "date": "2026-07-13",
     "en": {

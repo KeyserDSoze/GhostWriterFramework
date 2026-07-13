@@ -1126,7 +1126,8 @@ export async function restorePreviousDrafts(input: RewriteRepositoryContext & {
   const manifest = await loadRewriteOperation(input, input.operationId);
   const conflicts: RewriteConflict[] = [];
   const currentByPath = new Map<string, { content: string | null; hash: string | null }>();
-  for (const file of manifest.modifiedFiles.filter((entry) => entry.status === "completed")) {
+  const restorableFiles = manifest.modifiedFiles.filter((entry) => entry.status === "completed" || entry.status === "kept-current");
+  for (const file of restorableFiles) {
     const current = await readWorkingCopyText(context, file.path);
     currentByPath.set(file.path, current);
     if (current.hash !== (file.appliedHash ?? null)) conflicts.push({ path: file.path, expectedHash: file.appliedHash ?? null, currentHash: current.hash, reason: "Draft changed after this operation." });
@@ -1145,11 +1146,10 @@ export async function restorePreviousDrafts(input: RewriteRepositoryContext & {
   await saveLocalRewriteOperation(manifest);
   const mutations = [] as Parameters<typeof mutateLocalTextFilesAtomically>[1];
   try {
-    for (const file of manifest.modifiedFiles.filter((entry) => entry.status === "completed")) {
+    for (const file of restorableFiles) {
       const current = currentByPath.get(file.path)!;
-      const conflict = conflicts.find((entry) => entry.path === file.path);
       const policy = input.policies?.[file.path] ?? defaultPolicy;
-      if (conflict && policy === "keep-current") {
+      if (policy === "keep-current") {
         file.status = "kept-current";
         continue;
       }

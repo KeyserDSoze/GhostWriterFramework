@@ -9,7 +9,7 @@ import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
 import { addLocalRepoLog, buildLocalBookStructure, getLocalRepository, getLocalRepositoryByBook, listAllLocalFiles, listDirtyLocalFiles, listLocalRepoLogs, listUnpushedLocalCommits, localStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryFile, type LocalRepoStatus } from "@/repository/localRepository";
-import { commitLocalChanges, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, syncFullRepository } from "@/repository/repositoryService";
+import { commitLocalChanges, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, syncFullRepository } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 
 function formatBytes(value: number): string {
@@ -51,11 +51,13 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const [logs, setLogs] = useState<LocalRepoLogEntry[]>([]);
   const [logFilter, setLogFilter] = useState<"all" | LocalRepoLogKind>("all");
   const [message, setMessage] = useState("");
+  const [selectedDraftPaths, setSelectedDraftPaths] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const token = book ? resolveBookToken(book, settings) : "";
   const disabled = !book || !!busy;
   const networkDisabled = !book || !token || !!busy;
   const storageHigh = Boolean(storage.usage && storage.quota && storage.usage / storage.quota > 0.8);
+  const draftDirtyFiles = useMemo(() => dirtyFiles.filter((file) => file.path.startsWith("drafts/")), [dirtyFiles]);
 
   const defaultMessage = useMemo(() => {
     if (dirtyFiles.length === 1) return t("repoStatus.defaultCommitSingle", { path: dirtyFiles[0].path });
@@ -63,6 +65,11 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   }, [dirtyFiles, t]);
 
   const visibleLogs = useMemo(() => logFilter === "all" ? logs : logs.filter((log) => log.kind === logFilter), [logFilter, logs]);
+
+  useEffect(() => {
+    const available = new Set(draftDirtyFiles.map((file) => file.path));
+    setSelectedDraftPaths((current) => current.filter((path) => available.has(path)));
+  }, [draftDirtyFiles]);
 
   async function currentRepo() {
     if (!book) return null;
@@ -234,8 +241,41 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
             <div className="space-y-2 rounded-xl border p-3">
               <p className="text-sm font-medium">{t("repoStatus.localChanges")}</p>
               {dirtyFiles.length ? (
-                <div className="max-h-56 min-w-0 space-y-1 overflow-y-auto text-xs">
-                  {dirtyFiles.map((file) => <div key={file.path} className="flex min-w-0 items-center gap-2 rounded border px-2 py-1"><span className="w-16 shrink-0 uppercase text-muted-foreground">{file.status}</span><span className="min-w-0 flex-1 truncate font-mono" title={file.path}>{file.path}</span></div>)}
+                <div className="space-y-2">
+                  {draftDirtyFiles.length > 0 && (
+                    <div className="space-y-2 rounded-lg border bg-muted/20 p-2 text-xs">
+                      <p className="text-muted-foreground">{t("repoStatus.draftRestoreHelp")}</p>
+                      <p className="text-muted-foreground">{t("repoStatus.draftRestoreSummary", { selected: selectedDraftPaths.length, kept: Math.max(draftDirtyFiles.length - selectedDraftPaths.length, 0) })}</p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button type="button" size="sm" variant="outline" disabled={disabled || draftDirtyFiles.length === 0} onClick={() => setSelectedDraftPaths(draftDirtyFiles.map((file) => file.path))}>{t("repoStatus.selectAllDrafts")}</Button>
+                        <Button type="button" size="sm" variant="outline" disabled={disabled || selectedDraftPaths.length === 0} onClick={() => setSelectedDraftPaths([])}>{t("repoStatus.clearDraftSelection")}</Button>
+                        <Button type="button" size="sm" variant="outline" disabled={disabled || selectedDraftPaths.length === 0} onClick={() => void run("restore-drafts", async () => {
+                          const repo = await currentRepo();
+                          if (!repo) throw new Error(t("repoStatus.notCloned"));
+                          const result = await restoreLocalFilesToBase({ repoId: repo.id, owner: repo.owner, repo: repo.repo, paths: selectedDraftPaths, token: token || undefined });
+                          setSelectedDraftPaths([]);
+                          return t("repoStatus.restoreSelectedDraftsDone", { count: result.restored });
+                        })}><RotateCcw className="mr-1 h-4 w-4" />{t("repoStatus.restoreSelectedDrafts")}</Button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="max-h-56 min-w-0 space-y-1 overflow-y-auto text-xs">
+                    {dirtyFiles.map((file) => {
+                      const isDraft = file.path.startsWith("drafts/");
+                      const checked = selectedDraftPaths.includes(file.path);
+                      return (
+                        <label key={file.path} className="flex min-w-0 items-start gap-2 rounded border px-2 py-1.5">
+                          {isDraft ? (
+                            <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={checked} onChange={(event) => setSelectedDraftPaths((current) => event.target.checked ? [...current, file.path] : current.filter((path) => path !== file.path))} aria-label={t("repoStatus.selectDraftToRestore", { path: file.path })} />
+                          ) : (
+                            <span className="h-4 w-4 shrink-0" aria-hidden="true" />
+                          )}
+                          <span className="w-16 shrink-0 uppercase text-muted-foreground">{file.status}</span>
+                          <span className="min-w-0 flex-1 break-all font-mono">{file.path}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
               ) : <p className="text-sm text-muted-foreground">{t("repoStatus.noLocalChanges")}</p>}
               <div className="flex flex-col gap-2 sm:flex-row">

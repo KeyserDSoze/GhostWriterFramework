@@ -96,6 +96,13 @@ const en = {
     unpushedNotice: "You have {{count}} local commits that are not pushed. Push or back them up to avoid losing them.",
     defaultCommitSingle: "Update {{path}}",
     defaultCommitMany: "Update {{count}} files",
+    draftRestoreHelp: "Select draft files under drafts/ to restore them to the clean base before committing. Unselected drafts stay as they are.",
+    draftRestoreSummary: "{{selected}} selected to restore, {{kept}} kept for commit.",
+    selectAllDrafts: "Select all drafts",
+    clearDraftSelection: "Clear selection",
+    selectDraftToRestore: "Restore {{path}} to the clean base state",
+    restoreSelectedDrafts: "Restore selected drafts",
+    restoreSelectedDraftsDone: "Restored {{count}} selected drafts.",
   },
   repoSettings: {
     title: "Local repositories",
@@ -1089,6 +1096,16 @@ const en = {
     applyRestoreChoices: "Apply restore choices",
     rolledBack: "Previous drafts restored",
     partialRestore: "Restore completed partially; selected current drafts were kept",
+    fileRowStatus: "Status: {{status}}",
+    previewSource: {
+      current: "Showing current local draft",
+      generated: "Showing saved rewritten snapshot",
+      unavailable: "No saved rewritten snapshot is available"
+    },
+    previewChangedSinceGenerated: "The current local draft differs from the saved rewritten snapshot.",
+    noDiffPreview: "No diff to show for this file.",
+    noSavedRewrite: "No rewritten draft snapshot was saved for this file.",
+    restoreThisDraft: "Restore this draft",
   },
   audit: {
     title: "Audit",
