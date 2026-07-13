@@ -19,7 +19,7 @@ import { usePageActionsStore } from "@/store/pageActionsStore";
 import { useContextualActions } from "@/hooks/useContextualActions";
 
 const AUDIT_ACTION_IDS = new Set(["run-audit", "open-audit", "update-audit", "delete-audit"]);
-const DIRECT_CONTEXT_ACTION_IDS = new Set([...AUDIT_ACTION_IDS, "generate-draft-from-feedback", "feedback-rewrite-status", "restore-previous-drafts", "navigate-prev", "navigate-next", "open-notes"]);
+const DIRECT_CONTEXT_ACTION_IDS = new Set([...AUDIT_ACTION_IDS, "generate-draft-from-feedback", "feedback-rewrite-status", "restore-previous-drafts", "navigate-prev", "navigate-next", "navigate-next-view", "navigate-previous-view", "open-notes"]);
 
 interface ActionRow {
   label: string;
@@ -123,7 +123,6 @@ export function FloatingActions() {
     rows.push({ label: chapter.draftPath ? t("chapter.openDraft") : t("chapter.createDraft"), onClick: () => void openOrCreateChapter("draft"), icon: <FileEdit className="h-4 w-4" /> });
     rows.push({ label: chapter.hasResume ? t("chapter.openResume") : t("chapter.createResume"), onClick: () => void openOrCreateChapter("resume"), icon: <NotebookText className="h-4 w-4" /> });
     rows.push({ label: chapter.hasEvaluation ? t("chapter.openEvaluation") : t("chapter.createEvaluation"), onClick: () => void openOrCreateChapter("evaluation"), icon: <ClipboardCheck className="h-4 w-4" /> });
-    rows.push({ label: t("writingStyle.chapterButton"), to: `${base}/writing-style`, icon: <PenLine className="h-4 w-4" /> });
   } else if (bookId) {
     rows.push({ label: t("ghostwriters.title"), to: `/app/books/${bookId}/ghostwriters`, icon: <Wand2 className="h-4 w-4" /> });
     rows.push({ label: t("writingStyle.title"), to: `/app/books/${bookId}/writing-style`, icon: <PenLine className="h-4 w-4" /> });

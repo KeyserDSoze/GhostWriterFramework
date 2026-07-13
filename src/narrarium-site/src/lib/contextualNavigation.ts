@@ -4,6 +4,8 @@ import type { BookStructure, Chapter, Paragraph } from "@/types/book";
 export interface ContextualNavigationTarget {
   previousHref?: string;
   nextHref?: string;
+  nextViewHref?: string;
+  previousViewHref?: string;
   currentFilePaths: string[];
   currentLabel?: string;
 }
@@ -22,6 +24,12 @@ function paragraphHref(bookId: string, chapterSlug: string, paragraphNumber: str
 
 function chapterHref(bookId: string, chapterSlug: string, suffix = ""): string {
   return `/app/books/${bookId}/chapters/${chapterSlug}${suffix}`;
+}
+
+function rotate<T>(items: T[], index: number, delta: number): T | undefined {
+  if (items.length === 0) return undefined;
+  const normalized = ((index + delta) % items.length + items.length) % items.length;
+  return items[normalized];
 }
 
 function chapterAndParagraph(structure: BookStructure, chapterSlug: string, paragraphNumber: string): { chapter: Chapter; paragraph: Paragraph; chapterIndex: number; paragraphIndex: number } | null {
@@ -91,9 +99,21 @@ export function resolveContextualNavigation(structure: BookStructure | undefined
                 : suffix === "/workspace/evaluation"
                   ? [resolved.paragraph.evaluationPath ?? `evaluations/paragraphs/${resolved.chapter.slug}/${paragraphSlug}.md`]
                   : [];
+    const currentView = suffix || "overview";
+    const views = [
+      { key: "overview", href: paragraphHref(bookId, chapterSlug, paragraphNumber) },
+      ...(resolved.paragraph.draftPath ? [{ key: "/workspace/draft", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/workspace/draft") }] : []),
+      { key: "/workspace/script", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/workspace/script") },
+      ...(typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches ? [{ key: "/split", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/split") }] : []),
+      { key: "/workspace/evaluation", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/workspace/evaluation") },
+      { key: "/reader-evaluations", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/reader-evaluations") },
+    ];
+    const currentIndex = Math.max(0, views.findIndex((view) => view.key === currentView));
     return {
       previousHref: previous ? paragraphHref(bookId, previous.chapter.slug, previous.paragraph.number, suffix) : undefined,
       nextHref: next ? paragraphHref(bookId, next.chapter.slug, next.paragraph.number, suffix) : undefined,
+      previousViewHref: rotate(views, currentIndex, -1)?.href,
+      nextViewHref: rotate(views, currentIndex, 1)?.href,
       currentFilePaths,
       currentLabel: resolved.paragraph.title,
     };
@@ -120,9 +140,21 @@ export function resolveContextualNavigation(structure: BookStructure | undefined
               : suffix === "/workspace/evaluation"
                 ? [`evaluations/chapters/${resolved.chapter.slug}.md`]
                 : [];
+    const currentView = suffix || "overview";
+    const views = [
+      { key: "overview", href: chapterHref(bookId, chapterSlug) },
+      { key: "/drafts", href: chapterHref(bookId, chapterSlug, "/drafts") },
+      { key: "/scripts", href: chapterHref(bookId, chapterSlug, "/scripts") },
+      { key: "/workspace/resume", href: chapterHref(bookId, chapterSlug, "/workspace/resume") },
+      { key: "/workspace/evaluation", href: chapterHref(bookId, chapterSlug, "/workspace/evaluation") },
+      { key: "/reader-evaluations", href: chapterHref(bookId, chapterSlug, "/reader-evaluations") },
+    ];
+    const currentIndex = Math.max(0, views.findIndex((view) => view.key === currentView));
     return {
       previousHref: previous ? chapterHref(bookId, previous.slug, suffix) : undefined,
       nextHref: next ? chapterHref(bookId, next.slug, suffix) : undefined,
+      previousViewHref: rotate(views, currentIndex, -1)?.href,
+      nextViewHref: rotate(views, currentIndex, 1)?.href,
       currentFilePaths,
       currentLabel: resolved.chapter.title,
     };

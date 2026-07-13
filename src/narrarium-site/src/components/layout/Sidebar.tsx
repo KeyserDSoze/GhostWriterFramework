@@ -17,7 +17,6 @@ import {
   NotebookText,
   Package,
   PanelLeftClose,
-  PenLine,
   Quote,
   Search,
   Settings,
@@ -121,7 +120,6 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         { label: t("chapter.resume"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/resume`, icon: <NotebookText className="h-4 w-4" /> },
         { label: t("chapter.evaluation"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/evaluation`, icon: <ClipboardCheck className="h-4 w-4" /> },
         { label: t("readerEvaluations.title"), href: `/app/books/${bookId}/chapters/${chapterId}/reader-evaluations`, icon: <Users className="h-4 w-4" /> },
-        { label: t("writingStyle.chapterButton"), href: `/app/books/${bookId}/chapters/${chapterId}/writing-style`, icon: <PenLine className="h-4 w-4" /> },
       ]
     : [];
 

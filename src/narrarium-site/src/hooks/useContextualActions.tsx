@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, ArrowRight, ClipboardCheck, Columns2, FileEdit, FileText, History, NotebookPen, NotebookText, Network, PenLine, Play, RefreshCcw, RotateCcw, Search, ShieldAlert, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, ClipboardCheck, Columns2, FileEdit, FileText, History, NotebookPen, NotebookText, Repeat, Network, PenLine, Play, RefreshCcw, RotateCcw, Search, ShieldAlert, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useBookStructure } from "@/hooks/useBookStructure";
@@ -153,6 +153,8 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
   const actions: ContextualAction[] = [...pageActions];
   if (navTarget.previousHref) actions.push({ id: "navigate-prev", label: t("quickNav.previous"), icon: <ArrowLeft className="h-4 w-4" />, shortcut: "Ctrl+B", to: navTarget.previousHref });
   if (navTarget.nextHref) actions.push({ id: "navigate-next", label: t("quickNav.next"), icon: <ArrowRight className="h-4 w-4" />, shortcut: "Ctrl+N", to: navTarget.nextHref });
+  if (navTarget.nextViewHref) actions.push({ id: "navigate-next-view", label: t("quickNav.nextView"), icon: <Repeat className="h-4 w-4" />, shortcut: "Ctrl+Tab", to: navTarget.nextViewHref });
+  if (navTarget.previousViewHref) actions.push({ id: "navigate-previous-view", label: t("quickNav.previousView"), icon: <Repeat className="h-4 w-4" />, shortcut: "Ctrl+Shift+Tab", to: navTarget.previousViewHref });
   if (bookId) actions.push({ id: "open-notes", label: t("quickNav.openNotes"), icon: <NotebookPen className="h-4 w-4" />, shortcut: "Ctrl+M", run: () => setNotesOpen(true) });
   if (paragraph && chapterId) {
     const base = `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}`;
@@ -173,7 +175,6 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
     actions.push({ id: "chResume", label: chapter.hasResume ? t("chapter.openResume") : t("chapter.createResume"), run: () => openOrCreateChapter("resume"), icon: <NotebookText className="h-4 w-4" /> });
     actions.push({ id: "chEval", label: chapter.hasEvaluation ? t("chapter.openEvaluation") : t("chapter.createEvaluation"), run: () => openOrCreateChapter("evaluation"), icon: <ClipboardCheck className="h-4 w-4" /> });
     actions.push({ id: "chReaderEval", label: t("readerEvaluations.evaluateWithReaders"), to: `${base}/reader-evaluations`, icon: <Users className="h-4 w-4" /> });
-    actions.push({ id: "chStyle", label: t("writingStyle.chapterButton"), to: `${base}/writing-style`, icon: <PenLine className="h-4 w-4" /> });
   } else if (bookId) {
     if (route.kind === "canon") {
       const files = structure?.[route.section as keyof typeof structure] as Array<{ path: string; name?: string }> | undefined;

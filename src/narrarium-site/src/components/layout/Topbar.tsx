@@ -307,7 +307,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         )}
         {pendingCurrentObject.pending && (
           <span
-            className="inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300"
+            className="inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 motion-safe:animate-pulse dark:text-amber-300"
             title={pendingCurrentObject.paths.join("\n")}
           >
             <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />

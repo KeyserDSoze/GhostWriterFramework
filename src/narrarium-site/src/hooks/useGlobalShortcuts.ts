@@ -56,6 +56,16 @@ export function useGlobalShortcuts() {
       const structure = bookId ? structures[bookId] : undefined;
       const target = resolveContextualNavigation(structure, location.pathname, bookId);
 
+      // Ctrl/Cmd+Tab → switch to the next available view of the same chapter/paragraph.
+      // Ctrl/Cmd+Shift+Tab → previous view of the same target.
+      if (key === "tab") {
+        const href = event.shiftKey ? target.previousViewHref : target.nextViewHref;
+        if (!href) return;
+        event.preventDefault();
+        navigate(href);
+        return;
+      }
+
       // Ctrl/Cmd+B → contextual previous chapter/paragraph while keeping the same view mode.
       if (key === "b") {
         if (!target.previousHref) return;

@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.75.1",
+    "date": "2026-07-13",
+    "en": {
+      "title": "Contextual view shortcuts and active local-draft indicator",
+      "summary": "Narrarium now navigates backward, forward, and across sibling views of the same chapter or paragraph from the keyboard and shared action menus, and it highlights when the currently opened draft/text still has local changes waiting to be committed.",
+      "changes": [
+        "Added Ctrl+B for contextual previous navigation and Ctrl+N for contextual next navigation while preserving the current view mode such as final, draft, script, split, evaluation, audit, and reader evaluations.",
+        "Added Ctrl+Tab for switching to the next available sibling view of the same paragraph or chapter, plus Ctrl+Shift+Tab for the previous sibling view.",
+        "Exposed the same previous/next/view-switch navigation and Open notes actions in the shared contextual menu and mobile Actions.",
+        "Moved quick notes from Ctrl+N to Ctrl+M.",
+        "Added a visible local-pending badge in the top bar for the currently opened object and made it pulse softly when the current draft/text still has uncommitted local changes.",
+        "Removed chapter-style navigation from the active chapter UI and action surfaces so chapter workflows now rely on ghostwriters and the global writing style instead."
+      ]
+    },
+    "it": {
+      "title": "Shortcut contestuali di vista e indicatore draft locale attivo",
+      "summary": "Narrarium ora permette di navigare indietro, avanti e tra le viste sorelle dello stesso capitolo o paragrafo da tastiera e dai menu condivisi, e segnala quando il draft o testo aperto ha ancora modifiche locali da committare.",
+      "changes": [
+        "Aggiunti Ctrl+B per la navigazione contestuale al precedente e Ctrl+N per la navigazione contestuale al successivo mantenendo la stessa modalità di vista, come finale, bozza, script, split, valutazione, audit e valutazioni dei lettori.",
+        "Aggiunto Ctrl+Tab per passare alla vista sorella successiva dello stesso paragrafo o capitolo, più Ctrl+Shift+Tab per la vista sorella precedente.",
+        "Esposte le stesse azioni di navigazione precedente/successivo/cambio vista e Apri note nel menu contestuale condiviso e nelle Azioni mobile.",
+        "Spostate le note rapide da Ctrl+N a Ctrl+M.",
+        "Aggiunto un badge visibile in top bar per l'oggetto corrente e reso leggermente pulsante quando il draft o testo aperto ha ancora modifiche locali non committate.",
+        "Rimossa la navigazione allo stile capitolo dalla UI attiva del capitolo e dalle superfici di azione, così il flusso del capitolo si basa ora su ghostwriter e stile globale."
+      ]
+    }
+  },
+  {
     "version": "0.75.0",
     "date": "2026-07-13",
     "en": {

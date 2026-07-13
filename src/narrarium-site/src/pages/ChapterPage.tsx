@@ -8,7 +8,6 @@ import {
   Trash2,
   Loader2,
   FileEdit,
-  PenLine,
   Save,
   ShieldAlert,
   MoreHorizontal,
@@ -450,14 +449,6 @@ export function ChapterPage() {
           label={t("chapter.draft")}
           active={!!chapter.draftPath}
         />
-        {chapter.writingStylePath && (
-          <ChapterActionChip
-            to={`/app/books/${bookId}/chapters/${chapterId}/writing-style`}
-            icon={<PenLine className="h-3.5 w-3.5" />}
-            label={t("chapter.writingStyle")}
-            active
-          />
-        )}
         <ChapterActionChip
           to={`/app/books/${bookId}/chapters/${chapterId}/workspace/resume`}
           label={t("chapter.resume")}
