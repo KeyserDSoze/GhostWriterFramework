@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.74.1",
+    "date": "2026-07-13",
+    "en": {
+      "title": "Rewrite drafts from reader feedback without automatic Git commits",
+      "summary": "Narrarium can now generate or restore paragraph and chapter drafts from reader feedback entirely inside the local working copy, with previews, progress, local operation history and per-file restore, without creating automatic Git commits or pushes.",
+      "changes": [
+        "Generate Draft from Feedback now works from the panel summary or from one selected reader opinion, for both paragraph and chapter targets.",
+        "Paragraph generation shows a mandatory warning, a draft diff preview, the applied feedback list and replaces the draft only after explicit confirmation.",
+        "Chapter generation rewrites drafts one paragraph at a time in story order, shows progress, supports cancellation and resume, and keeps completed drafts identifiable after an interruption.",
+        "Operation checkpoints, generated versions and restore metadata are now stored locally by the app instead of being committed into the repository automatically.",
+        "Restore Previous Drafts now reverts only the files touched by that operation, detects later manual edits, and lets you keep current or restore anyway per file.",
+        "The feature remains accessible from Reader Evaluations, contextual actions, mobile Actions, Copilot and Fantasmino, all through the same shared workflow."
+      ]
+    },
+    "it": {
+      "title": "Riscrivi le bozze dai feedback senza commit Git automatici",
+      "summary": "Narrarium può ora generare o ripristinare le bozze di paragrafi e capitoli dai feedback dei lettori interamente nella working copy locale, con anteprima, avanzamento, storico locale dell'operazione e ripristino per file, senza creare commit o push Git automatici.",
+      "changes": [
+        "Genera bozza dai feedback ora funziona sia dalla sintesi del panel sia dal parere di un singolo lettore selezionato, per target paragrafo e capitolo.",
+        "La generazione del paragrafo mostra un warning obbligatorio, l'anteprima diff della bozza, la lista dei feedback applicati e sostituisce la bozza solo dopo conferma esplicita.",
+        "La generazione del capitolo riscrive le bozze un paragrafo alla volta in ordine narrativo, mostra l'avanzamento, supporta annullamento e resume e mantiene riconoscibili le bozze già completate dopo un'interruzione.",
+        "Checkpoint operazione, versioni generate e metadati di ripristino vengono ora salvati localmente dall'app invece di essere committati automaticamente nel repository.",
+        "Ripristina bozze precedenti ora annulla solo i file toccati da quella specifica operazione, rileva modifiche manuali successive e permette per ogni file di mantenere il corrente o ripristinare comunque.",
+        "La funzione resta accessibile da Valutazioni dei lettori, azioni contestuali, Azioni mobile, Copilot e Fantasmino, tutti attraverso lo stesso workflow condiviso."
+      ]
+    }
+  },
+  {
     "version": "0.74.0",
     "date": "2026-07-12",
     "en": {

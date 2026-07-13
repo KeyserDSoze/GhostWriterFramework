@@ -5,6 +5,7 @@ import { ClipboardCheck, Columns2, FileEdit, FileText, History, NotebookText, Ne
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { useHasLocalRewriteOperation } from "@/hooks/useHasLocalRewriteOperation";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { parseAppRoute } from "@/assistant/context";
 import { resolveBookToken } from "@/types/settings";
@@ -67,10 +68,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
     ? `evaluations/readers/summaries/paragraphs/${chapter.slug}/${paragraphSlug}.md`
     : chapter ? `evaluations/readers/summaries/chapters/${chapter.slug}.md` : null;
   const hasFeedbackSummary = Boolean(summaryPath && structure?.readerEvaluationFiles.some((file) => file.path === summaryPath));
-  const operationPrefix = paragraphSlug && chapter
-    ? `operations/rewrite-from-reader-feedback/paragraphs/${chapter.slug}/${paragraphSlug}/`
-    : chapter ? `operations/rewrite-from-reader-feedback/chapters/${chapter.slug}/` : null;
-  const hasRewriteOperation = Boolean(operationPrefix && structure?.operationManifestFiles.some((file) => file.path.startsWith(operationPrefix)));
+  const hasRewriteOperation = useHasLocalRewriteOperation({ book, branch, scope: rewriteScope, chapterSlug: chapter?.slug, paragraphSlug });
 
   const auditScope = (() => {
     if (route.kind === "paragraph" || route.kind === "paragraph-workspace" || route.kind === "paragraph-reader-evaluations" || route.kind === "paragraph-audit") return "paragraph";

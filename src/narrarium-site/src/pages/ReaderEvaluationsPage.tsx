@@ -13,6 +13,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { useHasLocalRewriteOperation } from "@/hooks/useHasLocalRewriteOperation";
 import { resolveBookToken } from "@/types/settings";
 import { deleteFile, loadFileContent, readFileWithSha } from "@/github/githubClient";
 import { generateReaderEvaluationSummary, hashReaderSource, loadReaderPersonas, parseReaderEvaluation, runReaderEvaluations, type ReaderEvaluationProgress, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
@@ -48,10 +49,7 @@ export function ReaderEvaluationsPage() {
   const abortRef = useRef<AbortController | null>(null);
   const paragraphSlugValue = paragraph ? paragraphSlug(paragraph.path) : undefined;
   const rewriteScope = paragraph ? "paragraph" as const : "chapter" as const;
-  const operationPrefix = paragraphSlugValue
-    ? `operations/rewrite-from-reader-feedback/paragraphs/${chapterId}/${paragraphSlugValue}/`
-    : `operations/rewrite-from-reader-feedback/chapters/${chapterId}/`;
-  const hasRewriteOperation = Boolean(structure?.operationManifestFiles.some((file) => file.path.startsWith(operationPrefix)));
+  const hasRewriteOperation = useHasLocalRewriteOperation({ book, branch, scope: rewriteScope, chapterSlug: chapterId, paragraphSlug: paragraphSlugValue });
 
   function openRewrite(mode: FeedbackRewriteMode, record?: Pick<ReaderEvaluationRecord, "path" | "readerId" | "readerName">) {
     if (!bookId || !chapterId || selection) return;

@@ -1,7 +1,7 @@
 import { parseDocument, stringify } from "yaml";
 import { completeToolRouted } from "@/assistant/router";
 import type { LlmRunMetadata } from "@/assistant/llm";
-import { loadFileContent } from "@/github/githubClient";
+import { loadFileContent, loadRemoteFileContentAtRef } from "@/github/githubClient";
 import { ghostwriterPrompt, parseGhostwriter } from "@/narrarium/ghostwriter";
 import {
   hashReaderSource,
@@ -13,17 +13,20 @@ import {
   type ReaderEvaluationTarget,
 } from "@/narrarium/readerEvaluations";
 import {
-  rewriteOperationManifestPath,
-  rewriteOperationSnapshotPath,
-  type RewriteOperationScope,
-} from "@/narrarium/rewriteOperationPaths";
-import {
-  commitAndPushTextFileMutation,
-  preflightRepositoryOperation,
-  RepositoryConflictError,
+  getLocalFileEntry,
+  getLocalRepository,
+  mutateLocalTextFilesAtomically,
   sha256Text,
-  type RepositoryTextMutation,
+} from "@/repository/localRepository";
+import {
+  loadLocalRewriteOperation,
+  listLocalRewriteOperations,
+  saveLocalRewriteOperation,
+} from "@/repository/localRewriteOperationStore";
+import {
+  RepositoryConflictError,
 } from "@/repository/safeRepositoryMutation";
+import type { RewriteOperationScope } from "@/narrarium/rewriteOperationPaths";
 import type { BookStructure, Chapter, Paragraph } from "@/types/book";
 import type { AppSettings, BookEntry } from "@/types/settings";
 
@@ -55,14 +58,15 @@ export interface RewriteConflict {
 export interface RewriteModifiedFile {
   path: string;
   paragraphSlug: string;
-  beforeSnapshotPath: string;
-  generatedSnapshotPath: string;
   existedBefore: boolean;
   beforeHash: string | null;
+  beforeContent: string | null;
   sourceDraftPath?: string;
   sourceDraftHash?: string | null;
   finalSourcePath?: string;
   finalSourceHash?: string;
+  generatedContent?: string | null;
+  generatedHash?: string | null;
   appliedHash?: string;
   status: RewriteModifiedFileStatus;
 }
@@ -83,13 +87,13 @@ export interface RewriteOperationManifest {
   paragraphIds: string[];
   startedAt: string;
   completedAt: string | null;
-  baseGitReference: string;
-  resultGitReference: string | null;
   status: RewriteOperationStatus;
   createdAt: string;
   updatedAt: string;
-  baseRemoteHeadSha: string;
-  latestRemoteHeadSha: string;
+  repoId: string;
+  owner: string;
+  repo: string;
+  branch: string;
   chapterSlug: string;
   paragraphSlug?: string;
   targetIds: string[];
@@ -140,12 +144,16 @@ export class StaleReaderFeedbackConfirmationError extends Error {
 export class RewriteFinalizationError extends Error {
   readonly code = "REWRITE_FINALIZATION_FAILED";
   readonly cause: unknown;
-  constructor(readonly manifest: RewriteOperationManifest, readonly manifestPath: string, cause: unknown) {
+  constructor(readonly manifest: RewriteOperationManifest, readonly operationId: string, cause: unknown) {
     const detail = cause instanceof Error ? cause.message : String(cause);
-    super(`The drafts were saved, but finalizing the rewrite manifest failed: ${detail}`);
+    super(`The drafts were saved locally, but recording the rewrite operation failed: ${detail}`);
     this.name = "RewriteFinalizationError";
     this.cause = cause;
   }
+}
+
+interface RewriteWorkspaceContext extends RewriteRepositoryContext {
+  repoId: string;
 }
 
 export interface RewriteRepositoryContext {
@@ -244,78 +252,6 @@ function canonicalDraftContent(chapter: Chapter, paragraph: Paragraph, finalRaw:
   return `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${body.trim()}\n`;
 }
 
-function renderManifest(manifest: RewriteOperationManifest): string {
-  return `---\n${stringify({ type: "rewriteFromReaderFeedbackOperation", ...manifest }).trimEnd()}\n---\n\n# Rewrite from reader feedback\n\nStatus: ${manifest.status}\n`;
-}
-
-export function parseRewriteOperationManifest(path: string, raw: string, fallbackBookId = ""): RewriteOperationManifest {
-  const parsed = splitMarkdown(raw).frontmatter as Partial<RewriteOperationManifest> & Record<string, unknown>;
-  if (!parsed || parsed.schemaVersion !== 1 || typeof parsed.operationId !== "string" || (parsed.scope !== "chapter" && parsed.scope !== "paragraph")) {
-    throw new Error(`Invalid rewrite operation manifest: ${path}`);
-  }
-  const chapterSlug = typeof parsed.chapterSlug === "string"
-    ? parsed.chapterSlug
-    : typeof parsed.chapterId === "string" ? parsed.chapterId : "";
-  if (!chapterSlug) throw new Error(`Invalid rewrite operation manifest: ${path}`);
-  const createdAt = typeof parsed.createdAt === "string"
-    ? parsed.createdAt
-    : typeof parsed.startedAt === "string" ? parsed.startedAt : new Date(0).toISOString();
-  const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : createdAt;
-  const modifiedFiles = Array.isArray(parsed.modifiedFiles) ? parsed.modifiedFiles : [];
-  const paragraphIds = Array.isArray(parsed.paragraphIds)
-    ? parsed.paragraphIds.filter((value): value is string => typeof value === "string")
-    : modifiedFiles.map((file) => file.paragraphSlug).filter(Boolean);
-  const hasCompletedAt = Object.prototype.hasOwnProperty.call(parsed, "completedAt");
-  const hasResultGitReference = Object.prototype.hasOwnProperty.call(parsed, "resultGitReference");
-  const terminalMetadataComplete = hasCompletedAt && typeof parsed.completedAt === "string" && Boolean(parsed.completedAt)
-    && hasResultGitReference && typeof parsed.resultGitReference === "string" && Boolean(parsed.resultGitReference);
-  const statuses: RewriteOperationStatus[] = ["preparing", "rewriting", "saving", "completed", "failed", "cancelled", "rollingBack", "rolledBack", "conflict"];
-  const parsedStatus: RewriteOperationStatus = typeof parsed.status === "string" && statuses.includes(parsed.status as RewriteOperationStatus)
-    ? parsed.status as RewriteOperationStatus
-    : "failed";
-  const terminalFilesComplete = parsedStatus === "completed"
-    ? modifiedFiles.length > 0 && modifiedFiles.every((file) => file.status === "completed")
-    : parsedStatus === "rolledBack"
-      ? modifiedFiles.every((file) => file.status === "restored" || file.status === "kept-current")
-      : true;
-  const terminalStateComplete = terminalMetadataComplete && terminalFilesComplete;
-  const invalidTerminalState = (parsedStatus === "completed" || parsedStatus === "rolledBack") && !terminalStateComplete;
-  const status: RewriteOperationStatus = (parsedStatus === "completed" || parsedStatus === "rolledBack") && !terminalStateComplete
-    ? parsedStatus === "completed" && modifiedFiles.length > 0 && modifiedFiles.every((file) => file.status === "completed") ? "saving" : "failed"
-    : parsedStatus;
-  const latestReference = typeof parsed.latestRemoteHeadSha === "string" ? parsed.latestRemoteHeadSha : "";
-  const baseReference = typeof parsed.baseRemoteHeadSha === "string" ? parsed.baseRemoteHeadSha : latestReference;
-  const feedbackMode: FeedbackSourceMode = parsed.feedbackMode === "reader-opinion" ? "reader-opinion" : "panel-summary";
-  const feedbackPath = typeof parsed.feedbackPath === "string"
-    ? parsed.feedbackPath
-    : typeof parsed.feedbackSummaryPath === "string" ? parsed.feedbackSummaryPath : "";
-  return {
-    ...parsed,
-    operation: "rewriteFromReaderFeedback",
-    bookId: typeof parsed.bookId === "string" ? parsed.bookId : fallbackBookId,
-    chapterId: typeof parsed.chapterId === "string" ? parsed.chapterId : chapterSlug,
-    chapterSlug,
-    paragraphIds,
-    startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : createdAt,
-    completedAt: !invalidTerminalState && hasCompletedAt && (typeof parsed.completedAt === "string" || parsed.completedAt === null)
-      ? parsed.completedAt
-      : null,
-    baseGitReference: typeof parsed.baseGitReference === "string" ? parsed.baseGitReference : baseReference,
-    resultGitReference: !invalidTerminalState && hasResultGitReference && (typeof parsed.resultGitReference === "string" || parsed.resultGitReference === null)
-      ? parsed.resultGitReference
-      : null,
-    status,
-    createdAt,
-    updatedAt,
-    baseRemoteHeadSha: baseReference,
-    latestRemoteHeadSha: latestReference || baseReference,
-    feedbackMode,
-    feedbackPath,
-    feedbackSummaryPath: typeof parsed.feedbackSummaryPath === "string" ? parsed.feedbackSummaryPath : feedbackPath,
-    modifiedFiles,
-  } as RewriteOperationManifest;
-}
-
 function aggregateRuns(manifest: RewriteOperationManifest): void {
   manifest.aggregateInputTokens = manifest.generationRuns.reduce((sum, run) => sum + run.metadata.inputTokens, 0);
   manifest.aggregateCachedInputTokens = manifest.generationRuns.reduce((sum, run) => sum + run.metadata.cachedInputTokens, 0);
@@ -328,12 +264,46 @@ async function readOptional(context: RewriteRepositoryContext, path: string): Pr
   return loadFileContent(context.token, context.book.owner, context.book.repo, path, context.branch).catch(() => null);
 }
 
-async function loadParagraphSource(context: RewriteRepositoryContext, paragraph: Paragraph): Promise<{ raw: string; body: string; hash: string }> {
-  const raw = await loadFileContent(context.token, context.book.owner, context.book.repo, paragraph.path, context.branch);
+async function requireLocalWorkingCopy(context: RewriteRepositoryContext): Promise<RewriteWorkspaceContext> {
+  const local = await getLocalRepository(context.book.owner, context.book.repo, context.branch);
+  if (!local) throw new Error("A local working copy for the selected branch is required.");
+  if (local.cloneComplete !== true) throw new Error("The local working copy has not been fully verified.");
+  return { ...context, repoId: local.id };
+}
+
+async function mutateLocalDraftFiles(repoId: string, mutations: Array<{ path: string; content?: string | null; expectedCurrentHash?: string | null }>): Promise<void> {
+  try {
+    await mutateLocalTextFilesAtomically(repoId, mutations);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("File changed since")) throw new RepositoryConflictError(error.message);
+    throw error;
+  }
+}
+
+async function readWorkingCopyText(context: RewriteWorkspaceContext, path: string): Promise<{ content: string | null; hash: string | null }> {
+  const local = await getLocalFileEntry(context.repoId, path);
+  if (local) {
+    if (local.status === "deleted") return { content: null, hash: null };
+    if (local.kind === "text") return { content: local.text ?? "", hash: local.currentHash };
+    return { content: new TextDecoder().decode(await local.blob?.arrayBuffer() ?? new ArrayBuffer(0)), hash: local.currentHash };
+  }
+  const remote = await loadRemoteFileContentAtRef(context.token, context.book.owner, context.book.repo, path, context.branch).catch(() => null);
+  if (!remote) return { content: null, hash: null };
+  return { content: remote.content, hash: await sha256Text(remote.content) };
+}
+
+export async function loadRewriteWorkingCopyText(context: RewriteRepositoryContext, path: string): Promise<string | null> {
+  return (await readWorkingCopyText(await requireLocalWorkingCopy(context), path)).content;
+}
+
+async function loadParagraphSource(context: RewriteWorkspaceContext, paragraph: Paragraph): Promise<{ raw: string; body: string; hash: string }> {
+  const { content, hash } = await readWorkingCopyText(context, paragraph.path);
+  if (content === null || hash === null) throw new Error(`Missing final paragraph source: ${paragraph.path}`);
+  const raw = content;
   return { raw, body: splitMarkdown(raw).body, hash: await sha256Text(raw) };
 }
 
-async function loadCurrentDraft(context: RewriteRepositoryContext, chapter: Chapter, paragraph: Paragraph): Promise<{
+async function loadCurrentDraft(context: RewriteWorkspaceContext, chapter: Chapter, paragraph: Paragraph): Promise<{
   canonicalPath: string;
   legacyPath: string;
   canonicalContent: string | null;
@@ -344,18 +314,18 @@ async function loadCurrentDraft(context: RewriteRepositoryContext, chapter: Chap
   const slug = paragraphSlug(paragraph);
   const canonicalPath = `drafts/${chapter.slug}/${slug}.md`;
   const legacyPath = `${chapter.path}/drafts/${slug}.md`;
-  const [canonicalContent, legacyContent] = await Promise.all([readOptional(context, canonicalPath), readOptional(context, legacyPath)]);
+  const [canonical, legacy] = await Promise.all([readWorkingCopyText(context, canonicalPath), readWorkingCopyText(context, legacyPath)]);
   return {
     canonicalPath,
     legacyPath,
-    canonicalContent,
-    sourceContent: canonicalContent ?? legacyContent,
-    canonicalHash: canonicalContent === null ? null : await sha256Text(canonicalContent),
-    legacyHash: legacyContent === null ? null : await sha256Text(legacyContent),
+    canonicalContent: canonical.content,
+    sourceContent: canonical.content ?? legacy.content,
+    canonicalHash: canonical.hash,
+    legacyHash: legacy.hash,
   };
 }
 
-async function chapterReaderTarget(context: RewriteRepositoryContext, chapter: Chapter, frozenSources?: Array<{ raw: string; body: string; hash: string }>): Promise<ReaderEvaluationTarget> {
+async function chapterReaderTarget(context: RewriteWorkspaceContext, chapter: Chapter, frozenSources?: Array<{ raw: string; body: string; hash: string }>): Promise<ReaderEvaluationTarget> {
   const files = frozenSources ?? await Promise.all(chapter.paragraphs.map((paragraph) => loadParagraphSource(context, paragraph)));
   const text = files.map((file, index) => `## ${chapter.paragraphs[index].title}\n\n${file.body}`).join("\n\n");
   return {
@@ -572,13 +542,14 @@ export async function inspectReaderFeedbackSummary(input: RewriteRepositoryConte
   paragraphSlug?: string;
   feedbackSource?: FeedbackSourceSelection;
 }): Promise<ReaderFeedbackSummaryState> {
+  const context = await requireLocalWorkingCopy(input);
   const { chapter, paragraph } = resolveTarget(input.structure, input.chapterSlug, input.paragraphSlug);
   if (paragraph) {
-    const source = await loadParagraphSource(input, paragraph);
-    const feedback = await loadFeedbackSource(input, paragraphReaderTarget(input, chapter, paragraph, source), input.feedbackSource);
+    const source = await loadParagraphSource(context, paragraph);
+    const feedback = await loadFeedbackSource(context, paragraphReaderTarget(context, chapter, paragraph, source), input.feedbackSource);
     return { path: feedback.primary.path, stale: Boolean(feedback.primary.stale), feedbackMode: feedback.mode, readerId: feedback.primary.readerId, readerName: feedback.primary.readerName };
   }
-  const feedback = await loadFeedbackSource(input, await chapterReaderTarget(input, chapter), input.feedbackSource);
+  const feedback = await loadFeedbackSource(context, await chapterReaderTarget(context, chapter), input.feedbackSource);
   return { path: feedback.primary.path, stale: Boolean(feedback.primary.stale), feedbackMode: feedback.mode, readerId: feedback.primary.readerId, readerName: feedback.primary.readerName };
 }
 
@@ -588,20 +559,20 @@ export async function prepareParagraphFeedbackProposal(input: RewriteRepositoryC
   feedbackSource?: FeedbackSourceSelection;
   signal?: AbortSignal;
 }): Promise<ParagraphFeedbackProposal> {
-  await preflightRepositoryOperation(input);
+  const context = await requireLocalWorkingCopy(input);
   const { chapter, paragraph } = resolveTarget(input.structure, input.chapterSlug, input.paragraphSlug);
-  const final = await loadParagraphSource(input, paragraph!);
-  const target = paragraphReaderTarget(input, chapter, paragraph!, final);
-  const feedback = await loadFeedbackSource(input, target, input.feedbackSource);
-  const draft = await loadCurrentDraft(input, chapter, paragraph!);
+  const final = await loadParagraphSource(context, paragraph!);
+  const target = paragraphReaderTarget(context, chapter, paragraph!, final);
+  const feedback = await loadFeedbackSource(context, target, input.feedbackSource);
+  const draft = await loadCurrentDraft(context, chapter, paragraph!);
   const index = chapter.paragraphs.indexOf(paragraph!);
   const [previous, next] = await Promise.all([
-    index > 0 ? loadParagraphSource(input, chapter.paragraphs[index - 1]).then((value) => value.body) : "",
-    index + 1 < chapter.paragraphs.length ? loadParagraphSource(input, chapter.paragraphs[index + 1]).then((value) => value.body) : "",
+    index > 0 ? loadParagraphSource(context, chapter.paragraphs[index - 1]).then((value) => value.body) : "",
+    index + 1 < chapter.paragraphs.length ? loadParagraphSource(context, chapter.paragraphs[index + 1]).then((value) => value.body) : "",
   ]);
-  const writingContext = await loadWritingContext(input, chapter, { previous, next }, `${final.body}\n${feedback.primary.body}`);
+  const writingContext = await loadWritingContext(context, chapter, { previous, next }, `${final.body}\n${feedback.primary.body}`);
   const generated = await generateParagraph({
-    context: input,
+    context,
     chapter,
     paragraph: paragraph!,
     draftBody: splitMarkdown(draft.sourceContent ?? "").body,
@@ -649,7 +620,10 @@ function newManifest(input: {
   operationId: string;
   scope: RewriteOperationScope;
   bookId: string;
-  head: string;
+  repoId: string;
+  owner: string;
+  repo: string;
+  branch: string;
   chapterSlug: string;
   paragraphSlug?: string;
   targetIds: string[];
@@ -673,13 +647,13 @@ function newManifest(input: {
     paragraphIds: input.modifiedFiles.map((file) => file.paragraphSlug),
     startedAt: now,
     completedAt: null,
-    baseGitReference: input.head,
-    resultGitReference: null,
     status: "preparing",
     createdAt: now,
     updatedAt: now,
-    baseRemoteHeadSha: input.head,
-    latestRemoteHeadSha: input.head,
+    repoId: input.repoId,
+    owner: input.owner,
+    repo: input.repo,
+    branch: input.branch,
     chapterSlug: input.chapterSlug,
     paragraphSlug: input.paragraphSlug,
     targetIds: input.targetIds,
@@ -702,37 +676,21 @@ function newManifest(input: {
   };
 }
 
-async function finalizeSuccessfulManifest(input: RewriteRepositoryContext & {
+async function finalizeSuccessfulManifest(input: {
   manifest: RewriteOperationManifest;
-  manifestPath: string;
-  persistedManifestContent: string;
-  resultCommitSha: string;
   status: "completed" | "rolledBack";
-  message: string;
 }): Promise<void> {
   const completedAt = new Date().toISOString();
   const terminalManifest = structuredClone(input.manifest);
   terminalManifest.status = input.status;
   terminalManifest.completedAt = completedAt;
   terminalManifest.updatedAt = completedAt;
-  terminalManifest.resultGitReference = input.resultCommitSha;
-  terminalManifest.latestRemoteHeadSha = input.resultCommitSha;
   try {
-    const finalized = await commitAndPushTextFileMutation({
-      ...input,
-      expectedRemoteHeadSha: input.resultCommitSha,
-      message: input.message,
-      mutations: [{
-        path: input.manifestPath,
-        content: renderManifest(terminalManifest),
-        expectedCurrentHash: await sha256Text(input.persistedManifestContent),
-      }],
-    });
-    terminalManifest.latestRemoteHeadSha = finalized.commitSha;
+    await saveLocalRewriteOperation(terminalManifest);
     Object.assign(input.manifest, terminalManifest);
   } catch (error) {
     input.manifest.error = `Finalization failed: ${error instanceof Error ? error.message : String(error)}`;
-    throw new RewriteFinalizationError(input.manifest, input.manifestPath, error);
+    throw new RewriteFinalizationError(input.manifest, input.manifest.operationId, error);
   }
 }
 
@@ -741,6 +699,7 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
   feedbackSource?: FeedbackSourceSelection;
   confirmStaleFeedback?: boolean;
 }): Promise<RewriteOperationManifest> {
+  const context = await requireLocalWorkingCopy(input);
   const proposal = input.proposal;
   if (input.feedbackSource) {
     const mode = normalizedFeedbackMode(input.feedbackSource);
@@ -752,17 +711,12 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
   }
   if (proposal.staleFeedback && !input.confirmStaleFeedback) throw new StaleReaderFeedbackConfirmationError();
   resolveTarget(input.structure, proposal.chapterSlug, proposal.paragraphSlug);
-  const preflight = await preflightRepositoryOperation(input);
-  const manifestPath = rewriteOperationManifestPath("paragraph", proposal.chapterSlug, proposal.operationId, proposal.paragraphSlug);
-  const beforePath = rewriteOperationSnapshotPath("paragraph", proposal.chapterSlug, proposal.operationId, proposal.paragraphSlug, "before", proposal.paragraphSlug);
-  const generatedPath = rewriteOperationSnapshotPath("paragraph", proposal.chapterSlug, proposal.operationId, proposal.paragraphSlug, "generated", proposal.paragraphSlug);
   const modifiedFile: RewriteModifiedFile = {
     path: proposal.draftPath,
     paragraphSlug: proposal.paragraphSlug,
-    beforeSnapshotPath: beforePath,
-    generatedSnapshotPath: generatedPath,
     existedBefore: proposal.canonicalDraftExisted,
     beforeHash: proposal.beforeDraftHash,
+    beforeContent: proposal.beforeDraftContent,
     sourceDraftPath: proposal.canonicalDraftExisted ? proposal.draftPath : proposal.legacyDraftPath,
     sourceDraftHash: proposal.canonicalDraftExisted ? proposal.beforeDraftHash : proposal.legacyDraftHash,
     finalSourcePath: proposal.finalSourcePath,
@@ -773,7 +727,10 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
     operationId: proposal.operationId,
     scope: "paragraph",
     bookId: input.book.id,
-    head: preflight.remoteHeadSha,
+    repoId: context.repoId,
+    owner: input.book.owner,
+    repo: input.book.repo,
+    branch: input.branch,
     chapterSlug: proposal.chapterSlug,
     paragraphSlug: proposal.paragraphSlug,
     targetIds: [`paragraph:${proposal.chapterSlug}:${proposal.paragraphSlug}`],
@@ -786,71 +743,37 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
     staleFeedback: proposal.staleFeedback,
     modifiedFiles: [modifiedFile],
   });
-  const checkpointContent = renderManifest(manifest);
-  const checkpoint = await commitAndPushTextFileMutation({
-    ...input,
-    expectedRemoteHeadSha: preflight.remoteHeadSha,
-    message: `Checkpoint reader feedback rewrite ${proposal.paragraphSlug}`,
-    mutations: [
-      { path: manifestPath, content: checkpointContent, expectedCurrentHash: null },
-      { path: beforePath, content: proposal.beforeDraftContent ?? "---\ntype: rewriteSnapshot\nexists: false\n---\n", expectedCurrentHash: null },
-      { path: proposal.draftPath, expectedCurrentHash: proposal.beforeDraftHash },
-      { path: proposal.legacyDraftPath, expectedCurrentHash: proposal.legacyDraftHash },
+  try {
+    await saveLocalRewriteOperation(manifest);
+    await mutateLocalDraftFiles(context.repoId, [
+      { path: proposal.draftPath, content: proposal.generatedDraftContent, expectedCurrentHash: proposal.beforeDraftHash },
       { path: proposal.feedbackPath, expectedCurrentHash: proposal.feedbackFileHash },
       { path: proposal.finalSourcePath, expectedCurrentHash: proposal.finalSourceHash },
-    ],
-  });
-  manifest.status = "saving";
-  manifest.updatedAt = new Date().toISOString();
-  manifest.latestRemoteHeadSha = checkpoint.commitSha;
-  manifest.progress = { completed: 1, total: 1, currentParagraphSlug: proposal.paragraphSlug };
-  modifiedFile.appliedHash = await sha256Text(proposal.generatedDraftContent);
-  modifiedFile.status = "completed";
-  manifest.generationRuns.push({ paragraphSlug: proposal.paragraphSlug, feedbackApplied: proposal.feedbackApplied, metadata: proposal.generation });
-  aggregateRuns(manifest);
-  const appliedManifestContent = renderManifest(manifest);
-  let resultCommitSha: string;
-  try {
-    const saved = await commitAndPushTextFileMutation({
-      ...input,
-      expectedRemoteHeadSha: checkpoint.commitSha,
-      message: `Apply reader feedback draft ${proposal.paragraphSlug}`,
-      mutations: [
-        { path: proposal.draftPath, content: proposal.generatedDraftContent, expectedCurrentHash: proposal.beforeDraftHash },
-        { path: generatedPath, content: proposal.generatedDraftContent, expectedCurrentHash: null },
-        { path: manifestPath, content: appliedManifestContent, expectedCurrentHash: await sha256Text(checkpointContent) },
-        { path: proposal.feedbackPath, expectedCurrentHash: proposal.feedbackFileHash },
-        { path: proposal.finalSourcePath, expectedCurrentHash: proposal.finalSourceHash },
-        ...(!proposal.canonicalDraftExisted ? [{ path: proposal.legacyDraftPath, expectedCurrentHash: proposal.legacyDraftHash }] : []),
-      ],
-    });
-    resultCommitSha = saved.commitSha;
+      ...(!proposal.canonicalDraftExisted ? [{ path: proposal.legacyDraftPath, expectedCurrentHash: proposal.legacyDraftHash }] : []),
+    ]);
+    manifest.status = "saving";
+    manifest.updatedAt = new Date().toISOString();
+    manifest.progress = { completed: 1, total: 1, currentParagraphSlug: proposal.paragraphSlug };
+    modifiedFile.generatedContent = proposal.generatedDraftContent;
+    modifiedFile.generatedHash = await sha256Text(proposal.generatedDraftContent);
+    modifiedFile.appliedHash = modifiedFile.generatedHash;
+    modifiedFile.status = "completed";
+    manifest.generationRuns.push({ paragraphSlug: proposal.paragraphSlug, feedbackApplied: proposal.feedbackApplied, metadata: proposal.generation });
+    aggregateRuns(manifest);
+    await saveLocalRewriteOperation(manifest);
   } catch (error) {
     manifest.status = error instanceof RepositoryConflictError ? "conflict" : "failed";
     manifest.error = error instanceof Error ? error.message : String(error);
+    manifest.updatedAt = new Date().toISOString();
     modifiedFile.status = manifest.status === "conflict" ? "conflict" : "failed";
     try {
-      const failed = await commitAndPushTextFileMutation({
-        ...input,
-        expectedRemoteHeadSha: checkpoint.commitSha,
-        message: `Record ${manifest.status} reader feedback rewrite ${proposal.paragraphSlug}`,
-        mutations: [{ path: manifestPath, content: renderManifest(manifest), expectedCurrentHash: await sha256Text(checkpointContent) }],
-      });
-      manifest.latestRemoteHeadSha = failed.commitSha;
+      await saveLocalRewriteOperation(manifest);
     } catch (saveError) {
       manifest.error += `\n\nAdditionally, recording this failure failed: ${saveError instanceof Error ? saveError.message : String(saveError)}`;
     }
     return manifest;
   }
-  await finalizeSuccessfulManifest({
-    ...input,
-    manifest,
-    manifestPath,
-    persistedManifestContent: appliedManifestContent,
-    resultCommitSha,
-    status: "completed",
-    message: `Finalize reader feedback rewrite ${proposal.paragraphSlug}`,
-  });
+  await finalizeSuccessfulManifest({ manifest, status: "completed" });
   return manifest;
 }
 
@@ -863,24 +786,22 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
   onProgress?: (progress: RewriteOperationProgress, manifest: RewriteOperationManifest) => void;
 }): Promise<RewriteOperationManifest> {
   if (!input.confirmed) throw new Error("Explicit confirmation is required before rewriting a chapter.");
+  const context = await requireLocalWorkingCopy(input);
   const { chapter } = resolveTarget(input.structure, input.chapterSlug);
-  const finalSources = await Promise.all(chapter.paragraphs.map((paragraph) => loadParagraphSource(input, paragraph)));
-  const chapterTarget = await chapterReaderTarget(input, chapter, finalSources);
-  const chapterFeedback = await loadFeedbackSource(input, chapterTarget, input.feedbackSource);
+  const finalSources = await Promise.all(chapter.paragraphs.map((paragraph) => loadParagraphSource(context, paragraph)));
+  const chapterTarget = await chapterReaderTarget(context, chapter, finalSources);
+  const chapterFeedback = await loadFeedbackSource(context, chapterTarget, input.feedbackSource);
   if (chapterFeedback.primary.stale && !input.confirmStaleFeedback) throw new StaleReaderFeedbackConfirmationError();
-  const preflight = await preflightRepositoryOperation(input);
   const operationId = crypto.randomUUID();
-  const manifestPath = rewriteOperationManifestPath("chapter", chapter.slug, operationId);
-  const drafts = await Promise.all(chapter.paragraphs.map((paragraph) => loadCurrentDraft(input, chapter, paragraph)));
+  const drafts = await Promise.all(chapter.paragraphs.map((paragraph) => loadCurrentDraft(context, chapter, paragraph)));
   const modifiedFiles = chapter.paragraphs.map((paragraph, index): RewriteModifiedFile => {
     const slug = paragraphSlug(paragraph);
     return {
       path: drafts[index].canonicalPath,
       paragraphSlug: slug,
-      beforeSnapshotPath: rewriteOperationSnapshotPath("chapter", chapter.slug, operationId, slug, "before"),
-      generatedSnapshotPath: rewriteOperationSnapshotPath("chapter", chapter.slug, operationId, slug, "generated"),
       existedBefore: drafts[index].canonicalContent !== null,
       beforeHash: drafts[index].canonicalHash,
+      beforeContent: drafts[index].canonicalContent,
       sourceDraftPath: drafts[index].canonicalContent !== null ? drafts[index].canonicalPath : drafts[index].legacyPath,
       sourceDraftHash: drafts[index].canonicalContent !== null ? drafts[index].canonicalHash : drafts[index].legacyHash,
       finalSourcePath: paragraph.path,
@@ -892,7 +813,10 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
     operationId,
     scope: "chapter",
     bookId: input.book.id,
-    head: preflight.remoteHeadSha,
+    repoId: context.repoId,
+    owner: input.book.owner,
+    repo: input.book.repo,
+    branch: input.branch,
     chapterSlug: chapter.slug,
     targetIds: [`chapter:${chapter.slug}`, ...chapter.paragraphs.map((paragraph) => `paragraph:${chapter.slug}:${paragraphSlug(paragraph)}`)],
     feedbackMode: chapterFeedback.mode,
@@ -904,25 +828,9 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
     staleFeedback: Boolean(chapterFeedback.primary.stale),
     modifiedFiles,
   });
-  let manifestContent = renderManifest(manifest);
-  const checkpointMutations: RepositoryTextMutation[] = [
-    { path: manifestPath, content: manifestContent, expectedCurrentHash: null },
-    { path: chapterFeedback.primary.path, expectedCurrentHash: chapterFeedback.fileHash },
-  ];
-  for (let index = 0; index < modifiedFiles.length; index++) {
-    checkpointMutations.push({
-      path: modifiedFiles[index].beforeSnapshotPath,
-      content: drafts[index].canonicalContent ?? "---\ntype: rewriteSnapshot\nexists: false\n---\n",
-      expectedCurrentHash: null,
-    });
-    checkpointMutations.push({ path: drafts[index].canonicalPath, expectedCurrentHash: drafts[index].canonicalHash });
-    checkpointMutations.push({ path: drafts[index].legacyPath, expectedCurrentHash: drafts[index].legacyHash });
-    checkpointMutations.push({ path: chapter.paragraphs[index].path, expectedCurrentHash: finalSources[index].hash });
-  }
-  const checkpoint = await commitAndPushTextFileMutation({ ...input, expectedRemoteHeadSha: preflight.remoteHeadSha, message: `Checkpoint chapter reader feedback rewrite ${chapter.slug}`, mutations: checkpointMutations });
-  manifest.latestRemoteHeadSha = checkpoint.commitSha;
   manifest.status = "rewriting";
-  let expectedHead = checkpoint.commitSha;
+  manifest.updatedAt = new Date().toISOString();
+  await saveLocalRewriteOperation(manifest);
   const rewritten: string[] = [];
 
   try {
@@ -933,16 +841,16 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
       manifest.progress.currentParagraphSlug = slug;
       input.onProgress?.({ ...manifest.progress }, manifest);
       const final = finalSources[index];
-      const paragraphTarget = paragraphReaderTarget(input, chapter, paragraph, final);
+      const paragraphTarget = paragraphReaderTarget(context, chapter, paragraph, final);
       let paragraphFeedback: Awaited<ReturnType<typeof loadFeedback>> | null = null;
       let paragraphEvaluations: ReaderEvaluationRecord[] = [];
       let selectedParagraphOpinion: Awaited<ReturnType<typeof loadCurrentReaderOpinion>> = null;
       if (chapterFeedback.mode === "reader-opinion") {
-        selectedParagraphOpinion = await loadCurrentReaderOpinion(input, paragraphTarget, chapterFeedback.primary.readerId);
+        selectedParagraphOpinion = await loadCurrentReaderOpinion(context, paragraphTarget, chapterFeedback.primary.readerId);
       } else {
-        try { paragraphFeedback = await loadFeedback(input, paragraphTarget); } catch (error) {
+        try { paragraphFeedback = await loadFeedback(context, paragraphTarget); } catch (error) {
           if (!(error instanceof MissingReaderFeedbackSummaryError)) throw error;
-          paragraphEvaluations = await loadCurrentEvaluations(input, paragraphTarget, await hashReaderSource(paragraphTarget.text));
+          paragraphEvaluations = await loadCurrentEvaluations(context, paragraphTarget, await hashReaderSource(paragraphTarget.text));
         }
         if (paragraphFeedback?.primary.stale) {
           paragraphEvaluations = paragraphFeedback.evaluations;
@@ -952,9 +860,9 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
       const previous = index > 0 ? (rewritten[index - 1] ?? finalSources[index - 1].body) : "";
       const next = index + 1 < chapter.paragraphs.length ? finalSources[index + 1].body : "";
       const paragraphOpinion = selectedParagraphOpinion?.record ?? paragraphFeedback?.primary;
-      const writingContext = await loadWritingContext(input, chapter, { previous, next, alreadyRewritten: rewritten }, `${chapterFeedback.primary.body}\n${paragraphOpinion?.body ?? ""}\n${final.body}`);
+      const writingContext = await loadWritingContext(context, chapter, { previous, next, alreadyRewritten: rewritten }, `${chapterFeedback.primary.body}\n${paragraphOpinion?.body ?? ""}\n${final.body}`);
       const generated = await generateParagraph({
-        context: input,
+        context,
         chapter,
         paragraph,
         draftBody: splitMarkdown(drafts[index].sourceContent ?? "").body,
@@ -969,33 +877,26 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
       const generatedContent = drafts[index].sourceContent
         ? replaceMarkdownBody(drafts[index].sourceContent!, generated.output.body)
         : canonicalDraftContent(chapter, paragraph, final.raw, generated.output.body);
+      const generatedHash = await sha256Text(generatedContent);
+      await mutateLocalDraftFiles(context.repoId, [
+        { path: drafts[index].canonicalPath, content: generatedContent, expectedCurrentHash: drafts[index].canonicalHash },
+        { path: paragraph.path, expectedCurrentHash: final.hash },
+        { path: chapterFeedback.primary.path, expectedCurrentHash: chapterFeedback.fileHash },
+        ...(drafts[index].canonicalContent === null ? [{ path: drafts[index].legacyPath, expectedCurrentHash: drafts[index].legacyHash }] : []),
+        ...(selectedParagraphOpinion ? [{ path: selectedParagraphOpinion.record.path, expectedCurrentHash: selectedParagraphOpinion.fileHash }] : []),
+      ]);
       rewritten.push(generated.output.body);
-      const nextManifest = structuredClone(manifest);
-      nextManifest.status = index === chapter.paragraphs.length - 1 ? "saving" : "rewriting";
-      nextManifest.progress.completed = index + 1;
-      nextManifest.updatedAt = new Date().toISOString();
-      nextManifest.modifiedFiles[index].appliedHash = await sha256Text(generatedContent);
-      nextManifest.modifiedFiles[index].status = "completed";
-      nextManifest.generationRuns.push({ paragraphSlug: slug, feedbackApplied: generated.output.feedbackApplied, metadata: generated.metadata });
-      aggregateRuns(nextManifest);
-      const nextManifestContent = renderManifest(nextManifest);
-      const saved = await commitAndPushTextFileMutation({
-        ...input,
-        expectedRemoteHeadSha: expectedHead,
-        message: `Rewrite draft from reader feedback ${chapter.slug}/${slug}`,
-        mutations: [
-          { path: drafts[index].canonicalPath, content: generatedContent, expectedCurrentHash: drafts[index].canonicalHash },
-          { path: manifest.modifiedFiles[index].generatedSnapshotPath, content: generatedContent, expectedCurrentHash: null },
-          { path: manifestPath, content: nextManifestContent, expectedCurrentHash: await sha256Text(manifestContent) },
-          { path: paragraph.path, expectedCurrentHash: final.hash },
-          { path: chapterFeedback.primary.path, expectedCurrentHash: chapterFeedback.fileHash },
-          ...(drafts[index].canonicalContent === null ? [{ path: drafts[index].legacyPath, expectedCurrentHash: drafts[index].legacyHash }] : []),
-          ...(selectedParagraphOpinion ? [{ path: selectedParagraphOpinion.record.path, expectedCurrentHash: selectedParagraphOpinion.fileHash }] : []),
-        ],
-      });
-      expectedHead = saved.commitSha;
-      Object.assign(manifest, nextManifest, { latestRemoteHeadSha: saved.commitSha });
-      manifestContent = nextManifestContent;
+      manifest.status = index === chapter.paragraphs.length - 1 ? "saving" : "rewriting";
+      manifest.progress.completed = index + 1;
+      manifest.updatedAt = new Date().toISOString();
+      manifest.error = undefined;
+      manifest.modifiedFiles[index].generatedContent = generatedContent;
+      manifest.modifiedFiles[index].generatedHash = generatedHash;
+      manifest.modifiedFiles[index].appliedHash = generatedHash;
+      manifest.modifiedFiles[index].status = "completed";
+      manifest.generationRuns.push({ paragraphSlug: slug, feedbackApplied: generated.output.feedbackApplied, metadata: generated.metadata });
+      aggregateRuns(manifest);
+      await saveLocalRewriteOperation(manifest);
       input.onProgress?.({ ...manifest.progress }, manifest);
     }
   } catch (error) {
@@ -1004,34 +905,19 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
     manifest.updatedAt = new Date().toISOString();
     const current = manifest.modifiedFiles[manifest.progress.completed];
     if (current && current.status === "pending") current.status = manifest.status === "conflict" ? "conflict" : "failed";
-    const failedContent = renderManifest(manifest);
     try {
-      const saved = await commitAndPushTextFileMutation({
-        ...input,
-        expectedRemoteHeadSha: expectedHead,
-        message: `Record ${manifest.status} reader feedback rewrite ${chapter.slug}`,
-        mutations: [{ path: manifestPath, content: failedContent, expectedCurrentHash: await sha256Text(manifestContent) }],
-      });
-      manifest.latestRemoteHeadSha = saved.commitSha;
+      await saveLocalRewriteOperation(manifest);
     } catch (saveError) {
       manifest.error += `\n\nAdditionally, recording this failure failed: ${saveError instanceof Error ? saveError.message : String(saveError)}`;
     }
     return manifest;
   }
-  await finalizeSuccessfulManifest({
-    ...input,
-    manifest,
-    manifestPath,
-    persistedManifestContent: manifestContent,
-    resultCommitSha: expectedHead,
-    status: "completed",
-    message: `Finalize chapter reader feedback rewrite ${chapter.slug}`,
-  });
+  await finalizeSuccessfulManifest({ manifest, status: "completed" });
   return manifest;
 }
 
 export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryContext & {
-  manifestPath: string;
+  operationId: string;
   feedbackSource?: FeedbackSourceSelection;
   confirmed: boolean;
   confirmStaleFeedback?: boolean;
@@ -1039,32 +925,27 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
   onProgress?: (progress: RewriteOperationProgress, manifest: RewriteOperationManifest) => void;
 }): Promise<RewriteOperationManifest> {
   if (!input.confirmed) throw new Error("Explicit confirmation is required before resuming a chapter rewrite.");
-  const manifestRaw = await loadFileContent(input.token, input.book.owner, input.book.repo, input.manifestPath, input.branch);
-  const manifest = parseRewriteOperationManifest(input.manifestPath, manifestRaw, input.book.id);
+  const context = await requireLocalWorkingCopy(input);
+  const manifest = await loadLocalRewriteOperation(input.operationId);
+  if (!manifest) throw new Error(`Rewrite operation not found: ${input.operationId}`);
+  if (manifest.bookId !== input.book.id || manifest.owner !== input.book.owner || manifest.repo !== input.book.repo || manifest.branch !== input.branch) {
+    throw new RepositoryConflictError("The saved rewrite operation belongs to a different local working copy.");
+  }
   if (manifest.scope !== "chapter") throw new Error("Only chapter feedback rewrites can be resumed.");
   const { chapter } = resolveTarget(input.structure, manifest.chapterSlug);
   const allFilesCompleted = manifest.modifiedFiles.length > 0 && manifest.modifiedFiles.every((file) => file.status === "completed");
   if (allFilesCompleted && manifest.status === "saving") {
-    const preflight = await preflightRepositoryOperation(input);
-    await finalizeSuccessfulManifest({
-      ...input,
-      manifest,
-      manifestPath: input.manifestPath,
-      persistedManifestContent: manifestRaw,
-      resultCommitSha: preflight.remoteHeadSha,
-      status: "completed",
-      message: `Finalize resumed reader feedback rewrite ${chapter.slug}`,
-    });
+    await finalizeSuccessfulManifest({ manifest, status: "completed" });
     return manifest;
   }
   if (!manifest.modifiedFiles.some((file) => file.status === "pending" || file.status === "failed" || file.status === "conflict")) return manifest;
 
-  const finalSources = await Promise.all(chapter.paragraphs.map((paragraph) => loadParagraphSource(input, paragraph)));
+  const finalSources = await Promise.all(chapter.paragraphs.map((paragraph) => loadParagraphSource(context, paragraph)));
   for (let index = 0; index < chapter.paragraphs.length; index++) {
     const file = manifest.modifiedFiles[index];
     if (!file || file.paragraphSlug !== paragraphSlug(chapter.paragraphs[index])) throw new Error("The chapter structure no longer matches this rewrite operation.");
     if (!file.finalSourceHash || file.finalSourcePath !== chapter.paragraphs[index].path) {
-      throw new RepositoryConflictError(`The rewrite checkpoint does not contain a frozen final source for ${chapter.paragraphs[index].path}.`, chapter.paragraphs[index].path);
+      throw new RepositoryConflictError(`The rewrite operation does not contain a frozen final source for ${chapter.paragraphs[index].path}.`, chapter.paragraphs[index].path);
     }
     if (finalSources[index].hash !== file.finalSourceHash) throw new RepositoryConflictError(`Final paragraph source changed after this operation started: ${file.finalSourcePath}`, file.finalSourcePath);
   }
@@ -1083,7 +964,7 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
       throw new RepositoryConflictError("The selected reader feedback does not match the original operation.");
     }
   }
-  const chapterFeedback = await loadFeedbackSource(input, await chapterReaderTarget(input, chapter, finalSources), manifestSelection);
+  const chapterFeedback = await loadFeedbackSource(context, await chapterReaderTarget(context, chapter, finalSources), manifestSelection);
   const feedbackHashChanged = chapterFeedback.sourceHash !== manifest.feedbackSourceHash
     || Boolean(manifest.feedbackFileHash && chapterFeedback.fileHash !== manifest.feedbackFileHash);
   if (chapterFeedback.primary.path !== manifest.feedbackPath
@@ -1093,19 +974,16 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
     throw new RepositoryConflictError("The reader feedback or chapter source changed after this operation started.");
   }
   if (chapterFeedback.primary.stale && !input.confirmStaleFeedback) throw new StaleReaderFeedbackConfirmationError();
-  const preflight = await preflightRepositoryOperation(input);
-  let expectedHead = preflight.remoteHeadSha;
-  let manifestContent = manifestRaw;
   const rewritten: string[] = [];
 
   for (let index = 0; index < chapter.paragraphs.length; index++) {
     const file = manifest.modifiedFiles[index];
     if (!file || file.paragraphSlug !== paragraphSlug(chapter.paragraphs[index])) throw new Error("The chapter structure no longer matches this rewrite operation.");
     if (file.status === "completed") {
-      const current = await readOptional(input, file.path);
-      if ((current === null ? null : await sha256Text(current)) !== (file.appliedHash ?? null)) throw new RepositoryConflictError(`Completed draft changed after this operation: ${file.path}`, file.path);
-      const generated = await loadFileContent(input.token, input.book.owner, input.book.repo, file.generatedSnapshotPath, input.branch);
-      rewritten[index] = splitMarkdown(generated).body;
+      const current = await readWorkingCopyText(context, file.path);
+      if (current.hash !== (file.appliedHash ?? null)) throw new RepositoryConflictError(`Completed draft changed after this operation: ${file.path}`, file.path);
+      if (!file.generatedContent) throw new RepositoryConflictError(`The saved rewrite snapshot is missing for ${file.path}.`, file.path);
+      rewritten[index] = splitMarkdown(file.generatedContent).body;
     }
   }
 
@@ -1122,20 +1000,20 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
       input.onProgress?.({ ...manifest.progress }, manifest);
 
       const final = finalSources[index];
-      const draft = await loadCurrentDraft(input, chapter, paragraph);
+      const draft = await loadCurrentDraft(context, chapter, paragraph);
       if (draft.canonicalHash !== file.beforeHash) throw new RepositoryConflictError(`Pending draft changed after this operation started: ${file.path}`, file.path);
       const sourceHash = file.sourceDraftPath === draft.legacyPath ? draft.legacyHash : draft.canonicalHash;
       if (file.sourceDraftHash !== undefined && sourceHash !== file.sourceDraftHash) throw new RepositoryConflictError(`Source draft changed after this operation started: ${file.sourceDraftPath}`, file.sourceDraftPath);
-      const paragraphTarget = paragraphReaderTarget(input, chapter, paragraph, final);
+      const paragraphTarget = paragraphReaderTarget(context, chapter, paragraph, final);
       let paragraphFeedback: Awaited<ReturnType<typeof loadFeedback>> | null = null;
       let paragraphEvaluations: ReaderEvaluationRecord[] = [];
       let selectedParagraphOpinion: Awaited<ReturnType<typeof loadCurrentReaderOpinion>> = null;
       if (chapterFeedback.mode === "reader-opinion") {
-        selectedParagraphOpinion = await loadCurrentReaderOpinion(input, paragraphTarget, chapterFeedback.primary.readerId);
+        selectedParagraphOpinion = await loadCurrentReaderOpinion(context, paragraphTarget, chapterFeedback.primary.readerId);
       } else {
-        try { paragraphFeedback = await loadFeedback(input, paragraphTarget); } catch (error) {
+        try { paragraphFeedback = await loadFeedback(context, paragraphTarget); } catch (error) {
           if (!(error instanceof MissingReaderFeedbackSummaryError)) throw error;
-          paragraphEvaluations = await loadCurrentEvaluations(input, paragraphTarget, await hashReaderSource(paragraphTarget.text));
+          paragraphEvaluations = await loadCurrentEvaluations(context, paragraphTarget, await hashReaderSource(paragraphTarget.text));
         }
         if (paragraphFeedback?.primary.stale) {
           paragraphEvaluations = paragraphFeedback.evaluations;
@@ -1145,9 +1023,9 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
       const previous = index > 0 ? (rewritten[index - 1] ?? finalSources[index - 1].body) : "";
       const next = index + 1 < chapter.paragraphs.length ? finalSources[index + 1].body : "";
       const paragraphOpinion = selectedParagraphOpinion?.record ?? paragraphFeedback?.primary;
-      const writingContext = await loadWritingContext(input, chapter, { previous, next, alreadyRewritten: rewritten.filter(Boolean) }, `${chapterFeedback.primary.body}\n${paragraphOpinion?.body ?? ""}\n${final.body}`);
+      const writingContext = await loadWritingContext(context, chapter, { previous, next, alreadyRewritten: rewritten.filter(Boolean) }, `${chapterFeedback.primary.body}\n${paragraphOpinion?.body ?? ""}\n${final.body}`);
       const generated = await generateParagraph({
-        context: input,
+        context,
         chapter,
         paragraph,
         draftBody: splitMarkdown(draft.sourceContent ?? "").body,
@@ -1160,35 +1038,25 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
         signal: input.signal,
       });
       const generatedContent = draft.sourceContent ? replaceMarkdownBody(draft.sourceContent, generated.output.body) : canonicalDraftContent(chapter, paragraph, final.raw, generated.output.body);
-      const existingGeneratedSnapshot = await readOptional(input, file.generatedSnapshotPath);
-      const existingGeneratedSnapshotHash = existingGeneratedSnapshot === null ? null : await sha256Text(existingGeneratedSnapshot);
-      const nextManifest = structuredClone(manifest);
-      nextManifest.modifiedFiles[index].status = "completed";
-      nextManifest.modifiedFiles[index].appliedHash = await sha256Text(generatedContent);
-      nextManifest.progress.completed = nextManifest.modifiedFiles.filter((entry) => entry.status === "completed").length;
-      nextManifest.status = nextManifest.progress.completed === nextManifest.progress.total ? "saving" : "rewriting";
-      nextManifest.updatedAt = new Date().toISOString();
-      nextManifest.error = undefined;
-      nextManifest.generationRuns.push({ paragraphSlug: slug, feedbackApplied: generated.output.feedbackApplied, metadata: generated.metadata });
-      aggregateRuns(nextManifest);
-      const nextContent = renderManifest(nextManifest);
-      const saved = await commitAndPushTextFileMutation({
-        ...input,
-        expectedRemoteHeadSha: expectedHead,
-        message: `Resume reader feedback draft ${chapter.slug}/${slug}`,
-        mutations: [
-          { path: file.path, content: generatedContent, expectedCurrentHash: file.beforeHash },
-          { path: file.generatedSnapshotPath, content: generatedContent, expectedCurrentHash: existingGeneratedSnapshotHash },
-          { path: input.manifestPath, content: nextContent, expectedCurrentHash: await sha256Text(manifestContent) },
-          { path: paragraph.path, expectedCurrentHash: final.hash },
-          { path: chapterFeedback.primary.path, expectedCurrentHash: chapterFeedback.fileHash },
-          ...(file.sourceDraftPath && file.sourceDraftPath !== file.path ? [{ path: file.sourceDraftPath, expectedCurrentHash: file.sourceDraftHash }] : []),
-          ...(selectedParagraphOpinion ? [{ path: selectedParagraphOpinion.record.path, expectedCurrentHash: selectedParagraphOpinion.fileHash }] : []),
-        ],
-      });
-      expectedHead = saved.commitSha;
-      Object.assign(manifest, nextManifest, { latestRemoteHeadSha: saved.commitSha });
-      manifestContent = nextContent;
+      const generatedHash = await sha256Text(generatedContent);
+      await mutateLocalDraftFiles(context.repoId, [
+        { path: file.path, content: generatedContent, expectedCurrentHash: file.beforeHash },
+        { path: paragraph.path, expectedCurrentHash: final.hash },
+        { path: chapterFeedback.primary.path, expectedCurrentHash: chapterFeedback.fileHash },
+        ...(file.sourceDraftPath && file.sourceDraftPath !== file.path ? [{ path: file.sourceDraftPath, expectedCurrentHash: file.sourceDraftHash }] : []),
+        ...(selectedParagraphOpinion ? [{ path: selectedParagraphOpinion.record.path, expectedCurrentHash: selectedParagraphOpinion.fileHash }] : []),
+      ]);
+      manifest.modifiedFiles[index].status = "completed";
+      manifest.modifiedFiles[index].generatedContent = generatedContent;
+      manifest.modifiedFiles[index].generatedHash = generatedHash;
+      manifest.modifiedFiles[index].appliedHash = generatedHash;
+      manifest.progress.completed = manifest.modifiedFiles.filter((entry) => entry.status === "completed").length;
+      manifest.status = manifest.progress.completed === manifest.progress.total ? "saving" : "rewriting";
+      manifest.updatedAt = new Date().toISOString();
+      manifest.error = undefined;
+      manifest.generationRuns.push({ paragraphSlug: slug, feedbackApplied: generated.output.feedbackApplied, metadata: generated.metadata });
+      aggregateRuns(manifest);
+      await saveLocalRewriteOperation(manifest);
       rewritten[index] = generated.output.body;
       input.onProgress?.({ ...manifest.progress }, manifest);
     }
@@ -1199,48 +1067,34 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
     const current = manifest.modifiedFiles.find((file) => file.paragraphSlug === manifest.progress.currentParagraphSlug);
     if (current && current.status !== "completed") current.status = manifest.status === "conflict" ? "conflict" : "failed";
     try {
-      const failedContent = renderManifest(manifest);
-      const saved = await commitAndPushTextFileMutation({
-        ...input,
-        expectedRemoteHeadSha: expectedHead,
-        message: `Record ${manifest.status} resumed reader feedback rewrite ${chapter.slug}`,
-        mutations: [{ path: input.manifestPath, content: failedContent, expectedCurrentHash: await sha256Text(manifestContent) }],
-      });
-      manifest.latestRemoteHeadSha = saved.commitSha;
+      await saveLocalRewriteOperation(manifest);
     } catch (saveError) {
       manifest.error += `\n\nAdditionally, recording this failure failed: ${saveError instanceof Error ? saveError.message : String(saveError)}`;
     }
     return manifest;
   }
-  await finalizeSuccessfulManifest({
-    ...input,
-    manifest,
-    manifestPath: input.manifestPath,
-    persistedManifestContent: manifestContent,
-    resultCommitSha: expectedHead,
-    status: "completed",
-    message: `Finalize resumed reader feedback rewrite ${chapter.slug}`,
-  });
+  await finalizeSuccessfulManifest({ manifest, status: "completed" });
   return manifest;
 }
 
-export async function loadRewriteOperation(context: RewriteRepositoryContext, manifestPath: string): Promise<RewriteOperationManifest> {
-  const raw = await loadFileContent(context.token, context.book.owner, context.book.repo, manifestPath, context.branch);
-  return parseRewriteOperationManifest(manifestPath, raw, context.book.id);
+export async function loadRewriteOperation(context: RewriteRepositoryContext, operationId: string): Promise<RewriteOperationManifest> {
+  const manifest = await loadLocalRewriteOperation(operationId);
+  if (!manifest || manifest.bookId !== context.book.id || manifest.owner !== context.book.owner || manifest.repo !== context.book.repo || manifest.branch !== context.branch) {
+    throw new Error(`Rewrite operation not found: ${operationId}`);
+  }
+  return manifest;
 }
 
 export async function listRewriteOperations(context: RewriteRepositoryContext, target: { scope: RewriteOperationScope; chapterSlug: string; paragraphSlug?: string }): Promise<RewriteOperationManifest[]> {
-  const manifests = context.structure.operationManifestFiles.filter((file) => {
-    const prefix = target.scope === "chapter"
-      ? `operations/rewrite-from-reader-feedback/chapters/${target.chapterSlug}/`
-      : `operations/rewrite-from-reader-feedback/paragraphs/${target.chapterSlug}/${target.paragraphSlug}/`;
-    return file.path.startsWith(prefix);
+  return listLocalRewriteOperations({
+    bookId: context.book.id,
+    owner: context.book.owner,
+    repo: context.book.repo,
+    branch: context.branch,
+    scope: target.scope,
+    chapterSlug: target.chapterSlug,
+    paragraphSlug: target.scope === "paragraph" ? target.paragraphSlug : undefined,
   });
-  const loaded = await Promise.all(manifests.map(async (file) => {
-    const raw = file.content ?? await readOptional(context, file.path);
-    return raw ? parseRewriteOperationManifest(file.path, raw, context.book.id) : null;
-  }));
-  return loaded.filter((entry): entry is RewriteOperationManifest => Boolean(entry)).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 export async function loadLatestRewriteOperation(context: RewriteRepositoryContext, target: { scope: RewriteOperationScope; chapterSlug: string; paragraphSlug?: string }): Promise<RewriteOperationManifest | null> {
@@ -1264,20 +1118,18 @@ export function loadLatestParagraphRewriteOperation(context: RewriteRepositoryCo
 }
 
 export async function restorePreviousDrafts(input: RewriteRepositoryContext & {
-  manifestPath: string;
+  operationId: string;
   policies?: Record<string, RewriteRollbackPolicy>;
   defaultPolicy?: RewriteRollbackPolicy;
 }): Promise<{ manifest: RewriteOperationManifest; conflicts: RewriteConflict[] }> {
-  const preflight = await preflightRepositoryOperation(input);
-  const manifestRaw = await loadFileContent(input.token, input.book.owner, input.book.repo, input.manifestPath, input.branch);
-  const manifest = parseRewriteOperationManifest(input.manifestPath, manifestRaw, input.book.id);
+  const context = await requireLocalWorkingCopy(input);
+  const manifest = await loadRewriteOperation(input, input.operationId);
   const conflicts: RewriteConflict[] = [];
   const currentByPath = new Map<string, { content: string | null; hash: string | null }>();
   for (const file of manifest.modifiedFiles.filter((entry) => entry.status === "completed")) {
-    const content = await readOptional(input, file.path);
-    const hash = content === null ? null : await sha256Text(content);
-    currentByPath.set(file.path, { content, hash });
-    if (hash !== (file.appliedHash ?? null)) conflicts.push({ path: file.path, expectedHash: file.appliedHash ?? null, currentHash: hash, reason: "Draft changed after this operation." });
+    const current = await readWorkingCopyText(context, file.path);
+    currentByPath.set(file.path, current);
+    if (current.hash !== (file.appliedHash ?? null)) conflicts.push({ path: file.path, expectedHash: file.appliedHash ?? null, currentHash: current.hash, reason: "Draft changed after this operation." });
   }
   const defaultPolicy = input.defaultPolicy ?? "cancel";
   const cancelled = conflicts.some((conflict) => (input.policies?.[conflict.path] ?? defaultPolicy) === "cancel");
@@ -1285,46 +1137,34 @@ export async function restorePreviousDrafts(input: RewriteRepositoryContext & {
   manifest.updatedAt = new Date().toISOString();
   if (cancelled) {
     manifest.status = "conflict";
-    const saved = await commitAndPushTextFileMutation({
-      ...input,
-      expectedRemoteHeadSha: preflight.remoteHeadSha,
-      message: `Record rollback conflict ${manifest.operationId}`,
-      mutations: [{ path: input.manifestPath, content: renderManifest(manifest), expectedCurrentHash: await sha256Text(manifestRaw) }],
-    });
-    manifest.latestRemoteHeadSha = saved.commitSha;
+    await saveLocalRewriteOperation(manifest);
     return { manifest, conflicts };
   }
 
   manifest.status = "rollingBack";
-  const mutations: RepositoryTextMutation[] = [];
-  for (const file of manifest.modifiedFiles.filter((entry) => entry.status === "completed")) {
-    const current = currentByPath.get(file.path)!;
-    const conflict = conflicts.find((entry) => entry.path === file.path);
-    const policy = input.policies?.[file.path] ?? defaultPolicy;
-    if (conflict && policy === "keep-current") {
-      file.status = "kept-current";
-      continue;
+  await saveLocalRewriteOperation(manifest);
+  const mutations = [] as Parameters<typeof mutateLocalTextFilesAtomically>[1];
+  try {
+    for (const file of manifest.modifiedFiles.filter((entry) => entry.status === "completed")) {
+      const current = currentByPath.get(file.path)!;
+      const conflict = conflicts.find((entry) => entry.path === file.path);
+      const policy = input.policies?.[file.path] ?? defaultPolicy;
+      if (conflict && policy === "keep-current") {
+        file.status = "kept-current";
+        continue;
+      }
+      if (file.existedBefore && file.beforeContent === null) throw new Error(`Missing local before-snapshot for ${file.path}.`);
+      mutations.push({ path: file.path, content: file.existedBefore ? file.beforeContent : null, expectedCurrentHash: policy === "force-restore" ? undefined : current.hash });
+      file.status = "restored";
     }
-    const snapshot = await loadFileContent(input.token, input.book.owner, input.book.repo, file.beforeSnapshotPath, input.branch);
-    mutations.push({ path: file.path, content: file.existedBefore ? snapshot : null, expectedCurrentHash: policy === "force-restore" ? undefined : current.hash });
-    file.status = "restored";
+    await mutateLocalDraftFiles(context.repoId, mutations);
+  } catch (error) {
+    manifest.status = error instanceof RepositoryConflictError ? "conflict" : "failed";
+    manifest.error = error instanceof Error ? error.message : String(error);
+    manifest.updatedAt = new Date().toISOString();
+    await saveLocalRewriteOperation(manifest);
+    return { manifest, conflicts };
   }
-  const rollbackManifestContent = renderManifest(manifest);
-  mutations.push({ path: input.manifestPath, content: rollbackManifestContent, expectedCurrentHash: await sha256Text(manifestRaw) });
-  const saved = await commitAndPushTextFileMutation({
-    ...input,
-    expectedRemoteHeadSha: preflight.remoteHeadSha,
-    message: `Restore drafts before reader feedback rewrite ${manifest.operationId}`,
-    mutations,
-  });
-  await finalizeSuccessfulManifest({
-    ...input,
-    manifest,
-    manifestPath: input.manifestPath,
-    persistedManifestContent: rollbackManifestContent,
-    resultCommitSha: saved.commitSha,
-    status: "rolledBack",
-    message: `Finalize rollback ${manifest.operationId}`,
-  });
+  await finalizeSuccessfulManifest({ manifest, status: "rolledBack" });
   return { manifest, conflicts };
 }

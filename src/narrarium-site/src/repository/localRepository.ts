@@ -239,8 +239,12 @@ export async function listDirtyLocalFiles(repoIdValue: string): Promise<LocalRep
   return (await listAllLocalFiles(repoIdValue)).filter((file) => file.status !== "clean" && !file.committed);
 }
 
+export async function getLocalFileEntry(repoIdValue: string, path: string): Promise<LocalRepositoryFile | null> {
+  return (await txStore<LocalRepositoryFile | undefined>("files", "readonly", (store) => store.get(fileKey(repoIdValue, path)))) ?? null;
+}
+
 export async function getLocalFile(repoIdValue: string, path: string): Promise<LocalRepositoryFile | null> {
-  const file = await txStore<LocalRepositoryFile | undefined>("files", "readonly", (store) => store.get(fileKey(repoIdValue, path)));
+  const file = await getLocalFileEntry(repoIdValue, path);
   return file && file.status !== "deleted" ? file : null;
 }
 

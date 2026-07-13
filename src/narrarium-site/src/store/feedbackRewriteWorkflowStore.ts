@@ -45,7 +45,7 @@ interface FeedbackRewriteWorkflowState {
   missingSummary: boolean;
   proposal: ParagraphFeedbackProposal | null;
   manifest: RewriteOperationManifest | null;
-  manifestPath: string | null;
+  operationId: string | null;
   progress: RewriteOperationProgress | null;
   error: string | null;
   conflicts: RollbackConflictPreview[];
@@ -64,7 +64,7 @@ const initialRuntime = {
   missingSummary: false,
   proposal: null,
   manifest: null,
-  manifestPath: null,
+  operationId: null,
   progress: null,
   error: null,
   conflicts: [] as RollbackConflictPreview[],
