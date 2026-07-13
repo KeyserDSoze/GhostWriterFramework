@@ -1,5 +1,37 @@
 [
   {
+    "version": "0.74.0",
+    "date": "2026-07-12",
+    "en": {
+      "title": "Rewrite drafts from reader feedback and restore them safely",
+      "summary": "Narrarium can now rewrite one paragraph draft or all chapter drafts from the simulated-reader feedback recap or from one selected reader opinion, with previews, sequential progress, checkpoints, and targeted restore.",
+      "changes": [
+        "Added Generate Draft from Feedback and Restore Previous Drafts to Reader Evaluations, contextual actions, mobile Actions, Copilot, and Fantasmino for paragraph and chapter targets.",
+        "Paragraph rewrites now show a required warning, a draft diff preview, the applied feedback points, and replace the draft only after explicit confirmation.",
+        "Chapter rewrites now process paragraphs one at a time in story order, show completed/total/current progress, keep completed drafts identifiable after failure or cancellation, and support retrying the failed paragraph and continuing.",
+        "Added repository-backed operation manifests and before/generated snapshots under operations/rewrite-from-reader-feedback for checkpoints, progress, retries, and targeted restore.",
+        "Added targeted Restore Previous Drafts with conflict detection, per-file Keep current / Restore anyway choices, and no global reset of unrelated work.",
+        "Made the workflow use the dedicated Rewrite from Reader Feedback Router task with existing fallback, token, and cost tracking metadata.",
+        "Added support for generating from one selected reader opinion instead of only the panel summary, while pinning that exact opinion through retries and resume.",
+        "Hardened chapter rewrites: exact-branch pushes, preserved original errors, resumable finalization, frozen source validation, and clearer recovery details when only the checkpoint was committed."
+      ]
+    },
+    "it": {
+      "title": "Riscrivi le bozze dai feedback lettori e ripristinale in sicurezza",
+      "summary": "Narrarium può ora riscrivere la bozza di un paragrafo o tutte le bozze di un capitolo partendo dal recap dei lettori simulati o dal parere di un singolo lettore, con anteprima, avanzamento sequenziale, checkpoint e ripristino mirato.",
+      "changes": [
+        "Aggiunte Genera bozza dai feedback e Ripristina bozze precedenti nelle Valutazioni lettori, nelle azioni contestuali, nelle Azioni mobile, nel Copilot e nel Fantasmino per target paragrafo e capitolo.",
+        "Le riscritture di paragrafo mostrano ora un warning obbligatorio, l'anteprima diff della bozza, i feedback applicati e sostituiscono la bozza solo dopo conferma esplicita.",
+        "Le riscritture di capitolo elaborano ora i paragrafi uno alla volta in ordine di storia, mostrano completati/totale/corrente, mantengono riconoscibili le bozze completate dopo errore o annullamento e permettono di riprovare il paragrafo fallito e continuare.",
+        "Aggiunti manifest operazione e snapshot prima/generato nel repository sotto operations/rewrite-from-reader-feedback per checkpoint, avanzamento, retry e ripristino mirato.",
+        "Aggiunto Ripristina bozze precedenti con rilevazione conflitti, scelte Mantieni corrente / Ripristina comunque per file e nessun reset globale del lavoro non collegato.",
+        "Il workflow usa ora il task Router dedicato Riscrittura dal feedback lettori con fallback, token e tracking dei costi già esistenti.",
+        "Aggiunto il supporto alla generazione dal parere di un singolo lettore selezionato, non solo dalla sintesi panel, mantenendo fissato quel parere attraverso retry e resume.",
+        "Rese più robuste le riscritture di capitolo: push sul branch esatto, errore originale preservato, finalizzazione riprendibile, validazione delle sorgenti congelate e dettagli di recupero più chiari quando è stato committato solo il checkpoint."
+      ]
+    }
+  },
+  {
     "version": "0.73.2",
     "date": "2026-07-13",
     "en": {
