@@ -2053,6 +2053,13 @@ const en = {
     empty: "No matching page.",
     backToPrevious: "Back to previous"
   },
+  quickNav: {
+    previous: "Previous",
+    next: "Next",
+    openNotes: "Open notes",
+    localPending_one: "{{count}} local draft",
+    localPending_other: "{{count}} local drafts"
+  },
   copilotTools: {
     introTitle: "Copilot tool registry",
     introBody: "Copilot and the voice assistant discover their available capabilities from this registry. You can turn individual tools on or off without changing the orchestration engine.",

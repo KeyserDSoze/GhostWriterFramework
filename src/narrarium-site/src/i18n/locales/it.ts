@@ -2053,6 +2053,13 @@ const it = {
     empty: "Nessuna pagina trovata.",
     backToPrevious: "Torna al precedente"
   },
+  quickNav: {
+    previous: "Precedente",
+    next: "Successivo",
+    openNotes: "Apri note",
+    localPending_one: "{{count}} bozza locale",
+    localPending_other: "{{count}} bozze locali"
+  },
   copilotTools: {
     introTitle: "Registry tool Copilot",
     introBody: "Copilot e l’assistente vocale scoprono le funzionalità disponibili da questo registry. Puoi attivare o disattivare i singoli tool senza cambiare il motore di orchestrazione.",

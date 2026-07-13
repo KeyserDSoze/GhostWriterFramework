@@ -31,6 +31,8 @@ import { emailToBranchName } from "@/github/githubClient";
 import { useTheme } from "./ThemeProvider";
 import { SUPPORTED_LANGUAGES } from "@/i18n";
 import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
+import { resolveContextualNavigation } from "@/lib/contextualNavigation";
+import { useCurrentObjectPendingCommit } from "@/hooks/useCurrentObjectPendingCommit";
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -55,6 +57,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const cloneProgress = useBooksStore((s) => s.cloneProgress);
   const setCloneProgress = useBooksStore((s) => s.setCloneProgress);
   const workingBranches = useBooksStore((s) => s.workingBranches);
+  const structures = useBooksStore((s) => s.structures);
   const { floatingHidden, toggleFloating } = useUiStore();
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
@@ -79,6 +82,13 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     ?? (currentBookId ? workingBranches[currentBookId] : undefined)
     ?? (user?.email ? emailToBranchName(user.email) : undefined);
   const currentToken = currentBook ? resolveBookToken(currentBook, settings) : "";
+  const currentStructure = currentBookId ? structures[currentBookId] : undefined;
+  const currentObjectNavigation = resolveContextualNavigation(currentStructure, location.pathname, currentBookId);
+  const pendingCurrentObject = useCurrentObjectPendingCommit({
+    book: currentBook,
+    branch: currentBranch ?? "",
+    paths: currentObjectNavigation.currentFilePaths,
+  });
   const readerSettingsState = route.kind === "reader" ? { returnTo: location.pathname } : undefined;
 
   useEffect(() => {
@@ -295,6 +305,15 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
             </DropdownMenuContent>
           </DropdownMenu>
         )}
+        {pendingCurrentObject.pending && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300"
+            title={pendingCurrentObject.paths.join("\n")}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+            {t("quickNav.localPending", { count: pendingCurrentObject.count })}
+          </span>
+        )}
         <Button variant="ghost" size="icon" aria-label={floatingHidden ? t("shell.showFloating") : t("shell.hideFloating")} onClick={toggleFloating}>
           {floatingHidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </Button>
@@ -302,7 +321,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           <Volume2 className="h-4 w-4" />
         </Button>
         {currentBook && (
-          <Button variant="ghost" size="icon" aria-label={t("notes.title")} title={`${t("notes.title")} (Ctrl+N)`} onClick={() => setNotesOpen(true)}>
+          <Button variant="ghost" size="icon" aria-label={t("notes.title")} title={`${t("notes.title")} (Ctrl+M)`} onClick={() => setNotesOpen(true)}>
             <NotebookPen className="h-4 w-4" />
           </Button>
         )}

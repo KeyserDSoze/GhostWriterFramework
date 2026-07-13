@@ -20,7 +20,7 @@ interface UiState {
   /** Mobile dossier search popup (there is no docked column on small screens). */
   dossierSearchOpen: boolean;
   setDossierSearchOpen: (open: boolean) => void;
-  /** Quick notes dialog (opened with Ctrl+N or the topbar button). */
+  /** Quick notes dialog (opened with Ctrl+M or the topbar button). */
   notesOpen: boolean;
   setNotesOpen: (open: boolean) => void;
   /** Session/connection status shown as a discreet pill. */

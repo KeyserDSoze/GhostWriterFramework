@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.75.0",
+    "date": "2026-07-13",
+    "en": {
+      "title": "Contextual previous/next navigation and local-draft indicator",
+      "summary": "Narrarium now supports contextual previous/next navigation across chapters and paragraphs while keeping the current view mode, plus a visible indicator when the currently opened draft or text still has local changes waiting to be committed.",
+      "changes": [
+        "Added Ctrl+B for contextual backward navigation and Ctrl+N for contextual forward navigation across chapter and paragraph flows, preserving the current view mode such as final, draft, script, evaluation, split, audit, and reader evaluations.",
+        "Added the same previous/next actions to the desktop context menu and to mobile Actions through the shared contextual action system.",
+        "Moved quick notes from Ctrl+N to Ctrl+M and added Open notes as a shared contextual action.",
+        "Added a visible top-bar indicator when the currently opened object, such as a draft or final paragraph, still has local changes that have not yet been committed."
+      ]
+    },
+    "it": {
+      "title": "Navigazione contestuale precedente/successivo e indicatore draft locale",
+      "summary": "Narrarium supporta ora la navigazione contestuale avanti/indietro tra capitoli e paragrafi mantenendo la stessa vista corrente, e mostra un indicatore quando la bozza o il testo aperto ha ancora modifiche locali da committare.",
+      "changes": [
+        "Aggiunti Ctrl+B per la navigazione contestuale all'indietro e Ctrl+N per la navigazione contestuale in avanti tra flussi di capitolo e paragrafo, mantenendo la vista corrente come finale, bozza, script, valutazione, split, audit e valutazioni dei lettori.",
+        "Aggiunte le stesse azioni precedente/successivo al menu contestuale desktop e alle Azioni mobile tramite il sistema condiviso di azioni contestuali.",
+        "Spostate le note rapide da Ctrl+N a Ctrl+M e aggiunta Apri note come azione contestuale condivisa.",
+        "Aggiunto un indicatore visibile nella topbar quando l'oggetto attualmente aperto, come una bozza o un paragrafo finale, ha ancora modifiche locali non ancora commitate."
+      ]
+    }
+  },
+  {
     "version": "0.74.2",
     "date": "2026-07-13",
     "en": {

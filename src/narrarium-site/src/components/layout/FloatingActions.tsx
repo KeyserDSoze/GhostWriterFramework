@@ -19,7 +19,7 @@ import { usePageActionsStore } from "@/store/pageActionsStore";
 import { useContextualActions } from "@/hooks/useContextualActions";
 
 const AUDIT_ACTION_IDS = new Set(["run-audit", "open-audit", "update-audit", "delete-audit"]);
-const DIRECT_CONTEXT_ACTION_IDS = new Set([...AUDIT_ACTION_IDS, "generate-draft-from-feedback", "feedback-rewrite-status", "restore-previous-drafts"]);
+const DIRECT_CONTEXT_ACTION_IDS = new Set([...AUDIT_ACTION_IDS, "generate-draft-from-feedback", "feedback-rewrite-status", "restore-previous-drafts", "navigate-prev", "navigate-next", "open-notes"]);
 
 interface ActionRow {
   label: string;

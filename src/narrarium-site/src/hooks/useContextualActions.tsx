@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ClipboardCheck, Columns2, FileEdit, FileText, History, NotebookText, Network, PenLine, Play, RefreshCcw, RotateCcw, Search, ShieldAlert, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, ClipboardCheck, Columns2, FileEdit, FileText, History, NotebookPen, NotebookText, Network, PenLine, Play, RefreshCcw, RotateCcw, Search, ShieldAlert, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useBookStructure } from "@/hooks/useBookStructure";
@@ -14,6 +14,8 @@ import { createChapterDraftArtifacts, createChapterEvaluationArtifact, createCha
 import { usePageActionsStore } from "@/store/pageActionsStore";
 import { auditTargetHref, type AuditTarget } from "@/narrarium/audit";
 import { openFeedbackRewriteWorkflow } from "@/store/feedbackRewriteWorkflowStore";
+import { useUiStore } from "@/store/uiStore";
+import { resolveContextualNavigation } from "@/lib/contextualNavigation";
 
 export interface ContextualAction {
   id: string;
@@ -50,6 +52,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
   const { settings } = useSettingsStore();
   const { structures } = useBooksStore();
   const pageActions = usePageActionsStore((s) => s.actions);
+  const setNotesOpen = useUiStore((s) => s.setNotesOpen);
 
   const route = parseAppRoute(location.pathname);
   const bookId = "bookId" in route ? route.bookId : undefined;
@@ -62,6 +65,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
   const paragraph = paragraphNum && chapter ? chapter.paragraphs.find((p) => p.number === paragraphNum) : undefined;
   const book = bookId ? settings.books.find((b) => b.id === bookId) : undefined;
   const token = book ? resolveBookToken(book, settings) : "";
+  const navTarget = resolveContextualNavigation(structure, location.pathname, bookId);
   const paragraphSlug = paragraph ? (paragraph.path.split("/").pop() ?? "").replace(/\.md$/i, "") : undefined;
   const rewriteScope = paragraph ? "paragraph" as const : chapter ? "chapter" as const : null;
   const summaryPath = paragraphSlug && chapter
@@ -147,6 +151,9 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
   }
 
   const actions: ContextualAction[] = [...pageActions];
+  if (navTarget.previousHref) actions.push({ id: "navigate-prev", label: t("quickNav.previous"), icon: <ArrowLeft className="h-4 w-4" />, shortcut: "Ctrl+B", to: navTarget.previousHref });
+  if (navTarget.nextHref) actions.push({ id: "navigate-next", label: t("quickNav.next"), icon: <ArrowRight className="h-4 w-4" />, shortcut: "Ctrl+N", to: navTarget.nextHref });
+  if (bookId) actions.push({ id: "open-notes", label: t("quickNav.openNotes"), icon: <NotebookPen className="h-4 w-4" />, shortcut: "Ctrl+M", run: () => setNotesOpen(true) });
   if (paragraph && chapterId) {
     const base = `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraph.number}`;
     actions.push({ id: "script", label: paragraph.scriptPath ? t("chapter.openScript") : t("chapter.createScript"), run: () => openOrCreate("script"), icon: <Network className="h-4 w-4" /> });
