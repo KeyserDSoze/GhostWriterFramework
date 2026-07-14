@@ -266,7 +266,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               <button
                 type="button"
                 className={visibleRepoStatus.tone === "dirty"
-                  ? "inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300"
+                  ? `inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300${pendingCurrentObject.pending ? " motion-safe:animate-pulse" : ""}`
                   : visibleRepoStatus.tone === "ahead"
                     ? "inline-flex items-center gap-1 rounded-full border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-xs text-sky-700 dark:text-sky-300"
                     : visibleRepoStatus.tone === "behind"
@@ -304,14 +304,6 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               <DropdownMenuItem disabled={!currentBook || !currentToken || !!repoActionBusy} onSelect={() => void runRepoAction("push", async () => { const result = await pushLocalCommits({ bookId: currentBook!.id, token: currentToken }); return t("repoStatus.pushDone", { count: result.files }); })}><UploadCloud className="mr-2 h-4 w-4" />{t("repoStatus.push")}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        )}
-        {pendingCurrentObject.pending && (
-          <span
-            className="inline-flex min-w-6 items-center justify-center rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 motion-safe:animate-pulse dark:text-amber-300"
-            title={pendingCurrentObject.paths.join("\n")}
-          >
-            {pendingCurrentObject.count}
-          </span>
         )}
         <Button variant="ghost" size="icon" aria-label={floatingHidden ? t("shell.showFloating") : t("shell.hideFloating")} onClick={toggleFloating}>
           {floatingHidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

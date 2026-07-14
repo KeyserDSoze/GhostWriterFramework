@@ -1,5 +1,25 @@
 [
   {
+    "version": "0.75.4",
+    "date": "2026-07-13",
+    "en": {
+      "title": "Current-file local changes now pulse on the main repository badge",
+      "summary": "When the currently opened object is one of the local modified files, the main local-changes badge now pulses softly instead of showing a second tiny counter badge.",
+      "changes": [
+        "Removed the extra small current-file counter badge in the top bar.",
+        "Made the main local-changes badge pulse gently whenever the currently opened object is among the uncommitted local changes."
+      ]
+    },
+    "it": {
+      "title": "Le modifiche locali del file corrente lampeggiano sul badge principale repository",
+      "summary": "Quando l'oggetto aperto è uno dei file modificati localmente, ora lampeggia in modo discreto il badge principale delle modifiche locali invece di mostrare un secondo piccolo badge contatore.",
+      "changes": [
+        "Rimosso il piccolo badge contatore separato del file corrente in top bar.",
+        "Reso leggermente pulsante il badge principale delle modifiche locali ogni volta che l'oggetto aperto rientra tra le modifiche locali non ancora commitate."
+      ]
+    }
+  },
+  {
     "version": "0.75.3",
     "date": "2026-07-13",
     "en": {
