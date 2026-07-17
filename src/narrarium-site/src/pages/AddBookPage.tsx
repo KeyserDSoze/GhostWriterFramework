@@ -29,7 +29,7 @@ function defaultRepoName(title: string): string {
     .replace(/^[.-]+|[.-]+$/g, "")
     .replace(/-{2,}/g, "-")
     .toLowerCase();
-  return `book.${normalized || "untitled"}`;
+  return normalized ? `book-${normalized}` : "";
 }
 
 export function AddBookPage() {
@@ -44,7 +44,7 @@ export function AddBookPage() {
   const [customToken, setCustomToken] = useState("");
   const [customTokenLabel, setCustomTokenLabel] = useState("");
   const [newBookTitle, setNewBookTitle] = useState("");
-  const [newRepoName, setNewRepoName] = useState(defaultRepoName(""));
+  const [newRepoName, setNewRepoName] = useState("");
   const [repoNameEdited, setRepoNameEdited] = useState(false);
   const [newRepoVisibility, setNewRepoVisibility] = useState<"private" | "public">("private");
   const [creatingRepo, setCreatingRepo] = useState(false);
@@ -235,8 +235,8 @@ export function AddBookPage() {
             </div>
             <div className="grid gap-2">
               <Label>{t("addBook.repositoryName")}</Label>
-              <Input value={newRepoName} onChange={(e) => { setRepoNameEdited(true); setNewRepoName(e.target.value); }} placeholder="book.my-story" />
-              <p className="text-xs text-muted-foreground">{t("addBook.repoNameHint")}</p>
+              <Input value={newRepoName} onChange={(e) => { setRepoNameEdited(true); setNewRepoName(e.target.value); }} placeholder="book-my-story" />
+              <p className="text-xs text-muted-foreground">{newRepoName.trim() ? t("addBook.repoNameHint") : t("addBook.repoNameHintEmpty")}</p>
             </div>
           </div>
           <div className="grid gap-2 sm:max-w-xs">
@@ -250,7 +250,7 @@ export function AddBookPage() {
             </Select>
           </div>
           {createError && <Alert variant="destructive"><AlertDescription>{createError}</AlertDescription></Alert>}
-          <Button onClick={() => void handleCreateNewBook()} disabled={creatingRepo || !activeToken || !newBookTitle.trim() || !newRepoName.trim()}>
+          <Button className="w-full sm:w-fit" onClick={() => void handleCreateNewBook()} disabled={creatingRepo || !activeToken || !newBookTitle.trim() || !newRepoName.trim()}>
             {creatingRepo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
             {creatingRepo ? t("addBook.creatingRepo") : t("addBook.createRepo")}
           </Button>
@@ -301,37 +301,35 @@ export function AddBookPage() {
             (b) => b.owner === repo.owner && b.repo === repo.name,
           );
           return (
-            <Card key={repo.id} className="flex items-center gap-4 p-4">
-              <Github className="h-5 w-5 shrink-0 text-muted-foreground" />
-              <CardHeader className="flex-1 p-0">
-                <CardTitle className="flex items-center gap-2 text-sm font-medium">
-                  {repo.full_name}
-                  {repo.private ? (
-                    <Lock className="h-3 w-3 text-muted-foreground" />
+            <Card key={repo.id} className="p-4">
+              <div className="flex items-start gap-4">
+                <Github className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-2 text-sm font-medium">
+                   {repo.full_name}
+                   {repo.private ? (
+                     <Lock className="h-3 w-3 text-muted-foreground" />
                   ) : (
                     <Globe className="h-3 w-3 text-muted-foreground" />
                   )}
-                </CardTitle>
-                {repo.description && (
-                  <CardContent className="p-0 text-xs text-muted-foreground">
-                    {repo.description}
-                  </CardContent>
-                )}
-              </CardHeader>
-              {alreadyAdded ? (
-                <Badge variant="secondary">{t("addBook.added")}</Badge>
-              ) : (
-                <Button
-                  size="sm"
-                  disabled={adding === repo.full_name}
-                  onClick={() => void handleAdd(repo)}
-                >
-                  {adding === repo.full_name ? (
-                    <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                  ) : null}
-                  {t("addBook.add")}
-                </Button>
-              )}
+                  </p>
+                  {repo.description && <p className="mt-1 text-xs text-muted-foreground">{repo.description}</p>}
+                </div>
+                <div className="shrink-0">
+                  {alreadyAdded ? (
+                    <Badge variant="secondary">{t("addBook.added")}</Badge>
+                  ) : (
+                    <Button
+                      size="sm"
+                      disabled={adding === repo.full_name}
+                      onClick={() => void handleAdd(repo)}
+                    >
+                      {adding === repo.full_name ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : null}
+                      {t("addBook.add")}
+                    </Button>
+                  )}
+                </div>
+              </div>
             </Card>
           );
         })}

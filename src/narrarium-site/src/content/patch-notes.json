@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.75.5",
+    "date": "2026-07-13",
+    "en": {
+      "title": "Add Book layout and default repository name cleanup",
+      "summary": "The Add Book screen now formats the creation form more cleanly and no longer falls back to a clumsy `book.untitled` repository name when the title is empty.",
+      "changes": [
+        "Changed the suggested repository naming pattern to `book-...` and stopped pre-filling an untitled fallback before the user enters a real title.",
+        "Added a dedicated helper hint when the book title is still empty, instead of showing a misleading default repository name.",
+        "Cleaned up the existing-repository list card layout so repository metadata and action buttons align more consistently."
+      ]
+    },
+    "it": {
+      "title": "Pulizia layout Aggiungi libro e default del nome repository",
+      "summary": "La schermata Aggiungi libro ora ha un form più pulito e non ricade più su un nome repository goffo come `book.untitled` quando il titolo è vuoto.",
+      "changes": [
+        "Cambiato il pattern suggerito del nome repository in `book-...` e rimosso il fallback precompilato senza titolo reale.",
+        "Aggiunto un hint dedicato quando il titolo del libro è ancora vuoto, invece di mostrare un nome repository di default fuorviante.",
+        "Ripulito il layout della lista dei repository esistenti così metadati e pulsanti di azione risultano più coerenti."
+      ]
+    }
+  },
+  {
     "version": "0.75.4",
     "date": "2026-07-13",
     "en": {
