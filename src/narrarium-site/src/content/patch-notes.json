@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.75.6",
+    "date": "2026-07-17",
+    "en": {
+      "title": "Existing paragraph drafts and scripts are detected reliably",
+      "summary": "Chapter stage views now recognize existing drafts and scripts even when older renames, reorders, or title-derived filenames left their paths out of sync with the final paragraph.",
+      "changes": [
+        "Added conservative artifact matching through exact paths, frontmatter paragraph identity, and unique titles for both GitHub and local repositories.",
+        "Kept ambiguous matches unresolved instead of opening or overwriting an unrelated draft or script.",
+        "Made new paragraph drafts and scripts use the final paragraph basename, and standardized newly generated drafts on the canonical root drafts directory."
+      ]
+    },
+    "it": {
+      "title": "Rilevamento affidabile di bozze e script esistenti",
+      "summary": "Le viste di lavorazione del capitolo ora riconoscono bozze e script esistenti anche quando vecchi rename, riordini o nomi derivati dal titolo hanno disallineato i loro path dal paragrafo finale.",
+      "changes": [
+        "Aggiunta un'associazione conservativa tramite path esatti, identità del paragrafo nel frontmatter e titoli univoci, sia per repository GitHub sia locali.",
+        "Mantenuti irrisolti gli abbinamenti ambigui invece di aprire o sovrascrivere una bozza o uno script non correlati.",
+        "Allineate le nuove bozze e i nuovi script al basename reale del paragrafo finale e standardizzate le bozze generate nella directory canonica alla radice."
+      ]
+    }
+  },
+  {
     "version": "0.75.5",
     "date": "2026-07-13",
     "en": {

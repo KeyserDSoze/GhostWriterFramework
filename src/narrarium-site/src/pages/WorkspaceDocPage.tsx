@@ -670,7 +670,7 @@ export function WorkspaceDocPage() {
   async function applyPipeline() {
     if (!book || !chapter || !paraSlug) return;
     const targetPath = pipelineMode === "toDraft"
-      ? `${chapter.path}/drafts/${paraSlug}.md`
+      ? `drafts/${chapter.slug}/${paraSlug}.md`
       : `${chapter.path}/${paraSlug}.md`;
     const number = Number(paraSlug.match(/^(\d{3})/)?.[1] ?? "1");
     const titleText = (entries.find((e) => e.key === "title")?.value as string) || paraSlug;

@@ -1020,14 +1020,16 @@ async function createScriptFromPrompt(input: PromptInput & { book: BookEntry; br
   const title = typeof parsed?.title === "string" ? parsed.title.trim() : "New Scene";
   const location = typeof parsed?.location === "string" ? parsed.location.trim() : undefined;
   const nextNumber = input.context.paragraph ? Number(input.context.paragraph.number) : (chapter.paragraphs.length || 0) + 1;
-  await createParagraphScriptArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: chapter.slug, number: nextNumber, title, location });
+  const paragraphSlug = input.context.paragraph?.path.split("/").pop()?.replace(/\.md$/i, "");
+  await createParagraphScriptArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: chapter.slug, number: nextNumber, title, paragraphSlug, location });
   return makeAssistantMessage("assistant", `I created a script for \`${title}\` in chapter \`${chapter.slug}\`.`);
 }
 
 async function createDraftFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   if (input.context.chapter) {
     if (input.context.paragraph) {
-      await createParagraphDraftArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: input.context.chapter.slug, number: Number(input.context.paragraph.number), title: input.context.paragraph.title });
+      const paragraphSlug = input.context.paragraph.path.split("/").pop()?.replace(/\.md$/i, "");
+      await createParagraphDraftArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: input.context.chapter.slug, number: Number(input.context.paragraph.number), title: input.context.paragraph.title, paragraphSlug });
       return makeAssistantMessage("assistant", `I created a paragraph draft for \`${input.context.paragraph.title}\`.`);
     }
     const match = /^(\d{3})-/.exec(input.context.chapter.slug);

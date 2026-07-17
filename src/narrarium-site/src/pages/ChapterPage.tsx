@@ -342,6 +342,7 @@ export function ChapterPage() {
           chapterSlug: chapter.slug,
           number: Number(paragraph.number),
           title: paragraph.title,
+          paragraphSlug: paragraph.path.split("/").pop()?.replace(/\.md$/i, ""),
         });
         toast({ title: t("chapter.draftCreatedFor", { title: paragraph.title }) });
       } else if (kind === "script") {
@@ -349,6 +350,7 @@ export function ChapterPage() {
           chapterSlug: chapter.slug,
           number: Number(paragraph.number),
           title: paragraph.title,
+          paragraphSlug: paragraph.path.split("/").pop()?.replace(/\.md$/i, ""),
         });
         toast({ title: t("chapter.scriptCreatedFor", { title: paragraph.title }) });
       } else {

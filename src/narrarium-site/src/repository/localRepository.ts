@@ -5,6 +5,11 @@ import {
   buildParagraphAuditPath,
 } from "@/narrarium/auditPaths";
 import { isRewriteOperationManifestPath } from "@/narrarium/rewriteOperationPaths";
+import {
+  resolveParagraphArtifactPaths,
+  type ParagraphArtifactMetadata,
+  type ParagraphArtifactTarget,
+} from "@/narrarium/paragraphArtifacts";
 
 const DB_NAME = "narrarium-local-repositories";
 const DB_VERSION = 4;
@@ -638,7 +643,8 @@ function splitFrontmatter(raw: string): Record<string, unknown> {
   const description = /^description:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
   const language = /^language:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
   const ghostwriter = /^ghostwriter:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
-  return { title, name, description, language, ghostwriter };
+  const paragraph = /^paragraph:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
+  return { title, name, description, language, ghostwriter, paragraph };
 }
 
 function markdownBody(raw: string): string {
@@ -664,6 +670,30 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
     return (typeof fm.title === "string" && fm.title) || (typeof fm.name === "string" && fm.name) || fallback;
   };
   const bookFm = splitFrontmatter(textMap.get("book.md") ?? "");
+  const paragraphPaths = allPaths.filter((path) => /^chapters\/[^/]+\/\d{3}(?:-[^/]+)?\.md$/.test(path));
+  const paragraphArtifactPaths = allPaths.filter((path) =>
+    /^(?:drafts\/[^/]+|chapters\/[^/]+\/drafts|scripts\/[^/]+)\/[^/]+\.md$/.test(path),
+  );
+  const artifactTargets: ParagraphArtifactTarget[] = paragraphPaths.map((path) => {
+    const parts = path.split("/");
+    const paragraphSlug = (parts.pop() ?? "").replace(/\.md$/i, "");
+    return {
+      path,
+      chapterSlug: parts[1] ?? "",
+      paragraphSlug,
+      title: titleName(path, slugToTitle(paragraphSlug)),
+    };
+  });
+  const artifactMetadata: Record<string, ParagraphArtifactMetadata> = Object.fromEntries(
+    paragraphArtifactPaths.map((path) => {
+      const fm = splitFrontmatter(textMap.get(path) ?? "");
+      const title = (typeof fm.title === "string" && fm.title) || (typeof fm.name === "string" && fm.name) || undefined;
+      const paragraph = typeof fm.paragraph === "string" ? fm.paragraph : undefined;
+      return [path, { title, paragraph }];
+    }),
+  );
+  const draftPaths = resolveParagraphArtifactPaths("draft", allPaths, artifactTargets, artifactMetadata);
+  const scriptPaths = resolveParagraphArtifactPaths("script", allPaths, artifactTargets, artifactMetadata);
   const auditFiles: BookFile[] = files
     .filter((file) => file.path.startsWith("audit/") && file.path.endsWith(".md"))
     .map((file) => ({
@@ -695,9 +725,6 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
       const filename = p.split("/").pop() ?? "";
       const num = filename.match(/^(\d{3})(?:-[^/]+)?\.md$/)?.[1] ?? "";
       const paragraphSlug = filename.replace(/\.md$/i, "");
-      const canonicalDraftPath = `drafts/${slug}/${filename}`;
-      const legacyDraftPath = `${folder}/drafts/${filename}`;
-      const scriptPath = `scripts/${slug}/${paragraphSlug}.md`;
       const evaluationPath = `evaluations/paragraphs/${slug}/${paragraphSlug}.md`;
       const auditPath = buildParagraphAuditPath(slug, paragraphSlug);
       const imagePromptPath = `assets/chapters/${slug}/paragraphs/${paragraphSlug}/primary.md`;
@@ -705,8 +732,8 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
         number: num,
         title: titleName(p, slugToTitle(filename.replace(/\.md$/, ""))),
         path: p,
-        draftPath: allPaths.includes(canonicalDraftPath) ? canonicalDraftPath : allPaths.includes(legacyDraftPath) ? legacyDraftPath : undefined,
-        scriptPath: allPaths.includes(scriptPath) ? scriptPath : undefined,
+        draftPath: draftPaths.get(p),
+        scriptPath: scriptPaths.get(p),
         evaluationPath: allPaths.includes(evaluationPath) ? evaluationPath : undefined,
         auditPath: auditPathSet.has(auditPath) ? auditPath : undefined,
         imagePromptPath: allPaths.includes(imagePromptPath) ? imagePromptPath : undefined,

@@ -88,7 +88,7 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
       path = `scripts/${chapter!.slug}/${genPara}.md`;
       fm = { type: "script", id: `script:${chapter!.slug}:${genPara}`, chapter: `chapter:${chapter!.slug}`, paragraph: `paragraph:${chapter!.slug}:${genPara}`, number, title: titleText };
     } else if (genKind === "draft") {
-      path = `${chapter!.path}/drafts/${genPara}.md`;
+      path = `drafts/${chapter!.slug}/${genPara}.md`;
       fm = { type: "paragraph-draft", id: `draft:paragraph:${chapter!.slug}:${genPara}`, paragraph: `paragraph:${chapter!.slug}:${genPara}`, chapter: `chapter:${chapter!.slug}`, number, title: titleText, canon: "draft" };
     } else {
       path = `${chapter!.path}/${genPara}.md`;

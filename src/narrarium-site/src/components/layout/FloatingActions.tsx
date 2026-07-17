@@ -61,8 +61,9 @@ export function FloatingActions() {
     const present = kind === "draft" ? paragraph.draftPath : paragraph.scriptPath;
     if (!present) {
       try {
-        if (kind === "draft") await createParagraphDraftArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug, number: Number(paragraph.number), title: paragraph.title });
-        else await createParagraphScriptArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug, number: Number(paragraph.number), title: paragraph.title });
+        const paragraphSlug = paragraph.path.split("/").pop()?.replace(/\.md$/i, "");
+        if (kind === "draft") await createParagraphDraftArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug, number: Number(paragraph.number), title: paragraph.title, paragraphSlug });
+        else await createParagraphScriptArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug, number: Number(paragraph.number), title: paragraph.title, paragraphSlug });
         await reload();
       } catch (err) {
         toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });

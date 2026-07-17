@@ -9,6 +9,11 @@ import {
   extractParagraphSlug,
 } from "@/narrarium/auditPaths";
 import { isRewriteOperationManifestPath } from "@/narrarium/rewriteOperationPaths";
+import {
+  resolveParagraphArtifactPaths,
+  type ParagraphArtifactMetadata,
+  type ParagraphArtifactTarget,
+} from "@/narrarium/paragraphArtifacts";
 
 export function createGitHubClient(token: string): Octokit {
   return new Octokit({ auth: token });
@@ -209,6 +214,7 @@ function nameFromFrontmatter(raw: string): string | undefined {
 interface FrontmatterMetadata {
   name?: string;
   ghostwriter?: string;
+  paragraph?: string;
 }
 
 /**
@@ -242,7 +248,8 @@ async function fetchFrontmatterMetadata(
         if (text) {
           const name = nameFromFrontmatter(text);
           const ghostwriter = frontmatterString(text, "ghostwriter");
-          if (name || ghostwriter) result[p] = { name, ghostwriter };
+          const paragraph = frontmatterString(text, "paragraph");
+          if (name || ghostwriter || paragraph) result[p] = { name, ghostwriter, paragraph };
         }
       });
     } catch {
@@ -312,10 +319,29 @@ export async function loadBookStructure(
   const canonPaths = allPaths.filter((p) => p.endsWith(".md") && canonPrefixes.some((prefix) => p.startsWith(`${prefix}/`)));
   const chapterMdPaths = allPaths.filter((p) => /^chapters\/[^/]+\/chapter\.md$/.test(p));
   const paragraphPaths = allPaths.filter((p) => /^chapters\/[^/]+\/\d{3}(?:-[^/]+)?\.md$/.test(p) && !p.includes("/drafts/"));
+  const paragraphArtifactPaths = allPaths.filter((p) =>
+    /^(?:drafts\/[^/]+|chapters\/[^/]+\/drafts|scripts\/[^/]+)\/[^/]+\.md$/.test(p),
+  );
   const notePaths = allPaths.filter((p) => /^notes\/[^/]+\.md$/.test(p));
   const personaPaths = allPaths.filter((p) => /^personas\/[^/]+\.md$/.test(p));
   const ghostwriterPaths = allPaths.filter((p) => /^ghostwriters\/[^/]+\.md$/.test(p));
-  const metaMap = await fetchFrontmatterMetadata(octokit, owner, repo, branch, [...chapterMdPaths, ...paragraphPaths, ...canonPaths, ...notePaths, ...personaPaths, ...ghostwriterPaths]);
+  const metaMap = await fetchFrontmatterMetadata(octokit, owner, repo, branch, [...chapterMdPaths, ...paragraphPaths, ...paragraphArtifactPaths, ...canonPaths, ...notePaths, ...personaPaths, ...ghostwriterPaths]);
+
+  const artifactTargets: ParagraphArtifactTarget[] = paragraphPaths.map((path) => {
+    const parts = path.split("/");
+    const paragraphSlug = (parts.pop() ?? "").replace(/\.md$/i, "");
+    return {
+      path,
+      chapterSlug: parts[1] ?? "",
+      paragraphSlug,
+      title: metaMap[path]?.name ?? slugToTitle(paragraphSlug),
+    };
+  });
+  const artifactMetadata: Record<string, ParagraphArtifactMetadata> = Object.fromEntries(
+    paragraphArtifactPaths.map((path) => [path, { title: metaMap[path]?.name, paragraph: metaMap[path]?.paragraph }]),
+  );
+  const draftPaths = resolveParagraphArtifactPaths("draft", allPaths, artifactTargets, artifactMetadata);
+  const scriptPaths = resolveParagraphArtifactPaths("script", allPaths, artifactTargets, artifactMetadata);
 
   // ── Canon sections ────────────────────────────────────────────────────────
   function filesUnder(prefix: string): BookFile[] {
@@ -359,9 +385,6 @@ export async function loadBookStructure(
       const filename = p.split("/").pop() ?? "";
       const num = filename.match(/^(\d{3})(?:-[^/]+)?\.md$/)?.[1] ?? "";
       const paragraphSlug = filename.replace(/\.md$/i, "");
-      const canonicalDraftPath = `drafts/${slug}/${filename}`;
-      const legacyDraftPath = `${folder}/drafts/${filename}`;
-      const scriptPath = `scripts/${slug}/${paragraphSlug}.md`;
       const evaluationPath = `evaluations/paragraphs/${slug}/${paragraphSlug}.md`;
       const auditPath = buildParagraphAuditPath(slug, paragraphSlug);
       const imagePromptPath = `assets/chapters/${slug}/paragraphs/${paragraphSlug}/primary.md`;
@@ -369,8 +392,8 @@ export async function loadBookStructure(
         number: num,
         title: metaMap[p]?.name ?? slugToTitle(filename.replace(/\.md$/, "")),
         path: p,
-        draftPath: allPaths.includes(canonicalDraftPath) ? canonicalDraftPath : allPaths.includes(legacyDraftPath) ? legacyDraftPath : undefined,
-        scriptPath: allPaths.includes(scriptPath) ? scriptPath : undefined,
+        draftPath: draftPaths.get(p),
+        scriptPath: scriptPaths.get(p),
         evaluationPath: allPaths.includes(evaluationPath) ? evaluationPath : undefined,
         auditPath: auditPathSet.has(auditPath) ? auditPath : undefined,
         imagePromptPath: allPaths.includes(imagePromptPath) ? imagePromptPath : undefined,

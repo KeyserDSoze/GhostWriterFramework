@@ -123,9 +123,9 @@ export async function createParagraphDraftArtifact(
   owner: string,
   repo: string,
   branch: string,
-  input: { chapterSlug: string; number: number; title: string },
+  input: { chapterSlug: string; number: number; title: string; paragraphSlug?: string },
 ) {
-  const slug = `${formatOrdinal(input.number)}-${slugify(input.title)}`;
+  const slug = input.paragraphSlug ?? `${formatOrdinal(input.number)}-${slugify(input.title)}`;
   await createFileIfAbsent(
     token,
     owner,
@@ -153,9 +153,9 @@ export async function createParagraphScriptArtifact(
   owner: string,
   repo: string,
   branch: string,
-  input: { chapterSlug: string; number: number; title: string; location?: string },
+  input: { chapterSlug: string; number: number; title: string; paragraphSlug?: string; location?: string },
 ) {
-  const slug = `${formatOrdinal(input.number)}-${slugify(input.title)}`;
+  const slug = input.paragraphSlug ?? `${formatOrdinal(input.number)}-${slugify(input.title)}`;
   await createFileIfAbsent(
     token,
     owner,
