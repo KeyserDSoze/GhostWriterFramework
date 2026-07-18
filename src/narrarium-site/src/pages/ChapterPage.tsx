@@ -360,6 +360,7 @@ export function ChapterPage() {
         });
         toast({ title: t("chapter.evaluationCreatedFor", { title: paragraph.title }) });
       }
+      await reload();
     } catch (err) {
       toast({ title: t("chapter.createKindFailed", { kind }), description: String(err), variant: "destructive" });
     }
@@ -544,9 +545,27 @@ export function ChapterPage() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("draft", p)}>{t("chapter.createDraft")}</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("script", p)}>{t("chapter.createScript")}</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("evaluation", p)}>{t("chapter.createEvaluation")}</DropdownMenuItem>
+                  {p.draftPath ? (
+                    <DropdownMenuItem asChild>
+                      <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/draft`}>{t("chapter.openDraft")}</Link>
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("draft", p)}>{t("chapter.createDraft")}</DropdownMenuItem>
+                  )}
+                  {p.scriptPath ? (
+                    <DropdownMenuItem asChild>
+                      <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/script`}>{t("chapter.openScript")}</Link>
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("script", p)}>{t("chapter.createScript")}</DropdownMenuItem>
+                  )}
+                  {p.evaluationPath ? (
+                    <DropdownMenuItem asChild>
+                      <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/evaluation`}>{t("chapter.openEvaluation")}</Link>
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem onClick={() => void handleCreateParagraphWorkspace("evaluation", p)}>{t("chapter.createEvaluation")}</DropdownMenuItem>
+                  )}
                   <DropdownMenuItem asChild>
                     <Link to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/reader-evaluations`}>{t("chapter.readerEvaluations")}</Link>
                   </DropdownMenuItem>

@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.75.7",
+    "date": "2026-07-18",
+    "en": {
+      "title": "Mobile paragraph menu recognizes existing workspaces",
+      "summary": "The three-dot menu beside paragraphs on the chapter screen now opens existing drafts, scripts, and evaluations instead of always offering to create them again.",
+      "changes": [
+        "Changed each mobile paragraph menu label from Create to Open whenever the corresponding draft, script, or evaluation already exists.",
+        "Made existing workspace actions navigate directly to the available document.",
+        "Reloaded the chapter structure after creating a missing workspace so the menu immediately reflects its new state."
+      ]
+    },
+    "it": {
+      "title": "Il menu mobile del paragrafo riconosce i workspace esistenti",
+      "summary": "Il menu con i tre puntini accanto ai paragrafi nella schermata del capitolo ora apre bozze, script e valutazioni esistenti invece di proporre sempre di crearli di nuovo.",
+      "changes": [
+        "Cambiata ogni voce del menu mobile da Crea ad Apri quando la relativa bozza, script o valutazione esiste già.",
+        "Collegate le azioni dei workspace esistenti direttamente al documento disponibile.",
+        "Ricaricata la struttura del capitolo dopo la creazione di un workspace mancante, così il menu riflette subito il nuovo stato."
+      ]
+    }
+  },
+  {
     "version": "0.75.6",
     "date": "2026-07-17",
     "en": {
