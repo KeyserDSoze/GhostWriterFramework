@@ -4,17 +4,18 @@ import { useTranslation } from "react-i18next";
 import { useGoogleLogin } from "@react-oauth/google";
 import { useMsal } from "@azure/msal-react";
 import { Loader2 } from "lucide-react";
-import { useAuthStore, type GoogleUser } from "@/store/authStore";
+import { useAuthStore } from "@/store/authStore";
 import { useUiStore } from "@/store/uiStore";
 import { ensureMsalInitialized, findMicrosoftAccountByEmail, microsoftSilentRequest } from "@/config/msal";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
+import { WanderingAuthGhost } from "@/components/auth/WanderingAuthGhost";
 
 interface AuthGuardProps {
   children: React.ReactNode;
 }
 
 type Status = "checking" | "ok" | "unauthenticated";
-const SILENT_AUTH_TIMEOUT_MS = 12000;
+const SILENT_AUTH_TIMEOUT_MS = 4000;
 
 export function AuthGuard({ children }: AuthGuardProps) {
   const { t } = useTranslation();
@@ -26,6 +27,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const [silentAttemptNonce, setSilentAttemptNonce] = useState(0);
   const lastAttemptKeyRef = useRef("");
   const silentAuthTimeoutRef = useRef<number | null>(null);
+  const silentAttemptActiveRef = useRef(false);
 
   function clearSilentAuthTimeout() {
     if (silentAuthTimeoutRef.current != null) {
@@ -36,6 +38,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
   /** Give up gracefully: never nuke the session while offline or backgrounded. */
   function giveUpSilent() {
+    silentAttemptActiveRef.current = false;
     clearSilentAuthTimeout();
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       // Offline: keep whatever we have; AuthGuard will retry when back online.
@@ -50,6 +53,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
   function startSilentAuthTimeout() {
     clearSilentAuthTimeout();
+    silentAttemptActiveRef.current = true;
     silentAuthTimeoutRef.current = window.setTimeout(() => {
       giveUpSilent();
     }, SILENT_AUTH_TIMEOUT_MS);
@@ -61,39 +65,24 @@ export function AuthGuard({ children }: AuthGuardProps) {
     prompt: "none",
     hint: user?.email,
     onSuccess: (tokenResponse) => {
+      if (!silentAttemptActiveRef.current || !user) return;
+      silentAttemptActiveRef.current = false;
       clearSilentAuthTimeout();
-      fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-        headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
-      })
-        .then((r) => r.json())
-        .then((profile: Record<string, string>) => {
-          const u: GoogleUser = {
-            provider: "google",
-            name: profile["name"] ?? "",
-            email: profile["email"] ?? "",
-            picture: profile["picture"] ?? "",
-          };
-          setAuth(
-            tokenResponse.access_token,
-            u,
-            "expires_in" in tokenResponse
-              ? (tokenResponse as { expires_in: number }).expires_in
-              : 3600,
-          );
-          useUiStore.getState().setAuthActivity("idle");
-          setStatus("ok");
-        })
-        .catch(() => {
-          // Userinfo fetch failed (often a transient network hiccup) → keep the token,
-          // it is still valid for Drive; do not force a logout.
-          clearSilentAuthTimeout();
-          useUiStore.getState().setAuthActivity("idle");
-          setStatus("ok");
-        });
+      setAuth(
+        tokenResponse.access_token,
+        user,
+        "expires_in" in tokenResponse
+          ? (tokenResponse as { expires_in: number }).expires_in
+          : 3600,
+      );
+      useUiStore.getState().setAuthActivity("idle");
+      setStatus("ok");
     },
     // The token is already unusable here. One silent attempt is enough while
     // online; offline keeps the known user and retries when connectivity returns.
-    onError: () => giveUpSilent(),
+    onError: () => {
+      if (silentAttemptActiveRef.current) giveUpSilent();
+    },
   });
 
   useEffect(() => {
@@ -102,19 +91,23 @@ export function AuthGuard({ children }: AuthGuardProps) {
         await ensureMsalInitialized();
         const account = findMicrosoftAccountByEmail(user?.email);
         if (!account) {
+          silentAttemptActiveRef.current = false;
+          clearSilentAuthTimeout();
           clearAuth();
           setStatus("unauthenticated");
           return;
         }
         const result = await instance.acquireTokenSilent({ ...microsoftSilentRequest(account), forceRefresh: true });
+        if (!silentAttemptActiveRef.current || !user) return;
         if (result.account) instance.setActiveAccount(result.account);
         const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
         const expiresIn = Math.max(120, Math.round((expiresAt - Date.now()) / 1000));
+        silentAttemptActiveRef.current = false;
         clearSilentAuthTimeout();
-        setAuth(result.accessToken, user!, expiresIn);
+        setAuth(result.accessToken, user, expiresIn);
         setStatus("ok");
       } catch {
-        giveUpSilent();
+        if (silentAttemptActiveRef.current) giveUpSilent();
       }
     }
 
@@ -147,8 +140,13 @@ export function AuthGuard({ children }: AuthGuardProps) {
       clearSilentAuthTimeout();
       setStatus("unauthenticated");
     }
-    return () => clearSilentAuthTimeout();
   }, [accessToken, accessTokenExpiry, clearAuth, instance, setAuth, silentAttemptNonce, silentLogin, user]);
+
+  useEffect(() => () => {
+    silentAttemptActiveRef.current = false;
+    clearSilentAuthTimeout();
+    lastAttemptKeyRef.current = "";
+  }, []);
 
   // When the PWA comes back online or to the foreground after an offline wait,
   // explicitly re-run the single silent attempt.
@@ -184,10 +182,13 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
   if (status === "checking") {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <p className="text-sm font-medium">{t("auth.checkingSession")}</p>
-        <p className="max-w-md text-sm text-muted-foreground">{t("auth.checkingSessionHint")}</p>
+      <div className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-background px-6 text-center">
+        <WanderingAuthGhost />
+        <div className="relative z-10 flex max-w-md flex-col items-center gap-3 rounded-3xl bg-background px-6 py-5 shadow-[0_0_40px_24px_hsl(var(--background))]">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-sm font-medium">{t("auth.checkingSession")}</p>
+          <p className="text-sm text-muted-foreground">{t("auth.checkingSessionHint")}</p>
+        </div>
       </div>
     );
   }

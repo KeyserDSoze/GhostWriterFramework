@@ -2,6 +2,59 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes auth-ghost-wander-flicker {
+  0%, 100% {
+    opacity: 0.2;
+    transform: translate(-50%, -50%) rotate(-7deg) scale(0.9);
+  }
+  28% {
+    opacity: 0.72;
+    transform: translate(-50%, -50%) rotate(5deg) scale(1.03);
+  }
+  58% {
+    opacity: 0.34;
+    transform: translate(-50%, -50%) rotate(-2deg) scale(0.96);
+  }
+  78% {
+    opacity: 0.82;
+    transform: translate(-50%, -50%) rotate(6deg) scale(1.06);
+  }
+}
+
+@keyframes auth-ghost-tap-flash {
+  0% { opacity: 0.35; filter: brightness(1); }
+  28% { opacity: 1; filter: brightness(2.4) saturate(1.8); }
+  55% { opacity: 0.3; filter: brightness(1.15); }
+  78% { opacity: 1; filter: brightness(2) saturate(1.5); }
+  100% { opacity: 0.55; filter: brightness(1); }
+}
+
+.auth-wandering-ghost {
+  animation: auth-ghost-wander-flicker 2.4s ease-in-out infinite;
+  transition:
+    left 2.65s cubic-bezier(0.45, 0, 0.2, 1),
+    top 2.65s cubic-bezier(0.45, 0, 0.2, 1),
+    color 180ms ease;
+  will-change: left, top, transform, opacity;
+}
+
+.auth-wandering-ghost[data-flashing="true"] {
+  animation: auth-ghost-tap-flash 620ms ease-out;
+}
+
+.auth-ghost-glow {
+  opacity: 0.3;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-wandering-ghost,
+  .auth-wandering-ghost[data-flashing="true"] {
+    animation: none;
+    opacity: 0.55;
+    transition: color 180ms ease;
+  }
+}
+
 @layer base {
   :root {
     --background: 40 33% 95%;

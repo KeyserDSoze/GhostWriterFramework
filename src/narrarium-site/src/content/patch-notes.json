@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.75.8",
+    "date": "2026-07-18",
+    "en": {
+      "title": "Faster session restore with a wandering ghost",
+      "summary": "Returning users no longer wait through a long Google session check, and the short restore screen now includes an interactive ghost that wanders and flickers around the page.",
+      "changes": [
+        "Kept one useful silent Google renewal attempt but capped the wait at four seconds instead of twelve.",
+        "Completed session restoration as soon as Google returns a token, without blocking on an additional profile request or accepting late responses after timeout.",
+        "Added a translucent wandering ghost around the viewport perimeter; tapping it produces a random-color flash while the central status text remains unobstructed.",
+        "Disabled ghost movement when reduced-motion preferences are enabled."
+      ]
+    },
+    "it": {
+      "title": "Ripristino sessione più rapido con fantasmino errante",
+      "summary": "Chi rientra nell'app non deve più attendere a lungo il controllo della sessione Google e la breve schermata di ripristino ora include un fantasmino interattivo che vaga e lampeggia nella pagina.",
+      "changes": [
+        "Mantenuto un solo tentativo utile di rinnovo silenzioso Google, limitando però l'attesa a quattro secondi invece di dodici.",
+        "Completato il ripristino appena Google restituisce il token, senza bloccare l'accesso su una seconda richiesta del profilo e senza accettare risposte tardive dopo il timeout.",
+        "Aggiunto un fantasmino traslucido che vaga lungo il perimetro della viewport; toccandolo lampeggia con un colore casuale senza coprire il testo di stato centrale.",
+        "Disattivato il movimento del fantasmino quando è attiva la preferenza per la riduzione delle animazioni."
+      ]
+    }
+  },
+  {
     "version": "0.75.7",
     "date": "2026-07-18",
     "en": {
