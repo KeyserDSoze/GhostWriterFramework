@@ -12,7 +12,6 @@ import { GlobalContextMenu } from "@/components/editor/GlobalContextMenu";
 import { LlmDebugPanel } from "@/components/debug/LlmDebugPanel";
 import { GenerateDiffDialog } from "@/components/book/GenerateDiffDialog";
 import { SessionStatusPill } from "@/components/layout/SessionStatusPill";
-import { PatchNotesDialog } from "@/components/layout/PatchNotesDialog";
 import { OnboardingDialog } from "@/components/layout/OnboardingDialog";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -29,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useNavigationHistoryStore, type NavigationHistoryEntry } from "@/store/navigationHistoryStore";
 import { FeedbackRewriteWorkflowDialog } from "@/components/book/FeedbackRewriteWorkflowDialog";
+import { OPEN_PATCH_NOTES_AFTER_UPDATE_KEY } from "@/pwa";
 
 const AssistantPanel = lazy(() =>
   import("@/components/assistant/AssistantPanel").then((module) => ({ default: module.AssistantPanel })),
@@ -50,6 +50,12 @@ export function Shell() {
   useCostsSync();
   useClipboardSync();
   useGlobalShortcuts();
+
+  useEffect(() => {
+    if (sessionStorage.getItem(OPEN_PATCH_NOTES_AFTER_UPDATE_KEY) !== "1") return;
+    sessionStorage.removeItem(OPEN_PATCH_NOTES_AFTER_UPDATE_KEY);
+    navigate("/app/patch-notes", { replace: true });
+  }, [navigate]);
 
   useEffect(() => {
     const route = parseAppRoute(location.pathname);
@@ -149,7 +155,6 @@ export function Shell() {
       <GenerateDiffDialog />
       <FeedbackRewriteWorkflowDialog />
       <OnboardingDialog />
-      <PatchNotesDialog />
       <Suspense fallback={null}>
         <AssistantPanel />
       </Suspense>

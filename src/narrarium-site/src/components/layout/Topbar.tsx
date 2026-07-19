@@ -1,4 +1,4 @@
-import { Activity, ArrowLeftRight, BookOpen, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, History, Languages, LogOut, Menu, Moon, NotebookPen, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2, Wand2 } from "lucide-react";
+import { Activity, ArrowLeftRight, BookOpen, CircleAlert, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, History, Languages, LogOut, Menu, Moon, NotebookPen, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2, Wand2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +33,8 @@ import { SUPPORTED_LANGUAGES } from "@/i18n";
 import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
 import { resolveContextualNavigation } from "@/lib/contextualNavigation";
 import { useCurrentObjectPendingCommit } from "@/hooks/useCurrentObjectPendingCommit";
+import { useAppUpdateStore } from "@/store/appUpdateStore";
+import { activateAvailableUpdate } from "@/pwa";
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -67,6 +69,8 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const setNotesOpen = useUiStore((s) => s.setNotesOpen);
   const setDebugOpen = useUiStore((s) => s.setDebugOpen);
   const debugCount = useLlmDebugStore((s) => s.entries.length);
+  const updateWorker = useAppUpdateStore((s) => s.worker);
+  const updateVersion = useAppUpdateStore((s) => s.version);
   const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -261,7 +265,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           </Button>
         )}
         {currentBook && visibleRepoStatus.tone !== "none" && (
-          <DropdownMenu>
+        <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
@@ -330,14 +334,17 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           <PanelRight className="h-4 w-4" />
         </Button>
 
-        <DropdownMenu>
+          <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="rounded-full">
+            <Button variant="ghost" size="icon" className="relative rounded-full">
               <Avatar className="h-8 w-8">
                 <AvatarFallback className="text-xs font-medium">
                   {initials(user?.name)}
                 </AvatarFallback>
               </Avatar>
+              {updateWorker && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold leading-none text-amber-950 shadow-sm ring-2 ring-background">!</span>
+              )}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
@@ -403,6 +410,13 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               <History className="mr-2 h-4 w-4" />
               {t("patchNotes.title")}
             </DropdownMenuItem>
+            {updateWorker && (
+              <DropdownMenuItem className="font-semibold text-amber-700 focus:text-amber-800 dark:text-amber-300 dark:focus:text-amber-200" onSelect={() => activateAvailableUpdate(true)}>
+                <CircleAlert className="mr-2 h-4 w-4" />
+                <span className="flex-1">{t("pwa.updateMenu")}</span>
+                {updateVersion && <span className="ml-2 font-mono text-[10px]">v{updateVersion}</span>}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleSignOut}>
               <LogOut className="mr-2 h-4 w-4" />

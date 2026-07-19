@@ -564,8 +564,10 @@ const it = {
   },
   pwa: {
     updateTitle: "Nuova versione disponibile",
-    updateDescription: "Narrarium è stato aggiornato. Ricarica per usare l'ultima versione.",
-    updateNow: "Aggiorna ora",
+    updateDescription: "Installa la nuova versione ora oppure aggiornala e apri subito l'elenco completo delle novità.",
+    updateOnly: "Aggiorna",
+    updateAndViewChanges: "Aggiorna e vedi tutti i cambiamenti",
+    updateMenu: "Aggiornamento",
     installTitle: "Installa Narrarium",
     installDescription: "Aggiungi Narrarium alla schermata Home per usarla come un'app a schermo intero.",
     installNow: "Installa",

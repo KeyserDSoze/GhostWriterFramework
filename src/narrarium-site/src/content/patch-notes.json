@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.75.9",
+    "date": "2026-07-18",
+    "en": {
+      "title": "Background update checks and persistent update actions",
+      "summary": "Narrarium can now discover new releases while it remains open, offers a direct update-and-read-changes action, and keeps a visible reminder in the user menu when an update is postponed.",
+      "changes": [
+        "Replaced the bottom update banner with a focused dialog whose primary action updates Narrarium and opens the complete patch notes after reload.",
+        "Added a secondary Update action for installing the release without opening patch notes.",
+        "Added a five-minute background version check plus a foreground check, allowing future releases to appear without reopening or refreshing the app.",
+        "Added an exclamation badge on the user avatar and an Update menu item that remain available after dismissing the dialog.",
+        "Removed the automatic post-update What's New dialog to avoid showing a second release window."
+      ]
+    },
+    "it": {
+      "title": "Controllo aggiornamenti in background e azioni persistenti",
+      "summary": "Narrarium ora può rilevare nuove versioni mentre resta aperto, offre un'azione diretta per aggiornare e leggere i cambiamenti e mantiene un promemoria visibile nel menu utente quando l'aggiornamento viene rimandato.",
+      "changes": [
+        "Sostituito il banner inferiore con un dialog dedicato la cui azione principale aggiorna Narrarium e apre le patch note complete dopo il reload.",
+        "Aggiunta un'azione secondaria Aggiorna per installare la versione senza aprire le patch note.",
+        "Aggiunto un controllo versione ogni cinque minuti e al ritorno in primo piano, così le versioni future appariranno senza riaprire o aggiornare manualmente l'app.",
+        "Aggiunti un badge con punto esclamativo sull'avatar e una voce Aggiornamento nel menu utente, disponibili anche dopo aver chiuso il dialog.",
+        "Rimosso il dialog automatico post-aggiornamento Cosa c'è di nuovo per evitare una seconda finestra della release."
+      ]
+    }
+  },
+  {
     "version": "0.75.8",
     "date": "2026-07-18",
     "en": {

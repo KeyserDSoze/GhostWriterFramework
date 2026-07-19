@@ -20,7 +20,19 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "narrarium-version-manifest",
+      generateBundle() {
+        this.emitFile({
+          type: "asset",
+          fileName: "version.json",
+          source: `${JSON.stringify({ version: pkg.version })}\n`,
+        });
+      },
+    },
+  ],
   css: {
     postcss: {
       plugins: [

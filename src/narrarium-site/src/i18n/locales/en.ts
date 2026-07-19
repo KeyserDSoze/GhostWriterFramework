@@ -564,8 +564,10 @@ const en = {
   },
   pwa: {
     updateTitle: "New version available",
-    updateDescription: "Narrarium has been updated. Reload to use the latest version.",
-    updateNow: "Update now",
+    updateDescription: "Install the new version now, or update and open the complete list of changes.",
+    updateOnly: "Update",
+    updateAndViewChanges: "Update and view all changes",
+    updateMenu: "Update",
     installTitle: "Install Narrarium",
     installDescription: "Add Narrarium to your home screen for a full-screen app experience.",
     installNow: "Install",
