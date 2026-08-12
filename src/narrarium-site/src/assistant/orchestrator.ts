@@ -3,7 +3,7 @@ import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTo
 import { localizeCopilotToolArea, localizeCopilotToolText, localizeCopilotToolsLabel } from "@/assistant/tools/presentation";
 import { copilotToolRegistry, isCopilotToolEnabled } from "@/assistant/tools/registry";
 import type { AssistantMessage } from "@/assistant/store";
-import { isExplicitNavigationPrompt } from "@/assistant/orchestratorRules";
+import { isExplicitNavigationPrompt, matchesToolKeyword } from "@/assistant/orchestratorRules";
 
 export interface OrchestratorToolContext {
   prompt: string;
@@ -52,7 +52,7 @@ export function chooseToolHandlerId(context: OrchestratorToolContext, availableH
     if (tool.handlerId === "navigate" && !isExplicitNavigationPrompt(prompt)) continue;
     let score = 0;
     for (const keyword of tool.keywords) {
-      if (prompt.includes(keyword.toLowerCase())) score += Math.max(1, keyword.length);
+      if (matchesToolKeyword(prompt, keyword)) score += Math.max(1, keyword.length);
     }
     if (score <= 0) continue;
     // Prefer local/non-LLM tools on ties to reduce token usage.

@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.2",
+    "date": "2026-07-18",
+    "en": {
+      "title": "Copilot no longer confuses primo with pull requests",
+      "summary": "Italian editorial questions containing words such as `primo` are no longer misrouted to the Pull Requests tool and will reach the configured AI chat route.",
+      "changes": [
+        "Changed Copilot keyword matching from substring search to complete word or phrase matching.",
+        "Prevented the `pr` Pull Requests abbreviation from matching inside `primo`, `prima`, or other words.",
+        "Kept standalone `pr`, `pull request`, and `pull requests` commands working as before."
+      ]
+    },
+    "it": {
+      "title": "Il Copilota non confonde più primo con le pull request",
+      "summary": "Le domande editoriali italiane che contengono parole come `primo` non vengono più indirizzate erroneamente allo strumento Pull Requests e raggiungono il percorso chat AI configurato.",
+      "changes": [
+        "Sostituita la ricerca delle keyword come sottostringhe con un confronto per parole o frasi complete.",
+        "Impedito all'abbreviazione `pr` delle Pull Requests di corrispondere dentro `primo`, `prima` o altre parole.",
+        "Mantenuti funzionanti i comandi autonomi `pr`, `pull request` e `pull requests`."
+      ]
+    }
+  },
+  {
     "version": "0.76.1",
     "date": "2026-07-18",
     "en": {
