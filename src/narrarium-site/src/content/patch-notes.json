@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.4",
+    "date": "2026-07-18",
+    "en": {
+      "title": "Copilot loads complete chapter context for natural questions",
+      "summary": "Questions such as 'how does this chapter feel?' or 'what do you think of the last chapter?' now trigger editorial review and load the actual chapter text before asking the AI.",
+      "changes": [
+        "Recognized natural editorial questions such as 'how does it seem', 'what do you think', and 'do you like it' as review requests.",
+        "Resolved 'last chapter' and common ordinal paragraph references such as first, second, primo, and secondo.",
+        "Loaded the complete final chapter or paragraph text from the repository before contextual answers and editorial reviews.",
+        "Prevented the Copilot from asking the user to attach or name a repository file when that file has already been loaded automatically."
+      ]
+    },
+    "it": {
+      "title": "Il Copilota carica il contesto completo del capitolo per le domande naturali",
+      "summary": "Domande come 'come ti sembra questo capitolo?' o 'che ne pensi dell'ultimo capitolo?' ora attivano la valutazione editoriale e caricano il testo reale del capitolo prima di interrogare l'AI.",
+      "changes": [
+        "Riconosciute come richieste di valutazione le domande naturali come 'come ti sembra', 'che ne pensi' e 'ti piace'.",
+        "Risolti 'ultimo capitolo' e i riferimenti ordinali comuni ai paragrafi come primo, secondo, first e second.",
+        "Caricato il testo finale completo del capitolo o del paragrafo dal repository prima delle risposte contestuali e delle review editoriali.",
+        "Impedito al Copilota di chiedere all'utente di allegare o indicare un file del repository quando quel file è già stato caricato automaticamente."
+      ]
+    }
+  },
+  {
     "version": "0.76.3",
     "date": "2026-07-18",
     "en": {

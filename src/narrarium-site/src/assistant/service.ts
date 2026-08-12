@@ -21,6 +21,8 @@ import {
 } from "@/assistant/llm";
 import { completeTextRouted, resolveTaskCandidates } from "@/assistant/router";
 import { buildCapabilitiesMessage, chooseToolHandlerId, isCapabilityQuestion } from "@/assistant/orchestrator";
+import { isEditorialReviewPrompt } from "@/assistant/intentRules";
+import { ordinalNumber } from "@/assistant/targetRules";
 import { resolveNavigateAction, resolveReadAloudAction } from "@/assistant/planner";
 import type {
   AssistantAction,
@@ -148,9 +150,9 @@ export async function runAssistantPrompt(input: {
     "evaluate-chapter-paragraphs": () => writeAllParagraphEvaluations({ ...promptInput, book, branch, token }),
     "rewrite-paragraph": () => rewriteCurrentParagraph({ ...promptInput, book, branch, token }),
     "create-note": () => createContextNote({ ...promptInput, book, branch, token }),
-    "review-context": () => reviewCurrentContext(promptInput),
+    "review-context": () => reviewCurrentContext({ ...promptInput, book, token }),
     "summarize-context": () => summarizeCurrentContext(promptInput, token),
-    "answer-from-context": () => answerFromContext(promptInput),
+    "answer-from-context": () => answerFromContext({ ...promptInput, book, token }),
     "open-reader": () => openReaderNavigation({ ...promptInput, book }),
     "navigate": () => navigateFromPrompt({ ...promptInput, book }),
     "read-current-page": () => readCurrentPageFromPrompt({ ...promptInput, book }),
@@ -208,9 +210,9 @@ export async function runAssistantPrompt(input: {
   if (looksLikeMultiFileEdit(lowered)) return proposeMultiFileUpdates({ ...promptInput, book, token });
   if (looksLikeRewrite(lowered)) return rewriteCurrentParagraph({ ...promptInput, book, branch, token });
   if (looksLikeNote(lowered)) return createContextNote({ ...promptInput, book, branch, token });
-  if (looksLikeReview(lowered)) return reviewCurrentContext(promptInput);
+  if (looksLikeReview(lowered)) return reviewCurrentContext({ ...promptInput, book, token });
   if (looksLikeSummary(lowered)) return summarizeCurrentContext(promptInput);
-  return answerFromContext(promptInput);
+  return answerFromContext({ ...promptInput, book, token });
 }
 
 export async function compactAssistantSession(input: {
@@ -281,19 +283,27 @@ async function summarizeCurrentContext(input: PromptInput, token?: string): Prom
   return makeAssistantMessage("assistant", answer.trim());
 }
 
-async function reviewCurrentContext(input: PromptInput): Promise<AssistantMessage> {
+async function reviewCurrentContext(input: PromptInput & { book: BookEntry | null; token: string }): Promise<AssistantMessage> {
+  const target = input.token ? await resolveTargetBody(input, input.token) : null;
+  const request = target
+    ? `Review request: ${input.prompt}\n\nReview this complete ${target.kind} titled "${target.title}":\n\n${target.body}`
+    : `Review request: ${input.prompt}`;
   const answer = await completeForTask(input.settings, [
-    buildSystemMessage(input, "You are Narrarium's editorial reviewer. Review the current context with concrete strengths, issues, and specific next actions. Preserve facts; do not invent canon."),
-    buildUserMessage(input, `Review request: ${input.prompt}`),
+    buildSystemMessage(input, "You are Narrarium's editorial reviewer. Review the requested chapter or paragraph using the complete text supplied below. Do not claim that a repository file is missing when its contents are included. Give concrete strengths, issues, and specific next actions. Preserve facts; do not invent canon."),
+    buildUserMessage(input, request),
   ], "review", { signal: input.signal, label: "copilot:review", onText: input.onText });
   if (!answer) return noAiMessage();
   return makeAssistantMessage("assistant", answer.trim());
 }
 
-async function answerFromContext(input: PromptInput): Promise<AssistantMessage> {
+async function answerFromContext(input: PromptInput & { book: BookEntry | null; token: string }): Promise<AssistantMessage> {
+  const target = input.token ? await resolveTargetBody(input, input.token) : null;
+  const request = target
+    ? `User request: ${input.prompt}\n\nAnswer using this complete ${target.kind} titled "${target.title}":\n\n${target.body}`
+    : `User request: ${input.prompt}`;
   const answer = await completeForTask(input.settings, [
-    buildSystemMessage(input, "You are Narrarium's contextual writing copilot. Answer only from the provided repository context and current location. The manifest lists available files; only LOADED FILE contents are available in full. If needed content is not loaded, say which file you need."),
-    buildUserMessage(input, `User request: ${input.prompt}`),
+    buildSystemMessage(input, "You are Narrarium's contextual writing copilot. Answer only from the provided repository context and the complete target text supplied below. Do not ask the user to attach or name a repository file when the text has already been loaded."),
+    buildUserMessage(input, request),
   ], "copilot", { signal: input.signal, label: "copilot", onText: input.onText });
   if (!answer) return noAiMessage();
   return makeAssistantMessage("assistant", answer.trim());
@@ -760,15 +770,19 @@ function resolveChapterFromPrompt(input: PromptInput): NonNullable<LoadedWriterC
     const padded = match[1].padStart(3, "0");
     return structure.chapters.find((chapter) => chapter.slug.startsWith(`${padded}-`)) ?? input.context.chapter;
   }
+  if (/(?:ultimo|ultima|latest|last)\s+(?:capitolo|chapter)\b/.test(input.prompt.toLowerCase())) {
+    return structure.chapters[structure.chapters.length - 1] ?? input.context.chapter;
+  }
   return input.context.chapter;
 }
 
 function resolveParagraphFromPrompt(input: PromptInput): { chapter: NonNullable<LoadedWriterContext["chapter"]>; paragraph: NonNullable<LoadedWriterContext["paragraph"]> } | null {
   const chapter = resolveChapterFromPrompt(input);
   if (!chapter) return null;
-  const match = input.prompt.toLowerCase().match(/(?:paragrafo|paragraph|scena|scene)\s+(\d+)/);
+  const match = input.prompt.toLowerCase().match(/(?:paragrafo|paragraph|scena|scene)\s+(\d+|primo|prima|secondo|seconda|terzo|terza|quarto|quarta|quinto|quinta|first|second|third|fourth|fifth)\b/);
+  const ordinal = match ? ordinalNumber(match[1]) : null;
   const paragraph = match
-    ? chapter.paragraphs.find((entry) => entry.number === match[1].padStart(3, "0")) ?? null
+    ? ordinal ? chapter.paragraphs.find((entry) => entry.number === String(ordinal).padStart(3, "0")) ?? null : null
     : input.context.paragraph;
   if (!paragraph) return null;
   return { chapter, paragraph };
@@ -1594,7 +1608,7 @@ function looksLikeSummary(prompt: string): boolean { return /\b(summary|summar|r
 function looksLikeBranchSwitch(prompt: string): boolean { return /\b(branch)\b/.test(prompt) && /\b(switch|checkout|go to|usa il branch|vai sul branch|cambia branch|create|crea|new)\b/.test(prompt); }
 function looksLikeWriteResume(prompt: string): boolean { return /\b(resume|riassunto)\b/.test(prompt) && /\b(write|save|refresh|aggiorna|scrivi|salva|crea)\b/.test(prompt); }
 function looksLikeUpdatePlot(prompt: string): boolean { return /\b(plot)\b/.test(prompt) && /\b(update|refresh|aggiorna|scrivi|salva|sync)\b/.test(prompt); }
-function looksLikeReview(prompt: string): boolean { return /\b(review|critique|feedback|editorial|analy[sz]e|valuta|reviewa)\b/.test(prompt); }
+function looksLikeReview(prompt: string): boolean { return isEditorialReviewPrompt(prompt); }
 function looksLikeNote(prompt: string): boolean { return /\b(note|notes|appunto|appunti|memo)\b/.test(prompt); }
 function looksLikeRewrite(prompt: string): boolean { return /\b(rewrite|revise|fix|improve|polish|sistema|riscrivi|migliora|paragrafo)\b/.test(prompt); }
 function looksLikeSearch(prompt: string): boolean { return /\b(search|find|lookup|cerca|trova|keyword|keywords|search for)\b/.test(prompt); }
