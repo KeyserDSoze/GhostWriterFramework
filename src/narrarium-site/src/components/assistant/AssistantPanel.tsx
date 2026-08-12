@@ -312,7 +312,18 @@ export function AssistantPanel() {
 
   function newChat() {
     setCurrentSession(createEmptyAssistantSession(contextLabel));
+    setActiveTab("chat");
     setOpen(true);
+  }
+
+  function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
+    if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    if (!event.dataTransfer.files.length) return;
+    event.preventDefault();
+    void attachFiles(event.dataTransfer.files);
   }
 
   async function attachFiles(files: FileList | null) {
@@ -1403,7 +1414,7 @@ export function AssistantPanel() {
   }, [route, bookId, loadingDiff]);
 
   const syncPanel = (
-    <div className="flex h-full min-h-0 flex-col bg-card">
+    <div className="flex h-full min-h-0 flex-col bg-card" onDragOver={handleDragOver} onDrop={handleDrop}>
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div>
           <p className="font-semibold">{t("assistant.syncTitle")}</p>
@@ -1572,7 +1583,7 @@ export function AssistantPanel() {
           <ScrollArea className="min-h-0 flex-1 px-3 py-3">{historyView}</ScrollArea>
         ) : (
           <>
-            <div className="flex items-center gap-2 border-b px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" className="h-8 gap-1">
@@ -1592,7 +1603,10 @@ export function AssistantPanel() {
                   })}
                 </DropdownMenuContent>
               </DropdownMenu>
-              <Button variant="outline" size="sm" className="h-8 gap-1" onClick={speechController ? stopReading : () => void readLastAssistantReply()}>
+              <Button type="button" variant="outline" size="sm" className="h-8 gap-1" title={t("assistant.newChat")} onClick={newChat}>
+                <MessageSquarePlus className="h-4 w-4" /><span className="hidden sm:inline">{t("assistant.newChat")}</span>
+              </Button>
+              <Button type="button" variant="outline" size="sm" className="h-8 gap-1" onClick={speechController ? stopReading : () => void readLastAssistantReply()}>
                 {speechController ? <Square className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                 <span className="hidden sm:inline">{speechController ? t("assistant.stopReading") : t("assistant.read")}</span>
               </Button>
@@ -1618,7 +1632,7 @@ export function AssistantPanel() {
               </DropdownMenu>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="ml-auto h-8 text-xs text-muted-foreground">{t("assistant.contextInspector")}</Button>
+                  <Button variant="ghost" size="sm" className="ml-auto h-8 max-w-full shrink-0 text-xs text-muted-foreground">{t("assistant.contextInspector")}</Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-72">
                   <DropdownMenuLabel className="text-xs">{contextSummary || t("assistant.contextFollows")}</DropdownMenuLabel>
@@ -1803,7 +1817,7 @@ export function AssistantPanel() {
         </div>
       )}
       <Dialog open={syncOpen} onOpenChange={setSyncOpen}><DialogContent hideCloseButton className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[920px]">{syncPanel}</DialogContent></Dialog>
-      <Dialog open={open} onOpenChange={(next) => { if (!next) interruptLiveVoice(); setOpen(next); }}><DialogContent hideCloseButton bare className={voiceMode || fullScreen || isMobile ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 overflow-hidden" : "bottom-6 right-6 h-[80dvh] max-h-[calc(100dvh-3rem)] w-[420px] max-w-[calc(100vw-3rem)] overflow-hidden"}>{voiceMode ? liveVoicePanel : panel}</DialogContent></Dialog>
+      <Dialog open={open} onOpenChange={(next) => { if (!next) interruptLiveVoice(); setOpen(next); }}><DialogContent hideCloseButton bare onPointerDownOutside={(event) => event.preventDefault()} onInteractOutside={(event) => event.preventDefault()} onEscapeKeyDown={(event) => event.preventDefault()} className={voiceMode || fullScreen || isMobile ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 overflow-hidden" : "bottom-6 right-6 h-[80dvh] max-h-[calc(100dvh-3rem)] w-[420px] max-w-[calc(100vw-3rem)] overflow-hidden"}>{voiceMode ? liveVoicePanel : panel}</DialogContent></Dialog>
     </>
   );
 }

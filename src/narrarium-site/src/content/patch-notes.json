@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.3",
+    "date": "2026-07-18",
+    "en": {
+      "title": "Faster Copilot chat controls and reliable attachments",
+      "summary": "The Copilot now makes new chats one click away, accepts dropped files, stays open while its internal menus are used, and keeps the Inspector visible on narrow desktop layouts.",
+      "changes": [
+        "Added a New chat button directly to the Chat toolbar and automatically return to Chat when starting from History.",
+        "Added drag-and-drop file handling across the Copilot panel using the same attachment parser as the paperclip button.",
+        "Stopped outside clicks and Escape from closing the Copilot; use the X button to close it explicitly while dropdowns and dialogs remain usable.",
+        "Allowed the Copilot toolbar to wrap on narrow desktop widths so the Inspector action is not clipped."
+      ]
+    },
+    "it": {
+      "title": "Controlli Copilota più rapidi e allegati affidabili",
+      "summary": "Nel Copilota ora basta un clic per aprire una nuova chat, i file possono essere trascinati nel pannello, i menu interni non lo fanno chiudere e l'Ispettore resta visibile sui desktop stretti.",
+      "changes": [
+        "Aggiunto il pulsante Nuova chat direttamente nella barra Chat e ritorno automatico alla vista Chat quando si parte dalla Cronologia.",
+        "Aggiunto il drag-and-drop dei file sull'intero pannello Copilota usando lo stesso parser del pulsante graffetta.",
+        "Impedito ai click esterni e al tasto Escape di chiudere il Copilota; per chiuderlo esplicitamente si usa il pulsante X, mentre dropdown e dialog interni restano utilizzabili.",
+        "Permesso alla barra degli strumenti del Copilota di andare a capo sulle larghezze desktop ridotte, così l'azione Ispettore non viene tagliata."
+      ]
+    }
+  },
+  {
     "version": "0.76.2",
     "date": "2026-07-18",
     "en": {
