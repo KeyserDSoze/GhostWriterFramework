@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.0",
+    "date": "2026-07-18",
+    "en": {
+      "title": "Editorial Copilot questions reach the configured AI router",
+      "summary": "The Copilot no longer mistakes ordinary questions mentioning a chapter or paragraph for navigation commands, so contextual writing questions are sent to the configured AI route again.",
+      "changes": [
+        "Stopped the local navigation tool from activating on destination words such as chapter, paragraph, or research without an explicit navigation verb.",
+        "Kept commands such as 'go to chapter 3' and 'open research' as fast local navigation actions.",
+        "Added regression coverage for the Italian question 'mi dici dell'ultimo capitolo cosa abbiamo scritto?' and for explicit chapter navigation."
+      ]
+    },
+    "it": {
+      "title": "Le domande editoriali del Copilota raggiungono il router AI configurato",
+      "summary": "Il Copilota non scambia più le domande normali che citano un capitolo o un paragrafo per comandi di navigazione, quindi le domande di scrittura contestuali vengono nuovamente inviate al percorso AI configurato.",
+      "changes": [
+        "Impedito allo strumento di navigazione locale di attivarsi solo per parole come capitolo, paragrafo o ricerca senza un verbo esplicito di navigazione.",
+        "Mantenuti come azioni locali rapide i comandi espliciti come 'vai al capitolo 3' e 'apri la ricerca'.",
+        "Aggiunta una regressione per la domanda italiana 'mi dici dell'ultimo capitolo cosa abbiamo scritto?' e per la navigazione esplicita al capitolo."
+      ]
+    }
+  },
+  {
     "version": "0.75.9",
     "date": "2026-07-18",
     "en": {

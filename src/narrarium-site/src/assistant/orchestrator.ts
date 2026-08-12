@@ -3,6 +3,7 @@ import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTo
 import { localizeCopilotToolArea, localizeCopilotToolText, localizeCopilotToolsLabel } from "@/assistant/tools/presentation";
 import { copilotToolRegistry, isCopilotToolEnabled } from "@/assistant/tools/registry";
 import type { AssistantMessage } from "@/assistant/store";
+import { isExplicitNavigationPrompt } from "@/assistant/orchestratorRules";
 
 export interface OrchestratorToolContext {
   prompt: string;
@@ -13,6 +14,7 @@ export interface OrchestratorToolContext {
 
 export type OrchestratorHandler = () => Promise<AssistantMessage>;
 export type OrchestratorHandlerMap = Record<string, OrchestratorHandler>;
+
 
 export function isCapabilityQuestion(prompt: string): boolean {
   return /\b(cosa puoi fare|che strumenti hai|come mi puoi aiutare|quali funzionalita supporti|quali funzionalità supporti|what can you do|what tools do you have|how can you help)\b/i.test(prompt);
@@ -44,6 +46,10 @@ export function chooseToolHandlerId(context: OrchestratorToolContext, availableH
   for (const tool of copilotToolRegistry.list()) {
     if (!tool.handlerId || !availableHandlerIds.has(tool.handlerId)) continue;
     if (!isCopilotToolEnabled(context.settings, tool)) continue;
+    // Destination words such as "chapter" or "research" are also common in
+    // editorial questions. Navigation must be explicit, otherwise a question
+    // is intercepted before it reaches the configured AI router.
+    if (tool.handlerId === "navigate" && !isExplicitNavigationPrompt(prompt)) continue;
     let score = 0;
     for (const keyword of tool.keywords) {
       if (prompt.includes(keyword.toLowerCase())) score += Math.max(1, keyword.length);
