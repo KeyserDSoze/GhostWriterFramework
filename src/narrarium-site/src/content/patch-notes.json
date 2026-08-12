@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.1",
+    "date": "2026-07-18",
+    "en": {
+      "title": "Load one chat model from any OpenAI-compatible API",
+      "summary": "OpenAI-compatible integrations can now read their standard `/models` endpoint and let you add one selected model to the Chat Router without typing its name manually.",
+      "changes": [
+        "Added a Load models from API action for OpenAI / compatible integrations using the configured endpoint and Bearer API key.",
+        "Added a model picker that adds only the selected remote model to the existing chat model list; manual model names remain supported.",
+        "Accepted the standard `{ object: 'list', data: [{ id: 'model-name' }] }` response and ignored malformed or duplicate entries.",
+        "Added clear feedback for missing endpoints, empty catalogs, failed requests, and endpoints that do not allow browser access."
+      ]
+    },
+    "it": {
+      "title": "Carica un modello chat da qualsiasi API compatibile OpenAI",
+      "summary": "Le integrazioni compatibili OpenAI ora possono leggere il loro endpoint standard `/models` e permettere di aggiungere un singolo modello scelto al Router chat senza scriverne manualmente il nome.",
+      "changes": [
+        "Aggiunta l'azione Carica modelli dall'API per le integrazioni OpenAI / compatibili, usando l'endpoint configurato e la API key Bearer.",
+        "Aggiunto un selettore che inserisce solo il modello remoto scelto nella lista dei modelli chat; l'inserimento manuale resta disponibile.",
+        "Supportata la risposta standard `{ object: 'list', data: [{ id: 'model-name' }] }`, ignorando elementi malformati o duplicati.",
+        "Aggiunti messaggi chiari per endpoint mancante, catalogo vuoto, richieste fallite ed endpoint che non consentono l'accesso dal browser."
+      ]
+    }
+  },
+  {
     "version": "0.76.0",
     "date": "2026-07-18",
     "en": {

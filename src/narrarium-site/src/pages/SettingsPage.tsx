@@ -12,6 +12,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
 import { fetchGitHubModelsCatalog, type GitHubCatalogModel } from "@/github/githubModelsCatalog";
+import { fetchOpenAICompatibleModels, type OpenAICompatibleModel } from "@/ai/openaiModelsCatalog";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { CHAT_CAPABILITIES, ROUTING_TASKS, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget, type RoutingTaskKind, type TaskRoute } from "@/types/settings";
@@ -501,6 +502,7 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
       {integration.provider !== "m365_copilot" && (
         <ChatModelsEditor
           provider={integration.provider}
+          endpoint={integration.endpoint ?? ""}
           apiKey={integration.apiKey}
           models={integration.chatModels ?? []}
           onChange={(chatModels) => onChange({ chatModels })}
@@ -530,10 +532,17 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
   );
 }
 
-function ChatModelsEditor({ provider, apiKey, models, onChange }: { provider: AIProviderType; apiKey: string; models: ChatModel[]; onChange: (models: ChatModel[]) => void }) {
+function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange }: { provider: AIProviderType; endpoint: string; apiKey: string; models: ChatModel[]; onChange: (models: ChatModel[]) => void }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [loadingCatalog, setLoadingCatalog] = useState(false);
+  const [remoteModels, setRemoteModels] = useState<OpenAICompatibleModel[]>([]);
+  const [selectedRemoteModel, setSelectedRemoteModel] = useState("");
+
+  useEffect(() => {
+    setRemoteModels([]);
+    setSelectedRemoteModel("");
+  }, [endpoint]);
 
   function patchModel(id: string, patch: Partial<ChatModel>) {
     onChange(models.map((m) => (m.id === id ? { ...m, ...patch } : m)));
@@ -553,6 +562,32 @@ function ChatModelsEditor({ provider, apiKey, models, onChange }: { provider: AI
   }
   function removeModel(id: string) {
     onChange(models.filter((m) => m.id !== id));
+  }
+
+  async function loadOpenAIModels() {
+    if (!endpoint.trim()) { toast({ title: t("settings.openaiEndpointMissing"), variant: "destructive" }); return; }
+    setLoadingCatalog(true);
+    try {
+      const catalog = await fetchOpenAICompatibleModels(endpoint, apiKey);
+      setRemoteModels(catalog);
+      setSelectedRemoteModel((current) => current || catalog[0]?.id || "");
+      if (!catalog.length) toast({ title: t("settings.openaiCatalogEmpty") });
+    } catch (err) {
+      toast({ title: t("settings.openaiCatalogFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setLoadingCatalog(false);
+    }
+  }
+
+  function addSelectedOpenAIModel() {
+    const selected = remoteModels.find((model) => model.id === selectedRemoteModel);
+    if (!selected || models.some((model) => model.name === selected.id)) return;
+    const added: ChatModel = {
+      id: crypto.randomUUID(),
+      name: selected.id,
+      capabilities: models.length === 0 ? ["default", "copilot", "simple-tasks", "review"] : [],
+    };
+    onChange([...models, added]);
   }
 
   async function loadCatalog() {
@@ -598,11 +633,33 @@ function ChatModelsEditor({ provider, apiKey, models, onChange }: { provider: AI
               {t("settings.loadCatalogModels")}
             </Button>
           )}
+          {provider === "openai" && (
+            <Button type="button" variant="outline" size="sm" disabled={loadingCatalog} onClick={() => void loadOpenAIModels()}>
+              {loadingCatalog ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1 h-3.5 w-3.5" />}
+              {t("settings.loadApiModels")}
+            </Button>
+          )}
           <Button type="button" variant="outline" size="sm" onClick={addModel}>
             <Plus className="mr-1 h-3.5 w-3.5" />{t("settings.addChatModel")}
           </Button>
         </div>
       </div>
+      {provider === "openai" && remoteModels.length > 0 && (
+        <div className="mb-3 flex flex-col gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3 sm:flex-row sm:items-end">
+          <div className="grid flex-1 gap-1">
+            <Label className="text-xs">{t("settings.apiModelChoice")}</Label>
+            <Select value={selectedRemoteModel} onValueChange={setSelectedRemoteModel}>
+              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("settings.chooseApiModel")} /></SelectTrigger>
+              <SelectContent>
+                {remoteModels.map((model) => <SelectItem key={model.id} value={model.id}>{model.id}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button type="button" size="sm" disabled={!selectedRemoteModel || models.some((model) => model.name === selectedRemoteModel)} onClick={addSelectedOpenAIModel}>
+            <Plus className="mr-1 h-3.5 w-3.5" />{t("settings.addSelectedApiModel")}
+          </Button>
+        </div>
+      )}
       {models.length === 0 && <p className="text-xs text-muted-foreground">{t("settings.noChatModels")}</p>}
       <div className="space-y-3">
         {models.map((model) => (

@@ -212,6 +212,13 @@ const it = {
     catalogLoaded: "Aggiunti {{count}} modelli multimodali dal catalogo.",
     catalogNoNew: "Nessun nuovo modello multimodale da aggiungere.",
     catalogFailed: "Impossibile leggere il catalogo modelli.",
+    loadApiModels: "Carica modelli dall'API",
+    apiModelChoice: "Modello disponibile dall'API",
+    chooseApiModel: "Scegli un modello",
+    addSelectedApiModel: "Aggiungi modello scelto",
+    openaiEndpointMissing: "Inserisci prima l'endpoint OpenAI-compatible.",
+    openaiCatalogEmpty: "L'API non ha restituito modelli disponibili.",
+    openaiCatalogFailed: "Impossibile leggere i modelli dall'endpoint OpenAI-compatible.",
     capability: {
       default: "Predefinito",
       copilot: "Copilot",
