@@ -23,6 +23,7 @@ import { completeTextRouted, resolveTaskCandidates } from "@/assistant/router";
 import { buildCapabilitiesMessage, chooseToolHandlerId, isCapabilityQuestion } from "@/assistant/orchestrator";
 import { isEditorialReviewPrompt } from "@/assistant/intentRules";
 import { ordinalNumber } from "@/assistant/targetRules";
+import { selectMentionedCanonFiles, type CanonContextCandidate } from "@/assistant/canonContext";
 import { resolveNavigateAction, resolveReadAloudAction } from "@/assistant/planner";
 import type {
   AssistantAction,
@@ -823,7 +824,7 @@ async function resolveTargetBody(input: PromptInput, token: string): Promise<{ k
   if (paragraph) {
     const raw = await loadFileContent(token, book.owner, book.repo, paragraph.paragraph.path, branch).catch(() => "");
     const { body } = parseMarkdown(raw);
-    if (body.trim()) return { kind: "paragraph", title: paragraph.paragraph.title, body: body.trim() };
+    if (body.trim()) return { kind: "paragraph", title: paragraph.paragraph.title, body: await appendRelatedCanon(input, token, `${input.prompt}\n${body.trim()}`, body.trim()) };
   }
   const wantsChapter = /\b(capitolo|chapter)\b/.test(input.prompt.toLowerCase());
   if (wantsChapter || (!paragraph && input.context.chapter)) {
@@ -832,10 +833,30 @@ async function resolveTargetBody(input: PromptInput, token: string): Promise<{ k
       const intro = await loadFileContent(token, book.owner, book.repo, `${chapter.path}/chapter.md`, branch).catch(() => "");
       const paragraphs = await Promise.all(chapter.paragraphs.map((entry) => loadFileContent(token, book.owner, book.repo, entry.path, branch).catch(() => "")));
       const body = [intro, ...paragraphs].map((raw) => parseMarkdown(raw).body.trim()).filter(Boolean).join("\n\n");
-      if (body.trim()) return { kind: "chapter", title: chapter.title, body: body.trim() };
+      if (body.trim()) return { kind: "chapter", title: chapter.title, body: await appendRelatedCanon(input, token, `${input.prompt}\n${body.trim()}`, body.trim()) };
     }
   }
   return null;
+}
+
+async function appendRelatedCanon(input: PromptInput, token: string, sourceText: string, body: string): Promise<string> {
+  const structure = input.context.structure;
+  const book = input.context.book;
+  const branch = input.context.structure?.loadedBranch;
+  if (!structure || !book || !branch) return body;
+  const sections = ["characters", "locations", "factions", "items", "timelines"] as const;
+  const candidates: CanonContextCandidate[] = sections.flatMap((section) =>
+    structure[section].map((file) => ({ path: file.path, name: file.name, section })),
+  );
+  const selected = selectMentionedCanonFiles(candidates, sourceText);
+  if (!selected.length) return body;
+  const loaded = await Promise.all(selected.map(async (entry) => {
+    const raw = await loadFileContent(token, book.owner, book.repo, entry.path, branch).catch(() => "");
+    if (!raw.trim()) return "";
+    return `RELATED CANON (${entry.section}): ${entry.path}\n${raw.trim()}`;
+  }));
+  const related = loaded.filter(Boolean).join("\n\n---\n\n");
+  return related ? `${body.trim()}\n\nRelated canon context:\n\n${related}` : body;
 }
 
 async function getBookInfo(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
@@ -1206,7 +1227,7 @@ async function resolveEvaluationTarget(input: PromptInput & { book: BookEntry; b
       chapterSlug: paragraphTarget.chapter.slug,
       title: paragraphTarget.paragraph.title,
       targetPath: `evaluations/paragraphs/${paragraphTarget.chapter.slug}/${paragraphSlug}.md`,
-      body: parsed.body.trim(),
+      body: await appendRelatedCanon(input, input.token, `${input.prompt}\n${parsed.body.trim()}`, parsed.body.trim()),
       fileFrontmatter: parsed.frontmatter,
     };
   }
@@ -1229,7 +1250,7 @@ async function resolveEvaluationTarget(input: PromptInput & { book: BookEntry; b
     chapterSlug: chapter.slug,
     title: chapter.title,
     targetPath: `evaluations/chapters/${chapter.slug}.md`,
-    body,
+    body: await appendRelatedCanon(input, input.token, `${input.prompt}\n${body}`, body),
     fileFrontmatter: introParsed.frontmatter,
   };
 }

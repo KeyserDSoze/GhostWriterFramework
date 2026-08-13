@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.5",
+    "date": "2026-07-18",
+    "en": {
+      "title": "Selective canon context for Copilot reviews",
+      "summary": "Copilot answers and editorial reviews now use the complete target text plus relevant canon sheets when characters, locations, factions, items, or timeline events are actually mentioned.",
+      "changes": [
+        "Added global book context to chapter and paragraph Copilot sessions alongside writing style, punctuation, plot, resume, and evaluation files.",
+        "Automatically loaded up to twelve canon entries whose names are explicitly mentioned in the target text or request.",
+        "Included characters, locations, factions, items, and timeline events selectively instead of loading the entire canon on every request.",
+        "Kept secrets out of automatic canon enrichment so hidden information is not exposed before its reveal threshold."
+      ]
+    },
+    "it": {
+      "title": "Contesto canone selettivo per le review del Copilota",
+      "summary": "Le risposte e le valutazioni editoriali del Copilota ora usano il testo completo del target e le schede canoniche pertinenti quando nel testo vengono citati personaggi, luoghi, fazioni, oggetti o eventi della timeline.",
+      "changes": [
+        "Aggiunto il contesto globale del libro alle sessioni Copilota di capitolo e paragrafo insieme a stile di scrittura, punteggiatura, trama, resume e valutazioni.",
+        "Caricate automaticamente fino a dodici schede canoniche i cui nomi sono citati esplicitamente nel testo del target o nella richiesta.",
+        "Inclusi in modo selettivo personaggi, luoghi, fazioni, oggetti ed eventi della timeline invece di caricare tutto il canone a ogni richiesta.",
+        "Mantenuti i segreti fuori dall'arricchimento automatico del canone, così le informazioni nascoste non vengono esposte prima della soglia di rivelazione."
+      ]
+    }
+  },
+  {
     "version": "0.76.4",
     "date": "2026-07-18",
     "en": {

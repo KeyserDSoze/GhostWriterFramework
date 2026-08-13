@@ -219,6 +219,7 @@ export async function loadWriterContext(
     await pushFile(structure.plotPath);
 
     if (chapter) {
+      await pushFile("book.md");
       await pushFile(chapter.writingStylePath);
       await pushFile(`resumes/chapters/${chapter.slug}.md`);
       await pushFile(`evaluations/chapters/${chapter.slug}.md`);
