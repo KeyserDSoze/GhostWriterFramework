@@ -287,6 +287,7 @@ const it = {
     fallbackN: "Fallback {{n}}",
     addFallback: "Aggiungi fallback",
     swapPrimaryFallback: "Scambia con fallback 1",
+    moveFallbackUp: "Sposta il fallback {{n}} sopra",
     pickIntegration: "Scegli integrazione",
     pickModel: "Scegli modello",
     browser: "Browser (integrato)",

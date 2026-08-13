@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowUpDown, Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Search, Trash2, Volume2, Wand2 } from "lucide-react";
+import { ArrowUp, ArrowUpDown, Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Search, Trash2, Volume2, Wand2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -902,6 +902,12 @@ function TaskRouteEditor({ task, integrations, route, onChange }: { task: Routin
       fallbacks: [normalizeRoutingTarget(current.primary, task), ...rest].filter((entry): entry is RoutingTarget => Boolean(entry)),
     });
   }
+  function moveFallbackUp(index: number) {
+    if (index <= 0 || index >= current.fallbacks.length) return;
+    const fallbacks = [...current.fallbacks];
+    [fallbacks[index - 1], fallbacks[index]] = [fallbacks[index], fallbacks[index - 1]];
+    onChange({ ...current, fallbacks });
+  }
 
   const label = t(`routing.task.${task}`);
 
@@ -929,7 +935,24 @@ function TaskRouteEditor({ task, integrations, route, onChange }: { task: Routin
         {current.fallbacks.map((fb, i) => (
           <div key={i} className="grid gap-1">
             <Label className="text-xs">{t("routing.fallbackN", { n: i + 1 })}</Label>
-            <TargetRow task={task} integrations={integrations} target={fb} onChange={(t2) => setFallback(i, t2)} clearable onRemove={() => setFallback(i, undefined)} />
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <TargetRow task={task} integrations={integrations} target={fb} onChange={(t2) => setFallback(i, t2)} clearable onRemove={() => setFallback(i, undefined)} />
+              </div>
+              {i > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={() => moveFallbackUp(i)}
+                  aria-label={t("routing.moveFallbackUp", { n: i + 1 })}
+                  title={t("routing.moveFallbackUp", { n: i + 1 })}
+                >
+                  <ArrowUp className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
           </div>
         ))}
         <Button type="button" variant="ghost" size="sm" className="w-fit" onClick={addFallback} disabled={!current.primary}>

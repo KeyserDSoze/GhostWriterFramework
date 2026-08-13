@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.6",
+    "date": "2026-08-13",
+    "en": {
+      "title": "Reorder AI Router fallbacks quickly",
+      "summary": "AI Router fallback chains can now be reordered directly from each fallback row, making longer provider and model chains easier to maintain.",
+      "changes": [
+        "Added a move-up control beside every fallback after the first one.",
+        "Moved a fallback up by one position without changing the primary target or the rest of the chain.",
+        "Kept the existing quick action for swapping the primary target with fallback 1.",
+        "Added localized accessible labels and tooltips in English and Italian."
+      ]
+    },
+    "it": {
+      "title": "Riordina rapidamente i fallback dell'AI Router",
+      "summary": "Le catene di fallback dell'AI Router possono ora essere riordinate direttamente da ogni riga, rendendo più semplice gestire sequenze lunghe di provider e modelli.",
+      "changes": [
+        "Aggiunto un controllo per spostare verso l'alto ogni fallback dopo il primo.",
+        "Spostato un fallback di una posizione senza modificare il target primario o il resto della catena.",
+        "Mantenuta l'azione rapida esistente per scambiare il primario con il fallback 1.",
+        "Aggiunte etichette accessibili e tooltip localizzati in italiano e inglese."
+      ]
+    }
+  },
+  {
     "version": "0.76.5",
     "date": "2026-07-18",
     "en": {
