@@ -343,6 +343,8 @@ const en = {
     newChat: "New chat",
     noSavedChats: "No saved chats yet.",
     untitledChat: "Untitled chat",
+    deleteChat: "Delete {{title}}",
+    deleteChatConfirm: "Delete the chat \"{{title}}\" permanently from chat history?",
     quickActions: "Actions",
     fullscreen: "Fullscreen",
     exitFullscreen: "Exit fullscreen",

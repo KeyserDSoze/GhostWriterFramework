@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.7",
+    "date": "2026-08-13",
+    "en": {
+      "title": "Safer Copilot chat history actions",
+      "summary": "Empty chats can no longer be saved as notes from quick actions, and deleting a saved chat now requires explicit confirmation.",
+      "changes": [
+        "Disabled the Save note quick action while the current chat has no messages.",
+        "Added a confirmation prompt before deleting a chat from the Copilot history tab.",
+        "Added the same confirmation to the full saved-chats page.",
+        "Added localized accessible delete labels in English and Italian."
+      ]
+    },
+    "it": {
+      "title": "Azioni più sicure per la cronologia del Copilota",
+      "summary": "Le chat vuote non possono più essere salvate come note dalle azioni rapide e la cancellazione di una chat salvata ora richiede una conferma esplicita.",
+      "changes": [
+        "Disabilitata l'azione rapida Salva nota quando la chat corrente non contiene messaggi.",
+        "Aggiunta una richiesta di conferma prima di cancellare una chat dalla tab Cronologia del Copilota.",
+        "Aggiunta la stessa conferma nella pagina completa delle chat salvate.",
+        "Aggiunte label accessibili localizzate per la cancellazione in italiano e inglese."
+      ]
+    }
+  },
+  {
     "version": "0.76.6",
     "date": "2026-08-13",
     "en": {

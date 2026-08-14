@@ -58,6 +58,7 @@ export function AssistantChatsPage() {
 
   async function deleteSession(session: AssistantSessionMeta) {
     if (!user || !accessToken || !session.fileId) return;
+    if (!window.confirm(t("assistant.deleteChatConfirm", { title: session.title || t("assistant.untitledChat") }))) return;
     setDeleting(session.fileId);
     try {
       await deleteAssistantSession(user.provider, accessToken, session.fileId);

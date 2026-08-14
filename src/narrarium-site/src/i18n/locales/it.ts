@@ -343,6 +343,8 @@ const it = {
     newChat: "Nuova chat",
     noSavedChats: "Nessuna chat salvata.",
     untitledChat: "Chat senza titolo",
+    deleteChat: "Elimina {{title}}",
+    deleteChatConfirm: "Eliminare definitivamente la chat \"{{title}}\" dalla cronologia?",
     quickActions: "Azioni",
     fullscreen: "Schermo intero",
     exitFullscreen: "Esci da schermo intero",

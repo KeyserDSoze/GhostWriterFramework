@@ -36,6 +36,7 @@ import {
   type AssistantAttachment,
   type AssistantFileUpdate,
   type AssistantMessage,
+  type AssistantSessionMeta,
 } from "@/assistant/store";
 import { appendAssistantNote, applyParagraphRewrite, compactAssistantSession, runAssistantPrompt } from "@/assistant/service";
 import { assistantMarkdownToRichPlainText, buildAssistantSessionMarkdown, buildAssistantSessionPdfBlob, renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
@@ -657,7 +658,7 @@ export function AssistantPanel() {
   }
 
   async function saveCurrentChatAsNote(options: { mode: "full" | "reply-summary"; deleteAfter?: boolean }) {
-    if (!currentSession || !bookId) return;
+    if (!currentSession?.messages.length || !bookId) return;
     const book = settings.books.find((entry) => entry.id === bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) {
@@ -1156,8 +1157,10 @@ export function AssistantPanel() {
     }
   }
 
-  async function deleteSavedSession(fileId: string) {
-    if (!user || !accessToken) return;
+  async function deleteSavedSession(session: AssistantSessionMeta) {
+    const fileId = session.fileId;
+    if (!user || !accessToken || !fileId) return;
+    if (!window.confirm(t("assistant.deleteChatConfirm", { title: session.title || t("assistant.untitledChat") }))) return;
     try {
       await deleteAssistantSession(user.provider, accessToken, fileId);
       setSessions(sessions.filter((session) => session.fileId !== fileId));
@@ -1368,6 +1371,7 @@ export function AssistantPanel() {
     const actions: QuickAction[] = [];
     const ask = (prompt: string) => () => void sendPrompt(prompt);
     const canonSection = route.kind === "canon" ? route.section : undefined;
+    const hasChatMessages = Boolean(currentSession?.messages.length);
 
     if (route.kind === "paragraph" || route.kind === "paragraph-workspace") {
       actions.push({ id: "fix", labelKey: "assistant.actions.fixParagraph", icon: Wand2, run: ask("Improve the current paragraph while preserving all facts.") });
@@ -1407,11 +1411,11 @@ export function AssistantPanel() {
       actions.push({ id: "search", labelKey: "assistant.actions.search", icon: Search, run: ask("Search the current book for relevant characters, paragraphs, or canon keywords.") });
     }
 
-    actions.push({ id: "note", labelKey: "assistant.actions.saveNote", icon: FileText, run: ask("Create a writer note from the current context and save it.") });
+    actions.push({ id: "note", labelKey: "assistant.actions.saveNote", icon: FileText, run: ask("Create a writer note from the current context and save it."), disabled: !hasChatMessages });
     if (bookId) actions.push({ id: "diff", labelKey: "assistant.actions.syncDiff", icon: GitBranch, run: () => void loadBranchDiff(), disabled: loadingDiff });
     return actions;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route, bookId, loadingDiff]);
+  }, [route, bookId, loadingDiff, currentSession?.messages.length]);
 
   const syncPanel = (
     <div className="flex h-full min-h-0 flex-col bg-card" onDragOver={handleDragOver} onDrop={handleDrop}>
@@ -1544,7 +1548,7 @@ export function AssistantPanel() {
               <p className="truncate text-xs text-muted-foreground">{session.contextTitle || t("assistant.title")}</p>
             </button>
             {session.fileId && (
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => void deleteSavedSession(session.fileId!)}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => void deleteSavedSession(session)} aria-label={t("assistant.deleteChat", { title: session.title || t("assistant.untitledChat") })} title={t("assistant.deleteChat", { title: session.title || t("assistant.untitledChat") })}>
                 <Trash2 className="h-4 w-4" />
               </Button>
             )}
