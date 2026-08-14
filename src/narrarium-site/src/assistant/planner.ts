@@ -1,6 +1,7 @@
 import type { LoadedWriterContext } from "@/assistant/context";
 import type { AssistantAction } from "@/assistant/store";
-import type { Chapter, Paragraph } from "@/types/book";
+import type { Chapter } from "@/types/book";
+import { resolveChapterTarget, resolveParagraphTarget } from "@/assistant/targetRules";
 
 export type NavigateAction = Extract<AssistantAction, { kind: "navigate" }>;
 export type ReadAloudAction = Extract<AssistantAction, { kind: "read-aloud" }>;
@@ -8,19 +9,6 @@ export type ReadAloudAction = Extract<AssistantAction, { kind: "read-aloud" }>;
 const READ_KEYWORDS = /\b(leggi|leggimi|leggile|leggilo|riproduci|ascolta|recita|read|read aloud|read out|play)\b/i;
 const NAV_KEYWORDS = /\b(apri|apre|aprimi|vai|va'|vammi|portami|mostra|mostrami|naviga|open|go to|goto|show me|show|navigate|take me|jump to)\b/i;
 const FRONTMATTER_KEYWORDS = /\b(frontmatter|metadat|metadata|intestazion|header|campi|fields)\b/i;
-
-/** Resolve a chapter by an explicit number like "capitolo 3" -> slug "003-...". */
-function findChapterByNumber(context: LoadedWriterContext, rawNumber: string): Chapter | null {
-  const structure = context.structure;
-  if (!structure) return null;
-  const padded = rawNumber.padStart(3, "0");
-  return structure.chapters.find((entry) => entry.slug.startsWith(`${padded}-`)) ?? null;
-}
-
-function findParagraphByNumber(chapter: Chapter, rawNumber: string): Paragraph | null {
-  const padded = rawNumber.padStart(3, "0");
-  return chapter.paragraphs.find((entry) => entry.number === padded) ?? null;
-}
 
 /** Build the ordered repo paths that make up a read target (chapter intro + paragraphs, or a single paragraph). */
 function chapterReadPaths(chapter: Chapter): string[] {
@@ -41,36 +29,11 @@ export function resolveReadAloudAction(
   const structure = context.structure;
   if (!structure) return null;
   const includeFrontmatter = FRONTMATTER_KEYWORDS.test(lower);
-
-  const paragraphThenChapter = lower.match(/(?:paragrafo|paragraph|scena|scene)\s+(\d+).*?(?:capitolo|chapter)\s+(\d+)/);
-  const chapterThenParagraph = lower.match(/(?:capitolo|chapter)\s+(\d+).*?(?:paragrafo|paragraph|scena|scene)\s+(\d+)/);
-  if (paragraphThenChapter || chapterThenParagraph) {
-    const paragraphNumber = paragraphThenChapter?.[1] ?? chapterThenParagraph?.[2] ?? "";
-    const chapterNumber = paragraphThenChapter?.[2] ?? chapterThenParagraph?.[1] ?? "";
-    const chapter = findChapterByNumber(context, chapterNumber);
-    const paragraph = chapter ? findParagraphByNumber(chapter, paragraphNumber) : null;
-    if (chapter && paragraph) {
-      return { kind: "read-aloud", bookId, title: paragraph.title, paths: [paragraph.path], includeFrontmatter };
-    }
-  }
-
-  const paragraphMatch = lower.match(/(?:questo\s+)?(?:paragrafo|paragraph|scena|scene)\s*(\d+)?/);
-  if (paragraphMatch && context.chapter) {
-    const paragraph = paragraphMatch[1]
-      ? findParagraphByNumber(context.chapter, paragraphMatch[1])
-      : context.paragraph;
-    if (paragraph) {
-      return { kind: "read-aloud", bookId, title: paragraph.title, paths: [paragraph.path], includeFrontmatter };
-    }
-  }
-
-  const chapterMatch = lower.match(/(?:questo\s+)?(?:capitolo|chapter)\s*(\d+)?/);
-  if (chapterMatch) {
-    const chapter = chapterMatch[1] ? findChapterByNumber(context, chapterMatch[1]) : context.chapter;
-    if (chapter) {
-      return { kind: "read-aloud", bookId, title: chapter.title, paths: chapterReadPaths(chapter), includeFrontmatter };
-    }
-  }
+  const chapterResolution = resolveChapterTarget(prompt, structure.chapters, context.chapter);
+  const paragraphResolution = resolveParagraphTarget(prompt, chapterResolution, context.chapter, context.paragraph);
+  if ((chapterResolution.explicit && !chapterResolution.value) || (paragraphResolution.explicit && !paragraphResolution.value)) return null;
+  if (paragraphResolution.value) return { kind: "read-aloud", bookId, title: paragraphResolution.value.paragraph.title, paths: [paragraphResolution.value.paragraph.path], includeFrontmatter };
+  if (chapterResolution.value) return { kind: "read-aloud", bookId, title: chapterResolution.value.title, paths: chapterReadPaths(chapterResolution.value), includeFrontmatter };
 
   // "read this / leggi questa pagina" with no explicit target: read whatever is loaded here.
   if (context.paragraph && context.chapter) {
@@ -94,18 +57,12 @@ export function resolveNavigateAction(
   const lower = prompt.toLowerCase();
   if (!NAV_KEYWORDS.test(lower)) return null;
   const base = `/app/books/${bookId}`;
-
-  // Explicit chapter / paragraph navigation.
-  const paragraphThenChapter = lower.match(/(?:paragrafo|paragraph|scena|scene)\s+(\d+).*?(?:capitolo|chapter)\s+(\d+)/);
-  const chapterThenParagraph = lower.match(/(?:capitolo|chapter)\s+(\d+).*?(?:paragrafo|paragraph|scena|scene)\s+(\d+)/);
-  if (paragraphThenChapter || chapterThenParagraph) {
-    const paragraphNumber = paragraphThenChapter?.[1] ?? chapterThenParagraph?.[2] ?? "";
-    const chapterNumber = paragraphThenChapter?.[2] ?? chapterThenParagraph?.[1] ?? "";
-    const chapter = findChapterByNumber(context, chapterNumber);
-    const paragraph = chapter ? findParagraphByNumber(chapter, paragraphNumber) : null;
-    if (chapter && paragraph) {
-      return { kind: "navigate", to: `${base}/chapters/${chapter.slug}/paragraphs/${paragraph.number}`, label: `${chapter.title} · ${paragraph.title}` };
-    }
+  const chapterResolution = resolveChapterTarget(prompt, context.structure?.chapters ?? [], context.chapter);
+  const paragraphResolution = resolveParagraphTarget(prompt, chapterResolution, context.chapter, context.paragraph);
+  if ((chapterResolution.explicit && !chapterResolution.value) || (paragraphResolution.explicit && !paragraphResolution.value)) return null;
+  if (paragraphResolution.explicit && paragraphResolution.value) {
+    const { chapter, paragraph } = paragraphResolution.value;
+    return { kind: "navigate", to: `${base}/chapters/${chapter.slug}/paragraphs/${paragraph.number}`, label: `${chapter.title} · ${paragraph.title}` };
   }
 
   if (/\b(reader|lettore|lettura)\b/.test(lower)) {
@@ -131,12 +88,8 @@ export function resolveNavigateAction(
     return { kind: "navigate", to: `/app/settings`, label: "Settings" };
   }
 
-  const chapterMatch = lower.match(/(?:questo\s+)?(?:capitolo|chapter)\s*(\d+)?/);
-  if (chapterMatch) {
-    const chapter = chapterMatch[1] ? findChapterByNumber(context, chapterMatch[1]) : context.chapter;
-    if (chapter) {
-      return { kind: "navigate", to: `${base}/chapters/${chapter.slug}`, label: chapter.title };
-    }
+  if (/\b(capitolo|chapter)\b/.test(lower) && chapterResolution.value) {
+    return { kind: "navigate", to: `${base}/chapters/${chapterResolution.value.slug}`, label: chapterResolution.value.title };
   }
 
   return null;

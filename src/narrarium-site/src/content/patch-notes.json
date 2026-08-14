@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.15",
+    "date": "2026-08-14",
+    "en": {
+      "title": "Fail-closed chapter and paragraph targets",
+      "summary": "Copilot no longer substitutes the open chapter, paragraph, or whole chapter when an explicitly requested story target cannot be found or is ambiguous.",
+      "changes": [
+        "Introduced one shared target contract for numeric, ordinal, latest, quoted, unquoted, named, missing, ambiguous, and ambient chapter and paragraph references.",
+        "Applied fail-closed target resolution to reading, navigation, contextual answers, evaluations, audits, paragraph rewrites and deletes, simulated readers, and feedback workflows.",
+        "Kept ambient context only for prompts without an explicit target, while preserving chapter-level requests such as ‘this chapter’ instead of collapsing them to the open paragraph.",
+        "Added regression coverage for missing nested targets, duplicate names, title connectors, structural qualifiers, operational modifiers, and command words that also appear as titles."
+      ]
+    },
+    "it": {
+      "title": "Target di capitoli e paragrafi fail-closed",
+      "summary": "Il Copilota non sostituisce più il capitolo, paragrafo o intero capitolo aperto quando un target narrativo richiesto esplicitamente non esiste o è ambiguo.",
+      "changes": [
+        "Introdotto un unico contratto di risoluzione per riferimenti numerici, ordinali, ultimo, quotati, non quotati, nominali, mancanti, ambigui e ambientali a capitoli e paragrafi.",
+        "Applicata la risoluzione fail-closed a lettura, navigazione, risposte contestuali, valutazioni, audit, rewrite ed eliminazione dei paragrafi, lettori simulati e workflow di feedback.",
+        "Mantenuto il contesto ambientale soltanto per prompt senza target esplicito, preservando richieste di livello capitolo come ‘questo capitolo’ senza ridurle al paragrafo aperto.",
+        "Aggiunta copertura di regressione per target annidati mancanti, nomi duplicati, connettori nei titoli, qualificatori strutturali, modificatori operativi e parole di comando presenti anche come titoli."
+      ]
+    }
+  },
+  {
     "version": "0.76.14",
     "date": "2026-08-14",
     "en": {

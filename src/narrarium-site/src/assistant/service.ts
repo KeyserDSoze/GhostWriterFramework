@@ -22,7 +22,7 @@ import {
 import { completeTextRouted, resolveTaskCandidates } from "@/assistant/router";
 import { buildCapabilitiesMessage, chooseToolMatch, isCapabilityQuestion } from "@/assistant/orchestrator";
 import { isEditorialReviewPrompt } from "@/assistant/intentRules";
-import { ordinalNumber } from "@/assistant/targetRules";
+import { resolveChapterTarget, resolveParagraphTarget } from "@/assistant/targetRules";
 import { selectMentionedCanonFiles, type CanonContextCandidate } from "@/assistant/canonContext";
 import { copilotToolRegistry, isCopilotHandlerEnabled } from "@/assistant/tools/registry";
 import { classifyMutationIntent, type MutationIntent } from "@/assistant/mutationIntent";
@@ -359,6 +359,8 @@ export async function applyParagraphRewrite(input: {
 }
 
 async function summarizeCurrentContext(input: PromptInput, token?: string): Promise<AssistantMessage> {
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   // Hybrid pipeline: when a concrete chapter/paragraph target is resolvable, send only its
   // body to the LLM instead of the whole context bundle, to keep the request small and cheap.
   const target = token ? await resolveTargetBody(input, token) : null;
@@ -378,6 +380,8 @@ async function summarizeCurrentContext(input: PromptInput, token?: string): Prom
 }
 
 async function reviewCurrentContext(input: PromptInput & { book: BookEntry | null; token: string }): Promise<AssistantMessage> {
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const target = input.token ? await resolveTargetBody(input, input.token) : null;
   const request = target
     ? `Review request: ${input.prompt}\n\nReview this complete ${target.kind} titled "${target.title}":\n\n${target.body}`
@@ -391,6 +395,8 @@ async function reviewCurrentContext(input: PromptInput & { book: BookEntry | nul
 }
 
 async function answerFromContext(input: PromptInput & { book: BookEntry | null; token: string }): Promise<AssistantMessage> {
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const target = input.token ? await resolveTargetBody(input, input.token) : null;
   const request = target
     ? `User request: ${input.prompt}\n\nAnswer using this complete ${target.kind} titled "${target.title}":\n\n${target.body}`
@@ -439,6 +445,8 @@ async function openReaderNavigation(input: PromptInput & { book: BookEntry }): P
 }
 
 async function navigateFromPrompt(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const action = resolveNavigateAction(input.prompt, input.context, input.book.id);
   if (!action) {
     return makeAssistantMessage("assistant", "Tell me where to go, for example: open the reader, go to chapter 3, or open research.");
@@ -452,6 +460,8 @@ async function navigateFromPrompt(input: PromptInput & { book: BookEntry }): Pro
 }
 
 async function readCurrentPageFromPrompt(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const action = resolveReadAloudAction(input.prompt, input.context, input.book.id);
   if (!action) {
     return makeAssistantMessage("assistant", "I couldn't find a chapter or paragraph to read here. Open one, or say for example: read chapter 3.");
@@ -568,6 +578,7 @@ async function toggleSimulatedReaderFromPrompt(input: PromptInput & { book: Book
 }
 
 async function evaluationTargetFromContext(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<ReaderEvaluationTarget | null> {
+  if (unresolvedTargetMessage(input)) return null;
   const chapter = resolveChapterFromPrompt(input);
   if (!chapter) return null;
   const paragraph = resolveParagraphFromPrompt(input);
@@ -582,6 +593,8 @@ async function evaluationTargetFromContext(input: PromptInput & { book: BookEntr
 async function evaluateWithReadersFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const structure = input.context.structure;
   if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const [target, readers] = await Promise.all([evaluationTargetFromContext(input), loadReaderPersonas({ token: input.token, book: input.book, branch: input.branch, structure })]);
   if (!target) return makeAssistantMessage("assistant", "Open or name a chapter or paragraph first.");
   const lower = input.prompt.toLowerCase();
@@ -601,6 +614,8 @@ function readerEvaluationPrefixes(target: ReaderEvaluationTarget): string[] {
 async function summarizeReaderEvaluationsFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const structure = input.context.structure;
   if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const target = await evaluationTargetFromContext(input);
   if (!target) return makeAssistantMessage("assistant", "Open or name a chapter or paragraph first.");
   const hash = await hashReaderSource(target.text);
@@ -621,6 +636,8 @@ async function summarizeReaderEvaluationsFromPrompt(input: PromptInput & { book:
 }
 
 async function openReaderEvaluationsFromContext(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const chapter = resolveChapterFromPrompt(input);
   if (!chapter) return makeAssistantMessage("assistant", "Open or name a chapter first.");
   const paragraph = resolveParagraphFromPrompt(input);
@@ -632,21 +649,13 @@ async function openReaderEvaluationsFromContext(input: PromptInput & { book: Boo
 
 async function feedbackRewriteNavigation(input: PromptInput & { book: BookEntry; branch?: string; token?: string }, workflow: "generate" | "restore" | "status"): Promise<AssistantMessage> {
   const lower = input.prompt.toLowerCase();
-  const structure = input.context.structure;
-  const namedChapter = structure?.chapters
-    .map((chapter) => ({ chapter, names: [chapter.title.toLowerCase(), chapter.slug.toLowerCase().replace(/-/g, " ")] }))
-    .filter((entry) => entry.names.some((name) => name.length >= 3 && lower.includes(name)))
-    .sort((left, right) => Math.max(...right.names.map((name) => name.length)) - Math.max(...left.names.map((name) => name.length)))[0]?.chapter;
-  const chapter = namedChapter ?? resolveChapterFromPrompt(input);
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
+  const chapterResolution = chapterTargetResolution(input);
+  const chapter = chapterResolution.value;
   if (!chapter) return makeAssistantMessage("assistant", "Open or name a chapter first.");
-  const explicitlyChapter = /\b(chapter|capitolo)\b/.test(lower) && !/\b(paragraph|paragrafo|scene|scena)\b/.test(lower);
-  const paragraphNumber = lower.match(/(?:paragrafo|paragraph|scena|scene)\s+(\d+)/)?.[1].padStart(3, "0");
-  const namedParagraph = chapter.paragraphs
-    .map((paragraph) => ({ paragraph, names: [paragraph.title.toLowerCase(), slugFromPath(paragraph.path).toLowerCase().replace(/-/g, " ")] }))
-    .filter((entry) => entry.names.some((name) => name.length >= 3 && lower.includes(name)))
-    .sort((left, right) => Math.max(...right.names.map((name) => name.length)) - Math.max(...left.names.map((name) => name.length)))[0]?.paragraph;
-  const currentParagraph = input.context.chapter?.slug === chapter.slug ? input.context.paragraph : null;
-  const paragraph = explicitlyChapter ? null : paragraphNumber ? chapter.paragraphs.find((entry) => entry.number === paragraphNumber) : namedParagraph ?? currentParagraph;
+  const paragraphResolution = paragraphTargetResolution(input);
+  const paragraph = paragraphResolution.value?.paragraph ?? null;
   const base = paragraph
     ? `/app/books/${input.book.id}/chapters/${chapter.slug}/paragraphs/${paragraph.number}/reader-evaluations`
     : `/app/books/${input.book.id}/chapters/${chapter.slug}/reader-evaluations`;
@@ -703,18 +712,15 @@ function auditTargetFromPrompt(input: PromptInput & { book: BookEntry }): AuditT
   const wantsParagraph = /\b(paragraph|paragrafo|scene|scena)\b/.test(lower);
   const wantsChapter = /\b(chapter|capitolo)\b/.test(lower);
   const wantsBook = /\b(book|libro)\b/.test(lower);
-  const requestedChapter = lower.match(/(?:capitolo|chapter)\s+(\d+)/)?.[1].padStart(3, "0");
-  const requestedParagraph = lower.match(/(?:paragrafo|paragraph|scena|scene)\s+(\d+)/)?.[1].padStart(3, "0");
+  const chapterResolution = chapterTargetResolution(input);
+  const paragraphResolution = paragraphTargetResolution(input);
 
   if (wantsParagraph) {
-    const resolved = resolveParagraphFromPrompt(input);
-    if (resolved && requestedChapter && !resolved.chapter.slug.startsWith(`${requestedChapter}-`)) return null;
-    if (resolved && requestedParagraph && resolved.paragraph.number !== requestedParagraph) return null;
+    const resolved = paragraphResolution.value;
     return resolved ? { scope: "paragraph", bookId: input.book.id, chapterId: resolved.chapter.slug, paragraphNum: resolved.paragraph.number } : null;
   }
   if (wantsChapter) {
-    const chapter = resolveChapterFromPrompt(input);
-    if (chapter && requestedChapter && !chapter.slug.startsWith(`${requestedChapter}-`)) return null;
+    const chapter = chapterResolution.value;
     return chapter ? { scope: "chapter", bookId: input.book.id, chapterId: chapter.slug } : null;
   }
   if (wantsBook) return { scope: "book", bookId: input.book.id };
@@ -778,6 +784,8 @@ function auditFiltersFromPrompt(prompt: string): URLSearchParams {
 async function auditNavigationFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }, operation: "run" | "open" | "update" | "delete"): Promise<AssistantMessage> {
   const structure = input.context.structure;
   if (!structure) return makeAssistantMessage("assistant", "Open a book first so I can resolve the audit target.");
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const target = auditTargetFromPrompt(input);
   if (!target) return makeAssistantMessage("assistant", "Open or name the chapter or paragraph whose audit you want to use.");
   let resolved;
@@ -813,6 +821,8 @@ function auditFindingStatusFromPrompt(prompt: string): AuditFindingStatus | null
 async function setAuditFindingStatusFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const structure = input.context.structure;
   if (!structure) return makeAssistantMessage("assistant", "Open a book first so I can resolve the audit report.");
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const target = auditTargetFromPrompt(input);
   if (!target) return makeAssistantMessage("assistant", "Open or name the chapter or paragraph that owns the audit finding.");
   const findingId = input.prompt.match(/\baudit-[a-f0-9]{20}\b/i)?.[0].toLowerCase();
@@ -860,34 +870,41 @@ function findCanonFileByPrompt<T extends { path: string; name?: string }>(files:
   return best?.file ?? null;
 }
 
+function chapterTargetResolution(input: PromptInput) {
+  return resolveChapterTarget(input.prompt, input.context.structure?.chapters ?? [], input.context.chapter);
+}
+
 function resolveChapterFromPrompt(input: PromptInput): NonNullable<LoadedWriterContext["chapter"]> | null {
-  const structure = input.context.structure;
-  if (!structure) return input.context.chapter;
-  const match = input.prompt.toLowerCase().match(/(?:capitolo|chapter)\s+(\d+)/);
-  if (match) {
-    const padded = match[1].padStart(3, "0");
-    return structure.chapters.find((chapter) => chapter.slug.startsWith(`${padded}-`)) ?? input.context.chapter;
-  }
-  if (/(?:ultimo|ultima|latest|last)\s+(?:capitolo|chapter)\b/.test(input.prompt.toLowerCase())) {
-    return structure.chapters[structure.chapters.length - 1] ?? input.context.chapter;
-  }
-  return input.context.chapter;
+  return chapterTargetResolution(input).value;
+}
+
+function paragraphTargetResolution(input: PromptInput) {
+  return resolveParagraphTarget(input.prompt, chapterTargetResolution(input), input.context.chapter, input.context.paragraph);
 }
 
 function resolveParagraphFromPrompt(input: PromptInput): { chapter: NonNullable<LoadedWriterContext["chapter"]>; paragraph: NonNullable<LoadedWriterContext["paragraph"]> } | null {
-  const chapter = resolveChapterFromPrompt(input);
-  if (!chapter) return null;
-  const match = input.prompt.toLowerCase().match(/(?:paragrafo|paragraph|scena|scene)\s+(\d+|primo|prima|secondo|seconda|terzo|terza|quarto|quarta|quinto|quinta|first|second|third|fourth|fifth)\b/);
-  const ordinal = match ? ordinalNumber(match[1]) : null;
-  const paragraph = match
-    ? ordinal ? chapter.paragraphs.find((entry) => entry.number === String(ordinal).padStart(3, "0")) ?? null : null
-    : input.context.paragraph;
-  if (!paragraph) return null;
-  return { chapter, paragraph };
+  return paragraphTargetResolution(input).value;
+}
+
+function unresolvedTargetMessage(input: PromptInput): AssistantMessage | null {
+  const paragraph = paragraphTargetResolution(input);
+  if (paragraph.explicit && !paragraph.value) {
+    return makeAssistantMessage("assistant", paragraph.status === "ambiguous"
+      ? `The paragraph target “${paragraph.reference ?? input.prompt}” is ambiguous. Specify its chapter and exact number or title.`
+      : `I could not find the requested paragraph “${paragraph.reference ?? input.prompt}”. No current paragraph or chapter was used instead.`);
+  }
+  const chapter = chapterTargetResolution(input);
+  if (chapter.explicit && !chapter.value) {
+    return makeAssistantMessage("assistant", chapter.status === "ambiguous"
+      ? `The chapter target “${chapter.reference ?? input.prompt}” is ambiguous. Specify its exact number or title.`
+      : `I could not find the requested chapter “${chapter.reference ?? input.prompt}”. No current chapter was used instead.`);
+  }
+  return null;
 }
 
 /** Resolve the "current file" for generic body/frontmatter tools. */
 function currentFilePath(input: PromptInput): { path: string; title: string } | null {
+  if (unresolvedTargetMessage(input)) return null;
   const paragraph = resolveParagraphFromPrompt(input);
   if (paragraph) return { path: paragraph.paragraph.path, title: paragraph.paragraph.title };
   if (input.context.route.kind === "canon") {
@@ -914,6 +931,7 @@ function resolveCanonPathFromRoute(input: PromptInput): string | null {
 }
 
 async function resolveTargetBody(input: PromptInput, token: string): Promise<{ kind: string; title: string; body: string } | null> {
+  if (unresolvedTargetMessage(input)) return null;
   const book = input.context.book;
   const branch = input.context.structure?.loadedBranch;
   if (!book || !branch || !token) return null;
@@ -970,6 +988,8 @@ async function getBookInfo(input: PromptInput & { book: BookEntry }): Promise<As
 }
 
 async function getChapterInfo(input: PromptInput & { book: BookEntry; token: string }): Promise<AssistantMessage> {
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const chapter = resolveChapterFromPrompt(input);
   if (!chapter) return makeAssistantMessage("assistant", "Open a chapter or tell me a chapter number, e.g. get chapter 3.");
   const lines = [
@@ -981,6 +1001,8 @@ async function getChapterInfo(input: PromptInput & { book: BookEntry; token: str
 }
 
 async function getParagraphInfo(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const target = resolveParagraphFromPrompt(input);
   if (!target) return makeAssistantMessage("assistant", "Open a paragraph or tell me which one, e.g. get paragraph 2 of chapter 3.");
   const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, target.paragraph.path, input.branch).catch(() => "");
@@ -1012,6 +1034,8 @@ async function getCanonEntityInfo(section: CanonSectionKey, input: PromptInput &
 }
 
 async function getBodyInfo(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const current = currentFilePath(input);
   if (!current) return makeAssistantMessage("assistant", "Open a paragraph, chapter or canon entity first, or tell me which file you mean.");
   const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, current.path, input.branch).catch(() => "");
@@ -1021,6 +1045,8 @@ async function getBodyInfo(input: PromptInput & { book: BookEntry; branch: strin
 }
 
 async function getFrontmatterInfo(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const current = currentFilePath(input);
   if (!current) return makeAssistantMessage("assistant", "Open a paragraph, chapter or canon entity first, or tell me which file you mean.");
   const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, current.path, input.branch).catch(() => "");
@@ -1052,6 +1078,8 @@ async function requestDeleteNote(input: PromptInput & { book: BookEntry; branch:
 }
 
 async function requestDeleteParagraph(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const target = resolveParagraphFromPrompt(input);
   if (!target) return makeAssistantMessage("assistant", "Open the paragraph you want to delete first.");
   const provenance = await actionProvenance(input, "delete-current-paragraph", [target.paragraph.path]);
@@ -1314,11 +1342,11 @@ async function resolveEvaluationTarget(input: PromptInput & { book: BookEntry; b
   | { kind: "chapter"; chapterSlug: string; title: string; targetPath: string; body: string; fileFrontmatter: Record<string, unknown> }
   | null
 > {
-  const lower = input.prompt.toLowerCase();
-  const explicitParagraph = /(?:paragrafo|paragraph|scena|scene)\s+\d+/.test(lower);
-  const explicitChapterOnly = /(?:capitolo|chapter)\s+\d+/.test(lower) && !explicitParagraph;
-
-  const paragraphTarget = resolveParagraphFromPrompt(input);
+  if (unresolvedTargetMessage(input)) return null;
+  const paragraphResolution = paragraphTargetResolution(input);
+  const explicitParagraph = paragraphResolution.explicit;
+  const explicitChapterOnly = chapterTargetResolution(input).explicit && !explicitParagraph;
+  const paragraphTarget = paragraphResolution.value;
   if (paragraphTarget && (explicitParagraph || (input.context.paragraph && !explicitChapterOnly))) {
     const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, paragraphTarget.paragraph.path, input.branch).catch(() => "");
     const parsed = parseMarkdown(raw);
@@ -1426,6 +1454,8 @@ async function evaluateAndWriteTarget(
 }
 
 async function writeAllParagraphEvaluations(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const chapter = resolveChapterFromPrompt(input);
   if (!chapter) return makeAssistantMessage("assistant", "Tell me which chapter to evaluate, for example: evaluate all paragraphs of chapter 1.");
   if (!chapter.paragraphs.length) return makeAssistantMessage("assistant", `Chapter \`${chapter.slug}\` has no paragraphs to evaluate.`);
@@ -1481,6 +1511,8 @@ async function writeAllParagraphEvaluations(input: PromptInput & { book: BookEnt
 }
 
 async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
   const target = await resolveEvaluationTarget(input);
   if (!target) return makeAssistantMessage("assistant", "Tell me which chapter or paragraph to evaluate, for example: evaluate chapter 1 or evaluate paragraph 2 of chapter 1.");
   const guidelines = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, language: input.context.structure?.language });
@@ -1500,9 +1532,11 @@ async function writePlotUpdate(input: PromptInput & { book: BookEntry; branch: s
 }
 
 async function rewriteCurrentParagraph(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
-  const { context } = input;
-  if (!context.paragraph || !context.chapter) return makeAssistantMessage("assistant", "Paragraph rewrite works when you are inside a paragraph page. Open a paragraph first, then ask me to revise it.");
-  const paragraphFile = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, context.paragraph.path).catch(() => null);
+  const unresolved = unresolvedTargetMessage(input);
+  if (unresolved) return unresolved;
+  const target = resolveParagraphFromPrompt(input);
+  if (!target) return makeAssistantMessage("assistant", "Paragraph rewrite works when you are inside a paragraph page or name an existing paragraph and chapter.");
+  const paragraphFile = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, target.paragraph.path).catch(() => null);
   const paragraphBody = paragraphFile ? parseMarkdown(paragraphFile.content).body : "";
   const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "You are Narrarium's prose editor. Rewrite only the paragraph body. Preserve facts, chronology, names, and visible canon. Return only the revised paragraph body, no markdown fences, no commentary. Use any loaded writing-style files if present.", "book"),
@@ -1515,15 +1549,15 @@ async function rewriteCurrentParagraph(input: PromptInput & { book: BookEntry; b
     owner: input.book.owner,
     repo: input.book.repo,
     branch: input.branch,
-    sourceRevision: sourceRevisionFromFiles({ [context.paragraph.path]: paragraphFile.sha }),
-    sourceRevisions: { [context.paragraph.path]: paragraphFile.sha },
+    sourceRevision: sourceRevisionFromFiles({ [target.paragraph.path]: paragraphFile.sha }),
+    sourceRevisions: { [target.paragraph.path]: paragraphFile.sha },
     generatedAt: new Date().toISOString(),
   };
   return {
     id: crypto.randomUUID(),
     role: "assistant",
     text: `I prepared a revised version of the current paragraph. Review it below and apply it if you want.\n\n${answer.trim()}`,
-    action: { ...provenance, kind: "apply-paragraph-rewrite", bookId: input.book.id, chapterSlug: context.chapter.slug, paragraphPath: context.paragraph.path, proposedBody: answer.trim() },
+    action: { ...provenance, kind: "apply-paragraph-rewrite", bookId: input.book.id, chapterSlug: target.chapter.slug, paragraphPath: target.paragraph.path, proposedBody: answer.trim() },
   };
 }
 
