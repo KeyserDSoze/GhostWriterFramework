@@ -31,6 +31,11 @@ test("maps persisted actions to the setting that must be rechecked", () => {
   assert.equal(assistantActionToolId({ kind: "confirm-delete", bookId: "book", target: "paragraph", path: "p.md", title: "Paragraph" }), "delete-current-paragraph");
   assert.equal(assistantActionToolId({ kind: "navigate", to: "/app/books/book/reader" }), "open-reader");
   assert.equal(assistantActionToolId({ kind: "navigate", to: "/app/books/book/research" }), "navigate-app");
+  assert.equal(assistantActionToolId({ kind: "navigate", to: "/app/books/book/audit?action=run" }), "run-audit");
+  assert.equal(assistantActionToolId({ kind: "navigate", to: "/app/books/book/audit?action=delete" }), "delete-audit");
+  assert.equal(assistantActionToolId({ kind: "navigate", to: "/app/books/book/audit" }), "open-audit");
+  assert.equal(assistantActionToolId({ kind: "navigate", to: "/app/books/book/audit?action=run", toolId: "update-audit" }), "update-audit");
+  assert.equal(assistantActionToolId({ kind: "confirm-delete", bookId: "book", target: "note", path: "notes.md", title: "Notes", toolId: "review-context" }), "delete-current-note");
 });
 
 test("an all-tools-disabled policy rejects contextual answers, quick actions, and persisted actions", () => {

@@ -26,9 +26,11 @@ import { ordinalNumber } from "@/assistant/targetRules";
 import { selectMentionedCanonFiles, type CanonContextCandidate } from "@/assistant/canonContext";
 import { copilotToolRegistry, isCopilotHandlerEnabled } from "@/assistant/tools/registry";
 import { classifyMutationIntent, type MutationIntent } from "@/assistant/mutationIntent";
+import { sourceRevisionFromFiles } from "@/assistant/actionValidation";
 import { resolveNavigateAction, resolveReadAloudAction } from "@/assistant/planner";
 import type {
   AssistantAction,
+  AssistantActionProvenance,
   AssistantAttachment,
   AssistantMessage,
   AssistantSession,
@@ -182,10 +184,10 @@ export async function runAssistantPrompt(input: {
     "restore-previous-drafts": () => feedbackRewriteNavigation({ ...promptInput, book }, "restore"),
     "feedback-rewrite-status": () => feedbackRewriteNavigation({ ...promptInput, book }, "status"),
     "cancel-feedback-rewrite": () => cancelFeedbackRewrite({ ...promptInput, book }),
-    "run-audit": () => auditNavigationFromPrompt({ ...promptInput, book }, "run"),
-    "open-audit": () => auditNavigationFromPrompt({ ...promptInput, book }, "open"),
-    "update-audit": () => auditNavigationFromPrompt({ ...promptInput, book }, "update"),
-    "delete-audit": () => auditNavigationFromPrompt({ ...promptInput, book }, "delete"),
+    "run-audit": () => auditNavigationFromPrompt({ ...promptInput, book, branch, token }, "run"),
+    "open-audit": () => auditNavigationFromPrompt({ ...promptInput, book, branch, token }, "open"),
+    "update-audit": () => auditNavigationFromPrompt({ ...promptInput, book, branch, token }, "update"),
+    "delete-audit": () => auditNavigationFromPrompt({ ...promptInput, book, branch, token }, "delete"),
     "set-audit-finding-status": () => setAuditFindingStatusFromPrompt({ ...promptInput, book, branch, token }),
     "list-branches": () => listBranchesMessage({ ...promptInput, book, token }),
     "show-branch-diff": () => showBranchDiffMessage({ ...promptInput, book, branch, token }),
@@ -203,9 +205,9 @@ export async function runAssistantPrompt(input: {
     "get-timeline-event": () => getCanonEntityInfo("timelines", { ...promptInput, book, branch, token }),
     "get-body": () => getBodyInfo({ ...promptInput, book, branch, token }),
     "get-frontmatter": () => getFrontmatterInfo({ ...promptInput, book, branch, token }),
-    "delete-current-note": () => requestDeleteNote({ ...promptInput, book }),
-    "delete-current-paragraph": () => requestDeleteParagraph({ ...promptInput, book }),
-    "delete-current-entity": () => requestDeleteEntity({ ...promptInput, book }),
+    "delete-current-note": () => requestDeleteNote({ ...promptInput, book, branch, token }),
+    "delete-current-paragraph": () => requestDeleteParagraph({ ...promptInput, book, branch, token }),
+    "delete-current-entity": () => requestDeleteEntity({ ...promptInput, book, branch, token }),
     "delete-reader-evaluation": () => requestDeleteReaderEvaluation({ ...promptInput, book, branch, token }),
   } as const;
 
@@ -244,10 +246,38 @@ export async function runAssistantPrompt(input: {
   }
   if (looksLikeMultiFileEdit(lowered)) {
     if (!isCopilotHandlerEnabled(settings, "multi-file-edit")) return disabledCopilotToolMessage(settings);
-    return proposeMultiFileUpdates({ ...promptInput, book, token });
+    return proposeMultiFileUpdates({ ...promptInput, book, branch, token });
   }
   if (!isCopilotHandlerEnabled(settings, "answer-from-context")) return disabledCopilotToolMessage(settings, "answer-from-context");
   return handlers["answer-from-context"]();
+}
+
+async function actionProvenance(
+  input: { book: BookEntry; branch: string; token: string },
+  toolId: string,
+  paths: string[] = [],
+  revisionBranch = input.branch,
+): Promise<AssistantActionProvenance> {
+  const sourceRevisions: Record<string, string | null> = {};
+  for (const path of [...new Set(paths)].sort()) {
+    const current = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path).catch(() => null);
+    sourceRevisions[path] = current?.sha ?? null;
+  }
+  let sourceRevision = sourceRevisionFromFiles(sourceRevisions);
+  if (!paths.length) {
+    const latestCommit = (await listBranchCommits(input.token, input.book.owner, input.book.repo, revisionBranch))[0]?.sha;
+    if (!latestCommit) throw new Error(`Could not resolve the source revision for branch ${revisionBranch}.`);
+    sourceRevision = latestCommit;
+  }
+  return {
+    toolId,
+    owner: input.book.owner,
+    repo: input.book.repo,
+    branch: input.branch,
+    sourceRevision,
+    sourceRevisions,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 function handlerMutationIntent(prompt: string, handlerId: string): MutationIntent | null {
@@ -311,6 +341,9 @@ export async function applyParagraphRewrite(input: {
 }): Promise<void> {
   const { action, book, branch, token } = input;
   const file = await readFileWithSha(token, book.owner, book.repo, branch, action.paragraphPath);
+  if (!action.sourceRevisions || action.sourceRevisions[action.paragraphPath] !== file.sha) {
+    throw new Error("The paragraph changed after this rewrite was generated. Review it and generate a new rewrite before applying.");
+  }
   const parsed = parseMarkdown(file.content);
   const nextRaw = renderMarkdown(parsed.frontmatter, action.proposedBody);
   await updateFile(
@@ -378,6 +411,7 @@ async function switchBookBranchFromPrompt(input: PromptInput & { book: BookEntry
   }
   const createIfMissing = /\b(create|new|crea|nuovo)\b/.test(input.prompt.toLowerCase());
   const baseBranch = input.context.structure?.defaultBranch ?? "main";
+  const provenance = await actionProvenance(input, "switch-branch", [], createIfMissing ? baseBranch : input.branch);
   return {
     id: crypto.randomUUID(),
     role: "assistant",
@@ -385,6 +419,7 @@ async function switchBookBranchFromPrompt(input: PromptInput & { book: BookEntry
       ? "I can create branch `" + branchName + "` from `" + baseBranch + "` and switch this book to it."
       : "I can switch this book to branch `" + branchName + "`." ,
     action: {
+      ...provenance,
       kind: "switch-book-branch",
       bookId: input.book.id,
       branchName,
@@ -740,7 +775,7 @@ function auditFiltersFromPrompt(prompt: string): URLSearchParams {
   return params;
 }
 
-async function auditNavigationFromPrompt(input: PromptInput & { book: BookEntry }, operation: "run" | "open" | "update" | "delete"): Promise<AssistantMessage> {
+async function auditNavigationFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }, operation: "run" | "open" | "update" | "delete"): Promise<AssistantMessage> {
   const structure = input.context.structure;
   if (!structure) return makeAssistantMessage("assistant", "Open a book first so I can resolve the audit target.");
   const target = auditTargetFromPrompt(input);
@@ -760,7 +795,9 @@ async function auditNavigationFromPrompt(input: PromptInput & { book: BookEntry 
   const query = params.toString();
   const href = `${auditTargetHref(structure, target)}${query ? `?${query}` : ""}`;
   const verb = operation === "delete" ? "Opening the audit deletion confirmation for" : operation === "open" ? "Opening the audit for" : operation === "update" ? "Opening and updating the audit for" : "Opening and running the audit for";
-  return { id: crypto.randomUUID(), role: "assistant", text: `${verb} **${resolved.title}**.`, action: { kind: "navigate", to: href, label: "Audit" } };
+  const toolId = operation === "run" ? "run-audit" : operation === "open" ? "open-audit" : operation === "update" ? "update-audit" : "delete-audit";
+  const provenance = await actionProvenance(input, toolId, operation === "delete" ? [resolved.reportPath] : []);
+  return { id: crypto.randomUUID(), role: "assistant", text: `${verb} **${resolved.title}**.`, action: { ...provenance, kind: "navigate", to: href, label: "Audit" } };
 }
 
 function auditFindingStatusFromPrompt(prompt: string): AuditFindingStatus | null {
@@ -1002,37 +1039,40 @@ function formatFrontmatterValue(value: unknown): string {
 
 // ─── Destructive tools (return a confirmation gate, never delete directly) ────
 
-async function requestDeleteNote(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+async function requestDeleteNote(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const path = input.context.noteTargetPath;
   if (!path) return makeAssistantMessage("assistant", "There is no note file associated with this page.");
+  const provenance = await actionProvenance(input, "delete-current-note", [path]);
   return {
     id: crypto.randomUUID(),
     role: "assistant",
     text: `This will delete the note file \`${path}\` (all notes it contains). Confirm to proceed.`,
-    action: { kind: "confirm-delete", bookId: input.book.id, target: "note", path, title: path },
+    action: { ...provenance, kind: "confirm-delete", bookId: input.book.id, target: "note", path, title: path },
   };
 }
 
-async function requestDeleteParagraph(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+async function requestDeleteParagraph(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const target = resolveParagraphFromPrompt(input);
   if (!target) return makeAssistantMessage("assistant", "Open the paragraph you want to delete first.");
+  const provenance = await actionProvenance(input, "delete-current-paragraph", [target.paragraph.path]);
   return {
     id: crypto.randomUUID(),
     role: "assistant",
     text: `This will delete paragraph ${target.paragraph.number} “${target.paragraph.title}” and renumber the following paragraphs. Confirm to proceed.`,
-    action: { kind: "confirm-delete", bookId: input.book.id, target: "paragraph", path: target.paragraph.path, title: target.paragraph.title, chapterSlug: target.chapter.slug },
+    action: { ...provenance, kind: "confirm-delete", bookId: input.book.id, target: "paragraph", path: target.paragraph.path, title: target.paragraph.title, chapterSlug: target.chapter.slug },
   };
 }
 
-async function requestDeleteEntity(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
+async function requestDeleteEntity(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const path = resolveCanonPathFromRoute(input);
   if (!path) return makeAssistantMessage("assistant", "Open the canon entity you want to delete first.");
   const title = slugToTitle(slugFromPath(path));
+  const provenance = await actionProvenance(input, "delete-current-entity", [path]);
   return {
     id: crypto.randomUUID(),
     role: "assistant",
     text: `This will delete the canon entity \`${path}\`. Confirm to proceed.`,
-    action: { kind: "confirm-delete", bookId: input.book.id, target: "entity", path, title },
+    action: { ...provenance, kind: "confirm-delete", bookId: input.book.id, target: "entity", path, title },
   };
 }
 
@@ -1047,7 +1087,8 @@ async function requestDeleteReaderEvaluation(input: PromptInput & { book: BookEn
   const path = readerEvaluationPath(target, reader);
   const existing = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path).catch(() => null);
   if (!existing) return makeAssistantMessage("assistant", `No current evaluation by ${reader.name} exists for this target.`);
-  return { id: crypto.randomUUID(), role: "assistant", text: `This will delete the evaluation by **${reader.name}** for **${target.title}**. Confirm to proceed.`, action: { kind: "confirm-delete", bookId: input.book.id, target: "reader-evaluation", path, title: `${reader.name} — ${target.title}` } };
+  const provenance = await actionProvenance(input, "delete-reader-evaluation", [path]);
+  return { id: crypto.randomUUID(), role: "assistant", text: `This will delete the evaluation by **${reader.name}** for **${target.title}**. Confirm to proceed.`, action: { ...provenance, kind: "confirm-delete", bookId: input.book.id, target: "reader-evaluation", path, title: `${reader.name} — ${target.title}` } };
 }
 
 async function createChapterFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -1461,22 +1502,32 @@ async function writePlotUpdate(input: PromptInput & { book: BookEntry; branch: s
 async function rewriteCurrentParagraph(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const { context } = input;
   if (!context.paragraph || !context.chapter) return makeAssistantMessage("assistant", "Paragraph rewrite works when you are inside a paragraph page. Open a paragraph first, then ask me to revise it.");
-  const paragraphFile = context.relevantFiles.find((entry) => entry.path === context.paragraph?.path);
+  const paragraphFile = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, context.paragraph.path).catch(() => null);
   const paragraphBody = paragraphFile ? parseMarkdown(paragraphFile.content).body : "";
   const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "You are Narrarium's prose editor. Rewrite only the paragraph body. Preserve facts, chronology, names, and visible canon. Return only the revised paragraph body, no markdown fences, no commentary. Use any loaded writing-style files if present.", "book"),
     buildUserMessage(input, `Current paragraph body:\n${paragraphBody}\n\nRewrite request: ${input.prompt}`),
   ], "default", { signal: input.signal, label: "copilot:rewrite-paragraph" });
   if (!answer) return noAiMessage();
+  if (!paragraphFile) return makeAssistantMessage("assistant", "The current paragraph could not be reloaded, so I did not create an apply action.");
+  const provenance: AssistantActionProvenance = {
+    toolId: "rewrite-current-paragraph",
+    owner: input.book.owner,
+    repo: input.book.repo,
+    branch: input.branch,
+    sourceRevision: sourceRevisionFromFiles({ [context.paragraph.path]: paragraphFile.sha }),
+    sourceRevisions: { [context.paragraph.path]: paragraphFile.sha },
+    generatedAt: new Date().toISOString(),
+  };
   return {
     id: crypto.randomUUID(),
     role: "assistant",
     text: `I prepared a revised version of the current paragraph. Review it below and apply it if you want.\n\n${answer.trim()}`,
-    action: { kind: "apply-paragraph-rewrite", bookId: input.book.id, chapterSlug: context.chapter.slug, paragraphPath: context.paragraph.path, proposedBody: answer.trim() },
+    action: { ...provenance, kind: "apply-paragraph-rewrite", bookId: input.book.id, chapterSlug: context.chapter.slug, paragraphPath: context.paragraph.path, proposedBody: answer.trim() },
   };
 }
 
-async function proposeMultiFileUpdates(input: PromptInput & { book: BookEntry; token: string }): Promise<AssistantMessage> {
+async function proposeMultiFileUpdates(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, 'You are Narrarium file editor. Propose multi-file changes only for files in the available manifest or obvious notes/workspace files. Return ONLY JSON: {"summary":"...","updates":[{"path":"relative/path.md","content":"FULL NEW FILE CONTENT","reason":"..."}]}. Do not wrap in markdown.'),
     buildUserMessage(input, `User multi-file request: ${input.prompt}`),
@@ -1488,7 +1539,8 @@ async function proposeMultiFileUpdates(input: PromptInput & { book: BookEntry; t
     : [];
   if (!updates.length) return makeAssistantMessage("assistant", `I could not extract a safe multi-file update plan from the model response. Raw response:\n\n${answer.trim()}`);
   const summary = typeof parsed?.summary === "string" ? parsed.summary : "Multi-file update proposal";
-  return { id: crypto.randomUUID(), role: "assistant", text: `${summary}\n\nProposed files:\n${updates.map((entry) => `- ${entry.path}${entry.reason ? `: ${entry.reason}` : ""}`).join("\n")}`, action: { kind: "apply-file-updates", bookId: input.book.id, updates } };
+  const provenance = await actionProvenance(input, "multi-file-edit", updates.map((entry) => entry.path));
+  return { id: crypto.randomUUID(), role: "assistant", text: `${summary}\n\nProposed files:\n${updates.map((entry) => `- ${entry.path}${entry.reason ? `: ${entry.reason}` : ""}`).join("\n")}`, action: { ...provenance, kind: "apply-file-updates", bookId: input.book.id, updates } };
 }
 
 async function createContextNote(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {

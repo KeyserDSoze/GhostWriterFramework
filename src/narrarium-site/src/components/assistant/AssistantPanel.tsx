@@ -47,7 +47,8 @@ import { AssistantSessionSaveQueue, assistantSessionSaveFingerprint, attachAssis
 import { assistantSessionCompactionTarget, mergeAssistantSessionCompaction } from "@/assistant/sessionCompaction";
 import { isAssistantRequestOwned } from "@/assistant/sessionOwnership";
 import { assistantActionToolId, policyTargetEnabled, quickActionToolId } from "@/assistant/toolPolicy";
-import { isCopilotToolIdEnabled } from "@/assistant/tools/registry";
+import { hasAssistantActionProvenance, sourceRevisionFromFiles, validateAssistantAction } from "@/assistant/actionValidation";
+import { copilotToolRegistry, isCopilotToolIdEnabled } from "@/assistant/tools/registry";
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
 import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
 import { parseAttachment } from "@/assistant/attachments";
@@ -77,6 +78,7 @@ import {
   createBranchFromBase,
   createFile,
   deleteFile,
+  listBranchCommits,
   loadFileContent,
   readFileWithSha,
   reorderParagraphsInChapter,
@@ -983,7 +985,7 @@ export function AssistantPanel() {
       }
       setOpen(true);
       if (reply.action?.kind === "navigate" && isAssistantActionEnabled(reply.action)) {
-        navigate(reply.action.to);
+        await executeNavigationAction(reply.action);
       } else if (reply.action?.kind === "read-aloud" && book && token && isAssistantActionEnabled(reply.action)) {
         const readBranch = routeContext.structure?.loadedBranch ?? branch;
         await speakReadAloud(reply.action, book, token, readBranch);
@@ -1287,14 +1289,94 @@ export function AssistantPanel() {
     }
   }
 
+  async function validatePersistedMutation(
+    action: NonNullable<AssistantMessage["action"]>,
+    book: (typeof settings.books)[number],
+    token: string,
+  ): Promise<boolean> {
+    const toolId = assistantActionToolId(action);
+    const toolEnabled = Boolean(toolId && isCopilotToolIdEnabled(useSettingsStore.getState().settings, toolId));
+    const fail = (reason: string) => {
+      const language = useSettingsStore.getState().settings.ui.language;
+      const staleMessage = useAssistantStore.getState().currentSession?.messages.find((message) => message.action === action);
+      if (staleMessage) {
+        useAssistantStore.getState().updateMessage(staleMessage.id, {
+          action: undefined,
+          text: `${staleMessage.text}\n\n${language === "it" ? "Questa azione non è più valida. Rivedi il contesto e genera una nuova proposta." : "This action is no longer valid. Review the context and generate a new proposal."}`,
+        });
+      }
+      toast({
+        title: language === "it" ? "Azione del Copilota non più valida" : "Copilot action is no longer valid",
+        description: language === "it"
+          ? `La provenienza dell'azione non corrisponde più allo stato corrente (${reason}). Rivedi il contesto e genera una nuova proposta.`
+          : `The action provenance no longer matches the current state (${reason}). Review the context and generate a new proposal.`,
+        variant: "destructive",
+      });
+      return false;
+    };
+    if (!hasAssistantActionProvenance(action)) return fail("missing-provenance");
+
+    const scopeFailure = validateAssistantAction({
+      action,
+      owner: book.owner,
+      repo: book.repo,
+      branch,
+      expectedToolId: toolId,
+      toolEnabled,
+      sourceRevision: action.sourceRevision,
+    });
+    if (scopeFailure) return fail(scopeFailure);
+
+    let currentRevision: string;
+    const paths = Object.keys(action.sourceRevisions);
+    if (paths.length) {
+      const revisions: Record<string, string | null> = {};
+      await Promise.all(paths.map(async (path) => {
+        const current = await readFileWithSha(token, book.owner, book.repo, branch, path).catch(() => null);
+        revisions[path] = current?.sha ?? null;
+      }));
+      currentRevision = sourceRevisionFromFiles(revisions);
+    } else {
+      const revisionBranch = action.kind === "switch-book-branch" && action.createIfMissing ? action.baseBranch ?? "main" : branch;
+      const latestCommit = (await listBranchCommits(token, book.owner, book.repo, revisionBranch).catch(() => []))[0]?.sha;
+      if (!latestCommit) return fail("source-unavailable");
+      currentRevision = latestCommit;
+    }
+    const revisionFailure = validateAssistantAction({
+      action,
+      owner: book.owner,
+      repo: book.repo,
+      branch,
+      expectedToolId: toolId,
+      toolEnabled,
+      sourceRevision: currentRevision,
+    });
+    return revisionFailure ? fail(revisionFailure) : true;
+  }
+
+  async function executeNavigationAction(action: NonNullable<AssistantMessage["action"]>) {
+    if (action.kind !== "navigate") return;
+    const toolId = assistantActionToolId(action);
+    const tool = toolId ? copilotToolRegistry.get(toolId) : undefined;
+    if (tool?.mutatesData) {
+      const book = hasAssistantActionProvenance(action)
+        ? settings.books.find((entry) => entry.owner.toLowerCase() === action.owner.toLowerCase() && entry.repo.toLowerCase() === action.repo.toLowerCase())
+        : undefined;
+      const token = book ? resolveBookToken(book, settings) : "";
+      if (!book || !token || !await validatePersistedMutation(action, book, token)) return;
+    }
+    navigate(action.to);
+  }
+
   async function applyRewrite(messageIndex: number) {
     const message = currentSession?.messages[messageIndex];
-    if (!message?.action || message.action.kind !== "apply-paragraph-rewrite" || !bookId) return;
+    if (!message?.action || message.action.kind !== "apply-paragraph-rewrite") return;
     const action = message.action;
     if (!requireAssistantActionEnabled(action)) return;
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
+    if (!await validatePersistedMutation(action, book, token)) return;
     setBusy(true);
     try {
       await applyParagraphRewrite({ action, book, branch, token });
@@ -1318,18 +1400,33 @@ export function AssistantPanel() {
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token || updates.length === 0) return;
+    if (!await validatePersistedMutation(action, book, token)) return;
     setBusy(true);
     try {
       const undoUpdates: AssistantFileUpdate[] = [];
+      const appliedRevisions: Record<string, string | null> = {};
       for (const update of updates) {
         const existing = await readFileWithSha(token, book.owner, book.repo, branch, update.path).catch(() => null);
+        if ((existing?.sha ?? null) !== action.sourceRevisions?.[update.path]) throw new Error(`Source changed before applying ${update.path}.`);
         undoUpdates.push({ ...update, previousContent: existing?.content ?? null });
-        if (existing) await updateFile(token, book.owner, book.repo, branch, update.path, existing.sha, update.content, `Update ${update.path}`);
-        else await createFile(token, book.owner, book.repo, branch, update.path, update.content, `Add ${update.path}`);
+        appliedRevisions[update.path] = existing
+          ? await updateFile(token, book.owner, book.repo, branch, update.path, existing.sha, update.content, `Update ${update.path}`)
+          : await createFile(token, book.owner, book.repo, branch, update.path, update.content, `Add ${update.path}`);
       }
       useAssistantStore.getState().updateMessage(message.id, {
         text: `${message.text}\n\n${t("assistant.appliedFileChanges", { count: updates.length })}`,
-        action: { kind: "undo-file-updates", bookId: action.bookId, updates: undoUpdates },
+        action: {
+          kind: "undo-file-updates",
+          bookId: action.bookId,
+          updates: undoUpdates,
+          toolId: action.toolId,
+          owner: action.owner,
+          repo: action.repo,
+          branch: action.branch,
+          sourceRevision: sourceRevisionFromFiles(appliedRevisions),
+          sourceRevisions: appliedRevisions,
+          generatedAt: new Date().toISOString(),
+        },
       });
       toast({ title: t("assistant.toastFileUpdatesApplied") });
     } catch (err) {
@@ -1347,6 +1444,7 @@ export function AssistantPanel() {
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
+    if (!await validatePersistedMutation(action, book, token)) return;
     setBusy(true);
     try {
       if (action.createIfMissing) {
@@ -1376,6 +1474,7 @@ export function AssistantPanel() {
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
+    if (!await validatePersistedMutation(action, book, token)) return;
     setBusy(true);
     try {
       if (action.target === "paragraph") {
@@ -1407,10 +1506,12 @@ export function AssistantPanel() {
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
+    if (!await validatePersistedMutation(action, book, token)) return;
     setBusy(true);
     try {
       for (const update of action.updates) {
         const current = await readFileWithSha(token, book.owner, book.repo, branch, update.path).catch(() => null);
+        if ((current?.sha ?? null) !== action.sourceRevisions?.[update.path]) throw new Error(`Source changed before undoing ${update.path}.`);
         if (update.previousContent == null) {
           if (current) await deleteFile(token, book.owner, book.repo, branch, update.path, current.sha, `Undo add ${update.path}`);
         } else if (current) {
@@ -1665,7 +1766,7 @@ export function AssistantPanel() {
             )}
             {message.action?.kind === "undo-file-updates" && <div className="mt-2 flex items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.undoChanges")}</Button></div>}
             {message.action?.kind === "apply-paragraph-rewrite" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.rewriteReady")}</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.applyToParagraph")}</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>{t("assistant.openChapter")}</Link></Button></div>}
-            {message.action?.kind === "navigate" && <div className="mt-2 flex items-center gap-2">{isAssistantActionEnabled(message.action) ? <Button asChild size="sm" variant="outline"><Link to={message.action.to}><BookOpen className="mr-1.5 h-3.5 w-3.5" />{message.action.label ?? t("assistant.openLocation")}</Link></Button> : <Button size="sm" variant="outline" disabled><BookOpen className="mr-1.5 h-3.5 w-3.5" />{message.action.label ?? t("assistant.openLocation")}</Button>}</div>}
+            {message.action?.kind === "navigate" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" disabled={!isAssistantActionEnabled(message.action)} onClick={() => void executeNavigationAction(message.action!)}><BookOpen className="mr-1.5 h-3.5 w-3.5" />{message.action.label ?? t("assistant.openLocation")}</Button></div>}
             {message.action?.kind === "read-aloud" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" onClick={() => void replayReadAloud(index)} disabled={!isAssistantActionEnabled(message.action)}><Play className="mr-1.5 h-3.5 w-3.5" />{t("assistant.playAloud")}</Button></div>}
             {message.action?.kind === "confirm-delete" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="destructive">{t("assistant.destructive")}</Badge><Button size="sm" variant="destructive" onClick={() => void confirmDeleteAction(index)} disabled={busy || !isAssistantActionEnabled(message.action)}><Trash2 className="mr-1.5 h-3.5 w-3.5" />{t("assistant.confirmDelete")}</Button><Button size="sm" variant="outline" onClick={() => useAssistantStore.getState().updateMessage(message.id, { action: undefined })} disabled={busy}>{t("assistant.cancel")}</Button></div>}
           </div>

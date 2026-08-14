@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.14",
+    "date": "2026-08-14",
+    "en": {
+      "title": "Repository-bound Copilot actions",
+      "summary": "Copilot apply, undo, delete, branch, and audit actions are now bound to the repository state that created them instead of following whichever book or branch is open later.",
+      "changes": [
+        "Stored canonical tool, repository owner/name, branch, source revisions, and generation time on new mutation actions saved with Copilot chats.",
+        "Revalidated action shape, repository, branch, current tool setting, 24-hour lifetime, and file or branch revision immediately before execution.",
+        "Rejected legacy, malformed, cross-repository, cross-branch, disabled, expired, and stale cloud-loaded actions with a safe review-and-regenerate message.",
+        "Protected paragraph rewrites and multi-file apply/undo from overwriting a file whose SHA changed after proposal generation or validation."
+      ]
+    },
+    "it": {
+      "title": "Azioni del Copilota legate al repository",
+      "summary": "Le azioni applica, annulla, elimina, branch e audit del Copilota sono ora legate allo stato del repository che le ha create, invece di seguire il libro o branch aperto in seguito.",
+      "changes": [
+        "Salvati tool canonico, owner/nome repository, branch, revisioni sorgente e momento di generazione nelle nuove azioni mutanti conservate con le chat del Copilota.",
+        "Rivalidati forma dell'azione, repository, branch, impostazione corrente del tool, durata di 24 ore e revisione di file o branch immediatamente prima dell'esecuzione.",
+        "Rifiutate azioni legacy, malformate, di altri repository o branch, disabilitate, scadute e obsolete caricate dal cloud, mostrando un percorso sicuro di revisione e rigenerazione.",
+        "Protetti rewrite dei paragrafi e apply/undo multi-file dalla sovrascrittura di file la cui SHA è cambiata dopo la proposta o la validazione."
+      ]
+    }
+  },
+  {
     "version": "0.76.13",
     "date": "2026-08-14",
     "en": {

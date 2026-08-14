@@ -17,7 +17,17 @@ export interface AssistantFileUpdate {
   previousContent?: string | null;
 }
 
-export type AssistantAction =
+export interface AssistantActionProvenance {
+  toolId: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  sourceRevision: string;
+  sourceRevisions: Record<string, string | null>;
+  generatedAt: string;
+}
+
+export type AssistantAction = (
   | {
       kind: "apply-paragraph-rewrite";
       bookId: string;
@@ -61,7 +71,8 @@ export type AssistantAction =
       path: string;
       title: string;
       chapterSlug?: string;
-    };
+    }
+) & Partial<AssistantActionProvenance>;
 
 export interface AssistantMessage {
   id: string;
