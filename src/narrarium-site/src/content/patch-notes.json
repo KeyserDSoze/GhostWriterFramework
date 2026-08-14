@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.8",
+    "date": "2026-08-14",
+    "en": {
+      "title": "Reliable Copilot chat autosave",
+      "summary": "Copilot chat saves are now serialized per session so cloud metadata updates cannot trigger save loops or replace newer messages with an older snapshot.",
+      "changes": [
+        "Stopped chat-history index updates from scheduling the same cloud save repeatedly.",
+        "Preserved the latest in-memory messages when a newly created Drive file ID is returned.",
+        "Serialized queued saves for each chat and reused the first cloud file ID for later revisions.",
+        "Added regression tests for save ordering, file-ID reuse, metadata deduplication, stale snapshots, and temporary failures."
+      ]
+    },
+    "it": {
+      "title": "Autosalvataggio affidabile delle chat del Copilota",
+      "summary": "I salvataggi delle chat del Copilota sono ora serializzati per sessione, così gli aggiornamenti dei metadati cloud non possono generare loop o sostituire messaggi recenti con uno snapshot precedente.",
+      "changes": [
+        "Impedito agli aggiornamenti dell'indice della cronologia di programmare ripetutamente lo stesso salvataggio cloud.",
+        "Conservati i messaggi più recenti in memoria quando Drive restituisce l'ID di un file appena creato.",
+        "Serializzati i salvataggi in coda per ogni chat e riutilizzato il primo ID cloud per le revisioni successive.",
+        "Aggiunti test di regressione per ordine dei salvataggi, riuso dell'ID, deduplicazione dei metadati, snapshot obsoleti ed errori temporanei."
+      ]
+    }
+  },
+  {
     "version": "0.76.7",
     "date": "2026-08-13",
     "en": {

@@ -43,6 +43,7 @@ import { assistantMarkdownToRichPlainText, buildAssistantSessionMarkdown, buildA
 import { loadWriterContext, parseAppRoute } from "@/assistant/context";
 import { resolveNavigateAction, resolveReadAloudAction, type ReadAloudAction } from "@/assistant/planner";
 import { deleteAssistantSession, listAssistantSessions, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
+import { AssistantSessionSaveQueue, assistantSessionSaveFingerprint, attachAssistantSessionFileId, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
 import { parseAttachment } from "@/assistant/attachments";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -141,6 +142,8 @@ export function AssistantPanel() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const manualEndRef = useRef(false);
   const pendingRewriteRef = useRef<{ from: number; to: number; segments: string[] } | null>(null);
+  const sessionSaveQueueRef = useRef(new AssistantSessionSaveQueue());
+  const queuedSessionFingerprintsRef = useRef(new Map<string, string>());
   const {
     open,
     setOpen,
@@ -230,26 +233,26 @@ export function AssistantPanel() {
 
   useEffect(() => {
     if (!user || !accessToken || !currentSession) return;
+    const fingerprint = assistantSessionSaveFingerprint(currentSession);
+    if (queuedSessionFingerprintsRef.current.get(currentSession.id) === fingerprint) return;
     const timer = setTimeout(() => {
-      void saveAssistantSession(user.provider, accessToken, currentSession)
-        .then((fileId) => {
-          const savedSession = currentSession.fileId === fileId ? currentSession : { ...currentSession, fileId };
-          if (currentSession.fileId !== fileId) setCurrentSession(savedSession);
-          setSessions([
-            {
-              id: savedSession.id,
-              fileId,
-              title: savedSession.title,
-              contextTitle: savedSession.contextTitle,
-              updatedAt: savedSession.updatedAt,
-            },
-            ...sessions.filter((session) => session.fileId !== fileId && session.id !== savedSession.id),
-          ]);
-        })
-        .catch((err) => toast({ title: t("assistant.toastSaveChatFailed"), description: String(err), variant: "destructive" }));
+      queuedSessionFingerprintsRef.current.set(currentSession.id, fingerprint);
+      void sessionSaveQueueRef.current.enqueue(
+        currentSession,
+        (session) => saveAssistantSession(user.provider, accessToken, session),
+        (savedSnapshot, fileId) => {
+          const state = useAssistantStore.getState();
+          const latest = state.currentSession?.id === savedSnapshot.id ? state.currentSession : null;
+          const sessionWithFileId = attachAssistantSessionFileId(state.currentSession, savedSnapshot.id, fileId);
+          if (sessionWithFileId !== state.currentSession) state.setCurrentSession(sessionWithFileId);
+          const metadataSource = latest ?? savedSnapshot;
+          state.setSessions(upsertAssistantSessionMeta(state.sessions, metadataSource, fileId));
+        },
+        (err) => toast({ title: t("assistant.toastSaveChatFailed"), description: String(err), variant: "destructive" }),
+      );
     }, 300);
     return () => clearTimeout(timer);
-  }, [currentSession, user, accessToken, setCurrentSession, setSessions, sessions, toast]);
+  }, [currentSession, user, accessToken, toast]);
 
   useEffect(() => {
     if (!currentSession || busy || currentSession.messages.length <= 12) return;
