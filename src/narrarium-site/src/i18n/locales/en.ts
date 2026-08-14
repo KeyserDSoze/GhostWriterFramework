@@ -449,6 +449,7 @@ const en = {
     contextFollows: "Context follows the current route and repository files.",
     none: "none",
     compactionSummary: "Compaction summary",
+    toastCompactionFailed: "Failed to compact the chat",
     branchActionReady: "Branch action ready",
     applyBranch: "Apply branch",
     proposedChanges: "Proposed multi-file changes",

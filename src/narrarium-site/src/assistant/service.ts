@@ -219,8 +219,9 @@ export async function runAssistantPrompt(input: {
 export async function compactAssistantSession(input: {
   session: AssistantSession;
   settings: AppSettings;
+  signal?: AbortSignal;
 }): Promise<AssistantSession> {
-  const { session, settings } = input;
+  const { session, settings, signal } = input;
   if (session.messages.length <= 12) return session;
   const targetCount = session.messages.length - 6;
   if (targetCount <= session.compactedMessageCount) return session;
@@ -237,7 +238,7 @@ export async function compactAssistantSession(input: {
         "Summarize the conversation so far for future continuation. Keep goals, decisions, open questions, created notes, requested edits, and canon-sensitive facts. Return concise bullet points. Do not imply that full file contents are preserved; file contents must be reloaded when needed.",
     },
     { role: "user", content },
-  ], "chat-resume", { label: "copilot:compact" });
+  ], "chat-resume", { label: "copilot:compact", signal });
   if (!summary) return session;
 
   return { ...session, compactSummary: summary.trim(), compactedMessageCount: targetCount };

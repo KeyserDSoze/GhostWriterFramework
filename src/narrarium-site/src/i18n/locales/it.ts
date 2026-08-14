@@ -449,6 +449,7 @@ const it = {
     contextFollows: "Il contesto segue la rotta corrente e i file del repository.",
     none: "nessuno",
     compactionSummary: "Riassunto compattazione",
+    toastCompactionFailed: "Compattazione della chat non riuscita",
     branchActionReady: "Azione branch pronta",
     applyBranch: "Applica branch",
     proposedChanges: "Modifiche multi-file proposte",

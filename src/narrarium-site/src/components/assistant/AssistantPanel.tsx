@@ -44,6 +44,7 @@ import { loadWriterContext, parseAppRoute } from "@/assistant/context";
 import { resolveNavigateAction, resolveReadAloudAction, type ReadAloudAction } from "@/assistant/planner";
 import { deleteAssistantSession, listAssistantSessions, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
 import { AssistantSessionSaveQueue, assistantSessionSaveFingerprint, attachAssistantSessionFileId, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
+import { assistantSessionCompactionTarget, mergeAssistantSessionCompaction } from "@/assistant/sessionCompaction";
 import { parseAttachment } from "@/assistant/attachments";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -144,6 +145,7 @@ export function AssistantPanel() {
   const pendingRewriteRef = useRef<{ from: number; to: number; segments: string[] } | null>(null);
   const sessionSaveQueueRef = useRef(new AssistantSessionSaveQueue());
   const queuedSessionFingerprintsRef = useRef(new Map<string, string>());
+  const compactionRunRef = useRef(0);
   const {
     open,
     setOpen,
@@ -255,15 +257,24 @@ export function AssistantPanel() {
   }, [currentSession, user, accessToken, toast]);
 
   useEffect(() => {
-    if (!currentSession || busy || currentSession.messages.length <= 12) return;
-    let active = true;
-    setBusy(true);
-    void compactAssistantSession({ session: currentSession, settings })
-      .then((compacted) => { if (active) setCurrentSession(compacted); })
-      .catch(() => undefined)
-      .finally(() => { if (active) setBusy(false); });
-    return () => { active = false; };
-  }, [currentSession, settings, setCurrentSession, busy, setBusy]);
+    if (!currentSession || busy || assistantSessionCompactionTarget(currentSession) === null) return;
+    const sourceSession = currentSession;
+    const controller = new AbortController();
+    const runId = ++compactionRunRef.current;
+    void compactAssistantSession({ session: sourceSession, settings, signal: controller.signal })
+      .then((compacted) => {
+        if (controller.signal.aborted || compactionRunRef.current !== runId) return;
+        const state = useAssistantStore.getState();
+        const merged = mergeAssistantSessionCompaction(state.currentSession, sourceSession.id, compacted);
+        if (merged !== state.currentSession) state.setCurrentSession(merged);
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted && compactionRunRef.current === runId) {
+          toast({ title: t("assistant.toastCompactionFailed"), description: String(err), variant: "destructive" });
+        }
+      });
+    return () => controller.abort();
+  }, [currentSession?.id, currentSession?.messages.length, currentSession?.compactedMessageCount, settings, busy, toast]);
 
   useEffect(() => {
     return () => {

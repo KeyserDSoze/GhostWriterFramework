@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.9",
+    "date": "2026-08-14",
+    "en": {
+      "title": "Non-blocking Copilot chat compaction",
+      "summary": "Long Copilot conversations can now be compacted in the background without leaving the assistant permanently busy or replacing newer session data.",
+      "changes": [
+        "Moved chat compaction off the global busy lock used by interactive requests and actions.",
+        "Cancelled background compaction when a user request starts or the active session changes.",
+        "Merged only the summary and compaction counter into the latest matching session, preserving newer messages, attachments, metadata, and cloud identity.",
+        "Added regression tests for compaction thresholds, stale results, cross-session results, and preservation of newer session data."
+      ]
+    },
+    "it": {
+      "title": "Compattazione non bloccante delle chat del Copilota",
+      "summary": "Le conversazioni lunghe del Copilota possono ora essere compattate in background senza lasciare l'assistente permanentemente occupato o sostituire dati più recenti della sessione.",
+      "changes": [
+        "Spostata la compattazione fuori dal lock globale usato dalle richieste e dalle azioni interattive.",
+        "Annullata la compattazione in background quando parte una richiesta utente o cambia la sessione attiva.",
+        "Uniti soltanto riassunto e contatore nella sessione più recente corrispondente, conservando messaggi, allegati, metadati e identità cloud più nuovi.",
+        "Aggiunti test di regressione per soglie, risultati obsoleti, risultati di altre sessioni e conservazione dei dati più recenti."
+      ]
+    }
+  },
+  {
     "version": "0.76.8",
     "date": "2026-08-14",
     "en": {
