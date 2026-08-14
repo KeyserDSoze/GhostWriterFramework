@@ -45,6 +45,7 @@ import { resolveNavigateAction, resolveReadAloudAction, type ReadAloudAction } f
 import { deleteAssistantSession, listAssistantSessions, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
 import { AssistantSessionSaveQueue, assistantSessionSaveFingerprint, attachAssistantSessionFileId, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
 import { assistantSessionCompactionTarget, mergeAssistantSessionCompaction } from "@/assistant/sessionCompaction";
+import { isAssistantRequestOwned } from "@/assistant/sessionOwnership";
 import { parseAttachment } from "@/assistant/attachments";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -146,6 +147,11 @@ export function AssistantPanel() {
   const sessionSaveQueueRef = useRef(new AssistantSessionSaveQueue());
   const queuedSessionFingerprintsRef = useRef(new Map<string, string>());
   const compactionRunRef = useRef(0);
+  const activePromptRef = useRef<{ requestId: string; sessionId: string; controller: AbortController } | null>(null);
+  const attachmentRunRef = useRef(0);
+  const activeAttachmentRunRef = useRef<number | null>(null);
+  const openSessionRunRef = useRef(0);
+  const activeOpenSessionRunRef = useRef<number | null>(null);
   const {
     open,
     setOpen,
@@ -204,6 +210,10 @@ export function AssistantPanel() {
   useEffect(() => {
     manualEndRef.current = manualEnd;
   }, [manualEnd]);
+
+  useEffect(() => {
+    return () => cancelSessionOperations();
+  }, [user?.provider, user?.email, accessToken]);
 
   const lastMessageText = currentSession?.messages[currentSession.messages.length - 1]?.text;
   useEffect(() => {
@@ -319,13 +329,35 @@ export function AssistantPanel() {
   }
 
   function ensureSession() {
-    if (currentSession) return currentSession;
+    const existing = useAssistantStore.getState().currentSession;
+    if (existing) return existing;
     const next = createEmptyAssistantSession(contextLabel);
     setCurrentSession(next);
     return next;
   }
 
+  function cancelSessionOperations() {
+    let releasedBusy = false;
+    if (activePromptRef.current) {
+      activePromptRef.current.controller.abort();
+      activePromptRef.current = null;
+      releasedBusy = true;
+    }
+    if (activeAttachmentRunRef.current !== null) {
+      attachmentRunRef.current += 1;
+      activeAttachmentRunRef.current = null;
+      releasedBusy = true;
+    }
+    if (activeOpenSessionRunRef.current !== null) {
+      openSessionRunRef.current += 1;
+      activeOpenSessionRunRef.current = null;
+      releasedBusy = true;
+    }
+    if (releasedBusy) setBusy(false);
+  }
+
   function newChat() {
+    cancelSessionOperations();
     setCurrentSession(createEmptyAssistantSession(contextLabel));
     setActiveTab("chat");
     setOpen(true);
@@ -344,20 +376,28 @@ export function AssistantPanel() {
   async function attachFiles(files: FileList | null) {
     if (!files?.length) return;
     const session = ensureSession();
+    const runId = ++attachmentRunRef.current;
+    activeAttachmentRunRef.current = runId;
     setBusy(true);
     try {
       const parsed: AssistantAttachment[] = [];
       for (const file of Array.from(files)) parsed.push(await parseAttachment(file));
-      updateCurrentSession((current) => ({
+      if (activeAttachmentRunRef.current !== runId) return;
+      useAssistantStore.getState().updateSession(session.id, (current) => ({
         ...current,
         updatedAt: new Date().toISOString(),
         attachments: [...current.attachments, ...parsed],
       }));
       if (!session.messages.length) setOpen(true);
     } catch (err) {
-      toast({ title: t("assistant.toastAttachFailed"), description: String(err), variant: "destructive" });
+      if (activeAttachmentRunRef.current === runId) {
+        toast({ title: t("assistant.toastAttachFailed"), description: String(err), variant: "destructive" });
+      }
     } finally {
-      setBusy(false);
+      if (activeAttachmentRunRef.current === runId) {
+        activeAttachmentRunRef.current = null;
+        setBusy(false);
+      }
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
@@ -665,6 +705,7 @@ export function AssistantPanel() {
 
   async function deleteCurrentSavedChat() {
     if (!user || !accessToken || !currentSession) return;
+    cancelSessionOperations();
     const fileId = currentSession.fileId;
     if (fileId) await deleteAssistantSession(user.provider, accessToken, fileId);
     setSessions(sessions.filter((session) => (session.fileId ?? session.id) !== (fileId ?? currentSession.id)));
@@ -841,40 +882,60 @@ export function AssistantPanel() {
 
   async function sendPrompt(prompt: string, options?: { spokenMode?: boolean; signal?: AbortSignal }): Promise<AssistantMessage | null> {
     const trimmed = prompt.trim();
-    if (!trimmed || busy) return null;
-    localAudioHandledRef.current = false;
-    const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches);
-    const book = routeContext.book;
-    const token = book ? resolveBookToken(book, settings) : "";
+    if (!trimmed || useAssistantStore.getState().busy) return null;
     const session = ensureSession();
-    const userMessage = { id: crypto.randomUUID(), role: "user" as const, text: trimmed };
+    const requestId = crypto.randomUUID();
+    const controller = new AbortController();
+    const abortFromCaller = () => controller.abort();
+    if (options?.signal?.aborted) controller.abort();
+    else options?.signal?.addEventListener("abort", abortFromCaller, { once: true });
+    if (controller.signal.aborted) return null;
+    activePromptRef.current = { requestId, sessionId: session.id, controller };
+    const ownsRequest = () => isAssistantRequestOwned(
+      activePromptRef.current,
+      requestId,
+      session.id,
+      useAssistantStore.getState().currentSession?.id,
+      controller.signal.aborted,
+    );
+    setBusy(true);
+    localAudioHandledRef.current = false;
     let streamedMessageId: string | null = null;
     const updateStreamedReply = (text: string) => {
+      if (!ownsRequest()) return;
       if (!text && !streamedMessageId) return;
       if (!streamedMessageId) {
         streamedMessageId = crypto.randomUUID();
         const streamedMessage: AssistantMessage = { id: streamedMessageId, role: "assistant", text };
-        updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, streamedMessage] }));
+        useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, streamedMessage] }));
       } else {
-        useAssistantStore.getState().updateMessage(streamedMessageId, { text });
+        useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text });
       }
     };
-    updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage] }));
-    setDraft("");
-    setBusy(true);
     try {
+      const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches);
+      if (!ownsRequest()) return null;
+      const book = routeContext.book;
+      const token = book ? resolveBookToken(book, settings) : "";
+      const userMessage = { id: crypto.randomUUID(), role: "user" as const, text: trimmed };
+      useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage] }));
+      setDraft("");
       const strofaReply = await tryHandleStrofaCommand(trimmed);
+      if (!ownsRequest()) return null;
       if (strofaReply) {
-        updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, strofaReply] }));
+        useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, strofaReply] }));
         setOpen(true);
         return strofaReply;
       }
       const localReply = await tryHandleLocalVoiceTool(trimmed, { context: routeContext, book, token, spokenMode: options?.spokenMode });
+      if (!ownsRequest()) return null;
       if (localReply) {
-        updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, localReply] }));
+        useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, localReply] }));
         setOpen(true);
         return localReply;
       }
+      const latestSession = useAssistantStore.getState().currentSession;
+      if (!latestSession || latestSession.id !== session.id) return null;
       const reply = await runAssistantPrompt({
         prompt: trimmed,
         context: routeContext,
@@ -882,19 +943,20 @@ export function AssistantPanel() {
         book,
         branch,
         token,
-        history: [...session.messages, userMessage],
-        compactSummary: session.compactSummary,
-        compactedMessageCount: session.compactedMessageCount,
-        attachments: session.attachments,
+        history: latestSession.messages,
+        compactSummary: latestSession.compactSummary,
+        compactedMessageCount: latestSession.compactedMessageCount,
+        attachments: latestSession.attachments,
         spokenMode: options?.spokenMode,
-        signal: options?.signal,
+        signal: controller.signal,
         onText: updateStreamedReply,
       });
+      if (!ownsRequest()) return null;
       const finalReply = streamedMessageId ? { ...reply, id: streamedMessageId } : reply;
       if (streamedMessageId) {
-        useAssistantStore.getState().updateMessage(streamedMessageId, { text: reply.text, action: reply.action });
+        useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: reply.text, action: reply.action });
       } else {
-        updateCurrentSession((current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, reply] }));
+        useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, reply] }));
       }
       setOpen(true);
       if (reply.action?.kind === "navigate") {
@@ -905,13 +967,17 @@ export function AssistantPanel() {
       }
       return finalReply;
     } catch (err) {
-      if (options?.signal?.aborted) return null;
+      if (!ownsRequest()) return null;
       const errorMessage = { id: streamedMessageId ?? crypto.randomUUID(), role: "assistant" as const, text: err instanceof Error ? err.message : t("assistant.requestFailed") };
-      if (streamedMessageId) useAssistantStore.getState().updateMessage(streamedMessageId, { text: errorMessage.text });
-      else updateCurrentSession((current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, errorMessage] }));
+      if (streamedMessageId) useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: errorMessage.text });
+      else useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, errorMessage] }));
       return errorMessage;
     } finally {
-      setBusy(false);
+      options?.signal?.removeEventListener("abort", abortFromCaller);
+      if (activePromptRef.current?.requestId === requestId) {
+        activePromptRef.current = null;
+        setBusy(false);
+      }
     }
   }
 
@@ -1159,15 +1225,24 @@ export function AssistantPanel() {
 
   async function openSession(fileId: string) {
     if (!user || !accessToken) return;
+    cancelSessionOperations();
+    const runId = ++openSessionRunRef.current;
+    activeOpenSessionRunRef.current = runId;
     setBusy(true);
     try {
       const session = await loadAssistantSession(user.provider, accessToken, fileId);
+      if (activeOpenSessionRunRef.current !== runId) return;
       setCurrentSession(session);
       setOpen(true);
     } catch (err) {
-      toast({ title: t("assistant.toastOpenChatFailed"), description: String(err), variant: "destructive" });
+      if (activeOpenSessionRunRef.current === runId) {
+        toast({ title: t("assistant.toastOpenChatFailed"), description: String(err), variant: "destructive" });
+      }
     } finally {
-      setBusy(false);
+      if (activeOpenSessionRunRef.current === runId) {
+        activeOpenSessionRunRef.current = null;
+        setBusy(false);
+      }
     }
   }
 
@@ -1178,7 +1253,10 @@ export function AssistantPanel() {
     try {
       await deleteAssistantSession(user.provider, accessToken, fileId);
       setSessions(sessions.filter((session) => session.fileId !== fileId));
-      if (currentSession?.fileId === fileId) setCurrentSession(null);
+      if (useAssistantStore.getState().currentSession?.fileId === fileId) {
+        cancelSessionOperations();
+        setCurrentSession(null);
+      }
       toast({ title: t("assistant.toastChatDeleted") });
     } catch (err) {
       toast({ title: t("assistant.toastDeleteChatFailed"), description: String(err), variant: "destructive" });

@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.10",
+    "date": "2026-08-14",
+    "en": {
+      "title": "Session-safe Copilot operations",
+      "summary": "Copilot prompts, streaming replies, attachments, and chat loading are now bound to the session and operation that started them, preventing late results from entering another chat.",
+      "changes": [
+        "Assigned explicit request and session ownership to every Copilot prompt before asynchronous context loading begins.",
+        "Scoped streamed messages and final replies to the originating chat and ignored stale or aborted operations.",
+        "Invalidated pending prompt, attachment, and chat-loading work when starting or opening another chat, deleting the active chat, changing account credentials, or unmounting the panel.",
+        "Added latest-selection guards for chat history loading and regression tests for session-scoped state and request ownership."
+      ]
+    },
+    "it": {
+      "title": "Operazioni del Copilota sicure per sessione",
+      "summary": "Richieste, risposte in streaming, allegati e caricamenti delle chat sono ora legati alla sessione e all'operazione che li ha avviati, impedendo ai risultati tardivi di entrare in un'altra chat.",
+      "changes": [
+        "Assegnata ownership esplicita di richiesta e sessione a ogni prompt prima del caricamento asincrono del contesto.",
+        "Limitati messaggi in streaming e risposte finali alla chat di origine, ignorando operazioni obsolete o annullate.",
+        "Invalidate le operazioni pendenti di prompt, allegati e caricamento chat quando si crea o apre un'altra chat, si elimina quella attiva, cambiano le credenziali dell'account o viene smontato il pannello.",
+        "Aggiunte protezioni latest-selection per la cronologia e test di regressione su aggiornamenti di sessione e ownership delle richieste."
+      ]
+    }
+  },
+  {
     "version": "0.76.9",
     "date": "2026-08-14",
     "en": {

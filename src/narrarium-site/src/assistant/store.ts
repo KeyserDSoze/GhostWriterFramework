@@ -95,7 +95,9 @@ interface AssistantState {
   setSessions: (sessions: AssistantSessionMeta[]) => void;
   setCurrentSession: (session: AssistantSession | null) => void;
   updateCurrentSession: (updater: (session: AssistantSession) => AssistantSession) => void;
+  updateSession: (sessionId: string, updater: (session: AssistantSession) => AssistantSession) => void;
   updateMessage: (messageId: string, patch: Partial<AssistantMessage>) => void;
+  updateSessionMessage: (sessionId: string, messageId: string, patch: Partial<AssistantMessage>) => void;
   clearMessages: () => void;
 }
 
@@ -112,9 +114,24 @@ export const useAssistantStore = create<AssistantState>((set) => ({
     set((state) => ({
       currentSession: state.currentSession ? updater(state.currentSession) : state.currentSession,
     })),
+  updateSession: (sessionId, updater) =>
+    set((state) => ({
+      currentSession: state.currentSession?.id === sessionId ? updater(state.currentSession) : state.currentSession,
+    })),
   updateMessage: (messageId, patch) =>
     set((state) => ({
       currentSession: state.currentSession
+        ? {
+            ...state.currentSession,
+            messages: state.currentSession.messages.map((message) =>
+              message.id === messageId ? { ...message, ...patch } : message,
+            ),
+          }
+        : state.currentSession,
+    })),
+  updateSessionMessage: (sessionId, messageId, patch) =>
+    set((state) => ({
+      currentSession: state.currentSession?.id === sessionId
         ? {
             ...state.currentSession,
             messages: state.currentSession.messages.map((message) =>
