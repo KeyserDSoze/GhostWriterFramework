@@ -15,15 +15,25 @@ export interface OrchestratorToolContext {
 export type OrchestratorHandler = () => Promise<AssistantMessage>;
 export type OrchestratorHandlerMap = Record<string, OrchestratorHandler>;
 
+export interface OrchestratorToolMatch {
+  toolId: string;
+  handlerId: string;
+  enabled: boolean;
+}
+
 
 export function isCapabilityQuestion(prompt: string): boolean {
   return /\b(cosa puoi fare|che strumenti hai|come mi puoi aiutare|quali funzionalita supporti|quali funzionalità supporti|what can you do|what tools do you have|how can you help)\b/i.test(prompt);
 }
 
-export function buildCapabilitiesMessage(prompt: string, settings: AppSettings): AssistantMessage {
+export function buildCapabilitiesMessage(prompt: string, settings: AppSettings, availableHandlerIds?: ReadonlySet<string>): AssistantMessage {
   ensureBuiltinCopilotToolsRegistered();
   const language = capabilityMessageLanguage(prompt, settings);
-  const tools = copilotToolRegistry.list().filter((tool) => isCopilotToolEnabled(settings, tool));
+  const tools = copilotToolRegistry.list().filter((tool) => (
+    isCopilotToolEnabled(settings, tool)
+    && Boolean(tool.handlerId)
+    && (!availableHandlerIds || availableHandlerIds.has(tool.handlerId!))
+  ));
   const grouped = new Map<string, string[]>();
   for (const tool of tools) {
     const area = localizeCopilotToolArea(tool.area, language);
@@ -40,12 +50,16 @@ export function buildCapabilitiesMessage(prompt: string, settings: AppSettings):
 }
 
 export function chooseToolHandlerId(context: OrchestratorToolContext, availableHandlerIds: Set<string>): string | null {
+  const match = chooseToolMatch(context, availableHandlerIds);
+  return match?.enabled ? match.handlerId : null;
+}
+
+export function chooseToolMatch(context: OrchestratorToolContext, availableHandlerIds: Set<string>): OrchestratorToolMatch | null {
   ensureBuiltinCopilotToolsRegistered();
   const prompt = context.lowered;
-  let best: { id: string; score: number } | null = null;
+  let best: { tool: ReturnType<typeof copilotToolRegistry.list>[number]; score: number } | null = null;
   for (const tool of copilotToolRegistry.list()) {
     if (!tool.handlerId || !availableHandlerIds.has(tool.handlerId)) continue;
-    if (!isCopilotToolEnabled(context.settings, tool)) continue;
     // Destination words such as "chapter" or "research" are also common in
     // editorial questions. Navigation must be explicit, otherwise a question
     // is intercepted before it reaches the configured AI router.
@@ -56,20 +70,29 @@ export function chooseToolHandlerId(context: OrchestratorToolContext, availableH
     }
     if (score <= 0) continue;
     // Prefer local/non-LLM tools on ties to reduce token usage.
-    if (!best || score > best.score || (score === best.score && isBetterTie(tool.handlerId, best.id, context.settings))) {
-      best = { id: tool.handlerId, score };
+    if (!best || score > best.score || (score === best.score && isBetterTie(tool, best.tool, context.settings))) {
+      best = { tool, score };
     }
   }
-  return best?.id ?? null;
+  if (!best?.tool.handlerId) return null;
+  return {
+    toolId: best.tool.id,
+    handlerId: best.tool.handlerId,
+    enabled: isCopilotToolEnabled(context.settings, best.tool),
+  };
 }
 
-function isBetterTie(nextId: string, prevId: string, settings: AppSettings): boolean {
-  const next = copilotToolRegistry.list().find((tool) => tool.handlerId === nextId);
-  const prev = copilotToolRegistry.list().find((tool) => tool.handlerId === prevId);
-  if (!next || !prev) return false;
+function isBetterTie(
+  next: ReturnType<typeof copilotToolRegistry.list>[number],
+  prev: ReturnType<typeof copilotToolRegistry.list>[number],
+  settings: AppSettings,
+): boolean {
+  const nextEnabled = isCopilotToolEnabled(settings, next);
+  const prevEnabled = isCopilotToolEnabled(settings, prev);
+  if (nextEnabled !== prevEnabled) return !nextEnabled;
   if (next.requiresLlm !== prev.requiresLlm) return !next.requiresLlm;
   if (next.mutatesData !== prev.mutatesData) return !next.mutatesData;
-  return isCopilotToolEnabled(settings, next);
+  return false;
 }
 
 function capabilityMessageLanguage(prompt: string, settings: AppSettings): "it" | "en" {

@@ -24,7 +24,17 @@ class ToolRegistry {
 export const copilotToolRegistry = new ToolRegistry();
 
 export function isCopilotToolEnabled(settings: AppSettings, tool: CopilotToolDescriptor): boolean {
-  const override = settings.copilotTools.toolOverrides[tool.id]?.enabled;
+  const override = settings.copilotTools?.toolOverrides?.[tool.id]?.enabled;
   if (typeof override === "boolean") return override;
   return tool.defaultEnabled;
+}
+
+export function isCopilotToolIdEnabled(settings: AppSettings, toolId: string): boolean {
+  const tool = copilotToolRegistry.get(toolId);
+  return tool ? isCopilotToolEnabled(settings, tool) : false;
+}
+
+export function isCopilotHandlerEnabled(settings: AppSettings, handlerId: string): boolean {
+  const tools = copilotToolRegistry.list().filter((tool) => tool.handlerId === handlerId);
+  return tools.some((tool) => isCopilotToolEnabled(settings, tool));
 }

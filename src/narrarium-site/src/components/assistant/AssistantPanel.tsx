@@ -46,6 +46,9 @@ import { deleteAssistantSession, listAssistantSessions, loadAssistantSession, sa
 import { AssistantSessionSaveQueue, assistantSessionSaveFingerprint, attachAssistantSessionFileId, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
 import { assistantSessionCompactionTarget, mergeAssistantSessionCompaction } from "@/assistant/sessionCompaction";
 import { isAssistantRequestOwned } from "@/assistant/sessionOwnership";
+import { assistantActionToolId, policyTargetEnabled, quickActionToolId } from "@/assistant/toolPolicy";
+import { isCopilotToolIdEnabled } from "@/assistant/tools/registry";
+import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
 import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
 import { parseAttachment } from "@/assistant/attachments";
 import { useSettings } from "@/drive/useSettings";
@@ -86,6 +89,8 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { speakText, splitIntoStrofe, transcribeAudio, type SpeechController } from "@/assistant/speech";
 import { classifyConfirmationRouted, completeTextRouted, sttMode } from "@/assistant/router";
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
+
+ensureBuiltinCopilotToolsRegistered();
 
 const ATTACHMENT_TARGETS = [
   { value: "paragraph", labelKey: "assistant.importParagraph" },
@@ -977,9 +982,9 @@ export function AssistantPanel() {
         useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, reply] }));
       }
       setOpen(true);
-      if (reply.action?.kind === "navigate") {
+      if (reply.action?.kind === "navigate" && isAssistantActionEnabled(reply.action)) {
         navigate(reply.action.to);
-      } else if (reply.action?.kind === "read-aloud" && book && token) {
+      } else if (reply.action?.kind === "read-aloud" && book && token && isAssistantActionEnabled(reply.action)) {
         const readBranch = routeContext.structure?.loadedBranch ?? branch;
         await speakReadAloud(reply.action, book, token, readBranch);
       }
@@ -1012,7 +1017,7 @@ export function AssistantPanel() {
 
     // No-LLM navigation: "apri il reader", "vai al capitolo 3", "open research".
     const navAction = resolveNavigateAction(prompt, input.context, input.book.id);
-    if (navAction) {
+    if (navAction && isAssistantActionEnabled(navAction)) {
       navigate(navAction.to);
       const reply = makeAssistantReply(t("assistant.navigatingTo", { target: navAction.label ?? navAction.to }));
       reply.action = navAction;
@@ -1021,7 +1026,7 @@ export function AssistantPanel() {
 
     // No-LLM read-aloud: "leggi questo paragrafo", "read chapter 3".
     const readAction = resolveReadAloudAction(prompt, input.context, input.book.id);
-    if (readAction) {
+    if (readAction && isAssistantActionEnabled(readAction)) {
       const spoke = await speakReadAloud(readAction, input.book, input.token, input.context.structure.loadedBranch);
       if (!spoke) return makeAssistantReply(t("assistant.readTargetEmpty"));
       const reply = makeAssistantReply(t("assistant.readingTarget", { title: readAction.title }));
@@ -1059,6 +1064,7 @@ export function AssistantPanel() {
     const message = currentSession?.messages[messageIndex];
     if (!message?.action || message.action.kind !== "read-aloud") return;
     const action = message.action;
+    if (!requireAssistantActionEnabled(action)) return;
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
@@ -1285,6 +1291,7 @@ export function AssistantPanel() {
     const message = currentSession?.messages[messageIndex];
     if (!message?.action || message.action.kind !== "apply-paragraph-rewrite" || !bookId) return;
     const action = message.action;
+    if (!requireAssistantActionEnabled(action)) return;
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
@@ -1304,6 +1311,7 @@ export function AssistantPanel() {
     const message = currentSession?.messages[messageIndex];
     if (!message?.action || message.action.kind !== "apply-file-updates") return;
     const action = message.action;
+    if (!requireAssistantActionEnabled(action)) return;
     const updates = selectedPaths?.length
       ? action.updates.filter((update) => selectedPaths.includes(update.path))
       : action.updates;
@@ -1335,6 +1343,7 @@ export function AssistantPanel() {
     const message = currentSession?.messages[messageIndex];
     if (!message?.action || message.action.kind !== "switch-book-branch") return;
     const action = message.action;
+    if (!requireAssistantActionEnabled(action)) return;
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
@@ -1363,6 +1372,7 @@ export function AssistantPanel() {
     const message = currentSession?.messages[messageIndex];
     if (!message?.action || message.action.kind !== "confirm-delete") return;
     const action = message.action;
+    if (!requireAssistantActionEnabled(action)) return;
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
@@ -1393,6 +1403,7 @@ export function AssistantPanel() {
     const message = currentSession?.messages[messageIndex];
     if (!message?.action || message.action.kind !== "undo-file-updates") return;
     const action = message.action;
+    if (!requireAssistantActionEnabled(action)) return;
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
@@ -1418,6 +1429,7 @@ export function AssistantPanel() {
   }
 
   async function loadBranchDiff() {
+    if (!requireCopilotToolEnabled("show-branch-diff")) return;
     if (!bookId) return;
     const book = settings.books.find((entry) => entry.id === bookId);
     const structure = structures[bookId];
@@ -1436,6 +1448,7 @@ export function AssistantPanel() {
   }
 
   async function revertDiffFile(file: BranchDiffFile) {
+    if (!requireCopilotToolEnabled("show-branch-diff")) return;
     if (!bookId) return;
     const book = settings.books.find((entry) => entry.id === bookId);
     const structure = structures[bookId];
@@ -1527,6 +1540,28 @@ export function AssistantPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, bookId, loadingDiff, currentSession?.messages.length]);
 
+  function isAssistantActionEnabled(action: NonNullable<AssistantMessage["action"]>): boolean {
+    const currentSettings = useSettingsStore.getState().settings;
+    return policyTargetEnabled(assistantActionToolId(action), (toolId) => isCopilotToolIdEnabled(currentSettings, toolId));
+  }
+
+  function requireCopilotToolEnabled(toolId: string | null): boolean {
+    if (toolId && isCopilotToolIdEnabled(useSettingsStore.getState().settings, toolId)) return true;
+    const language = useSettingsStore.getState().settings.ui.language;
+    toast({
+      title: language === "it" ? "Tool del Copilota disabilitato" : "Copilot tool disabled",
+      description: language === "it"
+        ? "Puoi riattivarlo in Impostazioni > Tools for Copilot."
+        : "You can enable it again under Settings > Tools for Copilot.",
+      variant: "destructive",
+    });
+    return false;
+  }
+
+  function requireAssistantActionEnabled(action: NonNullable<AssistantMessage["action"]>): boolean {
+    return requireCopilotToolEnabled(assistantActionToolId(action));
+  }
+
   const syncPanel = (
     <div className="flex h-full min-h-0 flex-col bg-card" onDragOver={handleDragOver} onDrop={handleDrop}>
       <div className="flex items-center justify-between border-b px-4 py-3">
@@ -1595,7 +1630,7 @@ export function AssistantPanel() {
             {message.action?.kind === "switch-book-branch" && (
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Badge variant="secondary">{t("assistant.branchActionReady")}</Badge>
-                <Button size="sm" onClick={() => void applyBranchSwitch(index)} disabled={busy}><GitBranch className="mr-1 h-4 w-4" />{t("assistant.applyBranch")}</Button>
+                <Button size="sm" onClick={() => void applyBranchSwitch(index)} disabled={busy || !isAssistantActionEnabled(message.action)}><GitBranch className="mr-1 h-4 w-4" />{t("assistant.applyBranch")}</Button>
               </div>
             )}
             {message.action?.kind === "apply-file-updates" && (
@@ -1614,7 +1649,7 @@ export function AssistantPanel() {
                             {loadingDiffPath === diffKey ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
                             {showDiff ? t("assistant.hideDiff") : t("assistant.showDiff")}
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => void applySelectedFileUpdates(index, [update.path])} disabled={busy}>{t("assistant.applyThisFile")}</Button>
+                          <Button size="sm" variant="outline" onClick={() => void applySelectedFileUpdates(index, [update.path])} disabled={busy || !isAssistantActionEnabled(message.action!)}>{t("assistant.applyThisFile")}</Button>
                         </div>
                         {showDiff ? (
                           <FileDiff previous={previousContents[diffKey] ?? ""} next={update.content} className="mt-2 max-h-64" />
@@ -1625,14 +1660,14 @@ export function AssistantPanel() {
                     );
                   })}
                 </div>
-                <Button className="mt-2" size="sm" onClick={() => void applySelectedFileUpdates(index)} disabled={busy}>{t("assistant.applyAllFiles")}</Button>
+                <Button className="mt-2" size="sm" onClick={() => void applySelectedFileUpdates(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.applyAllFiles")}</Button>
               </div>
             )}
-            {message.action?.kind === "undo-file-updates" && <div className="mt-2 flex items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy}>{t("assistant.undoChanges")}</Button></div>}
-            {message.action?.kind === "apply-paragraph-rewrite" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.rewriteReady")}</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy}>{t("assistant.applyToParagraph")}</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>{t("assistant.openChapter")}</Link></Button></div>}
-            {message.action?.kind === "navigate" && <div className="mt-2 flex items-center gap-2"><Button asChild size="sm" variant="outline"><Link to={message.action.to}><BookOpen className="mr-1.5 h-3.5 w-3.5" />{message.action.label ?? t("assistant.openLocation")}</Link></Button></div>}
-            {message.action?.kind === "read-aloud" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" onClick={() => void replayReadAloud(index)}><Play className="mr-1.5 h-3.5 w-3.5" />{t("assistant.playAloud")}</Button></div>}
-            {message.action?.kind === "confirm-delete" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="destructive">{t("assistant.destructive")}</Badge><Button size="sm" variant="destructive" onClick={() => void confirmDeleteAction(index)} disabled={busy}><Trash2 className="mr-1.5 h-3.5 w-3.5" />{t("assistant.confirmDelete")}</Button><Button size="sm" variant="outline" onClick={() => useAssistantStore.getState().updateMessage(message.id, { action: undefined })} disabled={busy}>{t("assistant.cancel")}</Button></div>}
+            {message.action?.kind === "undo-file-updates" && <div className="mt-2 flex items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.undoChanges")}</Button></div>}
+            {message.action?.kind === "apply-paragraph-rewrite" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.rewriteReady")}</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.applyToParagraph")}</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>{t("assistant.openChapter")}</Link></Button></div>}
+            {message.action?.kind === "navigate" && <div className="mt-2 flex items-center gap-2">{isAssistantActionEnabled(message.action) ? <Button asChild size="sm" variant="outline"><Link to={message.action.to}><BookOpen className="mr-1.5 h-3.5 w-3.5" />{message.action.label ?? t("assistant.openLocation")}</Link></Button> : <Button size="sm" variant="outline" disabled><BookOpen className="mr-1.5 h-3.5 w-3.5" />{message.action.label ?? t("assistant.openLocation")}</Button>}</div>}
+            {message.action?.kind === "read-aloud" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" onClick={() => void replayReadAloud(index)} disabled={!isAssistantActionEnabled(message.action)}><Play className="mr-1.5 h-3.5 w-3.5" />{t("assistant.playAloud")}</Button></div>}
+            {message.action?.kind === "confirm-delete" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="destructive">{t("assistant.destructive")}</Badge><Button size="sm" variant="destructive" onClick={() => void confirmDeleteAction(index)} disabled={busy || !isAssistantActionEnabled(message.action)}><Trash2 className="mr-1.5 h-3.5 w-3.5" />{t("assistant.confirmDelete")}</Button><Button size="sm" variant="outline" onClick={() => useAssistantStore.getState().updateMessage(message.id, { action: undefined })} disabled={busy}>{t("assistant.cancel")}</Button></div>}
           </div>
         </div>
       ))}
@@ -1709,8 +1744,11 @@ export function AssistantPanel() {
                   <DropdownMenuSeparator />
                   {contextActions.map((action) => {
                     const Icon = action.icon;
+                    const enabled = isCopilotToolIdEnabled(settings, quickActionToolId(action.id) ?? "");
                     return (
-                      <DropdownMenuItem key={action.id} disabled={action.disabled} onSelect={() => action.run()}>
+                      <DropdownMenuItem key={action.id} disabled={action.disabled || !enabled} onSelect={() => {
+                        if (requireCopilotToolEnabled(quickActionToolId(action.id))) action.run();
+                      }}>
                         <Icon className="mr-2 h-4 w-4" />{t(action.labelKey)}
                       </DropdownMenuItem>
                     );

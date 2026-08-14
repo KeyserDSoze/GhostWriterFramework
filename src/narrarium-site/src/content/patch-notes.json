@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.12",
+    "date": "2026-08-14",
+    "en": {
+      "title": "Copilot tools stay disabled everywhere",
+      "summary": "Turning off a Copilot tool now prevents it from running through legacy prompts, local shortcuts, quick actions, or actions restored from saved chats.",
+      "changes": [
+        "Blocked disabled tool intents before legacy fallback or contextual AI routing can transmit repository context or spend tokens.",
+        "Applied current tool settings to local navigation and read-aloud shortcuts, quick actions, branch comparisons, and saved chat actions immediately before execution.",
+        "Limited the Copilot capabilities answer to tools that are both enabled and backed by an executable handler.",
+        "Added regression coverage for quick-action mappings, persisted-action mappings, and an all-tools-disabled policy."
+      ]
+    },
+    "it": {
+      "title": "Tool del Copilota disabilitati ovunque",
+      "summary": "Disattivare un tool del Copilota ora ne impedisce l'esecuzione tramite prompt legacy, scorciatoie locali, azioni rapide o azioni ripristinate dalle chat salvate.",
+      "changes": [
+        "Bloccate le intenzioni dei tool disabilitati prima che fallback legacy o routing AI contestuale possano trasmettere contesto del repository o consumare token.",
+        "Applicate le impostazioni correnti dei tool a navigazione e lettura locali, azioni rapide, confronti branch e azioni delle chat salvate immediatamente prima dell'esecuzione.",
+        "Limitata la risposta sulle capacità del Copilota ai tool sia abilitati sia supportati da un handler eseguibile.",
+        "Aggiunta copertura di regressione per mappature delle azioni rapide, azioni persistite e policy con tutti i tool disabilitati."
+      ]
+    }
+  },
+  {
     "version": "0.76.11",
     "date": "2026-08-14",
     "en": {

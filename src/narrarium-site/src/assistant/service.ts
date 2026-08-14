@@ -20,10 +20,11 @@ import {
   type LlmMessage,
 } from "@/assistant/llm";
 import { completeTextRouted, resolveTaskCandidates } from "@/assistant/router";
-import { buildCapabilitiesMessage, chooseToolHandlerId, isCapabilityQuestion } from "@/assistant/orchestrator";
+import { buildCapabilitiesMessage, chooseToolMatch, isCapabilityQuestion } from "@/assistant/orchestrator";
 import { isEditorialReviewPrompt } from "@/assistant/intentRules";
 import { ordinalNumber } from "@/assistant/targetRules";
 import { selectMentionedCanonFiles, type CanonContextCandidate } from "@/assistant/canonContext";
+import { isCopilotHandlerEnabled } from "@/assistant/tools/registry";
 import { resolveNavigateAction, resolveReadAloudAction } from "@/assistant/planner";
 import type {
   AssistantAction,
@@ -77,6 +78,19 @@ type PromptInput = {
   onText?: (text: string) => void;
 };
 
+const EXECUTABLE_HANDLER_IDS = new Set([
+  "search-book", "switch-branch", "import-attachments", "create-chapter", "create-paragraph", "create-entity",
+  "create-script", "create-draft", "update-plot", "write-resume", "write-evaluation", "evaluate-chapter-paragraphs",
+  "rewrite-paragraph", "create-note", "review-context", "summarize-context", "answer-from-context", "open-reader",
+  "navigate", "read-current-page", "list-simulated-readers", "create-simulated-reader", "toggle-simulated-reader",
+  "evaluate-with-readers", "summarize-reader-evaluations", "open-reader-evaluations", "generate-draft-from-feedback",
+  "restore-previous-drafts", "feedback-rewrite-status", "cancel-feedback-rewrite", "run-audit", "open-audit",
+  "update-audit", "delete-audit", "set-audit-finding-status", "list-branches", "show-branch-diff", "list-commits",
+  "list-pull-requests", "create-pull-request", "get-book", "get-chapter", "get-paragraph", "get-character",
+  "get-location", "get-faction", "get-item", "get-secret", "get-timeline-event", "get-body", "get-frontmatter",
+  "delete-current-note", "delete-current-paragraph", "delete-current-entity", "delete-reader-evaluation",
+]);
+
 export async function runAssistantPrompt(input: {
   prompt: string;
   context: LoadedWriterContext;
@@ -121,7 +135,7 @@ export async function runAssistantPrompt(input: {
     onText,
   };
 
-  if (isCapabilityQuestion(prompt)) return buildCapabilitiesMessage(prompt, settings);
+  if (isCapabilityQuestion(prompt)) return buildCapabilitiesMessage(prompt, settings, EXECUTABLE_HANDLER_IDS);
 
   if (!book || !token) {
     return makeAssistantMessage(
@@ -194,26 +208,48 @@ export async function runAssistantPrompt(input: {
     "delete-reader-evaluation": () => requestDeleteReaderEvaluation({ ...promptInput, book, branch, token }),
   } as const;
 
-  const handlerId = chooseToolHandlerId({ prompt, lowered, settings, spokenMode }, new Set(Object.keys(handlers)));
-  if (handlerId && handlerId in handlers) return handlers[handlerId as keyof typeof handlers]();
+  const availableHandlerIds = new Set(Object.keys(handlers));
+  const match = chooseToolMatch({ prompt, lowered, settings, spokenMode }, availableHandlerIds);
+  if (match && !match.enabled) return disabledCopilotToolMessage(settings, match.toolId);
+  if (match?.handlerId && match.handlerId in handlers) return handlers[match.handlerId as keyof typeof handlers]();
 
   // Fallback while the registry coverage is still growing. Keep existing behavior for unmatched prompts.
-  if (looksLikeSearch(lowered)) return searchCurrentBook({ ...promptInput, book, token });
-  if (looksLikeBranchSwitch(lowered)) return switchBookBranchFromPrompt({ ...promptInput, book, branch, token });
-  if (looksLikeImportAttachment(lowered)) return importAttachmentsIntoBook({ ...promptInput, book, branch, token });
-  if (looksLikeCreateChapter(lowered)) return createChapterFromPrompt({ ...promptInput, book, branch, token });
-  if (looksLikeCreateParagraph(lowered)) return createParagraphFromPrompt({ ...promptInput, book, branch, token });
-  if (looksLikeCreateEntity(lowered)) return createEntityFromPrompt({ ...promptInput, book, branch, token });
-  if (looksLikeCreateScript(lowered)) return createScriptFromPrompt({ ...promptInput, book, branch, token });
-  if (looksLikeCreateDraft(lowered)) return createDraftFromPrompt({ ...promptInput, book, branch, token });
-  if (looksLikeUpdatePlot(lowered)) return writePlotUpdate({ ...promptInput, book, branch, token });
-  if (looksLikeWriteResume(lowered)) return writeResume({ ...promptInput, book, branch, token });
-  if (looksLikeMultiFileEdit(lowered)) return proposeMultiFileUpdates({ ...promptInput, book, token });
-  if (looksLikeRewrite(lowered)) return rewriteCurrentParagraph({ ...promptInput, book, branch, token });
-  if (looksLikeNote(lowered)) return createContextNote({ ...promptInput, book, branch, token });
-  if (looksLikeReview(lowered)) return reviewCurrentContext({ ...promptInput, book, token });
-  if (looksLikeSummary(lowered)) return summarizeCurrentContext(promptInput);
-  return answerFromContext({ ...promptInput, book, token });
+  let legacyHandlerId: keyof typeof handlers | null = null;
+  if (looksLikeSearch(lowered)) legacyHandlerId = "search-book";
+  else if (looksLikeBranchSwitch(lowered)) legacyHandlerId = "switch-branch";
+  else if (looksLikeImportAttachment(lowered)) legacyHandlerId = "import-attachments";
+  else if (looksLikeCreateChapter(lowered)) legacyHandlerId = "create-chapter";
+  else if (looksLikeCreateParagraph(lowered)) legacyHandlerId = "create-paragraph";
+  else if (looksLikeCreateEntity(lowered)) legacyHandlerId = "create-entity";
+  else if (looksLikeCreateScript(lowered)) legacyHandlerId = "create-script";
+  else if (looksLikeCreateDraft(lowered)) legacyHandlerId = "create-draft";
+  else if (looksLikeUpdatePlot(lowered)) legacyHandlerId = "update-plot";
+  else if (looksLikeWriteResume(lowered)) legacyHandlerId = "write-resume";
+  else if (looksLikeRewrite(lowered)) legacyHandlerId = "rewrite-paragraph";
+  else if (looksLikeNote(lowered)) legacyHandlerId = "create-note";
+  else if (looksLikeReview(lowered)) legacyHandlerId = "review-context";
+  else if (looksLikeSummary(lowered)) legacyHandlerId = "summarize-context";
+
+  if (legacyHandlerId) {
+    if (!isCopilotHandlerEnabled(settings, legacyHandlerId)) return disabledCopilotToolMessage(settings);
+    return handlers[legacyHandlerId]();
+  }
+  if (looksLikeMultiFileEdit(lowered)) {
+    if (!isCopilotHandlerEnabled(settings, "multi-file-edit")) return disabledCopilotToolMessage(settings);
+    return proposeMultiFileUpdates({ ...promptInput, book, token });
+  }
+  if (!isCopilotHandlerEnabled(settings, "answer-from-context")) return disabledCopilotToolMessage(settings, "answer-from-context");
+  return handlers["answer-from-context"]();
+}
+
+function disabledCopilotToolMessage(settings: AppSettings, toolId?: string): AssistantMessage {
+  const name = toolId ? ` (${toolId})` : "";
+  return makeAssistantMessage(
+    "assistant",
+    settings.ui.language === "it"
+      ? `Questo tool del Copilota${name} è disabilitato nelle impostazioni. Puoi riattivarlo in Impostazioni > Tools for Copilot.`
+      : `This Copilot tool${name} is disabled in settings. You can enable it again under Settings > Tools for Copilot.`,
+  );
 }
 
 export async function compactAssistantSession(input: {
