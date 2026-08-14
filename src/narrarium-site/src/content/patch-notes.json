@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.13",
+    "date": "2026-08-14",
+    "en": {
+      "title": "Explicit intent before Copilot changes",
+      "summary": "Copilot now distinguishes direct change requests from questions, negations, exclusions, and ambiguous references before any repository-changing tool can run.",
+      "changes": [
+        "Required a positive action verb for every built-in tool that can change repository or application data.",
+        "Routed explanatory and read-only questions away from mutation handlers, including plot, draft, canon, note, script, resume, audit, and reader collisions.",
+        "Recognized English and Italian negation, typographic apostrophes, exclusions, deliberative questions, direct requests, and contrast clauses.",
+        "Added bilingual table-driven coverage for all 27 mutating tools and fail-closed behavior for future unclassified mutation tools."
+      ]
+    },
+    "it": {
+      "title": "Intento esplicito prima delle modifiche del Copilota",
+      "summary": "Il Copilota ora distingue richieste dirette di modifica da domande, negazioni, esclusioni e riferimenti ambigui prima di eseguire qualsiasi tool che possa cambiare il repository.",
+      "changes": [
+        "Richiesto un verbo d'azione positivo per ogni tool integrato che può modificare dati del repository o dell'applicazione.",
+        "Instradate domande esplicative e read-only lontano dagli handler mutanti, incluse collisioni su plot, bozze, canone, note, script, riassunti, audit e lettori.",
+        "Riconosciute negazioni inglesi e italiane, apostrofi tipografici, esclusioni, domande deliberative, richieste dirette e clausole contrastive.",
+        "Aggiunta copertura bilingue tabellare per tutti i 27 tool mutanti e comportamento fail-closed per futuri tool di modifica non classificati."
+      ]
+    }
+  },
+  {
     "version": "0.76.12",
     "date": "2026-08-14",
     "en": {

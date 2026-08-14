@@ -24,7 +24,8 @@ import { buildCapabilitiesMessage, chooseToolMatch, isCapabilityQuestion } from 
 import { isEditorialReviewPrompt } from "@/assistant/intentRules";
 import { ordinalNumber } from "@/assistant/targetRules";
 import { selectMentionedCanonFiles, type CanonContextCandidate } from "@/assistant/canonContext";
-import { isCopilotHandlerEnabled } from "@/assistant/tools/registry";
+import { copilotToolRegistry, isCopilotHandlerEnabled } from "@/assistant/tools/registry";
+import { classifyMutationIntent, type MutationIntent } from "@/assistant/mutationIntent";
 import { resolveNavigateAction, resolveReadAloudAction } from "@/assistant/planner";
 import type {
   AssistantAction,
@@ -211,6 +212,7 @@ export async function runAssistantPrompt(input: {
   const availableHandlerIds = new Set(Object.keys(handlers));
   const match = chooseToolMatch({ prompt, lowered, settings, spokenMode }, availableHandlerIds);
   if (match && !match.enabled) return disabledCopilotToolMessage(settings, match.toolId);
+  if (match?.mutationIntent === "ambiguous") return ambiguousMutationMessage(settings, match.toolId);
   if (match?.handlerId && match.handlerId in handlers) return handlers[match.handlerId as keyof typeof handlers]();
 
   // Fallback while the registry coverage is still growing. Keep existing behavior for unmatched prompts.
@@ -232,6 +234,12 @@ export async function runAssistantPrompt(input: {
 
   if (legacyHandlerId) {
     if (!isCopilotHandlerEnabled(settings, legacyHandlerId)) return disabledCopilotToolMessage(settings);
+    const mutationIntent = handlerMutationIntent(lowered, legacyHandlerId);
+    if (mutationIntent === "ambiguous") return ambiguousMutationMessage(settings);
+    if (mutationIntent === "negated" || mutationIntent === "read-only") {
+      if (!isCopilotHandlerEnabled(settings, "answer-from-context")) return disabledCopilotToolMessage(settings, "answer-from-context");
+      return handlers["answer-from-context"]();
+    }
     return handlers[legacyHandlerId]();
   }
   if (looksLikeMultiFileEdit(lowered)) {
@@ -240,6 +248,21 @@ export async function runAssistantPrompt(input: {
   }
   if (!isCopilotHandlerEnabled(settings, "answer-from-context")) return disabledCopilotToolMessage(settings, "answer-from-context");
   return handlers["answer-from-context"]();
+}
+
+function handlerMutationIntent(prompt: string, handlerId: string): MutationIntent | null {
+  const tool = copilotToolRegistry.list().find((entry) => entry.handlerId === handlerId && entry.mutatesData);
+  return tool ? classifyMutationIntent(prompt, tool.id) : null;
+}
+
+function ambiguousMutationMessage(settings: AppSettings, toolId?: string): AssistantMessage {
+  const name = toolId ? ` (${toolId})` : "";
+  return makeAssistantMessage(
+    "assistant",
+    settings.ui.language === "it"
+      ? `La richiesta potrebbe modificare il repository tramite il tool${name}. Vuoi davvero eseguire la modifica? Ripeti la richiesta con un verbo esplicito, ad esempio “crea”, “aggiorna” o “elimina”.`
+      : `This request may modify the repository through the tool${name}. Do you want to make that change? Repeat the request with an explicit verb such as “create”, “update”, or “delete”.`,
+  );
 }
 
 function disabledCopilotToolMessage(settings: AppSettings, toolId?: string): AssistantMessage {

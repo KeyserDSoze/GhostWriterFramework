@@ -4,6 +4,7 @@ import { localizeCopilotToolArea, localizeCopilotToolText, localizeCopilotToolsL
 import { copilotToolRegistry, isCopilotToolEnabled } from "@/assistant/tools/registry";
 import type { AssistantMessage } from "@/assistant/store";
 import { isExplicitNavigationPrompt, matchesToolKeyword } from "@/assistant/orchestratorRules";
+import { classifyMutationIntent, type MutationIntent } from "@/assistant/mutationIntent";
 
 export interface OrchestratorToolContext {
   prompt: string;
@@ -19,6 +20,7 @@ export interface OrchestratorToolMatch {
   toolId: string;
   handlerId: string;
   enabled: boolean;
+  mutationIntent?: MutationIntent;
 }
 
 
@@ -51,7 +53,7 @@ export function buildCapabilitiesMessage(prompt: string, settings: AppSettings, 
 
 export function chooseToolHandlerId(context: OrchestratorToolContext, availableHandlerIds: Set<string>): string | null {
   const match = chooseToolMatch(context, availableHandlerIds);
-  return match?.enabled ? match.handlerId : null;
+  return match?.enabled && match.mutationIntent !== "ambiguous" ? match.handlerId : null;
 }
 
 export function chooseToolMatch(context: OrchestratorToolContext, availableHandlerIds: Set<string>): OrchestratorToolMatch | null {
@@ -69,6 +71,8 @@ export function chooseToolMatch(context: OrchestratorToolContext, availableHandl
       if (matchesToolKeyword(prompt, keyword)) score += Math.max(1, keyword.length);
     }
     if (score <= 0) continue;
+    const mutationIntent = tool.mutatesData ? classifyMutationIntent(prompt, tool.id) : undefined;
+    if (mutationIntent === "negated" || mutationIntent === "read-only") continue;
     // Prefer local/non-LLM tools on ties to reduce token usage.
     if (!best || score > best.score || (score === best.score && isBetterTie(tool, best.tool, context.settings))) {
       best = { tool, score };
@@ -79,6 +83,7 @@ export function chooseToolMatch(context: OrchestratorToolContext, availableHandl
     toolId: best.tool.id,
     handlerId: best.tool.handlerId,
     enabled: isCopilotToolEnabled(context.settings, best.tool),
+    mutationIntent: best.tool.mutatesData ? classifyMutationIntent(prompt, best.tool.id) : undefined,
   };
 }
 
