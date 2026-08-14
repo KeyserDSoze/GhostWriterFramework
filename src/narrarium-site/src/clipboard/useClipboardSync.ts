@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useAuthStore } from "@/store/authStore";
 import { useClipboardStore, type ClipboardEntry } from "@/clipboard/clipboardStore";
 import { loadAppJson, saveAppJson } from "@/drive/jsonFile";
+import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
 
 const FILE = "clipboard.json";
 
@@ -20,13 +21,20 @@ function mergeItems(a: ClipboardEntry[], b: ClipboardEntry[]): ClipboardEntry[] 
 export function useClipboardSync() {
   const { user, accessToken } = useAuthStore();
   const dirty = useClipboardStore((s) => s.dirty);
-  const loadedRef = useRef(false);
+  const loadedIdentityRef = useRef<string | null>(null);
   const driveIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    if (!user || !accessToken || loadedRef.current) return;
-    loadedRef.current = true;
+    if (!user || !accessToken) {
+      loadedIdentityRef.current = null;
+      driveIdRef.current = undefined;
+      return;
+    }
+    const expectedIdentity = accountIdentity(user);
+    if (loadedIdentityRef.current === expectedIdentity) return;
+    loadedIdentityRef.current = expectedIdentity;
     void loadAppJson<ClipboardEntry[]>(user.provider, accessToken, FILE).then((handle) => {
+      if (!isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
       driveIdRef.current = handle.driveFileId;
       if (handle.data?.length) {
         const merged = mergeItems(useClipboardStore.getState().items, handle.data);
@@ -37,9 +45,14 @@ export function useClipboardSync() {
 
   useEffect(() => {
     if (!user || !accessToken || !dirty) return;
+    const expectedIdentity = accountIdentity(user);
     const timer = setTimeout(() => {
       void saveAppJson(user.provider, accessToken, FILE, useClipboardStore.getState().items, driveIdRef.current)
-        .then((handle) => { driveIdRef.current = handle.driveFileId; useClipboardStore.getState().markSynced(); })
+        .then((handle) => {
+          if (!isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
+          driveIdRef.current = handle.driveFileId;
+          useClipboardStore.getState().markSynced();
+        })
         .catch(() => undefined);
     }, 5000);
     return () => clearTimeout(timer);

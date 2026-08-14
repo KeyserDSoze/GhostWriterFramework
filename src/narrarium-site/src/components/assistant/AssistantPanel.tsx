@@ -46,6 +46,7 @@ import { deleteAssistantSession, listAssistantSessions, loadAssistantSession, sa
 import { AssistantSessionSaveQueue, assistantSessionSaveFingerprint, attachAssistantSessionFileId, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
 import { assistantSessionCompactionTarget, mergeAssistantSessionCompaction } from "@/assistant/sessionCompaction";
 import { isAssistantRequestOwned } from "@/assistant/sessionOwnership";
+import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
 import { parseAttachment } from "@/assistant/attachments";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -236,15 +237,27 @@ export function AssistantPanel() {
 
   useEffect(() => {
     if (!open || !user || !accessToken) return;
+    let active = true;
+    const expectedIdentity = accountIdentity(user);
     setLoadingSessions(true);
     void listAssistantSessions(user.provider, accessToken)
-      .then((items) => setSessions(items))
-      .catch((err) => toast({ title: t("assistant.toastLoadChatsFailed"), description: String(err), variant: "destructive" }))
-      .finally(() => setLoadingSessions(false));
+      .then((items) => {
+        if (active && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setSessions(items);
+      })
+      .catch((err) => {
+        if (active && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
+          toast({ title: t("assistant.toastLoadChatsFailed"), description: String(err), variant: "destructive" });
+        }
+      })
+      .finally(() => {
+        if (active && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setLoadingSessions(false);
+      });
+    return () => { active = false; };
   }, [open, user, accessToken, setSessions, toast]);
 
   useEffect(() => {
     if (!user || !accessToken || !currentSession) return;
+    const expectedIdentity = accountIdentity(user);
     const fingerprint = assistantSessionSaveFingerprint(currentSession);
     if (queuedSessionFingerprintsRef.current.get(currentSession.id) === fingerprint) return;
     const timer = setTimeout(() => {
@@ -253,6 +266,7 @@ export function AssistantPanel() {
         currentSession,
         (session) => saveAssistantSession(user.provider, accessToken, session),
         (savedSnapshot, fileId) => {
+          if (!isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
           const state = useAssistantStore.getState();
           const latest = state.currentSession?.id === savedSnapshot.id ? state.currentSession : null;
           const sessionWithFileId = attachAssistantSessionFileId(state.currentSession, savedSnapshot.id, fileId);
@@ -260,7 +274,11 @@ export function AssistantPanel() {
           const metadataSource = latest ?? savedSnapshot;
           state.setSessions(upsertAssistantSessionMeta(state.sessions, metadataSource, fileId));
         },
-        (err) => toast({ title: t("assistant.toastSaveChatFailed"), description: String(err), variant: "destructive" }),
+        (err) => {
+          if (isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
+            toast({ title: t("assistant.toastSaveChatFailed"), description: String(err), variant: "destructive" });
+          }
+        },
       );
     }, 300);
     return () => clearTimeout(timer);

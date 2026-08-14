@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.11",
+    "date": "2026-08-14",
+    "en": {
+      "title": "Account-isolated Copilot and cloud state",
+      "summary": "Signing out or switching between Google and Microsoft accounts now clears private in-memory and local cloud caches, while stale requests from the previous account can no longer restore its data.",
+      "changes": [
+        "Introduced a provider-and-email account scope that resets Copilot chats, settings, books, branches, costs, clipboard, debug history, dossiers, and active workflows when identity changes.",
+        "Rejected late settings, chat-list, autosave, cost, clipboard, and book-structure results when they no longer belong to the active account.",
+        "Reset unverified legacy local caches once before loading the current account's authoritative Drive data.",
+        "Added tests for normalized account identity, provider isolation, stale ownership, first-use reset, logout, and account changes."
+      ]
+    },
+    "it": {
+      "title": "Stato Copilota e cloud isolato per account",
+      "summary": "Uscire o passare tra account Google e Microsoft ora pulisce stato privato e cache cloud locali, mentre richieste tardive dell'account precedente non possono più ripristinarne i dati.",
+      "changes": [
+        "Introdotto uno scope basato su provider ed email che azzera chat, impostazioni, libri, branch, costi, clipboard, debug, dossier e workflow attivi quando cambia identità.",
+        "Rifiutati risultati tardivi di impostazioni, elenco chat, autosalvataggio, costi, clipboard e strutture libro quando non appartengono più all'account attivo.",
+        "Azzerate una volta le cache locali legacy non verificabili prima di caricare i dati autorevoli dal Drive dell'account corrente.",
+        "Aggiunti test per identità normalizzata, isolamento provider, ownership obsoleta, primo utilizzo, logout e cambio account."
+      ]
+    }
+  },
+  {
     "version": "0.76.10",
     "date": "2026-08-14",
     "en": {

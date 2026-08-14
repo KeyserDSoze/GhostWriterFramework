@@ -91,7 +91,7 @@ export const useLlmDebugStore = create<LlmDebugState>()((set) => ({
   },
   clear: () => {
     persistLocal([]);
-    set({ entries: [] });
+    set({ entries: [], pending: 0 });
   },
 }));
 

@@ -3,6 +3,7 @@ import { useAuthStore } from "@/store/authStore";
 import { useCostsStore } from "@/costs/costsStore";
 import { loadCosts, saveCosts } from "@/costs/costsCloud";
 import { emptyBucket, type BookUsage, type CostsFile, type UsageBucket } from "@/costs/model";
+import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
 
 function maxBucket(x: UsageBucket, y: UsageBucket): UsageBucket {
   return {
@@ -53,14 +54,20 @@ function mergeMax(a: CostsFile, b: CostsFile): CostsFile {
 export function useCostsSync() {
   const { user, accessToken } = useAuthStore();
   const dirty = useCostsStore((s) => s.dirty);
-  const loadedRef = useRef(false);
+  const loadedIdentityRef = useRef<string | null>(null);
   const savingRef = useRef(false);
 
   // Initial load + merge with local cache.
   useEffect(() => {
-    if (!user || !accessToken || loadedRef.current) return;
-    loadedRef.current = true;
+    if (!user || !accessToken) {
+      loadedIdentityRef.current = null;
+      return;
+    }
+    const expectedIdentity = accountIdentity(user);
+    if (loadedIdentityRef.current === expectedIdentity) return;
+    loadedIdentityRef.current = expectedIdentity;
     void loadCosts(user.provider, accessToken).then((handle) => {
+      if (!isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
       const local = useCostsStore.getState().file;
       const merged = mergeMax(local, handle.file);
       useCostsStore.getState().setFile(merged, handle.driveFileId);
@@ -70,12 +77,17 @@ export function useCostsSync() {
   // Debounced save when dirty.
   useEffect(() => {
     if (!user || !accessToken || !dirty) return;
+    const expectedIdentity = accountIdentity(user);
     const timer = setTimeout(() => {
       if (savingRef.current) return;
       savingRef.current = true;
       const { file, driveFileId } = useCostsStore.getState();
       void saveCosts(user.provider, accessToken, { file, driveFileId })
-        .then((handle) => useCostsStore.getState().markSynced(handle.driveFileId))
+        .then((handle) => {
+          if (isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
+            useCostsStore.getState().markSynced(handle.driveFileId);
+          }
+        })
         .catch(() => undefined)
         .finally(() => { savingRef.current = false; });
     }, 4000);

@@ -8,6 +8,7 @@ import { resolveBookToken } from "@/types/settings";
 import { ensureLocalBookStructure, fetchRemoteStatus, getExistingLocalBookStructure, pullRemoteChanges, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
 import { useToast } from "@/components/ui/use-toast";
+import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
 
 function remoteChangedNoticeKey(bookId: string, remoteHeadSha: string): string {
   return `narrarium-remote-changed-${bookId}-${remoteHeadSha}`;
@@ -43,6 +44,8 @@ export function useBookStructure(bookId: string | undefined) {
 
   const loadStructure = useCallback(() => {
     if (!book || !resolvedBookId) return;
+    const expectedIdentity = accountIdentity(user);
+    const ownsLoad = () => isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user);
     const token = resolveBookToken(book, settings);
     if (!token) {
       setError(resolvedBookId, t("bookPage.noTokenConfigured"));
@@ -58,7 +61,7 @@ export function useBookStructure(bookId: string | undefined) {
           // When online, re-fetch any files missing from an interrupted clone before serving it.
           if (local.meta.cloneComplete !== true && navigator.onLine) {
             try {
-              const repaired = await verifyAndRepairLocalRepository({ meta: local.meta, token, onProgress: (p) => setCloneProgress(resolvedBookId, p) });
+              const repaired = await verifyAndRepairLocalRepository({ meta: local.meta, token, onProgress: (p) => { if (ownsLoad()) setCloneProgress(resolvedBookId, p); } });
               return repaired.structure;
             } catch {
               return local.structure;
@@ -66,10 +69,11 @@ export function useBookStructure(bookId: string | undefined) {
           }
           return local.structure;
         }
-        return ensureLocalBookStructure({ bookId: resolvedBookId, book, token, branch: readBranch, onProgress: (p) => setCloneProgress(resolvedBookId, p) }).then((result) => result.structure);
+        return ensureLocalBookStructure({ bookId: resolvedBookId, book, token, branch: readBranch, onProgress: (p) => { if (ownsLoad()) setCloneProgress(resolvedBookId, p); } }).then((result) => result.structure);
       })
       .catch(() => loadBookStructure(token, book.owner, book.repo, readBranch))
       .then(async (nextStructure) => {
+        if (!ownsLoad()) return;
         setStructure(resolvedBookId, nextStructure);
         setError(resolvedBookId, "");
         if (settings.repository.autoFetchOnOpen && navigator.onLine) {
@@ -78,7 +82,7 @@ export function useBookStructure(bookId: string | undefined) {
             if (remote.changed && settings.repository.autoPullWhenClean) {
               await pullRemoteChanges({ bookId: resolvedBookId, token });
               const refreshed = await getExistingLocalBookStructure(resolvedBookId);
-              if (refreshed) setStructure(resolvedBookId, refreshed.structure);
+              if (refreshed && ownsLoad()) setStructure(resolvedBookId, refreshed.structure);
             } else if (remote.changed) {
               const key = remoteChangedNoticeKey(resolvedBookId, remote.remoteHeadSha);
               if (!sessionStorage.getItem(key)) {
@@ -92,10 +96,14 @@ export function useBookStructure(bookId: string | undefined) {
         }
       })
       .catch((err: unknown) => {
-        setError(resolvedBookId, err instanceof Error ? err.message : t("common.loadFailed"));
+        if (ownsLoad()) setError(resolvedBookId, err instanceof Error ? err.message : t("common.loadFailed"));
       })
-      .finally(() => { setCloneProgress(resolvedBookId, undefined); setLoading(resolvedBookId, false); });
-  }, [book, readBranch, resolvedBookId, setCloneProgress, setError, setLoading, setStructure, settings, t, toast]);
+      .finally(() => {
+        if (!ownsLoad()) return;
+        setCloneProgress(resolvedBookId, undefined);
+        setLoading(resolvedBookId, false);
+      });
+  }, [book, readBranch, resolvedBookId, setCloneProgress, setError, setLoading, setStructure, settings, t, toast, user]);
 
   useEffect(() => {
     if (!book || !resolvedBookId || loading) return;

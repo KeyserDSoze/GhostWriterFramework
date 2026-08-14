@@ -4,6 +4,9 @@ import "./index.css";
 import "./i18n";
 import App from "./App";
 import { registerServiceWorker } from "./pwa";
+import { installAccountScopeIsolation } from "./auth/accountScope";
+
+installAccountScopeIsolation();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Root element #root not found");
