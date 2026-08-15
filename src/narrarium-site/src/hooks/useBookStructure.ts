@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { loadBookStructure } from "@/github/githubClient";
-import { emailToBranchName } from "@/github/githubClient";
+import { ensureAuthoritativePersonalBranch, resolveAuthoritativeBranch } from "@/github/branchResolution";
 import { resolveBookToken } from "@/types/settings";
 import { ensureLocalBookStructure, fetchRemoteStatus, getExistingLocalBookStructure, pullRemoteChanges, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
@@ -29,6 +29,7 @@ export function useBookStructure(bookId: string | undefined) {
     setLoading,
     setError,
     setCloneProgress,
+    setWorkingBranch,
     clearBook,
   } = useBooksStore();
 
@@ -38,9 +39,8 @@ export function useBookStructure(bookId: string | undefined) {
   const loading = resolvedBookId ? loadingIds.has(resolvedBookId) : false;
   const error = resolvedBookId ? errors[resolvedBookId] : undefined;
   const progress = resolvedBookId ? cloneProgress[resolvedBookId] : undefined;
-  const readBranch = book?.activeBranch
-    ?? (resolvedBookId ? workingBranches[resolvedBookId] : undefined)
-    ?? (user?.email ? emailToBranchName(user.email) : undefined);
+  const branchResolution = resolveAuthoritativeBranch({ activeBranch: book?.activeBranch, workingBranch: resolvedBookId ? workingBranches[resolvedBookId] : undefined, loadedBranch: structure?.loadedBranch, defaultBranch: structure?.defaultBranch, userEmail: user?.email });
+  const readBranch = branchResolution.branch;
 
   const loadStructure = useCallback(() => {
     if (!book || !resolvedBookId) return;
@@ -54,25 +54,33 @@ export function useBookStructure(bookId: string | undefined) {
     setError(resolvedBookId, "");
     setLoading(resolvedBookId, true);
     setCloneProgress(resolvedBookId, undefined);
-    getExistingLocalBookStructure(resolvedBookId)
-      .then(async (local) => {
-        if (local && (!readBranch || local.structure.loadedBranch === readBranch)) {
+    void (async () => {
+      let authoritativeBranch = readBranch;
+      if (branchResolution.requiresCreation && user?.email && !workingBranches[resolvedBookId]) {
+        authoritativeBranch = await ensureAuthoritativePersonalBranch({ token, owner: book.owner, repo: book.repo, defaultBranch: structure?.defaultBranch ?? "main", email: user.email });
+        if (!ownsLoad()) return;
+        setWorkingBranch(resolvedBookId, authoritativeBranch);
+      }
+      try {
+        const local = await getExistingLocalBookStructure(resolvedBookId);
+        let nextStructure;
+        if (local && local.structure.loadedBranch === authoritativeBranch) {
           // Heal partial/legacy clones: a repo is only trustworthy once verified complete.
           // When online, re-fetch any files missing from an interrupted clone before serving it.
           if (local.meta.cloneComplete !== true && navigator.onLine) {
             try {
               const repaired = await verifyAndRepairLocalRepository({ meta: local.meta, token, onProgress: (p) => { if (ownsLoad()) setCloneProgress(resolvedBookId, p); } });
-              return repaired.structure;
+              nextStructure = repaired.structure;
             } catch {
-              return local.structure;
+              nextStructure = local.structure;
             }
+          } else {
+            nextStructure = local.structure;
           }
-          return local.structure;
+        } else {
+          nextStructure = (await ensureLocalBookStructure({ bookId: resolvedBookId, book, token, branch: authoritativeBranch, onProgress: (p) => { if (ownsLoad()) setCloneProgress(resolvedBookId, p); } })).structure;
         }
-        return ensureLocalBookStructure({ bookId: resolvedBookId, book, token, branch: readBranch, onProgress: (p) => { if (ownsLoad()) setCloneProgress(resolvedBookId, p); } }).then((result) => result.structure);
-      })
-      .catch(() => loadBookStructure(token, book.owner, book.repo, readBranch))
-      .then(async (nextStructure) => {
+        if (nextStructure.loadedBranch !== authoritativeBranch) throw new Error(`Loaded branch ${nextStructure.loadedBranch} does not match authoritative branch ${authoritativeBranch}.`);
         if (!ownsLoad()) return;
         setStructure(resolvedBookId, nextStructure);
         setError(resolvedBookId, "");
@@ -94,22 +102,34 @@ export function useBookStructure(bookId: string | undefined) {
             // Remote checks are opportunistic; local offline editing stays available.
           }
         }
-      })
-      .catch((err: unknown) => {
-        if (ownsLoad()) setError(resolvedBookId, err instanceof Error ? err.message : t("common.loadFailed"));
-      })
-      .finally(() => {
+      } catch (localError) {
+        try {
+          const nextStructure = await loadBookStructure(token, book.owner, book.repo, authoritativeBranch);
+          if (!ownsLoad()) return;
+          setStructure(resolvedBookId, nextStructure);
+          setError(resolvedBookId, "");
+        } catch (err) {
+          if (ownsLoad()) setError(resolvedBookId, err instanceof Error ? err.message : localError instanceof Error ? localError.message : t("common.loadFailed"));
+        }
+      } finally {
         if (!ownsLoad()) return;
         setCloneProgress(resolvedBookId, undefined);
         setLoading(resolvedBookId, false);
+      }
+    })().catch((err: unknown) => {
+        if (ownsLoad()) setError(resolvedBookId, err instanceof Error ? err.message : t("common.loadFailed"));
+        if (ownsLoad()) {
+          setCloneProgress(resolvedBookId, undefined);
+          setLoading(resolvedBookId, false);
+        }
       });
-  }, [book, readBranch, resolvedBookId, setCloneProgress, setError, setLoading, setStructure, settings, t, toast, user]);
+  }, [book, branchResolution.requiresCreation, readBranch, resolvedBookId, setCloneProgress, setError, setLoading, setStructure, setWorkingBranch, settings, structure?.defaultBranch, t, toast, user, workingBranches]);
 
   useEffect(() => {
-    if (!book || !resolvedBookId || loading) return;
+    if (!book || !resolvedBookId || loading || error) return;
     if (structure && (!readBranch || structure.loadedBranch === readBranch)) return;
     loadStructure();
-  }, [book, loadStructure, loading, readBranch, resolvedBookId, structure]);
+  }, [book, error, loadStructure, loading, readBranch, resolvedBookId, structure]);
 
   const reload = useCallback(() => {
     if (!resolvedBookId) return;

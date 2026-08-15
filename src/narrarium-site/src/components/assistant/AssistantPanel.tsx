@@ -126,7 +126,7 @@ export function AssistantPanel() {
   const navigate = useNavigate();
   const route = useMemo(() => parseAppRoute(location.pathname), [location.pathname]);
   const bookId = "bookId" in route ? route.bookId : undefined;
-  const { branch } = useWorkingBranch(bookId);
+  const { branch, ensuring: branchEnsuring, ready: branchReady, error: branchError } = useWorkingBranch(bookId);
   const { settings, patchSettings } = useSettingsStore();
   const { structures, workingBranches, clearBook } = useBooksStore();
   const { save } = useSettings();
@@ -247,7 +247,7 @@ export function AssistantPanel() {
 
   useEffect(() => {
     let active = true;
-    void loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches).then((ctx) => {
+    void loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches, branch).then((ctx) => {
       if (!active) return;
       setContextLabel(ctx.title);
       setContextSummary(ctx.summary);
@@ -257,7 +257,7 @@ export function AssistantPanel() {
     return () => {
       active = false;
     };
-  }, [location.pathname, settings, structures, workingBranches]);
+  }, [branch, location.pathname, settings, structures, workingBranches]);
 
   useEffect(() => {
     if (!open || !user || !accessToken) return;
@@ -858,13 +858,17 @@ export function AssistantPanel() {
 
   async function saveCurrentChatAsNote(options: { mode: "full" | "reply-summary"; deleteAfter?: boolean }) {
     if (!currentSession?.messages.length || !bookId) return;
+    if (!branchReady || branchEnsuring) {
+      toast({ title: "Copilot branch is not ready", description: branchError ?? `Waiting for branch ${branch}.`, variant: "destructive" });
+      return;
+    }
     const book = settings.books.find((entry) => entry.id === bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) {
       toast({ title: t("assistant.toastNoBookToken"), variant: "destructive" });
       return;
     }
-    const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches);
+    const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches, branch);
     if (!routeContext.noteTargetPath) {
       toast({ title: t("assistant.toastNoNoteTarget"), variant: "destructive" });
       return;
@@ -888,7 +892,7 @@ export function AssistantPanel() {
         token,
         owner: book.owner,
         repo: book.repo,
-        branch: routeContext.structure?.loadedBranch ?? branch,
+        branch: routeContext.branch ?? branch,
         path: routeContext.noteTargetPath,
         noteBody,
       });
@@ -1036,6 +1040,10 @@ export function AssistantPanel() {
   async function sendPrompt(prompt: string, options?: { spokenMode?: boolean; signal?: AbortSignal; attachmentTarget?: AttachmentImportTarget }): Promise<AssistantMessage | null> {
     const trimmed = prompt.trim();
     if (!trimmed || useAssistantStore.getState().busy) return null;
+    if (bookId && (!branchReady || branchEnsuring)) {
+      toast({ title: "Copilot branch is not ready", description: branchError ?? `Waiting for branch ${branch} to finish loading.`, variant: "destructive" });
+      return null;
+    }
     const session = ensureSession();
     const requestId = crypto.randomUUID();
     const controller = new AbortController();
@@ -1062,14 +1070,14 @@ export function AssistantPanel() {
       if (!text && !streamedMessageId) return;
       if (!streamedMessageId) {
         streamedMessageId = crypto.randomUUID();
-        const streamedMessage: AssistantMessage = { id: streamedMessageId, role: "assistant", text };
+        const streamedMessage: AssistantMessage = { id: streamedMessageId, role: "assistant", text, branch };
         useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, streamedMessage] }));
       } else {
         useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text });
       }
     };
     try {
-      const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches);
+      const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches, branch);
       if (!ownsRequest()) return null;
       const book = routeContext.book;
       const token = book ? resolveBookToken(book, settings) : "";
@@ -1079,16 +1087,18 @@ export function AssistantPanel() {
       const strofaReply = await tryHandleStrofaCommand(trimmed, mediaOperation);
       if (!ownsRequest()) return null;
       if (strofaReply) {
-        useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, strofaReply] }));
+        const ownedReply = { ...strofaReply, branch: routeContext.branch };
+        useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, ownedReply] }));
         setOpen(true);
-        return strofaReply;
+        return ownedReply;
       }
       const localReply = await tryHandleLocalVoiceTool(trimmed, { context: routeContext, book, token, spokenMode: options?.spokenMode, operation: mediaOperation });
       if (!ownsRequest()) return null;
       if (localReply) {
-        useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, localReply] }));
+        const ownedReply = { ...localReply, branch: routeContext.branch, action: localReply.action ? { ...localReply.action, branch: routeContext.branch } : undefined };
+        useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, ownedReply] }));
         setOpen(true);
-        return localReply;
+        return ownedReply;
       }
       const latestSession = useAssistantStore.getState().currentSession;
       if (!latestSession || latestSession.id !== session.id) return null;
@@ -1109,11 +1119,12 @@ export function AssistantPanel() {
         onText: updateStreamedReply,
       });
       if (!ownsRequest()) return null;
-      const finalReply = streamedMessageId ? { ...reply, id: streamedMessageId } : reply;
+      const ownedReply = { ...reply, branch: routeContext.branch, action: reply.action ? { ...reply.action, branch: reply.action.branch ?? routeContext.branch } : undefined };
+      const finalReply = streamedMessageId ? { ...ownedReply, id: streamedMessageId } : ownedReply;
       if (streamedMessageId) {
-        useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: reply.text, action: reply.action });
+        useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: ownedReply.text, action: ownedReply.action, branch: ownedReply.branch });
       } else {
-        useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, reply] }));
+        useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, ownedReply] }));
       }
       setOpen(true);
       if (reply.action?.kind === "navigate" && isAssistantActionEnabled(reply.action)) {
@@ -1125,8 +1136,8 @@ export function AssistantPanel() {
       return finalReply;
     } catch (err) {
       if (!ownsRequest()) return null;
-      const errorMessage = { id: streamedMessageId ?? crypto.randomUUID(), role: "assistant" as const, text: err instanceof Error ? err.message : t("assistant.requestFailed") };
-      if (streamedMessageId) useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: errorMessage.text });
+      const errorMessage = { id: streamedMessageId ?? crypto.randomUUID(), role: "assistant" as const, text: err instanceof Error ? err.message : t("assistant.requestFailed"), branch };
+      if (streamedMessageId) useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: errorMessage.text, branch });
       else useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, errorMessage] }));
       return errorMessage;
     } finally {

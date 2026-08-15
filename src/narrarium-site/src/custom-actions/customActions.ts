@@ -3,6 +3,7 @@ import { completeTextRouted } from "@/assistant/router";
 import { loadWriterContext, parseAppRoute } from "@/assistant/context";
 import type { LlmMessage } from "@/assistant/llm";
 import { loadFileContent } from "@/github/githubClient";
+import { resolveAuthoritativeBranch } from "@/github/branchRules";
 import { CANON_SECTION_ORDER } from "@/lib/canonSections";
 import { ghostwriterPrompt } from "@/narrarium/ghostwriter";
 import { loadGhostwriterProfile, stripFrontmatter } from "@/narrarium/pipeline";
@@ -115,7 +116,7 @@ export function resolveCustomActionTarget(input: {
   const structure = bookId ? input.structures[bookId] ?? null : null;
   const chapter = structure && "chapterId" in route ? structure.chapters.find((entry) => entry.slug === route.chapterId) ?? null : null;
   const paragraph = chapter && "paragraphNum" in route ? chapter.paragraphs.find((entry) => entry.number === route.paragraphNum) ?? null : null;
-  const branch = bookId ? (book?.activeBranch ?? input.workingBranches[bookId] ?? structure?.loadedBranch ?? structure?.defaultBranch) : undefined;
+  const branch = bookId ? resolveAuthoritativeBranch({ activeBranch: book?.activeBranch, workingBranch: input.workingBranches[bookId], loadedBranch: structure?.loadedBranch, defaultBranch: structure?.defaultBranch }).branch : undefined;
   const token = book ? resolveBookToken(book, input.settings) : "";
 
   switch (route.kind) {
@@ -162,7 +163,7 @@ async function buildCustomActionMessages(input: CustomActionPromptInput, target:
     injected.push(`BODY:\n${doc.body.trim()}`);
   }
   if (action.injections.includeContext) {
-    const context = await loadWriterContext(input.pathname, input.settings, input.books, input.structures, input.workingBranches);
+    const context = await loadWriterContext(input.pathname, input.settings, input.books, input.structures, input.workingBranches, target.branch);
     const files = context.relevantFiles
       .map((file) => `FILE: ${file.path}\n${file.content.trim()}`)
       .filter(Boolean)

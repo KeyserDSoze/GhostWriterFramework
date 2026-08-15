@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.23",
+    "date": "2026-08-15",
+    "en": {
+      "title": "One authoritative branch everywhere",
+      "summary": "Copilot structure, context, reads, custom actions, chat notes, actions, and writes now use one branch resolution contract and wait for personal branch creation.",
+      "changes": [
+        "Defined one branch priority and provenance contract across active, working, personal, loaded, default, and fallback branches.",
+        "Coalesced and awaited personal branch creation before loading structure, and kept failed creation in a stable blocked state instead of writing or retrying endlessly.",
+        "Blocked Copilot and custom actions until the loaded structure matches the authoritative branch, using that same branch for target, canon, context, note, and mutation reads/writes.",
+        "Recorded branch provenance on streamed, final, local-tool, error, and action messages, with account-switch and branch-mismatch regression tests."
+      ]
+    },
+    "it": {
+      "title": "Un solo branch autorevole ovunque",
+      "summary": "Struttura, contesto, letture, custom action, note chat, azioni e scritture del Copilota usano ora un unico contratto di branch e attendono la creazione del branch personale.",
+      "changes": [
+        "Definito un unico contratto di priorità e provenienza tra branch attivo, working, personale, caricato, predefinito e fallback.",
+        "Aggregata e attesa la creazione del branch personale prima del caricamento struttura, mantenendo gli errori in uno stato bloccato stabile invece di scrivere o ritentare all'infinito.",
+        "Bloccati Copilota e custom action finché la struttura caricata non coincide con il branch autorevole, usando lo stesso branch per target, canone, contesto, note e mutazioni.",
+        "Registrata la provenienza branch su messaggi streaming, finali, tool locali, errori e azioni, con test di regressione per cambio account e mismatch del branch."
+      ]
+    }
+  },
+  {
     "version": "0.76.22",
     "date": "2026-08-15",
     "en": {

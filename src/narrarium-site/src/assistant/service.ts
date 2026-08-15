@@ -80,6 +80,7 @@ type PromptInput = {
   compactedMessageCount: number;
   attachments: AssistantAttachment[];
   attachmentTarget?: AttachmentImportTarget;
+  branch: string;
   spokenMode?: boolean;
   signal?: AbortSignal;
   onText?: (text: string) => void;
@@ -140,12 +141,17 @@ export async function runAssistantPrompt(input: {
     compactedMessageCount,
     attachments,
     attachmentTarget,
+    branch,
     spokenMode,
     signal,
     onText,
   };
 
   if (isCapabilityQuestion(prompt)) return buildCapabilitiesMessage(prompt, settings, EXECUTABLE_HANDLER_IDS);
+
+  if (!context.branchReady || context.branch !== branch) {
+    return makeAssistantMessage("assistant", `Copilot is waiting for the authoritative branch \`${branch}\` to finish loading before it can read or write repository context.`);
+  }
 
   if (!book || !token) {
     return makeAssistantMessage(
@@ -940,7 +946,7 @@ function resolveCanonPathFromRoute(input: PromptInput): string | null {
 async function resolveTargetBody(input: PromptInput, token: string): Promise<{ kind: string; title: string; body: string } | null> {
   if (unresolvedTargetMessage(input)) return null;
   const book = input.context.book;
-  const branch = input.context.structure?.loadedBranch;
+  const branch = input.branch;
   if (!book || !branch || !token) return null;
   const paragraph = resolveParagraphFromPrompt(input);
   if (paragraph) {
@@ -964,7 +970,7 @@ async function resolveTargetBody(input: PromptInput, token: string): Promise<{ k
 async function appendRelatedCanon(input: PromptInput, token: string, sourceText: string, body: string): Promise<string> {
   const structure = input.context.structure;
   const book = input.context.book;
-  const branch = input.context.structure?.loadedBranch;
+  const branch = input.branch;
   if (!structure || !book || !branch) return body;
   const sections = ["characters", "locations", "factions", "items", "timelines"] as const;
   const candidates: CanonContextCandidate[] = sections.flatMap((section) =>
@@ -1667,7 +1673,7 @@ async function searchCurrentBook(input: PromptInput & { book: BookEntry; token: 
     if (matchedByTitle.length === 0) {
       for (const hit of paragraphCandidates.slice(0, 24)) {
         try {
-          const content = await loadFileContent(token, book.owner, book.repo, hit.paragraph.path, input.context.structure?.loadedBranch);
+          const content = await loadFileContent(token, book.owner, book.repo, hit.paragraph.path, input.branch);
           if (matchText(content)) {
             results.push(`- paragraph body: ${hit.chapter.slug}/${hit.paragraph.number} ${hit.paragraph.title}`);
             if (results.length >= 5) break;

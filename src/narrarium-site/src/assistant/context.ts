@@ -2,6 +2,7 @@ import type { BookStructure, Chapter, Paragraph } from "@/types/book";
 import type { AppSettings, BookEntry } from "@/types/settings";
 import { loadFileContent } from "@/github/githubClient";
 import { resolveBookToken } from "@/types/settings";
+import { resolveAuthoritativeBranch } from "@/github/branchRules";
 
 export type AppRouteContext =
   | { kind: "app-home" }
@@ -50,6 +51,8 @@ export interface LoadedWriterContext {
   relevantFiles: Array<{ path: string; content: string }>;
   loadedFilePaths: string[];
   noteTargetPath: string | null;
+  branch?: string;
+  branchReady: boolean;
 }
 
 export function parseAppRoute(pathname: string): AppRouteContext {
@@ -194,6 +197,7 @@ export async function loadWriterContext(
   books: BookEntry[],
   structures: Record<string, BookStructure>,
   workingBranches: Record<string, string>,
+  requestedBranch?: string,
 ): Promise<LoadedWriterContext> {
   const route = parseAppRoute(pathname);
   const bookId = "bookId" in route ? route.bookId : null;
@@ -209,12 +213,14 @@ export async function loadWriterContext(
       : null;
 
   const token = book ? resolveBookToken(book, settings) : "";
-  const readBranch = bookId ? (book?.activeBranch ?? workingBranches[bookId] ?? structure?.defaultBranch) : undefined;
+  const branchResolution = bookId ? resolveAuthoritativeBranch({ activeBranch: book?.activeBranch, workingBranch: requestedBranch ?? workingBranches[bookId], loadedBranch: structure?.loadedBranch, defaultBranch: structure?.defaultBranch }) : null;
+  const readBranch = branchResolution?.branch;
+  const branchReady = Boolean(!structure || branchResolution?.structureMatches);
   const availableFiles = structure ? buildAvailableFileManifest(structure) : [];
   const relevantFiles: Array<{ path: string; content: string }> = [];
   const loaded = new Set<string>();
 
-  if (book && structure && token) {
+  if (book && structure && token && branchReady) {
     const pushFile = async (path: string | undefined) => {
       if (!path || loaded.has(path)) return;
       try {
@@ -320,6 +326,8 @@ export async function loadWriterContext(
     relevantFiles,
     loadedFilePaths: [...loaded],
     noteTargetPath: buildNoteTargetPath(route, chapter),
+    branch: readBranch,
+    branchReady,
   };
 }
 

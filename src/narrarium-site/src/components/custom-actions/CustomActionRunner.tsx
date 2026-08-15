@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
+import { parseAppRoute } from "@/assistant/context";
+import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { Copy, Loader2, Volume2, VolumeX } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -37,6 +39,9 @@ export function CustomActionRunner({ invocation, onDone }: { invocation: CustomA
   const { toast } = useToast();
   const location = useLocation();
   const pathname = location.pathname;
+  const route = parseAppRoute(pathname);
+  const bookId = "bookId" in route ? route.bookId : undefined;
+  const { branch, ready: branchReady, error: branchError } = useWorkingBranch(bookId);
   const { settings } = useSettingsStore();
   const { structures, workingBranches } = useBooksStore();
   const [loading, setLoading] = useState(false);
@@ -58,13 +63,18 @@ export function CustomActionRunner({ invocation, onDone }: { invocation: CustomA
     setLoading(true);
     setResult("");
     setError("");
+    if (bookId && !branchReady) {
+      setError(branchError ?? `Waiting for branch ${branch} to finish loading.`);
+      setLoading(false);
+      return;
+    }
     void runCustomAction({
       action: invocation.action,
       pathname,
       settings,
       books: settings.books,
       structures,
-      workingBranches,
+      workingBranches: bookId ? { ...workingBranches, [bookId]: branch } : workingBranches,
       selection: invocation.selection,
       editorBody: invocation.editable?.value,
     })
@@ -72,7 +82,7 @@ export function CustomActionRunner({ invocation, onDone }: { invocation: CustomA
       .catch((err) => { if (!cancelled) setError(String(err)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [invocation, pathname, settings, structures, workingBranches]);
+  }, [bookId, branch, branchError, branchReady, invocation, pathname, settings, structures, workingBranches]);
 
   useEffect(() => () => {
     speechRef.current?.stop();

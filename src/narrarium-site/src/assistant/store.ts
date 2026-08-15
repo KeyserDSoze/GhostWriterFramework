@@ -82,6 +82,7 @@ export interface AssistantMessage {
   role: "user" | "assistant" | "system";
   text: string;
   action?: AssistantAction;
+  branch?: string;
 }
 
 export interface AssistantSessionMeta {
