@@ -43,7 +43,7 @@ import { assistantMarkdownToRichPlainText, buildAssistantSessionMarkdown, buildA
 import { loadWriterContext, parseAppRoute } from "@/assistant/context";
 import { resolveNavigateAction, resolveReadAloudAction, type ReadAloudAction } from "@/assistant/planner";
 import { deleteAssistantSession, listAssistantSessions, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
-import { AssistantSessionSaveQueue, assistantSessionSaveFingerprint, attachAssistantSessionFileId, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
+import { AssistantSessionSaveQueue, assistantSessionSaveFingerprint, attachAssistantSessionCloudHandle, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
 import { assistantSessionCompactionTarget, mergeAssistantSessionCompaction } from "@/assistant/sessionCompaction";
 import { isAssistantRequestOwned } from "@/assistant/sessionOwnership";
 import { isMediaOperationOwned, stopMediaStreamTracks } from "@/assistant/mediaOwnership";
@@ -97,6 +97,7 @@ import { currentRevisionToken, fileRevisionMatches, fileUpdateCounts, markFileUp
 import { buildCanonEntityDocument } from "@/narrarium/canon";
 import { BrowserSpeechFallbackRequired } from "@/assistant/mediaFallback";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
+import { refreshBookAfterMutation, runPromptWithMutationRefresh } from "@/assistant/mutationRefresh";
 
 ensureBuiltinCopilotToolsRegistered();
 
@@ -172,6 +173,8 @@ export function AssistantPanel() {
   const activeAttachmentRunRef = useRef<number | null>(null);
   const openSessionRunRef = useRef(0);
   const activeOpenSessionRunRef = useRef<number | null>(null);
+  const openSessionAbortRef = useRef<AbortController | null>(null);
+  const cloudAccountAbortRef = useRef(new AbortController());
   const {
     open,
     setOpen,
@@ -241,7 +244,16 @@ export function AssistantPanel() {
   }, [manualEnd]);
 
   useEffect(() => {
-    return () => cancelSessionOperations();
+    cloudAccountAbortRef.current.abort();
+    cloudAccountAbortRef.current = new AbortController();
+    sessionSaveQueueRef.current.reset();
+    queuedSessionFingerprintsRef.current.clear();
+    return () => {
+      cloudAccountAbortRef.current.abort();
+      sessionSaveQueueRef.current.reset();
+      queuedSessionFingerprintsRef.current.clear();
+      cancelSessionOperations();
+    };
   }, [user?.provider, user?.email, accessToken]);
 
   const lastMessageText = currentSession?.messages[currentSession.messages.length - 1]?.text;
@@ -270,9 +282,10 @@ export function AssistantPanel() {
   useEffect(() => {
     if (!open || !user || !accessToken) return;
     let active = true;
+    const controller = new AbortController();
     const expectedIdentity = accountIdentity(user);
     setLoadingSessions(true);
-    void listAssistantSessions(user.provider, accessToken)
+    void listAssistantSessions(user.provider, accessToken, { signal: controller.signal, isCurrent: () => isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user) })
       .then((items) => {
         if (active && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setSessions(items);
       })
@@ -284,7 +297,7 @@ export function AssistantPanel() {
       .finally(() => {
         if (active && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setLoadingSessions(false);
       });
-    return () => { active = false; };
+    return () => { active = false; controller.abort(); };
   }, [open, user, accessToken, setSessions, toast]);
 
   useEffect(() => {
@@ -297,14 +310,14 @@ export function AssistantPanel() {
       void sessionSaveQueueRef.current.enqueue(
         currentSession,
         (session) => saveAssistantSession(user.provider, accessToken, session),
-        (savedSnapshot, fileId) => {
+        (savedSnapshot, handle) => {
           if (!isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
           const state = useAssistantStore.getState();
           const latest = state.currentSession?.id === savedSnapshot.id ? state.currentSession : null;
-          const sessionWithFileId = attachAssistantSessionFileId(state.currentSession, savedSnapshot.id, fileId);
+          const sessionWithFileId = attachAssistantSessionCloudHandle(state.currentSession, savedSnapshot.id, handle);
           if (sessionWithFileId !== state.currentSession) state.setCurrentSession(sessionWithFileId);
           const metadataSource = latest ?? savedSnapshot;
-          state.setSessions(upsertAssistantSessionMeta(state.sessions, metadataSource, fileId));
+          state.setSessions(upsertAssistantSessionMeta(state.sessions, metadataSource, handle));
         },
         (err) => {
           if (isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
@@ -401,6 +414,8 @@ export function AssistantPanel() {
       releasedBusy = true;
     }
     if (activeOpenSessionRunRef.current !== null) {
+      openSessionAbortRef.current?.abort();
+      openSessionAbortRef.current = null;
       openSessionRunRef.current += 1;
       activeOpenSessionRunRef.current = null;
       releasedBusy = true;
@@ -775,19 +790,24 @@ export function AssistantPanel() {
           liveStrofeIndexRef.current = index;
           setLiveStrofeIndex(index);
         },
+        onError: (error) => {
+          if (!ownsMediaOperation(operation.generation, operation.signal)) return;
+          toast({ title: t("assistant.toastTtsFailed"), description: String(error), variant: "destructive" });
+        },
       });
       if (!ownsMediaOperation(operation.generation, operation.signal)) {
         controller.stop();
         return null;
       }
       setLiveController(controller);
-      void controller.done.finally(() => {
+      const clearController = () => {
         if (mountedRef.current && speechControllerRef.current === controller) {
           speechControllerRef.current = null;
           setSpeechController(null);
           setLivePaused(false);
         }
-      });
+      };
+      void controller.done.then(clearController, clearController);
       return controller;
     } catch (err) {
       if (!ownsMediaOperation(operation.generation, operation.signal)) return null;
@@ -885,10 +905,14 @@ export function AssistantPanel() {
 
   async function deleteCurrentSavedChat() {
     if (!user || !accessToken || !currentSession) return;
+    const expectedIdentity = accountIdentity(user);
+    const signal = cloudAccountAbortRef.current.signal;
     cancelSessionOperations();
     const fileId = currentSession.fileId;
-    if (fileId) await deleteAssistantSession(user.provider, accessToken, fileId);
-    setSessions(sessions.filter((session) => (session.fileId ?? session.id) !== (fileId ?? currentSession.id)));
+    if (fileId) await deleteAssistantSession(user.provider, accessToken, fileId, signal);
+    if (signal.aborted || !isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
+    const state = useAssistantStore.getState();
+    state.setSessions(state.sessions.filter((session) => (session.fileId ?? session.id) !== (fileId ?? currentSession.id)));
     setCurrentSession(null);
   }
 
@@ -904,7 +928,8 @@ export function AssistantPanel() {
       toast({ title: t("assistant.toastNoBookToken"), variant: "destructive" });
       return;
     }
-    const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches, branch);
+    const booksState = useBooksStore.getState();
+    const routeContext = await loadWriterContext(location.pathname, settings, settings.books, booksState.structures, booksState.workingBranches, branch);
     if (!routeContext.noteTargetPath) {
       toast({ title: t("assistant.toastNoNoteTarget"), variant: "destructive" });
       return;
@@ -932,6 +957,7 @@ export function AssistantPanel() {
         path: routeContext.noteTargetPath,
         noteBody,
       });
+      await refreshBookAfterMutation({ book, token, branch: routeContext.branch ?? branch });
       if (options.deleteAfter) await deleteCurrentSavedChat();
       toast({ title: t("assistant.toastChatNoteSaved") });
     } catch (err) {
@@ -1113,7 +1139,8 @@ export function AssistantPanel() {
       }
     };
     try {
-      const routeContext = await loadWriterContext(location.pathname, settings, settings.books, structures, workingBranches, branch);
+      const booksState = useBooksStore.getState();
+      const routeContext = await loadWriterContext(location.pathname, settings, settings.books, booksState.structures, booksState.workingBranches, branch);
       if (!ownsRequest()) return null;
       const book = routeContext.book;
       const token = book ? resolveBookToken(book, settings) : "";
@@ -1138,7 +1165,7 @@ export function AssistantPanel() {
       }
       const latestSession = useAssistantStore.getState().currentSession;
       if (!latestSession || latestSession.id !== session.id) return null;
-      const reply = await runAssistantPrompt({
+      const reply = await runPromptWithMutationRefresh(() => runAssistantPrompt({
         prompt: trimmed,
         context: routeContext,
         settings,
@@ -1153,12 +1180,14 @@ export function AssistantPanel() {
         spokenMode: options?.spokenMode,
         signal: controller.signal,
         onText: updateStreamedReply,
+      }), async () => {
+        if (book) await refreshBookAfterMutation({ book, token, branch: routeContext.branch ?? branch });
       });
       if (!ownsRequest()) return null;
       const ownedReply = { ...reply, branch: routeContext.branch, action: reply.action ? { ...reply.action, branch: reply.action.branch ?? routeContext.branch } : undefined };
       const finalReply = streamedMessageId ? { ...ownedReply, id: streamedMessageId } : ownedReply;
       if (streamedMessageId) {
-        useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: ownedReply.text, action: ownedReply.action, branch: ownedReply.branch });
+        useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: ownedReply.text, action: ownedReply.action, branch: ownedReply.branch, mutation: ownedReply.mutation });
       } else {
         useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, ownedReply] }));
       }
@@ -1448,11 +1477,13 @@ export function AssistantPanel() {
     if (!user || !accessToken) return;
     cancelSessionOperations();
     const runId = ++openSessionRunRef.current;
+    const controller = new AbortController();
+    openSessionAbortRef.current = controller;
     activeOpenSessionRunRef.current = runId;
     setBusy(true);
     try {
-      const session = await loadAssistantSession(user.provider, accessToken, fileId);
-      if (activeOpenSessionRunRef.current !== runId) return;
+      const session = await loadAssistantSession(user.provider, accessToken, fileId, controller.signal);
+      if (controller.signal.aborted || activeOpenSessionRunRef.current !== runId) return;
       setCurrentSession(session);
       setOpen(true);
     } catch (err) {
@@ -1462,6 +1493,7 @@ export function AssistantPanel() {
     } finally {
       if (activeOpenSessionRunRef.current === runId) {
         activeOpenSessionRunRef.current = null;
+        openSessionAbortRef.current = null;
         setBusy(false);
       }
     }
@@ -1471,16 +1503,22 @@ export function AssistantPanel() {
     const fileId = session.fileId;
     if (!user || !accessToken || !fileId) return;
     if (!window.confirm(t("assistant.deleteChatConfirm", { title: session.title || t("assistant.untitledChat") }))) return;
+    const expectedIdentity = accountIdentity(user);
+    const signal = cloudAccountAbortRef.current.signal;
     try {
-      await deleteAssistantSession(user.provider, accessToken, fileId);
-      setSessions(sessions.filter((session) => session.fileId !== fileId));
+      await deleteAssistantSession(user.provider, accessToken, fileId, signal);
+      if (signal.aborted || !isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
+      const state = useAssistantStore.getState();
+      state.setSessions(state.sessions.filter((entry) => entry.fileId !== fileId));
       if (useAssistantStore.getState().currentSession?.fileId === fileId) {
         cancelSessionOperations();
         setCurrentSession(null);
       }
       toast({ title: t("assistant.toastChatDeleted") });
     } catch (err) {
-      toast({ title: t("assistant.toastDeleteChatFailed"), description: String(err), variant: "destructive" });
+      if (!signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
+        toast({ title: t("assistant.toastDeleteChatFailed"), description: String(err), variant: "destructive" });
+      }
     }
   }
 
@@ -1584,8 +1622,9 @@ export function AssistantPanel() {
     setBusy(true);
     try {
       await applyParagraphRewrite({ action, book, branch, token });
+      await refreshBookAfterMutation({ book, token, branch });
+      useAssistantStore.getState().updateMessage(message.id, { mutation: { changedPaths: [action.paragraphPath], refresh: "book-structure-and-context" } });
       toast({ title: t("assistant.toastParagraphUpdated") });
-      window.location.reload();
     } catch (err) {
       toast({ title: t("assistant.toastRewriteFailed"), description: String(err), variant: "destructive" });
     } finally {
@@ -1616,12 +1655,14 @@ export function AssistantPanel() {
       }));
       const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch });
       await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: `Apply ${updates.length} Copilot file update${updates.length === 1 ? "" : "s"}` });
+      await refreshBookAfterMutation({ book, token, branch });
       const nextUpdates = markFileUpdatesApplied(action.updates, results);
       const nextRevisions = { ...action.sourceRevisions };
       for (const update of updates) nextRevisions[update.path] = results[update.path].appliedHash;
       const allApplied = nextUpdates.every((update) => update.status === "applied");
       useAssistantStore.getState().updateMessage(message.id, {
         text: `${message.text}\n\n${t("assistant.appliedFileChanges", { count: updates.length })}`,
+        mutation: { changedPaths: updates.map((update) => update.path).sort(), refresh: "book-structure-and-context" },
         action: {
           kind: allApplied ? "undo-file-updates" : "apply-file-updates",
           bookId: action.bookId,
@@ -1700,10 +1741,9 @@ export function AssistantPanel() {
         const existing = await optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, action.path));
         if (existing) await deleteFile(token, book.owner, book.repo, branch, action.path, existing.sha, `Delete ${action.target}: ${action.title}`);
       }
-      useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("assistant.deleteApplied")}` });
+      useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("assistant.deleteApplied")}`, mutation: { changedPaths: [action.path], refresh: "book-structure-and-context" } });
       toast({ title: t("assistant.toastDeleted", { title: action.title }) });
-      clearBook(book.id);
-      window.location.reload();
+      await refreshBookAfterMutation({ book, token, branch });
     } catch (err) {
       toast({ title: t("assistant.toastDeleteFailed"), description: String(err), variant: "destructive" });
     } finally {
@@ -1725,8 +1765,8 @@ export function AssistantPanel() {
       if (document.path !== action.destinationPath) throw new Error("The generated entity destination changed before confirmation.");
       const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch });
       await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations: [{ path: document.path, content: document.content, expectedCurrentHash: null }], message: `Add ${action.entityKind} ${action.label} from ${action.researchPath}` });
-      useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("assistant.createFromResearchApplied")}` });
-      clearBook(book.id);
+      useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("assistant.createFromResearchApplied")}`, mutation: { changedPaths: [document.path], refresh: "book-structure-and-context" } });
+      await refreshBookAfterMutation({ book, token, branch });
       toast({ title: t("assistant.toastCreatedFromResearch", { title: action.label }) });
     } catch (err) {
       toast({ title: t("assistant.toastCreateFromResearchFailed"), description: String(err), variant: "destructive" });
@@ -1756,10 +1796,11 @@ export function AssistantPanel() {
       }));
       const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch });
       await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: `Undo ${applied.length} Copilot file update${applied.length === 1 ? "" : "s"}` });
+      await refreshBookAfterMutation({ book, token, branch });
       const nextUpdates = markFileUpdatesUndone(action.updates, applied.map((update) => update.path));
       const nextRevisions = { ...action.sourceRevisions };
       await Promise.all(applied.map(async (update) => { nextRevisions[update.path] = update.previousContent == null ? null : await sha256Text(update.previousContent); }));
-      useAssistantStore.getState().updateMessage(message.id, { action: { ...action, kind: "apply-file-updates", updates: nextUpdates, sourceRevision: sourceRevisionFromFiles(nextRevisions), sourceRevisions: nextRevisions, generatedAt: new Date().toISOString() }, text: `${message.text}\n\n${t("assistant.undoApplied")}` });
+      useAssistantStore.getState().updateMessage(message.id, { action: { ...action, kind: "apply-file-updates", updates: nextUpdates, sourceRevision: sourceRevisionFromFiles(nextRevisions), sourceRevisions: nextRevisions, generatedAt: new Date().toISOString() }, text: `${message.text}\n\n${t("assistant.undoApplied")}`, mutation: { changedPaths: applied.map((update) => update.path).sort(), refresh: "book-structure-and-context" } });
       toast({ title: t("assistant.toastUndoApplied") });
     } catch (err) {
       toast({ title: t("assistant.toastUndoFailed"), description: String(err), variant: "destructive" });
@@ -1797,6 +1838,7 @@ export function AssistantPanel() {
     setBusy(true);
     try {
       await revertFileToRef(token, book.owner, book.repo, branch, file.filename, structure.defaultBranch);
+      await refreshBookAfterMutation({ book, token, branch });
       toast({ title: t("assistant.toastReverted", { file: file.filename }) });
       await loadBranchDiff();
     } catch (err) {

@@ -10,8 +10,20 @@ function paragraphSlugFromPath(path: string): string {
   return (path.split("/").pop() ?? "").replace(/\.md$/i, "");
 }
 
+export function chapterDraftArtifactPaths(slug: string): [string, string, string, string] {
+  return [
+    `drafts/${slug}/chapter.md`,
+    `drafts/${slug}/notes.md`,
+    `drafts/${slug}/ideas.md`,
+    `drafts/${slug}/promoted.md`,
+  ];
+}
+
 async function writeWorkspaceFile(token: string, owner: string, repo: string, branch: string, path: string, content: string, message: string, replace = false) {
-  if (replace) return createOrUpdateTextFile(token, owner, repo, branch, path, content, message);
+  if (replace) {
+    await createOrUpdateTextFile(token, owner, repo, branch, path, content, message);
+    return true;
+  }
   return createFileIfAbsent(token, owner, repo, branch, path, content, message);
 }
 
@@ -24,12 +36,14 @@ export async function createChapterDraftArtifacts(
 ) {
   const slug = input.chapterSlug ?? chapterSlug(input.number, input.title);
   const chapterId = `chapter:${slug}`;
-  await writeWorkspaceFile(
+  const [path, ...bucketPaths] = chapterDraftArtifactPaths(slug);
+  const changedPaths: string[] = [];
+  const primaryChanged = await writeWorkspaceFile(
     token,
     owner,
     repo,
     branch,
-    `drafts/${slug}/chapter.md`,
+    path,
     renderMarkdown(
       {
         type: "chapter-draft",
@@ -44,20 +58,22 @@ export async function createChapterDraftArtifacts(
     `Add chapter draft ${slug}`,
     input.replace,
   );
+  if (primaryChanged) changedPaths.push(path);
 
-  for (const bucket of ["notes", "ideas", "promoted"] as const) {
+  for (const [index, bucket] of (["notes", "ideas", "promoted"] as const).entries()) {
     const title =
       bucket === "ideas"
         ? `Chapter Draft Ideas ${slug}`
         : bucket === "promoted"
           ? `Chapter Draft Promoted ${slug}`
           : `Chapter Draft Notes ${slug}`;
+    const bucketPath = bucketPaths[index];
     await createFileIfAbsent(
       token,
       owner,
       repo,
       branch,
-      `drafts/${slug}/${bucket}.md`,
+      bucketPath,
       renderMarkdown(
         {
           type: "note",
@@ -70,9 +86,9 @@ export async function createChapterDraftArtifacts(
         `# ${title}\n\nKeep working material for this chapter draft here.\n`,
       ),
       `Add chapter draft ${bucket} ${slug}`,
-    ).catch(() => undefined);
+    ).then((created) => { if (created) changedPaths.push(bucketPath); }).catch(() => undefined);
   }
-  return `drafts/${slug}/chapter.md`;
+  return { path, changedPaths };
 }
 
 export async function createChapterResumeArtifact(

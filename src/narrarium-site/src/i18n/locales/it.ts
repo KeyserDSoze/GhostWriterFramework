@@ -292,6 +292,7 @@ const it = {
     pickModel: "Scegli modello",
     browser: "Browser (integrato)",
     noModel: "Nessun modello",
+    invalidSave: "Correggi o rimuovi i routing non validi prima di salvare.",
     task: {
       default: "Chat (predefinito)",
       copilot: "Copilot",
@@ -1138,6 +1139,7 @@ const it = {
     stale: "Non aggiornato",
     staleDescription: "Il contenuto o una delle sue dipendenze è cambiato dopo la generazione del report. Aggiorna l'audit per valutare le fonti correnti.",
     disabled: "L'audit è disabilitato nelle impostazioni di questo libro.",
+    missingModel: "Nessun modello AI eseguibile è configurato per il task Audit.",
     none: "Nessuno.",
     depth: {
       label: "Profondità audit",
@@ -1151,6 +1153,8 @@ const it = {
       update: "Aggiorna audit",
       rerun: "Ripeti audit",
       cancel: "Annulla",
+      openBookSettings: "Apri impostazioni libro",
+      openAiRouter: "Configura AI Router",
       openSource: "Apri fonte",
       delete: "Elimina audit",
       saveNote: "Salva nota"
@@ -1372,7 +1376,7 @@ const it = {
   },
   debug: {
     title: "Richieste AI",
-    subtitle: "Storico ultimi 10 giorni · costo totale {{cost}}",
+    subtitle: "Ultimi 7 giorni · solo metadati · costo totale {{cost}}",
     requests: "{{count}} richieste",
     inFlight: "{{count}} in corso…",
     empty: "Nessuna richiesta registrata.",
@@ -1380,10 +1384,16 @@ const it = {
     clearConfirm: "Sicuro? Cancella lo storico.",
     clearYes: "Svuota",
     model: "Modello",
+    provider: "Provider",
+    integration: "Integrazione (ID privato)",
+    routeCandidate: "Candidato routing",
+    primaryCandidate: "Primario",
+    fallbackCandidate: "Fallback {{n}}",
     cost: "Costo",
     tokensIn: "Token input",
     tokensOut: "Token output",
-    response: "Risposta"
+    response: "Risposta",
+    storageError: "Impossibile salvare lo storico debug: {{error}} L'esecuzione AI non è stata interrotta."
   },
   costs: {
     title: "Costi",

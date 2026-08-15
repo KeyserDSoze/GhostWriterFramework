@@ -17,7 +17,7 @@ import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { CHAT_CAPABILITIES, ROUTING_TASKS, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget, type RoutingTaskKind, type TaskRoute } from "@/types/settings";
 import { integrationChatModels } from "@/assistant/llm";
-import { BROWSER_ROUTING_ID } from "@/assistant/router";
+import { BROWSER_ROUTING_ID, reconcileTaskRouting, routingIssues } from "@/assistant/router";
 import { DeepSearchSettingsBody } from "@/components/settings/DeepSearchSettingsBody";
 import { CopilotToolsSettingsBody } from "@/components/settings/CopilotToolsSettingsBody";
 import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
@@ -75,6 +75,7 @@ function Section({ title, description, icon, defaultOpen, children }: { title: s
 
 export function SettingsPage() {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const location = useLocation();
   const previousPath = useNavigationHistoryStore((s) => s.previous?.pathname);
   const { settings, patchSettings } = useSettingsStore();
@@ -102,8 +103,13 @@ export function SettingsPage() {
   const aiIntegrations = settings.aiIntegrations ?? [];
   const defaultWriting = settings.defaultWritingIntegrationId ?? aiIntegrations[0]?.id;
   const defaultReview = settings.defaultReviewIntegrationId ?? aiIntegrations[0]?.id;
+  const brokenRoutes = routingIssues(settings.taskRouting, aiIntegrations);
 
   async function handleSave() {
+    if (brokenRoutes.length) {
+      toast({ title: t("routing.invalidSave"), variant: "destructive" });
+      return;
+    }
     const azureOpenAI = integrationToAzureCompat(aiIntegrations) ?? settings.azureOpenAI;
     patchSettings({ defaultGitHubToken: defaultToken, azureOpenAI });
     await save();
@@ -126,12 +132,13 @@ export function SettingsPage() {
   }
   function updateIntegration(id: string, patch: Partial<AIIntegration>) {
     const next = aiIntegrations.map((integration) => integration.id === id ? normalizeIntegration({ ...integration, ...patch }) : integration);
-    patchAi({ aiIntegrations: next, azureOpenAI: integrationToAzureCompat(next) ?? settings.azureOpenAI });
+    patchAi({ aiIntegrations: next, taskRouting: reconcileTaskRouting(settings.taskRouting, aiIntegrations, next), azureOpenAI: integrationToAzureCompat(next) ?? settings.azureOpenAI });
   }
   function removeIntegration(id: string) {
     const next = aiIntegrations.filter((integration) => integration.id !== id);
     patchAi({
       aiIntegrations: next,
+      taskRouting: reconcileTaskRouting(settings.taskRouting, aiIntegrations, next),
       defaultWritingIntegrationId: settings.defaultWritingIntegrationId === id ? next[0]?.id : settings.defaultWritingIntegrationId,
       defaultReviewIntegrationId: settings.defaultReviewIntegrationId === id ? next[0]?.id : settings.defaultReviewIntegrationId,
       azureOpenAI: integrationToAzureCompat(next) ?? settings.azureOpenAI,
@@ -161,7 +168,7 @@ export function SettingsPage() {
             {t("settings.syncFromDrive")}
           </Button>
           {section !== "home" && (
-            <Button size="sm" onClick={() => void handleSave()} disabled={isSaving}>
+            <Button size="sm" onClick={() => void handleSave()} disabled={isSaving || brokenRoutes.length > 0}>
               {isSaving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
               {t("settings.save")}
             </Button>
@@ -170,6 +177,15 @@ export function SettingsPage() {
       </div>
 
       {syncStatus === "error" && <Alert variant="destructive"><CloudOff className="h-4 w-4" /><AlertDescription>{t("settings.syncError")}</AlertDescription></Alert>}
+      {brokenRoutes.length > 0 && (
+        <Alert variant="destructive">
+          <Route className="h-4 w-4" />
+          <AlertDescription>
+            <p>{t("routing.invalidSave")}</p>
+            {brokenRoutes.map((issue, index) => <p key={`${issue.task}-${issue.target.integrationId}-${issue.target.model}-${index}`} className="mt-1 text-xs">{t(`routing.task.${issue.task}`)}: {issue.message}</p>)}
+          </AlertDescription>
+        </Alert>
+      )}
       {lastSynced && <p className="text-xs text-muted-foreground">{t("settings.lastSynced")}: {new Date(lastSynced).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</p>}
 
       {section === "home" ? (

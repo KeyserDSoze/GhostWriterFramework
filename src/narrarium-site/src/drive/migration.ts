@@ -8,7 +8,7 @@ import {
   saveAssistantSession,
 } from "@/assistant/chatCloud";
 import type { AssistantSession } from "@/assistant/store";
-import { resumableMigrationSteps } from "@/drive/migrationSafety";
+import { assertMigrationChatCompatible, indexUniqueMigrationIdentities, resumableMigrationSteps } from "@/drive/migrationSafety";
 import { deleteVerifiedGoogleAppFolders } from "@/drive/googleAppFolder";
 
 const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
@@ -90,7 +90,7 @@ async function deleteMicrosoftData(accessToken: string): Promise<CloudDeleteResu
  * Copy everything Narrarium stores in the user's cloud (app settings incl. per-book
  * settings, costs ledger, clipboard, and all chat sessions) from a source account's
  * cloud storage to a target account's cloud storage. Existing target files are
- * overwritten. The user's active session (authStore) is never touched.
+ * preserved when they differ. The user's active session (authStore) is never touched.
  */
 export async function migrateCloudData(
   source: MigrationEndpoint,
@@ -169,11 +169,26 @@ export async function migrateCloudData(
     if (!completed.has("chats")) {
       let copied = 0;
       const targetMetas = await listAssistantSessionsStrict(target.provider, target.accessToken);
-      const targetIds = new Map(targetMetas.map((meta) => [meta.id, meta.fileId]));
+      const targetsByIdentity = indexUniqueMigrationIdentities(targetMetas, "Migration target");
+      const compatibleTargets = new Map<string, AssistantSession>();
       for (const session of preflight.chats) {
-        const clean: AssistantSession = { ...session, fileId: targetIds.get(session.id) };
-        const targetId = await saveAssistantSession(target.provider, target.accessToken, clean);
-        const verified = await loadAssistantSession(target.provider, target.accessToken, targetId);
+        const targetMeta = targetsByIdentity.get(session.id);
+        if (!targetMeta?.fileId) continue;
+        const existing = await loadAssistantSession(target.provider, target.accessToken, targetMeta.fileId);
+        assertMigrationChatCompatible(session.id, session, existing, canonicalSession);
+        compatibleTargets.set(session.id, existing);
+      }
+      for (const session of preflight.chats) {
+        const existing = compatibleTargets.get(session.id);
+        if (existing) {
+          copied += 1;
+          onProgress?.({ step: "chats", status: "start", count: copied });
+          continue;
+        }
+        const targetMeta = targetsByIdentity.get(session.id);
+        const clean: AssistantSession = { ...session, fileId: targetMeta?.fileId, revision: targetMeta?.revision };
+        const handle = await saveAssistantSession(target.provider, target.accessToken, clean);
+        const verified = await loadAssistantSession(target.provider, target.accessToken, handle.fileId);
         if (!sameJson(canonicalSession(verified), canonicalSession(clean))) throw new Error(`Target chat verification failed for ${clean.id}.`);
         copied += 1;
         onProgress?.({ step: "chats", status: "start", count: copied });
@@ -198,8 +213,8 @@ function validSession(value: AssistantSession): boolean {
   return Boolean(value && typeof value.id === "string" && Array.isArray(value.messages) && Array.isArray(value.attachments));
 }
 
-function canonicalSession(session: AssistantSession): Omit<AssistantSession, "fileId"> {
-  const { fileId: _fileId, ...canonical } = session;
+function canonicalSession(session: AssistantSession): Omit<AssistantSession, "fileId" | "revision"> {
+  const { fileId: _fileId, revision: _revision, ...canonical } = session;
   return canonical;
 }
 
@@ -215,6 +230,7 @@ export async function preflightCloudMigration(source: MigrationEndpoint): Promis
     if (!meta.fileId) throw new Error(`Source chat ${meta.id} has no file identity.`);
     const session = await loadAssistantSession(source.provider, source.accessToken, meta.fileId);
     if (!validSession(session)) throw new Error(`Source chat ${meta.id} is malformed.`);
+    if (session.id !== meta.id) throw new Error(`Source chat ${meta.id} has mismatched session identity.`);
     chats.push(session);
   }
   const clipboard = clipboardResult.data ?? [];

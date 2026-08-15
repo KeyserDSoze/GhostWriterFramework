@@ -47,6 +47,7 @@ export function useBookStructure(bookId: string | undefined) {
     const expectedIdentity = accountIdentity(user);
     const ownsLoad = () => isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user);
     const token = resolveBookToken(book, settings);
+    const generation = useBooksStore.getState().structureGenerations[resolvedBookId] ?? 0;
     if (!token) {
       setError(resolvedBookId, t("bookPage.noTokenConfigured"));
       return;
@@ -82,7 +83,7 @@ export function useBookStructure(bookId: string | undefined) {
         }
         if (nextStructure.loadedBranch !== authoritativeBranch) throw new Error(`Loaded branch ${nextStructure.loadedBranch} does not match authoritative branch ${authoritativeBranch}.`);
         if (!ownsLoad()) return;
-        setStructure(resolvedBookId, nextStructure);
+        setStructure(resolvedBookId, nextStructure, generation);
         setError(resolvedBookId, "");
         if (settings.repository.autoFetchOnOpen && navigator.onLine) {
           try {
@@ -90,7 +91,7 @@ export function useBookStructure(bookId: string | undefined) {
             if (remote.changed && settings.repository.autoPullWhenClean) {
               await pullRemoteChanges({ bookId: resolvedBookId, token });
               const refreshed = await getExistingLocalBookStructure(resolvedBookId);
-              if (refreshed && ownsLoad()) setStructure(resolvedBookId, refreshed.structure);
+              if (refreshed && ownsLoad()) setStructure(resolvedBookId, refreshed.structure, generation);
             } else if (remote.changed) {
               const key = remoteChangedNoticeKey(resolvedBookId, remote.remoteHeadSha);
               if (!sessionStorage.getItem(key)) {
@@ -106,7 +107,7 @@ export function useBookStructure(bookId: string | undefined) {
         try {
           const nextStructure = await loadBookStructure(token, book.owner, book.repo, authoritativeBranch);
           if (!ownsLoad()) return;
-          setStructure(resolvedBookId, nextStructure);
+          setStructure(resolvedBookId, nextStructure, generation);
           setError(resolvedBookId, "");
         } catch (err) {
           if (ownsLoad()) setError(resolvedBookId, err instanceof Error ? err.message : localError instanceof Error ? localError.message : t("common.loadFailed"));

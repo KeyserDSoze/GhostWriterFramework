@@ -3,7 +3,7 @@ import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTo
 import { localizeCopilotToolArea, localizeCopilotToolText, localizeCopilotToolsLabel } from "@/assistant/tools/presentation";
 import { copilotToolRegistry, isCopilotToolEnabled } from "@/assistant/tools/registry";
 import type { AssistantMessage } from "@/assistant/store";
-import { isExplicitNavigationPrompt, matchesToolKeyword } from "@/assistant/orchestratorRules";
+import { isExplicitNavigationPrompt, isReaderEvaluationsNavigationPrompt, matchesToolKeyword } from "@/assistant/orchestratorRules";
 import { classifyMutationIntent, type MutationIntent } from "@/assistant/mutationIntent";
 
 export interface OrchestratorToolContext {
@@ -59,6 +59,10 @@ export function chooseToolHandlerId(context: OrchestratorToolContext, availableH
 export function chooseToolMatch(context: OrchestratorToolContext, availableHandlerIds: Set<string>): OrchestratorToolMatch | null {
   ensureBuiltinCopilotToolsRegistered();
   const prompt = context.lowered;
+  if (isReaderEvaluationsNavigationPrompt(prompt) && availableHandlerIds.has("open-reader-evaluations")) {
+    const tool = copilotToolRegistry.get("open-reader-evaluations");
+    if (tool?.handlerId) return { toolId: tool.id, handlerId: tool.handlerId, enabled: isCopilotToolEnabled(context.settings, tool) };
+  }
   let best: { tool: ReturnType<typeof copilotToolRegistry.list>[number]; score: number } | null = null;
   for (const tool of copilotToolRegistry.list()) {
     if (!tool.handlerId || !availableHandlerIds.has(tool.handlerId)) continue;

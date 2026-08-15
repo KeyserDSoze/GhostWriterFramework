@@ -1,7 +1,7 @@
 import type { AppSettings } from "@/types/settings";
 import type { BookStructure, Chapter, Paragraph } from "@/types/book";
 import type { LlmMessage } from "@/assistant/llm";
-import { completeTextRouted, completeToolRouted } from "@/assistant/router";
+import { completeTextRouted, completeToolRouted, type RoutedLlmRunMetadata } from "@/assistant/router";
 import { resolveEvaluationCriteria, scoreEvaluationRouted, type EvaluationCriterionScore } from "@/assistant/service";
 import { loadFileContent } from "@/github/githubClient";
 import { ghostwriterPrompt, parseGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
@@ -20,6 +20,7 @@ interface PipelineSource {
   structure: BookStructure;
   /** Optional: present when working inside a chapter/paragraph/draft. Absent for canon, prompts, etc. */
   chapter?: Chapter;
+  signal?: AbortSignal;
 }
 
 async function tryLoad(src: PipelineSource, path?: string): Promise<string> {
@@ -270,7 +271,7 @@ export async function generateChapterResume(src: PipelineSource, paragraphs: Arr
 }
 
 /** Generate a chapter evaluation body (uses the review model when configured). */
-export async function generateChapterEvaluation(src: PipelineSource, paragraphs: Array<{ title: string; text: string }>): Promise<string> {
+export async function generateChapterEvaluation(src: PipelineSource, paragraphs: Array<{ title: string; text: string }>, options?: { signal?: AbortSignal }): Promise<string> {
   const [{ style, story }, guidelines] = await Promise.all([buildContext(src), evaluationGuidelines(src)]);
   const scenes = paragraphs
     .map((p, i) => `### ${i + 1}. ${p.title}\n${p.text.trim()}`)
@@ -279,42 +280,58 @@ export async function generateChapterEvaluation(src: PipelineSource, paragraphs:
     { role: "system", content: `You are an editorial reviewer. Follow the evaluation-guidelines.md contract below. Be critical and specific: do not give comfort scores or generic praise. Write a chapter evaluation using the required markdown headings and concrete revision suggestions. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src)}.\n\n${guidelines}\n\n${style}` },
     { role: "user", content: `${story}\n\nCHAPTER SCENES:\n${scenes}\n\nWrite the chapter evaluation.` },
   ];
-  return (await completeTextRouted(src.settings, messages, "review", { label: "evaluation:chapter" })).trim();
+  return (await completeTextRouted(src.settings, messages, "review", { label: "evaluation:chapter", signal: options?.signal ?? src.signal })).trim();
 }
 
 /** Generate a paragraph evaluation body from its prose (uses the review model when configured). */
-export async function generateParagraphEvaluation(src: PipelineSource, title: string, prose: string): Promise<string> {
+export async function generateParagraphEvaluation(src: PipelineSource, title: string, prose: string, options?: { signal?: AbortSignal }): Promise<string> {
   const [{ style, story }, guidelines] = await Promise.all([buildContext(src), evaluationGuidelines(src)]);
   const messages: LlmMessage[] = [
     { role: "system", content: `You are an editorial reviewer. Follow the evaluation-guidelines.md contract below. Be critical and specific: do not give comfort scores or generic praise. Write an evaluation of a single scene/paragraph using the required markdown headings and concrete suggestions. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src)}.\n\n${guidelines}\n\n${style}` },
     { role: "user", content: `${story}\n\nSCENE (${title}):\n${stripFrontmatter(prose).trim()}\n\nWrite the evaluation.` },
   ];
-  return (await completeTextRouted(src.settings, messages, "review", { label: "evaluation:paragraph" })).trim();
+  return (await completeTextRouted(src.settings, messages, "review", { label: "evaluation:paragraph", signal: options?.signal ?? src.signal })).trim();
 }
 
-export async function generateChapterEvaluationWithScores(src: PipelineSource, paragraphs: Array<{ title: string; text: string }>): Promise<{ body: string; scores: Record<string, EvaluationCriterionScore> | null }> {
-  const body = await generateChapterEvaluation(src, paragraphs);
+export interface EvaluationWithScoresResult {
+  body: string;
+  scores: Record<string, EvaluationCriterionScore> | null;
+  scoreGeneration: RoutedLlmRunMetadata | null;
+}
+
+export async function generateChapterEvaluationWithScores(src: PipelineSource, paragraphs: Array<{ title: string; text: string }>, options?: { signal?: AbortSignal }): Promise<EvaluationWithScoresResult> {
+  const signal = options?.signal ?? src.signal;
+  const body = await generateChapterEvaluation(src, paragraphs, { signal });
+  signal?.throwIfAborted();
   const guidelines = await evaluationGuidelines(src);
+  signal?.throwIfAborted();
   const criteria = resolveEvaluationCriteria(guidelines, src.structure.language ?? src.settings.ui.language);
+  let scoreGeneration: RoutedLlmRunMetadata | null = null;
   const scores = await scoreEvaluationRouted(src.settings, [
     "Score the chapter critically from 0 to 10 for every criterion. Every score must include a short evidence-based explanation. Do not be lenient.",
     `Evaluation guidelines:\n${guidelines}`,
     `Chapter evaluation body:\n${body}`,
     `Chapter scenes:\n${paragraphs.map((paragraph) => `### ${paragraph.title}\n${paragraph.text}`).join("\n\n")}`,
-  ].join("\n\n"), criteria);
-  return { body, scores };
+  ].join("\n\n"), criteria, { signal, label: "evaluation:chapter-scoring", onMetadata: (metadata) => { scoreGeneration = metadata; } });
+  signal?.throwIfAborted();
+  return { body, scores, scoreGeneration };
 }
 
-export async function generateParagraphEvaluationWithScores(src: PipelineSource, title: string, prose: string): Promise<{ body: string; scores: Record<string, EvaluationCriterionScore> | null }> {
-  const body = await generateParagraphEvaluation(src, title, prose);
+export async function generateParagraphEvaluationWithScores(src: PipelineSource, title: string, prose: string, options?: { signal?: AbortSignal }): Promise<EvaluationWithScoresResult> {
+  const signal = options?.signal ?? src.signal;
+  const body = await generateParagraphEvaluation(src, title, prose, { signal });
+  signal?.throwIfAborted();
   const guidelines = await evaluationGuidelines(src);
+  signal?.throwIfAborted();
   const criteria = resolveEvaluationCriteria(guidelines, src.structure.language ?? src.settings.ui.language);
+  let scoreGeneration: RoutedLlmRunMetadata | null = null;
   const scores = await scoreEvaluationRouted(src.settings, [
     "Score the paragraph critically from 0 to 10 for every criterion. Every score must include a short evidence-based explanation. Do not be lenient.",
     `Evaluation guidelines:\n${guidelines}`,
     `Paragraph title: ${title}`,
     `Paragraph prose:\n${stripFrontmatter(prose)}`,
     `Evaluation body:\n${body}`,
-  ].join("\n\n"), criteria);
-  return { body, scores };
+  ].join("\n\n"), criteria, { signal, label: "evaluation:paragraph-scoring", onMetadata: (metadata) => { scoreGeneration = metadata; } });
+  signal?.throwIfAborted();
+  return { body, scores, scoreGeneration };
 }

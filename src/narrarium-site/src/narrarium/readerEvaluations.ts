@@ -58,6 +58,12 @@ export interface ReaderEvaluationProgress {
   error?: string;
 }
 
+export interface ReaderEvaluationRunResult {
+  completed: ReaderEvaluationRecord[];
+  failed: ReaderEvaluationRecord[];
+  changedPaths: string[];
+}
+
 const EVALUATION_TOOL = {
   name: "reader_evaluation",
   description: "Return a concise simulated-reader evaluation from the configured reader's point of view.",
@@ -267,11 +273,12 @@ export async function runReaderEvaluations(input: {
   concurrency?: number;
   signal?: AbortSignal;
   onProgress?: (progress: ReaderEvaluationProgress) => void;
-}): Promise<{ completed: ReaderEvaluationRecord[]; failed: ReaderEvaluationRecord[] }> {
+}): Promise<ReaderEvaluationRunResult> {
   const outputLanguage = input.language || input.structure.language || input.settings.ui.language || "en";
   const sourceHash = await hashReaderSource(input.target.text);
   const context = await optionalContext(input);
   let completedCount = 0;
+  const changedPaths = new Set<string>();
   const records = await limitedMap(input.readers.filter((reader) => reader.enabled), input.concurrency ?? 2, async (reader) => {
     if (input.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     input.onProgress?.({ readerId: reader.id, readerName: reader.name, status: "running", completed: completedCount, total: input.readers.length });
@@ -287,10 +294,14 @@ export async function runReaderEvaluations(input: {
       const id = `reader-evaluation:${input.target.type}:${input.target.chapterId}:${input.target.paragraphId ?? "chapter"}:${reader.slug}`;
       const frontmatter = evaluationFrontmatter({ id, createdAt, updatedAt, input, reader, sourceHash, status: "completed", score: result.output.score, generation: result.metadata });
       await writeStableFile({ token: input.token, book: input.book, branch: input.branch, path, existing, content: renderFile(frontmatter, renderEvaluationBody(result.output, outputLanguage)), message: `Update reader evaluation ${reader.name}: ${input.target.title}` });
+      changedPaths.add(path);
       const legacyPrefix = legacyEvaluationPrefix(input.target, reader);
       for (const legacy of input.structure.readerEvaluationFiles.filter((file) => file.path.startsWith(legacyPrefix))) {
         const old = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, legacy.path));
-        if (old) await deleteFile(input.token, input.book.owner, input.book.repo, input.branch, legacy.path, old.sha, `Remove legacy reader evaluation ${reader.name}`);
+        if (old) {
+          await deleteFile(input.token, input.book.owner, input.book.repo, input.branch, legacy.path, old.sha, `Remove legacy reader evaluation ${reader.name}`);
+          changedPaths.add(legacy.path);
+        }
       }
       completedCount += 1;
       const record: ReaderEvaluationRecord = { path, id, targetType: input.target.type, targetId: targetId(input.target), readerId: reader.id, readerName: reader.name, readerType: reader.readerType, createdAt, sourceContentHash: sourceHash, sourceContentVersion: input.target.sourceVersion, status: "completed", score: result.output.score, body: renderEvaluationBody(result.output, outputLanguage), stale: false };
@@ -302,7 +313,10 @@ export async function runReaderEvaluations(input: {
       const error = err instanceof Error ? err.message : String(err);
       const id = `reader-evaluation:${input.target.type}:${input.target.chapterId}:${input.target.paragraphId ?? "chapter"}:${reader.slug}`;
       const frontmatter = evaluationFrontmatter({ id, createdAt, updatedAt, input, reader, sourceHash, status: input.signal?.aborted ? "cancelled" : "failed", error });
-      if (!existing) await createFile(input.token, input.book.owner, input.book.repo, input.branch, path, renderFile(frontmatter, `# Evaluation failed\n\n${error}`), `Record failed reader evaluation ${reader.name}`);
+      if (!existing) {
+        await createFile(input.token, input.book.owner, input.book.repo, input.branch, path, renderFile(frontmatter, `# Evaluation failed\n\n${error}`), `Record failed reader evaluation ${reader.name}`);
+        changedPaths.add(path);
+      }
       input.onProgress?.({ readerId: reader.id, readerName: reader.name, status: input.signal?.aborted ? "cancelled" : "failed", completed: completedCount, total: input.readers.length, error });
       throw Object.assign(new Error(error), { record: { path, id, targetType: input.target.type, targetId: targetId(input.target), readerId: reader.id, readerName: reader.name, readerType: reader.readerType, createdAt, sourceContentHash: sourceHash, sourceContentVersion: input.target.sourceVersion, status: input.signal?.aborted ? "cancelled" : "failed", body: "", error } satisfies ReaderEvaluationRecord });
     }
@@ -311,7 +325,7 @@ export async function runReaderEvaluations(input: {
   if (repositoryFailure) throw repositoryFailure.reason;
   const completed = records.filter((result): result is PromiseFulfilledResult<ReaderEvaluationRecord> => result.status === "fulfilled").map((result) => result.value);
   const failed = records.filter((result): result is PromiseRejectedResult => result.status === "rejected").map((result) => (result.reason as { record?: ReaderEvaluationRecord }).record).filter((record): record is ReaderEvaluationRecord => Boolean(record));
-  return { completed, failed };
+  return { completed, failed, changedPaths: [...changedPaths].sort() };
 }
 
 function targetId(target: ReaderEvaluationTarget): string {

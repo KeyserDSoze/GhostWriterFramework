@@ -4,6 +4,11 @@ export function isExplicitNavigationPrompt(prompt: string): boolean {
   return NAVIGATION_VERBS.test(prompt);
 }
 
+export function isReaderEvaluationsNavigationPrompt(prompt: string): boolean {
+  if (!isExplicitNavigationPrompt(prompt)) return false;
+  return /\b(reader evaluations?|reader reviews?|evaluations? (?:from|by) readers?|valutazioni (?:dei |del )?lettori|valutazioni (?:del )?lettore)\b/i.test(prompt);
+}
+
 /** Match a tool keyword as a complete token or phrase, never as a substring. */
 export function matchesToolKeyword(prompt: string, keyword: string): boolean {
   const normalized = keyword.trim().toLocaleLowerCase();

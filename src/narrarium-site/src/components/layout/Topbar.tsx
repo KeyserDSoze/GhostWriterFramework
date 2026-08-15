@@ -69,6 +69,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const setNotesOpen = useUiStore((s) => s.setNotesOpen);
   const setDebugOpen = useUiStore((s) => s.setDebugOpen);
   const debugCount = useLlmDebugStore((s) => s.entries.length);
+  const debugStorageError = useLlmDebugStore((s) => s.storageError);
   const updateWorker = useAppUpdateStore((s) => s.worker);
   const updateVersion = useAppUpdateStore((s) => s.version);
   const { toast } = useToast();
@@ -392,7 +393,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               {t("costs.title")}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setDebugOpen(true)}>
-              <Activity className="mr-2 h-4 w-4" />
+              {debugStorageError ? <CircleAlert className="mr-2 h-4 w-4 text-destructive" /> : <Activity className="mr-2 h-4 w-4" />}
               <span className="flex-1">{t("debug.title")}</span>
               {debugCount > 0 && (
                 <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">{debugCount}</span>

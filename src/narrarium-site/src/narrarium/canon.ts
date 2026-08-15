@@ -134,6 +134,15 @@ export interface CreatedChapter {
   slug: string;
   id: string;
   chapterFilePath: string;
+  changedPaths: string[];
+}
+
+export function chapterCreationPaths(slug: string): [string, string, string] {
+  return [
+    `chapters/${slug}/chapter.md`,
+    `resumes/chapters/${slug}.md`,
+    `evaluations/chapters/${slug}.md`,
+  ];
 }
 
 export async function createChapter(
@@ -145,7 +154,7 @@ export async function createChapter(
 ): Promise<CreatedChapter> {
   const slug = chapterSlug(input.number, input.title);
   const id = `chapter:${slug}`;
-  const chapterFilePath = `chapters/${slug}/chapter.md`;
+  const [chapterFilePath, resumePath, evaluationPath] = chapterCreationPaths(slug);
 
   const frontmatter = clean({
     type: "chapter",
@@ -161,10 +170,11 @@ export async function createChapter(
     ? `${input.body.trim()}\n`
     : `# ${input.title}\n\nStart the chapter here.\n`;
 
+  const changedPaths = [chapterFilePath];
   await createFile(token, owner, repo, branch, chapterFilePath, renderMarkdown(frontmatter, body), `Add chapter ${formatOrdinal(input.number)}: ${input.title}`);
-  await createFile(token, owner, repo, branch, `resumes/chapters/${slug}.md`, renderMarkdown({ type: "resume", id: `resume:chapter:${slug}`, title: `Resume ${slug}` }, "# Summary\n\nSummarize the chapter here.\n"), `Add resume for chapter ${slug}`).catch(() => undefined);
-  await createFile(token, owner, repo, branch, `evaluations/chapters/${slug}.md`, renderMarkdown({ type: "evaluation", id: `evaluation:chapter:${slug}`, title: `Evaluation ${slug}` }, "# Evaluation\n\nEvaluate the chapter here.\n"), `Add evaluation for chapter ${slug}`).catch(() => undefined);
-  return { slug, id, chapterFilePath };
+  await createFile(token, owner, repo, branch, resumePath, renderMarkdown({ type: "resume", id: `resume:chapter:${slug}`, title: `Resume ${slug}` }, "# Summary\n\nSummarize the chapter here.\n"), `Add resume for chapter ${slug}`).then(() => changedPaths.push(resumePath)).catch(() => undefined);
+  await createFile(token, owner, repo, branch, evaluationPath, renderMarkdown({ type: "evaluation", id: `evaluation:chapter:${slug}`, title: `Evaluation ${slug}` }, "# Evaluation\n\nEvaluate the chapter here.\n"), `Add evaluation for chapter ${slug}`).then(() => changedPaths.push(evaluationPath)).catch(() => undefined);
+  return { slug, id, chapterFilePath, changedPaths };
 }
 
 export interface CreateParagraphInput {

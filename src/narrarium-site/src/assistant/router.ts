@@ -1,6 +1,8 @@
-import type { AIIntegration, AIPricing, AppSettings, ChatCapability, RoutingTarget, RoutingTaskKind } from "@/types/settings";
-import { integrationChatModels, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, type ForcedToolDefinition, type LlmMessage, type LlmResult } from "@/assistant/llm";
+import type { AIIntegration, AIPricing, AppSettings, ChatCapability, RoutingTarget, RoutingTaskKind, TaskRoute } from "@/types/settings";
+import { integrationChatModels, resolveReviewIntegration, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, type ForcedToolDefinition, type LlmMessage, type LlmResult } from "@/assistant/llm";
 import { executeCompletionFallback } from "@/assistant/completionFallback";
+
+export type RoutedLlmRunMetadata = LlmResult<unknown>["metadata"] & { routeCandidateIndex: number; usedFallback: boolean };
 
 /** Reserved integrationId meaning "use the browser engine" (TTS/STT only). */
 export const BROWSER_ROUTING_ID = "__browser__";
@@ -21,6 +23,13 @@ export class NoCompletionCandidatesError extends Error {
   }
 }
 
+export class StaleRoutingConfigurationError extends Error {
+  constructor(task: RoutingTaskKind) {
+    super(`The configured ${task} route no longer references an available compatible model.`);
+    this.name = "StaleRoutingConfigurationError";
+  }
+}
+
 const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit"]);
 
 function isChatTask(task: RoutingTaskKind): task is ChatCapability {
@@ -31,6 +40,86 @@ function findIntegration(settings: AppSettings, id: string): AIIntegration | und
   return (settings.aiIntegrations ?? []).find((i) => i.id === id);
 }
 
+function mediaModel(integration: AIIntegration, task: RoutingTaskKind): string | undefined {
+  return task === "tts" ? integration.modelTextToSpeech?.trim()
+    : task === "stt" ? integration.modelSpeechToText?.trim()
+    : task === "image" ? integration.modelImageGeneration?.trim()
+    : undefined;
+}
+
+/** Return why a saved target is unusable, or null when it is executable. */
+export function routingTargetIssue(integrations: AIIntegration[], task: RoutingTaskKind, target: RoutingTarget): string | null {
+  if (target.integrationId === BROWSER_ROUTING_ID) {
+    if (task !== "tts" && task !== "stt") return "The browser engine only supports speech tasks.";
+    return target.model === "browser" ? null : "The browser route has an invalid model.";
+  }
+  const integration = integrations.find((entry) => entry.id === target.integrationId);
+  if (!integration) return "The selected integration no longer exists.";
+  if (!target.model?.trim()) return "The selected model is empty.";
+  if (isChatTask(task)) {
+    if (integration.provider === "m365_copilot") return "This integration cannot run browser chat tasks.";
+    return integrationChatModels(integration).some((model) => model.name === target.model.trim())
+      ? null
+      : "The selected chat model no longer exists in this integration.";
+  }
+  if (integration.provider !== "openai" && integration.provider !== "azure_openai") return "This integration does not support media tasks.";
+  return mediaModel(integration, task) === target.model.trim()
+    ? null
+    : "The selected media model no longer exists in this integration.";
+}
+
+export function routingIssues(routing: AppSettings["taskRouting"], integrations: AIIntegration[]): Array<{ task: RoutingTaskKind; target: RoutingTarget; message: string }> {
+  const issues: Array<{ task: RoutingTaskKind; target: RoutingTarget; message: string }> = [];
+  for (const [task, route] of Object.entries(routing ?? {}) as Array<[RoutingTaskKind, TaskRoute]>) {
+    for (const target of [...(route.primary ? [route.primary] : []), ...(route.fallbacks ?? [])]) {
+      const message = routingTargetIssue(integrations, task, target);
+      if (message) issues.push({ task, target, message });
+    }
+  }
+  return issues;
+}
+
+/** Remove incompatible targets while retaining every unaffected fallback. */
+export function sanitizeTaskRouting(routing: AppSettings["taskRouting"], integrations: AIIntegration[]): AppSettings["taskRouting"] {
+  const out: NonNullable<AppSettings["taskRouting"]> = {};
+  for (const [task, route] of Object.entries(routing ?? {}) as Array<[RoutingTaskKind, TaskRoute]>) {
+    const primary = route.primary && !routingTargetIssue(integrations, task, route.primary) ? route.primary : undefined;
+    const fallbacks = (route.fallbacks ?? []).filter((target) => !routingTargetIssue(integrations, task, target));
+    if (primary || fallbacks.length) out[task] = { primary, fallbacks };
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Update model-name references by stable model id, then remove targets invalidated by integration edits. */
+export function reconcileTaskRouting(
+  routing: AppSettings["taskRouting"],
+  previousIntegrations: AIIntegration[],
+  nextIntegrations: AIIntegration[],
+): AppSettings["taskRouting"] {
+  const rewritten: NonNullable<AppSettings["taskRouting"]> = {};
+  const rewrite = (task: RoutingTaskKind, target: RoutingTarget): RoutingTarget => {
+    if (target.integrationId === BROWSER_ROUTING_ID) return target;
+    const previous = previousIntegrations.find((entry) => entry.id === target.integrationId);
+    const next = nextIntegrations.find((entry) => entry.id === target.integrationId);
+    if (!previous || !next) return target;
+    if (isChatTask(task)) {
+      const previousModel = integrationChatModels(previous).find((model) => model.name === target.model);
+      const renamed = previousModel && integrationChatModels(next).find((model) => model.id === previousModel.id);
+      return renamed ? { ...target, model: renamed.name } : target;
+    }
+    const oldModel = mediaModel(previous, task);
+    const nextModel = mediaModel(next, task);
+    return oldModel === target.model && nextModel ? { ...target, model: nextModel } : target;
+  };
+  for (const [task, route] of Object.entries(routing ?? {}) as Array<[RoutingTaskKind, TaskRoute]>) {
+    rewritten[task] = {
+      primary: route.primary ? rewrite(task, route.primary) : undefined,
+      fallbacks: (route.fallbacks ?? []).map((target) => rewrite(task, target)),
+    };
+  }
+  return sanitizeTaskRouting(rewritten, nextIntegrations);
+}
+
 /** Chat: pricing = model's own price, else integration price. */
 function chatCandidateFromTarget(settings: AppSettings, target: RoutingTarget): TaskCandidate | null {
   const integration = findIntegration(settings, target.integrationId);
@@ -38,7 +127,8 @@ function chatCandidateFromTarget(settings: AppSettings, target: RoutingTarget): 
   const model = target.model?.trim();
   if (!model) return null;
   const modelEntry = integrationChatModels(integration).find((m) => m.name === model);
-  return { integration, model, pricing: modelEntry?.pricing ?? integration.pricing };
+  if (!modelEntry) return null;
+  return { integration, model, pricing: modelEntry.pricing ?? integration.pricing };
 }
 
 /** Media (tts/stt/image): the browser engine, or an OpenAI/Azure integration. */
@@ -52,6 +142,7 @@ function mediaCandidateFromTarget(settings: AppSettings, target: RoutingTarget, 
   if (integration.provider !== "openai" && integration.provider !== "azure_openai") return null;
   const model = target.model?.trim();
   if (!model) return null;
+  if (mediaModel(integration, task) !== model) return null;
   return { integration, model, pricing: integration.pricing };
 }
 
@@ -83,7 +174,7 @@ function hasConfiguredRoute(settings: AppSettings, task: RoutingTaskKind): boole
   return Boolean(route?.primary || route?.fallbacks?.length);
 }
 
-/** Legacy chat resolution tiers (capability match anywhere → default-writing → any default). */
+/** Legacy chat resolution tiers. Review honors its configured default before capability tags. */
 function legacyChatCandidates(settings: AppSettings, capability: ChatCapability): TaskCandidate[] {
   const integrations = settings.aiIntegrations ?? [];
   const out: TaskCandidate[] = [];
@@ -91,7 +182,17 @@ function legacyChatCandidates(settings: AppSettings, capability: ChatCapability)
     if (!model || integration.provider === "m365_copilot") return;
     out.push({ integration, model, pricing });
   };
-  // 1) exact capability match anywhere
+  // Review precedence: explicit route (handled by the caller) → default review integration
+  // → capability tags → default writing integration → any remaining integration.
+  if (capability === "review") {
+    const review = resolveReviewIntegration(settings);
+    if (review) {
+      const models = integrationChatModels(review);
+      const picked = models.find((m) => m.capabilities?.includes("review")) ?? models.find((m) => m.capabilities?.includes("default")) ?? models[0];
+      if (picked) push(review, picked.name, picked.pricing ?? review.pricing);
+    }
+  }
+  // Exact capability match anywhere.
   for (const integration of integrations) {
     const exact = integrationChatModels(integration).find((m) => m.capabilities?.includes(capability));
     if (exact) push(integration, exact.name, exact.pricing ?? integration.pricing);
@@ -155,9 +256,12 @@ export async function completeTextRouted(
   options?: { signal?: AbortSignal; label?: string; onText?: (text: string) => void },
 ): Promise<string> {
   const candidates = resolveTaskCandidates(settings, capability);
-  if (!candidates.length) throw new NoCompletionCandidatesError();
+  if (!candidates.length) {
+    if (hasConfiguredRoute(settings, capability)) throw new StaleRoutingConfigurationError(capability);
+    throw new NoCompletionCandidatesError();
+  }
   const purpose = capability === "review" ? "review" : "writing";
-  const executable = candidates.filter((candidate) => candidate.integration && candidate.model).map((candidate) => ({ ...candidate, integration: candidate.integration!, model: candidate.model!, label: `${candidate.integration!.provider}/${candidate.model!}` }));
+  const executable = candidates.map((candidate, routeCandidateIndex) => ({ ...candidate, routeCandidateIndex })).filter((candidate) => candidate.integration && candidate.model).map((candidate) => ({ ...candidate, integration: candidate.integration!, model: candidate.model!, label: `${candidate.integration!.provider}/${candidate.model!}` }));
   if (!executable.length) throw new NoCompletionCandidatesError();
   return executeCompletionFallback({ candidates: executable, signal: options?.signal, resetPartial: () => options?.onText?.(""), run: (candidate) => completeText(candidate.integration, messages, purpose, {
         modelName: candidate.model,
@@ -165,6 +269,8 @@ export async function completeTextRouted(
         signal: options?.signal,
         label: options?.label,
         onText: options?.onText,
+        routeCandidateIndex: candidate.routeCandidateIndex,
+        usedFallback: candidate.routeCandidateIndex > 0,
       }) });
 }
 
@@ -173,15 +279,23 @@ export async function completeToolRouted<T>(
   messages: LlmMessage[],
   capability: ChatCapability,
   tool: ForcedToolDefinition,
-  options?: { signal?: AbortSignal; label?: string },
-): Promise<LlmResult<T>> {
+  options?: { signal?: AbortSignal; label?: string; validate?: (output: unknown) => T },
+): Promise<LlmResult<T> & { metadata: RoutedLlmRunMetadata }> {
   const candidates = resolveTaskCandidates(settings, capability);
-  if (!candidates.length) throw new Error("No AI integration configured for this task.");
+  if (!candidates.length) {
+    if (hasConfiguredRoute(settings, capability)) throw new StaleRoutingConfigurationError(capability);
+    throw new NoCompletionCandidatesError();
+  }
   let lastError: unknown = null;
-  for (const candidate of candidates) {
+  for (const [candidateIndex, candidate] of candidates.entries()) {
     if (!candidate.integration || !candidate.model) continue;
     try {
-      return await completeToolWith<T>(candidate.integration, candidate.model, candidate.pricing, messages, capability, tool, { signal: options?.signal, label: options?.label, currency: settings.costCurrency });
+      const result = await completeToolWith<T>(candidate.integration, candidate.model, candidate.pricing, messages, capability, tool, { signal: options?.signal, label: options?.label, currency: settings.costCurrency, validate: options?.validate, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0 });
+      return {
+        ...result,
+        output: options?.validate ? options.validate(result.output) : result.output as T,
+        metadata: { ...result.metadata, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0 },
+      };
     } catch (err) {
       if (isAbort(err) || options?.signal?.aborted) throw err;
       lastError = err;

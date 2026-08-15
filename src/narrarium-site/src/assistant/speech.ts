@@ -16,6 +16,8 @@ export interface SpeakOptions {
   startIndex?: number;
   /** Fired right before a segment starts playing, with its index in `segments`. */
   onSegment?: (index: number) => void;
+  /** Reports playback or synthesis failures that happen after a controller is returned. */
+  onError?: (error: unknown) => void;
   signal?: AbortSignal;
 }
 
@@ -152,17 +154,11 @@ export async function speakText(text: string, settings: AppSettings, options: Sp
   options.signal?.throwIfAborted();
   const voice = settings.speech.ttsVoice || "nova";
   const candidates = resolveTaskCandidates(settings, "tts");
-  const segments = resolveSegments(text, options);
-  const probeText = segments[Math.max(0, options.startIndex ?? 0)] ?? text.slice(0, 200);
   if (!candidates.length) throw new Error("No text-to-speech route is configured.");
   return executeMediaFallback<SpeechController>({ candidates, signal: options.signal, runBrowser: () => speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, options), runAi: async (candidate) => {
-      // Probe: synthesize the first segment to confirm this provider works before committing.
       const integration = candidate.integration as AIIntegration;
       const model = candidate.model!;
       const pricing = candidates.find((entry) => entry.integration === integration && entry.model === model)?.pricing;
-      const probeUrl = await synthesizeChunk(probeText, integration, model, voice, options.signal);
-      try { URL.revokeObjectURL(probeUrl); } catch { /* ignore */ }
-      options.signal?.throwIfAborted();
       return speakWithOpenAICompatible(text, integration, model, voice, options, pricing);
   } });
 }
@@ -229,12 +225,24 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number, u
   let currentIndex = Math.max(0, options.startIndex ?? 0);
   window.speechSynthesis.cancel();
   let resolveDone: () => void = () => undefined;
-  const done = new Promise<void>((resolve) => { resolveDone = resolve; });
+  let rejectDone: (error: unknown) => void = () => undefined;
+  const done = new Promise<void>((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
+  let settled = false;
+  const finish = (error?: unknown) => {
+    if (settled) return;
+    settled = true;
+    if (error !== undefined) {
+      rejectDone(error);
+      options.onError?.(error);
+    } else {
+      resolveDone();
+    }
+  };
 
   const play = (index: number) => {
     currentIndex = index;
     if (stopped || index >= segments.length) {
-      resolveDone();
+      finish();
       return;
     }
     options.onSegment?.(index);
@@ -243,7 +251,11 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number, u
     utterance.lang = voice?.lang ?? lang;
     utterance.rate = Number.isFinite(rate) ? rate : 0.95;
     utterance.onend = () => { if (!stopped) play(index + 1); };
-    utterance.onerror = () => { if (!stopped) play(index + 1); };
+    utterance.onerror = (event) => {
+      if (stopped) return;
+      stopped = true;
+      finish(new Error(`Browser speech playback failed: ${event.error}`));
+    };
     window.speechSynthesis.speak(utterance);
   };
   play(currentIndex);
@@ -251,7 +263,7 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number, u
     stop: () => {
       stopped = true;
       window.speechSynthesis.cancel();
-      resolveDone();
+      finish();
     },
     pause: () => {
       if (stopped || paused) return;
@@ -270,7 +282,8 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number, u
   };
   const abort = () => controller.stop();
   options.signal?.addEventListener("abort", abort, { once: true });
-  void done.finally(() => options.signal?.removeEventListener("abort", abort));
+  const cleanupAbort = () => options.signal?.removeEventListener("abort", abort);
+  void done.then(cleanupAbort, cleanupAbort);
   return controller;
 }
 
@@ -278,71 +291,126 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
   const segments = resolveSegments(text, options);
   const startIndex = Math.max(0, options.startIndex ?? 0);
   const pricing = pricingOverride ?? integration.pricing;
-  const ttsChars = segments.slice(startIndex).reduce((sum, chunk) => sum + chunk.length, 0);
-  if (ttsChars > 0) {
-    if (pricing) useCostsStore.getState().recordCurrent(ttsDelta(ttsChars, pricing));
-    const cost = pricing ? ttsDelta(ttsChars, pricing).ttsCost : undefined;
-    const preview = segments.slice(startIndex).join(" ").slice(0, 400);
-    const ttsId = useLlmDebugStore.getState().begin({ kind: "tts", label: `tts (${voice})`, model, messages: [{ role: "input", content: preview }] });
-    useLlmDebugStore.getState().finish(ttsId, { status: "done", response: `${ttsChars} chars`, cost });
-  }
   let stopped = false;
   let paused = false;
   let currentIndex = startIndex;
   let audio: HTMLAudioElement | null = null;
   const activeUrls = new Set<string>();
+  const pendingDebug = new Map<string, { id: string; chars: number; cost?: number }>();
+  const synthesisController = new AbortController();
+  const abortSynthesis = () => synthesisController.abort();
+  options.signal?.addEventListener("abort", abortSynthesis, { once: true });
   // Set when a pause arrives between "fetch" and "play": resume() will start it.
   let heldPlay: (() => void) | null = null;
   options.signal?.throwIfAborted();
-  const synthesize = async (segment: string): Promise<string | null> => {
+  const synthesize = async (segment: string): Promise<string> => {
+    const debugId = useLlmDebugStore.getState().begin({ kind: "tts", label: `tts (${voice})`, model, messages: [{ role: "input", content: segment.slice(0, 400) }] });
+    let url: string;
     try {
-      const url = await synthesizeChunk(segment, integration, model, voice, options.signal);
-      if (stopped || options.signal?.aborted) {
-        URL.revokeObjectURL(url);
-        return null;
-      }
-      activeUrls.add(url);
-      return url;
-    } catch {
-      return null;
+      url = await synthesizeChunk(segment, integration, model, voice, synthesisController.signal);
+    } catch (error) {
+      useLlmDebugStore.getState().finish(debugId, { status: "error", error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+    const cost = pricing ? ttsDelta(segment.length, pricing).ttsCost : undefined;
+    if (pricing) useCostsStore.getState().recordCurrent(ttsDelta(segment.length, pricing));
+    if (stopped || synthesisController.signal.aborted) {
+      URL.revokeObjectURL(url);
+      useLlmDebugStore.getState().finish(debugId, { status: "done", response: `${segment.length} generated chars, 0 played chars`, cost });
+      throw synthesisController.signal.reason ?? new DOMException("Aborted", "AbortError");
+    }
+    activeUrls.add(url);
+    pendingDebug.set(url, { id: debugId, chars: segment.length, cost });
+    return url;
+  };
+  const finishChunkDebug = (url: string, played: boolean, error?: unknown) => {
+    const debug = pendingDebug.get(url);
+    if (!debug) return;
+    pendingDebug.delete(url);
+    useLlmDebugStore.getState().finish(debug.id, error === undefined
+      ? { status: "done", response: `${debug.chars} generated chars, ${played ? debug.chars : 0} played chars`, cost: debug.cost }
+      : { status: "error", error: error instanceof Error ? error.message : String(error), response: `${debug.chars} generated chars, 0 played chars`, cost: debug.cost });
+  };
+  type SynthesisResult = { url: string } | { error: unknown };
+  const queuedSynthesis = (segment: string): Promise<SynthesisResult> => synthesize(segment).then(
+    (url) => ({ url }),
+    (error: unknown) => ({ error }),
+  );
+  let initialUrl: string;
+  try {
+    initialUrl = await synthesize(segments[startIndex] ?? text.slice(0, 200));
+  } catch (error) {
+    options.signal?.removeEventListener("abort", abortSynthesis);
+    throw error;
+  }
+  let nextPromise: Promise<SynthesisResult> | null = Promise.resolve({ url: initialUrl });
+  let resolveDone: () => void = () => undefined;
+  let rejectDone: (error: unknown) => void = () => undefined;
+  const done = new Promise<void>((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
+  let settled = false;
+  const finish = (error?: unknown) => {
+    if (settled) return;
+    settled = true;
+    stopped = true;
+    heldPlay = null;
+    synthesisController.abort();
+    options.signal?.removeEventListener("abort", abortSynthesis);
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }
+    for (const url of activeUrls) {
+      finishChunkDebug(url, false);
+      URL.revokeObjectURL(url);
+    }
+    activeUrls.clear();
+    if (error !== undefined) {
+      rejectDone(error);
+      options.onError?.(error);
+    } else {
+      resolveDone();
     }
   };
-  let nextPromise: Promise<string | null> | null = segments[startIndex] ? synthesize(segments[startIndex]) : null;
-  let resolveDone: () => void = () => undefined;
-  const done = new Promise<void>((resolve) => { resolveDone = resolve; });
 
   const playNext = async (index: number): Promise<void> => {
     currentIndex = index;
     if (stopped || index >= segments.length || !nextPromise) {
-      resolveDone();
+      finish();
       return;
     }
-    const url = await nextPromise;
-    if (!url) {
-      resolveDone();
+    const result = await nextPromise;
+    if ("error" in result) {
+      finish(result.error);
       return;
     }
+    const { url } = result;
     // Prefetch the following segment, but never while paused (freezes mp3 generation too).
-    nextPromise = !paused && segments[index + 1] ? synthesize(segments[index + 1]) : null;
+    nextPromise = !paused && segments[index + 1] ? queuedSynthesis(segments[index + 1]) : null;
     if (stopped) {
       URL.revokeObjectURL(url);
       activeUrls.delete(url);
-      resolveDone();
+      finish();
       return;
     }
     audio = new Audio(url);
     audio.onended = () => {
+      finishChunkDebug(url, true);
       URL.revokeObjectURL(url);
       activeUrls.delete(url);
-      if (!paused) void playNext(index + 1).catch(() => resolveDone());
+      if (!paused) void playNext(index + 1).catch(finish);
       // If paused exactly at the boundary, resume() advances to index + 1.
+    };
+    audio.onerror = () => {
+      const error = new Error(`Audio playback failed for segment ${index + 1}.`);
+      finishChunkDebug(url, false, error);
+      finish(error);
     };
     const start = () => {
       options.onSegment?.(index);
-      void audio?.play().catch(() => {
-        URL.revokeObjectURL(url);
-        activeUrls.delete(url);
-        void playNext(index + 1).catch(() => resolveDone());
+      void audio?.play().catch((error) => {
+        finishChunkDebug(url, false, error);
+        finish(error);
       });
     };
     if (paused) {
@@ -353,20 +421,11 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
     start();
   };
 
-  void playNext(startIndex).catch(() => resolveDone());
+  void playNext(startIndex).catch(finish);
   const controller: SpeechController = {
     stop: () => {
-      stopped = true;
-      heldPlay = null;
-      if (audio) {
-        audio.pause();
-        audio.removeAttribute("src");
-        audio.load();
-      }
-      for (const url of activeUrls) URL.revokeObjectURL(url);
-      activeUrls.clear();
       window.speechSynthesis.cancel();
-      resolveDone();
+      finish();
     },
     pause: () => {
       if (stopped || paused) return;
@@ -378,7 +437,7 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
       paused = false;
       // Re-arm prefetch of the upcoming segment if it was suppressed during pause.
       if (!nextPromise && segments[currentIndex + 1]) {
-        nextPromise = synthesize(segments[currentIndex + 1]);
+        nextPromise = queuedSynthesis(segments[currentIndex + 1]);
       }
       if (heldPlay) {
         const run = heldPlay;
@@ -387,10 +446,10 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
         return;
       }
       if (audio && audio.ended) {
-        void playNext(currentIndex + 1).catch(() => resolveDone());
+        void playNext(currentIndex + 1).catch(finish);
         return;
       }
-      void audio?.play().catch(() => { void playNext(currentIndex + 1).catch(() => resolveDone()); });
+      void audio?.play().catch(finish);
     },
     isPaused: () => paused,
     segments,
@@ -399,7 +458,8 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
   };
   const abort = () => controller.stop();
   options.signal?.addEventListener("abort", abort, { once: true });
-  void done.finally(() => options.signal?.removeEventListener("abort", abort));
+  const cleanupAbort = () => options.signal?.removeEventListener("abort", abort);
+  void done.then(cleanupAbort, cleanupAbort);
   return controller;
 }
 

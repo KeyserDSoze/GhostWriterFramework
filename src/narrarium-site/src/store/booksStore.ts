@@ -14,8 +14,10 @@ interface BooksState {
   /** bookId → resolved personal dev branch name */
   workingBranches: Record<string, string>;
   cloneProgress: Record<string, CloneProgress | undefined>;
+  structureGenerations: Record<string, number>;
 
-  setStructure: (bookId: string, structure: BookStructure) => void;
+  setStructure: (bookId: string, structure: BookStructure, generation?: number) => void;
+  invalidateStructure: (bookId: string) => number;
   setLoading: (bookId: string, loading: boolean) => void;
   setError: (bookId: string, message: string) => void;
   setWorkingBranch: (bookId: string, branch: string) => void;
@@ -34,9 +36,23 @@ export const useBooksStore = create<BooksState>()((set) => ({
   errors: {},
   workingBranches: {},
   cloneProgress: {},
+  structureGenerations: {},
 
-  setStructure: (bookId, structure) =>
-    set((s) => ({ structures: { ...s.structures, [bookId]: structure } })),
+  setStructure: (bookId, structure, generation) =>
+    set((s) => generation !== undefined && s.structureGenerations[bookId] !== generation
+      ? {}
+      : { structures: { ...s.structures, [bookId]: structure } }),
+
+  invalidateStructure: (bookId) => {
+    let generation = 0;
+    set((s) => {
+      generation = (s.structureGenerations[bookId] ?? 0) + 1;
+      const structures = { ...s.structures };
+      delete structures[bookId];
+      return { structures, structureGenerations: { ...s.structureGenerations, [bookId]: generation } };
+    });
+    return generation;
+  },
 
   setLoading: (bookId, loading) =>
     set((s) => {
@@ -73,7 +89,14 @@ export const useBooksStore = create<BooksState>()((set) => ({
       delete cloneProgress[bookId];
       const loadingIds = new Set(s.loadingIds);
       loadingIds.delete(bookId);
-      return { structures, errors, workingBranches, cloneProgress, loadingIds };
+      return {
+        structures,
+        errors,
+        workingBranches,
+        cloneProgress,
+        loadingIds,
+        structureGenerations: { ...s.structureGenerations, [bookId]: (s.structureGenerations[bookId] ?? 0) + 1 },
+      };
     }),
 
   updateChapterParagraphs: (bookId, chapterSlug, paragraphs) =>

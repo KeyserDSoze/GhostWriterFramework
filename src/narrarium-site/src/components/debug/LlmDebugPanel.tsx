@@ -21,6 +21,7 @@ export function LlmDebugPanel() {
   const { t } = useTranslation();
   const entries = useLlmDebugStore((s) => s.entries);
   const clear = useLlmDebugStore((s) => s.clear);
+  const storageError = useLlmDebugStore((s) => s.storageError);
   const debugOpen = useUiStore((s) => s.debugOpen);
   const setDebugOpen = useUiStore((s) => s.setDebugOpen);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -50,6 +51,12 @@ export function LlmDebugPanel() {
               </Button>
             )}
           </div>
+
+          {storageError && (
+            <div role="alert" className="border-b border-destructive/40 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+              {t("debug.storageError", { error: storageError })}
+            </div>
+          )}
 
           {entries.length === 0 ? (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">{t("debug.empty")}</div>
@@ -101,6 +108,9 @@ function RequestDetail({ entry }: { entry: LlmDebugEntry }) {
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
         <Stat label={t("debug.model")} value={entry.model} />
+        <Stat label={t("debug.provider")} value={entry.provider ?? "—"} />
+        <Stat label={t("debug.integration")} value={entry.integrationId ?? "—"} />
+        <Stat label={t("debug.routeCandidate")} value={entry.routeCandidateIndex == null ? "—" : entry.usedFallback ? t("debug.fallbackCandidate", { n: entry.routeCandidateIndex + 1 }) : t("debug.primaryCandidate")} />
         <Stat label={t("debug.cost")} value={eur(entry.cost)} />
         <Stat label={t("debug.tokensIn")} value={num(entry.inputTokens)} />
         <Stat label={t("debug.tokensOut")} value={num(entry.outputTokens)} />

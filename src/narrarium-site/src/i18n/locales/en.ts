@@ -292,6 +292,7 @@ const en = {
     pickModel: "Pick model",
     browser: "Browser (built-in)",
     noModel: "No model",
+    invalidSave: "Fix or remove broken task routes before saving.",
     task: {
       default: "Chat (default)",
       copilot: "Copilot",
@@ -1138,6 +1139,7 @@ const en = {
     stale: "Outdated",
     staleDescription: "The target or one of its dependencies changed after this report was generated. Update the audit to evaluate the current sources.",
     disabled: "Audit is disabled in this book's settings.",
+    missingModel: "No executable AI model is configured for the Audit task.",
     none: "None.",
     depth: {
       label: "Audit depth",
@@ -1151,6 +1153,8 @@ const en = {
       update: "Update audit",
       rerun: "Rerun audit",
       cancel: "Cancel",
+      openBookSettings: "Open book settings",
+      openAiRouter: "Configure AI Router",
       openSource: "Open source",
       delete: "Delete audit",
       saveNote: "Save note"
@@ -1372,7 +1376,7 @@ const en = {
   },
   debug: {
     title: "AI requests",
-    subtitle: "Last 10 days · total cost {{cost}}",
+    subtitle: "Last 7 days · metadata only · total cost {{cost}}",
     requests: "{{count}} requests",
     inFlight: "{{count}} in flight…",
     empty: "No requests recorded.",
@@ -1380,10 +1384,16 @@ const en = {
     clearConfirm: "Sure? This clears the history.",
     clearYes: "Clear",
     model: "Model",
+    provider: "Provider",
+    integration: "Integration (private ID)",
+    routeCandidate: "Route candidate",
+    primaryCandidate: "Primary",
+    fallbackCandidate: "Fallback {{n}}",
     cost: "Cost",
     tokensIn: "Input tokens",
     tokensOut: "Output tokens",
-    response: "Response"
+    response: "Response",
+    storageError: "Debug history could not be saved: {{error}} AI execution was not affected."
   },
   costs: {
     title: "Costs",

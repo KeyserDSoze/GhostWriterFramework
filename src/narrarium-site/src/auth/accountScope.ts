@@ -78,14 +78,18 @@ export function installAccountScopeIsolation(): void {
   installed = true;
   let activeIdentity = accountIdentity(useAuthStore.getState().user);
   const storedIdentity = loadAccountScope();
-  if (shouldResetAccountScope(storedIdentity, activeIdentity)) resetAccountScopedState();
+  const accountChanged = shouldResetAccountScope(storedIdentity, activeIdentity);
+  if (accountChanged) resetAccountScopedState();
+  useLlmDebugStore.getState().setAccount(activeIdentity, storedIdentity, accountChanged);
   storeAccountScope(activeIdentity);
 
   useAuthStore.subscribe((state) => {
     const nextIdentity = accountIdentity(state.user);
     if (nextIdentity === activeIdentity) return;
+    const previousIdentity = activeIdentity;
     activeIdentity = nextIdentity;
     resetAccountScopedState();
+    useLlmDebugStore.getState().setAccount(nextIdentity, previousIdentity, true);
     storeAccountScope(nextIdentity);
   });
 }

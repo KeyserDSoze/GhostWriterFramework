@@ -1,6 +1,6 @@
 import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget } from "@/types/settings";
 import type { AuthProvider } from "@/store/authStore";
-import { BROWSER_ROUTING_ID } from "@/assistant/router";
+import { BROWSER_ROUTING_ID, sanitizeTaskRouting } from "@/assistant/router";
 import { ensureGoogleAppFolder } from "@/drive/googleAppFolder";
 import { beginCloudWrite } from "@/drive/cloudWriteBarrier";
 
@@ -179,7 +179,7 @@ async function saveMicrosoftSettings(accessToken: string, settings: AppSettings)
   return data.id;
 }
 
-function migrateSettings(raw: unknown): AppSettings {
+export function migrateSettings(raw: unknown): AppSettings {
   if (!raw || typeof raw !== "object") return DEFAULT_SETTINGS;
   const source = raw as Partial<AppSettings> & { version?: number };
   const azureOpenAI = {
@@ -215,8 +215,8 @@ function migrateSettings(raw: unknown): AppSettings {
     extraGitHubTokens: Array.isArray(source.extraGitHubTokens) ? source.extraGitHubTokens : [],
     azureOpenAI,
     aiIntegrations,
-    defaultWritingIntegrationId: source.defaultWritingIntegrationId ?? aiIntegrations[0]?.id,
-    defaultReviewIntegrationId: source.defaultReviewIntegrationId ?? aiIntegrations[0]?.id,
+    defaultWritingIntegrationId: aiIntegrations.some((entry) => entry.id === source.defaultWritingIntegrationId) ? source.defaultWritingIntegrationId : aiIntegrations[0]?.id,
+    defaultReviewIntegrationId: aiIntegrations.some((entry) => entry.id === source.defaultReviewIntegrationId) ? source.defaultReviewIntegrationId : aiIntegrations[0]?.id,
     ui: {
       ...DEFAULT_SETTINGS.ui,
       ...(typeof source.ui === "object" && source.ui ? source.ui : {}),
@@ -283,7 +283,7 @@ function normalizeTaskRouting(
       : [];
     if (primary || fallbacks.length) out[task as keyof typeof out] = { primary, fallbacks };
   }
-  return Object.keys(out).length ? out : undefined;
+  return sanitizeTaskRouting(Object.keys(out).length ? out : undefined, integrations);
 }
 
 /**

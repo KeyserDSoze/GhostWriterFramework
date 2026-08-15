@@ -94,11 +94,18 @@ export interface AssistantMessage {
   text: string;
   action?: AssistantAction;
   branch?: string;
+  mutation?: AssistantMutationResult;
+}
+
+export interface AssistantMutationResult {
+  changedPaths: string[];
+  refresh: "book-structure-and-context";
 }
 
 export interface AssistantSessionMeta {
   id: string;
   fileId?: string;
+  revision?: string;
   title: string;
   contextTitle: string;
   updatedAt: string;

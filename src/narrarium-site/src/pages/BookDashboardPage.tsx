@@ -74,12 +74,12 @@ export function BookDashboardPage() {
   const checklist: ChecklistItem[] = [
     { key: "chapters", label: t("dashboard.checkChapters"), done: structure.chapters.length > 0 ? 1 : 0, total: 1, weight: 12 },
     { key: "paragraphs", label: t("dashboard.checkParagraphs"), done: paragraphs.length > 0 ? 1 : 0, total: 1, weight: 10 },
-    { key: "chapter-resumes", label: t("dashboard.checkChapterResumes"), done: count(structure.chapters, (chapter) => chapter.hasResume), total: structure.chapters.length, weight: 10 },
-    { key: "chapter-evals", label: t("dashboard.checkChapterEvaluations"), done: count(structure.chapters, (chapter) => chapter.hasEvaluation), total: structure.chapters.length, weight: 10 },
+    { key: "chapter-resumes", label: t("dashboard.checkChapterResumes"), done: count(structure.chapters, (chapter: Chapter) => chapter.hasResume), total: structure.chapters.length, weight: 10 },
+    { key: "chapter-evals", label: t("dashboard.checkChapterEvaluations"), done: count(structure.chapters, (chapter: Chapter) => chapter.hasEvaluation), total: structure.chapters.length, weight: 10 },
     { key: "paragraph-evals", label: t("dashboard.checkParagraphEvaluations"), done: count(paragraphs, ({ paragraph }) => Boolean(paragraph.evaluationPath)), total: paragraphs.length, weight: 10 },
     { key: "paragraph-scripts", label: t("dashboard.checkParagraphScripts"), done: count(paragraphs, ({ paragraph }) => Boolean(paragraph.scriptPath)), total: paragraphs.length, weight: 7 },
     { key: "book-cover", label: t("dashboard.checkBookCover"), done: structure.bookCoverPath ? 1 : 0, total: 1, weight: 8 },
-    { key: "chapter-images", label: t("dashboard.checkChapterImages"), done: count(structure.chapters, (chapter) => Boolean(chapter.imagePath)), total: structure.chapters.length, weight: 8 },
+    { key: "chapter-images", label: t("dashboard.checkChapterImages"), done: count(structure.chapters, (chapter: Chapter) => Boolean(chapter.imagePath)), total: structure.chapters.length, weight: 8 },
     { key: "paragraph-images", label: t("dashboard.checkParagraphImages"), done: count(paragraphs, ({ paragraph }) => Boolean(paragraph.imagePath)), total: paragraphs.length, weight: 8 },
     { key: "export", label: t("dashboard.checkExportTarget"), done: profiles.length > 0 && hasDriveTarget ? 1 : 0, total: 1, weight: 8 },
     { key: "style-plot", label: t("dashboard.checkStylePlot"), done: Number(Boolean(structure.globalWritingStylePath)) + Number(Boolean(structure.plotPath)), total: 2, weight: 7 },
@@ -124,8 +124,8 @@ export function BookDashboardPage() {
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
           <MetricCard icon={<BookOpen className="h-4 w-4" />} label={t("dashboard.structure")} value={`${structure.chapters.length} / ${paragraphs.length}`} hint={t("dashboard.structureHint")} />
-          <MetricCard icon={<Wand2 className="h-4 w-4" />} label={t("dashboard.editorial")} value={`${count(structure.chapters, (chapter) => chapter.hasResume && chapter.hasEvaluation)}/${structure.chapters.length}`} hint={t("dashboard.editorialHint")} />
-          <MetricCard icon={<Image className="h-4 w-4" />} label={t("dashboard.assets")} value={`${count(structure.chapters, (chapter) => Boolean(chapter.imagePath))}/${structure.chapters.length}`} hint={t("dashboard.assetsHint")} />
+          <MetricCard icon={<Wand2 className="h-4 w-4" />} label={t("dashboard.editorial")} value={`${count(structure.chapters, (chapter: Chapter) => chapter.hasResume && chapter.hasEvaluation)}/${structure.chapters.length}`} hint={t("dashboard.editorialHint")} />
+          <MetricCard icon={<Image className="h-4 w-4" />} label={t("dashboard.assets")} value={`${count(structure.chapters, (chapter: Chapter) => Boolean(chapter.imagePath))}/${structure.chapters.length}`} hint={t("dashboard.assetsHint")} />
         </div>
       </div>
 

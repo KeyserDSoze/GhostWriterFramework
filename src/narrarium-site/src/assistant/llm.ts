@@ -164,7 +164,7 @@ export async function completeText(
   integration: AIIntegration,
   messages: LlmMessage[],
   purpose: "writing" | "review" = "writing",
-  options?: { signal?: AbortSignal; capability?: ChatCapability; modelName?: string; label?: string; onText?: (text: string) => void },
+  options?: { signal?: AbortSignal; capability?: ChatCapability; modelName?: string; label?: string; onText?: (text: string) => void; routeCandidateIndex?: number; usedFallback?: boolean },
 ): Promise<string> {
   const { model, pricing } = resolveModelForCall(integration, purpose, options);
 
@@ -180,7 +180,7 @@ export async function completeText(
   }));
 
   const debugMessages: LlmDebugMessage[] = messages.map((m) => ({ role: m.role, content: flattenLlmContent(m.content) }));
-  const debugId = useLlmDebugStore.getState().begin({ kind: "chat", label: options?.label ?? purpose, model, messages: debugMessages });
+  const debugId = useLlmDebugStore.getState().begin({ kind: "chat", label: options?.label ?? purpose, model, provider: integration.provider, integrationId: integration.id, routeCandidateIndex: options?.routeCandidateIndex, usedFallback: options?.usedFallback, messages: debugMessages });
 
   try {
     if (integration.provider === "azure_openai") {
@@ -267,7 +267,7 @@ export async function completeToolWith<T>(
   messages: LlmMessage[],
   capability: ChatCapability,
   tool: ForcedToolDefinition,
-  options?: { signal?: AbortSignal; label?: string; currency?: string },
+  options?: { signal?: AbortSignal; label?: string; currency?: string; validate?: (output: unknown) => T; routeCandidateIndex?: number; usedFallback?: boolean },
 ): Promise<LlmResult<T>> {
   if (integration.provider === "m365_copilot") throw new Error("Microsoft 365 Copilot does not support browser tool calls.");
   const normalizedMessages = messages.map((message) => ({
@@ -277,7 +277,7 @@ export async function completeToolWith<T>(
       : message.content,
   }));
   const debugMessages: LlmDebugMessage[] = messages.map((message) => ({ role: message.role, content: flattenLlmContent(message.content) }));
-  const debugId = useLlmDebugStore.getState().begin({ kind: "chat", label: options?.label ?? capability, model, messages: debugMessages });
+  const debugId = useLlmDebugStore.getState().begin({ kind: "chat", label: options?.label ?? capability, model, provider: integration.provider, integrationId: integration.id, routeCandidateIndex: options?.routeCandidateIndex, usedFallback: options?.usedFallback, messages: debugMessages });
   try {
     const client = integration.provider === "azure_openai"
       ? new AzureOpenAI({ endpoint: integration.endpoint ?? "", apiKey: integration.apiKey, apiVersion: integration.apiVersion || "2024-10-21", dangerouslyAllowBrowser: true })
@@ -292,7 +292,8 @@ export async function completeToolWith<T>(
     recordChatUsage(model, pricing, usage);
     const call = (response as unknown as { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> }).choices?.[0]?.message?.tool_calls?.[0];
     if (!call?.function?.arguments) throw new Error(`Model did not call forced tool ${tool.name}.`);
-    const output = JSON.parse(call.function.arguments) as T;
+    const parsed = JSON.parse(call.function.arguments) as unknown;
+    const output = options?.validate ? options.validate(parsed) : parsed as T;
     const normalized = normalizeUsage(usage);
     const cost = pricing ? chatDelta({ inputTokens: normalized.inputTokens, cachedTokens: normalized.cachedInputTokens, outputTokens: normalized.outputTokens }, pricing).chatCost : undefined;
     finishChatDebug(debugId, pricing, usage, call.function.arguments);
@@ -364,7 +365,7 @@ export async function classifyConfirmationWith(
     tool_choice: { type: "function", function: { name: "confirm" } },
   };
 
-  const debugId = useLlmDebugStore.getState().begin({ kind: "chat", label: "confirm", model, messages: [{ role: "user", content: utterance }] });
+  const debugId = useLlmDebugStore.getState().begin({ kind: "chat", label: "confirm", model, provider: integration.provider, integrationId: integration.id, messages: [{ role: "user", content: utterance }] });
   try {
     const client = integration.provider === "azure_openai"
       ? new AzureOpenAI({ endpoint: integration.endpoint ?? "", apiKey: integration.apiKey, apiVersion: integration.apiVersion || "2024-10-21", dangerouslyAllowBrowser: true })

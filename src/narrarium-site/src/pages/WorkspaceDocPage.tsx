@@ -28,6 +28,7 @@ import { useMergeDraftFinal } from "@/components/editor/useMergeDraftFinal";
 import { useGenerateDiffStore } from "@/store/generateDiffStore";
 import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
 import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
+import type { RoutedLlmRunMetadata } from "@/assistant/router";
 
 interface MetaEntry {
   key: string;
@@ -701,6 +702,7 @@ export function WorkspaceDocPage() {
     useGenerateDiffStore.getState().start(async () => {
       let newBody = "";
       let newScores: Record<string, { score: number; explanation: string }> | null = null;
+      let scoreGeneration: RoutedLlmRunMetadata | null = null;
       if (workspaceKind === "resume") {
         const scenes = await Promise.all(chapterRef.paragraphs.map(async (p) => ({ title: p.title, text: (await loadProse(p.draftPath)) || (await loadProse(p.path)) })));
         newBody = await generateChapterResume(src, scenes.filter((s) => s.text.trim()));
@@ -709,11 +711,13 @@ export function WorkspaceDocPage() {
         const generated = await generateParagraphEvaluationWithScores(src, paragraph.title, prose);
         newBody = generated.body;
         newScores = generated.scores;
+        scoreGeneration = generated.scoreGeneration;
       } else {
         const scenes = await Promise.all(chapterRef.paragraphs.map(async (p) => ({ title: p.title, text: (await loadProse(p.draftPath)) || (await loadProse(p.path)) })));
         const generated = await generateChapterEvaluationWithScores(src, scenes.filter((s) => s.text.trim()));
         newBody = generated.body;
         newScores = generated.scores;
+        scoreGeneration = generated.scoreGeneration;
       }
       return {
         title,
@@ -722,8 +726,9 @@ export function WorkspaceDocPage() {
         apply: async () => {
           const nextEntries = workspaceKind === "evaluation"
             ? [
-                ...entries.filter((entry) => entry.key !== "scores"),
+                ...entries.filter((entry) => entry.key !== "scores" && entry.key !== "score_generation"),
                 ...(newScores ? [{ key: "scores", value: JSON.stringify(newScores) }] : []),
+                ...(scoreGeneration ? [{ key: "score_generation", value: JSON.stringify(scoreGeneration) }] : []),
               ]
             : entries;
           const nextContent = buildFrontmatter(nextEntries, newBody);

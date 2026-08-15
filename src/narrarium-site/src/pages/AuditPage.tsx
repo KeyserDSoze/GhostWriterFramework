@@ -48,6 +48,7 @@ import {
 import { useRegisterPageActions } from "@/store/pageActionsStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { resolveBookAuditSettings, resolveBookToken, type AuditDepth } from "@/types/settings";
+import { auditRunBlocker, claimAuditQueryOperation } from "@/narrarium/auditAvailability";
 
 const SEVERITIES: AuditSeverity[] = ["critical", "high", "medium", "low", "informational"];
 const CERTAINTIES: AuditCertainty[] = ["confirmed", "probable", "possible", "needs-context"];
@@ -92,7 +93,8 @@ export function AuditPage() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const abortRef = useRef<AbortController | null>(null);
-  const handledOperationRef = useRef("");
+  const handledOperationsRef = useRef(new Set<string>());
+  const runBlocker = book ? auditRunBlocker(book, settings) : null;
 
   useEffect(() => {
     if (auditSettings) setDepth(auditSettings.defaultDepth);
@@ -124,8 +126,10 @@ export function AuditPage() {
 
   const running = runState === "preparingContext" || runState === "running" || runState === "synthesizing";
 
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   async function executeAudit() {
-    if (!book || !structure || !target || !token || running || !auditSettings?.enabled) return;
+    if (!book || !structure || !target || !token || running || runBlocker) return;
     const controller = new AbortController();
     abortRef.current = controller;
     setError("");
@@ -179,15 +183,13 @@ export function AuditPage() {
     const params = new URLSearchParams(location.search);
     const action = params.get("action");
     if (action !== "run" && action !== "delete") return;
-    const operationKey = `${target.reportPath}:${location.search}`;
-    if (handledOperationRef.current === operationKey) return;
-    handledOperationRef.current = operationKey;
+    if (!claimAuditQueryOperation(handledOperationsRef.current, location.key, target.reportPath, location.search)) return;
     params.delete("action");
     const search = params.toString();
     navigate(`${location.pathname}${search ? `?${search}` : ""}${location.hash}`, { replace: true });
     if (action === "delete") setDeleteOpen(true);
     else void executeAudit();
-  }, [loadedReportPath, location.hash, location.pathname, location.search, target?.reportPath]);
+  }, [loadedReportPath, location.hash, location.key, location.pathname, location.search, target?.reportPath, runBlocker]);
 
   async function removeReport() {
     if (!book || !structure || !target || !token) return;
@@ -235,7 +237,7 @@ export function AuditPage() {
       label: report ? t("audit.actions.update") : t("audit.actions.run"),
       icon: report ? <RefreshCcw className="h-4 w-4" /> : <Play className="h-4 w-4" />,
       run: () => executeAudit(),
-      disabled: running || !target || !auditSettings?.enabled,
+      disabled: running || !target || Boolean(runBlocker),
     },
     { id: "open-audit-source", label: t("audit.actions.openSource"), icon: <ExternalLink className="h-4 w-4" />, run: () => openSource(), disabled: !target },
     { id: "delete-audit", label: t("audit.actions.delete"), icon: <Trash2 className="h-4 w-4" />, run: () => setDeleteOpen(true), disabled: running || !report },
@@ -282,7 +284,7 @@ export function AuditPage() {
             {running ? (
               <Button variant="destructive" onClick={() => abortRef.current?.abort()}><Square className="mr-2 h-4 w-4" />{t("audit.actions.cancel")}</Button>
             ) : (
-              <Button onClick={() => void executeAudit()} disabled={!auditSettings?.enabled}>{report ? <RefreshCcw className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}{report ? t(report.stale ? "audit.actions.update" : "audit.actions.rerun") : t("audit.actions.run")}</Button>
+              <Button onClick={() => void executeAudit()} disabled={Boolean(runBlocker)}>{report ? <RefreshCcw className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}{report ? t(report.stale ? "audit.actions.update" : "audit.actions.rerun") : t("audit.actions.run")}</Button>
             )}
             <Button variant="outline" onClick={() => openSource()}><BookOpen className="mr-2 h-4 w-4" />{t("audit.actions.openSource")}</Button>
             {report && <Button variant="outline" onClick={() => setDeleteOpen(true)} disabled={running}><Trash2 className="h-4 w-4 text-destructive sm:mr-2" /><span className="hidden sm:inline">{t("audit.actions.delete")}</span></Button>}
@@ -290,7 +292,8 @@ export function AuditPage() {
         </div>
       </section>
 
-      {!auditSettings?.enabled && <Alert><AlertCircle className="h-4 w-4" /><AlertDescription>{t("audit.disabled")}</AlertDescription></Alert>}
+      {runBlocker === "disabled" && <Alert><AlertCircle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center justify-between gap-3"><span>{t("audit.disabled")}</span><Button size="sm" variant="outline" onClick={() => navigate(`/app/books/${bookId}/settings`)}>{t("audit.actions.openBookSettings")}</Button></AlertDescription></Alert>}
+      {runBlocker === "missing-model" && <Alert><AlertCircle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center justify-between gap-3"><span>{t("audit.missingModel")}</span><Button size="sm" variant="outline" onClick={() => navigate("/app/settings/ai-router")}>{t("audit.actions.openAiRouter")}</Button></AlertDescription></Alert>}
       {error && <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{error}</AlertDescription></Alert>}
 
       {(running || runState === "failed" || runState === "cancelled" || runState === "completed") && progress && (
@@ -307,7 +310,7 @@ export function AuditPage() {
       {loadingReport ? (
         <Card><CardContent className="flex items-center gap-3 py-8 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />{t("audit.progress.loading")}</CardContent></Card>
       ) : !report ? (
-        <Card className="border-dashed"><CardContent className="flex flex-col items-center px-6 py-12 text-center"><FileWarning className="h-10 w-10 text-muted-foreground" /><h2 className="mt-4 text-lg font-semibold">{t("audit.empty.title")}</h2><p className="mt-2 max-w-lg text-sm text-muted-foreground">{t("audit.empty.description")}</p><Button className="mt-5" onClick={() => void executeAudit()} disabled={!auditSettings?.enabled || running}><Play className="mr-2 h-4 w-4" />{t("audit.actions.run")}</Button></CardContent></Card>
+        <Card className="border-dashed"><CardContent className="flex flex-col items-center px-6 py-12 text-center"><FileWarning className="h-10 w-10 text-muted-foreground" /><h2 className="mt-4 text-lg font-semibold">{t("audit.empty.title")}</h2><p className="mt-2 max-w-lg text-sm text-muted-foreground">{t("audit.empty.description")}</p><Button className="mt-5" onClick={() => void executeAudit()} disabled={Boolean(runBlocker) || running}><Play className="mr-2 h-4 w-4" />{t("audit.actions.run")}</Button></CardContent></Card>
       ) : (
         <>
           {report.stale && <Alert><RefreshCcw className="h-4 w-4" /><AlertDescription>{t("audit.staleDescription")}</AlertDescription></Alert>}

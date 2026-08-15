@@ -1,4 +1,3 @@
-import OpenAI, { AzureOpenAI } from "openai";
 import { parseDocument, stringify } from "yaml";
 import {
   compareBranches,
@@ -20,7 +19,7 @@ import {
   type LlmContentPart,
   type LlmMessage,
 } from "@/assistant/llm";
-import { completeTextRouted, NoCompletionCandidatesError, resolveTaskCandidates } from "@/assistant/router";
+import { completeTextRouted, completeToolRouted, NoCompletionCandidatesError, resolveTaskCandidates, type RoutedLlmRunMetadata } from "@/assistant/router";
 import { buildCapabilitiesMessage, chooseToolMatch, isCapabilityQuestion } from "@/assistant/orchestrator";
 import { isEditorialReviewPrompt } from "@/assistant/intentRules";
 import { resolveChapterTarget, resolveParagraphTarget } from "@/assistant/targetRules";
@@ -54,7 +53,6 @@ import {
   createParagraphScriptArtifact,
 } from "@/narrarium/workspace";
 import { commitScriptWithCanonicalLedger } from "@/narrarium/scriptLedger";
-import { GITHUB_MODELS_INFERENCE_URL } from "@/config/githubModels";
 import { defaultEvaluationCriteria, defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
 import { emptyReaderPersona } from "@/narrarium/readerPersona";
 import { generateReaderEvaluationSummary, hashReaderSource, loadReaderPersonas, parseReaderEvaluation, readerEvaluationPath, runReaderEvaluations, saveReaderPersona, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
@@ -70,6 +68,7 @@ import type { z } from "zod";
 import { attachmentImportRoute, validateImportAttachments, type AttachmentImportTarget } from "@/assistant/attachmentImport";
 import { assertExecutableHandlerMap } from "@/assistant/handlerCatalog";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
+import { auditRunBlocker } from "@/narrarium/auditAvailability";
 
 async function completeForTask(
   settings: AppSettings,
@@ -575,7 +574,7 @@ async function createSimulatedReaderFromPrompt(input: PromptInput & { book: Book
   const name = parsed.name;
   const next = { ...profile, ...parsed, slug: slugToTitle(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") };
   const path = await saveReaderPersona({ token: input.token, book: input.book, branch: input.branch, profile: next });
-  return makeAssistantMessage("assistant", `Created simulated reader **${next.name}** at \`${path}\`.`);
+  return mutationMessage(`Created simulated reader **${next.name}** at \`${path}\`.`, [path]);
 }
 
 async function toggleSimulatedReaderFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -586,8 +585,8 @@ async function toggleSimulatedReaderFromPrompt(input: PromptInput & { book: Book
   const reader = readers.sort((a, b) => b.name.length - a.name.length).find((entry) => lower.includes(entry.name.toLowerCase()) || lower.includes(entry.slug.replace(/-/g, " ")));
   if (!reader) return makeAssistantMessage("assistant", "Tell me which simulated reader to enable or disable.");
   const enabled = !/\b(disable|disabilita|spegni|off)\b/.test(lower);
-  await saveReaderPersona({ token: input.token, book: input.book, branch: input.branch, profile: { ...reader, enabled } });
-  return makeAssistantMessage("assistant", `${reader.name} is now ${enabled ? "enabled" : "disabled"}.`);
+  const path = await saveReaderPersona({ token: input.token, book: input.book, branch: input.branch, profile: { ...reader, enabled } });
+  return mutationMessage(`${reader.name} is now ${enabled ? "enabled" : "disabled"}.`, [path]);
 }
 
 async function evaluationTargetFromContext(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<ReaderEvaluationTarget | null> {
@@ -615,7 +614,7 @@ async function evaluateWithReadersFromPrompt(input: PromptInput & { book: BookEn
   const selected = named.length ? named.filter((reader) => reader.enabled) : readers.filter((reader) => reader.enabled);
   if (!selected.length) return makeAssistantMessage("assistant", "No matching simulated readers are enabled.");
   const result = await runReaderEvaluations({ token: input.token, book: input.book, branch: input.branch, structure, settings: input.settings, target, readers: selected, depth: /\b(deep|approfondit)\b/.test(lower) ? "deep" : "brief", includeContext: true, concurrency: 2, signal: input.signal, onProgress: (progress) => input.onText?.(`**${progress.readerName}**: ${progress.status} (${progress.completed}/${progress.total})`) });
-  return makeAssistantMessage("assistant", `Completed ${result.completed.length} reader evaluations${result.failed.length ? `; ${result.failed.length} failed` : ""}.\n\n${result.completed.map((record) => `- **${record.readerName}**: ${record.score ?? "-"}/10 — \`${record.path}\``).join("\n")}`);
+  return mutationMessage(`Completed ${result.completed.length} reader evaluations${result.failed.length ? `; ${result.failed.length} failed` : ""}.\n\n${result.completed.map((record) => `- **${record.readerName}**: ${record.score ?? "-"}/10 — \`${record.path}\``).join("\n")}`, result.changedPaths);
 }
 
 function readerEvaluationPrefixes(target: ReaderEvaluationTarget): string[] {
@@ -645,7 +644,7 @@ async function summarizeReaderEvaluationsFromPrompt(input: PromptInput & { book:
     .filter((record) => !seen.has(record.readerId) && Boolean(seen.add(record.readerId)));
   if (latest.length < 2) return makeAssistantMessage("assistant", "At least two current reader evaluations are needed to create a summary.");
   const summary = await generateReaderEvaluationSummary({ token: input.token, book: input.book, branch: input.branch, settings: input.settings, target, evaluations: latest, language: structure.language, signal: input.signal });
-  return makeAssistantMessage("assistant", `Saved the simulated-reader summary to \`${summary.path}\`.\n\n${summary.body}`);
+  return mutationMessage(`Saved the simulated-reader summary to \`${summary.path}\`.\n\n${summary.body}`, [summary.path]);
 }
 
 async function openReaderEvaluationsFromContext(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
@@ -807,6 +806,25 @@ async function auditNavigationFromPrompt(input: PromptInput & { book: BookEntry;
   } catch (error) {
     return makeAssistantMessage("assistant", `I could not resolve that audit target: ${error instanceof Error ? error.message : String(error)}`);
   }
+  if (operation === "run" || operation === "update") {
+    const blocker = auditRunBlocker(input.book, input.settings);
+    if (blocker === "disabled") {
+      return {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        text: "Audit is disabled for this book. Enable it in the book settings before running or updating a report.",
+        action: { kind: "navigate", to: `/app/books/${encodeURIComponent(input.book.id)}/settings`, label: "Book settings" },
+      };
+    }
+    if (blocker === "missing-model") {
+      return {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        text: "No executable AI model is configured for the Audit task. Configure its primary model or a fallback before running the audit.",
+        action: { kind: "navigate", to: "/app/settings/ai-router", label: "AI Router" },
+      };
+    }
+  }
   if (operation === "delete" && !structure.auditFiles.some((file) => file.path === resolved.reportPath)) {
     return makeAssistantMessage("assistant", `There is no saved audit report for **${resolved.title}** to delete.`);
   }
@@ -817,7 +835,12 @@ async function auditNavigationFromPrompt(input: PromptInput & { book: BookEntry;
   const href = `${auditTargetHref(structure, target)}${query ? `?${query}` : ""}`;
   const verb = operation === "delete" ? "Opening the audit deletion confirmation for" : operation === "open" ? "Opening the audit for" : operation === "update" ? "Opening and updating the audit for" : "Opening and running the audit for";
   const toolId = operation === "run" ? "run-audit" : operation === "open" ? "open-audit" : operation === "update" ? "update-audit" : "delete-audit";
-  const provenance = await actionProvenance(input, toolId, operation === "delete" ? [resolved.reportPath] : []);
+  let provenance: AssistantActionProvenance;
+  try {
+    provenance = await actionProvenance(input, toolId, operation === "delete" ? [resolved.reportPath] : []);
+  } catch (error) {
+    return makeAssistantMessage("assistant", `I could not prepare the audit action safely: ${error instanceof Error ? error.message : String(error)}`);
+  }
   return { id: crypto.randomUUID(), role: "assistant", text: `${verb} **${resolved.title}**.`, action: { ...provenance, kind: "navigate", to: href, label: "Audit" } };
 }
 
@@ -853,7 +876,7 @@ async function setAuditFindingStatusFromPrompt(input: PromptInput & { book: Book
     return makeAssistantMessage("assistant", `Finding \`${findingId}\` does not exist in the resolved report. No finding was changed.`);
   }
   await updateAuditFinding({ token: input.token, book: input.book, branch: input.branch, structure, target, findingId, status });
-  return makeAssistantMessage("assistant", `Updated finding \`${findingId}\` to **${status}**.`);
+  return mutationMessage(`Updated finding \`${findingId}\` to **${status}**.`, [resolveAuditTarget(structure, target).reportPath]);
 }
 
 // ─── Local utility tools (no LLM) ────────────────────────────────────────────
@@ -1142,7 +1165,7 @@ async function createChapterFromPrompt(input: PromptInput & { book: BookEntry; b
   const { title, summary, body } = parsed;
   const nextNumber = (structure.chapters.length || 0) + 1;
   const created = await createChapter(input.token, input.book.owner, input.book.repo, input.branch, { number: nextNumber, title, summary, body });
-  return makeAssistantMessage("assistant", `I created chapter ${created.slug} at \`${created.chapterFilePath}\`.`);
+  return mutationMessage(`I created chapter ${created.slug} at \`${created.chapterFilePath}\`.`, created.changedPaths);
 }
 
 async function createParagraphFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -1155,7 +1178,7 @@ async function createParagraphFromPrompt(input: PromptInput & { book: BookEntry;
   const { title, summary, body } = parsed;
   const nextNumber = (chapter.paragraphs.length || 0) + 1;
   const created = await createParagraphDocument(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: chapter.slug, number: nextNumber, title, summary, body });
-  return makeAssistantMessage("assistant", `I created paragraph ${created.slug} at \`${created.paragraphFilePath}\`.`);
+  return mutationMessage(`I created paragraph ${created.slug} at \`${created.paragraphFilePath}\`.`, [created.paragraphFilePath]);
 }
 
 async function createEntityFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }, forcedKind?: EntityKind): Promise<AssistantMessage> {
@@ -1167,7 +1190,7 @@ async function createEntityFromPrompt(input: PromptInput & { book: BookEntry; br
   ], "default", entityOutputSchema, { signal: input.signal, label: "copilot:create-entity" });
   const { label, summary, body, extraFrontmatter } = parsed;
   const created = await createCanonEntity(input.token, input.book.owner, input.book.repo, input.branch, { kind, label, summary, body, extraFrontmatter });
-  return makeAssistantMessage("assistant", `I created ${kind} \`${label}\` at \`${created.path}\`.`);
+  return mutationMessage(`I created ${kind} \`${label}\` at \`${created.path}\`.`, [created.path]);
 }
 
 async function createScriptFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -1180,21 +1203,21 @@ async function createScriptFromPrompt(input: PromptInput & { book: BookEntry; br
   const { title, location } = parsed;
   const nextNumber = input.context.paragraph ? Number(input.context.paragraph.number) : (chapter.paragraphs.length || 0) + 1;
   const paragraphSlug = input.context.paragraph?.path.split("/").pop()?.replace(/\.md$/i, "");
-  await createParagraphScriptArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: chapter.slug, number: nextNumber, title, paragraphSlug, location });
-  return makeAssistantMessage("assistant", `I created a script for \`${title}\` in chapter \`${chapter.slug}\`.`);
+  const path = await createParagraphScriptArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: chapter.slug, number: nextNumber, title, paragraphSlug, location });
+  return mutationMessage(`I created a script for \`${title}\` in chapter \`${chapter.slug}\`.`, [path]);
 }
 
 async function createDraftFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   if (input.context.chapter) {
     if (input.context.paragraph) {
       const paragraphSlug = input.context.paragraph.path.split("/").pop()?.replace(/\.md$/i, "");
-      await createParagraphDraftArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: input.context.chapter.slug, number: Number(input.context.paragraph.number), title: input.context.paragraph.title, paragraphSlug });
-      return makeAssistantMessage("assistant", `I created a paragraph draft for \`${input.context.paragraph.title}\`.`);
+      const path = await createParagraphDraftArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: input.context.chapter.slug, number: Number(input.context.paragraph.number), title: input.context.paragraph.title, paragraphSlug });
+      return mutationMessage(`I created a paragraph draft for \`${input.context.paragraph.title}\`.`, [path]);
     }
     const match = /^(\d{3})-/.exec(input.context.chapter.slug);
     const number = Number(match?.[1] ?? 1);
-    await createChapterDraftArtifacts(input.token, input.book.owner, input.book.repo, input.branch, { number, title: input.context.chapter.title });
-    return makeAssistantMessage("assistant", `I created a chapter draft workspace for \`${input.context.chapter.title}\`.`);
+    const created = await createChapterDraftArtifacts(input.token, input.book.owner, input.book.repo, input.branch, { number, title: input.context.chapter.title });
+    return mutationMessage(`I created a chapter draft workspace for \`${input.context.chapter.title}\`.`, created.changedPaths);
   }
   return makeAssistantMessage("assistant", "Open a chapter or paragraph first so I know which draft workspace to create.");
 }
@@ -1225,7 +1248,7 @@ async function importAttachmentsAsScript(input: PromptInput & { book: BookEntry;
   const paragraphSlug = input.context.paragraph ? slugFromPath(input.context.paragraph.path) : undefined;
   const script = buildParagraphScriptArtifact({ chapterSlug: chapter.slug, number, title, paragraphSlug, location, body: parsed.body });
   await commitScriptWithCanonicalLedger({ token: input.token, book: input.book, branch: input.branch, script, message: `Import script ${script.slug} and refresh script ledger` });
-  return makeAssistantMessage("assistant", `I imported the attachments as script \`${script.path}\` and refreshed the canonical script ledger.`);
+  return mutationMessage(`I imported the attachments as script \`${script.path}\` and refreshed the canonical script ledger.`, [script.path, "state/script-ledger.md"]);
 }
 
 async function importAttachmentsAsDraft(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -1237,13 +1260,21 @@ async function importAttachmentsAsDraft(input: PromptInput & { book: BookEntry; 
   ], "default", importedDraftOutputSchema, { signal: input.signal, label: "copilot:import-draft" });
   const { title } = parsed;
   let path: string;
+  let changedPaths: string[];
   if (input.context.paragraph) {
     path = await createParagraphDraftArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: chapter.slug, number: Number(input.context.paragraph.number), title, paragraphSlug: slugFromPath(input.context.paragraph.path), body: parsed.body, replace: true });
+    changedPaths = draftImportChangedPaths(path);
   } else {
     const number = Number(/^(\d{3})-/.exec(chapter.slug)?.[1] ?? 1);
-    path = await createChapterDraftArtifacts(input.token, input.book.owner, input.book.repo, input.branch, { number, title, chapterSlug: chapter.slug, body: parsed.body, replace: true });
+    const created = await createChapterDraftArtifacts(input.token, input.book.owner, input.book.repo, input.branch, { number, title, chapterSlug: chapter.slug, body: parsed.body, replace: true });
+    path = created.path;
+    changedPaths = draftImportChangedPaths(created);
   }
-  return makeAssistantMessage("assistant", `I imported the attachments as draft \`${path}\`.`);
+  return mutationMessage(`I imported the attachments as draft \`${path}\`.`, changedPaths);
+}
+
+export function draftImportChangedPaths(created: string | { changedPaths: string[] }): string[] {
+  return typeof created === "string" ? [created] : created.changedPaths;
 }
 
 async function runDeepResearchFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -1251,7 +1282,7 @@ async function runDeepResearchFromPrompt(input: PromptInput & { book: BookEntry;
   if (!request) return makeAssistantMessage("assistant", "Tell me what topic to research, for example: run deep research on Roman aqueduct construction.");
   const result = await executeDeepResearchFromCopilot({ ...input, structureLanguage: input.context.structure?.language });
   if (!result) return makeAssistantMessage("assistant", "Tell me what topic to research.");
-  return makeAssistantMessage("assistant", `Saved deep research **${result.title}** to \`${result.path}\` using ${result.providers.join(", ") || "the configured research providers"}.`);
+  return mutationMessage(`Saved deep research **${result.title}** to \`${result.path}\` using ${result.providers.join(", ") || "the configured research providers"}.`, [result.path]);
 }
 
 async function proposeEntityFromResearch(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -1329,15 +1360,15 @@ async function writeResume(input: PromptInput & { book: BookEntry; branch: strin
   const parsed = existingResume ? parseMarkdown(existingResume.content) : { frontmatter: {} };
   const content = renderMarkdown(mergeResumeFrontmatter(parsed.frontmatter, chapter.slug), `${answer.trim()}\n`);
   await commitAndPushTextFileMutation({ token: input.token, book: input.book, branch: input.branch, expectedRemoteHeadSha, message: `${existingResume ? "Update" : "Add"} chapter resume ${chapter.slug}`, mutations: [{ path: targetPath, content, expectedCurrentHash: existingResume ? await sha256Text(existingResume.content) : null }] });
-  return makeAssistantMessage("assistant", `I wrote the chapter resume to \`${targetPath}\`.\n\n${answer.trim()}`);
+  return mutationMessage(`I wrote the chapter resume to \`${targetPath}\`.\n\n${answer.trim()}`, [targetPath]);
 }
 
-async function ensureEvaluationGuidelines(input: { token: string; owner: string; repo: string; branch: string; language?: string }): Promise<string> {
+async function ensureEvaluationGuidelines(input: { token: string; owner: string; repo: string; branch: string; language?: string }): Promise<{ content: string; created: boolean }> {
   const existing = await optionalRepositoryRead(() => loadFileContent(input.token, input.owner, input.repo, EVALUATION_GUIDELINES_PATH, input.branch));
-  if (existing) return existing;
+  if (existing) return { content: existing, created: false };
   const fallback = defaultEvaluationGuidelinesMarkdown(input.language);
   await createFile(input.token, input.owner, input.repo, input.branch, EVALUATION_GUIDELINES_PATH, fallback, "Add default evaluation guidelines");
-  return fallback;
+  return { content: fallback, created: true };
 }
 
 export type EvaluationCriterionScore = { score: number; explanation: string };
@@ -1359,17 +1390,32 @@ export function resolveEvaluationCriteria(guidelinesRaw: string, language?: stri
   return Object.keys(criteria).length ? criteria : defaultEvaluationCriteria(language);
 }
 
-function openAiBaseUrlForIntegration(bookIntegration: { provider: string; endpoint?: string }): string {
-  return bookIntegration.provider === "github_models" ? GITHUB_MODELS_INFERENCE_URL : (bookIntegration.endpoint || "https://api.openai.com/v1");
+export function validateEvaluationScores(value: unknown, criteria: Record<string, string>): Record<string, EvaluationCriterionScore> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Evaluation scoring returned an invalid tool payload.");
+  const scored = (value as { criteria?: unknown }).criteria;
+  if (!scored || typeof scored !== "object" || Array.isArray(scored)) throw new Error("Evaluation scoring did not return criteria.");
+  const expected = Object.keys(criteria);
+  if (Object.keys(scored).length !== expected.length) throw new Error("Evaluation scoring returned unexpected criteria.");
+  const out: Record<string, EvaluationCriterionScore> = {};
+  for (const key of expected) {
+    const entry = (scored as Record<string, unknown>)[key];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`Evaluation scoring omitted ${key}.`);
+    const { score, explanation } = entry as { score?: unknown; explanation?: unknown };
+    if (typeof score !== "number" || !Number.isFinite(score) || score < 0 || score > 10) throw new Error(`Evaluation scoring returned an invalid score for ${key}.`);
+    if (typeof explanation !== "string" || !explanation.trim()) throw new Error(`Evaluation scoring returned an invalid explanation for ${key}.`);
+    out[key] = { score, explanation: explanation.trim() };
+  }
+  return out;
 }
 
-async function scoreEvaluationWithTool(
-  integration: { provider: string; endpoint?: string; apiKey: string; apiVersion?: string },
-  model: string,
+export async function scoreEvaluationRouted(
+  settings: AppSettings,
   prompt: string,
   criteria: Record<string, string>,
-): Promise<Record<string, EvaluationCriterionScore>> {
-  const toolSchema = {
+  options?: { signal?: AbortSignal; label?: string; onMetadata?: (metadata: RoutedLlmRunMetadata) => void },
+): Promise<Record<string, EvaluationCriterionScore> | null> {
+  if (!Object.keys(criteria).length) return null;
+  const parameters = {
     type: "object",
     properties: {
       criteria: {
@@ -1391,53 +1437,23 @@ async function scoreEvaluationWithTool(
     required: ["criteria"],
     additionalProperties: false,
   };
-
-  const client = integration.provider === "azure_openai"
-    ? new AzureOpenAI({ endpoint: integration.endpoint ?? "", apiKey: integration.apiKey, apiVersion: integration.apiVersion || "2024-10-21", dangerouslyAllowBrowser: true })
-    : new OpenAI({ apiKey: integration.apiKey, baseURL: openAiBaseUrlForIntegration(integration), dangerouslyAllowBrowser: true });
-
-  const response = await client.chat.completions.create({
-    model,
-    messages: [{ role: "user", content: prompt }],
-    tools: [{
-      type: "function",
-      function: {
-        name: "set_scores",
-        description: "Return critical numeric evaluation scores with a short reason for each criterion.",
-        parameters: toolSchema as never,
-      },
-    }],
-    tool_choice: { type: "function", function: { name: "set_scores" } },
-  } as never);
-
-  const call = (response as { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> }).choices?.[0]?.message?.tool_calls?.[0];
-  const args = call?.function?.arguments ? JSON.parse(call.function.arguments) as { criteria?: Record<string, { score?: number; explanation?: string }> } : null;
-  const scored = args?.criteria ?? {};
-  const out: Record<string, EvaluationCriterionScore> = {};
-  for (const [key, description] of Object.entries(criteria)) {
-    const entry = scored[key];
-    out[key] = {
-      score: typeof entry?.score === "number" ? Math.max(0, Math.min(10, entry.score)) : 0,
-      explanation: typeof entry?.explanation === "string" && entry.explanation.trim() ? entry.explanation.trim() : description,
-    };
-  }
-  return out;
-}
-
-export async function scoreEvaluationRouted(settings: AppSettings, prompt: string, criteria: Record<string, string>): Promise<Record<string, EvaluationCriterionScore> | null> {
-  if (!Object.keys(criteria).length) return null;
-  const candidates = resolveTaskCandidates(settings, "review");
-  let lastError: unknown = null;
-  for (const candidate of candidates) {
-    if (!candidate.integration || !candidate.model) continue;
-    try {
-      return await scoreEvaluationWithTool(candidate.integration, candidate.model, prompt, criteria);
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  if (lastError) throw lastError;
-  return null;
+  const result = await completeToolRouted<Record<string, EvaluationCriterionScore>>(
+    settings,
+    [{ role: "user", content: prompt }],
+    "review",
+    {
+      name: "set_scores",
+      description: "Return critical numeric evaluation scores with a short reason for each criterion.",
+      parameters,
+    },
+    {
+      signal: options?.signal,
+      label: options?.label ?? "evaluation:scoring",
+      validate: (value) => validateEvaluationScores(value, criteria),
+    },
+  );
+  options?.onMetadata?.(result.metadata);
+  return result.output;
 }
 
 async function resolveEvaluationTarget(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<
@@ -1525,7 +1541,13 @@ async function evaluateAndWriteTarget(
     "",
     evaluationPayload,
   ].join("\n");
-  const scores = await scoreEvaluationRouted(input.settings, scorePrompt, criteria);
+  let scoreGeneration: RoutedLlmRunMetadata | undefined;
+  const scores = await scoreEvaluationRouted(input.settings, scorePrompt, criteria, {
+    signal: input.signal,
+    label: target.kind === "paragraph" ? "copilot:score-paragraph-evaluation" : "copilot:score-chapter-evaluation",
+    onMetadata: (metadata) => { scoreGeneration = metadata; },
+  });
+  input.signal?.throwIfAborted();
 
   const frontmatter = target.kind === "paragraph"
     ? {
@@ -1535,12 +1557,14 @@ async function evaluateAndWriteTarget(
         chapter: `chapter:${target.chapterSlug}`,
         paragraph: `paragraph:${target.chapterSlug}:${target.targetPath.split("/").pop()?.replace(/\.md$/i, "") ?? "unknown"}`,
         ...(scores ? { scores } : {}),
+        ...(scoreGeneration ? { score_generation: scoreGeneration } : {}),
       }
     : {
         type: "evaluation",
         id: `evaluation:chapter:${target.chapterSlug}`,
         title: `Evaluation ${target.chapterSlug}`,
         ...(scores ? { scores } : {}),
+        ...(scoreGeneration ? { score_generation: scoreGeneration } : {}),
       };
 
   await upsertStructuredMarkdownFile({
@@ -1564,11 +1588,13 @@ async function writeAllParagraphEvaluations(input: PromptInput & { book: BookEnt
   if (!chapter.paragraphs.length) return makeAssistantMessage("assistant", `Chapter \`${chapter.slug}\` has no paragraphs to evaluate.`);
 
   const language = input.context.structure?.language;
-  const guidelines = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, language });
+  const guidelineResult = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, language });
+  const guidelines = guidelineResult.content;
   const criteria = resolveEvaluationCriteria(guidelines, language);
   const italian = /\b(tutti|paragraf|capitolo|valutazione|scene)\b/i.test(input.prompt);
   const paragraphBodies: Array<{ title: string; body: string }> = [];
   const paths: string[] = [];
+  if (guidelineResult.created) paths.push(EVALUATION_GUIDELINES_PATH);
 
   for (let index = 0; index < chapter.paragraphs.length; index++) {
     const paragraph = chapter.paragraphs[index];
@@ -1610,7 +1636,7 @@ async function writeAllParagraphEvaluations(input: PromptInput & { book: BookEnt
   const intro = italian
     ? `Ho valutato tutti i ${chapter.paragraphs.length} paragrafi del capitolo e salvato anche la valutazione complessiva.`
     : `I evaluated all ${chapter.paragraphs.length} paragraphs and saved the overall chapter evaluation.`;
-  return makeAssistantMessage("assistant", `${intro}\n\n${total.answer}\n\n${paths.map((path) => `- \`${path}\``).join("\n")}`);
+  return mutationMessage(`${intro}\n\n${total.answer}\n\n${paths.map((path) => `- \`${path}\``).join("\n")}`, paths);
 }
 
 async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -1618,10 +1644,11 @@ async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: s
   if (unresolved) return unresolved;
   const target = await resolveEvaluationTarget(input);
   if (!target) return makeAssistantMessage("assistant", "Tell me which chapter or paragraph to evaluate, for example: evaluate chapter 1 or evaluate paragraph 2 of chapter 1.");
-  const guidelines = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, language: input.context.structure?.language });
+  const guidelineResult = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, language: input.context.structure?.language });
+  const guidelines = guidelineResult.content;
   const criteria = resolveEvaluationCriteria(guidelines, input.context.structure?.language);
   const result = await evaluateAndWriteTarget(input, target, guidelines, criteria);
-  return makeAssistantMessage("assistant", `I wrote the ${target.kind} evaluation to \`${result.path}\`.\n\n${result.answer}`);
+  return mutationMessage(`I wrote the ${target.kind} evaluation to \`${result.path}\`.\n\n${result.answer}`, guidelineResult.created ? [result.path, EVALUATION_GUIDELINES_PATH] : [result.path]);
 }
 
 async function writePlotUpdate(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -1631,7 +1658,7 @@ async function writePlotUpdate(input: PromptInput & { book: BookEntry; branch: s
   ], "default", { signal: input.signal, label: "copilot:update-plot" });
   if (!answer) return noAiMessage();
   await upsertStructuredMarkdownFile({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, path: "plot.md", frontmatter: { type: "plot", id: "plot:main", title: "Plot" }, body: answer.trim(), message: "Update plot.md" });
-  return makeAssistantMessage("assistant", `I updated \`plot.md\`.\n\n${answer.trim()}`);
+  return mutationMessage(`I updated \`plot.md\`.\n\n${answer.trim()}`, ["plot.md"]);
 }
 
 async function rewriteCurrentParagraph(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -1683,7 +1710,7 @@ async function createContextNote(input: PromptInput & { book: BookEntry; branch:
   ], "default", { signal: input.signal, label: "copilot:create-note" });
   if (!answer) return noAiMessage();
   await upsertNoteFile({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, path: targetPath, title: defaultNoteTitle(targetPath), noteBody: answer.trim() });
-  return makeAssistantMessage("assistant", `I saved a note to \`${targetPath}\`.\n\n${answer.trim()}`);
+  return mutationMessage(`I saved a note to \`${targetPath}\`.\n\n${answer.trim()}`, [targetPath]);
 }
 
 async function searchCurrentBook(input: PromptInput & { book: BookEntry; token: string }): Promise<AssistantMessage> {
@@ -1855,6 +1882,16 @@ function extractBranchName(prompt: string): string | null {
 
 function makeAssistantMessage(role: "assistant" | "system", text: string): AssistantMessage {
   return { id: crypto.randomUUID(), role, text };
+}
+
+export function mutationMessage(text: string, changedPaths: string[]): AssistantMessage {
+  return {
+    ...makeAssistantMessage("assistant", text),
+    mutation: {
+      changedPaths: [...new Set(changedPaths)].sort(),
+      refresh: "book-structure-and-context",
+    },
+  };
 }
 
 function noAiMessage(): AssistantMessage {

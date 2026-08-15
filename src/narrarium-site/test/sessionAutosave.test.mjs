@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   AssistantSessionSaveQueue,
   assistantSessionSaveFingerprint,
-  attachAssistantSessionFileId,
+  attachAssistantSessionCloudHandle,
   upsertAssistantSessionMeta,
 } from "../src/assistant/sessionAutosave.ts";
 
@@ -47,7 +47,7 @@ test("session metadata upsert removes id and file duplicates", () => {
     { id: "session-1", fileId: "old-file", title: "Old", contextTitle: "Old", updatedAt: "2026-01-01" },
     { id: "other-id", fileId: "new-file", title: "Duplicate file", contextTitle: "Old", updatedAt: "2026-01-01" },
     { id: "session-2", fileId: "file-2", title: "Keep", contextTitle: "Book", updatedAt: "2026-01-01" },
-  ], session(), "new-file");
+  ], session(), { fileId: "new-file", revision: "r2" });
 
   assert.deepEqual(result.map((entry) => [entry.id, entry.fileId]), [
     ["session-1", "new-file"],
@@ -57,12 +57,12 @@ test("session metadata upsert removes id and file duplicates", () => {
 
 test("attaching a file id preserves newer content and ignores another current session", () => {
   const latest = session({ messages: [{ id: "m1", role: "assistant", text: "Latest reply" }] });
-  const attached = attachAssistantSessionFileId(latest, "session-1", "drive-file");
+  const attached = attachAssistantSessionCloudHandle(latest, "session-1", { fileId: "drive-file", revision: "r1" });
   assert.equal(attached.fileId, "drive-file");
   assert.equal(attached.messages[0].text, "Latest reply");
 
   const other = session({ id: "session-2" });
-  assert.equal(attachAssistantSessionFileId(other, "session-1", "drive-file"), other);
+  assert.equal(attachAssistantSessionCloudHandle(other, "session-1", { fileId: "drive-file" }), other);
 });
 
 test("queued saves are serialized and reuse the first created file id", async () => {
@@ -78,7 +78,7 @@ test("queued saves are serialized and reuse the first created file id", async ()
       firstStarted.resolve();
       return first.promise;
     }
-    return "drive-file";
+    return { fileId: "drive-file", revision: "r2" };
   };
 
   const firstSave = queue.enqueue(session(), save, (snapshot, fileId) => saved.push([snapshot, fileId]), (error) => errors.push(error));
@@ -91,12 +91,13 @@ test("queued saves are serialized and reuse the first created file id", async ()
 
   await firstStarted.promise;
   assert.equal(calls.length, 1);
-  first.resolve("drive-file");
+  first.resolve({ fileId: "drive-file", revision: "r1" });
   await Promise.all([firstSave, secondSave]);
 
   assert.equal(errors.length, 0);
   assert.equal(calls.length, 2);
   assert.equal(calls[1].fileId, "drive-file");
+  assert.equal(calls[1].revision, "r1");
   assert.equal(calls[1].messages[0].text, "Reply");
   assert.equal(saved.length, 2);
 });
@@ -108,7 +109,7 @@ test("a failed save does not block the next queued revision", async () => {
   const save = async () => {
     call += 1;
     if (call === 1) throw new Error("temporary failure");
-    return "drive-file";
+    return { fileId: "drive-file", revision: "r1" };
   };
 
   await Promise.all([
@@ -118,4 +119,24 @@ test("a failed save does not block the next queued revision", async () => {
 
   assert.equal(call, 2);
   assert.equal(errors.length, 1);
+});
+
+test("account reset ignores an in-flight save and clears its cloud handle", async () => {
+  const queue = new AssistantSessionSaveQueue();
+  const pending = deferred();
+  const saved = [];
+  const errors = [];
+  const first = queue.enqueue(session(), () => pending.promise, (...args) => saved.push(args), (error) => errors.push(error));
+  queue.reset();
+  pending.resolve({ fileId: "old-account-file", revision: "old-revision" });
+  await first;
+  assert.deepEqual(saved, []);
+  assert.deepEqual(errors, []);
+
+  const calls = [];
+  await queue.enqueue(session(), async (snapshot) => {
+    calls.push(snapshot);
+    return { fileId: "new-account-file", revision: "new-revision" };
+  }, () => undefined, (error) => errors.push(error));
+  assert.equal(calls[0].fileId, undefined);
 });

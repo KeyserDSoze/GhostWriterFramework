@@ -130,7 +130,7 @@ export function ChapterPage() {
 
   function setChapterGhostwriter(slug: string) {
     setChapterFm((prev) => {
-      const next = { ...(prev ?? { type: "chapter", id: `chapter:${chapter?.slug ?? chapterId}`, title: titleValue || chapter?.title || "" }) };
+      const next: Record<string, unknown> = { ...(prev ?? { type: "chapter", id: `chapter:${chapter?.slug ?? chapterId}`, title: titleValue || chapter?.title || "" }) };
       if (slug) next.ghostwriter = slug;
       else delete next.ghostwriter;
       return next;

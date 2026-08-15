@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Loader2, Search, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useAuthStore } from "@/store/authStore";
 import { createEmptyAssistantSession, useAssistantStore, type AssistantSessionMeta } from "@/assistant/store";
 import { deleteAssistantSession, listAssistantSessions, loadAssistantSession } from "@/assistant/chatCloud";
+import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
 
 export function AssistantChatsPage() {
   const { t } = useTranslation();
@@ -18,6 +19,7 @@ export function AssistantChatsPage() {
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const accountRequestsRef = useRef(new Set<AbortController>());
 
   const filteredSessions = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -27,32 +29,46 @@ export function AssistantChatsPage() {
     );
   }, [sessions, query]);
 
-  async function loadSessions() {
-    if (!user || !accessToken) return;
-    setLoading(true);
-    try {
-      setSessions(await listAssistantSessions(user.provider, accessToken));
-    } catch (err) {
-      toast({ title: t("assistant.toastLoadChatsFailed"), description: String(err), variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
-    void loadSessions();
-  }, [user, accessToken]);
+    for (const request of accountRequestsRef.current) request.abort();
+    accountRequestsRef.current.clear();
+    setSessions([]);
+    setQuery("");
+    setDeleting(null);
+    setLoading(false);
+    if (!user || !accessToken) return;
+    const expectedIdentity = accountIdentity(user);
+    const controller = new AbortController();
+    accountRequestsRef.current.add(controller);
+    setLoading(true);
+    void listAssistantSessions(user.provider, accessToken, { signal: controller.signal, isCurrent: () => isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user) })
+      .then((items) => { if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setSessions(items); })
+      .catch((err) => {
+        if (!controller.signal.aborted) toast({ title: t("assistant.toastLoadChatsFailed"), description: String(err), variant: "destructive" });
+      })
+      .finally(() => {
+        accountRequestsRef.current.delete(controller);
+        if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setLoading(false);
+      });
+    return () => { controller.abort(); accountRequestsRef.current.delete(controller); };
+  }, [user, accessToken, toast, t]);
 
   async function openSession(fileId: string) {
     if (!user || !accessToken) return;
+    const expectedIdentity = accountIdentity(user);
+    const controller = new AbortController();
+    accountRequestsRef.current.add(controller);
     setLoading(true);
     try {
-      setCurrentSession(await loadAssistantSession(user.provider, accessToken, fileId));
+      const loaded = await loadAssistantSession(user.provider, accessToken, fileId, controller.signal);
+      if (controller.signal.aborted || !isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
+      setCurrentSession(loaded);
       setOpen(true);
     } catch (err) {
-      toast({ title: t("assistant.toastOpenChatFailed"), description: String(err), variant: "destructive" });
+      if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) toast({ title: t("assistant.toastOpenChatFailed"), description: String(err), variant: "destructive" });
     } finally {
-      setLoading(false);
+      accountRequestsRef.current.delete(controller);
+      if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setLoading(false);
     }
   }
 
@@ -60,13 +76,17 @@ export function AssistantChatsPage() {
     if (!user || !accessToken || !session.fileId) return;
     if (!window.confirm(t("assistant.deleteChatConfirm", { title: session.title || t("assistant.untitledChat") }))) return;
     setDeleting(session.fileId);
+    const expectedIdentity = accountIdentity(user);
+    const controller = new AbortController();
+    accountRequestsRef.current.add(controller);
     try {
-      await deleteAssistantSession(user.provider, accessToken, session.fileId);
-      setSessions((current) => current.filter((entry) => entry.fileId !== session.fileId));
+      await deleteAssistantSession(user.provider, accessToken, session.fileId, controller.signal);
+      if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setSessions((current) => current.filter((entry) => entry.fileId !== session.fileId));
     } catch (err) {
-      toast({ title: t("assistant.toastDeleteChatFailed"), description: String(err), variant: "destructive" });
+      if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) toast({ title: t("assistant.toastDeleteChatFailed"), description: String(err), variant: "destructive" });
     } finally {
-      setDeleting(null);
+      accountRequestsRef.current.delete(controller);
+      if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setDeleting(null);
     }
   }
 

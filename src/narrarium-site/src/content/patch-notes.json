@@ -1,5 +1,41 @@
 [
   {
+    "version": "0.76.34",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Reliable routing, refresh, speech, cloud, and audit",
+      "summary": "This stabilization release closes ten Copilot correctness issues across AI routing, mutation refresh, evaluation scoring, speech playback, privacy, navigation, cloud chat persistence, history, and audit execution.",
+      "changes": [
+        "Removed stale AI router targets when integrations or models change, blocked invalid saves, and surfaced actionable route warnings.",
+        "Refreshed authoritative book structure and Copilot context after every direct mutation, including partial-write failures and all companion files, while rejecting stale refresh races.",
+        "Honored the configured default review integration before fallbacks and preserved valid review routes during settings changes.",
+        "Moved evaluation scoring through the shared routed executor with fallback, cancellation, schema validation, usage, cost, provider, and privacy-safe candidate metadata.",
+        "Eliminated duplicate TTS synthesis, made playback completion reject real failures, and counted spoken characters only after audio actually ends.",
+        "Namespaced, redacted, bounded, migrated, and lifecycle-cleared LLM debug history without allowing debug persistence failures to interrupt AI calls.",
+        "Resolved English reader-evaluation navigation before generic reader or paragraph navigation, including explicitly named paragraph targets.",
+        "Made Google Drive and OneDrive chat saves revision-safe, idempotent, conflict-aware, recoverable after partial metadata writes, and safe under concurrent creates and account switches.",
+        "Paginated and strictly filtered Google Drive and OneDrive chat history using metadata-only listings with cancellation and account-generation protection.",
+        "Aligned audit metadata, disabled and missing-model behavior, errors, cancellation, and navigation-scoped exactly-once run/update execution across Copilot and the Audit page."
+      ]
+    },
+    "it": {
+      "title": "Routing, refresh, voce, cloud e audit affidabili",
+      "summary": "Questa release di stabilizzazione chiude dieci problemi di correttezza del Copilota in routing AI, refresh delle mutazioni, scoring, riproduzione vocale, privacy, navigazione, persistenza chat cloud, cronologia e audit.",
+      "changes": [
+        "Rimossi i target AI router stale quando cambiano integrazioni o modelli, bloccati i salvataggi invalidi e mostrati warning di route utilizzabili.",
+        "Aggiornati struttura autorevole e contesto Copilota dopo ogni mutazione diretta, inclusi failure dopo scritture parziali e tutti i file companion, rifiutando refresh stale.",
+        "Rispettata l'integrazione review predefinita prima dei fallback e preservate le route review valide durante le modifiche alle impostazioni.",
+        "Spostato lo scoring delle valutazioni nell'executor routed condiviso con fallback, cancellazione, validazione schema, usage, costi, provider e metadata candidati privacy-safe.",
+        "Eliminata la doppia sintesi TTS, reso il completamento playback fallimentare sugli errori reali e conteggiati i caratteri parlati solo dopo la fine effettiva dell'audio.",
+        "Namespaced, redatta, limitata, migrata e cancellata secondo lifecycle la cronologia debug LLM, senza interrompere le chiamate AI quando la persistenza debug fallisce.",
+        "Risolta la navigazione inglese delle reader evaluation prima della navigazione generica reader o paragrafo, inclusi target paragrafo espliciti.",
+        "Resi i salvataggi chat Google Drive e OneDrive revision-safe, idempotenti, conflict-aware, recuperabili dopo metadata parziali e sicuri con create concorrenti e cambi account.",
+        "Paginata e filtrata rigorosamente la cronologia chat Google Drive e OneDrive tramite listing solo metadata, cancellazione e protezione della generazione account.",
+        "Allineati metadata audit, comportamento disabilitato o senza modello, errori, cancellazione ed esecuzione run/update exactly-once per navigazione tra Copilota e pagina Audit."
+      ]
+    }
+  },
+  {
     "version": "0.76.33",
     "date": "2026-08-15",
     "en": {

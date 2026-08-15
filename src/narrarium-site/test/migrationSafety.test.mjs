@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertCloudStatus, readMigrationSource, resumableMigrationSteps, writeAndVerifyMigrationTarget } from "../src/drive/migrationSafety.ts";
+import { assertCloudStatus, assertMigrationChatCompatible, indexUniqueMigrationIdentities, readMigrationSource, resumableMigrationSteps, writeAndVerifyMigrationTarget } from "../src/drive/migrationSafety.ts";
 
 test("expired tokens and rate limits remain explicit read errors", () => {
   assert.throws(() => assertCloudStatus(false, 401, "Source read"), /401/);
@@ -29,4 +29,24 @@ test("retry runs only failed or unverified migration steps", () => {
     { step: "clipboard", ok: true, verified: false },
   ]);
   assert.deepEqual(pending, ["costs", "clipboard", "chats"]);
+});
+
+test("migration rejects duplicate target chat identities before writes", () => {
+  assert.throws(() => indexUniqueMigrationIdentities([
+    { id: "chat-1", fileId: "first" },
+    { id: "chat-1", fileId: "second" },
+  ], "Migration target"), /duplicate chat identity chat-1/);
+});
+
+test("migration accepts only identical target chats with matching payload identity", () => {
+  const canonical = (input) => {
+    const value = { ...input };
+    delete value.fileId;
+    delete value.revision;
+    return value;
+  };
+  const source = { id: "chat-1", title: "Source", fileId: "source" };
+  assert.doesNotThrow(() => assertMigrationChatCompatible("chat-1", source, { ...source, fileId: "target", revision: "r1" }, canonical));
+  assert.throws(() => assertMigrationChatCompatible("chat-1", source, { ...source, id: "chat-2" }, canonical), /mismatched session identity/);
+  assert.throws(() => assertMigrationChatCompatible("chat-1", source, { ...source, title: "Different" }, canonical), /conflicts with the migration source/);
 });

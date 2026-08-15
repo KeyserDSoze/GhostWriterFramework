@@ -2,6 +2,7 @@ import type { LoadedWriterContext } from "@/assistant/context";
 import type { AssistantAction } from "@/assistant/store";
 import type { Chapter } from "@/types/book";
 import { resolveChapterTarget, resolveParagraphTarget } from "@/assistant/targetRules";
+import { isReaderEvaluationsNavigationPrompt } from "@/assistant/orchestratorRules";
 
 export type NavigateAction = Extract<AssistantAction, { kind: "navigate" }>;
 export type ReadAloudAction = Extract<AssistantAction, { kind: "read-aloud" }>;
@@ -60,6 +61,14 @@ export function resolveNavigateAction(
   const chapterResolution = resolveChapterTarget(prompt, context.structure?.chapters ?? [], context.chapter);
   const paragraphResolution = resolveParagraphTarget(prompt, chapterResolution, context.chapter, context.paragraph);
   if ((chapterResolution.explicit && !chapterResolution.value) || (paragraphResolution.explicit && !paragraphResolution.value)) return null;
+  if (isReaderEvaluationsNavigationPrompt(lower) && chapterResolution.value) {
+    const chapter = chapterResolution.value;
+    const to = paragraphResolution.value
+      ? `${base}/chapters/${chapter.slug}/paragraphs/${paragraphResolution.value.paragraph.number}/reader-evaluations`
+      : `${base}/chapters/${chapter.slug}/reader-evaluations`;
+    return { kind: "navigate", to, label: "Reader evaluations" };
+  }
+
   if (paragraphResolution.explicit && paragraphResolution.value) {
     const { chapter, paragraph } = paragraphResolution.value;
     return { kind: "navigate", to: `${base}/chapters/${chapter.slug}/paragraphs/${paragraph.number}`, label: `${chapter.title} · ${paragraph.title}` };
