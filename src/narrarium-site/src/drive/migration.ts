@@ -1,13 +1,14 @@
 import type { AuthProvider } from "@/store/authStore";
-import { loadCloudSettings, saveCloudSettings } from "@/drive/cloudSettingsClient";
+import { loadCloudSettingsForMigration, saveCloudSettings } from "@/drive/cloudSettingsClient";
 import { loadCosts, saveCosts } from "@/costs/costsCloud";
 import { loadAppJson, saveAppJson } from "@/drive/jsonFile";
 import {
-  listAssistantSessions,
+  listAssistantSessionsStrict,
   loadAssistantSession,
   saveAssistantSession,
 } from "@/assistant/chatCloud";
 import type { AssistantSession } from "@/assistant/store";
+import { resumableMigrationSteps } from "@/drive/migrationSafety";
 import { deleteVerifiedGoogleAppFolders } from "@/drive/googleAppFolder";
 
 const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
@@ -26,6 +27,9 @@ export interface MigrationStepResult {
   ok: boolean;
   detail: string;
   count?: number;
+  verified?: boolean;
+  resumable?: boolean;
+  sourceFingerprint?: string;
 }
 
 export interface MigrationProgress {
@@ -39,6 +43,15 @@ export interface CloudDeleteResult {
   deleted: boolean;
   count: number;
   folderIds: string[];
+}
+
+export interface MigrationPreflight {
+  settings: Awaited<ReturnType<typeof loadCloudSettingsForMigration>>["settings"];
+  costs: Awaited<ReturnType<typeof loadCosts>>["file"];
+  clipboard: unknown[];
+  chats: AssistantSession[];
+  counts: Record<MigrationStepKind, number>;
+  fingerprint: string;
 }
 
 function authHeaders(accessToken: string) {
@@ -83,73 +96,135 @@ export async function migrateCloudData(
   source: MigrationEndpoint,
   target: MigrationEndpoint,
   onProgress?: (progress: MigrationProgress) => void,
+  previousResults: MigrationStepResult[] = [],
+  confirmedPreflight?: MigrationPreflight,
 ): Promise<MigrationStepResult[]> {
+  const preflight = confirmedPreflight ?? await preflightCloudMigration(source);
   const results: MigrationStepResult[] = [];
+  const pendingSteps = new Set(resumableMigrationSteps(["settings", "costs", "clipboard", "chats"], previousResults));
+  const completed = new Set<MigrationStepKind>(["settings", "costs", "clipboard", "chats"].filter((step) => !pendingSteps.has(step) && previousResults.some((result) => result.step === step && result.sourceFingerprint === preflight.fingerprint)) as MigrationStepKind[]);
+
+  const shouldSkip = (step: MigrationStepKind) => {
+    if (!completed.has(step)) return false;
+    const previous = previousResults.find((result) => result.step === step)!;
+    results.push(previous);
+    onProgress?.({ step, status: "done", count: previous.count });
+    return true;
+  };
 
   // ── Settings (includes per-book settings, tokens, AI integrations, routing) ──
-  onProgress?.({ step: "settings", status: "start" });
+  if (!shouldSkip("settings")) onProgress?.({ step: "settings", status: "start" });
   try {
-    const { settings } = await loadCloudSettings(source.provider, source.accessToken);
-    await saveCloudSettings(target.provider, target.accessToken, settings);
-    const bookCount = Array.isArray(settings.books) ? settings.books.length : 0;
-    const result: MigrationStepResult = { step: "settings", ok: true, detail: `${bookCount}`, count: bookCount };
-    results.push(result);
-    onProgress?.({ step: "settings", status: "done", count: bookCount });
+    if (!completed.has("settings")) {
+      await saveCloudSettings(target.provider, target.accessToken, preflight.settings);
+      const verified = await loadCloudSettingsForMigration(target.provider, target.accessToken);
+      if (!sameJson(verified.settings, preflight.settings)) throw new Error("Target settings verification failed.");
+      const bookCount = preflight.counts.settings;
+      results.push({ step: "settings", ok: true, verified: true, resumable: true, sourceFingerprint: preflight.fingerprint, detail: `${bookCount}`, count: bookCount });
+      onProgress?.({ step: "settings", status: "done", count: bookCount });
+    }
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    results.push({ step: "settings", ok: false, detail });
+    results.push({ step: "settings", ok: false, verified: false, resumable: true, detail });
     onProgress?.({ step: "settings", status: "error", detail });
   }
 
   // ── Costs ledger ────────────────────────────────────────────────────────────
-  onProgress?.({ step: "costs", status: "start" });
+  if (!shouldSkip("costs")) onProgress?.({ step: "costs", status: "start" });
   try {
-    const handle = await loadCosts(source.provider, source.accessToken);
-    // Drop the source driveFileId so the target creates/updates its own file.
-    await saveCosts(target.provider, target.accessToken, { file: handle.file });
-    results.push({ step: "costs", ok: true, detail: "ok" });
-    onProgress?.({ step: "costs", status: "done" });
+    if (!completed.has("costs")) {
+      const targetHandle = await loadCosts(target.provider, target.accessToken);
+      await saveCosts(target.provider, target.accessToken, { file: preflight.costs, driveFileId: targetHandle.driveFileId });
+      const verified = await loadCosts(target.provider, target.accessToken);
+      if (!sameJson(verified.file.books, preflight.costs.books)) throw new Error("Target costs verification failed.");
+      results.push({ step: "costs", ok: true, verified: true, resumable: true, sourceFingerprint: preflight.fingerprint, detail: "ok", count: preflight.counts.costs });
+      onProgress?.({ step: "costs", status: "done", count: preflight.counts.costs });
+    }
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    results.push({ step: "costs", ok: false, detail });
+    results.push({ step: "costs", ok: false, verified: false, resumable: true, detail });
     onProgress?.({ step: "costs", status: "error", detail });
   }
 
   // ── Clipboard ────────────────────────────────────────────────────────────────
-  onProgress?.({ step: "clipboard", status: "start" });
+  if (!shouldSkip("clipboard")) onProgress?.({ step: "clipboard", status: "start" });
   try {
-    const handle = await loadAppJson<unknown[]>(source.provider, source.accessToken, CLIPBOARD_FILE);
-    const items = Array.isArray(handle.data) ? handle.data : [];
-    await saveAppJson(target.provider, target.accessToken, CLIPBOARD_FILE, items);
-    results.push({ step: "clipboard", ok: true, detail: `${items.length}`, count: items.length });
-    onProgress?.({ step: "clipboard", status: "done", count: items.length });
+    if (!completed.has("clipboard")) {
+      const targetHandle = await loadAppJson<unknown[]>(target.provider, target.accessToken, CLIPBOARD_FILE);
+      await saveAppJson(target.provider, target.accessToken, CLIPBOARD_FILE, preflight.clipboard, targetHandle.driveFileId);
+      const verified = await loadAppJson<unknown[]>(target.provider, target.accessToken, CLIPBOARD_FILE);
+      if (!Array.isArray(verified.data) || !sameJson(verified.data, preflight.clipboard)) throw new Error("Target clipboard verification failed.");
+      results.push({ step: "clipboard", ok: true, verified: true, resumable: true, sourceFingerprint: preflight.fingerprint, detail: `${preflight.clipboard.length}`, count: preflight.clipboard.length });
+      onProgress?.({ step: "clipboard", status: "done", count: preflight.clipboard.length });
+    }
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    results.push({ step: "clipboard", ok: false, detail });
+    results.push({ step: "clipboard", ok: false, verified: false, resumable: true, detail });
     onProgress?.({ step: "clipboard", status: "error", detail });
   }
 
   // ── Chat sessions (one file per session) ─────────────────────────────────────
-  onProgress?.({ step: "chats", status: "start" });
+  if (!shouldSkip("chats")) onProgress?.({ step: "chats", status: "start" });
   try {
-    const metas = await listAssistantSessions(source.provider, source.accessToken);
-    let copied = 0;
-    for (const meta of metas) {
-      if (!meta.fileId) continue;
-      const session = await loadAssistantSession(source.provider, source.accessToken, meta.fileId);
-      // Cross-provider save must NOT reuse the source file id (id namespaces differ).
-      const clean: AssistantSession = { ...session, fileId: undefined };
-      await saveAssistantSession(target.provider, target.accessToken, clean);
-      copied += 1;
-      onProgress?.({ step: "chats", status: "start", count: copied });
+    if (!completed.has("chats")) {
+      let copied = 0;
+      const targetMetas = await listAssistantSessionsStrict(target.provider, target.accessToken);
+      const targetIds = new Map(targetMetas.map((meta) => [meta.id, meta.fileId]));
+      for (const session of preflight.chats) {
+        const clean: AssistantSession = { ...session, fileId: targetIds.get(session.id) };
+        const targetId = await saveAssistantSession(target.provider, target.accessToken, clean);
+        const verified = await loadAssistantSession(target.provider, target.accessToken, targetId);
+        if (!sameJson(canonicalSession(verified), canonicalSession(clean))) throw new Error(`Target chat verification failed for ${clean.id}.`);
+        copied += 1;
+        onProgress?.({ step: "chats", status: "start", count: copied });
+      }
+      results.push({ step: "chats", ok: true, verified: true, resumable: true, sourceFingerprint: preflight.fingerprint, detail: `${copied}`, count: copied });
+      onProgress?.({ step: "chats", status: "done", count: copied });
     }
-    results.push({ step: "chats", ok: true, detail: `${copied}`, count: copied });
-    onProgress?.({ step: "chats", status: "done", count: copied });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    results.push({ step: "chats", ok: false, detail });
+    results.push({ step: "chats", ok: false, verified: false, resumable: true, detail });
     onProgress?.({ step: "chats", status: "error", detail });
   }
 
   return results;
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function validSession(value: AssistantSession): boolean {
+  return Boolean(value && typeof value.id === "string" && Array.isArray(value.messages) && Array.isArray(value.attachments));
+}
+
+function canonicalSession(session: AssistantSession): Omit<AssistantSession, "fileId"> {
+  const { fileId: _fileId, ...canonical } = session;
+  return canonical;
+}
+
+export async function preflightCloudMigration(source: MigrationEndpoint): Promise<MigrationPreflight> {
+  const settingsResult = await loadCloudSettingsForMigration(source.provider, source.accessToken);
+  if (!settingsResult.settings || !Array.isArray(settingsResult.settings.books)) throw new Error("Source settings are malformed.");
+  const costsResult = await loadCosts(source.provider, source.accessToken);
+  const clipboardResult = await loadAppJson<unknown[]>(source.provider, source.accessToken, CLIPBOARD_FILE);
+  if (clipboardResult.data !== null && !Array.isArray(clipboardResult.data)) throw new Error("Source clipboard is malformed.");
+  const metas = await listAssistantSessionsStrict(source.provider, source.accessToken);
+  const chats: AssistantSession[] = [];
+  for (const meta of metas) {
+    if (!meta.fileId) throw new Error(`Source chat ${meta.id} has no file identity.`);
+    const session = await loadAssistantSession(source.provider, source.accessToken, meta.fileId);
+    if (!validSession(session)) throw new Error(`Source chat ${meta.id} is malformed.`);
+    chats.push(session);
+  }
+  const clipboard = clipboardResult.data ?? [];
+  const fingerprint = JSON.stringify({ settings: settingsResult.settings, costs: costsResult.file, clipboard, chats: chats.map(canonicalSession) });
+  return {
+    settings: settingsResult.settings,
+    costs: costsResult.file,
+    clipboard,
+    chats,
+    counts: { settings: settingsResult.settings.books.length, costs: Object.keys(costsResult.file.books).length, clipboard: clipboard.length, chats: chats.length },
+    fingerprint,
+  };
 }

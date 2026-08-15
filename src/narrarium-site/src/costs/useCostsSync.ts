@@ -65,19 +65,20 @@ export function useCostsSync() {
     }
     const expectedIdentity = accountIdentity(user);
     if (loadedIdentityRef.current === expectedIdentity) return;
-    loadedIdentityRef.current = expectedIdentity;
     void loadCosts(user.provider, accessToken).then((handle) => {
       if (!isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
       const local = useCostsStore.getState().file;
       const merged = mergeMax(local, handle.file);
       useCostsStore.getState().setFile(merged, handle.driveFileId);
-    });
+      loadedIdentityRef.current = expectedIdentity;
+    }).catch(() => undefined);
   }, [user, accessToken]);
 
   // Debounced save when dirty.
   useEffect(() => {
     if (!user || !accessToken || !dirty) return;
     const expectedIdentity = accountIdentity(user);
+    if (loadedIdentityRef.current !== expectedIdentity) return;
     const timer = setTimeout(() => {
       if (savingRef.current) return;
       savingRef.current = true;

@@ -3,6 +3,7 @@ import type { CostsFile } from "@/costs/model";
 import { emptyCostsFile } from "@/costs/model";
 import { ensureGoogleAppFolder } from "@/drive/googleAppFolder";
 import { beginCloudWrite } from "@/drive/cloudWriteBarrier";
+import { assertCloudStatus } from "@/drive/migrationSafety";
 
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -21,11 +22,21 @@ export interface CostsHandle {
 }
 
 export async function loadCosts(provider: AuthProvider, accessToken: string): Promise<CostsHandle> {
-  try {
-    return provider === "microsoft" ? await loadMicrosoftCosts(accessToken) : await loadGoogleCosts(accessToken);
-  } catch {
-    return { file: emptyCostsFile() };
+  return provider === "microsoft" ? loadMicrosoftCosts(accessToken) : loadGoogleCosts(accessToken);
+}
+
+function assertOk(response: Response, context: string, allow404 = false): void {
+  if (allow404 && response.status === 404) return;
+  assertCloudStatus(response.ok, response.status, context);
+}
+
+function parseCostsFile(value: unknown): CostsFile {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Costs source is malformed.");
+  const file = value as Partial<CostsFile>;
+  if (file.version !== 1 || file.currency !== "EUR" || typeof file.updatedAt !== "string" || !file.books || typeof file.books !== "object" || Array.isArray(file.books)) {
+    throw new Error("Costs source is malformed.");
   }
+  return file as CostsFile;
 }
 
 export async function saveCosts(provider: AuthProvider, accessToken: string, handle: CostsHandle): Promise<CostsHandle> {
@@ -49,22 +60,25 @@ async function loadGoogleCosts(accessToken: string): Promise<CostsHandle> {
   const root = await ensureGoogleAppFolder(accessToken);
   const params = new URLSearchParams({ q: `name='${COSTS_FILE}' and '${root}' in parents and trashed=false`, spaces: "drive", fields: "files(id)" });
   const found = await fetch(`${GOOGLE_DRIVE_API}/files?${params}`, { headers: authHeaders(accessToken) });
+  assertOk(found, "Google costs lookup");
   const data = (await found.json()) as { files?: Array<{ id: string }> };
   const fileId = data.files?.[0]?.id;
   if (!fileId) return { file: emptyCostsFile() };
   const content = await fetch(`${GOOGLE_DRIVE_API}/files/${fileId}?alt=media`, { headers: authHeaders(accessToken) });
-  const file = (await content.json()) as CostsFile;
+  assertOk(content, "Google costs download");
+  const file = parseCostsFile(await content.json());
   return { file: { ...emptyCostsFile(), ...file }, driveFileId: fileId };
 }
 
 async function saveGoogleCosts(accessToken: string, file: CostsFile, fileId?: string): Promise<string> {
   const body = JSON.stringify(file, null, 2);
   if (fileId) {
-    await fetch(`${GOOGLE_UPLOAD_API}/files/${fileId}?uploadType=media`, {
+    const response = await fetch(`${GOOGLE_UPLOAD_API}/files/${fileId}?uploadType=media`, {
       method: "PATCH",
       headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
       body,
     });
+    assertOk(response, "Google costs update");
     return fileId;
   }
   const root = await ensureGoogleAppFolder(accessToken);
@@ -76,6 +90,7 @@ async function saveGoogleCosts(accessToken: string, file: CostsFile, fileId?: st
     headers: authHeaders(accessToken),
     body: form,
   });
+  assertOk(create, "Google costs create");
   return ((await create.json()) as { id: string }).id;
 }
 
@@ -88,12 +103,14 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
     const nextPath = currentPath ? `${currentPath}/${part}` : part;
     const exists = await fetch(`${GRAPH_DRIVE_API}/root:/${nextPath}`, { headers: authHeaders(accessToken) });
     if (exists.ok) { currentPath = nextPath; continue; }
+    if (exists.status !== 404) throw new Error(`OneDrive costs folder lookup: ${exists.status}`);
     const createUrl = currentPath ? `${GRAPH_DRIVE_API}/root:/${currentPath}:/children` : `${GRAPH_DRIVE_API}/root/children`;
-    await fetch(createUrl, {
+    const created = await fetch(createUrl, {
       method: "POST",
       headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
       body: JSON.stringify({ name: part, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
     });
+    if (!(created.ok || created.status === 409)) throw new Error(`OneDrive costs folder create: ${created.status}`);
     currentPath = nextPath;
   }
 }
@@ -101,16 +118,18 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
 async function loadMicrosoftCosts(accessToken: string): Promise<CostsHandle> {
   await ensureMicrosoftFolderPath(accessToken, ONE_DRIVE_APP_FOLDER);
   const response = await fetch(`${GRAPH_DRIVE_API}/root:/${ONE_DRIVE_APP_FOLDER}/${COSTS_FILE}:/content`, { headers: authHeaders(accessToken) });
-  if (!response.ok) return { file: emptyCostsFile() };
-  const file = (await response.json()) as CostsFile;
+  if (response.status === 404) return { file: emptyCostsFile() };
+  assertOk(response, "OneDrive costs download");
+  const file = parseCostsFile(await response.json());
   return { file: { ...emptyCostsFile(), ...file } };
 }
 
 async function saveMicrosoftCosts(accessToken: string, file: CostsFile): Promise<void> {
   await ensureMicrosoftFolderPath(accessToken, ONE_DRIVE_APP_FOLDER);
-  await fetch(`${GRAPH_DRIVE_API}/root:/${ONE_DRIVE_APP_FOLDER}/${COSTS_FILE}:/content`, {
+  const response = await fetch(`${GRAPH_DRIVE_API}/root:/${ONE_DRIVE_APP_FOLDER}/${COSTS_FILE}:/content`, {
     method: "PUT",
     headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
     body: JSON.stringify(file, null, 2),
   });
+  assertOk(response, "OneDrive costs save");
 }

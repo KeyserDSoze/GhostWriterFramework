@@ -16,6 +16,12 @@ export async function listAssistantSessions(provider: AuthProvider, accessToken:
     : listGoogleSessions(accessToken);
 }
 
+export async function listAssistantSessionsStrict(provider: AuthProvider, accessToken: string): Promise<AssistantSessionMeta[]> {
+  return provider === "microsoft"
+    ? listMicrosoftSessions(accessToken, true)
+    : listGoogleSessions(accessToken, true);
+}
+
 export async function loadAssistantSession(provider: AuthProvider, accessToken: string, fileId: string): Promise<AssistantSession> {
   return provider === "microsoft"
     ? loadMicrosoftSession(accessToken, fileId)
@@ -84,7 +90,7 @@ async function ensureGoogleFolder(accessToken: string, name: string, parentId?: 
   return ((await created.json()) as { id: string }).id;
 }
 
-async function listGoogleSessions(accessToken: string): Promise<AssistantSessionMeta[]> {
+async function listGoogleSessions(accessToken: string, strict = false): Promise<AssistantSessionMeta[]> {
   const root = await ensureGoogleAppFolder(accessToken);
   const chats = await ensureGoogleFolder(accessToken, CHATS_FOLDER, root);
   const params = new URLSearchParams({
@@ -100,6 +106,7 @@ async function listGoogleSessions(accessToken: string): Promise<AssistantSession
       const session = await loadGoogleSession(accessToken, file.id);
       return normalizeSessionMeta(file.id, { ...session, updatedAt: session.updatedAt ?? file.modifiedTime });
     } catch {
+      if (strict) throw new Error(`Google chat ${file.id} could not be read.`);
       return normalizeSessionMeta(file.id, { updatedAt: file.modifiedTime, title: file.id });
     }
   }));
@@ -167,7 +174,7 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
   }
 }
 
-async function listMicrosoftSessions(accessToken: string): Promise<AssistantSessionMeta[]> {
+async function listMicrosoftSessions(accessToken: string, strict = false): Promise<AssistantSessionMeta[]> {
   const folderPath = `${ONE_DRIVE_APP_FOLDER}/${CHATS_FOLDER}`;
   await ensureMicrosoftFolderPath(accessToken, folderPath);
   const response = await fetch(`${GRAPH_DRIVE_API}/root:/${folderPath}:/children`, { headers: authHeaders(accessToken) });
@@ -178,6 +185,7 @@ async function listMicrosoftSessions(accessToken: string): Promise<AssistantSess
       const session = await loadMicrosoftSession(accessToken, entry.id);
       return normalizeSessionMeta(entry.id, { ...session, updatedAt: session.updatedAt ?? entry.lastModifiedDateTime });
     } catch {
+      if (strict) throw new Error(`OneDrive chat ${entry.id} could not be read.`);
       return normalizeSessionMeta(entry.id, { updatedAt: entry.lastModifiedDateTime, title: entry.id });
     }
   }));

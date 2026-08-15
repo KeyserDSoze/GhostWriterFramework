@@ -10,6 +10,7 @@ import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
 import {
   migrateCloudData,
+  preflightCloudMigration,
   deleteNarrariumCloudData,
   type MigrationEndpoint,
   type MigrationStepKind,
@@ -59,6 +60,7 @@ export function MigratePage() {
         const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
           headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
         });
+        if (!res.ok) throw new Error(`Google profile load failed (${res.status})`);
         const profile = (await res.json()) as { name?: string; email?: string };
         setTarget({
           provider: "google",
@@ -98,6 +100,7 @@ export function MigratePage() {
       const res = await fetch("https://graph.microsoft.com/v1.0/me", {
         headers: { Authorization: `Bearer ${graphToken}` },
       });
+      if (!res.ok) throw new Error(`Microsoft profile load failed (${res.status})`);
       const profile = (await res.json()) as { displayName?: string; mail?: string; userPrincipalName?: string };
       const email = profile.mail ?? profile.userPrincipalName ?? "";
       setTarget({
@@ -131,14 +134,16 @@ export function MigratePage() {
     setRunning(true);
     setError(null);
     setDeleteNotice(null);
-    setResults(null);
     setActiveStep(null);
     const src: MigrationEndpoint = { provider: user.provider, accessToken };
     const dst: MigrationEndpoint = { provider: target.provider, accessToken: target.accessToken };
     try {
+      const preflight = await preflightCloudMigration(src);
+      const summary = Object.entries(preflight.counts).map(([step, count]) => `${step}: ${count}`).join("\n");
+      if (!window.confirm(`Migration preflight completed:\n\n${summary}\n\nContinue with verified target writes?`)) return;
       const out = await migrateCloudData(src, dst, (p) => {
         if (p.status === "start") setActiveStep(p.step);
-      });
+      }, results ?? [], preflight);
       setResults(out);
       setActiveStep(null);
     } catch (err) {

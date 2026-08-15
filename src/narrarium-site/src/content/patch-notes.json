@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.18",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Verified, resumable cloud migration",
+      "summary": "Cloud migration now stops before writing when source data cannot be read or validated, and verifies every target step before reporting success.",
+      "changes": [
+        "Kept expired-token, rate-limit, network, malformed JSON, and other source failures as errors instead of converting them into empty costs or clipboard data.",
+        "Added a confirmed preflight snapshot covering settings, costs, clipboard, and every chat before the first target write.",
+        "Validated every target response and read back complete settings, costs, clipboard, and chat sessions before marking a step verified.",
+        "Made retries idempotent and resumable by updating logical target files, retaining verified steps, and binding results to the confirmed source fingerprint."
+      ]
+    },
+    "it": {
+      "title": "Migrazione cloud verificata e riprendibile",
+      "summary": "La migrazione cloud ora si interrompe prima di scrivere quando i dati sorgente non possono essere letti o validati, e verifica ogni step target prima di dichiararlo riuscito.",
+      "changes": [
+        "Mantenuti come errori token scaduti, rate limit, problemi di rete, JSON malformato e altri fallimenti sorgente, invece di convertirli in costi o clipboard vuoti.",
+        "Aggiunto uno snapshot preflight confermato che include impostazioni, costi, clipboard e tutte le chat prima della prima scrittura target.",
+        "Validate tutte le risposte target e riletti settings, costi, clipboard e sessioni chat complete prima di marcare uno step come verificato.",
+        "Resi i retry idempotenti e riprendibili aggiornando i file target logici, conservando gli step verificati e legando i risultati al fingerprint sorgente confermato."
+      ]
+    }
+  },
+  {
     "version": "0.76.17",
     "date": "2026-08-14",
     "en": {

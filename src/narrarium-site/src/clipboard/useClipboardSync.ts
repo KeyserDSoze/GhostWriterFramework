@@ -32,7 +32,6 @@ export function useClipboardSync() {
     }
     const expectedIdentity = accountIdentity(user);
     if (loadedIdentityRef.current === expectedIdentity) return;
-    loadedIdentityRef.current = expectedIdentity;
     void loadAppJson<ClipboardEntry[]>(user.provider, accessToken, FILE).then((handle) => {
       if (!isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
       driveIdRef.current = handle.driveFileId;
@@ -40,12 +39,14 @@ export function useClipboardSync() {
         const merged = mergeItems(useClipboardStore.getState().items, handle.data);
         useClipboardStore.getState().setItems(merged);
       }
-    });
+      loadedIdentityRef.current = expectedIdentity;
+    }).catch(() => undefined);
   }, [user, accessToken]);
 
   useEffect(() => {
     if (!user || !accessToken || !dirty) return;
     const expectedIdentity = accountIdentity(user);
+    if (loadedIdentityRef.current !== expectedIdentity) return;
     const timer = setTimeout(() => {
       void saveAppJson(user.provider, accessToken, FILE, useClipboardStore.getState().items, driveIdRef.current)
         .then((handle) => {

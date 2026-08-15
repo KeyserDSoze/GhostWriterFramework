@@ -27,6 +27,12 @@ export async function loadCloudSettings(
     : loadGoogleSettings(accessToken);
 }
 
+export async function loadCloudSettingsForMigration(provider: AuthProvider, accessToken: string): Promise<{ settings: AppSettings; fileId: string }> {
+  return provider === "microsoft"
+    ? loadMicrosoftSettings(accessToken, true)
+    : loadGoogleSettings(accessToken, true);
+}
+
 export async function saveCloudSettings(
   provider: AuthProvider,
   accessToken: string,
@@ -65,10 +71,11 @@ async function googleFindSettingsFile(accessToken: string, folderId: string): Pr
   return data.files?.[0]?.id ?? null;
 }
 
-async function loadGoogleSettings(accessToken: string): Promise<{ settings: AppSettings; fileId: string }> {
+async function loadGoogleSettings(accessToken: string, strict = false): Promise<{ settings: AppSettings; fileId: string }> {
   const folderId = await ensureGoogleAppFolder(accessToken);
   const fileId = await googleFindSettingsFile(accessToken, folderId);
   if (!fileId) {
+    if (strict) throw new Error("Source settings file is missing.");
     const createdId = await saveGoogleSettings(accessToken, DEFAULT_SETTINGS);
     return { settings: DEFAULT_SETTINGS, fileId: createdId };
   }
@@ -77,7 +84,9 @@ async function loadGoogleSettings(accessToken: string): Promise<{ settings: AppS
     headers: authHeaders(accessToken),
   });
   assertOk(response, "Google Drive settings download");
-  return { settings: migrateSettings(await response.json()), fileId };
+  const raw = await response.json();
+  if (strict && !isValidSettingsSource(raw)) throw new Error("Source settings are malformed.");
+  return { settings: migrateSettings(raw), fileId };
 }
 
 async function saveGoogleSettings(accessToken: string, settings: AppSettings): Promise<string> {
@@ -136,13 +145,14 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
   }
 }
 
-async function loadMicrosoftSettings(accessToken: string): Promise<{ settings: AppSettings; fileId: string }> {
+async function loadMicrosoftSettings(accessToken: string, strict = false): Promise<{ settings: AppSettings; fileId: string }> {
   await ensureMicrosoftFolderPath(accessToken, ONE_DRIVE_APP_FOLDER);
   const meta = await fetch(`${GRAPH_DRIVE_API}/root:/${ONE_DRIVE_APP_FOLDER}/${SETTINGS_FILE_NAME}`, {
     headers: authHeaders(accessToken),
   });
 
   if (meta.status === 404) {
+    if (strict) throw new Error("Source settings file is missing.");
     const fileId = await saveMicrosoftSettings(accessToken, DEFAULT_SETTINGS);
     return { settings: DEFAULT_SETTINGS, fileId };
   }
@@ -152,7 +162,9 @@ async function loadMicrosoftSettings(accessToken: string): Promise<{ settings: A
     headers: authHeaders(accessToken),
   });
   assertOk(file, "OneDrive settings download");
-  return { settings: migrateSettings(await file.json()), fileId: metaData.id };
+  const raw = await file.json();
+  if (strict && !isValidSettingsSource(raw)) throw new Error("Source settings are malformed.");
+  return { settings: migrateSettings(raw), fileId: metaData.id };
 }
 
 async function saveMicrosoftSettings(accessToken: string, settings: AppSettings): Promise<string> {
@@ -226,6 +238,16 @@ function migrateSettings(raw: unknown): AppSettings {
     books: Array.isArray(source.books) ? source.books : [],
     taskRouting: normalizeTaskRouting(source.taskRouting, aiIntegrations),
   };
+}
+
+export function isValidSettingsSource(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const source = raw as Record<string, unknown>;
+  const ui = source.ui as Record<string, unknown> | undefined;
+  return (source.version === 1 || source.version === 2)
+    && Array.isArray(source.books)
+    && typeof source.defaultGitHubToken === "string"
+    && Boolean(ui && (ui.language === "en" || ui.language === "it"));
 }
 
 /** Drop router targets pointing at integrations/models that no longer exist. */
