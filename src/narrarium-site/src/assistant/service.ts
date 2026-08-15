@@ -20,7 +20,7 @@ import {
   type LlmContentPart,
   type LlmMessage,
 } from "@/assistant/llm";
-import { completeTextRouted, resolveTaskCandidates } from "@/assistant/router";
+import { completeTextRouted, NoCompletionCandidatesError, resolveTaskCandidates } from "@/assistant/router";
 import { buildCapabilitiesMessage, chooseToolMatch, isCapabilityQuestion } from "@/assistant/orchestrator";
 import { isEditorialReviewPrompt } from "@/assistant/intentRules";
 import { resolveChapterTarget, resolveParagraphTarget } from "@/assistant/targetRules";
@@ -78,8 +78,7 @@ async function completeForTask(
   try {
     return await completeTextRouted(settings, messages, capability, options);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (/No AI integration configured/i.test(message)) return null;
+    if (err instanceof NoCompletionCandidatesError) return null;
     throw err;
   }
 }

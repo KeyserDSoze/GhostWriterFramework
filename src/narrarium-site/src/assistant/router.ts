@@ -1,5 +1,6 @@
 import type { AIIntegration, AIPricing, AppSettings, ChatCapability, RoutingTarget, RoutingTaskKind } from "@/types/settings";
 import { integrationChatModels, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, type ForcedToolDefinition, type LlmMessage, type LlmResult } from "@/assistant/llm";
+import { executeCompletionFallback } from "@/assistant/completionFallback";
 
 /** Reserved integrationId meaning "use the browser engine" (TTS/STT only). */
 export const BROWSER_ROUTING_ID = "__browser__";
@@ -11,6 +12,13 @@ export interface TaskCandidate {
   pricing?: AIPricing;
   /** True for the browser TTS/STT engine (no integration). */
   browser?: boolean;
+}
+
+export class NoCompletionCandidatesError extends Error {
+  constructor() {
+    super("No AI integration configured for this task.");
+    this.name = "NoCompletionCandidatesError";
+  }
 }
 
 const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit"]);
@@ -147,27 +155,17 @@ export async function completeTextRouted(
   options?: { signal?: AbortSignal; label?: string; onText?: (text: string) => void },
 ): Promise<string> {
   const candidates = resolveTaskCandidates(settings, capability);
-  if (!candidates.length) throw new Error("No AI integration configured for this task.");
+  if (!candidates.length) throw new NoCompletionCandidatesError();
   const purpose = capability === "review" ? "review" : "writing";
-  let lastError: unknown = null;
-  for (const candidate of candidates) {
-    if (!candidate.integration || !candidate.model) continue; // browser has no chat model
-    try {
-      options?.onText?.("");
-      return await completeText(candidate.integration, messages, purpose, {
+  const executable = candidates.filter((candidate) => candidate.integration && candidate.model).map((candidate) => ({ ...candidate, integration: candidate.integration!, model: candidate.model!, label: `${candidate.integration!.provider}/${candidate.model!}` }));
+  if (!executable.length) throw new NoCompletionCandidatesError();
+  return executeCompletionFallback({ candidates: executable, signal: options?.signal, resetPartial: () => options?.onText?.(""), run: (candidate) => completeText(candidate.integration, messages, purpose, {
         modelName: candidate.model,
         capability,
         signal: options?.signal,
         label: options?.label,
         onText: options?.onText,
-      });
-    } catch (err) {
-      if (isAbort(err) || options?.signal?.aborted) throw err;
-      lastError = err;
-      // Move on to the next candidate (fallback).
-    }
-  }
-  throw lastError ?? new Error("All AI candidates failed for this task.");
+      }) });
 }
 
 export async function completeToolRouted<T>(

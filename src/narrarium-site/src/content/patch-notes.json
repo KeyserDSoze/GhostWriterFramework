@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.31",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Reliable completion fallbacks",
+      "summary": "Empty, filtered, and interrupted AI responses now advance to configured fallbacks without leaving partial text or hiding the real exhaustion reason.",
+      "changes": [
+        "Treated empty, whitespace-only, explicitly filtered, and provider content-filter responses as failed completion attempts.",
+        "Cleared partial streaming output before each fallback and after failed attempts so responses from different providers are never mixed.",
+        "Stopped fallback immediately on cancellation while allowing safe provider failures to continue in configured order.",
+        "Added typed configuration errors and sanitized aggregate diagnostics that identify failed candidates without exposing tokens, authorization values, or secrets."
+      ]
+    },
+    "it": {
+      "title": "Fallback delle risposte affidabili",
+      "summary": "Le risposte AI vuote, filtrate o interrotte passano ora ai fallback configurati senza lasciare testo parziale o nascondere la causa reale dell'esaurimento.",
+      "changes": [
+        "Trattate come tentativi falliti le risposte vuote, composte solo da spazi, esplicitamente filtrate o bloccate dal content filter del provider.",
+        "Cancellato l'output streaming parziale prima di ogni fallback e dopo i tentativi falliti, evitando di mescolare risposte di provider diversi.",
+        "Interrotto immediatamente il fallback alla cancellazione, continuando invece in ordine per i failure provider sicuri.",
+        "Aggiunti errori di configurazione tipizzati e diagnostica aggregata sanificata senza token, valori authorization o segreti."
+      ]
+    }
+  },
+  {
     "version": "0.76.30",
     "date": "2026-08-15",
     "en": {

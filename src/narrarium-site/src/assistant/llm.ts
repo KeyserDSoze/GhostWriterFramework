@@ -153,6 +153,13 @@ function openAiBaseUrl(integration: AIIntegration): string {
   return integration.endpoint || "https://api.openai.com/v1";
 }
 
+export class ContentFilteredCompletionError extends Error {
+  constructor() {
+    super("The provider filtered the completion content.");
+    this.name = "ContentFilteredCompletionError";
+  }
+}
+
 export async function completeText(
   integration: AIIntegration,
   messages: LlmMessage[],
@@ -184,9 +191,10 @@ export async function completeText(
         dangerouslyAllowBrowser: true,
       });
       if (options?.onText) {
-        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true } } as never, { signal: options.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null } }>; usage?: unknown }>;
+        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true } } as never, { signal: options.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
         let text = "";
         let usage: unknown;
+        let filtered = false;
         for await (const chunk of stream) {
           const delta = chunk.choices?.[0]?.delta?.content ?? "";
           if (delta) {
@@ -194,15 +202,18 @@ export async function completeText(
             options.onText(text);
           }
           if (chunk.usage) usage = chunk.usage;
+          if (chunk.choices?.some((choice) => choice.finish_reason === "content_filter")) filtered = true;
         }
         recordChatUsage(model, pricing, usage);
         finishChatDebug(debugId, pricing, usage, text);
+        if (filtered) throw new ContentFilteredCompletionError();
         return text;
       }
       const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
       recordChatUsage(model, pricing, response.usage);
       const text = response.choices[0]?.message?.content ?? "";
       finishChatDebug(debugId, pricing, response.usage, text);
+      if (response.choices[0]?.finish_reason === "content_filter") throw new ContentFilteredCompletionError();
       return text;
     }
 
@@ -213,9 +224,10 @@ export async function completeText(
         dangerouslyAllowBrowser: true,
       });
       if (options?.onText) {
-        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true } } as never, { signal: options.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null } }>; usage?: unknown }>;
+        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true } } as never, { signal: options.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
         let text = "";
         let usage: unknown;
+        let filtered = false;
         for await (const chunk of stream) {
           const delta = chunk.choices?.[0]?.delta?.content ?? "";
           if (delta) {
@@ -223,15 +235,18 @@ export async function completeText(
             options.onText(text);
           }
           if (chunk.usage) usage = chunk.usage;
+          if (chunk.choices?.some((choice) => choice.finish_reason === "content_filter")) filtered = true;
         }
         recordChatUsage(model, pricing, usage);
         finishChatDebug(debugId, pricing, usage, text);
+        if (filtered) throw new ContentFilteredCompletionError();
         return text;
       }
       const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
       recordChatUsage(model, pricing, response.usage);
       const text = response.choices[0]?.message?.content ?? "";
       finishChatDebug(debugId, pricing, response.usage, text);
+      if (response.choices[0]?.finish_reason === "content_filter") throw new ContentFilteredCompletionError();
       return text;
     }
 
