@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.26",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Protected canon identity fields",
+      "summary": "AI-generated canon enrichment can no longer override entity identity, lifecycle, name, title, type, or status fields.",
+      "changes": [
+        "Added explicit common and per-entity allowlists for enrichable character, location, faction, item, secret, and timeline-event frontmatter.",
+        "Rejected protected and unknown fields before any canon write, regardless of whether creation starts from Copilot, research, dialogs, or future callers.",
+        "Merged validated enrichment first and canonical type, id, canon state, name, and title last as defense in depth.",
+        "Renamed research enrichment fields to location_kind, faction_kind, and item_kind so they remain valid and unambiguous."
+      ]
+    },
+    "it": {
+      "title": "Campi identità del canone protetti",
+      "summary": "L'arricchimento canone generato dall'AI non può più sovrascrivere identità, lifecycle, nome, titolo, tipo o stato delle entità.",
+      "changes": [
+        "Aggiunte allowlist comuni e specifiche per i campi arricchibili di personaggi, luoghi, fazioni, oggetti, segreti ed eventi timeline.",
+        "Rifiutati campi protetti e sconosciuti prima di ogni scrittura canone, indipendentemente da Copilota, ricerca, dialog o futuri caller.",
+        "Unito prima l'arricchimento validato e applicati per ultimi tipo, id, stato canonico, nome e titolo come difesa aggiuntiva.",
+        "Rinominati i campi research in location_kind, faction_kind e item_kind per mantenerli validi e non ambigui."
+      ]
+    }
+  },
+  {
     "version": "0.76.25",
     "date": "2026-08-15",
     "en": {

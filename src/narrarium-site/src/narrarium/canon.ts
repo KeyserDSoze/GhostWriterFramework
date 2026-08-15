@@ -1,5 +1,6 @@
 import { stringify } from "yaml";
 import { createFile } from "@/github/githubClient";
+import { validateCanonExtraFrontmatter } from "@/narrarium/canonFrontmatter";
 
 export function slugify(value: string): string {
   return value
@@ -99,12 +100,13 @@ export async function createCanonEntity(
       ? { title: input.label }
       : { name: input.label };
 
+  const validatedExtra = validateCanonExtraFrontmatter(input.kind, input.extraFrontmatter);
   const frontmatter = clean({
+    ...validatedExtra,
     type: input.kind,
     id,
     canon: "draft",
     ...nameField,
-    ...(input.extraFrontmatter ?? {}),
   });
 
   const body = input.body?.trim()

@@ -156,15 +156,15 @@ export async function createEntityFromResearch(input: CreateFromResearchInput): 
     if (parsed.story_role) extra.story_role = str(parsed.story_role);
     if (parsed.function_in_book) extra.function_in_book = str(parsed.function_in_book);
   } else if (input.entityKind === "location") {
-    if (parsed.kind) extra.kind = str(parsed.kind);
+    if (parsed.kind) extra.location_kind = str(parsed.kind);
     if (parsed.region) extra.region = str(parsed.region);
     if (parsed.atmosphere) extra.atmosphere = str(parsed.atmosphere);
   } else if (input.entityKind === "faction") {
-    if (parsed.kind) extra.kind = str(parsed.kind);
+    if (parsed.kind) extra.faction_kind = str(parsed.kind);
     if (parsed.mission) extra.mission = str(parsed.mission);
     if (parsed.ideology) extra.ideology = str(parsed.ideology);
   } else if (input.entityKind === "item") {
-    if (parsed.kind) extra.kind = str(parsed.kind);
+    if (parsed.kind) extra.item_kind = str(parsed.kind);
     if (parsed.purpose) extra.purpose = str(parsed.purpose);
     if (parsed.significance) extra.significance = str(parsed.significance);
   } else if (input.entityKind === "timeline-event") {
