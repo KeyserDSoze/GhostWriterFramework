@@ -15,6 +15,7 @@ export interface SpeakOptions {
   startIndex?: number;
   /** Fired right before a segment starts playing, with its index in `segments`. */
   onSegment?: (index: number) => void;
+  signal?: AbortSignal;
 }
 
 export interface SpeechController {
@@ -118,7 +119,8 @@ export function getSpeechIntegration(settings: AppSettings): AIIntegration | nul
   return integration;
 }
 
-export async function transcribeAudio(blob: Blob, settings: AppSettings): Promise<string> {
+export async function transcribeAudio(blob: Blob, settings: AppSettings, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   const candidates = resolveTaskCandidates(settings, "stt").filter((c) => c.integration && c.model);
   if (!candidates.length) throw new Error("No AI speech-to-text model is configured.");
   const sizeKb = Math.round(blob.size / 1024);
@@ -131,7 +133,8 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings): Promis
     const client = createAudioClient(integration);
     const debugId = useLlmDebugStore.getState().begin({ kind: "stt", label: "stt", model, messages: [{ role: "input", content: `audio ${sizeKb} KB` }] });
     try {
-      const response = await client.audio.transcriptions.create({ file, model });
+      const response = await client.audio.transcriptions.create({ file, model }, { signal });
+      signal?.throwIfAborted();
       const estimatedHours = blob.size > 0 ? blob.size / (16000 * 3600) : 0;
       const cost = pricing ? sttDelta(estimatedHours, pricing).sttCost : undefined;
       if (estimatedHours > 0 && pricing) useCostsStore.getState().recordCurrent(sttDelta(estimatedHours, pricing));
@@ -140,6 +143,7 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings): Promis
       return text;
     } catch (err) {
       useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
+      if (signal?.aborted) throw err;
       lastError = err;
       // try next fallback candidate
     }
@@ -148,6 +152,7 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings): Promis
 }
 
 export async function speakText(text: string, settings: AppSettings, options: SpeakOptions = {}): Promise<SpeechController> {
+  options.signal?.throwIfAborted();
   const voice = settings.speech.ttsVoice || "nova";
   const candidates = resolveTaskCandidates(settings, "tts");
   const segments = resolveSegments(text, options);
@@ -160,14 +165,17 @@ export async function speakText(text: string, settings: AppSettings, options: Sp
     if (!candidate.integration || !candidate.model) continue;
     try {
       // Probe: synthesize the first segment to confirm this provider works before committing.
-      const probeUrl = await synthesizeChunk(probeText, candidate.integration, candidate.model, voice);
+      const probeUrl = await synthesizeChunk(probeText, candidate.integration, candidate.model, voice, options.signal);
       try { URL.revokeObjectURL(probeUrl); } catch { /* ignore */ }
+      options.signal?.throwIfAborted();
       return speakWithOpenAICompatible(text, candidate.integration, candidate.model, voice, options, candidate.pricing);
     } catch {
+      options.signal?.throwIfAborted();
       // try next TTS fallback candidate
     }
   }
   // No AI candidate (or all failed) → browser voice.
+  options.signal?.throwIfAborted();
   return speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, options);
 }
 
@@ -226,6 +234,7 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number, u
   const segments = resolveSegments(text, options);
   const lang = detectSpeechLang(text, uiLanguage);
   const voices = await loadVoices();
+  options.signal?.throwIfAborted();
   const voice = pickVoice(voices, voiceName, lang);
   let stopped = false;
   let paused = false;
@@ -250,7 +259,7 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number, u
     window.speechSynthesis.speak(utterance);
   };
   play(currentIndex);
-  return {
+  const controller: SpeechController = {
     stop: () => {
       stopped = true;
       window.speechSynthesis.cancel();
@@ -271,6 +280,10 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number, u
     getCurrentIndex: () => currentIndex,
     done,
   };
+  const abort = () => controller.stop();
+  options.signal?.addEventListener("abort", abort, { once: true });
+  void done.finally(() => options.signal?.removeEventListener("abort", abort));
+  return controller;
 }
 
 async function speakWithOpenAICompatible(text: string, integration: AIIntegration, model: string, voice: string, options: SpeakOptions, pricingOverride?: import("@/types/settings").AIPricing): Promise<SpeechController> {
@@ -289,9 +302,24 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
   let paused = false;
   let currentIndex = startIndex;
   let audio: HTMLAudioElement | null = null;
+  const activeUrls = new Set<string>();
   // Set when a pause arrives between "fetch" and "play": resume() will start it.
   let heldPlay: (() => void) | null = null;
-  let nextPromise: Promise<string> | null = segments[startIndex] ? synthesizeChunk(segments[startIndex], integration, model, voice) : null;
+  options.signal?.throwIfAborted();
+  const synthesize = async (segment: string): Promise<string | null> => {
+    try {
+      const url = await synthesizeChunk(segment, integration, model, voice, options.signal);
+      if (stopped || options.signal?.aborted) {
+        URL.revokeObjectURL(url);
+        return null;
+      }
+      activeUrls.add(url);
+      return url;
+    } catch {
+      return null;
+    }
+  };
+  let nextPromise: Promise<string | null> | null = segments[startIndex] ? synthesize(segments[startIndex]) : null;
   let resolveDone: () => void = () => undefined;
   const done = new Promise<void>((resolve) => { resolveDone = resolve; });
 
@@ -302,24 +330,31 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
       return;
     }
     const url = await nextPromise;
+    if (!url) {
+      resolveDone();
+      return;
+    }
     // Prefetch the following segment, but never while paused (freezes mp3 generation too).
-    nextPromise = !paused && segments[index + 1] ? synthesizeChunk(segments[index + 1], integration, model, voice) : null;
+    nextPromise = !paused && segments[index + 1] ? synthesize(segments[index + 1]) : null;
     if (stopped) {
       URL.revokeObjectURL(url);
+      activeUrls.delete(url);
       resolveDone();
       return;
     }
     audio = new Audio(url);
     audio.onended = () => {
       URL.revokeObjectURL(url);
-      if (!paused) void playNext(index + 1);
+      activeUrls.delete(url);
+      if (!paused) void playNext(index + 1).catch(() => resolveDone());
       // If paused exactly at the boundary, resume() advances to index + 1.
     };
     const start = () => {
       options.onSegment?.(index);
       void audio?.play().catch(() => {
         URL.revokeObjectURL(url);
-        void playNext(index + 1);
+        activeUrls.delete(url);
+        void playNext(index + 1).catch(() => resolveDone());
       });
     };
     if (paused) {
@@ -330,12 +365,18 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
     start();
   };
 
-  void playNext(startIndex);
-  return {
+  void playNext(startIndex).catch(() => resolveDone());
+  const controller: SpeechController = {
     stop: () => {
       stopped = true;
       heldPlay = null;
-      if (audio) audio.pause();
+      if (audio) {
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+      }
+      for (const url of activeUrls) URL.revokeObjectURL(url);
+      activeUrls.clear();
       window.speechSynthesis.cancel();
       resolveDone();
     },
@@ -349,7 +390,7 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
       paused = false;
       // Re-arm prefetch of the upcoming segment if it was suppressed during pause.
       if (!nextPromise && segments[currentIndex + 1]) {
-        nextPromise = synthesizeChunk(segments[currentIndex + 1], integration, model, voice);
+        nextPromise = synthesize(segments[currentIndex + 1]);
       }
       if (heldPlay) {
         const run = heldPlay;
@@ -358,21 +399,28 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
         return;
       }
       if (audio && audio.ended) {
-        void playNext(currentIndex + 1);
+        void playNext(currentIndex + 1).catch(() => resolveDone());
         return;
       }
-      void audio?.play().catch(() => { void playNext(currentIndex + 1); });
+      void audio?.play().catch(() => { void playNext(currentIndex + 1).catch(() => resolveDone()); });
     },
     isPaused: () => paused,
     segments,
     getCurrentIndex: () => currentIndex,
     done,
   };
+  const abort = () => controller.stop();
+  options.signal?.addEventListener("abort", abort, { once: true });
+  void done.finally(() => options.signal?.removeEventListener("abort", abort));
+  return controller;
 }
 
-async function synthesizeChunk(text: string, integration: AIIntegration, model: string, voice: string): Promise<string> {
+async function synthesizeChunk(text: string, integration: AIIntegration, model: string, voice: string, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   const client = createAudioClient(integration);
-  const response = await client.audio.speech.create({ model, voice: voice || "nova", input: text, response_format: "mp3" } as never);
+  const response = await client.audio.speech.create({ model, voice: voice || "nova", input: text, response_format: "mp3" } as never, { signal });
+  signal?.throwIfAborted();
   const blob = new Blob([await response.arrayBuffer()], { type: "audio/mpeg" });
+  signal?.throwIfAborted();
   return URL.createObjectURL(blob);
 }

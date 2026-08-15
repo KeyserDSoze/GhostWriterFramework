@@ -46,6 +46,7 @@ import { deleteAssistantSession, listAssistantSessions, loadAssistantSession, sa
 import { AssistantSessionSaveQueue, assistantSessionSaveFingerprint, attachAssistantSessionFileId, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
 import { assistantSessionCompactionTarget, mergeAssistantSessionCompaction } from "@/assistant/sessionCompaction";
 import { isAssistantRequestOwned } from "@/assistant/sessionOwnership";
+import { isMediaOperationOwned, stopMediaStreamTracks } from "@/assistant/mediaOwnership";
 import { assistantActionToolId, policyTargetEnabled, quickActionToolId } from "@/assistant/toolPolicy";
 import { hasAssistantActionProvenance, sourceRevisionFromFiles, validateAssistantAction } from "@/assistant/actionValidation";
 import { copilotToolRegistry, isCopilotToolIdEnabled } from "@/assistant/tools/registry";
@@ -118,6 +119,8 @@ type QuickAction = {
   disabled?: boolean;
 };
 
+type MediaOperation = { generation: number; signal: AbortSignal };
+
 export function AssistantPanel() {
   const { t } = useTranslation();
   const location = useLocation();
@@ -133,6 +136,7 @@ export function AssistantPanel() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
   const speechRecognitionRef = useRef<any>(null);
   const speechRecognitionTranscriptRef = useRef("");
   const speechRecognitionSentRef = useRef(false);
@@ -140,8 +144,13 @@ export function AssistantPanel() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const voiceModeRef = useRef(false);
-  const liveAbortRef = useRef<AbortController | null>(null);
   const waitingToneTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const notHeardTimerRef = useRef<number | null>(null);
+  const waitingCueContextsRef = useRef(new Set<AudioContext>());
+  const waitingCueTimersRef = useRef(new Set<number>());
+  const mediaGenerationRef = useRef(0);
+  const mediaAbortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
   const localAudioHandledRef = useRef(false);
   const localAudioDoneRef = useRef<Promise<void> | null>(null);
   // Live "strofe" memory: every spoken segment of the current reading, the live index,
@@ -214,6 +223,15 @@ export function AssistantPanel() {
   useEffect(() => {
     voiceModeRef.current = voiceMode;
   }, [voiceMode]);
+
+  useEffect(() => {
+    if (!open) cancelMediaOperations({ disableVoice: true });
+  }, [open]);
+
+  useEffect(() => {
+    cancelMediaOperations({ disableVoice: true });
+    return () => cancelMediaOperations({ disableVoice: true, updateUi: false });
+  }, [user?.provider, user?.email, accessToken]);
 
   useEffect(() => {
     manualEndRef.current = manualEnd;
@@ -312,18 +330,17 @@ export function AssistantPanel() {
   }, [currentSession?.id, currentSession?.messages.length, currentSession?.compactedMessageCount, settings, busy, toast]);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      if (silenceTimerRef.current) clearInterval(silenceTimerRef.current);
-      if (waitingToneTimerRef.current) clearInterval(waitingToneTimerRef.current);
-      liveAbortRef.current?.abort();
-      if (audioContextRef.current) void audioContextRef.current.close().catch(() => undefined);
-      if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+      mountedRef.current = false;
+      cancelMediaOperations({ disableVoice: true, updateUi: false });
     };
   }, []);
 
   function playWaitTick() {
     try {
       const context = new AudioContext();
+      waitingCueContextsRef.current.add(context);
       const oscillator = context.createOscillator();
       const gain = context.createGain();
       oscillator.frequency.value = 660;
@@ -331,10 +348,13 @@ export function AssistantPanel() {
       oscillator.connect(gain);
       gain.connect(context.destination);
       oscillator.start();
-      window.setTimeout(() => {
+      const timer = window.setTimeout(() => {
+        waitingCueTimersRef.current.delete(timer);
         oscillator.stop();
+        waitingCueContextsRef.current.delete(context);
         void context.close().catch(() => undefined);
       }, 120);
+      waitingCueTimersRef.current.add(timer);
     } catch {
       // Audio cues are best-effort only.
     }
@@ -379,6 +399,80 @@ export function AssistantPanel() {
       releasedBusy = true;
     }
     if (releasedBusy) setBusy(false);
+  }
+
+  function beginMediaOperation(): { generation: number; signal: AbortSignal } {
+    cancelMediaOperations();
+    const controller = new AbortController();
+    mediaAbortRef.current = controller;
+    return { generation: mediaGenerationRef.current, signal: controller.signal };
+  }
+
+  function currentMediaOperation(): { generation: number; signal: AbortSignal } {
+    const current = mediaAbortRef.current;
+    if (current && !current.signal.aborted) return { generation: mediaGenerationRef.current, signal: current.signal };
+    return beginMediaOperation();
+  }
+
+  function ownsMediaOperation(generation: number, signal: AbortSignal): boolean {
+    return mountedRef.current && isMediaOperationOwned(mediaGenerationRef.current, generation, signal.aborted);
+  }
+
+  function cancelMediaOperations(options: { disableVoice?: boolean; updateUi?: boolean } = {}) {
+    mediaGenerationRef.current += 1;
+    mediaAbortRef.current?.abort();
+    mediaAbortRef.current = null;
+    stopWaitingTone();
+    stopSilenceMonitor();
+    if (notHeardTimerRef.current) {
+      clearTimeout(notHeardTimerRef.current);
+      notHeardTimerRef.current = null;
+    }
+    for (const timer of waitingCueTimersRef.current) clearTimeout(timer);
+    waitingCueTimersRef.current.clear();
+    for (const context of waitingCueContextsRef.current) void context.close().catch(() => undefined);
+    waitingCueContextsRef.current.clear();
+
+    const recognition = speechRecognitionRef.current;
+    speechRecognitionRef.current = null;
+    if (recognition) {
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      try { recognition.abort?.(); } catch {}
+      try { recognition.stop?.(); } catch {}
+    }
+    speechRecognitionTranscriptRef.current = "";
+    speechRecognitionSentRef.current = true;
+
+    const recorder = mediaRecorderRef.current;
+    mediaRecorderRef.current = null;
+    if (recorder) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      if (recorder.state === "recording") {
+        try { recorder.stop(); } catch {}
+      }
+    }
+    stopMediaStreamTracks(mediaStreamRef.current);
+    mediaStreamRef.current = null;
+    audioChunksRef.current = [];
+
+    speechControllerRef.current?.stop();
+    speechControllerRef.current = null;
+    window.speechSynthesis?.cancel();
+    localAudioHandledRef.current = false;
+    localAudioDoneRef.current = null;
+    pendingRewriteRef.current = null;
+    if (options.disableVoice) voiceModeRef.current = false;
+
+    if (options.updateUi !== false && mountedRef.current) {
+      setListening(false);
+      setSpeechController(null);
+      setLivePaused(false);
+      setVoiceStatus("idle");
+      if (options.disableVoice) setVoiceMode(false);
+    }
   }
 
   function newChat() {
@@ -493,10 +587,17 @@ export function AssistantPanel() {
       return;
     }
 
+    const operation = voiceModeRef.current ? currentMediaOperation() : beginMediaOperation();
+
     if (sttMode(settings) === "ai") {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (!ownsMediaOperation(operation.generation, operation.signal)) {
+          stopMediaStreamTracks(stream);
+          return;
+        }
         const recorder = new MediaRecorder(stream);
+        mediaStreamRef.current = stream;
         audioChunksRef.current = [];
         mediaRecorderRef.current = recorder;
         setListening(true);
@@ -504,32 +605,38 @@ export function AssistantPanel() {
         // Manual mode: keep recording until the user explicitly presses "Done".
         if (!manualEndRef.current) monitorSilence(stream);
         recorder.ondataavailable = (event) => {
+          if (!ownsMediaOperation(operation.generation, operation.signal)) return;
           if (event.data.size > 0) audioChunksRef.current.push(event.data);
         };
         recorder.onstop = async () => {
           stopSilenceMonitor();
-          stream.getTracks().forEach((track) => track.stop());
+          stopMediaStreamTracks(stream);
+          if (mediaStreamRef.current === stream) mediaStreamRef.current = null;
+          if (!ownsMediaOperation(operation.generation, operation.signal)) return;
           setListening(false);
           mediaRecorderRef.current = null;
           if (voiceModeRef.current) setVoiceStatus("thinking");
           try {
             const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
-            const transcript = (await transcribeAudio(blob, settings)).trim();
+            const transcript = (await transcribeAudio(blob, settings, operation.signal)).trim();
+            if (!ownsMediaOperation(operation.generation, operation.signal)) return;
             if (transcript) {
-              if (voiceModeRef.current) void handleVoiceTranscript(transcript);
-              else if (autoSend) void sendPrompt(transcript);
+              if (voiceModeRef.current) void handleVoiceTranscript(transcript, operation.generation, operation.signal);
+              else if (autoSend) void sendPrompt(transcript, { signal: operation.signal });
               else appendDraftText(transcript);
             } else if (voiceModeRef.current) {
               setLastVoiceTranscript(t("assistant.noSpeechHeard"));
               setVoiceStatus("idle");
             }
           } catch (err) {
+            if (!ownsMediaOperation(operation.generation, operation.signal)) return;
             if (voiceModeRef.current) setVoiceStatus("idle");
             toast({ title: t("assistant.toastSttFailed"), description: String(err), variant: "destructive" });
           }
         };
         recorder.start();
       } catch (err) {
+        if (!ownsMediaOperation(operation.generation, operation.signal)) return;
         stopSilenceMonitor();
         setListening(false);
         toast({ title: t("assistant.toastMicUnavailable"), description: String(err), variant: "destructive" });
@@ -552,6 +659,7 @@ export function AssistantPanel() {
     setListening(true);
     if (voiceModeRef.current) setVoiceStatus("listening");
     recognition.onresult = (event: any) => {
+      if (!ownsMediaOperation(operation.generation, operation.signal)) return;
       let hasFinal = false;
       const transcript = Array.from(event.results).map((result: any) => {
         if (result.isFinal) hasFinal = true;
@@ -563,40 +671,43 @@ export function AssistantPanel() {
         if (voiceModeRef.current && hasFinal && !speechRecognitionSentRef.current && !manualEndRef.current) {
           speechRecognitionSentRef.current = true;
           try { recognition.stop(); } catch {}
-          void handleVoiceTranscript(transcript);
+          void handleVoiceTranscript(transcript, operation.generation, operation.signal);
         }
-        else if (autoSend && !manualEndRef.current) void sendPrompt(transcript);
+        else if (autoSend && !manualEndRef.current) void sendPrompt(transcript, { signal: operation.signal });
         else if (!voiceModeRef.current) appendDraftText(transcript);
       }
     };
     recognition.onerror = () => {
+      if (!ownsMediaOperation(operation.generation, operation.signal)) return;
       speechRecognitionRef.current = null;
       speechRecognitionTranscriptRef.current = "";
       setListening(false);
       if (voiceModeRef.current) setVoiceStatus("idle");
     };
     recognition.onend = () => {
+      if (!ownsMediaOperation(operation.generation, operation.signal)) return;
       speechRecognitionRef.current = null;
       setListening(false);
       const transcript = speechRecognitionTranscriptRef.current.trim();
       if (voiceModeRef.current && transcript && !speechRecognitionSentRef.current) {
         speechRecognitionSentRef.current = true;
-        void handleVoiceTranscript(transcript);
+        void handleVoiceTranscript(transcript, operation.generation, operation.signal);
         return;
       }
       if (voiceModeRef.current) {
         setLastVoiceTranscript(t("assistant.noSpeechHeard"));
         setVoiceStatus("not-heard");
-        window.setTimeout(() => {
-          if (voiceModeRef.current) setVoiceStatus("idle");
+        notHeardTimerRef.current = window.setTimeout(() => {
+          notHeardTimerRef.current = null;
+          if (ownsMediaOperation(operation.generation, operation.signal) && voiceModeRef.current) setVoiceStatus("idle");
         }, 1800);
       }
     };
-    recognition.start();
+    if (ownsMediaOperation(operation.generation, operation.signal)) recognition.start();
   }
 
   function stopReading() {
-    speechController?.stop();
+    speechControllerRef.current?.stop();
     speechControllerRef.current = null;
     setSpeechController(null);
     setLivePaused(false);
@@ -609,7 +720,9 @@ export function AssistantPanel() {
   }
 
   /** Read prose as sentence-level "strofe", tracking the live index and heard count. */
-  async function readText(text: string, opts?: { startIndex?: number; segments?: string[] }): Promise<SpeechController | null> {
+  async function readText(text: string, opts?: { startIndex?: number; segments?: string[]; operation?: MediaOperation }): Promise<SpeechController | null> {
+    const operation = opts?.operation ?? (voiceModeRef.current ? currentMediaOperation() : beginMediaOperation());
+    if (!ownsMediaOperation(operation.generation, operation.signal)) return null;
     stopReading();
     const segments = opts?.segments ?? splitIntoStrofe(text);
     liveStrofeRef.current = segments;
@@ -621,14 +734,20 @@ export function AssistantPanel() {
       const controller = await speakText(text, settings, {
         segments,
         startIndex,
+        signal: operation.signal,
         onSegment: (index) => {
+          if (!ownsMediaOperation(operation.generation, operation.signal)) return;
           liveStrofeIndexRef.current = index;
           setLiveStrofeIndex(index);
         },
       });
+      if (!ownsMediaOperation(operation.generation, operation.signal)) {
+        controller.stop();
+        return null;
+      }
       setLiveController(controller);
       void controller.done.finally(() => {
-        if (speechControllerRef.current === controller) {
+        if (mountedRef.current && speechControllerRef.current === controller) {
           speechControllerRef.current = null;
           setSpeechController(null);
           setLivePaused(false);
@@ -636,6 +755,7 @@ export function AssistantPanel() {
       });
       return controller;
     } catch (err) {
+      if (!ownsMediaOperation(operation.generation, operation.signal)) return null;
       toast({ title: t("assistant.toastTtsFailed"), description: String(err), variant: "destructive" });
       return null;
     }
@@ -817,19 +937,18 @@ export function AssistantPanel() {
     }
   }
 
-  async function handleVoiceTranscript(transcript: string) {
+  async function handleVoiceTranscript(transcript: string, generation: number, signal: AbortSignal) {
+    if (!ownsMediaOperation(generation, signal)) return;
     setLastVoiceTranscript(transcript);
     setVoiceStatus("thinking");
     startWaitingTone();
-    const abortController = new AbortController();
-    liveAbortRef.current = abortController;
-    const reply = await sendPrompt(transcript, { spokenMode: true, signal: abortController.signal });
+    const reply = await sendPrompt(transcript, { spokenMode: true, signal });
+    if (!ownsMediaOperation(generation, signal)) return;
     stopWaitingTone();
-    if (abortController.signal.aborted) return;
-    liveAbortRef.current = null;
     if (!voiceModeRef.current) return;
     if (localAudioHandledRef.current) {
       await localAudioDoneRef.current?.catch(() => undefined);
+      if (!ownsMediaOperation(generation, signal)) return;
       localAudioHandledRef.current = false;
       localAudioDoneRef.current = null;
       if (voiceModeRef.current) setVoiceStatus("idle");
@@ -839,6 +958,7 @@ export function AssistantPanel() {
       setVoiceStatus("speaking");
       const controller = await readText(reply.text);
       await controller?.done.catch(() => undefined);
+      if (!ownsMediaOperation(generation, signal)) return;
     }
     localAudioHandledRef.current = false;
     if (voiceModeRef.current) setVoiceStatus("idle");
@@ -849,9 +969,10 @@ export function AssistantPanel() {
       const next = !enabled;
       voiceModeRef.current = next;
       if (!next) {
-        interruptLiveVoice();
+        cancelMediaOperations();
         setVoiceStatus("idle");
       } else {
+        beginMediaOperation();
         setOpen(true);
         setVoiceStatus("idle");
       }
@@ -891,18 +1012,26 @@ export function AssistantPanel() {
   }
 
   function interruptLiveVoice() {
-    liveAbortRef.current?.abort();
-    liveAbortRef.current = null;
-    localAudioHandledRef.current = false;
-    localAudioDoneRef.current = null;
-    pendingRewriteRef.current = null;
-    stopWaitingTone();
-    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
-    speechRecognitionRef.current?.stop?.();
-    speechRecognitionRef.current = null;
-    stopReading();
-    setListening(false);
-    setVoiceStatus("idle");
+    cancelMediaOperations();
+  }
+
+  function closeAssistant() {
+    cancelMediaOperations({ disableVoice: true });
+    cancelSessionOperations();
+    setOpen(false);
+  }
+
+  function openAssistantChat() {
+    cancelMediaOperations({ disableVoice: true });
+    setOpen(true);
+  }
+
+  function openAssistantVoice() {
+    cancelMediaOperations();
+    voiceModeRef.current = true;
+    setVoiceMode(true);
+    beginMediaOperation();
+    setOpen(true);
   }
 
   async function sendPrompt(prompt: string, options?: { spokenMode?: boolean; signal?: AbortSignal }): Promise<AssistantMessage | null> {
@@ -923,6 +1052,9 @@ export function AssistantPanel() {
       useAssistantStore.getState().currentSession?.id,
       controller.signal.aborted,
     );
+    const mediaOperation = options?.spokenMode && options.signal
+      ? { generation: mediaGenerationRef.current, signal: options.signal }
+      : undefined;
     setBusy(true);
     localAudioHandledRef.current = false;
     let streamedMessageId: string | null = null;
@@ -945,14 +1077,14 @@ export function AssistantPanel() {
       const userMessage = { id: crypto.randomUUID(), role: "user" as const, text: trimmed };
       useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage] }));
       setDraft("");
-      const strofaReply = await tryHandleStrofaCommand(trimmed);
+      const strofaReply = await tryHandleStrofaCommand(trimmed, mediaOperation);
       if (!ownsRequest()) return null;
       if (strofaReply) {
         useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, strofaReply] }));
         setOpen(true);
         return strofaReply;
       }
-      const localReply = await tryHandleLocalVoiceTool(trimmed, { context: routeContext, book, token, spokenMode: options?.spokenMode });
+      const localReply = await tryHandleLocalVoiceTool(trimmed, { context: routeContext, book, token, spokenMode: options?.spokenMode, operation: mediaOperation });
       if (!ownsRequest()) return null;
       if (localReply) {
         useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, localReply] }));
@@ -988,7 +1120,7 @@ export function AssistantPanel() {
         await executeNavigationAction(reply.action);
       } else if (reply.action?.kind === "read-aloud" && book && token && isAssistantActionEnabled(reply.action)) {
         const readBranch = routeContext.structure?.loadedBranch ?? branch;
-        await speakReadAloud(reply.action, book, token, readBranch);
+        await speakReadAloud(reply.action, book, token, readBranch, mediaOperation);
       }
       return finalReply;
     } catch (err) {
@@ -1013,6 +1145,7 @@ export function AssistantPanel() {
       book: Awaited<ReturnType<typeof loadWriterContext>>["book"];
       token: string;
       spokenMode?: boolean;
+      operation?: MediaOperation;
     },
   ): Promise<AssistantMessage | null> {
     if (!input.book || !input.token || !input.context.structure) return null;
@@ -1029,7 +1162,7 @@ export function AssistantPanel() {
     // No-LLM read-aloud: "leggi questo paragrafo", "read chapter 3".
     const readAction = resolveReadAloudAction(prompt, input.context, input.book.id);
     if (readAction && isAssistantActionEnabled(readAction)) {
-      const spoke = await speakReadAloud(readAction, input.book, input.token, input.context.structure.loadedBranch);
+      const spoke = await speakReadAloud(readAction, input.book, input.token, input.context.structure.loadedBranch, input.operation);
       if (!spoke) return makeAssistantReply(t("assistant.readTargetEmpty"));
       const reply = makeAssistantReply(t("assistant.readingTarget", { title: readAction.title }));
       reply.action = readAction;
@@ -1045,10 +1178,14 @@ export function AssistantPanel() {
     book: NonNullable<Awaited<ReturnType<typeof loadWriterContext>>["book"]>,
     token: string,
     readBranch: string,
+    requestedOperation?: MediaOperation,
   ): Promise<boolean> {
+    const operation = requestedOperation ?? (voiceModeRef.current ? currentMediaOperation() : beginMediaOperation());
+    if (!ownsMediaOperation(operation.generation, operation.signal)) return false;
     const raws = await Promise.all(
       action.paths.map((path) => loadFileContent(token, book.owner, book.repo, path, readBranch).catch(() => "")),
     );
+    if (!ownsMediaOperation(operation.generation, operation.signal)) return false;
     const text = raws
       .map((raw) => (action.includeFrontmatter ? raw.trim() : stripFrontmatterForSpeech(raw)))
       .filter(Boolean)
@@ -1056,7 +1193,11 @@ export function AssistantPanel() {
     if (!text.trim()) return false;
     localAudioHandledRef.current = true;
     setVoiceStatus("speaking");
-    const controller = await readText(text);
+    const controller = await readText(text, { operation });
+    if (!ownsMediaOperation(operation.generation, operation.signal)) {
+      controller?.stop();
+      return false;
+    }
     localAudioDoneRef.current = controller?.done ?? Promise.resolve();
     return true;
   }
@@ -1127,21 +1268,23 @@ export function AssistantPanel() {
   }
 
   /** Handle in-memory strofe commands (repeat / quote / rewrite / synonym / confirm). */
-  async function tryHandleStrofaCommand(prompt: string): Promise<AssistantMessage | null> {
+  async function tryHandleStrofaCommand(prompt: string, operation?: MediaOperation): Promise<AssistantMessage | null> {
+    if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
     const lower = prompt.toLowerCase().trim();
 
     // 1) Confirmation of a pending rewrite proposal.
     if (pendingRewriteRef.current) {
       const yes = /\b(s[iì]|sì|ok|va bene|conferma|sostituisci|yes|sure|replace|confirm)\b/.test(lower);
       const no = /\b(no|annulla|lascia|cancel|keep|stop)\b/.test(lower);
-      if (yes) return applyPendingRewrite();
+      if (yes) return applyPendingRewrite(operation);
       if (no) {
         pendingRewriteRef.current = null;
         return makeAssistantReply(t("assistant.rewriteCancelled"));
       }
       // Ambiguous → ask the cheap "simple-tasks" model with a forced tool to decide.
       const decision = await classifyConfirmationRouted(settings, prompt);
-      if (decision === "yes") return applyPendingRewrite();
+      if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
+      if (decision === "yes") return applyPendingRewrite(operation);
       if (decision === "no") {
         pendingRewriteRef.current = null;
         return makeAssistantReply(t("assistant.rewriteCancelled"));
@@ -1161,7 +1304,7 @@ export function AssistantPanel() {
     const wantsRewrite = /\b(riscriv|rescriv|cambia|modific|sostitu|migliora|rewrite|rephrase|change|replace|improve)\b/.test(lower);
     const synonymMatch = lower.match(/\b(?:sinonimo|synonym)\b[^a-zàèéìòù]*(?:di|of|for|per)?\s*["“']?([\p{L}][\p{L}\s'-]*?)["”']?(?:\s|$|\.|,)/u);
     if ((wantsRewrite || synonymMatch) && window) {
-      return proposeRewrite(window, { synonymWord: synonymMatch?.[1]?.trim(), instruction: prompt });
+      return proposeRewrite(window, { synonymWord: synonymMatch?.[1]?.trim(), instruction: prompt }, operation);
     }
 
     // 3) Repeat / read back recent strofe.
@@ -1171,7 +1314,8 @@ export function AssistantPanel() {
       if (!text) return makeAssistantReply(t("assistant.strofaEmpty"));
       localAudioHandledRef.current = true;
       setVoiceStatus("speaking");
-      const controller = await readText(text);
+      const controller = await readText(text, { operation });
+      if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
       localAudioDoneRef.current = controller?.done ?? Promise.resolve();
       return makeAssistantReply(text);
     }
@@ -1183,6 +1327,7 @@ export function AssistantPanel() {
   async function proposeRewrite(
     window: { from: number; to: number },
     opts: { synonymWord?: string; instruction: string },
+    operation?: MediaOperation,
   ): Promise<AssistantMessage | null> {
     const original = strofeSlice(window);
     if (!original) return makeAssistantReply(t("assistant.strofaEmpty"));
@@ -1197,12 +1342,15 @@ export function AssistantPanel() {
       rewritten = (await completeTextRouted(settings, [
         { role: "system", content: `You are a prose editor. ${task} Reply with ONLY the rewritten passage in ${langName}, no quotes, no preamble.` },
         { role: "user", content: original },
-      ], "default", { label: "live-voice:rewrite" })).trim();
+      ], "default", { label: "live-voice:rewrite", signal: operation?.signal })).trim();
+      if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
     } catch (err) {
+      if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
       stopWaitingTone();
       if (/No AI integration configured/i.test(err instanceof Error ? err.message : String(err))) return makeAssistantReply(t("assistant.rewriteNoModel"));
       return makeAssistantReply(t("assistant.rewriteFailed", { error: String(err) }));
     }
+    if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
     stopWaitingTone();
     if (!rewritten) return makeAssistantReply(t("assistant.rewriteFailed", { error: "empty" }));
     const newSegments = splitIntoStrofe(rewritten);
@@ -1210,13 +1358,15 @@ export function AssistantPanel() {
     const spoken = `${t("assistant.rewriteProposal")} ${rewritten} ${t("assistant.rewriteConfirmAsk")}`;
     localAudioHandledRef.current = true;
     setVoiceStatus("speaking");
-    const controller = await readText(spoken);
+    const controller = await readText(spoken, { operation });
+    if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
     localAudioDoneRef.current = controller?.done ?? Promise.resolve();
     return makeAssistantReply(spoken);
   }
 
   /** Replace the proposed strofe in memory and resume reading from there. */
-  async function applyPendingRewrite(): Promise<AssistantMessage | null> {
+  async function applyPendingRewrite(operation?: MediaOperation): Promise<AssistantMessage | null> {
+    if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
     const pending = pendingRewriteRef.current;
     pendingRewriteRef.current = null;
     if (!pending) return makeAssistantReply(t("assistant.rewriteCancelled"));
@@ -1226,7 +1376,8 @@ export function AssistantPanel() {
     setLiveStrofeCount(segments.length);
     localAudioHandledRef.current = true;
     setVoiceStatus("speaking");
-    const controller = await readText("", { segments, startIndex: pending.from });
+    const controller = await readText("", { segments, startIndex: pending.from, operation });
+    if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
     localAudioDoneRef.current = controller?.done ?? Promise.resolve();
     return makeAssistantReply(t("assistant.rewriteApplied"));
   }
@@ -1817,7 +1968,7 @@ export function AssistantPanel() {
         <div className="flex items-center gap-1">
           <Button variant={voiceMode ? "default" : "ghost"} size="icon" className="h-8 w-8" title={t("assistant.liveVoice")} onClick={toggleVoiceMode}><Ghost className="h-4 w-4" /></Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" title={fullScreen ? t("assistant.exitFullscreen") : t("assistant.fullscreen")} onClick={() => setFullScreen((value) => !value)}>{fullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}</Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8" title={t("assistant.close")} onClick={() => setOpen(false)}><X className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" title={t("assistant.close")} onClick={closeAssistant}><X className="h-4 w-4" /></Button>
         </div>
       </div>
 
@@ -1977,7 +2128,7 @@ export function AssistantPanel() {
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => { interruptLiveVoice(); voiceModeRef.current = false; setVoiceMode(false); }}>{t("assistant.backToChat")}</Button>
-          <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>{t("assistant.close")}</Button>
+          <Button variant="ghost" size="sm" onClick={closeAssistant}>{t("assistant.close")}</Button>
         </div>
       </div>
 
@@ -2060,17 +2211,17 @@ export function AssistantPanel() {
     <>
       {!floatingHidden && (
         <div className="fixed bottom-4 right-4 z-40 flex overflow-hidden rounded-full shadow-lg lg:bottom-6 lg:right-6">
-          <button type="button" className="flex items-center gap-2 bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90" onClick={() => { setVoiceMode(false); voiceModeRef.current = false; setOpen(true); }}>
+          <button type="button" className="flex items-center gap-2 bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90" onClick={openAssistantChat}>
             <Bot className="h-4 w-4" />{t("assistant.floatingButton")}
           </button>
           <span className="w-px self-stretch bg-primary-foreground/20" />
-          <button type="button" className="flex items-center justify-center bg-primary px-3 py-2.5 text-primary-foreground transition hover:bg-primary/90" title={t("assistant.liveVoice")} onClick={() => { setVoiceMode(true); voiceModeRef.current = true; setOpen(true); }}>
+          <button type="button" className="flex items-center justify-center bg-primary px-3 py-2.5 text-primary-foreground transition hover:bg-primary/90" title={t("assistant.liveVoice")} onClick={openAssistantVoice}>
             <Ghost className="h-5 w-5" />
           </button>
         </div>
       )}
       <Dialog open={syncOpen} onOpenChange={setSyncOpen}><DialogContent hideCloseButton className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[920px]">{syncPanel}</DialogContent></Dialog>
-      <Dialog open={open} onOpenChange={(next) => { if (!next) interruptLiveVoice(); setOpen(next); }}><DialogContent hideCloseButton bare onPointerDownOutside={(event) => event.preventDefault()} onInteractOutside={(event) => event.preventDefault()} onEscapeKeyDown={(event) => event.preventDefault()} className={voiceMode || fullScreen || isMobile ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 overflow-hidden" : "bottom-6 right-6 h-[80dvh] max-h-[calc(100dvh-3rem)] w-[420px] max-w-[calc(100vw-3rem)] overflow-hidden"}>{voiceMode ? liveVoicePanel : panel}</DialogContent></Dialog>
+      <Dialog open={open} onOpenChange={(next) => { if (!next) closeAssistant(); else setOpen(true); }}><DialogContent hideCloseButton bare onPointerDownOutside={(event) => event.preventDefault()} onInteractOutside={(event) => event.preventDefault()} onEscapeKeyDown={(event) => event.preventDefault()} className={voiceMode || fullScreen || isMobile ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 overflow-hidden" : "bottom-6 right-6 h-[80dvh] max-h-[calc(100dvh-3rem)] w-[420px] max-w-[calc(100vw-3rem)] overflow-hidden"}>{voiceMode ? liveVoicePanel : panel}</DialogContent></Dialog>
     </>
   );
 }

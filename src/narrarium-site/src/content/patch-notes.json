@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.16",
+    "date": "2026-08-14",
+    "en": {
+      "title": "Voice operations stop completely",
+      "summary": "Closing Copilot, leaving live voice, signing out, switching accounts, or unmounting the panel now cancels microphone capture, transcription, synthesis, playback, and every late callback.",
+      "changes": [
+        "Bound recorder, browser recognition, STT, TTS, read-aloud, voice prompts, and strofa workflows to one abortable media generation.",
+        "Stopped all media tracks, recognizers, recorders, silence monitors, waiting cues, browser synthesis, audio controllers, provider requests, and active voice prompts during teardown.",
+        "Ignored delayed getUserMedia, onstop, onend, file-loading, confirmation, rewrite, STT, and TTS results after close, logout, account change, mode switch, or unmount.",
+        "Made OpenAI-compatible TTS consume canceled prefetch promises and revoke every generated audio URL without unhandled rejections."
+      ]
+    },
+    "it": {
+      "title": "Arresto completo delle operazioni vocali",
+      "summary": "Chiudere il Copilota, uscire dalla modalità vocale, effettuare logout, cambiare account o smontare il pannello ora annulla microfono, trascrizione, sintesi, riproduzione e ogni callback tardiva.",
+      "changes": [
+        "Legati recorder, riconoscimento browser, STT, TTS, lettura ad alta voce, prompt vocali e workflow delle strofe a un'unica generazione media annullabile.",
+        "Arrestati tutti i track, recognizer, recorder, monitor del silenzio, cue di attesa, sintesi browser, controller audio, richieste provider e prompt vocali attivi durante il teardown.",
+        "Ignorati risultati tardivi di getUserMedia, onstop, onend, caricamento file, conferma, rewrite, STT e TTS dopo chiusura, logout, cambio account, cambio modalità o unmount.",
+        "Reso il TTS compatibile OpenAI capace di consumare le promise di prefetch annullate e revocare ogni URL audio generato senza rejection non gestite."
+      ]
+    }
+  },
+  {
     "version": "0.76.15",
     "date": "2026-08-14",
     "en": {
