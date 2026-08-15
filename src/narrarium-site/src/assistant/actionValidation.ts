@@ -41,10 +41,17 @@ function validUpdates(updates: unknown): boolean {
   ));
 }
 
+function revisionsMatchUpdates(action: Extract<AssistantAction, { kind: "apply-file-updates" | "undo-file-updates" }>): boolean {
+  if (!action.sourceRevisions) return false;
+  const updatePaths = [...new Set(action.updates.map((update) => update.path))].sort();
+  const revisionPaths = Object.keys(action.sourceRevisions).sort();
+  return updatePaths.length === action.updates.length && updatePaths.length === revisionPaths.length && updatePaths.every((path, index) => path === revisionPaths[index]);
+}
+
 export function isValidAssistantActionShape(action: AssistantAction): boolean {
   if (!action || typeof action !== "object" || typeof action.kind !== "string") return false;
   if (action.kind === "apply-paragraph-rewrite") return safePath(action.paragraphPath) && typeof action.proposedBody === "string";
-  if (action.kind === "apply-file-updates" || action.kind === "undo-file-updates") return validUpdates(action.updates);
+  if (action.kind === "apply-file-updates" || action.kind === "undo-file-updates") return validUpdates(action.updates) && revisionsMatchUpdates(action);
   if (action.kind === "switch-book-branch") return typeof action.branchName === "string" && /^[A-Za-z0-9._/-]+$/.test(action.branchName) && !action.branchName.includes("..");
   if (action.kind === "confirm-delete") return safePath(action.path) && ["note", "paragraph", "entity", "reader-evaluation"].includes(action.target);
   if (action.kind === "confirm-create-from-research") {

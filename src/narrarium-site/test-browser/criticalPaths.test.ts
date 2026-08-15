@@ -6,6 +6,10 @@ import { isAssistantRequestOwned } from "@/assistant/sessionOwnership";
 import { resolveChapterTarget, resolveParagraphTarget } from "@/assistant/targetRules";
 import { assistantActionToolId, policyTargetEnabled, quickActionToolId } from "@/assistant/toolPolicy";
 import { assertCloudStatus, resumableMigrationSteps } from "@/drive/migrationSafety";
+import { chooseToolMatch } from "@/assistant/orchestrator";
+import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
+import { copilotToolRegistry } from "@/assistant/tools/registry";
+import type { AppSettings } from "@/types/settings";
 
 describe("Copilot critical paths", () => {
   it("fails closed for missing nested story targets", () => {
@@ -53,5 +57,33 @@ describe("Copilot critical paths", () => {
   it("keeps cloud failures explicit and retries unverified migration steps", () => {
     expect(() => assertCloudStatus(false, 429, "migration read")).toThrow("429");
     expect(resumableMigrationSteps(["settings", "costs"], [{ step: "settings", ok: true, verified: true }])).toEqual(["costs"]);
+  });
+
+  it("registers and governs multi-file edit dispatch", () => {
+    ensureBuiltinCopilotToolsRegistered();
+    const tool = copilotToolRegistry.get("multi-file-edit");
+    expect(tool).toMatchObject({ handlerId: "multi-file-edit", mutatesData: true, requiresLlm: true, destructive: false });
+    const enabled = chooseToolMatch({ prompt: "update multiple files", lowered: "update multiple files", settings: {} as AppSettings }, new Set(["multi-file-edit"]));
+    expect(enabled).toMatchObject({ toolId: "multi-file-edit", handlerId: "multi-file-edit", enabled: true, mutationIntent: "positive" });
+    const settings = { copilotTools: { toolOverrides: { "multi-file-edit": { enabled: false } } } } as unknown as AppSettings;
+    expect(chooseToolMatch({ prompt: "aggiorna più file", lowered: "aggiorna più file", settings }, new Set(["multi-file-edit"]))).toMatchObject({ enabled: false, mutationIntent: "positive" });
+  });
+
+  it("requires exact per-target provenance before multi-file apply", () => {
+    const revisions = { "chapters/a.md": "sha-a", "notes/new.md": null };
+    const action = {
+      kind: "apply-file-updates" as const,
+      bookId: "book",
+      updates: [{ path: "chapters/a.md", content: "A" }, { path: "notes/new.md", content: "B" }],
+      toolId: "multi-file-edit",
+      owner: "owner",
+      repo: "repo",
+      branch: "draft",
+      sourceRevision: sourceRevisionFromFiles(revisions),
+      sourceRevisions: revisions,
+      generatedAt: new Date().toISOString(),
+    };
+    expect(validateAssistantAction({ action, owner: "owner", repo: "repo", branch: "draft", expectedToolId: "multi-file-edit", toolEnabled: true, sourceRevision: sourceRevisionFromFiles(revisions) })).toBeNull();
+    expect(validateAssistantAction({ action: { ...action, sourceRevisions: { "chapters/a.md": "sha-a" } }, owner: "owner", repo: "repo", branch: "draft", expectedToolId: "multi-file-edit", toolEnabled: true, sourceRevision: action.sourceRevision })).toBe("invalid-action");
   });
 });

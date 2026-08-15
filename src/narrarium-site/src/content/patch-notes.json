@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.30",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Governed multi-file edits",
+      "summary": "Copilot multi-file changes are now a registered, configurable tool that always produces a reviewable, revision-bound proposal before applying anything.",
+      "changes": [
+        "Registered multi-file editing with accurate prerequisites, AI usage, mutation metadata, capability discovery, and a dedicated enable/disable setting.",
+        "Moved English and Italian multi-file requests into the governed dispatcher and removed the unregistered legacy bypass.",
+        "Required explicit positive mutation intent before proposal generation and preserved read-only or negated requests without writing.",
+        "Required exact source revision provenance for every proposed update, including destinations that must remain absent until confirmation."
+      ]
+    },
+    "it": {
+      "title": "Modifiche multi-file governate",
+      "summary": "Le modifiche multi-file del Copilota sono ora uno strumento registrato e configurabile che produce sempre una proposta revisionabile e legata alle revisioni prima di applicare qualsiasi contenuto.",
+      "changes": [
+        "Registrato l'editing multi-file con prerequisiti, uso AI, metadata di mutazione, capability discovery e impostazione abilita/disabilita accurati.",
+        "Spostate le richieste multi-file inglesi e italiane nel dispatcher governato e rimosso il bypass legacy non registrato.",
+        "Richiesto un intento di mutazione positivo ed esplicito prima della proposta, mantenendo le richieste read-only o negate senza scritture.",
+        "Richiesta provenance esatta della revisione per ogni update proposto, incluse le destinazioni che devono restare assenti fino alla conferma."
+      ]
+    }
+  },
+  {
     "version": "0.76.29",
     "date": "2026-08-15",
     "en": {

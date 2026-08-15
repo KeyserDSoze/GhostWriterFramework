@@ -127,6 +127,7 @@ const EXECUTABLE_HANDLER_IDS = new Set([
   "delete-current-note", "delete-current-paragraph", "delete-current-entity", "delete-reader-evaluation",
   "deep-research",
   "create-from-research",
+  "multi-file-edit",
 ]);
 
 export async function runAssistantPrompt(input: {
@@ -259,6 +260,7 @@ export async function runAssistantPrompt(input: {
     "delete-reader-evaluation": () => requestDeleteReaderEvaluation({ ...promptInput, book, branch, token }),
     "deep-research": () => runDeepResearchFromPrompt({ ...promptInput, book, branch, token }),
     "create-from-research": () => proposeEntityFromResearch({ ...promptInput, book, branch, token }),
+    "multi-file-edit": () => proposeMultiFileUpdates({ ...promptInput, book, branch, token }),
   } as const;
 
   const availableHandlerIds = new Set(Object.keys(handlers));
@@ -301,10 +303,6 @@ export async function runAssistantPrompt(input: {
     }
     return handlers[legacyHandlerId]();
   }
-  if (looksLikeMultiFileEdit(lowered)) {
-    if (!isCopilotHandlerEnabled(settings, "multi-file-edit")) return disabledCopilotToolMessage(settings);
-    return proposeMultiFileUpdates({ ...promptInput, book, branch, token });
-  }
   if (!isCopilotHandlerEnabled(settings, "answer-from-context")) return disabledCopilotToolMessage(settings, "answer-from-context");
   return handlers["answer-from-context"]();
 }
@@ -317,7 +315,10 @@ async function actionProvenance(
 ): Promise<AssistantActionProvenance> {
   const sourceRevisions: Record<string, string | null> = {};
   for (const path of [...new Set(paths)].sort()) {
-    const current = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path).catch(() => null);
+    const current = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path).catch((error) => {
+      if (isGitHubFileNotFoundError(error)) return null;
+      throw error;
+    });
     sourceRevisions[path] = current?.sha ?? null;
   }
   let sourceRevision = sourceRevisionFromFiles(sourceRevisions);
@@ -1878,7 +1879,6 @@ function looksLikeCreateEntity(prompt: string): boolean { return /\b(create|add|
 function looksLikeCreateScript(prompt: string): boolean { return /\b(create|add|crea|aggiungi)\b/.test(prompt) && /\b(script|scene script|scaletta scena)\b/.test(prompt); }
 function looksLikeCreateDraft(prompt: string): boolean { return /\b(create|add|crea|aggiungi)\b/.test(prompt) && /\b(draft|bozza)\b/.test(prompt); }
 function looksLikeImportAttachment(prompt: string): boolean { return /\b(import|attachment|allega|usa allegat|mettilo come|mettilo nel libro)\b/.test(prompt); }
-function looksLikeMultiFileEdit(prompt: string): boolean { return /\b(multi[- ]?file|piu file|più file|several files|update files|modifica.*file|aggiorna.*file)\b/.test(prompt); }
 
 function extractBranchName(prompt: string): string | null {
   const match = /(?:branch\s+)([A-Za-z0-9._/-]+)/i.exec(prompt);
