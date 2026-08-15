@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.19",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Site tests gate CI and deployment",
+      "summary": "Narrarium site builds, typed Copilot tests, browser integration tests, and coverage thresholds now run before pull requests pass or GitHub Pages can deploy.",
+      "changes": [
+        "Added narrarium-site to root build and test commands used by the general CI workflow.",
+        "Made the Pages workflow run the complete site test gate before building or uploading its artifact.",
+        "Added Vitest with Vite aliases, jsdom, React Testing Library, fake timers, network mocks, and V8 coverage reports.",
+        "Typechecked both TypeScript browser tests and existing JavaScript unit tests, with per-file coverage minimums for critical assistant, router, tool, ownership, target, and migration paths."
+      ]
+    },
+    "it": {
+      "title": "Test del sito obbligatori per CI e deploy",
+      "summary": "Build del sito Narrarium, test Copilota tipizzati, test browser integrati e soglie di copertura ora devono riuscire prima dell'approvazione CI o del deploy GitHub Pages.",
+      "changes": [
+        "Aggiunto narrarium-site ai comandi root di build e test usati dal workflow CI generale.",
+        "Reso obbligatorio nel workflow Pages il gate completo dei test del sito prima di build e upload dell'artefatto.",
+        "Aggiunto Vitest con alias Vite, jsdom, React Testing Library, timer finti, mock di rete e report di copertura V8.",
+        "Sottoposti a typecheck sia i test browser TypeScript sia i test unitari JavaScript esistenti, con soglie minime per file sui percorsi critici di assistente, router, tool, ownership, target e migrazione."
+      ]
+    }
+  },
+  {
     "version": "0.76.18",
     "date": "2026-08-15",
     "en": {

@@ -12,7 +12,7 @@
     "src/*"
   ],
   "scripts": {
-    "build": "npm run build -w narrarium && npm run build -w narrarium-sdk && npm run build -w narrarium-mcp-server && npm run build -w create-narrarium-book && npm run build -w narrarium-astro-reader",
+    "build": "npm run build -w narrarium && npm run build -w narrarium-sdk && npm run build -w narrarium-mcp-server && npm run build -w create-narrarium-book && npm run build -w narrarium-astro-reader && npm run build -w narrarium-site",
     "bms:dev": "npm run dev -w narrarium-site",
     "bms:build": "npm run build -w narrarium-site",
     "create:book": "node packages/create-narrarium-book/dist/index.js",
@@ -26,7 +26,7 @@
     "sync:script-ledger": "npm run build -w narrarium --silent && node scripts/sync-script-ledger.mjs",
     "dev:mcp": "npm run dev -w narrarium-mcp-server",
     "dev:site": "npm run dev -w narrarium-astro-reader",
-    "test": "npm run test -w narrarium && npm run test -w narrarium-sdk && npm run test -w narrarium-mcp-server && npm run test -w create-narrarium-book && npm run test -w narrarium-astro-reader",
+    "test": "npm run test -w narrarium && npm run test -w narrarium-sdk && npm run test -w narrarium-mcp-server && npm run test -w create-narrarium-book && npm run test -w narrarium-astro-reader && npm run test -w narrarium-site",
     "validate": "npm run validate -w narrarium --if-present && npm run validate -w narrarium-sdk --if-present"
   }
 }

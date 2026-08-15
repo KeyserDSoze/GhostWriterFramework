@@ -11,13 +11,13 @@ import {
 
 function installBrowserStorage() {
   const values = new Map();
-  globalThis.window = {
+  globalThis.window = /** @type {any} */ ({
     localStorage: {
       getItem: (key) => values.get(key) ?? null,
       setItem: (key, value) => values.set(key, value),
       removeItem: (key) => values.delete(key),
     },
-  };
+  });
   return values;
 }
 

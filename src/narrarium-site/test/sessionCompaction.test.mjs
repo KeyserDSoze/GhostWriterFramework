@@ -5,6 +5,7 @@ import {
   mergeAssistantSessionCompaction,
 } from "../src/assistant/sessionCompaction.ts";
 
+/** @param {number} count @returns {import("../src/assistant/store.ts").AssistantMessage[]} */
 function messages(count) {
   return Array.from({ length: count }, (_, index) => ({
     id: `message-${index}`,
@@ -13,6 +14,7 @@ function messages(count) {
   }));
 }
 
+/** @param {Partial<import("../src/assistant/store.ts").AssistantSession>} [overrides] @returns {import("../src/assistant/store.ts").AssistantSession} */
 function session(overrides = {}) {
   return {
     id: "session-1",

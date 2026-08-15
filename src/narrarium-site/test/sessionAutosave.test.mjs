@@ -22,8 +22,10 @@ function session(overrides = {}) {
 }
 
 function deferred() {
-  let resolve;
-  let reject;
+  /** @type {(value?: any) => void} */
+  let resolve = () => undefined;
+  /** @type {(reason?: any) => void} */
+  let reject = () => undefined;
   const promise = new Promise((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
     reject = rejectPromise;

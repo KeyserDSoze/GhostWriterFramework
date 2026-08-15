@@ -3,6 +3,7 @@ import test from "node:test";
 import { isAssistantRequestOwned } from "../src/assistant/sessionOwnership.ts";
 import { useAssistantStore } from "../src/assistant/store.ts";
 
+/** @param {string} id @param {string} [text] @returns {import("../src/assistant/store.ts").AssistantSession} */
 function session(id, text = "Initial") {
   return {
     id,

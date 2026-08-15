@@ -4,6 +4,7 @@ import { sourceRevisionFromFiles, validateAssistantAction } from "../src/assista
 
 const now = Date.parse("2026-08-14T12:00:00.000Z");
 const revisions = { "chapters/001/001.md": "sha-1" };
+/** @type {import("../src/assistant/store.ts").AssistantAction} */
 const action = {
   kind: "apply-paragraph-rewrite",
   bookId: "book",

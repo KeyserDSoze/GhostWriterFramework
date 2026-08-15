@@ -32,3 +32,9 @@ jobs:
 
       - name: Run tests
         run: npm run test
+
+      - name: Upload Narrarium site coverage
+        uses: actions/upload-artifact@v6
+        with:
+          name: narrarium-site-coverage
+          path: src/narrarium-site/coverage

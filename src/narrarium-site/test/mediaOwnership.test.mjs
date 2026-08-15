@@ -40,7 +40,8 @@ test("late STT or TTS provider responses are ignored after abort", async () => {
   const generation = 12;
   let activeGeneration = generation;
   let appliedResponses = 0;
-  let resolveProvider;
+  /** @type {(value: unknown) => void} */
+  let resolveProvider = () => undefined;
   const provider = new Promise((resolve) => { resolveProvider = resolve; });
   const consume = provider.then(() => {
     if (isMediaOperationOwned(activeGeneration, generation, controller.signal.aborted)) appliedResponses += 1;
@@ -67,7 +68,8 @@ test("a stream returned after cancellation has every media track stopped", async
   const controller = new AbortController();
   let activeGeneration = 20;
   const generation = activeGeneration;
-  let resolveStream;
+  /** @type {(value: any) => void} */
+  let resolveStream = () => undefined;
   const pendingStream = new Promise((resolve) => { resolveStream = resolve; });
   const consume = pendingStream.then((lateStream) => {
     if (!isMediaOperationOwned(activeGeneration, generation, controller.signal.aborted)) stopMediaStreamTracks(lateStream);

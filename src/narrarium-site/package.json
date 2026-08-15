@@ -1,7 +1,7 @@
 {
   "name": "narrarium-site",
   "private": true,
-  "version": "0.76.18",
+  "version": "0.76.19",
   "type": "module",
   "description": "GitHub Pages site and web app for Narrarium Framework.",
   "scripts": {
@@ -10,7 +10,10 @@
     "prebuild": "node scripts/check-patch-notes.mjs && node scripts/generate-docs.mjs",
     "build": "tsc -b && vite build && node scripts/write-spa-fallback.mjs",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test test/*.test.mjs"
+    "test": "npm run test:typecheck && npm run test:unit && npm run test:browser",
+    "test:unit": "node --experimental-strip-types --test test/*.test.mjs",
+    "test:browser": "vitest run --coverage",
+    "test:typecheck": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.11.0",
@@ -53,14 +56,19 @@
     "zustand": "^5.0.5"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^24.6.0",
     "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.5.2",
+    "@vitest/coverage-v8": "^4.1.10",
     "autoprefixer": "^10.4.21",
+    "jsdom": "^30.0.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.9.3",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "vitest": "^4.1.10"
   }
 }
