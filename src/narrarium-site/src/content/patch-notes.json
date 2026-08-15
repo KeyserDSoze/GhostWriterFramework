@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.24",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Deep research from Copilot",
+      "summary": "Explicit deep-research requests in Copilot now run the existing routed research engine, stream progress, and save the resulting research document in the current book.",
+      "changes": [
+        "Added an executable deep-research Copilot handler using the configured deep-research model route and research-provider router.",
+        "Preserved provider selection, depth, English/Italian intent parsing, cancellation, progress streaming, cost tracking, and repository persistence.",
+        "Returned the saved research path, title, and providers in the Copilot response.",
+        "Advertised deep research only when book, token, structure, and a routed LLM candidate are available."
+      ]
+    },
+    "it": {
+      "title": "Ricerca approfondita dal Copilota",
+      "summary": "Le richieste esplicite di ricerca approfondita nel Copilota ora eseguono il motore di ricerca instradato esistente, mostrano il progresso e salvano il documento nel libro corrente.",
+      "changes": [
+        "Aggiunto un handler Copilota eseguibile per deep-research usando la route modello e il router provider configurati.",
+        "Conservati selezione provider, profondità, parsing intent inglese/italiano, annullamento, streaming del progresso, costi e persistenza repository.",
+        "Restituiti nella risposta Copilota path salvato, titolo e provider utilizzati.",
+        "Pubblicizzata la ricerca approfondita soltanto quando libro, token, struttura e candidato LLM instradato sono disponibili."
+      ]
+    }
+  },
+  {
     "version": "0.76.23",
     "date": "2026-08-15",
     "en": {

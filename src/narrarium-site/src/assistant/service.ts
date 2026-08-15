@@ -54,6 +54,8 @@ import { emptyReaderPersona } from "@/narrarium/readerPersona";
 import { generateReaderEvaluationSummary, hashReaderSource, loadReaderPersonas, parseReaderEvaluation, readerEvaluationPath, runReaderEvaluations, saveReaderPersona, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
 import { AUDIT_CATEGORIES, auditTargetHref, loadAuditReport, resolveAuditTarget, updateAuditFinding, type AuditCertainty, type AuditFindingStatus, type AuditSeverity, type AuditTarget } from "@/narrarium/audit";
 import { useFeedbackRewriteWorkflowStore } from "@/store/feedbackRewriteWorkflowStore";
+import { resolveDeepResearchRequest } from "@/assistant/deepResearchRequest";
+import { executeDeepResearchFromCopilot } from "@/assistant/deepResearchHandler";
 import { attachmentImportRoute, validateImportAttachments, type AttachmentImportTarget } from "@/assistant/attachmentImport";
 
 async function completeForTask(
@@ -97,6 +99,7 @@ const EXECUTABLE_HANDLER_IDS = new Set([
   "list-pull-requests", "create-pull-request", "get-book", "get-chapter", "get-paragraph", "get-character",
   "get-location", "get-faction", "get-item", "get-secret", "get-timeline-event", "get-body", "get-frontmatter",
   "delete-current-note", "delete-current-paragraph", "delete-current-entity", "delete-reader-evaluation",
+  "deep-research",
 ]);
 
 export async function runAssistantPrompt(input: {
@@ -147,7 +150,11 @@ export async function runAssistantPrompt(input: {
     onText,
   };
 
-  if (isCapabilityQuestion(prompt)) return buildCapabilitiesMessage(prompt, settings, EXECUTABLE_HANDLER_IDS);
+  if (isCapabilityQuestion(prompt)) {
+    const capabilities = new Set(EXECUTABLE_HANDLER_IDS);
+    if (!book || !token || !context.structure || !context.branchReady || context.branch !== branch || !resolveTaskCandidates(settings, "deep-research").some((candidate) => candidate.integration && candidate.model)) capabilities.delete("deep-research");
+    return buildCapabilitiesMessage(prompt, settings, capabilities);
+  }
 
   if (!context.branchReady || context.branch !== branch) {
     return makeAssistantMessage("assistant", `Copilot is waiting for the authoritative branch \`${branch}\` to finish loading before it can read or write repository context.`);
@@ -222,6 +229,7 @@ export async function runAssistantPrompt(input: {
     "delete-current-paragraph": () => requestDeleteParagraph({ ...promptInput, book, branch, token }),
     "delete-current-entity": () => requestDeleteEntity({ ...promptInput, book, branch, token }),
     "delete-reader-evaluation": () => requestDeleteReaderEvaluation({ ...promptInput, book, branch, token }),
+    "deep-research": () => runDeepResearchFromPrompt({ ...promptInput, book, branch, token }),
   } as const;
 
   const availableHandlerIds = new Set(Object.keys(handlers));
@@ -1269,6 +1277,14 @@ async function importAttachmentsAsDraft(input: PromptInput & { book: BookEntry; 
     path = await createChapterDraftArtifacts(input.token, input.book.owner, input.book.repo, input.branch, { number, title, chapterSlug: chapter.slug, body: parsed.body, replace: true });
   }
   return makeAssistantMessage("assistant", `I imported the attachments as draft \`${path}\`.`);
+}
+
+async function runDeepResearchFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const request = resolveDeepResearchRequest(input.prompt);
+  if (!request) return makeAssistantMessage("assistant", "Tell me what topic to research, for example: run deep research on Roman aqueduct construction.");
+  const result = await executeDeepResearchFromCopilot({ ...input, structureLanguage: input.context.structure?.language });
+  if (!result) return makeAssistantMessage("assistant", "Tell me what topic to research.");
+  return makeAssistantMessage("assistant", `Saved deep research **${result.title}** to \`${result.path}\` using ${result.providers.join(", ") || "the configured research providers"}.`);
 }
 
 async function writeResume(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
