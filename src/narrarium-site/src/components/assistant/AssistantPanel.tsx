@@ -53,6 +53,7 @@ import { copilotToolRegistry, isCopilotToolIdEnabled } from "@/assistant/tools/r
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
 import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
 import { parseAttachment } from "@/assistant/attachments";
+import type { AttachmentImportTarget } from "@/assistant/attachmentImport";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
@@ -108,8 +109,6 @@ const ATTACHMENT_TARGETS = [
   { value: "script", labelKey: "assistant.importScript" },
   { value: "draft", labelKey: "assistant.importDraft" },
 ] as const;
-
-type AttachmentTarget = (typeof ATTACHMENT_TARGETS)[number]["value"];
 
 type QuickAction = {
   id: string;
@@ -190,7 +189,7 @@ export function AssistantPanel() {
   const [syncOpen, setSyncOpen] = useState(false);
   const [diffFiles, setDiffFiles] = useState<BranchDiffFile[]>([]);
   const [loadingDiff, setLoadingDiff] = useState(false);
-  const [attachmentTarget, setAttachmentTarget] = useState<AttachmentTarget>("paragraph");
+  const [attachmentTarget, setAttachmentTarget] = useState<AttachmentImportTarget>("paragraph");
   const [fullScreen, setFullScreen] = useState(false);
   const [listening, setListening] = useState(false);
   const [autoSend, setAutoSend] = useState(false);
@@ -1034,7 +1033,7 @@ export function AssistantPanel() {
     setOpen(true);
   }
 
-  async function sendPrompt(prompt: string, options?: { spokenMode?: boolean; signal?: AbortSignal }): Promise<AssistantMessage | null> {
+  async function sendPrompt(prompt: string, options?: { spokenMode?: boolean; signal?: AbortSignal; attachmentTarget?: AttachmentImportTarget }): Promise<AssistantMessage | null> {
     const trimmed = prompt.trim();
     if (!trimmed || useAssistantStore.getState().busy) return null;
     const session = ensureSession();
@@ -1104,6 +1103,7 @@ export function AssistantPanel() {
         compactSummary: latestSession.compactSummary,
         compactedMessageCount: latestSession.compactedMessageCount,
         attachments: latestSession.attachments,
+        attachmentTarget: options?.attachmentTarget,
         spokenMode: options?.spokenMode,
         signal: controller.signal,
         onText: updateStreamedReply,
@@ -1387,9 +1387,7 @@ export function AssistantPanel() {
   }
 
   function buildAttachmentImportPrompt(): string {
-    const entry = ATTACHMENT_TARGETS.find((entry) => entry.value === attachmentTarget);
-    const label = (entry ? t(entry.labelKey) : attachmentTarget).toLowerCase();
-    return `Use the attached files as source material and ${label} in the current book context.`;
+    return "Import the attached files into the selected target in the current book context.";
   }
 
   async function handleImportAttachments() {
@@ -1397,7 +1395,7 @@ export function AssistantPanel() {
       toast({ title: t("assistant.toastNoAttachments"), description: t("assistant.attachFirst") });
       return;
     }
-    await sendPrompt(buildAttachmentImportPrompt());
+    await sendPrompt(buildAttachmentImportPrompt(), { attachmentTarget });
   }
 
   async function openSession(fileId: string) {

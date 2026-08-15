@@ -1,5 +1,5 @@
 import { stringify } from "yaml";
-import { createFileIfAbsent } from "@/github/githubClient";
+import { createFileIfAbsent, createOrUpdateTextFile } from "@/github/githubClient";
 import { chapterSlug, formatOrdinal, slugify } from "@/narrarium/canon";
 
 function renderMarkdown(frontmatter: Record<string, unknown>, body: string): string {
@@ -10,16 +10,21 @@ function paragraphSlugFromPath(path: string): string {
   return (path.split("/").pop() ?? "").replace(/\.md$/i, "");
 }
 
+async function writeWorkspaceFile(token: string, owner: string, repo: string, branch: string, path: string, content: string, message: string, replace = false) {
+  if (replace) return createOrUpdateTextFile(token, owner, repo, branch, path, content, message);
+  return createFileIfAbsent(token, owner, repo, branch, path, content, message);
+}
+
 export async function createChapterDraftArtifacts(
   token: string,
   owner: string,
   repo: string,
   branch: string,
-  input: { number: number; title: string },
+  input: { number: number; title: string; chapterSlug?: string; body?: string; replace?: boolean },
 ) {
-  const slug = chapterSlug(input.number, input.title);
+  const slug = input.chapterSlug ?? chapterSlug(input.number, input.title);
   const chapterId = `chapter:${slug}`;
-  await createFileIfAbsent(
+  await writeWorkspaceFile(
     token,
     owner,
     repo,
@@ -34,9 +39,10 @@ export async function createChapterDraftArtifacts(
         title: input.title,
         canon: "draft",
       },
-      `# ${input.title}\n\nStart the chapter draft here.\n`,
+      input.body?.trim() || `# ${input.title}\n\nStart the chapter draft here.\n`,
     ),
     `Add chapter draft ${slug}`,
+    input.replace,
   );
 
   for (const bucket of ["notes", "ideas", "promoted"] as const) {
@@ -66,6 +72,7 @@ export async function createChapterDraftArtifacts(
       `Add chapter draft ${bucket} ${slug}`,
     ).catch(() => undefined);
   }
+  return `drafts/${slug}/chapter.md`;
 }
 
 export async function createChapterResumeArtifact(
@@ -123,10 +130,10 @@ export async function createParagraphDraftArtifact(
   owner: string,
   repo: string,
   branch: string,
-  input: { chapterSlug: string; number: number; title: string; paragraphSlug?: string },
+  input: { chapterSlug: string; number: number; title: string; paragraphSlug?: string; body?: string; replace?: boolean },
 ) {
   const slug = input.paragraphSlug ?? `${formatOrdinal(input.number)}-${slugify(input.title)}`;
-  await createFileIfAbsent(
+  await writeWorkspaceFile(
     token,
     owner,
     repo,
@@ -142,10 +149,12 @@ export async function createParagraphDraftArtifact(
         title: input.title,
         canon: "draft",
       },
-      "",
+      input.body?.trim() ?? "",
     ),
     `Add paragraph draft ${slug}`,
+    input.replace,
   );
+  return `drafts/${input.chapterSlug}/${slug}.md`;
 }
 
 export async function createParagraphScriptArtifact(
@@ -153,16 +162,19 @@ export async function createParagraphScriptArtifact(
   owner: string,
   repo: string,
   branch: string,
-  input: { chapterSlug: string; number: number; title: string; paragraphSlug?: string; location?: string },
+  input: { chapterSlug: string; number: number; title: string; paragraphSlug?: string; location?: string; body?: string; replace?: boolean },
+) {
+  const artifact = buildParagraphScriptArtifact(input);
+  await writeWorkspaceFile(token, owner, repo, branch, artifact.path, artifact.content, `Add script ${artifact.slug}`, input.replace);
+  return artifact.path;
+}
+
+export function buildParagraphScriptArtifact(
+  input: { chapterSlug: string; number: number; title: string; paragraphSlug?: string; location?: string; body?: string },
 ) {
   const slug = input.paragraphSlug ?? `${formatOrdinal(input.number)}-${slugify(input.title)}`;
-  await createFileIfAbsent(
-    token,
-    owner,
-    repo,
-    branch,
-    `scripts/${input.chapterSlug}/${slug}.md`,
-    renderMarkdown(
+  const path = `scripts/${input.chapterSlug}/${slug}.md`;
+  const content = renderMarkdown(
       {
         type: "script",
         id: `script:${input.chapterSlug}:${slug}`,
@@ -180,10 +192,9 @@ export async function createParagraphScriptArtifact(
         timeline_refs: [],
         reveal_policy: {},
       },
-      `@scene_goal{Define the scene goal}\n@pov{character:todo}\nLocation: ${input.location ?? "todo"}\n[Plan the scene beats here]\n`,
-    ),
-    `Add script ${slug}`,
-  );
+      input.body?.trim() || `@scene_goal{Define the scene goal}\n@pov{character:todo}\nLocation: ${input.location ?? "todo"}\n[Plan the scene beats here]\n`,
+    );
+  return { path, content, slug };
 }
 
 export async function createParagraphEvaluationArtifact(

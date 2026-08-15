@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.20",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Typed attachment import targets",
+      "summary": "Attachment imports now honor the exact paragraph, chapter, note, canon, script, or draft target selected in Copilot instead of inferring it again from translated prompt text.",
+      "changes": [
+        "Passed one typed import target from the Copilot menu through dispatch and implemented every advertised English and Italian canon target.",
+        "Added real script and draft imports at their canonical workspace paths, including safe replacement of an existing selected workspace document.",
+        "Generated the canonical script ledger in the browser and committed script plus ledger atomically with repository revision checks.",
+        "Marked attachment import as LLM-backed for accurate capability and cost presentation, and rejected empty or malformed text and image attachments."
+      ]
+    },
+    "it": {
+      "title": "Target tipizzati per l'import degli allegati",
+      "summary": "L'import degli allegati ora rispetta esattamente il target paragrafo, capitolo, nota, canone, script o bozza selezionato nel Copilota, senza reinferirlo dal testo tradotto del prompt.",
+      "changes": [
+        "Passato un target di import tipizzato dal menu del Copilota al dispatch e implementati tutti i target canone pubblicizzati in inglese e italiano.",
+        "Aggiunti import reali di script e bozze nei path workspace canonici, inclusa la sostituzione sicura del documento workspace selezionato già esistente.",
+        "Generato nel browser il ledger script canonico e committati atomicamente script e ledger con controlli sulla revisione repository.",
+        "Dichiarato l'import allegati come operazione LLM per una presentazione corretta di capacità e costi, rifiutando allegati testo o immagine vuoti e malformati."
+      ]
+    }
+  },
+  {
     "version": "0.76.19",
     "date": "2026-08-15",
     "en": {

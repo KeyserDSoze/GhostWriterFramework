@@ -43,15 +43,18 @@ import {
 } from "@/narrarium/canon";
 import {
   createChapterDraftArtifacts,
+  buildParagraphScriptArtifact,
   createParagraphDraftArtifact,
   createParagraphScriptArtifact,
 } from "@/narrarium/workspace";
+import { commitScriptWithCanonicalLedger } from "@/narrarium/scriptLedger";
 import { GITHUB_MODELS_INFERENCE_URL } from "@/config/githubModels";
 import { defaultEvaluationCriteria, defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
 import { emptyReaderPersona } from "@/narrarium/readerPersona";
 import { generateReaderEvaluationSummary, hashReaderSource, loadReaderPersonas, parseReaderEvaluation, readerEvaluationPath, runReaderEvaluations, saveReaderPersona, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
 import { AUDIT_CATEGORIES, auditTargetHref, loadAuditReport, resolveAuditTarget, updateAuditFinding, type AuditCertainty, type AuditFindingStatus, type AuditSeverity, type AuditTarget } from "@/narrarium/audit";
 import { useFeedbackRewriteWorkflowStore } from "@/store/feedbackRewriteWorkflowStore";
+import { attachmentImportRoute, validateImportAttachments, type AttachmentImportTarget } from "@/assistant/attachmentImport";
 
 async function completeForTask(
   settings: AppSettings,
@@ -76,6 +79,7 @@ type PromptInput = {
   compactSummary: string;
   compactedMessageCount: number;
   attachments: AssistantAttachment[];
+  attachmentTarget?: AttachmentImportTarget;
   spokenMode?: boolean;
   signal?: AbortSignal;
   onText?: (text: string) => void;
@@ -105,6 +109,7 @@ export async function runAssistantPrompt(input: {
   compactSummary: string;
   compactedMessageCount: number;
   attachments: AssistantAttachment[];
+    attachmentTarget?: AttachmentImportTarget;
     spokenMode?: boolean;
     signal?: AbortSignal;
     onText?: (text: string) => void;
@@ -120,6 +125,7 @@ export async function runAssistantPrompt(input: {
     compactSummary,
     compactedMessageCount,
     attachments,
+    attachmentTarget,
     spokenMode,
     signal,
     onText,
@@ -133,6 +139,7 @@ export async function runAssistantPrompt(input: {
     compactSummary,
     compactedMessageCount,
     attachments,
+    attachmentTarget,
     spokenMode,
     signal,
     onText,
@@ -1153,8 +1160,8 @@ async function createParagraphFromPrompt(input: PromptInput & { book: BookEntry;
   return makeAssistantMessage("assistant", `I created paragraph ${created.slug} at \`${created.paragraphFilePath}\`.`);
 }
 
-async function createEntityFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
-  const kind = detectEntityKind(input.prompt);
+async function createEntityFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }, forcedKind?: EntityKind): Promise<AssistantMessage> {
+  const kind = forcedKind ?? detectEntityKind(input.prompt);
   if (!kind) return makeAssistantMessage("assistant", "Tell me which entity to create: character, location, faction, item, secret, or timeline event.");
   const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new canon entity: {"label":"...","summary":"...","body":"...","extraFrontmatter":{...}}.', "book"),
@@ -1205,13 +1212,57 @@ async function createDraftFromPrompt(input: PromptInput & { book: BookEntry; bra
 }
 
 async function importAttachmentsIntoBook(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
-  if (!input.attachments.length) return makeAssistantMessage("assistant", "Attach at least one file first.");
-  const lowered = input.prompt.toLowerCase();
+  const attachmentError = validateImportAttachments(input.attachments);
+  if (attachmentError) return makeAssistantMessage("assistant", attachmentError);
+  if (!input.attachmentTarget) return makeAssistantMessage("assistant", "Choose an attachment import target first.");
   const prompt = `${input.prompt}\n\nUse the attached files as source material.`;
-  if (/(note|notes|appunto|appunti)/.test(lowered)) return createContextNote({ ...input, prompt });
-  if (/(character|location|faction|item|secret|timeline|evento)/.test(lowered)) return createEntityFromPrompt({ ...input, prompt });
-  if (/(chapter|capitolo)/.test(lowered)) return createChapterFromPrompt({ ...input, prompt });
+  const route = attachmentImportRoute(input.attachmentTarget);
+  if (route.handler === "note") return createContextNote({ ...input, prompt });
+  if (route.handler === "entity") return createEntityFromPrompt({ ...input, prompt }, route.entityKind);
+  if (route.handler === "chapter") return createChapterFromPrompt({ ...input, prompt });
+  if (route.handler === "script") return importAttachmentsAsScript({ ...input, prompt });
+  if (route.handler === "draft") return importAttachmentsAsDraft({ ...input, prompt });
   return createParagraphFromPrompt({ ...input, prompt });
+}
+
+async function importAttachmentsAsScript(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const chapter = input.context.chapter;
+  if (!chapter) return makeAssistantMessage("assistant", "Open a chapter or paragraph before importing attachments as a script.");
+  const answer = await completeForTask(input.settings, [
+    buildSystemMessage(input, 'Convert the attached source into one Narrarium scene script. Return ONLY JSON: {"title":"...","location":"...","body":"..."}. The body must contain ordered script beats, not finished prose.', "book"),
+    buildUserMessage(input, input.prompt),
+  ], "default", { signal: input.signal, label: "copilot:import-script" });
+  if (!answer) return noAiMessage();
+  const parsed = parseJsonObject(answer);
+  if (!parsed || typeof parsed.body !== "string" || !parsed.body.trim()) return makeAssistantMessage("assistant", "The attachment could not be converted into a valid script body.");
+  const title = typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : input.context.paragraph?.title ?? "Imported Scene";
+  const location = typeof parsed.location === "string" ? parsed.location.trim() : undefined;
+  const number = input.context.paragraph ? Number(input.context.paragraph.number) : chapter.paragraphs.length + 1;
+  const paragraphSlug = input.context.paragraph ? slugFromPath(input.context.paragraph.path) : undefined;
+  const script = buildParagraphScriptArtifact({ chapterSlug: chapter.slug, number, title, paragraphSlug, location, body: parsed.body });
+  await commitScriptWithCanonicalLedger({ token: input.token, book: input.book, branch: input.branch, script, message: `Import script ${script.slug} and refresh script ledger` });
+  return makeAssistantMessage("assistant", `I imported the attachments as script \`${script.path}\` and refreshed the canonical script ledger.`);
+}
+
+async function importAttachmentsAsDraft(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const chapter = input.context.chapter;
+  if (!chapter) return makeAssistantMessage("assistant", "Open a chapter or paragraph before importing attachments as a draft.");
+  const answer = await completeForTask(input.settings, [
+    buildSystemMessage(input, 'Convert the attached source into a Narrarium prose draft. Return ONLY JSON: {"title":"...","body":"..."}. Preserve source facts and do not add wrapper commentary.', "book"),
+    buildUserMessage(input, input.prompt),
+  ], "default", { signal: input.signal, label: "copilot:import-draft" });
+  if (!answer) return noAiMessage();
+  const parsed = parseJsonObject(answer);
+  if (!parsed || typeof parsed.body !== "string" || !parsed.body.trim()) return makeAssistantMessage("assistant", "The attachment could not be converted into a valid draft body.");
+  const title = typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : input.context.paragraph?.title ?? chapter.title;
+  let path: string;
+  if (input.context.paragraph) {
+    path = await createParagraphDraftArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: chapter.slug, number: Number(input.context.paragraph.number), title, paragraphSlug: slugFromPath(input.context.paragraph.path), body: parsed.body, replace: true });
+  } else {
+    const number = Number(/^(\d{3})-/.exec(chapter.slug)?.[1] ?? 1);
+    path = await createChapterDraftArtifacts(input.token, input.book.owner, input.book.repo, input.branch, { number, title, chapterSlug: chapter.slug, body: parsed.body, replace: true });
+  }
+  return makeAssistantMessage("assistant", `I imported the attachments as draft \`${path}\`.`);
 }
 
 async function writeResume(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {

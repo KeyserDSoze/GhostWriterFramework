@@ -1,6 +1,6 @@
 {
   "name": "narrarium",
-  "version": "0.1.55",
+  "version": "0.1.56",
   "type": "module",
   "description": "Core schemas, repo scaffolding, search, validation, and export helpers for Narrarium book repositories.",
   "license": "MIT",
@@ -15,6 +15,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./script-ledger": {
+      "types": "./dist/script-ledger.d.ts",
+      "import": "./dist/script-ledger.js"
     }
   },
   "files": [

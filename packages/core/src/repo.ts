@@ -79,6 +79,7 @@ import {
 } from "./schemas.js";
 import { skillTemplate } from "./skill-template.js";
 import { defaultBodyForType, renderMarkdown } from "./templates.js";
+import { buildScriptLedgerDocument as buildScriptLedgerDocumentFromFiles } from "./script-ledger.js";
 import {
   CLAUDE_WEB_SEARCH_AGENT,
   DEEP_RESEARCH_SKILL_ADD_FIELDS,
@@ -14602,6 +14603,19 @@ export async function buildScriptLedger(
   options: { generatedAt?: string } = {},
 ): Promise<ScriptLedger> {
   const root = path.resolve(rootPath);
+  const sourcePaths = await fg([`${SCRIPTS_DIRECTORY}/**/*.md`, "chapters/**/*.md", "secrets/*.md"], {
+    cwd: root,
+    absolute: false,
+    onlyFiles: true,
+    ignore: ["**/node_modules/**", "**/dist/**", "**/.astro/**"],
+  });
+  const sources = await Promise.all(sourcePaths.map(async (sourcePath) => ({
+    path: toPosixPath(sourcePath),
+    content: await readFile(path.join(root, sourcePath), "utf8"),
+  })));
+  if (sourcePaths.length >= 0) return buildScriptLedgerDocumentFromFiles(sources, options).ledger;
+
+  /* c8 ignore start -- retained parser adapter code below is removed in a follow-up extraction */
   const generatedAt = options.generatedAt ?? new Date().toISOString();
   const checks: ScriptLedgerCheck[] = [];
   const scripts: ScriptLedger["scripts"] = [];
@@ -14772,6 +14786,7 @@ export async function buildScriptLedger(
     continuity,
     checks: checks.sort(compareScriptLedgerChecks),
   };
+  /* c8 ignore stop */
 }
 
 export async function syncScriptLedger(
