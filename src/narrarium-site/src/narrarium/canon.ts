@@ -81,6 +81,18 @@ export interface CreatedFile {
   slug: string;
 }
 
+export function buildCanonEntityDocument(input: CreateEntityInput): CreatedFile & { content: string } {
+  const slug = slugify(input.label);
+  if (!slug) throw new Error("A valid name or title is required.");
+  const path = `${ENTITY_DIRECTORY[input.kind]}/${slug}.md`;
+  const id = `${input.kind}:${slug}`;
+  const nameField = input.kind === "secret" || input.kind === "timeline-event" ? { title: input.label } : { name: input.label };
+  const validatedExtra = validateCanonExtraFrontmatter(input.kind, input.extraFrontmatter);
+  const frontmatter = clean({ ...validatedExtra, type: input.kind, id, canon: "draft", ...nameField });
+  const body = input.body?.trim() ? `${input.body.trim()}\n` : input.summary?.trim() ? `${input.summary.trim()}\n` : defaultEntityBody(input.kind, input.label);
+  return { path, id, slug, content: renderMarkdown(frontmatter, body) };
+}
+
 export async function createCanonEntity(
   token: string,
   owner: string,
@@ -88,35 +100,9 @@ export async function createCanonEntity(
   branch: string,
   input: CreateEntityInput,
 ): Promise<CreatedFile> {
-  const slug = slugify(input.label);
-  if (!slug) throw new Error("A valid name or title is required.");
-
-  const directory = ENTITY_DIRECTORY[input.kind];
-  const path = `${directory}/${slug}.md`;
-  const id = `${input.kind}:${slug}`;
-
-  const nameField =
-    input.kind === "secret" || input.kind === "timeline-event"
-      ? { title: input.label }
-      : { name: input.label };
-
-  const validatedExtra = validateCanonExtraFrontmatter(input.kind, input.extraFrontmatter);
-  const frontmatter = clean({
-    ...validatedExtra,
-    type: input.kind,
-    id,
-    canon: "draft",
-    ...nameField,
-  });
-
-  const body = input.body?.trim()
-    ? `${input.body.trim()}\n`
-    : input.summary?.trim()
-      ? `${input.summary.trim()}\n`
-      : defaultEntityBody(input.kind, input.label);
-
-  await createFile(token, owner, repo, branch, path, renderMarkdown(frontmatter, body), `Add ${input.kind} ${input.label}`);
-  return { path, id, slug };
+  const document = buildCanonEntityDocument(input);
+  await createFile(token, owner, repo, branch, document.path, document.content, `Add ${input.kind} ${input.label}`);
+  return { path: document.path, id: document.id, slug: document.slug };
 }
 
 function defaultEntityBody(kind: EntityKind, label: string): string {

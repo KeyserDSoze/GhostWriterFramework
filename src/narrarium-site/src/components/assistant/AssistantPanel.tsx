@@ -79,6 +79,7 @@ import {
   compareBranches,
   createBranchFromBase,
   deleteFile,
+  isGitHubFileNotFoundError,
   listBranchCommits,
   loadFileContent,
   readFileWithSha,
@@ -93,6 +94,7 @@ import { classifyConfirmationRouted, completeTextRouted, sttMode } from "@/assis
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
 import { commitAndPushTextFileMutation, RepositoryConflictError, resolveRepositoryHeadForMutation, sha256Text } from "@/repository/safeRepositoryMutation";
 import { currentRevisionToken, fileRevisionMatches, fileUpdateCounts, markFileUpdatesApplied, markFileUpdatesFailed, markFileUpdatesUndone, pendingFileUpdates } from "@/assistant/multiFileOperation";
+import { buildCanonEntityDocument } from "@/narrarium/canon";
 
 ensureBuiltinCopilotToolsRegistered();
 
@@ -1492,11 +1494,18 @@ export function AssistantPanel() {
     const paths = Object.keys(action.sourceRevisions);
     if (paths.length) {
       const revisions: Record<string, string | null> = {};
-      await Promise.all(paths.map(async (path) => {
-        const current = await readFileWithSha(token, book.owner, book.repo, branch, path).catch(() => null);
-        const contentHash = current ? await sha256Text(current.content) : null;
-        revisions[path] = currentRevisionToken(action.sourceRevisions[path], current?.sha ?? null, contentHash);
-      }));
+      try {
+        await Promise.all(paths.map(async (path) => {
+          const current = await readFileWithSha(token, book.owner, book.repo, branch, path).catch((error) => {
+            if (isGitHubFileNotFoundError(error)) return null;
+            throw error;
+          });
+          const contentHash = current ? await sha256Text(current.content) : null;
+          revisions[path] = currentRevisionToken(action.sourceRevisions[path], current?.sha ?? null, contentHash);
+        }));
+      } catch {
+        return fail("source-unavailable");
+      }
       currentRevision = sourceRevisionFromFiles(revisions);
     } else {
       const revisionBranch = action.kind === "switch-book-branch" && action.createIfMissing ? action.baseBranch ?? "main" : branch;
@@ -1664,6 +1673,30 @@ export function AssistantPanel() {
       window.location.reload();
     } catch (err) {
       toast({ title: t("assistant.toastDeleteFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmCreateFromResearch(messageIndex: number) {
+    const message = currentSession?.messages[messageIndex];
+    if (!message?.action || message.action.kind !== "confirm-create-from-research") return;
+    const action = message.action;
+    if (!requireAssistantActionEnabled(action)) return;
+    const book = settings.books.find((entry) => entry.id === action.bookId);
+    const token = book ? resolveBookToken(book, settings) : "";
+    if (!book || !token || !await validatePersistedMutation(action, book, token)) return;
+    setBusy(true);
+    try {
+      const document = buildCanonEntityDocument({ kind: action.entityKind, label: action.label, body: action.body, extraFrontmatter: action.extraFrontmatter });
+      if (document.path !== action.destinationPath) throw new Error("The generated entity destination changed before confirmation.");
+      const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch });
+      await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations: [{ path: document.path, content: document.content, expectedCurrentHash: null }], message: `Add ${action.entityKind} ${action.label} from ${action.researchPath}` });
+      useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("assistant.createFromResearchApplied")}` });
+      clearBook(book.id);
+      toast({ title: t("assistant.toastCreatedFromResearch", { title: action.label }) });
+    } catch (err) {
+      toast({ title: t("assistant.toastCreateFromResearchFailed"), description: String(err), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -1945,6 +1978,7 @@ export function AssistantPanel() {
             {message.action?.kind === "navigate" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" disabled={!isAssistantActionEnabled(message.action)} onClick={() => void executeNavigationAction(message.action!)}><BookOpen className="mr-1.5 h-3.5 w-3.5" />{message.action.label ?? t("assistant.openLocation")}</Button></div>}
             {message.action?.kind === "read-aloud" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" onClick={() => void replayReadAloud(index)} disabled={!isAssistantActionEnabled(message.action)}><Play className="mr-1.5 h-3.5 w-3.5" />{t("assistant.playAloud")}</Button></div>}
             {message.action?.kind === "confirm-delete" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="destructive">{t("assistant.destructive")}</Badge><Button size="sm" variant="destructive" onClick={() => void confirmDeleteAction(index)} disabled={busy || !isAssistantActionEnabled(message.action)}><Trash2 className="mr-1.5 h-3.5 w-3.5" />{t("assistant.confirmDelete")}</Button><Button size="sm" variant="outline" onClick={() => useAssistantStore.getState().updateMessage(message.id, { action: undefined })} disabled={busy}>{t("assistant.cancel")}</Button></div>}
+            {message.action?.kind === "confirm-create-from-research" && <div className="mt-2 flex flex-wrap items-center gap-2"><Button size="sm" onClick={() => void confirmCreateFromResearch(index)} disabled={busy || !isAssistantActionEnabled(message.action)}><Sparkles className="mr-1.5 h-3.5 w-3.5" />{t("assistant.confirmCreate")}</Button><Button size="sm" variant="outline" onClick={() => useAssistantStore.getState().updateMessage(message.id, { action: undefined })} disabled={busy}>{t("assistant.cancel")}</Button></div>}
           </div>
         </div>
       ))}

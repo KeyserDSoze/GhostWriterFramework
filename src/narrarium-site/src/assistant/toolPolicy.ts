@@ -43,6 +43,8 @@ export function canonicalAssistantActionToolIds(action: AssistantAction): string
       if (action.target === "paragraph") return ["delete-current-paragraph"];
       if (action.target === "reader-evaluation") return ["delete-reader-evaluation"];
       return action.target === "entity" ? ["delete-current-entity"] : [];
+    case "confirm-create-from-research":
+      return ["create-from-research"];
     case "navigate":
       if (typeof action.to !== "string") return [];
       if (/\/reader\/evaluations(?:[/?#]|$)/.test(action.to)) return ["open-reader-evaluations"];

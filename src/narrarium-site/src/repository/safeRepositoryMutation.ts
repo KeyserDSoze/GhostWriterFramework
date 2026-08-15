@@ -13,7 +13,7 @@ import {
   type LocalTextFileMutation,
 } from "@/repository/localRepository";
 import { pushLocalCommits, RemoteHeadMismatchError } from "@/repository/repositoryService";
-import { loadRemoteFileContentAtRef } from "@/github/githubClient";
+import { isGitHubFileNotFoundError, loadRemoteFileContentAtRef } from "@/github/githubClient";
 
 export type RepositoryTextMutation = LocalTextFileMutation;
 
@@ -74,7 +74,10 @@ async function mutateRemoteTextFiles(input: {
 
   for (const mutation of input.mutations) {
     if (mutation.expectedCurrentHash === undefined) continue;
-    const current = await loadRemoteFileContentAtRef(input.token, input.book.owner, input.book.repo, mutation.path, input.expectedRemoteHeadSha).catch(() => null);
+    const current = await loadRemoteFileContentAtRef(input.token, input.book.owner, input.book.repo, mutation.path, input.expectedRemoteHeadSha).catch((error) => {
+      if (isGitHubFileNotFoundError(error)) return null;
+      throw error;
+    });
     const actual = current ? await sha256Text(current.content) : null;
     if (actual !== mutation.expectedCurrentHash) throw new RepositoryConflictError(`File changed since it was read: ${mutation.path}`, mutation.path);
   }

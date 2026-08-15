@@ -41,6 +41,12 @@ describe("Copilot critical paths", () => {
     };
     expect(assistantActionToolId(action)).toBe("rewrite-current-paragraph");
     expect(validateAssistantAction({ action, owner: "owner", repo: "repo", branch: "draft", expectedToolId: "rewrite-current-paragraph", toolEnabled: true, sourceRevision: sourceRevisionFromFiles(revisions) })).toBeNull();
+    expect(assistantActionToolId({ ...action, kind: "confirm-create-from-research", researchPath: "research/topic.md", entityKind: "character", label: "Ada", body: "# Ada", extraFrontmatter: {}, destinationPath: "characters/ada.md" })).toBe("create-from-research");
+    const researchRevisions = { "research/topic.md": "research-sha", "characters/ada.md": null };
+    const researchAction = { ...action, kind: "confirm-create-from-research" as const, researchPath: "research/topic.md", entityKind: "character" as const, label: "Ada", body: "# Ada", extraFrontmatter: {}, destinationPath: "characters/ada.md", toolId: "create-from-research", sourceRevision: sourceRevisionFromFiles(researchRevisions), sourceRevisions: researchRevisions };
+    expect(validateAssistantAction({ action: researchAction, owner: "owner", repo: "repo", branch: "draft", expectedToolId: "create-from-research", toolEnabled: true, sourceRevision: sourceRevisionFromFiles(researchRevisions) })).toBeNull();
+    expect(validateAssistantAction({ action: { ...researchAction, sourceRevisions: { "unrelated.md": "sha" } }, owner: "owner", repo: "repo", branch: "draft", expectedToolId: "create-from-research", toolEnabled: true, sourceRevision: researchAction.sourceRevision })).toBe("invalid-action");
+    expect(validateAssistantAction({ action: researchAction, owner: "owner", repo: "repo", branch: "draft", expectedToolId: "create-from-research", toolEnabled: true, sourceRevision: sourceRevisionFromFiles({ ...researchRevisions, "research/topic.md": "changed" }) })).toBe("source-revision-mismatch");
     expect(policyTargetEnabled(quickActionToolId("search"), () => false)).toBe(false);
   });
 

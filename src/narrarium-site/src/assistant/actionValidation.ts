@@ -47,6 +47,12 @@ export function isValidAssistantActionShape(action: AssistantAction): boolean {
   if (action.kind === "apply-file-updates" || action.kind === "undo-file-updates") return validUpdates(action.updates);
   if (action.kind === "switch-book-branch") return typeof action.branchName === "string" && /^[A-Za-z0-9._/-]+$/.test(action.branchName) && !action.branchName.includes("..");
   if (action.kind === "confirm-delete") return safePath(action.path) && ["note", "paragraph", "entity", "reader-evaluation"].includes(action.target);
+  if (action.kind === "confirm-create-from-research") {
+    const revisions = action.sourceRevisions;
+    return safePath(action.researchPath) && safePath(action.destinationPath) && action.researchPath !== action.destinationPath
+      && typeof action.label === "string" && action.label.trim().length > 0 && typeof action.body === "string" && action.body.trim().length > 0
+      && Boolean(revisions && Object.keys(revisions).length === 2 && typeof revisions[action.researchPath] === "string" && revisions[action.destinationPath] === null);
+  }
   if (action.kind === "navigate") return typeof action.to === "string" && action.to.startsWith("/app/") && !action.to.includes("\\");
   if (action.kind === "read-aloud") return Array.isArray(action.paths) && action.paths.length > 0 && action.paths.every(safePath);
   return false;

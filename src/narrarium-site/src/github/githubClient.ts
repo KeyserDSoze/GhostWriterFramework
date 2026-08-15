@@ -583,6 +583,10 @@ export interface FileContent {
   sha: string;
 }
 
+export function isGitHubFileNotFoundError(error: unknown): boolean {
+  return /GitHub content load .*: 404\b/.test(error instanceof Error ? error.message : String(error));
+}
+
 function isShaUpdateError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return /sha/i.test(message) && /(wasn'?t supplied|does not match|required)/i.test(message);

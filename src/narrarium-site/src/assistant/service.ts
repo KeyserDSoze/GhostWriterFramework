@@ -7,6 +7,7 @@ import {
   listBranchCommits,
   listBranches,
   listOpenPullRequests,
+  isGitHubFileNotFoundError,
   loadFileContent,
   readFileWithSha,
   slugToTitle,
@@ -40,8 +41,12 @@ import {
   createCanonEntity,
   createChapter,
   createParagraphDocument,
+  ENTITY_DIRECTORY,
+  slugify,
   type EntityKind,
 } from "@/narrarium/canon";
+import { generateEntityFromResearchProposal } from "@/research/createFromResearch";
+import { isCreateFromResearchPrompt, resolveResearchTarget } from "@/assistant/researchTarget";
 import {
   createChapterDraftArtifacts,
   buildParagraphScriptArtifact,
@@ -121,6 +126,7 @@ const EXECUTABLE_HANDLER_IDS = new Set([
   "get-location", "get-faction", "get-item", "get-secret", "get-timeline-event", "get-body", "get-frontmatter",
   "delete-current-note", "delete-current-paragraph", "delete-current-entity", "delete-reader-evaluation",
   "deep-research",
+  "create-from-research",
 ]);
 
 export async function runAssistantPrompt(input: {
@@ -174,6 +180,7 @@ export async function runAssistantPrompt(input: {
   if (isCapabilityQuestion(prompt)) {
     const capabilities = new Set(EXECUTABLE_HANDLER_IDS);
     if (!book || !token || !context.structure || !context.branchReady || context.branch !== branch || !resolveTaskCandidates(settings, "deep-research").some((candidate) => candidate.integration && candidate.model)) capabilities.delete("deep-research");
+    if (!book || !token || !context.structure?.researchFiles.length || !context.branchReady || context.branch !== branch || !resolveTaskCandidates(settings, "create-from-research").some((candidate) => candidate.integration && candidate.model)) capabilities.delete("create-from-research");
     return buildCapabilitiesMessage(prompt, settings, capabilities);
   }
 
@@ -251,9 +258,17 @@ export async function runAssistantPrompt(input: {
     "delete-current-entity": () => requestDeleteEntity({ ...promptInput, book, branch, token }),
     "delete-reader-evaluation": () => requestDeleteReaderEvaluation({ ...promptInput, book, branch, token }),
     "deep-research": () => runDeepResearchFromPrompt({ ...promptInput, book, branch, token }),
+    "create-from-research": () => proposeEntityFromResearch({ ...promptInput, book, branch, token }),
   } as const;
 
   const availableHandlerIds = new Set(Object.keys(handlers));
+  if (isCreateFromResearchPrompt(prompt)) {
+    const available = context.structure.researchFiles.length > 0 && resolveTaskCandidates(settings, "create-from-research").some((candidate) => candidate.integration && candidate.model);
+    if (!available || !isCopilotHandlerEnabled(settings, "create-from-research")) return disabledCopilotToolMessage(settings, "create-from-research");
+    const intent = handlerMutationIntent(prompt, "create-from-research");
+    if (intent === "ambiguous") return ambiguousMutationMessage(settings, "create-from-research");
+    if (intent === "positive") return handlers["create-from-research"]();
+  }
   const match = chooseToolMatch({ prompt, lowered, settings, spokenMode }, availableHandlerIds);
   if (match && !match.enabled) return disabledCopilotToolMessage(settings, match.toolId);
   if (match?.mutationIntent === "ambiguous") return ambiguousMutationMessage(settings, match.toolId);
@@ -1263,6 +1278,32 @@ async function runDeepResearchFromPrompt(input: PromptInput & { book: BookEntry;
   const result = await executeDeepResearchFromCopilot({ ...input, structureLanguage: input.context.structure?.language });
   if (!result) return makeAssistantMessage("assistant", "Tell me what topic to research.");
   return makeAssistantMessage("assistant", `Saved deep research **${result.title}** to \`${result.path}\` using ${result.providers.join(", ") || "the configured research providers"}.`);
+}
+
+async function proposeEntityFromResearch(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const structure = input.context.structure;
+  const italian = input.settings.ui.language === "it";
+  if (!structure?.researchFiles.length) return makeAssistantMessage("assistant", italian ? "Non sono disponibili ricerche salvate in questo libro." : "No saved research documents are available in this book.");
+  const entityKind = detectEntityKind(input.prompt);
+  if (!entityKind) return makeAssistantMessage("assistant", italian ? "Scegli un tipo di entità: personaggio, luogo, fazione, oggetto, segreto o evento timeline." : "Choose an entity type: character, location, faction, item, secret, or timeline event.");
+  const resolved = resolveResearchTarget(input.prompt, structure.researchFiles, input.context.route.kind === "research-detail" ? input.context.route.researchSlug : undefined);
+  if (resolved.status !== "resolved") {
+    if (resolved.status === "ambiguous") return makeAssistantMessage("assistant", italian ? `La ricerca richiesta è ambigua: ${resolved.matches.map((file) => file.slug).join(", ")}.` : `The research target is ambiguous: ${resolved.matches.map((file) => file.slug).join(", ")}.`);
+    return makeAssistantMessage("assistant", italian ? `Non riesco a risolvere una singola ricerca. Disponibili: ${structure.researchFiles.slice(0, 8).map((file) => file.slug).join(", ")}.` : `I could not resolve one research document. Available: ${structure.researchFiles.slice(0, 8).map((file) => file.slug).join(", ")}.`);
+  }
+  const source = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, resolved.file.path);
+  const proposal = await generateEntityFromResearchProposal({ settings: input.settings, book: input.book, branch: input.branch, token: input.token, researchMarkdown: source.content, entityKind, language: structure.language ?? input.settings.ui.language, signal: input.signal });
+  const destinationPath = `${ENTITY_DIRECTORY[entityKind]}/${slugify(proposal.label)}.md`;
+  const destination = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, destinationPath).catch((error) => {
+    if (isGitHubFileNotFoundError(error)) return null;
+    throw error;
+  });
+  if (destination) return makeAssistantMessage("assistant", italian ? `Esiste già un file in \`${destinationPath}\`; nessuna modifica è stata eseguita.` : `A file already exists at \`${destinationPath}\`; no change was made.`);
+  const sourceRevisions = { [resolved.file.path]: source.sha, [destinationPath]: null };
+  const provenance: AssistantActionProvenance = { toolId: "create-from-research", owner: input.book.owner, repo: input.book.repo, branch: input.branch, sourceRevision: sourceRevisionFromFiles(sourceRevisions), sourceRevisions, generatedAt: new Date().toISOString() };
+  const frontmatterPreview = Object.keys(proposal.extraFrontmatter).length ? `\n\n**Frontmatter**\n\n\`\`\`json\n${JSON.stringify(proposal.extraFrontmatter, null, 2)}\n\`\`\`` : "";
+  const intro = italian ? `Proposta ${entityKind} **${proposal.label}** da \`${resolved.file.path}\`. Controlla il contenuto e conferma per creare \`${destinationPath}\`.` : `Proposed ${entityKind} **${proposal.label}** from \`${resolved.file.path}\`. Review the content and confirm to create \`${destinationPath}\`.`;
+  return { id: crypto.randomUUID(), role: "assistant", text: `${intro}\n\n${proposal.body}${frontmatterPreview}`, action: { ...provenance, kind: "confirm-create-from-research", bookId: input.book.id, researchPath: resolved.file.path, entityKind, label: proposal.label, body: proposal.body, extraFrontmatter: proposal.extraFrontmatter, destinationPath } };
 }
 
 async function writeResume(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {

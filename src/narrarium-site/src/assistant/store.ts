@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { EntityKind } from "@/narrarium/canon";
 
 export interface AssistantAttachment {
   id: string;
@@ -74,6 +75,16 @@ export type AssistantAction = (
       path: string;
       title: string;
       chapterSlug?: string;
+    }
+  | {
+      kind: "confirm-create-from-research";
+      bookId: string;
+      researchPath: string;
+      entityKind: EntityKind;
+      label: string;
+      body: string;
+      extraFrontmatter: Record<string, unknown>;
+      destinationPath: string;
     }
 ) & Partial<AssistantActionProvenance>;
 

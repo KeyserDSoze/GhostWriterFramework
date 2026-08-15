@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.28",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Confirmed creation from research",
+      "summary": "Copilot can now turn one saved research document into a reviewed canon proposal and creates it only after an explicit, conflict-safe confirmation.",
+      "changes": [
+        "Connected create-from-research requests to their dedicated AI task route and resolved explicit paths, exact titles, or the current research page without guessing through ambiguity.",
+        "Generated a complete character, location, faction, item, secret, or timeline-event proposal while preserving allowed source links in canon frontmatter.",
+        "Added a visible confirmation step that records the repository, branch, research revision, and unused destination before any write.",
+        "Revalidated research and destination revisions at confirmation time and created the entity through one optimistic repository mutation that refuses stale or conflicting changes."
+      ]
+    },
+    "it": {
+      "title": "Creazione confermata dalla ricerca",
+      "summary": "Il Copilota trasforma ora una ricerca salvata in una proposta canone revisionabile e la crea solo dopo una conferma esplicita e protetta dai conflitti.",
+      "changes": [
+        "Collegate le richieste crea-dalla-ricerca alla route AI dedicata, risolvendo path espliciti, titoli esatti o la pagina ricerca corrente senza indovinare nei casi ambigui.",
+        "Generata una proposta completa per personaggio, luogo, fazione, oggetto, segreto o evento timeline, preservando nel frontmatter i link sorgente consentiti.",
+        "Aggiunto un passaggio di conferma visibile che registra repository, branch, revisione della ricerca e destinazione libera prima di ogni scrittura.",
+        "Rivalidate ricerca e destinazione al momento della conferma e creata l'entità con una singola mutazione ottimistica che rifiuta modifiche stale o conflittuali."
+      ]
+    }
+  },
+  {
     "version": "0.76.27",
     "date": "2026-08-15",
     "en": {

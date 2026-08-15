@@ -38,6 +38,12 @@ export interface CreateFromResearchResult {
   suggestedName: string;
 }
 
+export interface CreateFromResearchProposal {
+  label: string;
+  body: string;
+  extraFrontmatter: Record<string, unknown>;
+}
+
 /** Default system prompts per entity kind. */
 export const DEFAULT_CREATE_PROMPTS: Record<EntityKind, string> = {
   character: [
@@ -108,7 +114,7 @@ function str(value: unknown): string {
   return "";
 }
 
-export async function createEntityFromResearch(input: CreateFromResearchInput): Promise<CreateFromResearchResult> {
+export async function generateEntityFromResearchProposal(input: CreateFromResearchInput): Promise<CreateFromResearchProposal> {
   const systemPrompt = input.customPrompt ?? DEFAULT_CREATE_PROMPTS[input.entityKind];
 
   const messages = [
@@ -142,42 +148,56 @@ export async function createEntityFromResearch(input: CreateFromResearchInput): 
     });
   }
 
+  return parseEntityFromResearchResponse(input.entityKind, raw, input.researchMarkdown);
+}
+
+export function parseEntityFromResearchResponse(entityKind: EntityKind, raw: string, researchMarkdown: string): CreateFromResearchProposal {
   const parsed = extractJson(raw);
 
   const name = str(parsed.name ?? parsed.title);
   if (!name) throw new Error("LLM did not return a name or title for the entity.");
 
-  const body = str(parsed.body) || `# ${name}\n\nGenerated from research.\n`;
+  const body = str(parsed.body);
+  if (!body) throw new Error("LLM did not return a non-empty body for the entity.");
 
   // Build extra frontmatter fields per kind
   const extra: Record<string, unknown> = {};
-  if (input.entityKind === "character") {
+  if (entityKind === "character") {
     if (parsed.role_tier) extra.role_tier = str(parsed.role_tier);
     if (parsed.story_role) extra.story_role = str(parsed.story_role);
     if (parsed.function_in_book) extra.function_in_book = str(parsed.function_in_book);
-  } else if (input.entityKind === "location") {
+  } else if (entityKind === "location") {
     if (parsed.kind) extra.location_kind = str(parsed.kind);
     if (parsed.region) extra.region = str(parsed.region);
     if (parsed.atmosphere) extra.atmosphere = str(parsed.atmosphere);
-  } else if (input.entityKind === "faction") {
+  } else if (entityKind === "faction") {
     if (parsed.kind) extra.faction_kind = str(parsed.kind);
     if (parsed.mission) extra.mission = str(parsed.mission);
     if (parsed.ideology) extra.ideology = str(parsed.ideology);
-  } else if (input.entityKind === "item") {
+  } else if (entityKind === "item") {
     if (parsed.kind) extra.item_kind = str(parsed.kind);
     if (parsed.purpose) extra.purpose = str(parsed.purpose);
     if (parsed.significance) extra.significance = str(parsed.significance);
-  } else if (input.entityKind === "timeline-event") {
+  } else if (entityKind === "secret") {
+    if (parsed.stakes) extra.stakes = str(parsed.stakes);
+  } else if (entityKind === "timeline-event") {
     if (parsed.date) extra.date = str(parsed.date);
     if (parsed.significance) extra.significance = str(parsed.significance);
   }
 
+  const sourceUrls = [...researchMarkdown.matchAll(/https?:\/\/[^\s)\]>]+/g)].map((match) => match[0]);
+  if (sourceUrls.length) extra.sources = [...new Set(sourceUrls)];
+  return { label: name, body, extraFrontmatter: extra };
+}
+
+export async function createEntityFromResearch(input: CreateFromResearchInput): Promise<CreateFromResearchResult> {
+  const proposal = await generateEntityFromResearchProposal(input);
   const created = await createCanonEntity(input.token, input.book.owner, input.book.repo, input.branch, {
     kind: input.entityKind,
-    label: name,
-    body,
-    extraFrontmatter: extra,
+    label: proposal.label,
+    body: proposal.body,
+    extraFrontmatter: proposal.extraFrontmatter,
   });
 
-  return { ...created, generatedBody: body, suggestedName: name };
+  return { ...created, generatedBody: proposal.body, suggestedName: proposal.label };
 }
