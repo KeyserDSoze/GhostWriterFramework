@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.21",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Resumable atomic multi-file changes",
+      "summary": "Copilot multi-file proposals can now be applied in subsets, safely resumed, and undone without overwriting intervening edits or losing remaining proposals.",
+      "changes": [
+        "Applied selected files through one atomic IndexedDB transaction or one remote Git Trees commit instead of sequential writes.",
+        "Persisted per-file pending, applied, and failed state together with previous content and resulting content hashes.",
+        "Preserved unapplied proposals, reported exact conflict paths, and allowed failed or pending files to be retried independently.",
+        "Required branch and applied-content hash matches for undo, with atomic local rollback when a push fails and remote-content verification when a ref already advanced."
+      ]
+    },
+    "it": {
+      "title": "Modifiche multi-file atomiche e riprendibili",
+      "summary": "Le proposte multi-file del Copilota possono ora essere applicate per sottoinsiemi, riprese in sicurezza e annullate senza sovrascrivere modifiche successive o perdere le proposte residue.",
+      "changes": [
+        "Applicati i file selezionati tramite un'unica transazione IndexedDB atomica o un singolo commit remoto Git Trees, invece di scritture sequenziali.",
+        "Persistito per ogni file lo stato pending, applied o failed insieme al contenuto precedente e all'hash del contenuto risultante.",
+        "Conservate le proposte non applicate, riportati i path esatti in conflitto e consentito il retry indipendente dei file falliti o pending.",
+        "Richiesta corrispondenza di branch e hash applicato per l'undo, con rollback locale atomico in caso di push fallito e verifica del contenuto remoto quando il ref è già avanzato."
+      ]
+    }
+  },
+  {
     "version": "0.76.20",
     "date": "2026-08-15",
     "en": {

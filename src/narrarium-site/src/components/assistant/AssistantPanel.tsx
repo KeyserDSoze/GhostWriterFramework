@@ -78,14 +78,12 @@ import { resolveBookExportSettings, resolveBookToken } from "@/types/settings";
 import {
   compareBranches,
   createBranchFromBase,
-  createFile,
   deleteFile,
   listBranchCommits,
   loadFileContent,
   readFileWithSha,
   reorderParagraphsInChapter,
   revertFileToRef,
-  updateFile,
   type BranchDiffFile,
 } from "@/github/githubClient";
 import { uploadDriveFile } from "@/drive/exportDriveClient";
@@ -93,6 +91,8 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { speakText, splitIntoStrofe, transcribeAudio, type SpeechController } from "@/assistant/speech";
 import { classifyConfirmationRouted, completeTextRouted, sttMode } from "@/assistant/router";
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
+import { commitAndPushTextFileMutation, RepositoryConflictError, resolveRepositoryHeadForMutation, sha256Text } from "@/repository/safeRepositoryMutation";
+import { currentRevisionToken, fileRevisionMatches, fileUpdateCounts, markFileUpdatesApplied, markFileUpdatesFailed, markFileUpdatesUndone, pendingFileUpdates } from "@/assistant/multiFileOperation";
 
 ensureBuiltinCopilotToolsRegistered();
 
@@ -1475,6 +1475,7 @@ export function AssistantPanel() {
       sourceRevision: action.sourceRevision,
     });
     if (scopeFailure) return fail(scopeFailure);
+    if (action.kind === "apply-file-updates" || action.kind === "undo-file-updates") return true;
 
     let currentRevision: string;
     const paths = Object.keys(action.sourceRevisions);
@@ -1482,7 +1483,8 @@ export function AssistantPanel() {
       const revisions: Record<string, string | null> = {};
       await Promise.all(paths.map(async (path) => {
         const current = await readFileWithSha(token, book.owner, book.repo, branch, path).catch(() => null);
-        revisions[path] = current?.sha ?? null;
+        const contentHash = current ? await sha256Text(current.content) : null;
+        revisions[path] = currentRevisionToken(action.sourceRevisions[path], current?.sha ?? null, contentHash);
       }));
       currentRevision = sourceRevisionFromFiles(revisions);
     } else {
@@ -1543,42 +1545,51 @@ export function AssistantPanel() {
     if (!message?.action || message.action.kind !== "apply-file-updates") return;
     const action = message.action;
     if (!requireAssistantActionEnabled(action)) return;
-    const updates = selectedPaths?.length
-      ? action.updates.filter((update) => selectedPaths.includes(update.path))
-      : action.updates;
+    const updates = pendingFileUpdates(action.updates, selectedPaths);
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token || updates.length === 0) return;
     if (!await validatePersistedMutation(action, book, token)) return;
     setBusy(true);
     try {
-      const undoUpdates: AssistantFileUpdate[] = [];
-      const appliedRevisions: Record<string, string | null> = {};
-      for (const update of updates) {
-        const existing = await readFileWithSha(token, book.owner, book.repo, branch, update.path).catch(() => null);
-        if ((existing?.sha ?? null) !== action.sourceRevisions?.[update.path]) throw new Error(`Source changed before applying ${update.path}.`);
-        undoUpdates.push({ ...update, previousContent: existing?.content ?? null });
-        appliedRevisions[update.path] = existing
-          ? await updateFile(token, book.owner, book.repo, branch, update.path, existing.sha, update.content, `Update ${update.path}`)
-          : await createFile(token, book.owner, book.repo, branch, update.path, update.content, `Add ${update.path}`);
-      }
+      const currentFiles = await Promise.all(updates.map((update) => readFileWithSha(token, book.owner, book.repo, branch, update.path).catch(() => null)));
+      const results: Record<string, { previousContent: string | null; appliedHash: string }> = {};
+      const mutations = await Promise.all(updates.map(async (update, index) => {
+        const current = currentFiles[index];
+        const currentHash = current ? await sha256Text(current.content) : null;
+        if (!fileRevisionMatches(action.sourceRevisions?.[update.path], current?.sha ?? null, currentHash)) throw new RepositoryConflictError(`Source changed before applying ${update.path}.`, update.path);
+        results[update.path] = { previousContent: current?.content ?? null, appliedHash: await sha256Text(update.content) };
+        return { path: update.path, content: update.content, expectedCurrentHash: currentHash };
+      }));
+      const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch });
+      await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: `Apply ${updates.length} Copilot file update${updates.length === 1 ? "" : "s"}` });
+      const nextUpdates = markFileUpdatesApplied(action.updates, results);
+      const nextRevisions = { ...action.sourceRevisions };
+      for (const update of updates) nextRevisions[update.path] = results[update.path].appliedHash;
+      const allApplied = nextUpdates.every((update) => update.status === "applied");
       useAssistantStore.getState().updateMessage(message.id, {
         text: `${message.text}\n\n${t("assistant.appliedFileChanges", { count: updates.length })}`,
         action: {
-          kind: "undo-file-updates",
+          kind: allApplied ? "undo-file-updates" : "apply-file-updates",
           bookId: action.bookId,
-          updates: undoUpdates,
+          updates: nextUpdates,
           toolId: action.toolId,
           owner: action.owner,
           repo: action.repo,
           branch: action.branch,
-          sourceRevision: sourceRevisionFromFiles(appliedRevisions),
-          sourceRevisions: appliedRevisions,
+          sourceRevision: sourceRevisionFromFiles(nextRevisions),
+          sourceRevisions: nextRevisions,
           generatedAt: new Date().toISOString(),
         },
       });
       toast({ title: t("assistant.toastFileUpdatesApplied") });
     } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      const conflictPath = err instanceof RepositoryConflictError ? err.path : undefined;
+      const failedPaths = conflictPath ? [conflictPath] : updates.map((update) => update.path);
+      const nextUpdates = markFileUpdatesFailed(action.updates, failedPaths, error);
+      const counts = fileUpdateCounts(nextUpdates);
+      useAssistantStore.getState().updateMessage(message.id, { action: { ...action, updates: nextUpdates }, text: `${message.text}\n\nCompleted: ${counts.applied}; pending: ${counts.pending}; failed: ${counts.failed}.` });
       toast({ title: t("assistant.toastFileUpdatesFailed"), description: String(err), variant: "destructive" });
     } finally {
       setBusy(false);
@@ -1649,7 +1660,7 @@ export function AssistantPanel() {
 
   async function undoFileUpdates(messageIndex: number) {
     const message = currentSession?.messages[messageIndex];
-    if (!message?.action || message.action.kind !== "undo-file-updates") return;
+    if (!message?.action || (message.action.kind !== "undo-file-updates" && message.action.kind !== "apply-file-updates")) return;
     const action = message.action;
     if (!requireAssistantActionEnabled(action)) return;
     const book = settings.books.find((entry) => entry.id === action.bookId);
@@ -1658,18 +1669,20 @@ export function AssistantPanel() {
     if (!await validatePersistedMutation(action, book, token)) return;
     setBusy(true);
     try {
-      for (const update of action.updates) {
-        const current = await readFileWithSha(token, book.owner, book.repo, branch, update.path).catch(() => null);
-        if ((current?.sha ?? null) !== action.sourceRevisions?.[update.path]) throw new Error(`Source changed before undoing ${update.path}.`);
-        if (update.previousContent == null) {
-          if (current) await deleteFile(token, book.owner, book.repo, branch, update.path, current.sha, `Undo add ${update.path}`);
-        } else if (current) {
-          await updateFile(token, book.owner, book.repo, branch, update.path, current.sha, update.previousContent, `Undo update ${update.path}`);
-        } else {
-          await createFile(token, book.owner, book.repo, branch, update.path, update.previousContent, `Undo delete ${update.path}`);
-        }
-      }
-      useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("assistant.undoApplied")}` });
+      const applied = action.updates.filter((update) => update.status === "applied" || update.appliedHash);
+      if (!applied.length) throw new Error("No applied file updates are available to undo.");
+      const currentFiles = await Promise.all(applied.map((update) => readFileWithSha(token, book.owner, book.repo, branch, update.path).catch(() => null)));
+      const mutations = await Promise.all(applied.map(async (update, index) => {
+        const current = currentFiles[index];
+        if (!update.appliedHash || !current || await sha256Text(current.content) !== update.appliedHash) throw new Error(`Source changed before undoing ${update.path}.`);
+        return { path: update.path, content: update.previousContent ?? null, expectedCurrentHash: update.appliedHash };
+      }));
+      const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch });
+      await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: `Undo ${applied.length} Copilot file update${applied.length === 1 ? "" : "s"}` });
+      const nextUpdates = markFileUpdatesUndone(action.updates, applied.map((update) => update.path));
+      const nextRevisions = { ...action.sourceRevisions };
+      await Promise.all(applied.map(async (update) => { nextRevisions[update.path] = update.previousContent == null ? null : await sha256Text(update.previousContent); }));
+      useAssistantStore.getState().updateMessage(message.id, { action: { ...action, kind: "apply-file-updates", updates: nextUpdates, sourceRevision: sourceRevisionFromFiles(nextRevisions), sourceRevisions: nextRevisions, generatedAt: new Date().toISOString() }, text: `${message.text}\n\n${t("assistant.undoApplied")}` });
       toast({ title: t("assistant.toastUndoApplied") });
     } catch (err) {
       toast({ title: t("assistant.toastUndoFailed"), description: String(err), variant: "destructive" });
@@ -1892,14 +1905,14 @@ export function AssistantPanel() {
                     const showDiff = diffMode[diffKey];
                     return (
                       <details key={update.path} className="rounded border bg-background p-2">
-                        <summary className="cursor-pointer font-mono">{update.path}</summary>
+                        <summary className="cursor-pointer font-mono">{update.path} · {update.status ?? "pending"}</summary>
                         {update.reason && <p className="mt-2 text-muted-foreground">{update.reason}</p>}
                         <div className="mt-2 flex flex-wrap gap-2">
                           <Button size="sm" variant="outline" onClick={() => void toggleDiff(message.id, update)} disabled={loadingDiffPath === diffKey}>
                             {loadingDiffPath === diffKey ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
                             {showDiff ? t("assistant.hideDiff") : t("assistant.showDiff")}
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => void applySelectedFileUpdates(index, [update.path])} disabled={busy || !isAssistantActionEnabled(message.action!)}>{t("assistant.applyThisFile")}</Button>
+                          <Button size="sm" variant="outline" onClick={() => void applySelectedFileUpdates(index, [update.path])} disabled={busy || update.status === "applied" || !isAssistantActionEnabled(message.action!)}>{t("assistant.applyThisFile")}</Button>
                         </div>
                         {showDiff ? (
                           <FileDiff previous={previousContents[diffKey] ?? ""} next={update.content} className="mt-2 max-h-64" />
@@ -1910,7 +1923,10 @@ export function AssistantPanel() {
                     );
                   })}
                 </div>
-                <Button className="mt-2" size="sm" onClick={() => void applySelectedFileUpdates(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.applyAllFiles")}</Button>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => void applySelectedFileUpdates(index)} disabled={busy || !message.action.updates.some((update) => update.status !== "applied") || !isAssistantActionEnabled(message.action)}>{t("assistant.applyAllFiles")}</Button>
+                  {message.action.updates.some((update) => update.status === "applied") && <Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy}>{t("assistant.undoChanges")}</Button>}
+                </div>
               </div>
             )}
             {message.action?.kind === "undo-file-updates" && <div className="mt-2 flex items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.undoChanges")}</Button></div>}

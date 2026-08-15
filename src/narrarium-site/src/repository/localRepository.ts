@@ -471,6 +471,27 @@ export async function mutateLocalTextFilesAtomically(repoIdValue: string, mutati
   });
 }
 
+export async function restoreLocalFilesAndDeleteCommit(
+  repoIdValue: string,
+  commitId: string,
+  snapshots: Array<{ path: string; file: LocalRepositoryFile | null }>,
+): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(["files", "commits"], "readwrite");
+    const files = tx.objectStore("files");
+    const commits = tx.objectStore("commits");
+    for (const snapshot of snapshots) {
+      if (snapshot.file) files.put(snapshot.file);
+      else files.delete(fileKey(repoIdValue, snapshot.path));
+    }
+    commits.delete(commitId);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error("Local rollback transaction aborted."));
+  });
+}
+
 export async function deleteLocalFile(repoIdValue: string, path: string): Promise<void> {
   const existing = await txStore<LocalRepositoryFile | undefined>("files", "readonly", (store) => store.get(fileKey(repoIdValue, path)));
   if (!existing) return;

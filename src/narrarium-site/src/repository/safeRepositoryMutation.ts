@@ -3,9 +3,12 @@ import type { BookEntry } from "@/types/settings";
 import {
   createLocalCommit,
   getLocalRepository,
+  getLocalFile,
   listDirtyLocalFiles,
   listUnpushedLocalCommits,
+  markLocalCommitsPushed,
   mutateLocalTextFilesAtomically,
+  restoreLocalFilesAndDeleteCommit,
   sha256Text,
   type LocalTextFileMutation,
 } from "@/repository/localRepository";
@@ -46,6 +49,14 @@ export async function preflightRepositoryOperation(input: {
   const remoteHeadSha = ref.data.object.sha;
   if (remoteHeadSha !== meta.remoteHeadSha) throw new RepositoryConflictError("The remote branch changed. Pull and retry the operation.");
   return { repoId: meta.id, remoteHeadSha, branch: input.branch };
+}
+
+export async function resolveRepositoryHeadForMutation(input: { token: string; book: BookEntry; branch: string }): Promise<string> {
+  const local = await getLocalRepository(input.book.owner, input.book.repo, input.branch).catch(() => null);
+  if (local) return (await preflightRepositoryOperation(input)).remoteHeadSha;
+  const octokit = new Octokit({ auth: input.token });
+  const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}` });
+  return ref.data.object.sha;
 }
 
 async function mutateRemoteTextFiles(input: {
@@ -111,14 +122,18 @@ export async function commitAndPushTextFileMutation(input: {
     return { commitSha, mode: "remote" };
   }
   if (local.remoteHeadSha !== input.expectedRemoteHeadSha) throw new RepositoryConflictError("The local working copy is based on a different remote head.");
+  const snapshots = await Promise.all(input.mutations.map(async (mutation) => ({ path: mutation.path, file: await getLocalFile(local.id, mutation.path) ?? null })));
   try {
     await mutateLocalTextFilesAtomically(local.id, input.mutations);
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("File changed since")) throw new RepositoryConflictError(error.message);
+    if (error instanceof Error && error.message.startsWith("File changed since")) {
+      const path = /^File changed since it was read:\s*(.+)$/.exec(error.message)?.[1];
+      throw new RepositoryConflictError(error.message, path);
+    }
     throw error;
   }
   if (!input.mutations.some((mutation) => mutation.content !== undefined)) return { commitSha: input.expectedRemoteHeadSha, mode: "local" };
-  await createLocalCommit(local.id, input.message);
+  const localCommit = await createLocalCommit(local.id, input.message);
   let pushed;
   try {
     pushed = await pushLocalCommits({
@@ -131,6 +146,30 @@ export async function commitAndPushTextFileMutation(input: {
       branch: input.branch,
     });
   } catch (error) {
+    const octokit = new Octokit({ auth: input.token });
+    const remoteRef = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}` }).catch(() => null);
+    const remoteHead = remoteRef?.data.object.sha;
+    if (remoteHead && remoteHead !== input.expectedRemoteHeadSha) {
+      const pushedShas: Record<string, string | null> = {};
+      let matchesOperation = true;
+      await Promise.all(input.mutations.map(async (mutation) => {
+        const remote = await loadRemoteFileContentAtRef(input.token, input.book.owner, input.book.repo, mutation.path, remoteHead).catch(() => null);
+        pushedShas[mutation.path] = remote?.sha ?? null;
+        if (mutation.content === undefined) return;
+        if (mutation.content === null) {
+          if (remote) matchesOperation = false;
+          return;
+        }
+        if (!remote || await sha256Text(remote.content) !== await sha256Text(mutation.content)) matchesOperation = false;
+      }));
+      if (!matchesOperation) {
+        await restoreLocalFilesAndDeleteCommit(local.id, localCommit.id, snapshots);
+        throw new RepositoryConflictError("The remote branch advanced with different content while saving the operation.");
+      }
+      await markLocalCommitsPushed(local.id, [localCommit.id], remoteHead, pushedShas).catch(() => undefined);
+      return { commitSha: remoteHead, mode: "local" };
+    }
+    await restoreLocalFilesAndDeleteCommit(local.id, localCommit.id, snapshots);
     if (error instanceof RemoteHeadMismatchError) throw new RepositoryConflictError(error.message);
     throw error;
   }

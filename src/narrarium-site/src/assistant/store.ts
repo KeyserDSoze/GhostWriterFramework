@@ -15,6 +15,9 @@ export interface AssistantFileUpdate {
   content: string;
   reason?: string;
   previousContent?: string | null;
+  status?: "pending" | "applied" | "failed";
+  appliedHash?: string;
+  error?: string;
 }
 
 export interface AssistantActionProvenance {
