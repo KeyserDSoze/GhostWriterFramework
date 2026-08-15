@@ -47,6 +47,9 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v6
 
+      - name: Build Narrarium core
+        run: npm run build -w narrarium
+
       - name: Test Narrarium site
         run: npm run test -w narrarium-site
 

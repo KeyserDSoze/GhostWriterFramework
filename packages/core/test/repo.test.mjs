@@ -176,7 +176,7 @@ test("core book workflow supports canon indexes and structural updates", async (
     const plot = await syncPlot(rootPath);
     const opencodeConfig = await readFile(path.join(rootPath, "opencode.jsonc"), "utf8");
     const contextDocument = await readFile(path.join(rootPath, "context.md"), "utf8");
-    const writingStyleDocument = await readFile(path.join(rootPath, "guidelines", "writing-style.md"), "utf8");
+    const writingStyleDocument = await readFile(path.join(rootPath, "writing-style.md"), "utf8");
     const notesDocument = await readFile(path.join(rootPath, "notes.md"), "utf8");
     const storyDesignDocument = await readFile(path.join(rootPath, "story-design.md"), "utf8");
     const conversationsReadme = await readFile(path.join(rootPath, "conversations", "README.md"), "utf8");
@@ -1156,17 +1156,17 @@ test("upgradeBookRepo creates default writing-style when missing but preserves i
       language: "en",
     });
 
-    await rm(path.join(rootPath, "guidelines", "writing-style.md"), { force: true });
+    await rm(path.join(rootPath, "writing-style.md"), { force: true });
 
     const firstUpgrade = await upgradeBookRepo(rootPath);
-    const generatedWritingStyle = await readFile(path.join(rootPath, "guidelines", "writing-style.md"), "utf8");
+    const generatedWritingStyle = await readFile(path.join(rootPath, "writing-style.md"), "utf8");
     assert.match(generatedWritingStyle, /# Dialogue action beats/);
-    assert.equal(firstUpgrade.created.includes("guidelines/writing-style.md"), true);
+    assert.equal(firstUpgrade.created.includes("writing-style.md"), true);
 
-    await writeFile(path.join(rootPath, "guidelines", "writing-style.md"), "# Custom Writing Style\n\nDo not overwrite me.\n", "utf8");
+    await writeFile(path.join(rootPath, "writing-style.md"), "# Custom Writing Style\n\nDo not overwrite me.\n", "utf8");
 
     await upgradeBookRepo(rootPath);
-    const preservedWritingStyle = await readFile(path.join(rootPath, "guidelines", "writing-style.md"), "utf8");
+    const preservedWritingStyle = await readFile(path.join(rootPath, "writing-style.md"), "utf8");
     assert.equal(preservedWritingStyle, "# Custom Writing Style\n\nDo not overwrite me.\n");
   } finally {
     await rm(rootPath, { recursive: true, force: true });
@@ -1459,9 +1459,9 @@ scope: chapter-writing-style
     const styledChapter = await readChapter(rootPath, "chapter:002-glass-confession");
 
     assert.match(defaultContext.text, /Always-read writing style/);
-    assert.match(defaultContext.text, /guidelines\/writing-style\.md/);
+    assert.match(defaultContext.text, /Source: writing-style\.md/);
     assert.match(defaultContext.text, /Chapter-specific writing style: none in final chapter files/);
-    assert.match(styledContext.text, /Always use the global writing style from guidelines\/writing-style\.md/);
+    assert.match(styledContext.text, /Always use the global writing style from writing-style\.md/);
     assert.match(styledContext.text, /Draft-specific writing style: drafts\/002-glass-confession\/writing-style\.md/);
     assert.match(styledContext.text, /Use first-person confession with clipped pressure/);
     assert.equal(styledChapter.metadata.title, "Glass Confession");
@@ -1578,7 +1578,7 @@ test("draft workflow can assemble writing context and promote drafts into final 
 
     const chapter = await readChapter(rootPath, "chapter:001-the-threshold");
 
-    assert.match(context.text, /guidelines\/writing-style\.md/);
+    assert.match(context.text, /Source: writing-style\.md/);
     assert.match(context.text, /story-design\.md/);
     assert.match(context.text, /notes\.md/);
     assert.match(context.text, /strained relationship with the harbor ledgers/);

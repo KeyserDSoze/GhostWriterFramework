@@ -483,8 +483,8 @@ scope: chapter-writing-style
     const plotSyncText = await callToolText(client, "sync_plot", { rootPath });
     const movedAssetPrompt = await readFile(path.join(rootPath, "assets", "characters", "lyra-voss", "primary.md"), "utf8");
     const renamedCharacter = await readFile(path.join(rootPath, "characters", "lyra-voss.md"), "utf8");
-    const chapterDraft = await readFile(path.join(rootPath, "drafts", "001-opening-move", "chapter.md"), "utf8");
-    const paragraphDraft = await readFile(path.join(rootPath, "drafts", "001-opening-move", "001-first-scene.md"), "utf8");
+    const chapterDraft = await readFile(path.join(rootPath, "drafts", "001-opening-gambit", "chapter.md"), "utf8");
+    const paragraphDraft = await readFile(path.join(rootPath, "drafts", "001-opening-gambit", "001-watching-walls.md"), "utf8");
     const plotFile = await readFile(path.join(rootPath, "plot.md"), "utf8");
     const currentStoryState = await readFile(path.join(rootPath, "state", "current.md"), "utf8");
     const storyStateStatus = await readFile(path.join(rootPath, "state", "status.md"), "utf8");
@@ -508,7 +508,7 @@ scope: chapter-writing-style
     assert.match(chapterContextText, /Chapter draft notes/);
     assert.match(chapterContextText, /forged registry seal/);
     assert.match(chapterContextText, /Watch pattern/);
-    assert.match(chapterContextText, /guidelines\/writing-style\.md/);
+    assert.match(chapterContextText, /Source: writing-style\.md/);
     assert.match(chapterContextText, /drafts\/001-opening-move\/writing-style\.md/);
     assert.match(chapterContextText, /Use first-person pressure anchored in physical detail/);
     assert.match(paragraphContextText, /Target paragraph draft/);
