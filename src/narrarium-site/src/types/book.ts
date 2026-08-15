@@ -110,6 +110,10 @@ export interface BookStructure {
   repo: string;
   defaultBranch: string;
   loadedBranch: string;
+  /** Existing first-class Markdown files at repository root. */
+  rootFiles?: BookFile[];
+  /** Existing conventional context/state/summary files represented explicitly in the assistant manifest. */
+  firstClassFiles?: BookFile[];
   bookCoverPath?: string;
   bookCoverPromptPath?: string;
   bookAuditPath?: string;

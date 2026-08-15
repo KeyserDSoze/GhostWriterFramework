@@ -636,8 +636,9 @@ function NewResearchForm({
 // ─── Main page ─────────────────────────────────────────────────────────────────
 
 export function DeepResearchPage() {
-  const { bookId } = useParams<{ bookId: string }>();
+  const { bookId, researchSlug } = useParams<{ bookId: string; researchSlug?: string }>();
   const location = useLocation();
+  const navigate = useNavigate();
   const { t } = useTranslation();
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
@@ -645,7 +646,7 @@ export function DeepResearchPage() {
   const token = book ? resolveBookToken(book, settings) : "";
   const bookLanguage = structure?.language;
 
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(researchSlug ?? null);
   const [showNew, setShowNew] = useState(false);
   const [prefillQuery, setPrefillQuery] = useState("");
   const [prefillDepth, setPrefillDepth] = useState<ResearchDepth>("medium");
@@ -659,7 +660,11 @@ export function DeepResearchPage() {
     if (!needle) return list;
     return list.filter((entry) => `${entry.title} ${entry.slug} ${searchIndex[entry.slug] ?? ""}`.toLowerCase().includes(needle));
   }, [filter, list, searchIndex]);
-  const selectedFile = useMemo(() => filteredList.find((f) => f.slug === selected) ?? null, [filteredList, selected]);
+  const selectedFile = useMemo(() => list.find((f) => f.slug === selected) ?? null, [list, selected]);
+
+  useEffect(() => {
+    if (researchSlug) setSelected(researchSlug);
+  }, [researchSlug]);
 
   useEffect(() => {
     const state = location.state as { newResearchQuery?: unknown; researchFilter?: unknown } | null;
@@ -689,19 +694,23 @@ export function DeepResearchPage() {
 
   // Auto-select first on load
   useEffect(() => {
-    if (!selected && filteredList.length > 0 && !showNew) setSelected(filteredList[0].slug);
-  }, [filteredList, selected, showNew]);
+    if (!researchSlug && !selected && filteredList.length > 0 && !showNew) setSelected(filteredList[0].slug);
+  }, [filteredList, researchSlug, selected, showNew]);
 
   function handleNewDone(slug: string, cost: number) {
     setShowNew(false);
     setLastRunCosts((prev) => ({ ...prev, [slug]: cost }));
     void reload();
-    setTimeout(() => setSelected(slug), 300);
+    setTimeout(() => {
+      setSelected(slug);
+      navigate(`/app/books/${bookId}/research/${slug}`);
+    }, 300);
   }
 
   function handleDeleted() {
     void reload();
     setSelected(null);
+    if (researchSlug) navigate(`/app/books/${bookId}/research`);
   }
 
   function handleDeepen(query: string, depth: ResearchDepth) {
@@ -744,7 +753,7 @@ export function DeepResearchPage() {
             <button
               key={f.slug}
               type="button"
-              onClick={() => { setSelected(f.slug); setShowNew(false); }}
+              onClick={() => { setSelected(f.slug); setShowNew(false); navigate(`/app/books/${bookId}/research/${f.slug}`); }}
               className={
                 selected === f.slug && !showNew
                   ? "flex w-full items-center gap-2 rounded-lg border bg-primary/5 px-3 py-2 text-left text-sm"

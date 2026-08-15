@@ -80,6 +80,7 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/reader", element: <ReaderPreviewPage /> },
       { path: "books/:bookId/export", element: <BookExportPage /> },
       { path: "books/:bookId/research", element: <DeepResearchPage /> },
+      { path: "books/:bookId/research/:researchSlug", element: <DeepResearchPage /> },
       { path: "books/:bookId/ghostwriters", element: <GhostwritersPage /> },
       { path: "books/:bookId/writing-style", element: <WritingStylePage /> },
       { path: "books/:bookId/evaluation-style", element: <EvaluationStylePage /> },

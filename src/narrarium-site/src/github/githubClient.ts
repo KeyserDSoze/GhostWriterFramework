@@ -434,6 +434,12 @@ export async function loadBookStructure(
     repo,
     defaultBranch,
     loadedBranch: branch,
+    rootFiles: allPaths
+      .filter((path) => !path.includes("/") && path.endsWith(".md"))
+      .map((path) => ({ path, sha: treeData.tree.find((node) => node.path === path)?.sha ?? "", size: treeData.tree.find((node) => node.path === path)?.size ?? 0 })),
+    firstClassFiles: allPaths
+      .filter((path) => ["context.md", "ideas.md", "story-design.md", "notes.md", "promoted.md", "evaluation-guidelines.md", "state/current.md", "state/status.md", "state/script-ledger.md", "resumes/total.md", "evaluations/total.md"].includes(path))
+      .map((path) => ({ path, sha: treeData.tree.find((node) => node.path === path)?.sha ?? "", size: treeData.tree.find((node) => node.path === path)?.size ?? 0 })),
     bookCoverPromptPath: allPaths.includes("assets/book/cover.md") ? "assets/book/cover.md" : undefined,
     bookCoverPath: firstExistingImage("assets/book/cover"),
     bookAuditPath: auditPathSet.has(buildBookAuditPath()) ? buildBookAuditPath() : undefined,

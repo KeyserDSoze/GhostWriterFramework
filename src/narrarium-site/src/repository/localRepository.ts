@@ -789,6 +789,12 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
     repo: meta.repo,
     defaultBranch: meta.defaultBranch,
     loadedBranch: meta.branch,
+    rootFiles: files
+      .filter((file) => !file.path.includes("/") && file.path.endsWith(".md"))
+      .map((file) => ({ path: file.path, sha: file.baseSha ?? file.currentHash, size: file.size })),
+    firstClassFiles: files
+      .filter((file) => ["context.md", "ideas.md", "story-design.md", "notes.md", "promoted.md", "evaluation-guidelines.md", "state/current.md", "state/status.md", "state/script-ledger.md", "resumes/total.md", "evaluations/total.md"].includes(file.path))
+      .map((file) => ({ path: file.path, sha: file.baseSha ?? file.currentHash, size: file.size })),
     bookCoverPath: firstExistingImage("assets/book/cover"),
     bookCoverPromptPath: allPaths.includes("assets/book/cover.md") ? "assets/book/cover.md" : undefined,
     bookAuditPath: auditPathSet.has(buildBookAuditPath()) ? buildBookAuditPath() : undefined,

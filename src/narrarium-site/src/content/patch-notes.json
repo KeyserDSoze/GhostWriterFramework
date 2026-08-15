@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.22",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Accurate Copilot route context",
+      "summary": "Copilot now identifies every application page correctly and keeps research, workspace, audit, reader, and style context aligned with the page the user is viewing.",
+      "changes": [
+        "Added explicit context mappings for global app pages, punctuation style, chapter writing style, research details, and all routed chapter/paragraph workflows.",
+        "Corrected book-page titles and summaries that were previously mislabeled as Evaluation Style.",
+        "Loaded the research document selected by the detail URL and updated that URL when choosing another research item.",
+        "Expanded the manifest with first-class root, state, research, note, operation, script, resume, evaluation, and audit files while marking conventional paths as confirmed or hypothetical."
+      ]
+    },
+    "it": {
+      "title": "Contesto route accurato per il Copilota",
+      "summary": "Il Copilota ora identifica correttamente ogni pagina dell'app e mantiene il contesto di ricerca, workspace, audit, lettori e stile allineato alla pagina visualizzata.",
+      "changes": [
+        "Aggiunte mappature esplicite per pagine globali, stile punteggiatura, stile capitolo, dettagli ricerca e tutti i workflow instradati di capitoli e paragrafi.",
+        "Corretti titoli e riepiloghi delle pagine libro precedentemente etichettati erroneamente come Evaluation Style.",
+        "Caricato il documento ricerca selezionato dall'URL detail e aggiornato l'URL quando si sceglie un'altra ricerca.",
+        "Esteso il manifest con file first-class root, stato, ricerca, note, operazioni, script, resume, valutazioni e audit, marcando i path convenzionali come confermati o ipotetici."
+      ]
+    }
+  },
+  {
     "version": "0.76.21",
     "date": "2026-08-15",
     "en": {

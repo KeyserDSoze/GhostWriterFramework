@@ -1751,7 +1751,7 @@ function buildUserMessage(input: PromptInput, requestText: string): LlmMessage {
 }
 
 function systemContextBundle(input: PromptInput): string {
-  const available = input.context.availableFiles.slice(0, 200).map((entry) => `- ${entry.path} (${entry.role})`).join("\n");
+  const available = input.context.availableFiles.slice(0, 200).map((entry) => `- ${entry.path} (${entry.role}; ${entry.exists ? "exists" : "conventional path, not confirmed"})`).join("\n");
   const loadedList = input.context.loadedFilePaths.length ? input.context.loadedFilePaths.map((path) => `- ${path}`).join("\n") : "- none";
   return [
     `Current route title: ${input.context.title}`,
