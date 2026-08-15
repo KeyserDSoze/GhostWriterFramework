@@ -1,12 +1,12 @@
 import { Octokit } from "@octokit/rest";
 import type { BookEntry } from "@/types/settings";
 import {
-  createLocalCommit,
   getLocalRepository,
   getLocalFile,
   listDirtyLocalFiles,
   listUnpushedLocalCommits,
   markLocalCommitsPushed,
+  mutateLocalTextFilesAndCreateCommitAtomically,
   mutateLocalTextFilesAtomically,
   restoreLocalFilesAndDeleteCommit,
   sha256Text,
@@ -122,9 +122,23 @@ export async function commitAndPushTextFileMutation(input: {
     return { commitSha, mode: "remote" };
   }
   if (local.remoteHeadSha !== input.expectedRemoteHeadSha) throw new RepositoryConflictError("The local working copy is based on a different remote head.");
-  const snapshots = await Promise.all(input.mutations.map(async (mutation) => ({ path: mutation.path, file: await getLocalFile(local.id, mutation.path) ?? null })));
+  const writes = input.mutations.filter((mutation) => mutation.content !== undefined);
+  const snapshots = await Promise.all(writes.map(async (mutation) => ({ path: mutation.path, file: await getLocalFile(local.id, mutation.path) ?? null })));
+  if (!writes.length) {
+    try {
+      await mutateLocalTextFilesAtomically(local.id, input.mutations);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("File changed since")) {
+        const path = /^File changed since it was read:\s*(.+)$/.exec(error.message)?.[1];
+        throw new RepositoryConflictError(error.message, path);
+      }
+      throw error;
+    }
+    return { commitSha: input.expectedRemoteHeadSha, mode: "local" };
+  }
+  let localCommit;
   try {
-    await mutateLocalTextFilesAtomically(local.id, input.mutations);
+    localCommit = await mutateLocalTextFilesAndCreateCommitAtomically(local.id, input.message, input.mutations);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("File changed since")) {
       const path = /^File changed since it was read:\s*(.+)$/.exec(error.message)?.[1];
@@ -132,8 +146,6 @@ export async function commitAndPushTextFileMutation(input: {
     }
     throw error;
   }
-  if (!input.mutations.some((mutation) => mutation.content !== undefined)) return { commitSha: input.expectedRemoteHeadSha, mode: "local" };
-  const localCommit = await createLocalCommit(local.id, input.message);
   let pushed;
   try {
     pushed = await pushLocalCommits({

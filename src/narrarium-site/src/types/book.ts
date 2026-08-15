@@ -114,6 +114,8 @@ export interface BookStructure {
   rootFiles?: BookFile[];
   /** Existing conventional context/state/summary files represented explicitly in the assistant manifest. */
   firstClassFiles?: BookFile[];
+  /** Every confirmed searchable Markdown/text file with a semantic or fallback role. */
+  searchableFiles?: Array<BookFile & { role: string }>;
   bookCoverPath?: string;
   bookCoverPromptPath?: string;
   bookAuditPath?: string;

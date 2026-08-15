@@ -1,15 +1,15 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  createLocalCommit,
   getLocalFile,
   listDirtyLocalFiles,
   listUnpushedLocalCommits,
-  mutateLocalTextFilesAtomically,
+  mutateLocalTextFilesAndCreateCommitAtomically,
   putCleanLocalFile,
   putLocalRepository,
   removeLocalRepository,
   restoreLocalFilesAndDeleteCommit,
+  writeLocalText,
 } from "@/repository/localRepository";
 
 let repoId = "";
@@ -26,15 +26,16 @@ describe("atomic local multi-file recovery", () => {
     const originalA = await putCleanLocalFile({ repoId, path: "a.md", kind: "text", text: "old A", size: 5 });
     const originalB = await putCleanLocalFile({ repoId, path: "b.md", kind: "text", text: "old B", size: 5 });
 
-    await mutateLocalTextFilesAtomically(repoId, [
+    const commit = await mutateLocalTextFilesAndCreateCommitAtomically(repoId, "multi-file operation", [
       { path: "a.md", content: "new A", expectedCurrentHash: originalA.currentHash },
       { path: "b.md", content: null, expectedCurrentHash: originalB.currentHash },
       { path: "c.md", content: "new C", expectedCurrentHash: null },
     ]);
-    const commit = await createLocalCommit(repoId, "multi-file operation");
     expect((await getLocalFile(repoId, "a.md"))?.text).toBe("new A");
     expect(await getLocalFile(repoId, "b.md")).toBeNull();
     expect((await getLocalFile(repoId, "c.md"))?.text).toBe("new C");
+    expect(commit.files.map((file) => file.path)).toEqual(["a.md", "b.md", "c.md"]);
+    expect(await listUnpushedLocalCommits(repoId)).toEqual([commit]);
 
     await restoreLocalFilesAndDeleteCommit(repoId, commit.id, [
       { path: "a.md", file: originalA },
@@ -46,5 +47,42 @@ describe("atomic local multi-file recovery", () => {
     expect(await getLocalFile(repoId, "c.md")).toBeNull();
     expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
     expect(await listDirtyLocalFiles(repoId)).toEqual([]);
+  });
+
+  it("does not commit or overwrite a concurrently dirtied unrelated file", async () => {
+    const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "draft", defaultBranch: "main", remoteHeadSha: "remote", clonedAt: new Date().toISOString(), cloneComplete: true });
+    repoId = repo.id;
+    const target = await putCleanLocalFile({ repoId, path: "target.md", kind: "text", text: "old target", size: 10 });
+    await putCleanLocalFile({ repoId, path: "unrelated.md", kind: "text", text: "old unrelated", size: 13 });
+    const [commit] = await Promise.all([
+      mutateLocalTextFilesAndCreateCommitAtomically(repoId, "target change", [
+        { path: "target.md", content: "new target", expectedCurrentHash: target.currentHash },
+      ]),
+      writeLocalText(repoId, "unrelated.md", "dirty unrelated"),
+    ]);
+
+    expect(commit.files.map((file) => file.path)).toEqual(["target.md"]);
+    expect((await getLocalFile(repoId, "unrelated.md"))?.text).toBe("dirty unrelated");
+    expect((await listDirtyLocalFiles(repoId)).map((file) => file.path)).toEqual(["unrelated.md"]);
+
+    await restoreLocalFilesAndDeleteCommit(repoId, commit.id, [{ path: "target.md", file: target }]);
+    expect((await getLocalFile(repoId, "target.md"))?.text).toBe("old target");
+    expect((await getLocalFile(repoId, "unrelated.md"))?.text).toBe("dirty unrelated");
+  });
+
+  it("validates every target hash before applying writes or creating a commit", async () => {
+    const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "draft", defaultBranch: "main", remoteHeadSha: "remote", clonedAt: new Date().toISOString(), cloneComplete: true });
+    repoId = repo.id;
+    const originalA = await putCleanLocalFile({ repoId, path: "a.md", kind: "text", text: "old A", size: 5 });
+    await putCleanLocalFile({ repoId, path: "b.md", kind: "text", text: "old B", size: 5 });
+
+    await expect(mutateLocalTextFilesAndCreateCommitAtomically(repoId, "stale operation", [
+      { path: "a.md", content: "new A", expectedCurrentHash: originalA.currentHash },
+      { path: "b.md", content: "new B", expectedCurrentHash: "stale-hash" },
+    ])).rejects.toThrow("File changed since it was read: b.md");
+
+    expect((await getLocalFile(repoId, "a.md"))?.text).toBe("old A");
+    expect((await getLocalFile(repoId, "b.md"))?.text).toBe("old B");
+    expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
   });
 });

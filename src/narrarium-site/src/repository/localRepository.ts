@@ -390,8 +390,11 @@ export interface LocalTextFileMutation {
   expectedCurrentHash?: string | null;
 }
 
-/** Validate and apply text mutations in the same IndexedDB transaction. */
-export async function mutateLocalTextFilesAtomically(repoIdValue: string, mutations: LocalTextFileMutation[]): Promise<void> {
+async function applyLocalTextFileMutations(
+  repoIdValue: string,
+  mutations: LocalTextFileMutation[],
+  commitMessage?: string,
+): Promise<LocalCommit | null> {
   const paths = new Set<string>();
   for (const mutation of mutations) {
     if (paths.has(mutation.path)) throw new Error(`Duplicate local file mutation: ${mutation.path}`);
@@ -403,12 +406,14 @@ export async function mutateLocalTextFilesAtomically(repoIdValue: string, mutati
   }));
 
   const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction("files", "readwrite");
+  return new Promise<LocalCommit | null>((resolve, reject) => {
+    const tx = db.transaction(commitMessage === undefined ? "files" : ["files", "commits"], "readwrite");
     const store = tx.objectStore("files");
+    const commitsStore = commitMessage === undefined ? null : tx.objectStore("commits");
     const existing = new Map<string, LocalRepositoryFile | undefined>();
     let pending = mutations.length;
     let validationError: Error | null = null;
+    let localCommit: LocalCommit | null = null;
     const now = new Date().toISOString();
 
     const apply = () => {
@@ -424,16 +429,22 @@ export async function mutateLocalTextFilesAtomically(repoIdValue: string, mutati
           }
         }
       }
+      const commitFiles: LocalCommitFile[] = [];
       for (const mutation of mutations) {
         if (mutation.content === undefined) continue;
         const row = existing.get(mutation.path);
         if (mutation.content === null) {
           if (!row || row.status === "deleted") continue;
           if (row.status === "new") store.delete(row.key);
-          else store.put({ ...row, status: "deleted", committed: false, updatedAt: now });
+          else {
+            commitFiles.push({ path: mutation.path, status: "deleted", kind: row.kind, hash: row.currentHash });
+            store.put({ ...row, status: "deleted", committed: commitMessage !== undefined, updatedAt: now });
+          }
           continue;
         }
         const currentHash = preparedHashes.get(mutation.path)!;
+        if (row?.status !== "deleted" && row?.currentHash === currentHash && row.status === "clean") continue;
+        const status = statusAfterWrite(row, currentHash);
         const file: LocalRepositoryFile = {
           key: fileKey(repoIdValue, mutation.path),
           repoId: repoIdValue,
@@ -443,12 +454,32 @@ export async function mutateLocalTextFilesAtomically(repoIdValue: string, mutati
           baseSha: row?.baseSha,
           baseHash: row?.baseHash,
           currentHash,
-          status: statusAfterWrite(row, currentHash),
-          committed: false,
+          status,
+          committed: commitMessage !== undefined && status !== "clean",
           size: new TextEncoder().encode(mutation.content).byteLength,
           updatedAt: now,
         };
+        if (status !== "clean") {
+          commitFiles.push({ path: mutation.path, status, kind: "text", hash: currentHash });
+          if (commitMessage !== undefined) file.status = "clean";
+        }
         store.put(file);
+      }
+      if (commitMessage !== undefined) {
+        if (!commitFiles.length) {
+          validationError = new Error("No local changes to commit.");
+          tx.abort();
+          return;
+        }
+        localCommit = {
+          id: crypto.randomUUID(),
+          repoId: repoIdValue,
+          message: commitMessage,
+          createdAt: now,
+          files: commitFiles,
+          pushed: false,
+        };
+        commitsStore!.put(localCommit);
       }
     };
 
@@ -465,10 +496,26 @@ export async function mutateLocalTextFilesAtomically(repoIdValue: string, mutati
         tx.abort();
       };
     }
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => resolve(localCommit);
     tx.onerror = () => reject(validationError ?? tx.error ?? new Error("Local file transaction failed."));
     tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local file transaction aborted."));
   });
+}
+
+/** Validate and apply text mutations in the same IndexedDB transaction. */
+export async function mutateLocalTextFilesAtomically(repoIdValue: string, mutations: LocalTextFileMutation[]): Promise<void> {
+  await applyLocalTextFileMutations(repoIdValue, mutations);
+}
+
+/** Validate, apply, and commit only the changed mutation paths in one IndexedDB transaction. */
+export async function mutateLocalTextFilesAndCreateCommitAtomically(
+  repoIdValue: string,
+  message: string,
+  mutations: LocalTextFileMutation[],
+): Promise<LocalCommit> {
+  const commit = await applyLocalTextFileMutations(repoIdValue, mutations, message);
+  if (!commit) throw new Error("No local commit was created.");
+  return commit;
 }
 
 export async function restoreLocalFilesAndDeleteCommit(
@@ -527,8 +574,8 @@ export async function listLocalRepoLogs(repoIdValue: string, limit = 30): Promis
   return entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
 }
 
-export async function createLocalCommit(repoIdValue: string, message: string): Promise<LocalCommit> {
-  const dirty = await listDirtyLocalFiles(repoIdValue);
+export async function createLocalCommit(repoIdValue: string, message: string, allowedPaths?: ReadonlySet<string>): Promise<LocalCommit> {
+  const dirty = (await listDirtyLocalFiles(repoIdValue)).filter((file) => !allowedPaths || allowedPaths.has(file.path));
   if (!dirty.length) throw new Error("No local changes to commit.");
   const commit: LocalCommit = {
     id: crypto.randomUUID(),
@@ -795,6 +842,9 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
     firstClassFiles: files
       .filter((file) => ["context.md", "ideas.md", "story-design.md", "notes.md", "promoted.md", "evaluation-guidelines.md", "state/current.md", "state/status.md", "state/script-ledger.md", "resumes/total.md", "evaluations/total.md"].includes(file.path))
       .map((file) => ({ path: file.path, sha: file.baseSha ?? file.currentHash, size: file.size })),
+    searchableFiles: files
+      .filter((file) => file.kind === "text" && /\.(md|txt)$/i.test(file.path))
+      .map((file) => ({ path: file.path, sha: file.baseSha ?? file.currentHash, size: file.size, role: file.path.startsWith("research/") ? "research" : file.path.startsWith("notes/") || file.path === "notes.md" ? "note" : file.path.startsWith("chapters/") ? "chapter or paragraph" : "repository text" })),
     bookCoverPath: firstExistingImage("assets/book/cover"),
     bookCoverPromptPath: allPaths.includes("assets/book/cover.md") ? "assets/book/cover.md" : undefined,
     bookAuditPath: auditPathSet.has(buildBookAuditPath()) ? buildBookAuditPath() : undefined,

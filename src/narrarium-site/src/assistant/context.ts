@@ -510,6 +510,7 @@ export function buildAvailableFileManifest(structure: BookStructure): AvailableF
   structure.researchFiles.forEach((file) => add(file.path, "research document"));
   structure.notesFiles.forEach((file) => add(file.path, "note"));
   structure.operationManifestFiles.forEach((file) => add(file.path, "operation manifest"));
+  (structure.searchableFiles ?? []).forEach((file) => add(file.path, file.role, true));
 
   for (const chapter of structure.chapters) {
     add(`${chapter.path}/chapter.md`, "chapter metadata/body");

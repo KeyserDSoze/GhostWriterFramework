@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.27",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Complete book search and chapter resumes",
+      "summary": "Copilot now searches all real book text with ranked excerpts and builds chapter resumes from every source paragraph without silently truncating long chapters.",
+      "changes": [
+        "Searched chapter introductions, every paragraph, canon bodies, research, notes, state, guidelines, scripts, drafts, evaluations, and other confirmed Markdown files.",
+        "Added bilingual stopword parsing, quoted phrases, any-term coverage ranking, exact paths, useful excerpts, total matches, omitted counts, and read-failure warnings.",
+        "Loaded chapter intro plus every paragraph explicitly for resume generation and aborted without writing when any required source failed.",
+        "Added complete-coverage map/reduce summarization for long chapters and oversized paragraphs while preserving existing resume frontmatter and optimistic updates."
+      ]
+    },
+    "it": {
+      "title": "Ricerca libro e resume capitolo completi",
+      "summary": "Il Copilota cerca ora in tutti i testi reali del libro con excerpt ordinati e costruisce i resume usando ogni paragrafo senza troncare silenziosamente i capitoli lunghi.",
+      "changes": [
+        "Cercati introduzioni capitolo, tutti i paragrafi, corpi canone, ricerche, note, stato, linee guida, script, bozze, valutazioni e altri file Markdown confermati.",
+        "Aggiunti stopword bilingui, frasi quotate, ranking per copertura, path esatti, excerpt utili, totale match, conteggio omessi e warning per letture fallite.",
+        "Caricati esplicitamente introduzione e ogni paragrafo per il resume, interrompendo senza scrivere quando una sorgente richiesta fallisce.",
+        "Aggiunta sintesi map/reduce a copertura completa per capitoli lunghi e paragrafi sovradimensionati, preservando frontmatter esistente e update ottimistici."
+      ]
+    }
+  },
+  {
     "version": "0.76.26",
     "date": "2026-08-15",
     "en": {

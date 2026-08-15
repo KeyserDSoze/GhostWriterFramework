@@ -57,6 +57,9 @@ import { AUDIT_CATEGORIES, auditTargetHref, loadAuditReport, resolveAuditTarget,
 import { useFeedbackRewriteWorkflowStore } from "@/store/feedbackRewriteWorkflowStore";
 import { resolveDeepResearchRequest } from "@/assistant/deepResearchRequest";
 import { executeDeepResearchFromCopilot } from "@/assistant/deepResearchHandler";
+import { searchBookTexts } from "@/assistant/bookSearch";
+import { buildChapterResumeChunks, loadCompleteChapterSource, mergeResumeFrontmatter, resolveResumeChapter } from "@/assistant/chapterSource";
+import { commitAndPushTextFileMutation, resolveRepositoryHeadForMutation, sha256Text } from "@/repository/safeRepositoryMutation";
 import { chapterOutputSchema, entityOutputSchema, importedDraftOutputSchema, importedScriptOutputSchema, multiFileOutputSchema, paragraphOutputSchema, parseStructuredOutput, readerOutputSchema, scriptOutputSchema, StructuredOutputError } from "@/assistant/structuredOutput";
 import type { z } from "zod";
 import { attachmentImportRoute, validateImportAttachments, type AttachmentImportTarget } from "@/assistant/attachmentImport";
@@ -1154,7 +1157,7 @@ async function createChapterFromPrompt(input: PromptInput & { book: BookEntry; b
 }
 
 async function createParagraphFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
-  const chapter = input.context.chapter;
+  const chapter = resolveResumeChapter(input.context);
   if (!chapter) return makeAssistantMessage("assistant", "Open a chapter first so I know where to create the paragraph.");
   const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new paragraph: {"title":"...","summary":"...","body":"..."}. Preserve current chapter context.', "book"),
@@ -1266,12 +1269,51 @@ async function writeResume(input: PromptInput & { book: BookEntry; branch: strin
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Resume writing works when you are inside a chapter or one of its paragraph/workspace pages.");
   const targetPath = `resumes/chapters/${chapter.slug}.md`;
-  const answer = await completeForTask(input.settings, [
-    buildSystemMessage(input, "Write a chapter resume suitable for the chapter resume file. Preserve chronology and visible canon. Return only the markdown body, no frontmatter.", "book"),
-    buildUserMessage(input, `Write or refresh the resume for chapter ${chapter.slug}. Request: ${input.prompt}`),
-  ], "default", { signal: input.signal, label: "copilot:write-resume" });
+  const existingResume = chapter.hasResume ? await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, targetPath) : null;
+  const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token: input.token, book: input.book, branch: input.branch });
+  const parts = await loadCompleteChapterSource(chapter, (path) => loadFileContent(input.token, input.book.owner, input.book.repo, path, input.branch));
+  input.signal?.throwIfAborted();
+  const chunks = buildChapterResumeChunks(parts);
+  const renderParts = (items: typeof parts) => items.map((part) => `SOURCE: ${part.path}\nTITLE: ${part.title}\n${part.content}`).join("\n\n---\n\n");
+  let answer: string | null;
+  if (chunks.length === 1) {
+    answer = await completeForTask(input.settings, [
+      { role: "system", content: `Write a complete chronological chapter resume from every labelled source below. Preserve facts and visible canon. Return only Markdown body.${languageInstruction(input, "book")}` },
+      { role: "user", content: `Chapter ${chapter.slug}. Request: ${input.prompt}\n\n${renderParts(chunks[0])}` },
+    ], "default", { signal: input.signal, label: "copilot:write-resume" });
+  } else {
+    const partials: string[] = [];
+    for (let index = 0; index < chunks.length; index++) {
+      const partial = await completeForTask(input.settings, [
+        { role: "system", content: "Summarize every labelled source in this chronological chapter segment. Keep all events, characters, changes, and open threads. Return only Markdown." },
+        { role: "user", content: `Segment ${index + 1}/${chunks.length}\n\n${renderParts(chunks[index])}` },
+      ], "chat-resume", { signal: input.signal, label: `copilot:resume-map-${index + 1}` });
+      if (!partial) return noAiMessage();
+      partials.push(`SEGMENT ${index + 1}\n${partial}`);
+    }
+    let level = partials;
+    let round = 0;
+    while (level.join("\n\n---\n\n").length > 30_000) {
+      if (round >= 6) throw new Error("The configured resume route could not reduce the complete chapter within a safe context budget.");
+      level = level.flatMap((item) => item.length <= 30_000 ? [item] : Array.from({ length: Math.ceil(item.length / 30_000) }, (_, index) => item.slice(index * 30_000, (index + 1) * 30_000)));
+      const groups: string[][] = [];
+      let group: string[] = []; let size = 0;
+      for (const item of level) { if (group.length && size + item.length > 30_000) { groups.push(group); group = []; size = 0; } group.push(item); size += item.length; }
+      if (group.length) groups.push(group);
+      const next: string[] = [];
+      for (let index = 0; index < groups.length; index++) {
+        const reduced = await completeForTask(input.settings, [{ role: "system", content: "Merge all ordered summaries without dropping events or later material. Return only Markdown." }, { role: "user", content: groups[index].join("\n\n---\n\n") }], "chat-resume", { signal: input.signal, label: `copilot:resume-reduce-${round}-${index}` });
+        if (!reduced) return noAiMessage(); next.push(reduced);
+      }
+      level = next; round += 1;
+    }
+    answer = await completeForTask(input.settings, [{ role: "system", content: `Merge every ordered summary into one complete chronological chapter resume. Do not omit later material. Return only Markdown.${languageInstruction(input, "book")}` }, { role: "user", content: level.join("\n\n---\n\n") }], "chat-resume", { signal: input.signal, label: "copilot:resume-final" });
+  }
   if (!answer) return noAiMessage();
-  await upsertStructuredMarkdownFile({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, path: targetPath, frontmatter: { type: "resume", id: `resume:chapter:${chapter.slug}`, title: `Resume ${chapter.slug}` }, body: answer.trim(), message: `Update chapter resume ${chapter.slug}` });
+  input.signal?.throwIfAborted();
+  const parsed = existingResume ? parseMarkdown(existingResume.content) : { frontmatter: {} };
+  const content = renderMarkdown(mergeResumeFrontmatter(parsed.frontmatter, chapter.slug), `${answer.trim()}\n`);
+  await commitAndPushTextFileMutation({ token: input.token, book: input.book, branch: input.branch, expectedRemoteHeadSha, message: `${existingResume ? "Update" : "Add"} chapter resume ${chapter.slug}`, mutations: [{ path: targetPath, content, expectedCurrentHash: existingResume ? await sha256Text(existingResume.content) : null }] });
   return makeAssistantMessage("assistant", `I wrote the chapter resume to \`${targetPath}\`.\n\n${answer.trim()}`);
 }
 
@@ -1636,42 +1678,21 @@ async function searchCurrentBook(input: PromptInput & { book: BookEntry; token: 
   const { context, prompt, book, token } = input;
   const structure = context.structure;
   if (!structure) return makeAssistantMessage("assistant", "The book structure is not loaded yet.");
-  const terms = extractSearchTerms(prompt);
-  if (!terms.length) return makeAssistantMessage("assistant", "Tell me what keywords to search for, for example: 'find a character about memory and debt' or 'search paragraph gate lantern'.");
-  const sectionHint = detectSectionHint(prompt);
-  const results: string[] = [];
-  const matchText = (value: string) => {
-    const lower = value.toLowerCase();
-    return terms.every((term) => lower.includes(term));
-  };
-  const canonSections = [["characters", structure.characters], ["locations", structure.locations], ["factions", structure.factions], ["items", structure.items], ["secrets", structure.secrets], ["timelines", structure.timelines]] as const;
-  if (!sectionHint || sectionHint === "characters" || sectionHint === "canon") {
-    for (const [section, files] of canonSections) {
-      if (sectionHint && sectionHint !== "canon" && sectionHint !== section) continue;
-      const matched = files.filter((file) => matchText(`${file.path} ${slugToTitle(file.path.split("/").pop()?.replace(/\.md$/, "") ?? file.path)}`));
-      for (const file of matched.slice(0, 4)) results.push(`- ${section}: ${file.path}`);
-    }
+  const candidates = context.availableFiles.filter((file) => file.exists && /\.(md|txt)$/i.test(file.path));
+  const loaded: Array<{ ok: true; path: string; role: string; content: string } | { ok: false; path: string }> = [];
+  for (let offset = 0; offset < candidates.length; offset += 8) {
+    const batch = await Promise.all(candidates.slice(offset, offset + 8).map(async (file) => {
+      try { return { ok: true as const, path: file.path, role: file.role, content: await loadFileContent(token, book.owner, book.repo, file.path, input.branch) }; }
+      catch { return { ok: false as const, path: file.path }; }
+    }));
+    loaded.push(...batch);
   }
-  if (!sectionHint || sectionHint === "paragraphs") {
-    const paragraphCandidates = structure.chapters.flatMap((chapter) => chapter.paragraphs.map((paragraph) => ({ chapter, paragraph })));
-    const matchedByTitle = paragraphCandidates.filter(({ chapter, paragraph }) => matchText(`${chapter.title} ${paragraph.title} ${paragraph.path}`));
-    for (const hit of matchedByTitle.slice(0, 5)) results.push(`- paragraph: ${hit.chapter.slug}/${hit.paragraph.number} ${hit.paragraph.title}`);
-    if (matchedByTitle.length === 0) {
-      for (const hit of paragraphCandidates.slice(0, 24)) {
-        try {
-          const content = await loadFileContent(token, book.owner, book.repo, hit.paragraph.path, input.branch);
-          if (matchText(content)) {
-            results.push(`- paragraph body: ${hit.chapter.slug}/${hit.paragraph.number} ${hit.paragraph.title}`);
-            if (results.length >= 5) break;
-          }
-        } catch {
-          // ignore read failures during search
-        }
-      }
-    }
-  }
-  if (results.length === 0) return makeAssistantMessage("assistant", `I could not find a match for: ${terms.join(", ")}. Try fewer or broader keywords.`);
-  return makeAssistantMessage("assistant", `Search results for **${terms.join(", ")}**:\n\n${results.join("\n")}`);
+  const searchable = loaded.filter((entry): entry is Extract<(typeof loaded)[number], { ok: true }> => entry.ok);
+  const search = searchBookTexts(searchable, prompt);
+  const failed = loaded.length - searchable.length;
+  if (!search.results.length) return makeAssistantMessage("assistant", `No matches found.${failed ? ` ${failed} files could not be searched.` : ""}`);
+  const lines = search.results.map((result) => `- \`${result.path}\` (${result.role})\n  ${result.excerpt || "Match in path."}`);
+  return makeAssistantMessage("assistant", `Search results (${search.total} matches):\n${lines.join("\n")}${search.total > search.results.length ? `\n${search.total - search.results.length} additional matches omitted.` : ""}${failed ? `\n${failed} files could not be searched.` : ""}`);
 }
 
 async function upsertStructuredMarkdownFile(input: { token: string; owner: string; repo: string; branch: string; path: string; frontmatter: Record<string, unknown>; body: string; message: string }) {
@@ -1791,10 +1812,6 @@ function renderMarkdown(frontmatter: Record<string, unknown>, body: string): str
   return `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${body.replace(/^\n+/, "")}`;
 }
 
-function extractSearchTerms(prompt: string): string[] {
-  return prompt.toLowerCase().replace(/[^a-z0-9à-ÿ\s-]/gi, " ").split(/\s+/).filter((token) => token.length > 2).filter((token) => !new Set(["find", "search", "cerca", "trova", "paragraph", "paragrafo", "character", "characters", "personaggio", "personaggi", "canon", "book"]).has(token)).slice(0, 5);
-}
-
 function detectEntityKind(prompt: string): EntityKind | null {
   const lowered = prompt.toLowerCase();
   if (/(character|personaggio)/.test(lowered)) return "character";
@@ -1803,14 +1820,6 @@ function detectEntityKind(prompt: string): EntityKind | null {
   if (/(item|oggetto)/.test(lowered)) return "item";
   if (/(secret|segreto)/.test(lowered)) return "secret";
   if (/(timeline|event|evento)/.test(lowered)) return "timeline-event";
-  return null;
-}
-
-function detectSectionHint(prompt: string): "characters" | "paragraphs" | "canon" | null {
-  const lowered = prompt.toLowerCase();
-  if (/\b(character|characters|personaggio|personaggi)\b/.test(lowered)) return "characters";
-  if (/\b(paragraph|paragraphs|paragrafo|paragrafi|scene|scena)\b/.test(lowered)) return "paragraphs";
-  if (/\b(canon|entity|entities|lore)\b/.test(lowered)) return "canon";
   return null;
 }
 

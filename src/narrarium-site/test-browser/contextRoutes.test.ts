@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { buildAvailableFileManifest, buildContextSummary, buildContextTitle, parseAppRoute, resolveResearchDetailPath } from "@/assistant/context";
+import { buildAvailableFileManifest, buildContextSummary, buildContextTitle, loadWriterContext, parseAppRoute, resolveResearchDetailPath } from "@/assistant/context";
+import { resolveResumeChapter } from "@/assistant/chapterSource";
 
 const routeCases = [
   ["/app", "app-home"],
@@ -86,4 +87,15 @@ test("manifest distinguishes real files from conventional hypothetical paths", (
   expect(manifest.find((file) => file.path === "notes.md")?.exists).toBe(true);
   expect(manifest.find((file) => file.path === "context.md")?.exists).toBe(false);
   expect(manifest.find((file) => file.path === "research/rome.md")?.exists).toBe(true);
+});
+
+test("chapter and paragraph routes resolve the same complete resume chapter", async () => {
+  const chapter = { slug: "001-start", path: "chapters/001-start", title: "Start", paragraphs: [{ number: "001", title: "One", path: "chapters/001-start/001.md" }], hasResume: false, hasEvaluation: false };
+  const structure = { title: "Book", owner: "owner", repo: "repo", defaultBranch: "main", loadedBranch: "main", chapters: [chapter], characters: [], locations: [], factions: [], items: [], timelines: [], secrets: [], ghostwriters: [], readerPersonas: [], readerEvaluationFiles: [], operationManifestFiles: [], auditFiles: [], researchFiles: [], notesFiles: [] } as any;
+  const book = { id: "book", owner: "owner", repo: "repo", tokenIndex: null } as any;
+  const settings = { books: [book], defaultGitHubToken: "" } as any;
+  const chapterContext = await loadWriterContext("/app/books/book/chapters/001-start", settings, [book], { book: structure }, { book: "main" }, "main");
+  const paragraphContext = await loadWriterContext("/app/books/book/chapters/001-start/paragraphs/001", settings, [book], { book: structure }, { book: "main" }, "main");
+  expect(resolveResumeChapter(chapterContext)).toBe(chapter);
+  expect(resolveResumeChapter(paragraphContext)).toBe(chapter);
 });

@@ -440,6 +440,9 @@ export async function loadBookStructure(
     firstClassFiles: allPaths
       .filter((path) => ["context.md", "ideas.md", "story-design.md", "notes.md", "promoted.md", "evaluation-guidelines.md", "state/current.md", "state/status.md", "state/script-ledger.md", "resumes/total.md", "evaluations/total.md"].includes(path))
       .map((path) => ({ path, sha: treeData.tree.find((node) => node.path === path)?.sha ?? "", size: treeData.tree.find((node) => node.path === path)?.size ?? 0 })),
+    searchableFiles: allPaths
+      .filter((path) => /\.(md|txt)$/i.test(path))
+      .map((path) => ({ path, sha: treeData.tree.find((node) => node.path === path)?.sha ?? "", size: treeData.tree.find((node) => node.path === path)?.size ?? 0, role: path.startsWith("research/") ? "research" : path.startsWith("notes/") || path === "notes.md" ? "note" : path.startsWith("chapters/") ? "chapter or paragraph" : path.startsWith("characters/") || path.startsWith("locations/") || path.startsWith("factions/") || path.startsWith("items/") || path.startsWith("secrets/") || path.startsWith("timelines/") ? "canon" : "repository text" })),
     bookCoverPromptPath: allPaths.includes("assets/book/cover.md") ? "assets/book/cover.md" : undefined,
     bookCoverPath: firstExistingImage("assets/book/cover"),
     bookAuditPath: auditPathSet.has(buildBookAuditPath()) ? buildBookAuditPath() : undefined,
