@@ -32,6 +32,7 @@ import type {
   AssistantAction,
   AssistantActionProvenance,
   AssistantAttachment,
+  AssistantFileUpdate,
   AssistantMessage,
   AssistantSession,
 } from "@/assistant/store";
@@ -56,6 +57,8 @@ import { AUDIT_CATEGORIES, auditTargetHref, loadAuditReport, resolveAuditTarget,
 import { useFeedbackRewriteWorkflowStore } from "@/store/feedbackRewriteWorkflowStore";
 import { resolveDeepResearchRequest } from "@/assistant/deepResearchRequest";
 import { executeDeepResearchFromCopilot } from "@/assistant/deepResearchHandler";
+import { chapterOutputSchema, entityOutputSchema, importedDraftOutputSchema, importedScriptOutputSchema, multiFileOutputSchema, paragraphOutputSchema, parseStructuredOutput, readerOutputSchema, scriptOutputSchema, StructuredOutputError } from "@/assistant/structuredOutput";
+import type { z } from "zod";
 import { attachmentImportRoute, validateImportAttachments, type AttachmentImportTarget } from "@/assistant/attachmentImport";
 
 async function completeForTask(
@@ -71,6 +74,21 @@ async function completeForTask(
     if (/No AI integration configured/i.test(message)) return null;
     throw err;
   }
+}
+
+async function completeStructuredForTask<T>(settings: AppSettings, messages: LlmMessage[], capability: ChatCapability, schema: z.ZodType<T>, options: { signal?: AbortSignal; label: string }): Promise<T> {
+  let lastError: unknown;
+  let attemptMessages = messages;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const raw = await completeForTask(settings, attemptMessages, capability, options);
+    if (!raw) throw new StructuredOutputError("No configured model returned structured output.");
+    try { return parseStructuredOutput(raw, schema); } catch (error) {
+      lastError = error;
+      if (options.signal?.aborted || attempt === 1) break;
+      attemptMessages = [...messages, { role: "assistant", content: raw }, { role: "user", content: `The JSON failed validation: ${error instanceof Error ? error.message : String(error)}. Return one corrected JSON object only.` }];
+    }
+  }
+  throw lastError instanceof Error ? lastError : new StructuredOutputError(String(lastError));
 }
 
 type PromptInput = {
@@ -557,31 +575,13 @@ async function listSimulatedReaders(input: PromptInput & { book: BookEntry; bran
 async function createSimulatedReaderFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const structure = input.context.structure;
   if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
-  const answer = await completeForTask(input.settings, [
+  const parsed = await completeStructuredForTask(input.settings, [
     { role: "system", content: "Return ONLY JSON for a useful simulated reader profile: {\"name\":\"...\",\"description\":\"...\",\"profile\":\"...\",\"aspects\":[\"...\"],\"preferredGenres\":[\"...\"],\"dislikedGenres\":[],\"experienceLevel\":\"...\",\"severity\":1-10,\"audienceAge\":\"...\",\"interests\":[],\"appreciatedElements\":[],\"frequentCriticisms\":[],\"customPrompt\":\"...\"}. Keep it revision-useful, not theatrical roleplay." },
     { role: "user", content: input.prompt },
-  ], "default", { signal: input.signal, label: "copilot:create-reader" });
-  if (!answer) return noAiMessage();
-  const parsed = parseJsonObject(answer);
+  ], "default", readerOutputSchema, { signal: input.signal, label: "copilot:create-reader" });
   const profile = emptyReaderPersona(structure.language ?? input.settings.ui.language);
-  const name = typeof parsed?.name === "string" ? parsed.name.trim() : "Custom Reader";
-  const next = {
-    ...profile,
-    name,
-    slug: slugToTitle(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
-    description: typeof parsed?.description === "string" ? parsed.description : "",
-    profile: typeof parsed?.profile === "string" ? parsed.profile : "",
-    aspects: Array.isArray(parsed?.aspects) ? parsed.aspects.map(String) : [],
-    preferredGenres: Array.isArray(parsed?.preferredGenres) ? parsed.preferredGenres.map(String) : [],
-    dislikedGenres: Array.isArray(parsed?.dislikedGenres) ? parsed.dislikedGenres.map(String) : [],
-    experienceLevel: typeof parsed?.experienceLevel === "string" ? parsed.experienceLevel : "average",
-    severity: typeof parsed?.severity === "number" ? Math.max(1, Math.min(10, parsed.severity)) : 5,
-    audienceAge: typeof parsed?.audienceAge === "string" ? parsed.audienceAge : "adult",
-    interests: Array.isArray(parsed?.interests) ? parsed.interests.map(String) : [],
-    appreciatedElements: Array.isArray(parsed?.appreciatedElements) ? parsed.appreciatedElements.map(String) : [],
-    frequentCriticisms: Array.isArray(parsed?.frequentCriticisms) ? parsed.frequentCriticisms.map(String) : [],
-    customPrompt: typeof parsed?.customPrompt === "string" ? parsed.customPrompt : "",
-  };
+  const name = parsed.name;
+  const next = { ...profile, ...parsed, slug: slugToTitle(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") };
   const path = await saveReaderPersona({ token: input.token, book: input.book, branch: input.branch, profile: next });
   return makeAssistantMessage("assistant", `Created simulated reader **${next.name}** at \`${path}\`.`);
 }
@@ -1143,15 +1143,11 @@ async function requestDeleteReaderEvaluation(input: PromptInput & { book: BookEn
 async function createChapterFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const structure = input.context.structure;
   if (!structure) return makeAssistantMessage("assistant", "Open a book first so I can create a chapter in the right repository.");
-  const answer = await completeForTask(input.settings, [
+  const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new chapter: {"title":"...","summary":"...","body":"..."}. Keep it concise and aligned with the current book context.', "book"),
     buildUserMessage(input, `Create a new chapter. Request: ${input.prompt}`),
-  ], "default", { signal: input.signal, label: "copilot:create-chapter" });
-  if (!answer) return noAiMessage();
-  const parsed = parseJsonObject(answer);
-  const title = typeof parsed?.title === "string" ? parsed.title.trim() : "New Chapter";
-  const summary = typeof parsed?.summary === "string" ? parsed.summary.trim() : undefined;
-  const body = typeof parsed?.body === "string" ? parsed.body.trim() : undefined;
+  ], "default", chapterOutputSchema, { signal: input.signal, label: "copilot:create-chapter" });
+  const { title, summary, body } = parsed;
   const nextNumber = (structure.chapters.length || 0) + 1;
   const created = await createChapter(input.token, input.book.owner, input.book.repo, input.branch, { number: nextNumber, title, summary, body });
   return makeAssistantMessage("assistant", `I created chapter ${created.slug} at \`${created.chapterFilePath}\`.`);
@@ -1160,15 +1156,11 @@ async function createChapterFromPrompt(input: PromptInput & { book: BookEntry; b
 async function createParagraphFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Open a chapter first so I know where to create the paragraph.");
-  const answer = await completeForTask(input.settings, [
+  const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new paragraph: {"title":"...","summary":"...","body":"..."}. Preserve current chapter context.', "book"),
     buildUserMessage(input, `Create a new paragraph in chapter ${chapter.slug}. Request: ${input.prompt}`),
-  ], "default", { signal: input.signal, label: "copilot:create-paragraph" });
-  if (!answer) return noAiMessage();
-  const parsed = parseJsonObject(answer);
-  const title = typeof parsed?.title === "string" ? parsed.title.trim() : "New Paragraph";
-  const summary = typeof parsed?.summary === "string" ? parsed.summary.trim() : undefined;
-  const body = typeof parsed?.body === "string" ? parsed.body.trim() : undefined;
+  ], "default", paragraphOutputSchema, { signal: input.signal, label: "copilot:create-paragraph" });
+  const { title, summary, body } = parsed;
   const nextNumber = (chapter.paragraphs.length || 0) + 1;
   const created = await createParagraphDocument(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: chapter.slug, number: nextNumber, title, summary, body });
   return makeAssistantMessage("assistant", `I created paragraph ${created.slug} at \`${created.paragraphFilePath}\`.`);
@@ -1177,18 +1169,11 @@ async function createParagraphFromPrompt(input: PromptInput & { book: BookEntry;
 async function createEntityFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }, forcedKind?: EntityKind): Promise<AssistantMessage> {
   const kind = forcedKind ?? detectEntityKind(input.prompt);
   if (!kind) return makeAssistantMessage("assistant", "Tell me which entity to create: character, location, faction, item, secret, or timeline event.");
-  const answer = await completeForTask(input.settings, [
+  const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new canon entity: {"label":"...","summary":"...","body":"...","extraFrontmatter":{...}}.', "book"),
     buildUserMessage(input, `Create a ${kind}. Request: ${input.prompt}`),
-  ], "default", { signal: input.signal, label: "copilot:create-entity" });
-  if (!answer) return noAiMessage();
-  const parsed = parseJsonObject(answer);
-  const label = typeof parsed?.label === "string" ? parsed.label.trim() : `New ${kind}`;
-  const summary = typeof parsed?.summary === "string" ? parsed.summary.trim() : undefined;
-  const body = typeof parsed?.body === "string" ? parsed.body.trim() : undefined;
-  const extraFrontmatter = parsed && typeof parsed.extraFrontmatter === "object" && !Array.isArray(parsed.extraFrontmatter)
-    ? (parsed.extraFrontmatter as Record<string, unknown>)
-    : undefined;
+  ], "default", entityOutputSchema, { signal: input.signal, label: "copilot:create-entity" });
+  const { label, summary, body, extraFrontmatter } = parsed;
   const created = await createCanonEntity(input.token, input.book.owner, input.book.repo, input.branch, { kind, label, summary, body, extraFrontmatter });
   return makeAssistantMessage("assistant", `I created ${kind} \`${label}\` at \`${created.path}\`.`);
 }
@@ -1196,14 +1181,11 @@ async function createEntityFromPrompt(input: PromptInput & { book: BookEntry; br
 async function createScriptFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Open a chapter first so I know where to create the script.");
-  const answer = await completeForTask(input.settings, [
+  const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new script scene: {"title":"...","location":"..."}.'),
     buildUserMessage(input, `Create a new scene script in chapter ${chapter.slug}. Request: ${input.prompt}`),
-  ], "default", { signal: input.signal, label: "copilot:create-script" });
-  if (!answer) return noAiMessage();
-  const parsed = parseJsonObject(answer);
-  const title = typeof parsed?.title === "string" ? parsed.title.trim() : "New Scene";
-  const location = typeof parsed?.location === "string" ? parsed.location.trim() : undefined;
+  ], "default", scriptOutputSchema, { signal: input.signal, label: "copilot:create-script" });
+  const { title, location } = parsed;
   const nextNumber = input.context.paragraph ? Number(input.context.paragraph.number) : (chapter.paragraphs.length || 0) + 1;
   const paragraphSlug = input.context.paragraph?.path.split("/").pop()?.replace(/\.md$/i, "");
   await createParagraphScriptArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: chapter.slug, number: nextNumber, title, paragraphSlug, location });
@@ -1242,15 +1224,11 @@ async function importAttachmentsIntoBook(input: PromptInput & { book: BookEntry;
 async function importAttachmentsAsScript(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Open a chapter or paragraph before importing attachments as a script.");
-  const answer = await completeForTask(input.settings, [
+  const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'Convert the attached source into one Narrarium scene script. Return ONLY JSON: {"title":"...","location":"...","body":"..."}. The body must contain ordered script beats, not finished prose.', "book"),
     buildUserMessage(input, input.prompt),
-  ], "default", { signal: input.signal, label: "copilot:import-script" });
-  if (!answer) return noAiMessage();
-  const parsed = parseJsonObject(answer);
-  if (!parsed || typeof parsed.body !== "string" || !parsed.body.trim()) return makeAssistantMessage("assistant", "The attachment could not be converted into a valid script body.");
-  const title = typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : input.context.paragraph?.title ?? "Imported Scene";
-  const location = typeof parsed.location === "string" ? parsed.location.trim() : undefined;
+  ], "default", importedScriptOutputSchema, { signal: input.signal, label: "copilot:import-script" });
+  const { title, location } = parsed;
   const number = input.context.paragraph ? Number(input.context.paragraph.number) : chapter.paragraphs.length + 1;
   const paragraphSlug = input.context.paragraph ? slugFromPath(input.context.paragraph.path) : undefined;
   const script = buildParagraphScriptArtifact({ chapterSlug: chapter.slug, number, title, paragraphSlug, location, body: parsed.body });
@@ -1261,14 +1239,11 @@ async function importAttachmentsAsScript(input: PromptInput & { book: BookEntry;
 async function importAttachmentsAsDraft(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Open a chapter or paragraph before importing attachments as a draft.");
-  const answer = await completeForTask(input.settings, [
+  const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'Convert the attached source into a Narrarium prose draft. Return ONLY JSON: {"title":"...","body":"..."}. Preserve source facts and do not add wrapper commentary.', "book"),
     buildUserMessage(input, input.prompt),
-  ], "default", { signal: input.signal, label: "copilot:import-draft" });
-  if (!answer) return noAiMessage();
-  const parsed = parseJsonObject(answer);
-  if (!parsed || typeof parsed.body !== "string" || !parsed.body.trim()) return makeAssistantMessage("assistant", "The attachment could not be converted into a valid draft body.");
-  const title = typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : input.context.paragraph?.title ?? chapter.title;
+  ], "default", importedDraftOutputSchema, { signal: input.signal, label: "copilot:import-draft" });
+  const { title } = parsed;
   let path: string;
   if (input.context.paragraph) {
     path = await createParagraphDraftArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: chapter.slug, number: Number(input.context.paragraph.number), title, paragraphSlug: slugFromPath(input.context.paragraph.path), body: parsed.body, replace: true });
@@ -1635,17 +1610,12 @@ async function rewriteCurrentParagraph(input: PromptInput & { book: BookEntry; b
 }
 
 async function proposeMultiFileUpdates(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
-  const answer = await completeForTask(input.settings, [
+  const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'You are Narrarium file editor. Propose multi-file changes only for files in the available manifest or obvious notes/workspace files. Return ONLY JSON: {"summary":"...","updates":[{"path":"relative/path.md","content":"FULL NEW FILE CONTENT","reason":"..."}]}. Do not wrap in markdown.'),
     buildUserMessage(input, `User multi-file request: ${input.prompt}`),
-  ], "default", { signal: input.signal, label: "copilot:multi-file-edit" });
-  if (!answer) return noAiMessage();
-  const parsed = parseJsonObject(answer);
-  const updates = Array.isArray(parsed?.updates)
-    ? parsed.updates.filter((entry): entry is { path: string; content: string; reason?: string } => typeof entry?.path === "string" && typeof entry?.content === "string" && isSafeRelativePath(entry.path)).slice(0, 8)
-    : [];
-  if (!updates.length) return makeAssistantMessage("assistant", `I could not extract a safe multi-file update plan from the model response. Raw response:\n\n${answer.trim()}`);
-  const summary = typeof parsed?.summary === "string" ? parsed.summary : "Multi-file update proposal";
+  ], "default", multiFileOutputSchema, { signal: input.signal, label: "copilot:multi-file-edit" });
+  const summary = parsed.summary;
+  const updates = parsed.updates as AssistantFileUpdate[];
   const provenance = await actionProvenance(input, "multi-file-edit", updates.map((entry) => entry.path));
   return { id: crypto.randomUUID(), role: "assistant", text: `${summary}\n\nProposed files:\n${updates.map((entry) => `- ${entry.path}${entry.reason ? `: ${entry.reason}` : ""}`).join("\n")}`, action: { ...provenance, kind: "apply-file-updates", bookId: input.book.id, updates } };
 }
@@ -1860,23 +1830,9 @@ function looksLikeCreateDraft(prompt: string): boolean { return /\b(create|add|c
 function looksLikeImportAttachment(prompt: string): boolean { return /\b(import|attachment|allega|usa allegat|mettilo come|mettilo nel libro)\b/.test(prompt); }
 function looksLikeMultiFileEdit(prompt: string): boolean { return /\b(multi[- ]?file|piu file|più file|several files|update files|modifica.*file|aggiorna.*file)\b/.test(prompt); }
 
-function parseJsonObject(value: string): Record<string, unknown> | null {
-  const trimmed = value.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
-  try {
-    const parsed = JSON.parse(trimmed);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
-  } catch {
-    return null;
-  }
-}
-
 function extractBranchName(prompt: string): string | null {
   const match = /(?:branch\s+)([A-Za-z0-9._/-]+)/i.exec(prompt);
   return match?.[1] ?? null;
-}
-
-function isSafeRelativePath(path: string): boolean {
-  return !path.startsWith("/") && !path.includes("..") && path.endsWith(".md");
 }
 
 function makeAssistantMessage(role: "assistant" | "system", text: string): AssistantMessage {

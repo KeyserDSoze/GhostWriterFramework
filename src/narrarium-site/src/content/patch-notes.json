@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.25",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Strict structured AI creation",
+      "summary": "Copilot no longer creates placeholder files when a model returns malformed, partial, mistyped, or unexpected structured output.",
+      "changes": [
+        "Added strict Zod schemas for reader, chapter, paragraph, canon entity, script, attachment script/draft, and multi-file responses.",
+        "Rejected invalid JSON roots, missing or empty required fields, wrong types, extra keys, unsafe paths, duplicate files, and partially invalid plans before mutation.",
+        "Added one bounded repair attempt with path-aware validation errors, for at most two model calls total.",
+        "Removed generic New Chapter, New Paragraph, New Scene, Custom Reader, and other placeholder write fallbacks."
+      ]
+    },
+    "it": {
+      "title": "Creazione AI strutturata e strict",
+      "summary": "Il Copilota non crea più file placeholder quando il modello restituisce output strutturato malformato, parziale, con tipi errati o campi inattesi.",
+      "changes": [
+        "Aggiunti schemi Zod strict per lettori, capitoli, paragrafi, entità canone, script, import script/bozza e risposte multi-file.",
+        "Rifiutati root JSON invalidi, campi richiesti mancanti o vuoti, tipi errati, chiavi extra, path non sicuri, duplicati e piani parzialmente invalidi prima di ogni mutazione.",
+        "Aggiunto un solo tentativo bounded di repair con errori path-aware, per un massimo totale di due chiamate modello.",
+        "Rimossi i fallback di scrittura placeholder come New Chapter, New Paragraph, New Scene e Custom Reader."
+      ]
+    }
+  },
+  {
     "version": "0.76.24",
     "date": "2026-08-15",
     "en": {
