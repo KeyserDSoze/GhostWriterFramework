@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.29",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Predictable speech fallbacks",
+      "summary": "Speech recognition and read-aloud now follow the configured AI and browser routes exactly, stop on cancellation, and report real exhaustion instead of claiming success.",
+      "changes": [
+        "Executed speech-to-text and text-to-speech candidates in their configured primary and fallback order, including AI-to-AI, AI-to-browser, and browser-to-AI transitions.",
+        "Used browser speech only when it is explicitly present in the route and removed the implicit browser text-to-speech fallback after AI exhaustion.",
+        "Stopped the fallback chain immediately after cancellation or an abort response and surfaced terminal browser recognition failures.",
+        "Reported read-aloud success only after a speech controller starts successfully."
+      ]
+    },
+    "it": {
+      "title": "Fallback vocali prevedibili",
+      "summary": "Riconoscimento vocale e lettura ad alta voce seguono ora esattamente le route AI e browser configurate, si fermano alla cancellazione e segnalano l'esaurimento reale senza dichiarare successo.",
+      "changes": [
+        "Eseguiti i candidati speech-to-text e text-to-speech nell'ordine primary e fallback configurato, incluse transizioni AI-AI, AI-browser e browser-AI.",
+        "Usata la voce browser solo quando presente esplicitamente nella route e rimosso il fallback text-to-speech browser implicito dopo l'esaurimento AI.",
+        "Interrotta immediatamente la catena di fallback dopo cancellazione o risposta abort e mostrati gli errori terminali del riconoscimento browser.",
+        "Segnalato il successo della lettura ad alta voce solo dopo l'avvio effettivo di un controller vocale."
+      ]
+    }
+  },
+  {
     "version": "0.76.28",
     "date": "2026-08-15",
     "en": {

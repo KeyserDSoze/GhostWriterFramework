@@ -95,6 +95,7 @@ import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
 import { commitAndPushTextFileMutation, RepositoryConflictError, resolveRepositoryHeadForMutation, sha256Text } from "@/repository/safeRepositoryMutation";
 import { currentRevisionToken, fileRevisionMatches, fileUpdateCounts, markFileUpdatesApplied, markFileUpdatesFailed, markFileUpdatesUndone, pendingFileUpdates } from "@/assistant/multiFileOperation";
 import { buildCanonEntityDocument } from "@/narrarium/canon";
+import { BrowserSpeechFallbackRequired } from "@/assistant/mediaFallback";
 
 ensureBuiltinCopilotToolsRegistered();
 
@@ -582,7 +583,7 @@ export function AssistantPanel() {
     }, 150);
   }
 
-  async function startSpeechToText() {
+  async function startSpeechToText(forceBrowser = false, candidateIndex = 0) {
     if (listening && mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
       return;
@@ -590,7 +591,12 @@ export function AssistantPanel() {
 
     const operation = voiceModeRef.current ? currentMediaOperation() : beginMediaOperation();
 
-    if (sttMode(settings) === "ai") {
+    const mode = sttMode(settings, candidateIndex);
+    if (!forceBrowser && mode === "none") {
+      toast({ title: t("assistant.toastSttUnavailable"), description: t("assistant.sttBrowserUnsupported"), variant: "destructive" });
+      return;
+    }
+    if (!forceBrowser && mode === "ai") {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         if (!ownsMediaOperation(operation.generation, operation.signal)) {
@@ -619,7 +625,7 @@ export function AssistantPanel() {
           if (voiceModeRef.current) setVoiceStatus("thinking");
           try {
             const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
-            const transcript = (await transcribeAudio(blob, settings, operation.signal)).trim();
+            const transcript = (await transcribeAudio(blob, settings, operation.signal, candidateIndex)).trim();
             if (!ownsMediaOperation(operation.generation, operation.signal)) return;
             if (transcript) {
               if (voiceModeRef.current) void handleVoiceTranscript(transcript, operation.generation, operation.signal);
@@ -631,6 +637,10 @@ export function AssistantPanel() {
             }
           } catch (err) {
             if (!ownsMediaOperation(operation.generation, operation.signal)) return;
+            if (err instanceof BrowserSpeechFallbackRequired) {
+              await startSpeechToText(true, err.nextCandidateIndex);
+              return;
+            }
             if (voiceModeRef.current) setVoiceStatus("idle");
             toast({ title: t("assistant.toastSttFailed"), description: String(err), variant: "destructive" });
           }
@@ -645,8 +655,13 @@ export function AssistantPanel() {
       return;
     }
 
+    const browserFallbackIndex = forceBrowser ? candidateIndex : candidateIndex + 1;
     const SpeechRecognition = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
+      if (sttMode(settings, browserFallbackIndex) === "ai") {
+        await startSpeechToText(false, browserFallbackIndex);
+        return;
+      }
       toast({ title: t("assistant.toastSttUnavailable"), description: t("assistant.sttBrowserUnsupported"), variant: "destructive" });
       return;
     }
@@ -657,6 +672,7 @@ export function AssistantPanel() {
     recognition.lang = settings.ui.language === "it" ? "it-IT" : "en-US";
     recognition.continuous = manualEndRef.current ? true : false;
     recognition.interimResults = voiceModeRef.current;
+    let recognitionFailed = false;
     setListening(true);
     if (voiceModeRef.current) setVoiceStatus("listening");
     recognition.onresult = (event: any) => {
@@ -680,13 +696,17 @@ export function AssistantPanel() {
     };
     recognition.onerror = () => {
       if (!ownsMediaOperation(operation.generation, operation.signal)) return;
+      recognitionFailed = true;
       speechRecognitionRef.current = null;
       speechRecognitionTranscriptRef.current = "";
       setListening(false);
       if (voiceModeRef.current) setVoiceStatus("idle");
+      if (sttMode(settings, browserFallbackIndex) === "ai") void startSpeechToText(false, browserFallbackIndex);
+      else toast({ title: t("assistant.toastSttFailed"), description: t("assistant.sttBrowserUnsupported"), variant: "destructive" });
     };
     recognition.onend = () => {
       if (!ownsMediaOperation(operation.generation, operation.signal)) return;
+      if (recognitionFailed) return;
       speechRecognitionRef.current = null;
       setListening(false);
       const transcript = speechRecognitionTranscriptRef.current.trim();
@@ -704,7 +724,16 @@ export function AssistantPanel() {
         }, 1800);
       }
     };
-    if (ownsMediaOperation(operation.generation, operation.signal)) recognition.start();
+    if (ownsMediaOperation(operation.generation, operation.signal)) {
+      try {
+        recognition.start();
+      } catch (error) {
+        speechRecognitionRef.current = null;
+        setListening(false);
+        if (sttMode(settings, browserFallbackIndex) === "ai") await startSpeechToText(false, browserFallbackIndex);
+        else toast({ title: t("assistant.toastSttFailed"), description: String(error), variant: "destructive" });
+      }
+    }
   }
 
   function stopReading() {
@@ -1207,11 +1236,12 @@ export function AssistantPanel() {
     localAudioHandledRef.current = true;
     setVoiceStatus("speaking");
     const controller = await readText(text, { operation });
+    if (!controller) return false;
     if (!ownsMediaOperation(operation.generation, operation.signal)) {
-      controller?.stop();
+      controller.stop();
       return false;
     }
-    localAudioDoneRef.current = controller?.done ?? Promise.resolve();
+    localAudioDoneRef.current = controller.done;
     return true;
   }
 

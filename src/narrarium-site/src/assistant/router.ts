@@ -208,8 +208,8 @@ export function isBrowserSttPreferred(settings: AppSettings): boolean {
  * - "ai": use MediaRecorder → transcribeAudio
  * - "none": no candidate (fall back to browser recognition by default)
  */
-export function sttMode(settings: AppSettings): "browser" | "ai" | "none" {
-  const first = resolveTaskCandidates(settings, "stt")[0];
+export function sttMode(settings: AppSettings, candidateIndex = 0): "browser" | "ai" | "none" {
+  const first = resolveTaskCandidates(settings, "stt")[candidateIndex];
   if (!first) return "none";
   if (first.browser) return "browser";
   return first.integration && first.model ? "ai" : "none";

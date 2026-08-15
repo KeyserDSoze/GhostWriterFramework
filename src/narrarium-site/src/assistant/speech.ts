@@ -4,6 +4,7 @@ import { resolveWritingIntegration } from "@/assistant/llm";
 import { resolveTaskCandidates } from "@/assistant/router";
 import { sttDelta, ttsDelta, useCostsStore } from "@/costs/costsStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
+import { BrowserSpeechFallbackRequired, executeMediaFallback } from "@/assistant/mediaFallback";
 
 const MAX_TTS_CHARS = 1200;
 
@@ -119,16 +120,15 @@ export function getSpeechIntegration(settings: AppSettings): AIIntegration | nul
   return integration;
 }
 
-export async function transcribeAudio(blob: Blob, settings: AppSettings, signal?: AbortSignal): Promise<string> {
+export async function transcribeAudio(blob: Blob, settings: AppSettings, signal?: AbortSignal, startCandidateIndex = 0): Promise<string> {
   signal?.throwIfAborted();
-  const candidates = resolveTaskCandidates(settings, "stt").filter((c) => c.integration && c.model);
+  const candidates = resolveTaskCandidates(settings, "stt").slice(startCandidateIndex);
   if (!candidates.length) throw new Error("No AI speech-to-text model is configured.");
   const sizeKb = Math.round(blob.size / 1024);
-  let lastError: unknown = null;
-  for (const candidate of candidates) {
-    const integration = candidate.integration!;
+  return executeMediaFallback<string>({ candidates, signal, runBrowser: async (index) => { throw new BrowserSpeechFallbackRequired(startCandidateIndex + index + 1); }, runAi: async (candidate) => {
+    const integration = candidate.integration as AIIntegration;
     const model = candidate.model!;
-    const pricing = candidate.pricing;
+    const pricing = candidates.find((entry) => entry.integration === integration && entry.model === model)?.pricing;
     const file = new File([blob], "speech.webm", { type: blob.type || "audio/webm" });
     const client = createAudioClient(integration);
     const debugId = useLlmDebugStore.getState().begin({ kind: "stt", label: "stt", model, messages: [{ role: "input", content: `audio ${sizeKb} KB` }] });
@@ -143,12 +143,9 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings, signal?
       return text;
     } catch (err) {
       useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
-      if (signal?.aborted) throw err;
-      lastError = err;
-      // try next fallback candidate
+      throw err;
     }
-  }
-  throw lastError ?? new Error("Speech-to-text failed.");
+  } });
 }
 
 export async function speakText(text: string, settings: AppSettings, options: SpeakOptions = {}): Promise<SpeechController> {
@@ -157,26 +154,17 @@ export async function speakText(text: string, settings: AppSettings, options: Sp
   const candidates = resolveTaskCandidates(settings, "tts");
   const segments = resolveSegments(text, options);
   const probeText = segments[Math.max(0, options.startIndex ?? 0)] ?? text.slice(0, 200);
-  for (const candidate of candidates) {
-    if (candidate.browser) {
-      // Router explicitly selected the browser voice for TTS.
-      return speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, options);
-    }
-    if (!candidate.integration || !candidate.model) continue;
-    try {
+  if (!candidates.length) throw new Error("No text-to-speech route is configured.");
+  return executeMediaFallback<SpeechController>({ candidates, signal: options.signal, runBrowser: () => speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, options), runAi: async (candidate) => {
       // Probe: synthesize the first segment to confirm this provider works before committing.
-      const probeUrl = await synthesizeChunk(probeText, candidate.integration, candidate.model, voice, options.signal);
+      const integration = candidate.integration as AIIntegration;
+      const model = candidate.model!;
+      const pricing = candidates.find((entry) => entry.integration === integration && entry.model === model)?.pricing;
+      const probeUrl = await synthesizeChunk(probeText, integration, model, voice, options.signal);
       try { URL.revokeObjectURL(probeUrl); } catch { /* ignore */ }
       options.signal?.throwIfAborted();
-      return speakWithOpenAICompatible(text, candidate.integration, candidate.model, voice, options, candidate.pricing);
-    } catch {
-      options.signal?.throwIfAborted();
-      // try next TTS fallback candidate
-    }
-  }
-  // No AI candidate (or all failed) → browser voice.
-  options.signal?.throwIfAborted();
-  return speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, options);
+      return speakWithOpenAICompatible(text, integration, model, voice, options, pricing);
+  } });
 }
 
 function createAudioClient(integration: AIIntegration): AzureOpenAI | OpenAI {
