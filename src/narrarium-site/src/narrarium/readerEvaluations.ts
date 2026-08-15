@@ -5,6 +5,7 @@ import { createFile, deleteFile, loadFileContent, readFileWithSha, updateFile } 
 import type { BookStructure } from "@/types/book";
 import type { AppSettings, BookEntry } from "@/types/settings";
 import { builtinReaderPersonas, mergeReaderPersonas, parseReaderPersona, readerPersonaSystemPrompt, serializeReaderPersona, type ReaderEvaluationDepth, type ReaderPersonaProfile } from "@/narrarium/readerPersona";
+import { isRepositoryError, optionalRepositoryRead } from "@/repository/repositoryError";
 
 export type ReaderEvaluationTargetType = "chapter" | "paragraph" | "selection";
 
@@ -99,7 +100,7 @@ const SUMMARY_TOOL = {
 
 export async function loadReaderPersonas(input: { token: string; book: BookEntry; branch: string; structure: BookStructure }): Promise<ReaderPersonaProfile[]> {
   const overrides = await Promise.all(input.structure.readerPersonas.map(async (entry) => {
-    const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, entry.path, input.branch).catch(() => "");
+    const raw = await optionalRepositoryRead(() => loadFileContent(input.token, input.book.owner, input.book.repo, entry.path, input.branch)) ?? "";
     return raw ? parseReaderPersona(entry.slug, raw) : null;
   }));
   return mergeReaderPersonas(input.structure.language, overrides.filter((profile): profile is ReaderPersonaProfile => Boolean(profile)));
@@ -108,18 +109,15 @@ export async function loadReaderPersonas(input: { token: string; book: BookEntry
 export async function saveReaderPersona(input: { token: string; book: BookEntry; branch: string; profile: ReaderPersonaProfile }): Promise<string> {
   const path = `personas/${input.profile.slug}.md`;
   const content = serializeReaderPersona({ ...input.profile, path });
-  try {
-    const existing = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path);
-    await updateFile(input.token, input.book.owner, input.book.repo, input.branch, path, existing.sha, content, `Update simulated reader ${input.profile.name}`);
-  } catch {
-    await createFile(input.token, input.book.owner, input.book.repo, input.branch, path, content, `Add simulated reader ${input.profile.name}`);
-  }
+  const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path));
+  if (existing) await updateFile(input.token, input.book.owner, input.book.repo, input.branch, path, existing.sha, content, `Update simulated reader ${input.profile.name}`);
+  else await createFile(input.token, input.book.owner, input.book.repo, input.branch, path, content, `Add simulated reader ${input.profile.name}`);
   return path;
 }
 
 export async function deleteReaderPersonaOverride(input: { token: string; book: BookEntry; branch: string; profile: ReaderPersonaProfile }): Promise<void> {
   const path = input.profile.path ?? `personas/${input.profile.slug}.md`;
-  const existing = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path).catch(() => null);
+  const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path));
   if (existing) await deleteFile(input.token, input.book.owner, input.book.repo, input.branch, path, existing.sha, `Remove simulated reader ${input.profile.name}`);
 }
 
@@ -244,8 +242,8 @@ async function limitedMap<T, R>(items: T[], limit: number, run: (item: T, index:
 
 async function optionalContext(input: { token: string; book: BookEntry; branch: string; structure: BookStructure; target: ReaderEvaluationTarget; includeContext?: boolean }): Promise<string> {
   if (!input.includeContext) return "";
-  const style = input.structure.globalWritingStylePath ? await loadFileContent(input.token, input.book.owner, input.book.repo, input.structure.globalWritingStylePath, input.branch).catch(() => "") : "";
-  const resume = await loadFileContent(input.token, input.book.owner, input.book.repo, `resumes/chapters/${input.target.chapterId}.md`, input.branch).catch(() => "");
+  const style = input.structure.globalWritingStylePath ? await optionalRepositoryRead(() => loadFileContent(input.token, input.book.owner, input.book.repo, input.structure.globalWritingStylePath!, input.branch)) ?? "" : "";
+  const resume = await optionalRepositoryRead(() => loadFileContent(input.token, input.book.owner, input.book.repo, `resumes/chapters/${input.target.chapterId}.md`, input.branch)) ?? "";
   const canon = [
     ...input.structure.characters.map((entry) => entry.name ?? entry.path),
     ...input.structure.locations.map((entry) => entry.name ?? entry.path),
@@ -279,7 +277,7 @@ export async function runReaderEvaluations(input: {
     input.onProgress?.({ readerId: reader.id, readerName: reader.name, status: "running", completed: completedCount, total: input.readers.length });
     const updatedAt = new Date().toISOString();
     const path = evaluationPath(input.target, reader);
-    const existing = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path).catch(() => null);
+    const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path));
     const createdAt = createdAtFromFile(existing?.content, updatedAt);
     try {
       const result = await completeToolRouted<ReaderEvaluationOutput>(input.settings, [
@@ -291,23 +289,26 @@ export async function runReaderEvaluations(input: {
       await writeStableFile({ token: input.token, book: input.book, branch: input.branch, path, existing, content: renderFile(frontmatter, renderEvaluationBody(result.output, outputLanguage)), message: `Update reader evaluation ${reader.name}: ${input.target.title}` });
       const legacyPrefix = legacyEvaluationPrefix(input.target, reader);
       for (const legacy of input.structure.readerEvaluationFiles.filter((file) => file.path.startsWith(legacyPrefix))) {
-        const old = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, legacy.path).catch(() => null);
-        if (old) await deleteFile(input.token, input.book.owner, input.book.repo, input.branch, legacy.path, old.sha, `Remove legacy reader evaluation ${reader.name}`).catch(() => undefined);
+        const old = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, legacy.path));
+        if (old) await deleteFile(input.token, input.book.owner, input.book.repo, input.branch, legacy.path, old.sha, `Remove legacy reader evaluation ${reader.name}`);
       }
       completedCount += 1;
       const record: ReaderEvaluationRecord = { path, id, targetType: input.target.type, targetId: targetId(input.target), readerId: reader.id, readerName: reader.name, readerType: reader.readerType, createdAt, sourceContentHash: sourceHash, sourceContentVersion: input.target.sourceVersion, status: "completed", score: result.output.score, body: renderEvaluationBody(result.output, outputLanguage), stale: false };
       input.onProgress?.({ readerId: reader.id, readerName: reader.name, status: "completed", completed: completedCount, total: input.readers.length });
       return record;
     } catch (err) {
+      if (isRepositoryError(err)) throw err;
       completedCount += 1;
       const error = err instanceof Error ? err.message : String(err);
       const id = `reader-evaluation:${input.target.type}:${input.target.chapterId}:${input.target.paragraphId ?? "chapter"}:${reader.slug}`;
       const frontmatter = evaluationFrontmatter({ id, createdAt, updatedAt, input, reader, sourceHash, status: input.signal?.aborted ? "cancelled" : "failed", error });
-      if (!existing) await createFile(input.token, input.book.owner, input.book.repo, input.branch, path, renderFile(frontmatter, `# Evaluation failed\n\n${error}`), `Record failed reader evaluation ${reader.name}`).catch(() => undefined);
+      if (!existing) await createFile(input.token, input.book.owner, input.book.repo, input.branch, path, renderFile(frontmatter, `# Evaluation failed\n\n${error}`), `Record failed reader evaluation ${reader.name}`);
       input.onProgress?.({ readerId: reader.id, readerName: reader.name, status: input.signal?.aborted ? "cancelled" : "failed", completed: completedCount, total: input.readers.length, error });
       throw Object.assign(new Error(error), { record: { path, id, targetType: input.target.type, targetId: targetId(input.target), readerId: reader.id, readerName: reader.name, readerType: reader.readerType, createdAt, sourceContentHash: sourceHash, sourceContentVersion: input.target.sourceVersion, status: input.signal?.aborted ? "cancelled" : "failed", body: "", error } satisfies ReaderEvaluationRecord });
     }
   });
+  const repositoryFailure = records.find((result): result is PromiseRejectedResult => result.status === "rejected" && isRepositoryError(result.reason));
+  if (repositoryFailure) throw repositoryFailure.reason;
   const completed = records.filter((result): result is PromiseFulfilledResult<ReaderEvaluationRecord> => result.status === "fulfilled").map((result) => result.value);
   const failed = records.filter((result): result is PromiseRejectedResult => result.status === "rejected").map((result) => (result.reason as { record?: ReaderEvaluationRecord }).record).filter((record): record is ReaderEvaluationRecord => Boolean(record));
   return { completed, failed };
@@ -360,7 +361,7 @@ export async function generateReaderEvaluationSummary(input: { token: string; bo
     { role: "user", content: input.evaluations.map((evaluation) => `READER: ${evaluation.readerName}\nSCORE: ${evaluation.score ?? "n/a"}\n${evaluation.body}`).join("\n\n---\n\n") },
   ], "reader-evaluation-summary", SUMMARY_TOOL, { signal: input.signal, label: "reader-evaluation-summary" });
   const path = readerEvaluationSummaryPath(input.target);
-  const existing = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path).catch(() => null);
+  const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path));
   const originalCreatedAt = createdAtFromFile(existing?.content, createdAt);
   const id = `reader-evaluation-summary:${input.target.type}:${input.target.chapterId}:${input.target.paragraphId ?? "chapter"}`;
   const sourceHash = await hashReaderSource(input.target.text);

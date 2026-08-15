@@ -2,6 +2,7 @@ import { parseDocument, stringify } from "yaml";
 import { completeToolRouted } from "@/assistant/router";
 import type { LlmRunMetadata } from "@/assistant/llm";
 import { loadFileContent, loadRemoteFileContentAtRef } from "@/github/githubClient";
+import { optionalRepositoryRead } from "@/repository/repositoryError";
 import { ghostwriterPrompt, parseGhostwriter } from "@/narrarium/ghostwriter";
 import {
   hashReaderSource,
@@ -261,7 +262,7 @@ function aggregateRuns(manifest: RewriteOperationManifest): void {
 }
 
 async function readOptional(context: RewriteRepositoryContext, path: string): Promise<string | null> {
-  return loadFileContent(context.token, context.book.owner, context.book.repo, path, context.branch).catch(() => null);
+  return optionalRepositoryRead(() => loadFileContent(context.token, context.book.owner, context.book.repo, path, context.branch));
 }
 
 async function requireLocalWorkingCopy(context: RewriteRepositoryContext): Promise<RewriteWorkspaceContext> {
@@ -287,7 +288,7 @@ async function readWorkingCopyText(context: RewriteWorkspaceContext, path: strin
     if (local.kind === "text") return { content: local.text ?? "", hash: local.currentHash };
     return { content: new TextDecoder().decode(await local.blob?.arrayBuffer() ?? new ArrayBuffer(0)), hash: local.currentHash };
   }
-  const remote = await loadRemoteFileContentAtRef(context.token, context.book.owner, context.book.repo, path, context.branch).catch(() => null);
+  const remote = await optionalRepositoryRead(() => loadRemoteFileContentAtRef(context.token, context.book.owner, context.book.repo, path, context.branch));
   if (!remote) return { content: null, hash: null };
   return { content: remote.content, hash: await sha256Text(remote.content) };
 }

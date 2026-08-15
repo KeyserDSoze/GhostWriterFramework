@@ -5,6 +5,7 @@ import { createOrUpdateBinaryFile, createOrUpdateTextFile, loadBinaryFileContent
 import { completeTextRouted, resolveTaskCandidates } from "@/assistant/router";
 import { imageTokenDelta, useCostsStore } from "@/costs/costsStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
+import { optionalRepositoryRead } from "@/repository/repositoryError";
 
 export type AssetSubjectKind = "book" | "chapter" | "paragraph";
 export type AssetPromptSource = "custom" | "text" | "resume";
@@ -127,12 +128,12 @@ export async function loadExistingAssetImage(input: {
   branch: string;
   target: AssetTarget;
 }): Promise<ExistingAssetImage | null> {
-  const existing = await readFileWithSha(input.token, input.owner, input.repo, input.branch, input.target.markdownPath).catch(() => null);
+  const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.owner, input.repo, input.branch, input.target.markdownPath));
   if (!existing) return null;
   const parsed = parseAssetMarkdown(existing.content);
   const imagePath = parsed.path || input.target.imagePath;
   const extension = imagePath.split(".").pop()?.toLowerCase() || "png";
-  const bytes = await loadBinaryFileContent(input.token, input.owner, input.repo, imagePath, input.branch).catch(() => null);
+  const bytes = await optionalRepositoryRead(() => loadBinaryFileContent(input.token, input.owner, input.repo, imagePath, input.branch));
   return {
     prompt: parsed.body,
     altText: parsed.altText,

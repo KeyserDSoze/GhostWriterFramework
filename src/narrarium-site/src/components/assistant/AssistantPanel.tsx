@@ -96,6 +96,7 @@ import { commitAndPushTextFileMutation, RepositoryConflictError, resolveReposito
 import { currentRevisionToken, fileRevisionMatches, fileUpdateCounts, markFileUpdatesApplied, markFileUpdatesFailed, markFileUpdatesUndone, pendingFileUpdates } from "@/assistant/multiFileOperation";
 import { buildCanonEntityDocument } from "@/narrarium/canon";
 import { BrowserSpeechFallbackRequired } from "@/assistant/mediaFallback";
+import { optionalRepositoryRead } from "@/repository/repositoryError";
 
 ensureBuiltinCopilotToolsRegistered();
 
@@ -256,6 +257,10 @@ export function AssistantPanel() {
       setContextSummary(ctx.summary);
       setContextFiles(ctx.loadedFilePaths);
       setAvailableCount(ctx.availableFiles.length);
+    }).catch((error) => {
+      if (!active) return;
+      setContextFiles([]);
+      toast({ title: settings.ui.language === "it" ? "Impossibile caricare il contesto repository" : "Could not load repository context", description: String(error), variant: "destructive" });
     });
     return () => {
       active = false;
@@ -1224,9 +1229,7 @@ export function AssistantPanel() {
   ): Promise<boolean> {
     const operation = requestedOperation ?? (voiceModeRef.current ? currentMediaOperation() : beginMediaOperation());
     if (!ownsMediaOperation(operation.generation, operation.signal)) return false;
-    const raws = await Promise.all(
-      action.paths.map((path) => loadFileContent(token, book.owner, book.repo, path, readBranch).catch(() => "")),
-    );
+    const raws = await Promise.all(action.paths.map((path) => loadFileContent(token, book.owner, book.repo, path, readBranch)));
     if (!ownsMediaOperation(operation.generation, operation.signal)) return false;
     const text = raws
       .map((raw) => (action.includeFrontmatter ? raw.trim() : stripFrontmatterForSpeech(raw)))
@@ -1602,7 +1605,7 @@ export function AssistantPanel() {
     if (!await validatePersistedMutation(action, book, token)) return;
     setBusy(true);
     try {
-      const currentFiles = await Promise.all(updates.map((update) => readFileWithSha(token, book.owner, book.repo, branch, update.path).catch(() => null)));
+      const currentFiles = await Promise.all(updates.map((update) => optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, update.path))));
       const results: Record<string, { previousContent: string | null; appliedHash: string }> = {};
       const mutations = await Promise.all(updates.map(async (update, index) => {
         const current = currentFiles[index];
@@ -1694,7 +1697,7 @@ export function AssistantPanel() {
         const remaining = chapter.paragraphs.filter((paragraph) => paragraph.path !== action.path);
         await reorderParagraphsInChapter(token, book.owner, book.repo, branch, chapter.path, chapter.paragraphs, remaining, `Delete paragraph: ${action.title}`);
       } else {
-        const existing = await readFileWithSha(token, book.owner, book.repo, branch, action.path).catch(() => null);
+        const existing = await optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, action.path));
         if (existing) await deleteFile(token, book.owner, book.repo, branch, action.path, existing.sha, `Delete ${action.target}: ${action.title}`);
       }
       useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("assistant.deleteApplied")}` });
@@ -1745,7 +1748,7 @@ export function AssistantPanel() {
     try {
       const applied = action.updates.filter((update) => update.status === "applied" || update.appliedHash);
       if (!applied.length) throw new Error("No applied file updates are available to undo.");
-      const currentFiles = await Promise.all(applied.map((update) => readFileWithSha(token, book.owner, book.repo, branch, update.path).catch(() => null)));
+      const currentFiles = await Promise.all(applied.map((update) => readFileWithSha(token, book.owner, book.repo, branch, update.path)));
       const mutations = await Promise.all(applied.map(async (update, index) => {
         const current = currentFiles[index];
         if (!update.appliedHash || !current || await sha256Text(current.content) !== update.appliedHash) throw new Error(`Source changed before undoing ${update.path}.`);
@@ -1815,7 +1818,7 @@ export function AssistantPanel() {
       if (book && token) {
         setLoadingDiffPath(key);
         try {
-          const existing = await readFileWithSha(token, book.owner, book.repo, branch, update.path).catch(() => null);
+          const existing = await optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, update.path));
           setPreviousContents((current) => ({ ...current, [key]: existing?.content ?? update.previousContent ?? "" }));
         } finally {
           setLoadingDiffPath(null);

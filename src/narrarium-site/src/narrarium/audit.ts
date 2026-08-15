@@ -2,6 +2,7 @@ import { parseDocument, stringify } from "yaml";
 import { completeToolRouted } from "@/assistant/router";
 import type { LlmRunMetadata } from "@/assistant/llm";
 import { createOrUpdateTextFile, deleteFile, readFileWithSha } from "@/github/githubClient";
+import { optionalRepositoryRead } from "@/repository/repositoryError";
 import {
   buildBookAuditPath,
   buildChapterAuditPath,
@@ -810,7 +811,7 @@ export async function runAudit(input: RunAuditInput): Promise<AuditReport> {
   if (!auditSettings.enabled) throw new Error("Audit is disabled for this book.");
   const depth = input.depth ?? auditSettings.defaultDepth;
   const language = reportLanguage(input.structure, input.settings, auditSettings);
-  const previousFile = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, target.reportPath).catch(() => null);
+  const previousFile = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, target.reportPath));
   const previousReport = previousFile ? parseAuditReport(target.reportPath, previousFile.content) : null;
   const previousFindings = new Map((previousReport?.findings ?? []).map((finding) => [finding.id, finding]));
   input.onProgress?.({ state: "preparingContext", completedCalls: 0, totalCalls: 0, detail: target.sourcePath });
@@ -1317,23 +1318,19 @@ export function parseAuditReport(path: string, raw: string): AuditReport | null 
 
 export async function loadAuditReport(input: AuditServiceBase): Promise<AuditReport | null> {
   const target = resolveAuditTarget(input.structure, input.target);
-  const file = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, target.reportPath).catch(() => null);
+  const file = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, target.reportPath));
   if (!file) return null;
   const report = parseAuditReport(target.reportPath, file.content);
   if (!report) throw new Error(`Invalid audit report: ${target.reportPath}`);
-  try {
-    const context = await buildAuditContext({ ...input, contextSettings: report.contextSettings });
-    report.currentSourceHash = context.sourceHash;
-    report.stale = report.sourceHash !== context.sourceHash;
-  } catch {
-    report.stale = true;
-  }
+  const context = await buildAuditContext({ ...input, contextSettings: report.contextSettings });
+  report.currentSourceHash = context.sourceHash;
+  report.stale = report.sourceHash !== context.sourceHash;
   return report;
 }
 
 export async function deleteAudit(input: AuditServiceBase): Promise<void> {
   const target = resolveAuditTarget(input.structure, input.target);
-  const existing = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, target.reportPath).catch(() => null);
+  const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, target.reportPath));
   if (!existing) return;
   await deleteFile(input.token, input.book.owner, input.book.repo, input.branch, target.reportPath, existing.sha, `Delete ${target.scope} audit: ${target.title}`);
 }

@@ -69,6 +69,7 @@ import { chapterOutputSchema, entityOutputSchema, importedDraftOutputSchema, imp
 import type { z } from "zod";
 import { attachmentImportRoute, validateImportAttachments, type AttachmentImportTarget } from "@/assistant/attachmentImport";
 import { assertExecutableHandlerMap } from "@/assistant/handlerCatalog";
+import { optionalRepositoryRead } from "@/repository/repositoryError";
 
 async function completeForTask(
   settings: AppSettings,
@@ -598,8 +599,8 @@ async function evaluationTargetFromContext(input: PromptInput & { book: BookEntr
     const file = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, paragraph.paragraph.path);
     return { type: "paragraph", bookId: input.book.id, chapterId: chapter.slug, paragraphId: paragraph.paragraph.path.split("/").pop()?.replace(/\.md$/i, ""), title: paragraph.paragraph.title, text: parseMarkdown(file.content).body.trim(), sourcePath: paragraph.paragraph.path, sourceVersion: file.sha };
   }
-  const files = await Promise.all(chapter.paragraphs.map((entry) => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, entry.path).catch(() => null)));
-  return { type: "chapter", bookId: input.book.id, chapterId: chapter.slug, title: chapter.title, text: files.map((file, index) => file ? `## ${chapter.paragraphs[index].title}\n\n${parseMarkdown(file.content).body.trim()}` : "").filter(Boolean).join("\n\n"), sourcePath: `${chapter.path}/chapter.md`, sourceVersion: files.map((file) => file?.sha ?? "").join(":") };
+  const files = await Promise.all(chapter.paragraphs.map((entry) => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, entry.path)));
+  return { type: "chapter", bookId: input.book.id, chapterId: chapter.slug, title: chapter.title, text: files.map((file, index) => `## ${chapter.paragraphs[index].title}\n\n${parseMarkdown(file.content).body.trim()}`).join("\n\n"), sourcePath: `${chapter.path}/chapter.md`, sourceVersion: files.map((file) => file.sha).join(":") };
 }
 
 async function evaluateWithReadersFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -633,7 +634,7 @@ async function summarizeReaderEvaluationsFromPrompt(input: PromptInput & { book:
   const hash = await hashReaderSource(target.text);
   const prefixes = readerEvaluationPrefixes(target);
   const records = await Promise.all(structure.readerEvaluationFiles.filter((file) => prefixes.some((prefix) => file.path.startsWith(prefix))).map(async (file) => {
-    const raw = file.content ?? await loadFileContent(input.token, input.book.owner, input.book.repo, file.path, input.branch).catch(() => "");
+    const raw = file.content ?? await optionalRepositoryRead(() => loadFileContent(input.token, input.book.owner, input.book.repo, file.path, input.branch)) ?? "";
     return raw ? parseReaderEvaluation(file.path, raw, hash) : null;
   }));
   const seen = new Set<string>();
@@ -679,7 +680,7 @@ async function feedbackRewriteNavigation(input: PromptInput & { book: BookEntry;
     const records = await Promise.all(input.context.structure!.readerEvaluationFiles
       .filter((file) => prefixes.some((prefix) => file.path.startsWith(prefix)))
       .map(async (file) => {
-        const raw = file.content ?? await loadFileContent(input.token!, input.book.owner, input.book.repo, file.path, input.branch!).catch(() => "");
+        const raw = file.content ?? await optionalRepositoryRead(() => loadFileContent(input.token!, input.book.owner, input.book.repo, file.path, input.branch!)) ?? "";
         return raw ? parseReaderEvaluation(file.path, raw, sourceHash) : null;
       }));
     const matching = records.filter((record): record is ReaderEvaluationRecord => {
@@ -709,8 +710,8 @@ async function feedbackTargetForResolvedContext(
     const file = await readFileWithSha(input.token!, input.book.owner, input.book.repo, input.branch!, paragraph.path);
     return { type: "paragraph", bookId: input.book.id, chapterId: chapter.slug, paragraphId: slugFromPath(paragraph.path), title: paragraph.title, text: parseMarkdown(file.content).body.trim(), sourcePath: paragraph.path, sourceVersion: file.sha };
   }
-  const files = await Promise.all(chapter.paragraphs.map((entry) => readFileWithSha(input.token!, input.book.owner, input.book.repo, input.branch!, entry.path).catch(() => null)));
-  return { type: "chapter", bookId: input.book.id, chapterId: chapter.slug, title: chapter.title, text: files.map((file, index) => file ? `## ${chapter.paragraphs[index].title}\n\n${parseMarkdown(file.content).body.trim()}` : "").filter(Boolean).join("\n\n"), sourcePath: `${chapter.path}/chapter.md`, sourceVersion: files.map((file) => file?.sha ?? "").join(":") };
+  const files = await Promise.all(chapter.paragraphs.map((entry) => readFileWithSha(input.token!, input.book.owner, input.book.repo, input.branch!, entry.path)));
+  return { type: "chapter", bookId: input.book.id, chapterId: chapter.slug, title: chapter.title, text: files.map((file, index) => `## ${chapter.paragraphs[index].title}\n\n${parseMarkdown(file.content).body.trim()}`).join("\n\n"), sourcePath: `${chapter.path}/chapter.md`, sourceVersion: files.map((file) => file.sha).join(":") };
 }
 
 async function cancelFeedbackRewrite(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
@@ -949,7 +950,7 @@ async function resolveTargetBody(input: PromptInput, token: string): Promise<{ k
   if (!book || !branch || !token) return null;
   const paragraph = resolveParagraphFromPrompt(input);
   if (paragraph) {
-    const raw = await loadFileContent(token, book.owner, book.repo, paragraph.paragraph.path, branch).catch(() => "");
+    const raw = await loadFileContent(token, book.owner, book.repo, paragraph.paragraph.path, branch);
     const { body } = parseMarkdown(raw);
     if (body.trim()) return { kind: "paragraph", title: paragraph.paragraph.title, body: await appendRelatedCanon(input, token, `${input.prompt}\n${body.trim()}`, body.trim()) };
   }
@@ -957,8 +958,8 @@ async function resolveTargetBody(input: PromptInput, token: string): Promise<{ k
   if (wantsChapter || (!paragraph && input.context.chapter)) {
     const chapter = resolveChapterFromPrompt(input);
     if (chapter) {
-      const intro = await loadFileContent(token, book.owner, book.repo, `${chapter.path}/chapter.md`, branch).catch(() => "");
-      const paragraphs = await Promise.all(chapter.paragraphs.map((entry) => loadFileContent(token, book.owner, book.repo, entry.path, branch).catch(() => "")));
+      const intro = await loadFileContent(token, book.owner, book.repo, `${chapter.path}/chapter.md`, branch);
+      const paragraphs = await Promise.all(chapter.paragraphs.map((entry) => loadFileContent(token, book.owner, book.repo, entry.path, branch)));
       const body = [intro, ...paragraphs].map((raw) => parseMarkdown(raw).body.trim()).filter(Boolean).join("\n\n");
       if (body.trim()) return { kind: "chapter", title: chapter.title, body: await appendRelatedCanon(input, token, `${input.prompt}\n${body.trim()}`, body.trim()) };
     }
@@ -978,7 +979,7 @@ async function appendRelatedCanon(input: PromptInput, token: string, sourceText:
   const selected = selectMentionedCanonFiles(candidates, sourceText);
   if (!selected.length) return body;
   const loaded = await Promise.all(selected.map(async (entry) => {
-    const raw = await loadFileContent(token, book.owner, book.repo, entry.path, branch).catch(() => "");
+    const raw = await optionalRepositoryRead(() => loadFileContent(token, book.owner, book.repo, entry.path, branch)) ?? "";
     if (!raw.trim()) return "";
     return `RELATED CANON (${entry.section}): ${entry.path}\n${raw.trim()}`;
   }));
@@ -1017,7 +1018,7 @@ async function getParagraphInfo(input: PromptInput & { book: BookEntry; branch: 
   if (unresolved) return unresolved;
   const target = resolveParagraphFromPrompt(input);
   if (!target) return makeAssistantMessage("assistant", "Open a paragraph or tell me which one, e.g. get paragraph 2 of chapter 3.");
-  const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, target.paragraph.path, input.branch).catch(() => "");
+  const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, target.paragraph.path, input.branch);
   const { body } = parseMarkdown(raw);
   if (!body.trim()) return makeAssistantMessage("assistant", `**${target.paragraph.title}** is empty.`);
   return makeAssistantMessage("assistant", `**${target.paragraph.title}**\n\n${body.trim()}`);
@@ -1033,7 +1034,7 @@ async function getCanonEntityInfo(section: CanonSectionKey, input: PromptInput &
     const names = files.slice(0, 20).map((entry) => `- ${entry.name ?? slugToTitle(slugFromPath(entry.path))}`).join("\n");
     return makeAssistantMessage("assistant", `Which one? Available ${section}:\n${names}`);
   }
-  const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, file.path, input.branch).catch(() => "");
+  const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, file.path, input.branch);
   const { frontmatter, body } = parseMarkdown(raw);
   const name = file.name ?? slugToTitle(slugFromPath(file.path));
   const facts = Object.entries(frontmatter)
@@ -1050,7 +1051,7 @@ async function getBodyInfo(input: PromptInput & { book: BookEntry; branch: strin
   if (unresolved) return unresolved;
   const current = currentFilePath(input);
   if (!current) return makeAssistantMessage("assistant", "Open a paragraph, chapter or canon entity first, or tell me which file you mean.");
-  const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, current.path, input.branch).catch(() => "");
+  const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, current.path, input.branch);
   const { body } = parseMarkdown(raw);
   if (!body.trim()) return makeAssistantMessage("assistant", `**${current.title}** has no body text.`);
   return makeAssistantMessage("assistant", `**${current.title}**\n\n${body.trim()}`);
@@ -1061,7 +1062,7 @@ async function getFrontmatterInfo(input: PromptInput & { book: BookEntry; branch
   if (unresolved) return unresolved;
   const current = currentFilePath(input);
   if (!current) return makeAssistantMessage("assistant", "Open a paragraph, chapter or canon entity first, or tell me which file you mean.");
-  const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, current.path, input.branch).catch(() => "");
+  const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, current.path, input.branch);
   const { frontmatter } = parseMarkdown(raw);
   const entries = Object.entries(frontmatter);
   if (!entries.length) return makeAssistantMessage("assistant", `**${current.title}** has no frontmatter.`);
@@ -1125,7 +1126,7 @@ async function requestDeleteReaderEvaluation(input: PromptInput & { book: BookEn
   const reader = readers.sort((a, b) => b.name.length - a.name.length).find((entry) => lower.includes(entry.name.toLowerCase()) || lower.includes(entry.slug.replace(/-/g, " ")));
   if (!reader) return makeAssistantMessage("assistant", "Tell me which reader evaluation to delete.");
   const path = readerEvaluationPath(target, reader);
-  const existing = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path).catch(() => null);
+  const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path));
   if (!existing) return makeAssistantMessage("assistant", `No current evaluation by ${reader.name} exists for this target.`);
   const provenance = await actionProvenance(input, "delete-reader-evaluation", [path]);
   return { id: crypto.randomUUID(), role: "assistant", text: `This will delete the evaluation by **${reader.name}** for **${target.title}**. Confirm to proceed.`, action: { ...provenance, kind: "confirm-delete", bookId: input.book.id, target: "reader-evaluation", path, title: `${reader.name} — ${target.title}` } };
@@ -1332,13 +1333,11 @@ async function writeResume(input: PromptInput & { book: BookEntry; branch: strin
 }
 
 async function ensureEvaluationGuidelines(input: { token: string; owner: string; repo: string; branch: string; language?: string }): Promise<string> {
-  try {
-    return await loadFileContent(input.token, input.owner, input.repo, EVALUATION_GUIDELINES_PATH, input.branch);
-  } catch {
-    const fallback = defaultEvaluationGuidelinesMarkdown(input.language);
-    await createFile(input.token, input.owner, input.repo, input.branch, EVALUATION_GUIDELINES_PATH, fallback, "Add default evaluation guidelines").catch(() => undefined);
-    return fallback;
-  }
+  const existing = await optionalRepositoryRead(() => loadFileContent(input.token, input.owner, input.repo, EVALUATION_GUIDELINES_PATH, input.branch));
+  if (existing) return existing;
+  const fallback = defaultEvaluationGuidelinesMarkdown(input.language);
+  await createFile(input.token, input.owner, input.repo, input.branch, EVALUATION_GUIDELINES_PATH, fallback, "Add default evaluation guidelines");
+  return fallback;
 }
 
 export type EvaluationCriterionScore = { score: number; explanation: string };
@@ -1452,7 +1451,7 @@ async function resolveEvaluationTarget(input: PromptInput & { book: BookEntry; b
   const explicitChapterOnly = chapterTargetResolution(input).explicit && !explicitParagraph;
   const paragraphTarget = paragraphResolution.value;
   if (paragraphTarget && (explicitParagraph || (input.context.paragraph && !explicitChapterOnly))) {
-    const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, paragraphTarget.paragraph.path, input.branch).catch(() => "");
+    const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, paragraphTarget.paragraph.path, input.branch);
     const parsed = parseMarkdown(raw);
     const paragraphSlug = paragraphTarget.paragraph.path.split("/").pop()?.replace(/\.md$/i, "") ?? paragraphTarget.paragraph.number;
     return {
@@ -1467,9 +1466,9 @@ async function resolveEvaluationTarget(input: PromptInput & { book: BookEntry; b
 
   const chapter = resolveChapterFromPrompt(input);
   if (!chapter) return null;
-  const introRaw = await loadFileContent(input.token, input.book.owner, input.book.repo, `${chapter.path}/chapter.md`, input.branch).catch(() => "");
+  const introRaw = await loadFileContent(input.token, input.book.owner, input.book.repo, `${chapter.path}/chapter.md`, input.branch);
   const introParsed = parseMarkdown(introRaw);
-  const paragraphRaws = await Promise.all(chapter.paragraphs.map((entry) => loadFileContent(input.token, input.book.owner, input.book.repo, entry.path, input.branch).catch(() => "")));
+  const paragraphRaws = await Promise.all(chapter.paragraphs.map((entry) => loadFileContent(input.token, input.book.owner, input.book.repo, entry.path, input.branch)));
   const body = [
     introParsed.body.trim(),
     ...paragraphRaws.map((raw, index) => {
@@ -1576,7 +1575,7 @@ async function writeAllParagraphEvaluations(input: PromptInput & { book: BookEnt
     input.onText?.(italian
       ? `Sto valutando il paragrafo ${index + 1} di ${chapter.paragraphs.length}: **${paragraph.title}**…`
       : `Evaluating paragraph ${index + 1} of ${chapter.paragraphs.length}: **${paragraph.title}**…`);
-    const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, paragraph.path, input.branch).catch(() => "");
+    const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, paragraph.path, input.branch);
     const parsed = parseMarkdown(raw);
     const slug = paragraph.path.split("/").pop()?.replace(/\.md$/i, "") ?? paragraph.number;
     const target: ResolvedEvaluationTarget = {
@@ -1595,7 +1594,7 @@ async function writeAllParagraphEvaluations(input: PromptInput & { book: BookEnt
   input.onText?.(italian
     ? `Ho completato ${chapter.paragraphs.length} valutazioni. Ora preparo la valutazione complessiva del capitolo…`
     : `Completed ${chapter.paragraphs.length} paragraph evaluations. Now preparing the overall chapter evaluation…`);
-  const chapterRaw = await loadFileContent(input.token, input.book.owner, input.book.repo, `${chapter.path}/chapter.md`, input.branch).catch(() => "");
+  const chapterRaw = await loadFileContent(input.token, input.book.owner, input.book.repo, `${chapter.path}/chapter.md`, input.branch);
   const chapterParsed = parseMarkdown(chapterRaw);
   const chapterTarget: ResolvedEvaluationTarget = {
     kind: "chapter",
@@ -1640,14 +1639,13 @@ async function rewriteCurrentParagraph(input: PromptInput & { book: BookEntry; b
   if (unresolved) return unresolved;
   const target = resolveParagraphFromPrompt(input);
   if (!target) return makeAssistantMessage("assistant", "Paragraph rewrite works when you are inside a paragraph page or name an existing paragraph and chapter.");
-  const paragraphFile = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, target.paragraph.path).catch(() => null);
-  const paragraphBody = paragraphFile ? parseMarkdown(paragraphFile.content).body : "";
+  const paragraphFile = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, target.paragraph.path);
+  const paragraphBody = parseMarkdown(paragraphFile.content).body;
   const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "You are Narrarium's prose editor. Rewrite only the paragraph body. Preserve facts, chronology, names, and visible canon. Return only the revised paragraph body, no markdown fences, no commentary. Use any loaded writing-style files if present.", "book"),
     buildUserMessage(input, `Current paragraph body:\n${paragraphBody}\n\nRewrite request: ${input.prompt}`),
   ], "default", { signal: input.signal, label: "copilot:rewrite-paragraph" });
   if (!answer) return noAiMessage();
-  if (!paragraphFile) return makeAssistantMessage("assistant", "The current paragraph could not be reloaded, so I did not create an apply action.");
   const provenance: AssistantActionProvenance = {
     toolId: "rewrite-current-paragraph",
     owner: input.book.owner,
@@ -1696,8 +1694,8 @@ async function searchCurrentBook(input: PromptInput & { book: BookEntry; token: 
   const loaded: Array<{ ok: true; path: string; role: string; content: string } | { ok: false; path: string }> = [];
   for (let offset = 0; offset < candidates.length; offset += 8) {
     const batch = await Promise.all(candidates.slice(offset, offset + 8).map(async (file) => {
-      try { return { ok: true as const, path: file.path, role: file.role, content: await loadFileContent(token, book.owner, book.repo, file.path, input.branch) }; }
-      catch { return { ok: false as const, path: file.path }; }
+      const content = await optionalRepositoryRead(() => loadFileContent(token, book.owner, book.repo, file.path, input.branch));
+      return content === null ? { ok: false as const, path: file.path } : { ok: true as const, path: file.path, role: file.role, content };
     }));
     loaded.push(...batch);
   }
@@ -1710,23 +1708,21 @@ async function searchCurrentBook(input: PromptInput & { book: BookEntry; token: 
 }
 
 async function upsertStructuredMarkdownFile(input: { token: string; owner: string; repo: string; branch: string; path: string; frontmatter: Record<string, unknown>; body: string; message: string }) {
-  try {
-    const existing = await readFileWithSha(input.token, input.owner, input.repo, input.branch, input.path);
-    await updateFile(input.token, input.owner, input.repo, input.branch, input.path, existing.sha, renderMarkdown(input.frontmatter, `${input.body.trim()}\n`), input.message);
-  } catch {
-    await createFile(input.token, input.owner, input.repo, input.branch, input.path, renderMarkdown(input.frontmatter, `${input.body.trim()}\n`), input.message);
-  }
+  const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.owner, input.repo, input.branch, input.path));
+  const content = renderMarkdown(input.frontmatter, `${input.body.trim()}\n`);
+  if (existing) await updateFile(input.token, input.owner, input.repo, input.branch, input.path, existing.sha, content, input.message);
+  else await createFile(input.token, input.owner, input.repo, input.branch, input.path, content, input.message);
 }
 
 async function upsertNoteFile(input: { token: string; owner: string; repo: string; branch: string; path: string; title: string; noteBody: string }) {
   const timestamp = new Date().toISOString();
   const section = `## ${timestamp}\n\n${input.noteBody.trim()}\n`;
-  try {
-    const existing = await readFileWithSha(input.token, input.owner, input.repo, input.branch, input.path);
+  const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.owner, input.repo, input.branch, input.path));
+  if (existing) {
     const parsed = parseMarkdown(existing.content);
     const nextBody = `${parsed.body.trim()}\n\n${section}`.trim() + "\n";
     await updateFile(input.token, input.owner, input.repo, input.branch, input.path, existing.sha, renderMarkdown(parsed.frontmatter, nextBody), `Update notes ${input.path}`);
-  } catch {
+  } else {
     const frontmatter = input.path === "notes.md"
       ? { type: "note", id: "note:book:notes", title: input.title, scope: "book", bucket: "notes", entries: [] }
       : chapterDraftNoteFrontmatter(input.path, input.title);

@@ -3,6 +3,7 @@ import type { AppSettings, BookEntry } from "@/types/settings";
 import { loadFileContent } from "@/github/githubClient";
 import { resolveBookToken } from "@/types/settings";
 import { resolveAuthoritativeBranch } from "@/github/branchRules";
+import { isRepositoryNotFoundError } from "@/repository/repositoryError";
 
 export type AppRouteContext =
   | { kind: "app-home" }
@@ -198,6 +199,7 @@ export async function loadWriterContext(
   structures: Record<string, BookStructure>,
   workingBranches: Record<string, string>,
   requestedBranch?: string,
+  readFile: typeof loadFileContent = loadFileContent,
 ): Promise<LoadedWriterContext> {
   const route = parseAppRoute(pathname);
   const bookId = "bookId" in route ? route.bookId : null;
@@ -221,14 +223,15 @@ export async function loadWriterContext(
   const loaded = new Set<string>();
 
   if (book && structure && token && branchReady) {
-    const pushFile = async (path: string | undefined) => {
+    const pushFile = async (path: string | undefined, required = false) => {
       if (!path || loaded.has(path)) return;
       try {
-        const content = await loadFileContent(token, book.owner, book.repo, path, readBranch);
+        const content = await readFile(token, book.owner, book.repo, path, readBranch);
         relevantFiles.push({ path, content });
         loaded.add(path);
-      } catch {
-        // Ignore missing optional files; the assistant works with what exists.
+      } catch (error) {
+        if (!required && isRepositoryNotFoundError(error)) return;
+        throw error;
       }
     };
 
@@ -266,7 +269,7 @@ export async function loadWriterContext(
       case "app-home":
         await pushFile("book.md");
         await pushFile(structure.plotPath);
-        if (route.kind === "research-detail") await pushFile(resolveResearchDetailPath(structure, route.researchSlug));
+        if (route.kind === "research-detail") await pushFile(resolveResearchDetailPath(structure, route.researchSlug), true);
         break;
       case "book-audit":
         await pushFile("audit/book.md");
@@ -274,27 +277,27 @@ export async function loadWriterContext(
         break;
       case "chapter":
       case "chapter-writing-style":
-        await pushFile(`${chapter?.path}/chapter.md`);
+        await pushFile(`${chapter?.path}/chapter.md`, true);
         if (route.kind === "chapter-writing-style") await pushFile(chapter?.writingStylePath);
         await Promise.all((chapter?.paragraphs ?? []).slice(0, 12).map((entry) => pushFile(entry.path)));
         break;
       case "chapter-workspace":
-        await pushFile(`${chapter?.path}/chapter.md`);
+        await pushFile(`${chapter?.path}/chapter.md`, true);
         await pushFile(resolveWorkspacePath(chapter, null, route.workspaceKind));
         break;
       case "paragraph":
         await pushFile(`${chapter?.path}/chapter.md`);
-        await pushFile(paragraph?.path);
+        await pushFile(paragraph?.path, true);
         break;
       case "paragraph-workspace":
-        await pushFile(paragraph?.path);
+        await pushFile(paragraph?.path, true);
         await pushFile(resolveWorkspacePath(chapter, paragraph, route.workspaceKind));
         break;
       case "chapter-reader-evaluations":
         await Promise.all((chapter?.paragraphs ?? []).map((entry) => pushFile(entry.path)));
         break;
       case "paragraph-reader-evaluations":
-        await pushFile(paragraph?.path);
+        await pushFile(paragraph?.path, true);
         break;
       case "chapter-audit":
         await pushFile(`audit/chapters/${route.chapterId}/chapter.md`);
@@ -307,7 +310,7 @@ export async function loadWriterContext(
         break;
       }
       case "canon":
-        await pushFile(resolveCanonPath(route.section, route.slug));
+        await pushFile(resolveCanonPath(route.section, route.slug), true);
         break;
       default:
         break;

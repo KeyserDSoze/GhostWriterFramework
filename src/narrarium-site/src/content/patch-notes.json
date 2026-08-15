@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.33",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Fail-closed repository reads",
+      "summary": "Copilot and repository mutations now ignore only confirmed missing optional files while preserving authentication, rate-limit, network, abort, conflict, and malformed-data failures.",
+      "changes": [
+        "Added typed repository errors for missing files, authentication, rate limits, network failures, cancellation, conflicts, malformed responses, and unknown failures across read and write operations.",
+        "Stopped context loading, evaluations, rewrites, audits, reader simulations, asset operations, and multi-file actions when required repository context is incomplete.",
+        "Changed note, plot, guideline, persona, evaluation, audit, asset, and generic file upserts to create only after a confirmed 404, never after an arbitrary read or update failure.",
+        "Rejected malformed file payloads and truncated repository trees before rename or reorder commits, and surfaced context-load failures visibly in Copilot."
+      ]
+    },
+    "it": {
+      "title": "Letture repository fail-closed",
+      "summary": "Il Copilota e le mutazioni repository ignorano ora soltanto i file opzionali con assenza confermata, preservando errori di autenticazione, rate limit, rete, abort, conflitto e dati malformati.",
+      "changes": [
+        "Aggiunti errori repository tipizzati per file mancanti, autenticazione, rate limit, rete, cancellazione, conflitti, risposte malformate e failure sconosciuti nelle operazioni di lettura e scrittura.",
+        "Interrotti caricamento contesto, valutazioni, riscritture, audit, lettori simulati, asset e azioni multi-file quando il contesto repository richiesto è incompleto.",
+        "Modificati gli upsert di note, plot, linee guida, persona, valutazioni, audit, asset e file generici per creare solo dopo un 404 confermato, mai dopo un errore arbitrario di lettura o update.",
+        "Rifiutati payload file malformati e tree repository troncati prima dei commit di rename o reorder, mostrando visibilmente nel Copilota i failure di caricamento contesto."
+      ]
+    }
+  },
+  {
     "version": "0.76.32",
     "date": "2026-08-15",
     "en": {

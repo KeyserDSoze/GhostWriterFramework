@@ -9,6 +9,7 @@ import {
   extractParagraphSlug,
 } from "@/narrarium/auditPaths";
 import { isRewriteOperationManifestPath } from "@/narrarium/rewriteOperationPaths";
+import { classifyRepositoryError, isRepositoryNotFoundError, optionalRepositoryRead, RepositoryError } from "@/repository/repositoryError";
 import {
   resolveParagraphArtifactPaths,
   type ParagraphArtifactMetadata,
@@ -36,21 +37,55 @@ async function fetchContentJson(
   ref?: string,
   fresh = false,
 ): Promise<{ content?: string; sha?: string }> {
-  const response = await fetch(githubContentUrl(owner, repo, path, ref, fresh), {
-    cache: fresh ? "no-store" : "default",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  });
-  if (!response.ok) throw new Error(`GitHub content load ${path}: ${response.status}`);
-  return await response.json() as { content?: string; sha?: string };
+  let response: Response;
+  try {
+    response = await fetch(githubContentUrl(owner, repo, path, ref, fresh), {
+      cache: fresh ? "no-store" : "default",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+  } catch (error) {
+    const kind = typeof error === "object" && error !== null && "name" in error && error.name === "AbortError"
+      ? "abort"
+      : error instanceof TypeError ? "network" : "unknown";
+    throw new RepositoryError(`GitHub content read failed for ${path}.`, kind, "read", undefined, { cause: error });
+  }
+  if (!response.ok) {
+    const rateLimited = response.status === 429
+      || (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0");
+    const kind = response.status === 404
+      ? "not-found"
+      : rateLimited ? "rate-limit"
+        : response.status === 401 || response.status === 403 ? "auth"
+          : response.status === 409 || response.status === 412 || response.status === 422 ? "conflict"
+            : response.status >= 500 ? "network" : "unknown";
+    throw new RepositoryError(`GitHub content read failed for ${path}: ${response.status}.`, kind, "read", response.status);
+  }
+  try {
+    const data: unknown = await response.json();
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      throw new TypeError("GitHub content response is not an object.");
+    }
+    const record = data as Record<string, unknown>;
+    if ((record.content !== undefined && typeof record.content !== "string") || (record.sha !== undefined && typeof record.sha !== "string")) {
+      throw new TypeError("GitHub content response has invalid content or sha fields.");
+    }
+    return { content: record.content as string | undefined, sha: record.sha as string | undefined };
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError") {
+      throw new RepositoryError(`GitHub content read was aborted for ${path}.`, "abort", "read", undefined, { cause: error });
+    }
+    throw new RepositoryError(`GitHub returned malformed content JSON for ${path}.`, "malformed", "read", response.status, { cause: error });
+  }
 }
 
 async function localRepoId(owner: string, repo: string, branch: string | undefined): Promise<string | null> {
   if (!branch) return null;
-  const local = await getLocalRepository(owner, repo, branch).catch(() => null);
+  let local: Awaited<ReturnType<typeof getLocalRepository>>;
+  try { local = await getLocalRepository(owner, repo, branch); } catch (error) { throw classifyRepositoryError(error, "read"); }
   return local?.id ?? null;
 }
 
@@ -518,8 +553,10 @@ export async function loadFileContent(
     if (file?.kind === "binary" && file.blob) return new TextDecoder().decode(await file.blob.arrayBuffer());
   }
   const data = await fetchContentJson(token, owner, repo, path, ref);
-  if (data.content) return decodeContent(data.content);
-  throw new Error(`${path} is not a file`);
+  if (data.content) {
+    try { return decodeContent(data.content); } catch (error) { throw new RepositoryError(`GitHub returned malformed file content for ${path}.`, "malformed", "read", 200, { cause: error }); }
+  }
+  throw new RepositoryError(`${path} is not a file.`, "malformed", "read", 200);
 }
 
 /** Read text from GitHub at an exact branch, tag, or commit without consulting IndexedDB. */
@@ -531,8 +568,10 @@ export async function loadRemoteFileContentAtRef(
   ref: string,
 ): Promise<FileContent> {
   const data = await fetchContentJson(token, owner, repo, path, ref, true);
-  if (data.content && data.sha) return { content: decodeContent(data.content), sha: data.sha };
-  throw new Error(`${path} is not a file at ${ref}`);
+  if (data.content && data.sha) {
+    try { return { content: decodeContent(data.content), sha: data.sha }; } catch (error) { throw new RepositoryError(`GitHub returned malformed file content for ${path}.`, "malformed", "read", 200, { cause: error }); }
+  }
+  throw new RepositoryError(`${path} is not a file at ${ref}.`, "malformed", "read", 200);
 }
 
 export async function loadBinaryFileContent(
@@ -548,20 +587,23 @@ export async function loadBinaryFileContent(
     if (file?.kind === "binary" && file.blob) return new Uint8Array(await file.blob.arrayBuffer());
     if (file?.kind === "text" && file.text !== undefined) return new TextEncoder().encode(file.text);
   }
-  const response = await fetch(githubContentUrl(owner, repo, path, ref, true), {
-    cache: "no-store",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github.raw",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  });
-  if (response.ok) return new Uint8Array(await response.arrayBuffer());
+  let response: Response;
+  try {
+    response = await fetch(githubContentUrl(owner, repo, path, ref, true), { cache: "no-store", headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" } });
+  } catch (error) {
+    throw classifyRepositoryError(error, "read", path);
+  }
+  if (response.ok) {
+    try { return new Uint8Array(await response.arrayBuffer()); }
+    catch (error) { throw classifyRepositoryError(error, "read", path); }
+  }
 
   // Fallback to the JSON contents API for small files or older API behaviour.
   const data = await fetchContentJson(token, owner, repo, path, ref, true);
-  if (data.content) return decodeBytes(data.content);
-  throw new Error(`${path} is not a file`);
+  if (data.content) {
+    try { return decodeBytes(data.content); } catch (error) { throw new RepositoryError(`GitHub returned malformed binary content for ${path}.`, "malformed", "read", 200, { cause: error }); }
+  }
+  throw new RepositoryError(`${path} is not a file.`, "malformed", "read", 200);
 }
 
 // ─── Paragraph CRUD ───────────────────────────────────────────────────────────
@@ -583,11 +625,10 @@ export interface FileContent {
   sha: string;
 }
 
-export function isGitHubFileNotFoundError(error: unknown): boolean {
-  return /GitHub content load .*: 404\b/.test(error instanceof Error ? error.message : String(error));
-}
+export const isGitHubFileNotFoundError = isRepositoryNotFoundError;
 
 function isShaUpdateError(err: unknown): boolean {
+  if (err instanceof RepositoryError && err.cause) return isShaUpdateError(err.cause);
   const message = err instanceof Error ? err.message : String(err);
   return /sha/i.test(message) && /(wasn'?t supplied|does not match|required)/i.test(message);
 }
@@ -622,9 +663,9 @@ export async function readFileWithSha(
   }
   const data = await fetchContentJson(token, owner, repo, path, branch, true);
   if (data.content && data.sha) {
-    return { content: decodeContent(data.content), sha: data.sha };
+    try { return { content: decodeContent(data.content), sha: data.sha }; } catch (error) { throw new RepositoryError(`GitHub returned malformed file content for ${path}.`, "malformed", "read", 200, { cause: error }); }
   }
-  throw new Error(`${path} is not a file`);
+  throw new RepositoryError(`${path} is not a file.`, "malformed", "read", 200);
 }
 
 /** Update an existing file. Returns the new blob SHA. */
@@ -641,15 +682,10 @@ export async function updateFile(
   const id = await localRepoId(owner, repo, branch);
   if (id) return (await writeLocalText(id, path, content)).currentHash;
   const octokit = createGitHubClient(token);
-  const { data } = await octokit.rest.repos.createOrUpdateFileContents({
-    owner,
-    repo,
-    path,
-    message,
-    content: encodeContent(content),
-    sha,
-    branch,
-  });
+  let data: Awaited<ReturnType<typeof octokit.rest.repos.createOrUpdateFileContents>>["data"];
+  try {
+    ({ data } = await octokit.rest.repos.createOrUpdateFileContents({ owner, repo, path, message, content: encodeContent(content), sha, branch }));
+  } catch (error) { throw classifyRepositoryError(error, "update", path); }
   return data.content?.sha ?? sha;
 }
 
@@ -665,7 +701,7 @@ export async function createOrUpdateBinaryFile(
   const id = await localRepoId(owner, repo, branch);
   if (id) return (await writeLocalBinary(id, path, bytes)).currentHash;
   const octokit = createGitHubClient(token);
-  const existing = await readFileWithSha(token, owner, repo, branch, path).catch(() => null);
+  const existing = await optionalRepositoryRead(() => readFileWithSha(token, owner, repo, branch, path));
   const body = {
     owner,
     repo,
@@ -679,10 +715,10 @@ export async function createOrUpdateBinaryFile(
   try {
     ({ data } = await octokit.rest.repos.createOrUpdateFileContents(body));
   } catch (err) {
-    if (!isShaUpdateError(err)) throw err;
+    if (!isShaUpdateError(err)) throw classifyRepositoryError(err, existing ? "update" : "create", path);
     const sha = await findFileShaFromTree(token, owner, repo, branch, path);
-    if (!sha) throw err;
-    ({ data } = await octokit.rest.repos.createOrUpdateFileContents({ ...body, sha }));
+    if (!sha) throw classifyRepositoryError(err, existing ? "update" : "create", path);
+    try { ({ data } = await octokit.rest.repos.createOrUpdateFileContents({ ...body, sha })); } catch (error) { throw classifyRepositoryError(error, "update", path); }
   }
   return data.content?.sha ?? existing?.sha ?? "";
 }
@@ -700,18 +736,14 @@ export async function createFile(
   const id = await localRepoId(owner, repo, branch);
   if (id) {
     const existing = await getLocalFile(id, path);
-    if (existing) throw new Error(`File already exists: ${path}`);
+    if (existing) throw new RepositoryError(`File already exists: ${path}`, "conflict", "create", 409);
     return (await writeLocalText(id, path, content)).currentHash;
   }
   const octokit = createGitHubClient(token);
-  const { data } = await octokit.rest.repos.createOrUpdateFileContents({
-    owner,
-    repo,
-    path,
-    message,
-    content: encodeContent(content),
-    branch,
-  });
+  let data: Awaited<ReturnType<typeof octokit.rest.repos.createOrUpdateFileContents>>["data"];
+  try {
+    ({ data } = await octokit.rest.repos.createOrUpdateFileContents({ owner, repo, path, message, content: encodeContent(content), branch }));
+  } catch (error) { throw classifyRepositoryError(error, "create", path); }
   return data.content?.sha ?? "";
 }
 
@@ -725,7 +757,7 @@ export async function createOrUpdateTextFile(
   content: string,
   message: string,
 ): Promise<string> {
-  const existing = await readFileWithSha(token, owner, repo, branch, path).catch(() => null);
+  const existing = await optionalRepositoryRead(() => readFileWithSha(token, owner, repo, branch, path));
   if (existing) return updateFile(token, owner, repo, branch, path, existing.sha, content, message);
   try {
     return await createFile(token, owner, repo, branch, path, content, message);
@@ -747,7 +779,7 @@ export async function createFileIfAbsent(
   content: string,
   message: string,
 ): Promise<boolean> {
-  const existing = await readFileWithSha(token, owner, repo, branch, path).catch(() => null);
+  const existing = await optionalRepositoryRead(() => readFileWithSha(token, owner, repo, branch, path));
   if (existing) return false;
   await createFile(token, owner, repo, branch, path, content, message);
   return true;
@@ -918,11 +950,12 @@ export async function renameParagraphWithCompanions(
   }
 
   const octokit = createGitHubClient(token);
+  try {
   const { data: branchData } = await octokit.rest.repos.getBranch({ owner, repo, branch });
   const currentCommitSha = branchData.commit.sha;
   const currentTreeSha = branchData.commit.commit.tree.sha;
   const { data: fullTree } = await octokit.rest.git.getTree({ owner, repo, tree_sha: currentTreeSha, recursive: "1" });
-  if (fullTree.truncated) throw new Error("Repository tree is truncated; paragraph rename cannot safely continue.");
+  if (fullTree.truncated) throw new RepositoryError("Repository tree is truncated; paragraph rename cannot safely continue.", "malformed", "update");
 
   const blobs = fullTree.tree.filter((node) => node.type === "blob" && node.path);
   const sourcePaths = preflight(blobs.map((node) => node.path!));
@@ -955,6 +988,7 @@ export async function renameParagraphWithCompanions(
   const { data: newCommit } = await octokit.rest.git.createCommit({ owner, repo, message: commitMessage, tree: newTree.sha, parents: [currentCommitSha] });
   await octokit.rest.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha: newCommit.sha });
   return updatedParagraph(sourcePaths);
+  } catch (error) { throw classifyRepositoryError(error, "update", oldParagraph.path); }
 }
 
 /**
@@ -1162,11 +1196,13 @@ export async function reorderParagraphsInChapter(
 
   // ── Remote: single atomic commit via the Git Trees API ──────────────────────
   const octokit = createGitHubClient(token);
+  try {
   const { data: branchData } = await octokit.rest.repos.getBranch({ owner, repo, branch });
   const currentCommitSha = branchData.commit.sha;
   const currentTreeSha = branchData.commit.commit.tree.sha;
 
   const { data: fullTree } = await octokit.rest.git.getTree({ owner, repo, tree_sha: currentTreeSha, recursive: "1" });
+  if (fullTree.truncated) throw new RepositoryError("Repository tree is truncated; paragraph reorder cannot safely continue.", "malformed", "update");
 
   type TreeEntry = { path: string; mode: "100644"; type: "blob"; sha?: string | null; content?: string };
   const treeUpdates: TreeEntry[] = [];
@@ -1188,19 +1224,15 @@ export async function reorderParagraphsInChapter(
     if (moved) {
       treeUpdates.push({ path, mode: "100644", type: "blob", sha: null });
       if (isTextPath(path)) {
-        const raw = await loadFileContent(token, owner, repo, path, branch).catch(() => null);
-        const next = raw !== null ? fixNumber(finalPath, rewriteRefs(raw)) : null;
-        if (next !== null) treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", content: next });
-        else if (node.sha) treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", sha: node.sha });
+        const raw = await loadFileContent(token, owner, repo, path, branch);
+        treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", content: fixNumber(finalPath, rewriteRefs(raw)) });
       } else if (node.sha) {
         treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", sha: node.sha });
       }
     } else if (isTextPath(path) && remapBySlug.size > 0) {
-      const raw = await loadFileContent(token, owner, repo, path, branch).catch(() => null);
-      if (raw !== null) {
-        const next = rewriteRefs(raw);
-        if (next !== raw) treeUpdates.push({ path, mode: "100644", type: "blob", content: next });
-      }
+      const raw = await loadFileContent(token, owner, repo, path, branch);
+      const next = rewriteRefs(raw);
+      if (next !== raw) treeUpdates.push({ path, mode: "100644", type: "blob", content: next });
     }
   }
 
@@ -1211,6 +1243,7 @@ export async function reorderParagraphsInChapter(
   await octokit.rest.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha: newCommit.sha });
 
   return result;
+  } catch (error) { throw classifyRepositoryError(error, "update", chapterPath); }
 }
 
 // ─── Chapter reordering ───────────────────────────────────────────────────────
@@ -1364,6 +1397,7 @@ export async function reorderChaptersInBook(
 
   // ── Remote: single atomic commit via the Git Trees API ──────────────────────
   const octokit = createGitHubClient(token);
+  try {
   const { data: branchData } = await octokit.rest.repos.getBranch({ owner, repo, branch });
   const currentCommitSha = branchData.commit.sha;
   const currentTreeSha = branchData.commit.commit.tree.sha;
@@ -1374,6 +1408,7 @@ export async function reorderChaptersInBook(
     tree_sha: currentTreeSha,
     recursive: "1",
   });
+  if (fullTree.truncated) throw new RepositoryError("Repository tree is truncated; chapter reorder cannot safely continue.", "malformed", "update");
 
   type TreeEntry = { path: string; mode: "100644"; type: "blob"; sha?: string | null; content?: string };
   const treeUpdates: TreeEntry[] = [];
@@ -1392,20 +1427,16 @@ export async function reorderChaptersInBook(
       // Remove the old path.
       treeUpdates.push({ path, mode: "100644", type: "blob", sha: null });
       if (affectsRefs) {
-        const raw = await loadFileContent(token, owner, repo, path, branch).catch(() => null);
-        const next = raw !== null ? fixChapterNumber(finalPath, rewriteRefs(raw)) : null;
-        if (next !== null) treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", content: next });
-        else if (node.sha) treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", sha: node.sha });
+        const raw = await loadFileContent(token, owner, repo, path, branch);
+        treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", content: fixChapterNumber(finalPath, rewriteRefs(raw)) });
       } else if (node.sha) {
         treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", sha: node.sha });
       }
     } else if (affectsRefs) {
       // Not moved, but may reference a remapped chapter.
-      const raw = await loadFileContent(token, owner, repo, path, branch).catch(() => null);
-      if (raw !== null) {
-        const next = rewriteRefs(raw);
-        if (next !== raw) treeUpdates.push({ path, mode: "100644", type: "blob", content: next });
-      }
+      const raw = await loadFileContent(token, owner, repo, path, branch);
+      const next = rewriteRefs(raw);
+      if (next !== raw) treeUpdates.push({ path, mode: "100644", type: "blob", content: next });
     }
   }
 
@@ -1427,6 +1458,7 @@ export async function reorderChaptersInBook(
   await octokit.rest.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha: newCommit.sha });
 
   return remap;
+  } catch (error) { throw classifyRepositoryError(error, "update"); }
 }
 
 // ─── Dev branch management ────────────────────────────────────────────────────
@@ -1502,7 +1534,7 @@ export async function renameAndUpdateFile(
     return { sha: file.currentHash };
   }
   const octokit = createGitHubClient(token);
-
+  try {
   const { data: branchData } = await octokit.rest.repos.getBranch({
     owner,
     repo,
@@ -1538,6 +1570,7 @@ export async function renameAndUpdateFile(
 
   const sha = newTree.tree.find((n) => n.path === newPath)?.sha ?? "";
   return { sha };
+  } catch (error) { throw classifyRepositoryError(error, "update", oldPath); }
 }
 
 export interface BranchDiffFile {
@@ -1558,6 +1591,7 @@ export async function compareBranches(
   head: string,
 ): Promise<BranchDiffFile[]> {
   const octokit = createGitHubClient(token);
+  try {
   const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
     owner,
     repo,
@@ -1572,6 +1606,7 @@ export async function compareBranches(
     patch: file.patch,
     previousFilename: file.previous_filename,
   }));
+  } catch (error) { throw classifyRepositoryError(error, "compare"); }
 }
 
 export async function deleteFile(
@@ -1589,14 +1624,9 @@ export async function deleteFile(
     return;
   }
   const octokit = createGitHubClient(token);
-  await octokit.rest.repos.deleteFile({
-    owner,
-    repo,
-    path,
-    message,
-    sha,
-    branch,
-  });
+  try {
+    await octokit.rest.repos.deleteFile({ owner, repo, path, message, sha, branch });
+  } catch (error) { throw classifyRepositoryError(error, "delete", path); }
 }
 
 export async function revertFileToRef(
@@ -1607,8 +1637,8 @@ export async function revertFileToRef(
   path: string,
   baseRef: string,
 ): Promise<void> {
-  const current = await readFileWithSha(token, owner, repo, branch, path).catch(() => null);
-  const base = await readFileWithSha(token, owner, repo, baseRef, path).catch(() => null);
+  const current = await optionalRepositoryRead(() => readFileWithSha(token, owner, repo, branch, path));
+  const base = await optionalRepositoryRead(() => readFileWithSha(token, owner, repo, baseRef, path));
 
   if (base && current) {
     await updateFile(token, owner, repo, branch, path, current.sha, base.content, `Revert ${path} to ${baseRef}`);
@@ -1625,7 +1655,7 @@ export async function revertFileToRef(
     return;
   }
 
-  throw new Error(`No file content found for ${path} on ${branch} or ${baseRef}.`);
+  throw new RepositoryError(`No file content found for ${path} on ${branch} or ${baseRef}.`, "not-found", "revert", 404);
 }
 
 export interface BranchSummary {
@@ -1639,11 +1669,9 @@ export async function listBranches(
   repo: string,
 ): Promise<BranchSummary[]> {
   const octokit = createGitHubClient(token);
-  const branches = await octokit.paginate(octokit.rest.repos.listBranches, {
-    owner,
-    repo,
-    per_page: 100,
-  });
+  let branches: Array<{ name: string; protected: boolean }>;
+  try { branches = await octokit.paginate(octokit.rest.repos.listBranches, { owner, repo, per_page: 100 }); }
+  catch (error) { throw classifyRepositoryError(error, "list"); }
   return branches
     .map((branch) => ({ name: branch.name, protected: branch.protected }))
     .sort((left, right) => left.name.localeCompare(right.name));

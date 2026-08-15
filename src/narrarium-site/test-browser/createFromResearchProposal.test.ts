@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseEntityFromResearchResponse } from "@/research/createFromResearch";
 import { buildCanonEntityDocument } from "@/narrarium/canon";
 import { isGitHubFileNotFoundError } from "@/github/githubClient";
+import { RepositoryError } from "@/repository/repositoryError";
 
 describe("create-from-research proposals", () => {
   it("builds a complete reviewable proposal with deduplicated source citations", () => {
@@ -24,7 +25,7 @@ describe("create-from-research proposals", () => {
   it("preserves secret stakes and distinguishes a missing file from read failures", () => {
     const proposal = parseEntityFromResearchResponse("secret", JSON.stringify({ title: "The Ledger", stakes: "The crown falls", body: "# The Ledger\n\nHidden accounts." }), "Research");
     expect(proposal.extraFrontmatter.stakes).toBe("The crown falls");
-    expect(isGitHubFileNotFoundError(new Error("GitHub content load secrets/ledger.md: 404"))).toBe(true);
+    expect(isGitHubFileNotFoundError(new RepositoryError("missing", "not-found", "read", 404))).toBe(true);
     expect(isGitHubFileNotFoundError(new Error("GitHub content load secrets/ledger.md: 503"))).toBe(false);
     expect(isGitHubFileNotFoundError(new Error("network unavailable"))).toBe(false);
   });
