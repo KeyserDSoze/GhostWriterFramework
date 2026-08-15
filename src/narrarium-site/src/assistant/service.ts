@@ -68,6 +68,7 @@ import { commitAndPushTextFileMutation, resolveRepositoryHeadForMutation, sha256
 import { chapterOutputSchema, entityOutputSchema, importedDraftOutputSchema, importedScriptOutputSchema, multiFileOutputSchema, paragraphOutputSchema, parseStructuredOutput, readerOutputSchema, scriptOutputSchema, StructuredOutputError } from "@/assistant/structuredOutput";
 import type { z } from "zod";
 import { attachmentImportRoute, validateImportAttachments, type AttachmentImportTarget } from "@/assistant/attachmentImport";
+import { assertExecutableHandlerMap } from "@/assistant/handlerCatalog";
 
 async function completeForTask(
   settings: AppSettings,
@@ -113,22 +114,6 @@ type PromptInput = {
   onText?: (text: string) => void;
 };
 
-const EXECUTABLE_HANDLER_IDS = new Set([
-  "search-book", "switch-branch", "import-attachments", "create-chapter", "create-paragraph", "create-entity",
-  "create-script", "create-draft", "update-plot", "write-resume", "write-evaluation", "evaluate-chapter-paragraphs",
-  "rewrite-paragraph", "create-note", "review-context", "summarize-context", "answer-from-context", "open-reader",
-  "navigate", "read-current-page", "list-simulated-readers", "create-simulated-reader", "toggle-simulated-reader",
-  "evaluate-with-readers", "summarize-reader-evaluations", "open-reader-evaluations", "generate-draft-from-feedback",
-  "restore-previous-drafts", "feedback-rewrite-status", "cancel-feedback-rewrite", "run-audit", "open-audit",
-  "update-audit", "delete-audit", "set-audit-finding-status", "list-branches", "show-branch-diff", "list-commits",
-  "list-pull-requests", "create-pull-request", "get-book", "get-chapter", "get-paragraph", "get-character",
-  "get-location", "get-faction", "get-item", "get-secret", "get-timeline-event", "get-body", "get-frontmatter",
-  "delete-current-note", "delete-current-paragraph", "delete-current-entity", "delete-reader-evaluation",
-  "deep-research",
-  "create-from-research",
-  "multi-file-edit",
-]);
-
 export async function runAssistantPrompt(input: {
   prompt: string;
   context: LoadedWriterContext;
@@ -149,7 +134,7 @@ export async function runAssistantPrompt(input: {
     prompt,
     context,
     settings,
-    book,
+    book: selectedBook,
     branch,
     token,
     history,
@@ -176,30 +161,8 @@ export async function runAssistantPrompt(input: {
     signal,
     onText,
   };
-
-  if (isCapabilityQuestion(prompt)) {
-    const capabilities = new Set(EXECUTABLE_HANDLER_IDS);
-    if (!book || !token || !context.structure || !context.branchReady || context.branch !== branch || !resolveTaskCandidates(settings, "deep-research").some((candidate) => candidate.integration && candidate.model)) capabilities.delete("deep-research");
-    if (!book || !token || !context.structure?.researchFiles.length || !context.branchReady || context.branch !== branch || !resolveTaskCandidates(settings, "create-from-research").some((candidate) => candidate.integration && candidate.model)) capabilities.delete("create-from-research");
-    return buildCapabilitiesMessage(prompt, settings, capabilities);
-  }
-
-  if (!context.branchReady || context.branch !== branch) {
-    return makeAssistantMessage("assistant", `Copilot is waiting for the authoritative branch \`${branch}\` to finish loading before it can read or write repository context.`);
-  }
-
-  if (!book || !token) {
-    return makeAssistantMessage(
-      "assistant",
-      "No GitHub token is configured for the current book, so I cannot read or write repository files from this context.",
-    );
-  }
-  if (!context.structure) {
-    return makeAssistantMessage(
-      "assistant",
-      "The current book structure is not loaded yet. Open the book page first so I can gather the right context.",
-    );
-  }
+  // Handlers are not invoked until prerequisite checks pass; constructing them here lets capability reporting use the real map.
+  const book = selectedBook as BookEntry;
 
   const handlers = {
     "search-book": () => searchCurrentBook({ ...promptInput, book, token }),
@@ -261,8 +224,18 @@ export async function runAssistantPrompt(input: {
     "create-from-research": () => proposeEntityFromResearch({ ...promptInput, book, branch, token }),
     "multi-file-edit": () => proposeMultiFileUpdates({ ...promptInput, book, branch, token }),
   } as const;
+  assertExecutableHandlerMap(handlers);
 
   const availableHandlerIds = new Set(Object.keys(handlers));
+  if (isCapabilityQuestion(prompt)) {
+    const capabilities = new Set(availableHandlerIds);
+    if (!selectedBook || !token || !context.structure || !context.branchReady || context.branch !== branch || !resolveTaskCandidates(settings, "deep-research").some((candidate) => candidate.integration && candidate.model)) capabilities.delete("deep-research");
+    if (!selectedBook || !token || !context.structure?.researchFiles.length || !context.branchReady || context.branch !== branch || !resolveTaskCandidates(settings, "create-from-research").some((candidate) => candidate.integration && candidate.model)) capabilities.delete("create-from-research");
+    return buildCapabilitiesMessage(prompt, settings, capabilities);
+  }
+  if (!context.branchReady || context.branch !== branch) return makeAssistantMessage("assistant", `Copilot is waiting for the authoritative branch \`${branch}\` to finish loading before it can read or write repository context.`);
+  if (!selectedBook || !token) return makeAssistantMessage("assistant", "No GitHub token is configured for the current book, so I cannot read or write repository files from this context.");
+  if (!context.structure) return makeAssistantMessage("assistant", "The current book structure is not loaded yet. Open the book page first so I can gather the right context.");
   if (isCreateFromResearchPrompt(prompt)) {
     const available = context.structure.researchFiles.length > 0 && resolveTaskCandidates(settings, "create-from-research").some((candidate) => candidate.integration && candidate.model);
     if (!available || !isCopilotHandlerEnabled(settings, "create-from-research")) return disabledCopilotToolMessage(settings, "create-from-research");

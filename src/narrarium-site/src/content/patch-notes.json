@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.32",
+    "date": "2026-08-15",
+    "en": {
+      "title": "Verified Copilot capabilities",
+      "summary": "Copilot now validates its complete tool catalog against the real service handlers and advertises only enabled capabilities that can actually execute.",
+      "changes": [
+        "Added startup validation for unique tool and handler IDs, exact descriptor-to-handler coverage, mutation policy, LLM usage, prerequisites, keywords, and destructive defaults.",
+        "Made duplicate tool registration fail immediately instead of silently replacing an existing tool.",
+        "Built capability answers from the real runtime handler map, excluding unavailable or disabled tools before they are shown.",
+        "Corrected audit metadata to disclose that running or updating an audit automatically invokes an AI model."
+      ]
+    },
+    "it": {
+      "title": "Capability del Copilota verificate",
+      "summary": "Il Copilota valida ora l'intero catalogo strumenti rispetto agli handler reali del service e mostra solo capability abilitate che possono essere realmente eseguite.",
+      "changes": [
+        "Aggiunta validazione startup per ID tool e handler unici, copertura esatta descriptor-handler, mutation policy, uso LLM, prerequisiti, keyword e default degli strumenti distruttivi.",
+        "Resa immediatamente fallimentare la registrazione di tool duplicati invece di sostituire silenziosamente il tool esistente.",
+        "Costruite le risposte capability dalla mappa handler runtime reale, escludendo tool non disponibili o disabilitati prima di mostrarli.",
+        "Corretti i metadata audit per dichiarare che l'esecuzione o l'aggiornamento di un audit invoca automaticamente un modello AI."
+      ]
+    }
+  },
+  {
     "version": "0.76.31",
     "date": "2026-08-15",
     "en": {

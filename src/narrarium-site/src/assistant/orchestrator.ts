@@ -28,13 +28,13 @@ export function isCapabilityQuestion(prompt: string): boolean {
   return /\b(cosa puoi fare|che strumenti hai|come mi puoi aiutare|quali funzionalita supporti|quali funzionalità supporti|what can you do|what tools do you have|how can you help)\b/i.test(prompt);
 }
 
-export function buildCapabilitiesMessage(prompt: string, settings: AppSettings, availableHandlerIds?: ReadonlySet<string>): AssistantMessage {
+export function buildCapabilitiesMessage(prompt: string, settings: AppSettings, availableHandlerIds: ReadonlySet<string>): AssistantMessage {
   ensureBuiltinCopilotToolsRegistered();
   const language = capabilityMessageLanguage(prompt, settings);
   const tools = copilotToolRegistry.list().filter((tool) => (
     isCopilotToolEnabled(settings, tool)
     && Boolean(tool.handlerId)
-    && (!availableHandlerIds || availableHandlerIds.has(tool.handlerId!))
+    && availableHandlerIds.has(tool.handlerId!)
   ));
   const grouped = new Map<string, string[]>();
   for (const tool of tools) {

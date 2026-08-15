@@ -21,6 +21,21 @@ export interface CopilotToolParam {
   required?: boolean;
 }
 
+export type CopilotToolPrerequisite =
+  | "attachments"
+  | "book open"
+  | "canon entity open"
+  | "chapter open"
+  | "chapter or paragraph open"
+  | "context loaded"
+  | "current page"
+  | "git token"
+  | "non-default branch"
+  | "note open"
+  | "paragraph open"
+  | "reader evaluations available"
+  | "research available";
+
 export interface CopilotToolDescriptor {
   id: string;
   area: CopilotToolArea;
@@ -28,7 +43,7 @@ export interface CopilotToolDescriptor {
   description: string;
   params: CopilotToolParam[];
   output: string;
-  prerequisites: string[];
+  prerequisites: CopilotToolPrerequisite[];
   requiresLlm: boolean;
   mutatesData: boolean;
   destructive: boolean;

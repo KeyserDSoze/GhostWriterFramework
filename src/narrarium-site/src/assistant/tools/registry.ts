@@ -1,14 +1,15 @@
 import type { AppSettings } from "@/types/settings";
 import type { CopilotToolDescriptor } from "./types";
 
-class ToolRegistry {
+export class ToolRegistry {
   private tools = new Map<string, CopilotToolDescriptor>();
 
   register(tool: CopilotToolDescriptor) {
+    if (this.tools.has(tool.id)) throw new Error(`Duplicate Copilot tool ID: ${tool.id}`);
     this.tools.set(tool.id, tool);
   }
 
-  registerMany(tools: CopilotToolDescriptor[]) {
+  registerMany(tools: readonly CopilotToolDescriptor[]) {
     tools.forEach((tool) => this.register(tool));
   }
 
