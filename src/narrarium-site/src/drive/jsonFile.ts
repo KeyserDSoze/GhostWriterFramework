@@ -1,9 +1,10 @@
 import type { AuthProvider } from "@/store/authStore";
+import { ensureGoogleAppFolder } from "@/drive/googleAppFolder";
+import { beginCloudWrite } from "@/drive/cloudWriteBarrier";
 
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
-const APP_FOLDER = "Narrarium";
 const ONE_DRIVE_APP_FOLDER = "Apps/Narrarium";
 const MIME_JSON = "application/json";
 
@@ -25,31 +26,21 @@ export async function loadAppJson<T>(provider: AuthProvider, token: string, file
 }
 
 export async function saveAppJson<T>(provider: AuthProvider, token: string, fileName: string, data: T, driveFileId?: string): Promise<JsonHandle<T>> {
-  if (provider === "microsoft") {
-    await saveMs(token, fileName, data);
-    return { data };
+  const endWrite = beginCloudWrite(provider, token);
+  try {
+    if (provider === "microsoft") {
+      await saveMs(token, fileName, data);
+      return { data };
+    }
+    const id = await saveGoogle(token, fileName, data, driveFileId);
+    return { data, driveFileId: id };
+  } finally {
+    endWrite();
   }
-  const id = await saveGoogle(token, fileName, data, driveFileId);
-  return { data, driveFileId: id };
-}
-
-async function ensureGoogleFolder(token: string): Promise<string> {
-  const params = new URLSearchParams({ q: `name='${APP_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`, spaces: "drive", fields: "files(id)" });
-  const found = await fetch(`${GOOGLE_DRIVE_API}/files?${params}`, { headers: headers(token) });
-  if (found.ok) {
-    const data = (await found.json()) as { files?: Array<{ id: string }> };
-    if (data.files?.[0]?.id) return data.files[0].id;
-  }
-  const created = await fetch(`${GOOGLE_DRIVE_API}/files?fields=id`, {
-    method: "POST",
-    headers: { ...headers(token), "Content-Type": MIME_JSON },
-    body: JSON.stringify({ name: APP_FOLDER, mimeType: "application/vnd.google-apps.folder" }),
-  });
-  return ((await created.json()) as { id: string }).id;
 }
 
 async function loadGoogle<T>(token: string, fileName: string): Promise<JsonHandle<T>> {
-  const root = await ensureGoogleFolder(token);
+  const root = await ensureGoogleAppFolder(token);
   const params = new URLSearchParams({ q: `name='${fileName}' and '${root}' in parents and trashed=false`, spaces: "drive", fields: "files(id)" });
   const found = await fetch(`${GOOGLE_DRIVE_API}/files?${params}`, { headers: headers(token) });
   const data = (await found.json()) as { files?: Array<{ id: string }> };
@@ -65,7 +56,7 @@ async function saveGoogle<T>(token: string, fileName: string, data: T, id?: stri
     await fetch(`${GOOGLE_UPLOAD_API}/files/${id}?uploadType=media`, { method: "PATCH", headers: { ...headers(token), "Content-Type": MIME_JSON }, body });
     return id;
   }
-  const root = await ensureGoogleFolder(token);
+  const root = await ensureGoogleAppFolder(token);
   const form = new FormData();
   form.append("metadata", new Blob([JSON.stringify({ name: fileName, parents: [root] })], { type: MIME_JSON }));
   form.append("file", new Blob([body], { type: MIME_JSON }));

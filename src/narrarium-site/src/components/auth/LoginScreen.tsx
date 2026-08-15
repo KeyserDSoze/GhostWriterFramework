@@ -11,6 +11,7 @@ import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftSilentRequest } from "@/config/msal";
 import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
+import { registerCloudAccount, resumeCloudWrites } from "@/drive/cloudWriteBarrier";
 
 export function LoginScreen() {
   const { t } = useTranslation();
@@ -56,6 +57,8 @@ export function LoginScreen() {
           picture: profile.picture,
         };
 
+        registerCloudAccount("google", tokenResponse.access_token, user.email);
+        resumeCloudWrites("google", tokenResponse.access_token);
         setAuth(
           tokenResponse.access_token,
           user,
@@ -109,6 +112,8 @@ export function LoginScreen() {
       const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
       const expiresIn = Math.max(120, Math.round((expiresAt - Date.now()) / 1000));
 
+      registerCloudAccount("microsoft", graphToken, email || name);
+      resumeCloudWrites("microsoft", graphToken);
       setAuth(
         graphToken,
         {

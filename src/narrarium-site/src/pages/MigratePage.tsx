@@ -15,6 +15,7 @@ import {
   type MigrationStepKind,
   type MigrationStepResult,
 } from "@/drive/migration";
+import { registerCloudAccount, resumeCloudWrites, suspendCloudWrites } from "@/drive/cloudWriteBarrier";
 
 interface TargetAccount {
   provider: AuthProvider;
@@ -65,6 +66,8 @@ export function MigratePage() {
           name: profile.name ?? profile.email ?? "Google",
           email: profile.email ?? "",
         });
+        registerCloudAccount("google", tokenResponse.access_token, profile.email ?? "google-target");
+        resumeCloudWrites("google", tokenResponse.access_token);
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -103,6 +106,8 @@ export function MigratePage() {
         name: profile.displayName ?? email ?? "Microsoft",
         email,
       });
+      registerCloudAccount("microsoft", graphToken, email || "microsoft-target");
+      resumeCloudWrites("microsoft", graphToken);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -151,12 +156,18 @@ export function MigratePage() {
     setDeleting(account.provider);
     setError(null);
     setDeleteNotice(null);
+    let deleted = false;
     try {
+      registerCloudAccount(account.provider, account.accessToken, account.email || account.name);
+      await suspendCloudWrites(account.provider, account.accessToken);
       const result = await deleteNarrariumCloudData(account.provider, account.accessToken);
+      deleted = result.deleted;
       setDeleteNotice(result.deleted
-        ? t("migration.deleteDone", { provider, count: result.count })
+        ? `${t("migration.deleteDone", { provider, count: result.count })} IDs: ${result.folderIds.join(", ")}`
         : t("migration.deleteNothing", { provider }));
+      if (!result.deleted) resumeCloudWrites(account.provider, account.accessToken);
     } catch (err) {
+      if (!deleted) resumeCloudWrites(account.provider, account.accessToken);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setDeleting(null);

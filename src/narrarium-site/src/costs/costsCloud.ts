@@ -1,11 +1,12 @@
 import type { AuthProvider } from "@/store/authStore";
 import type { CostsFile } from "@/costs/model";
 import { emptyCostsFile } from "@/costs/model";
+import { ensureGoogleAppFolder } from "@/drive/googleAppFolder";
+import { beginCloudWrite } from "@/drive/cloudWriteBarrier";
 
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
-const APP_FOLDER = "Narrarium";
 const ONE_DRIVE_APP_FOLDER = "Apps/Narrarium";
 const COSTS_FILE = "costs.json";
 const MIME_JSON = "application/json";
@@ -28,38 +29,24 @@ export async function loadCosts(provider: AuthProvider, accessToken: string): Pr
 }
 
 export async function saveCosts(provider: AuthProvider, accessToken: string, handle: CostsHandle): Promise<CostsHandle> {
+  const endWrite = beginCloudWrite(provider, accessToken);
   const file: CostsFile = { ...handle.file, updatedAt: new Date().toISOString() };
-  if (provider === "microsoft") {
-    await saveMicrosoftCosts(accessToken, file);
-    return { file };
+  try {
+    if (provider === "microsoft") {
+      await saveMicrosoftCosts(accessToken, file);
+      return { file };
+    }
+    const driveFileId = await saveGoogleCosts(accessToken, file, handle.driveFileId);
+    return { file, driveFileId };
+  } finally {
+    endWrite();
   }
-  const driveFileId = await saveGoogleCosts(accessToken, file, handle.driveFileId);
-  return { file, driveFileId };
 }
 
 // ─── Google Drive ─────────────────────────────────────────────────────────────
 
-async function ensureGoogleFolder(accessToken: string, name: string): Promise<string> {
-  const params = new URLSearchParams({
-    q: `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-    spaces: "drive",
-    fields: "files(id)",
-  });
-  const found = await fetch(`${GOOGLE_DRIVE_API}/files?${params}`, { headers: authHeaders(accessToken) });
-  if (found.ok) {
-    const data = (await found.json()) as { files?: Array<{ id: string }> };
-    if (data.files?.[0]?.id) return data.files[0].id;
-  }
-  const created = await fetch(`${GOOGLE_DRIVE_API}/files?fields=id`, {
-    method: "POST",
-    headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
-    body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder" }),
-  });
-  return ((await created.json()) as { id: string }).id;
-}
-
 async function loadGoogleCosts(accessToken: string): Promise<CostsHandle> {
-  const root = await ensureGoogleFolder(accessToken, APP_FOLDER);
+  const root = await ensureGoogleAppFolder(accessToken);
   const params = new URLSearchParams({ q: `name='${COSTS_FILE}' and '${root}' in parents and trashed=false`, spaces: "drive", fields: "files(id)" });
   const found = await fetch(`${GOOGLE_DRIVE_API}/files?${params}`, { headers: authHeaders(accessToken) });
   const data = (await found.json()) as { files?: Array<{ id: string }> };
@@ -80,7 +67,7 @@ async function saveGoogleCosts(accessToken: string, file: CostsFile, fileId?: st
     });
     return fileId;
   }
-  const root = await ensureGoogleFolder(accessToken, APP_FOLDER);
+  const root = await ensureGoogleAppFolder(accessToken);
   const form = new FormData();
   form.append("metadata", new Blob([JSON.stringify({ name: COSTS_FILE, parents: [root] })], { type: MIME_JSON }));
   form.append("file", new Blob([body], { type: MIME_JSON }));

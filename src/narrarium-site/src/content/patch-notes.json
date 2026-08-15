@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.17",
+    "date": "2026-08-14",
+    "en": {
+      "title": "Verified Narrarium cloud folders",
+      "summary": "Google Drive storage now uses a verified app-owned folder marker, so personal folders named Narrarium are never adopted or deleted by name alone.",
+      "changes": [
+        "Marked app-owned Google folders with a unique appProperty and persisted their verified ID separately for each Drive account.",
+        "Migrated legacy folders only when their settings document matches the Narrarium schema, while ignoring unrelated same-name folders.",
+        "Reconciled concurrent folder creation through deterministic verified discovery and failed closed when Drive could not establish one canonical folder.",
+        "Suspended and drained account-scoped cloud writes before deletion, kept autosave blocked across token refreshes, and reported the exact verified folder IDs removed."
+      ]
+    },
+    "it": {
+      "title": "Cartelle cloud Narrarium verificate",
+      "summary": "Lo storage Google Drive usa ora un marker verificato di proprietà dell'app, quindi le cartelle personali chiamate Narrarium non vengono mai adottate o eliminate basandosi soltanto sul nome.",
+      "changes": [
+        "Contrassegnate le cartelle Google dell'app con una appProperty univoca e salvato il relativo ID verificato separatamente per ogni account Drive.",
+        "Migrate le cartelle legacy soltanto quando il documento delle impostazioni rispetta lo schema Narrarium, ignorando cartelle omonime non correlate.",
+        "Riconciliata la creazione concorrente tramite discovery verificata e deterministica, con comportamento fail-closed quando Drive non stabilisce una cartella canonica.",
+        "Sospese e drenate le scritture cloud per account prima dell'eliminazione, mantenuto bloccato l'autosave attraverso i refresh del token e riportati gli ID esatti delle cartelle verificate rimosse."
+      ]
+    }
+  },
+  {
     "version": "0.76.16",
     "date": "2026-08-14",
     "en": {

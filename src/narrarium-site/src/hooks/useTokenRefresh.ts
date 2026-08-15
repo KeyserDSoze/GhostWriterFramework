@@ -4,6 +4,7 @@ import { useMsal } from "@azure/msal-react";
 import { useAuthStore } from "@/store/authStore";
 import { findMicrosoftAccountByEmail, microsoftSilentRequest } from "@/config/msal";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
+import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 
 const REFRESH_BEFORE_MS = 5 * 60 * 1000;
 const RETRY_AFTER_MS = 60 * 1000;
@@ -20,6 +21,7 @@ export function useTokenRefresh() {
     hint: user?.email,
     onSuccess: (tokenResponse) => {
       if (!user) return;
+      registerCloudAccount("google", tokenResponse.access_token, user.email);
       setAuth(tokenResponse.access_token, user, "expires_in" in tokenResponse ? tokenResponse.expires_in : 3600);
     },
     // Background refresh must never log the user out. A failed silent refresh
@@ -44,6 +46,7 @@ export function useTokenRefresh() {
           if (cancelled) return;
           if (result.account) instance.setActiveAccount(result.account);
           const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
+          registerCloudAccount("microsoft", result.accessToken, user.email);
           setAuth(result.accessToken, user, Math.max(120, Math.round((expiresAt - Date.now()) / 1000)));
         })
         .catch((err) => {

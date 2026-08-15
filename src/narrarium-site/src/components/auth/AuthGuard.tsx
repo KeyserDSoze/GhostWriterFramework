@@ -8,6 +8,7 @@ import { useAuthStore } from "@/store/authStore";
 import { useUiStore } from "@/store/uiStore";
 import { ensureMsalInitialized, findMicrosoftAccountByEmail, microsoftSilentRequest } from "@/config/msal";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
+import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 import { WanderingAuthGhost } from "@/components/auth/WanderingAuthGhost";
 
 interface AuthGuardProps {
@@ -68,6 +69,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
       if (!silentAttemptActiveRef.current || !user) return;
       silentAttemptActiveRef.current = false;
       clearSilentAuthTimeout();
+      registerCloudAccount("google", tokenResponse.access_token, user.email);
       setAuth(
         tokenResponse.access_token,
         user,
@@ -104,6 +106,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
         const expiresIn = Math.max(120, Math.round((expiresAt - Date.now()) / 1000));
         silentAttemptActiveRef.current = false;
         clearSilentAuthTimeout();
+        registerCloudAccount("microsoft", result.accessToken, user.email);
         setAuth(result.accessToken, user, expiresIn);
         setStatus("ok");
       } catch {

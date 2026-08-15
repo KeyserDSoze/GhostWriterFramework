@@ -1,10 +1,11 @@
 import type { AuthProvider } from "@/store/authStore";
 import type { AssistantSession, AssistantSessionMeta } from "@/assistant/store";
+import { ensureGoogleAppFolder } from "@/drive/googleAppFolder";
+import { beginCloudWrite } from "@/drive/cloudWriteBarrier";
 
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
-const APP_FOLDER = "Narrarium";
 const ONE_DRIVE_APP_FOLDER = "Apps/Narrarium";
 const CHATS_FOLDER = "chats";
 const MIME_JSON = "application/json";
@@ -22,9 +23,14 @@ export async function loadAssistantSession(provider: AuthProvider, accessToken: 
 }
 
 export async function saveAssistantSession(provider: AuthProvider, accessToken: string, session: AssistantSession): Promise<string> {
-  return provider === "microsoft"
-    ? saveMicrosoftSession(accessToken, session)
-    : saveGoogleSession(accessToken, session);
+  const endWrite = beginCloudWrite(provider, accessToken);
+  try {
+    return await (provider === "microsoft"
+      ? saveMicrosoftSession(accessToken, session)
+      : saveGoogleSession(accessToken, session));
+  } finally {
+    endWrite();
+  }
 }
 
 export async function deleteAssistantSession(provider: AuthProvider, accessToken: string, fileId: string): Promise<void> {
@@ -79,7 +85,7 @@ async function ensureGoogleFolder(accessToken: string, name: string, parentId?: 
 }
 
 async function listGoogleSessions(accessToken: string): Promise<AssistantSessionMeta[]> {
-  const root = await ensureGoogleFolder(accessToken, APP_FOLDER);
+  const root = await ensureGoogleAppFolder(accessToken);
   const chats = await ensureGoogleFolder(accessToken, CHATS_FOLDER, root);
   const params = new URLSearchParams({
     q: `'${chats}' in parents and trashed=false`,
@@ -108,7 +114,7 @@ async function loadGoogleSession(accessToken: string, fileId: string): Promise<A
 }
 
 async function saveGoogleSession(accessToken: string, session: AssistantSession): Promise<string> {
-  const root = await ensureGoogleFolder(accessToken, APP_FOLDER);
+  const root = await ensureGoogleAppFolder(accessToken);
   const chats = await ensureGoogleFolder(accessToken, CHATS_FOLDER, root);
   const body = JSON.stringify(session, null, 2);
 

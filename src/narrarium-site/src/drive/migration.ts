@@ -8,10 +8,9 @@ import {
   saveAssistantSession,
 } from "@/assistant/chatCloud";
 import type { AssistantSession } from "@/assistant/store";
+import { deleteVerifiedGoogleAppFolders } from "@/drive/googleAppFolder";
 
-const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
-const APP_FOLDER = "Narrarium";
 const ONE_DRIVE_APP_FOLDER = "Apps/Narrarium";
 const CLIPBOARD_FILE = "clipboard.json";
 
@@ -39,6 +38,7 @@ export interface MigrationProgress {
 export interface CloudDeleteResult {
   deleted: boolean;
   count: number;
+  folderIds: string[];
 }
 
 function authHeaders(accessToken: string) {
@@ -56,28 +56,13 @@ export async function deleteNarrariumCloudData(provider: AuthProvider, accessTok
 }
 
 async function deleteGoogleData(accessToken: string): Promise<CloudDeleteResult> {
-  const params = new URLSearchParams({
-    q: `name='${APP_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-    spaces: "drive",
-    fields: "files(id,name)",
-  });
-  const found = await fetch(`${GOOGLE_DRIVE_API}/files?${params}`, { headers: authHeaders(accessToken) });
-  assertOk(found, "Google Drive folder lookup");
-  const data = (await found.json()) as { files?: Array<{ id: string }> };
-  const folders = data.files ?? [];
-  for (const folder of folders) {
-    const response = await fetch(`${GOOGLE_DRIVE_API}/files/${folder.id}`, {
-      method: "DELETE",
-      headers: authHeaders(accessToken),
-    });
-    assertOk(response, "Google Drive folder delete");
-  }
-  return { deleted: folders.length > 0, count: folders.length };
+  const folderIds = await deleteVerifiedGoogleAppFolders(accessToken);
+  return { deleted: folderIds.length > 0, count: folderIds.length, folderIds };
 }
 
 async function deleteMicrosoftData(accessToken: string): Promise<CloudDeleteResult> {
   const meta = await fetch(`${GRAPH_DRIVE_API}/root:/${ONE_DRIVE_APP_FOLDER}`, { headers: authHeaders(accessToken) });
-  if (meta.status === 404) return { deleted: false, count: 0 };
+  if (meta.status === 404) return { deleted: false, count: 0, folderIds: [] };
   assertOk(meta, "OneDrive folder lookup");
   const data = (await meta.json()) as { id: string };
   const response = await fetch(`${GRAPH_DRIVE_API}/items/${data.id}`, {
@@ -85,7 +70,7 @@ async function deleteMicrosoftData(accessToken: string): Promise<CloudDeleteResu
     headers: authHeaders(accessToken),
   });
   assertOk(response, "OneDrive folder delete");
-  return { deleted: true, count: 1 };
+  return { deleted: true, count: 1, folderIds: [data.id] };
 }
 
 /**

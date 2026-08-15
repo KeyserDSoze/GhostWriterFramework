@@ -1,6 +1,8 @@
 import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget } from "@/types/settings";
 import type { AuthProvider } from "@/store/authStore";
 import { BROWSER_ROUTING_ID } from "@/assistant/router";
+import { ensureGoogleAppFolder } from "@/drive/googleAppFolder";
+import { beginCloudWrite } from "@/drive/cloudWriteBarrier";
 
 export class TokenExpiredError extends Error {
   constructor() {
@@ -12,7 +14,6 @@ export class TokenExpiredError extends Error {
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
-const APP_FOLDER = "Narrarium";
 const ONE_DRIVE_APP_FOLDER = "Apps/Narrarium";
 const SETTINGS_FILE_NAME = "settings.json";
 const MIME_JSON = "application/json";
@@ -31,9 +32,14 @@ export async function saveCloudSettings(
   accessToken: string,
   settings: AppSettings,
 ): Promise<string> {
-  return provider === "microsoft"
-    ? saveMicrosoftSettings(accessToken, settings)
-    : saveGoogleSettings(accessToken, settings);
+  const endWrite = beginCloudWrite(provider, accessToken);
+  try {
+    return await (provider === "microsoft"
+      ? saveMicrosoftSettings(accessToken, settings)
+      : saveGoogleSettings(accessToken, settings));
+  } finally {
+    endWrite();
+  }
 }
 
 function assertOk(response: Response, context: string): void {
@@ -43,29 +49,6 @@ function assertOk(response: Response, context: string): void {
 
 function authHeaders(accessToken: string) {
   return { Authorization: `Bearer ${accessToken}` };
-}
-
-async function googleFindOrCreateFolder(accessToken: string): Promise<string> {
-  const query = new URLSearchParams({
-    q: `name='${APP_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-    spaces: "drive",
-    fields: "files(id,name)",
-  });
-  const found = await fetch(`${GOOGLE_DRIVE_API}/files?${query}`, {
-    headers: authHeaders(accessToken),
-  });
-  assertOk(found, "Google Drive folder lookup");
-  const foundData = (await found.json()) as { files?: Array<{ id: string }> };
-  if (foundData.files?.[0]?.id) return foundData.files[0].id;
-
-  const created = await fetch(`${GOOGLE_DRIVE_API}/files?fields=id`, {
-    method: "POST",
-    headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
-    body: JSON.stringify({ name: APP_FOLDER, mimeType: "application/vnd.google-apps.folder" }),
-  });
-  assertOk(created, "Google Drive folder create");
-  const createdData = (await created.json()) as { id: string };
-  return createdData.id;
 }
 
 async function googleFindSettingsFile(accessToken: string, folderId: string): Promise<string | null> {
@@ -83,7 +66,7 @@ async function googleFindSettingsFile(accessToken: string, folderId: string): Pr
 }
 
 async function loadGoogleSettings(accessToken: string): Promise<{ settings: AppSettings; fileId: string }> {
-  const folderId = await googleFindOrCreateFolder(accessToken);
+  const folderId = await ensureGoogleAppFolder(accessToken);
   const fileId = await googleFindSettingsFile(accessToken, folderId);
   if (!fileId) {
     const createdId = await saveGoogleSettings(accessToken, DEFAULT_SETTINGS);
@@ -98,7 +81,7 @@ async function loadGoogleSettings(accessToken: string): Promise<{ settings: AppS
 }
 
 async function saveGoogleSettings(accessToken: string, settings: AppSettings): Promise<string> {
-  const folderId = await googleFindOrCreateFolder(accessToken);
+  const folderId = await ensureGoogleAppFolder(accessToken);
   const fileId = await googleFindSettingsFile(accessToken, folderId);
   const json = JSON.stringify(settings, null, 2);
 
