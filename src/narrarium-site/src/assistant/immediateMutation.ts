@@ -5,6 +5,7 @@ import {
   resolveRepositoryHeadForMutation,
   sha256Text,
 } from "@/repository/safeRepositoryMutation";
+import { commitCanonicalScriptMutation } from "@/narrarium/scriptLedger";
 
 export interface ImmediateMutationSnapshot {
   path: string;
@@ -61,16 +62,20 @@ export async function commitImmediateMutations(input: {
   input.signal?.throwIfAborted();
   const remoteHeads = new Set(input.snapshots.map(({ snapshot }) => snapshot.remoteHeadSha));
   if (remoteHeads.size !== 1) throw new Error("Immediate mutations must share one source head.");
-  const result = await commitAndPushTextFileMutation({
+  const mutations = input.snapshots.map(({ snapshot, content }) => ({ path: snapshot.path, content, expectedCurrentHash: snapshot.hash }));
+  const mutationInput = {
     token: input.token,
     book: input.book,
     branch: input.branch,
     expectedRemoteHeadSha: input.snapshots[0].snapshot.remoteHeadSha,
     message: input.message,
-    mutations: input.snapshots.map(({ snapshot, content }) => ({ path: snapshot.path, content, expectedCurrentHash: snapshot.hash })),
+    mutations,
     signal: input.signal,
-  });
-  return result.commitSha;
+  };
+  const result = mutations.some((mutation) => /^scripts\/.*\.md$/.test(mutation.path))
+    ? await commitCanonicalScriptMutation(mutationInput)
+    : await commitAndPushTextFileMutation(mutationInput);
+  return result.commitSha ?? input.snapshots[0].snapshot.remoteHeadSha;
 }
 
 export function mergeManagedFrontmatter(

@@ -451,7 +451,7 @@ export function ParagraphPage() {
 
       let newSha: string;
       if (needsRename) {
-        const updatedParagraph = await renameParagraphWithCompanions(
+        const renamed = await renameParagraphWithCompanions(
           token,
           book.owner,
           book.repo,
@@ -462,6 +462,8 @@ export function ParagraphPage() {
           rawContent,
           `Rename paragraph ${slotNum}: ${currentTitle}`,
         );
+        const updatedParagraph = renamed.paragraph;
+        if (renamed.canonical?.warningCount) toast({ title: t("common.saved"), description: renamed.canonical.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
         newSha = (await readFileWithSha(token, book.owner, book.repo, branch, updatedParagraph.path)).sha;
         loadedTargetRef.current = `${branch}:${updatedParagraph.path}`;
 

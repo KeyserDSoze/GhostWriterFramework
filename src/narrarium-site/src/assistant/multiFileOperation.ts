@@ -1,4 +1,20 @@
 import type { AssistantFileUpdate } from "@/assistant/store";
+import type { CanonicalScriptMutationResult } from "@/narrarium/canonicalScriptMutationPlan";
+
+export type AppliedFileUpdateResult = { previousContent: string | null; appliedHash: string; appliedContent?: string };
+
+export function applyCanonicalRevisionResults(
+  updates: AssistantFileUpdate[],
+  results: Record<string, AppliedFileUpdateResult>,
+  canonical: CanonicalScriptMutationResult,
+): Record<string, AppliedFileUpdateResult> {
+  const next = { ...results };
+  for (const update of updates) {
+    const revision = canonical.revisions[update.path];
+    if (revision?.content !== null && revision?.hash) next[update.path] = { previousContent: revision.previousContent, appliedHash: revision.hash, appliedContent: revision.content };
+  }
+  return next;
+}
 
 export function pendingFileUpdates(updates: AssistantFileUpdate[], selectedPaths?: string[]): AssistantFileUpdate[] {
   const selected = selectedPaths?.length ? new Set(selectedPaths) : null;
@@ -7,10 +23,10 @@ export function pendingFileUpdates(updates: AssistantFileUpdate[], selectedPaths
 
 export function markFileUpdatesApplied(
   updates: AssistantFileUpdate[],
-  results: Record<string, { previousContent: string | null; appliedHash: string }>,
+  results: Record<string, AppliedFileUpdateResult>,
 ): AssistantFileUpdate[] {
   return updates.map((update) => results[update.path]
-    ? { ...update, status: "applied", previousContent: results[update.path].previousContent, appliedHash: results[update.path].appliedHash, error: undefined }
+    ? { ...update, content: results[update.path].appliedContent ?? update.content, status: "applied", previousContent: results[update.path].previousContent, appliedHash: results[update.path].appliedHash, error: undefined }
     : update);
 }
 

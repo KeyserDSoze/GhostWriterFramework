@@ -216,7 +216,7 @@ export function ChapterPage() {
     if (!pendingReorder || !book || !structure || !chapter) return;
     setIsSavingOrder(true);
     try {
-      const updated = await reorderParagraphsInChapter(
+      const outcome = await reorderParagraphsInChapter(
         token,
         book.owner,
         book.repo,
@@ -226,6 +226,8 @@ export function ChapterPage() {
         pendingReorder,
         `Reorder paragraphs in ${chapter.slug}`,
       );
+      const updated = outcome.paragraphs;
+      if (outcome.canonical?.warningCount) toast({ title: t("common.saved"), description: outcome.canonical.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
       setLocalParagraphs(updated);
       updateChapterParagraphs(bookId!, chapterId!, updated);
       setPendingReorder(null);
@@ -251,7 +253,7 @@ export function ChapterPage() {
     setDeleting(true);
     try {
       const remaining = localParagraphs.filter((p) => p.path !== toDelete.path);
-      const updated = await reorderParagraphsInChapter(
+      const outcome = await reorderParagraphsInChapter(
         token,
         book.owner,
         book.repo,
@@ -261,6 +263,8 @@ export function ChapterPage() {
         remaining,
         `Delete paragraph ${toDelete.number}: ${toDelete.title}`,
       );
+      const updated = outcome.paragraphs;
+      if (outcome.canonical?.warningCount) toast({ title: t("common.saved"), description: outcome.canonical.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
       setLocalParagraphs(updated);
       updateChapterParagraphs(bookId!, chapterId!, updated);
       setToDelete(null);
@@ -346,13 +350,13 @@ export function ChapterPage() {
         });
         toast({ title: t("chapter.draftCreatedFor", { title: paragraph.title }) });
       } else if (kind === "script") {
-        await createParagraphScriptArtifact(token, book.owner, book.repo, branch, {
+        const result = await createParagraphScriptArtifact(token, book, branch, {
           chapterSlug: chapter.slug,
           number: Number(paragraph.number),
           title: paragraph.title,
           paragraphSlug: paragraph.path.split("/").pop()?.replace(/\.md$/i, ""),
         });
-        toast({ title: t("chapter.scriptCreatedFor", { title: paragraph.title }) });
+        toast({ title: result.changed ? t("chapter.scriptCreatedFor", { title: paragraph.title }) : t("chapter.scriptAlreadyExists", { title: paragraph.title }), description: result.warningCount ? result.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") : undefined });
       } else {
         await createParagraphEvaluationArtifact(token, book.owner, book.repo, branch, {
           chapterSlug: chapter.slug,

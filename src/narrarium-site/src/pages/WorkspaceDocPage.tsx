@@ -29,6 +29,8 @@ import { useGenerateDiffStore } from "@/store/generateDiffStore";
 import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
 import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
 import type { RoutedLlmRunMetadata } from "@/assistant/router";
+import { commitCanonicalScriptMutation } from "@/narrarium/scriptLedger";
+import { sha256Text } from "@/repository/safeRepositoryMutation";
 
 interface MetaEntry {
   key: string;
@@ -324,6 +326,7 @@ export function WorkspaceDocPage() {
   const [entries, setEntries] = useState<MetaEntry[]>([]);
   const [body, setBody] = useState("");
   const [sha, setSha] = useState("");
+  const [sourceHash, setSourceHash] = useState("");
   const [savedEntries, setSavedEntries] = useState<MetaEntry[]>([]);
   const [savedBody, setSavedBody] = useState("");
   const [loading, setLoading] = useState(false);
@@ -420,13 +423,14 @@ export function WorkspaceDocPage() {
     loadedTargetRef.current = targetKey;
     setLoading(true);
     readFileWithSha(token, book.owner, book.repo, branch, path)
-      .then(({ content, sha: fileSha }) => {
+      .then(async ({ content, sha: fileSha }) => {
         const parsed = parseFrontmatter(content);
         setEntries(parsed.entries);
         setSavedEntries(parsed.entries);
         setBody(parsed.body);
         setSavedBody(parsed.body);
         setSha(fileSha);
+        setSourceHash(await sha256Text(content));
         if (workspaceKind === "script") setScriptDoc(parseScript(parsed.body));
       })
       .catch((err) => {
@@ -536,6 +540,7 @@ export function WorkspaceDocPage() {
       setBody(parsed.body);
       setSavedBody(parsed.body);
       setSha(fileSha);
+      setSourceHash(await sha256Text(content));
       if (workspaceKind === "script") setScriptDoc(parseScript(parsed.body));
     } catch (err) {
       loadedTargetRef.current = null;
@@ -589,20 +594,25 @@ export function WorkspaceDocPage() {
     setSaving(true);
     try {
       const nextContent = buildFrontmatter(entries, body);
-      const newSha = await updateFile(
-        token,
-        book!.owner,
-        book!.repo,
-        branch,
-        path,
-        sha,
-        nextContent,
-        `Update ${title}`,
-      );
+      let newSha: string;
+      if (workspaceKind === "script") {
+        const result = await commitCanonicalScriptMutation({
+          token,
+          book: book!,
+          branch,
+          message: `Update ${title}`,
+          mutations: [{ path, content: nextContent, expectedCurrentHash: sourceHash }],
+        });
+        newSha = result.changed ? (await readFileWithSha(token, book!.owner, book!.repo, branch, path)).sha : sha;
+        if (result.warningCount) toast({ title: t("common.saved"), description: result.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
+      } else {
+        newSha = await updateFile(token, book!.owner, book!.repo, branch, path, sha, nextContent, `Update ${title}`);
+      }
       setSha(newSha);
+      setSourceHash(await sha256Text(nextContent));
       setSavedEntries(entries);
       setSavedBody(body);
-      toast({ title: t("common.saved") });
+      if (workspaceKind !== "script") toast({ title: t("common.saved") });
     } catch (err) {
       toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
     } finally {

@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.36",
+    "date": "2026-08-16",
+    "en": {
+      "title": "Canonical script ledger synchronization",
+      "summary": "Every script mutation now validates and updates the canonical script ledger atomically, with accurate outcomes across Copilot, workspace editing, and structural book operations.",
+      "changes": [
+        "Regenerated state/script-ledger.md in the same revision as every script create, update, delete, rename, reorder, import, rewrite, revert, apply, and undo operation.",
+        "Blocked complete mutations when ledger validation fails and surfaced ledger warnings in Copilot, live voice, and workspace flows instead of reporting false success.",
+        "Reported duplicate script creation and canonical no-ops accurately while repairing a missing or stale ledger without changing an existing script.",
+        "Reconciled ambiguous remote pushes through commit ancestry and exact file parity, preserving cancellation, conflict detection, and local or remote consistency.",
+        "Ignored model-supplied ledger content during multi-file edits and recorded the actual canonical ledger revision so apply and undo remain reliable."
+      ]
+    },
+    "it": {
+      "title": "Sincronizzazione canonica dello script ledger",
+      "summary": "Ogni mutazione degli script ora valida e aggiorna atomicamente lo script ledger canonico, con esiti accurati nel Copilota, nell'editor workspace e nelle operazioni strutturali del libro.",
+      "changes": [
+        "Rigenerato state/script-ledger.md nella stessa revisione di ogni creazione, modifica, eliminazione, rename, reorder, import, riscrittura, revert, apply e undo degli script.",
+        "Bloccate interamente le mutazioni quando la validazione del ledger fallisce e mostrati i warning del ledger nei flussi Copilota, live voice e workspace senza dichiarare falsi successi.",
+        "Segnalate correttamente creazioni duplicate e no-op canonici, riparando un ledger mancante o stale senza modificare uno script esistente.",
+        "Riconciliati i push remoti ambigui tramite ancestry del commit e parita esatta dei file, preservando cancellazione, rilevamento conflitti e coerenza locale o remota.",
+        "Ignorato il contenuto ledger fornito dal modello nelle modifiche multi-file e registrata la revisione canonica realmente persistita, mantenendo affidabili apply e undo."
+      ]
+    }
+  },
+  {
     "version": "0.76.35",
     "date": "2026-08-16",
     "en": {

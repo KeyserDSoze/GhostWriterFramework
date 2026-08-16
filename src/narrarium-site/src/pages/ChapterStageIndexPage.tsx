@@ -15,6 +15,8 @@ import { createOrUpdateTextFile, loadFileContent } from "@/github/githubClient";
 import { stringify } from "yaml";
 import { GeneratePreviewDialog } from "@/components/book/GeneratePreviewDialog";
 import { proseToScript, refineProse, scriptToProse, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
+import { commitCanonicalScriptMutation } from "@/narrarium/scriptLedger";
+import { sha256Text } from "@/repository/safeRepositoryMutation";
 
 type Stage = "drafts" | "scripts";
 type GenKind = "draft" | "final" | "script";
@@ -97,8 +99,14 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
     if (genGw) fm.ghostwriter = genGw;
     const content = `---\n${stringify(fm).trim()}\n---\n\n${genText.trim()}\n`;
     try {
-      await createOrUpdateTextFile(token, book!.owner, book!.repo, branch, path, content, `Generate ${path}`);
-      toast({ title: t("pipeline.created", { path }) });
+      if (genKind === "script") {
+        const previous = await loadFileContent(token, book!.owner, book!.repo, path, branch).catch(() => null);
+        const result = await commitCanonicalScriptMutation({ token, book: book!, branch, message: `Generate ${path}`, mutations: [{ path, content, expectedCurrentHash: previous === null ? null : await sha256Text(previous) }] });
+        toast({ title: result.changed ? t("pipeline.created", { path }) : t("common.saved"), description: result.warningCount ? result.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") : undefined });
+      } else {
+        await createOrUpdateTextFile(token, book!.owner, book!.repo, branch, path, content, `Generate ${path}`);
+        toast({ title: t("pipeline.created", { path }) });
+      }
       setGenOpen(false);
       reload();
     } catch (err) {

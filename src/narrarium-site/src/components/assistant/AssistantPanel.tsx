@@ -95,12 +95,13 @@ import { speakText, splitIntoStrofe, transcribeAudio, type SpeechController } fr
 import { classifyConfirmationRouted, completeTextRouted, sttMode } from "@/assistant/router";
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
 import { commitAndPushTextFileMutation, RepositoryConflictError, resolveRepositoryHeadForMutation, sha256Text } from "@/repository/safeRepositoryMutation";
-import { currentRevisionToken, fileRevisionMatches, fileUpdateCounts, markFileUpdatesApplied, markFileUpdatesFailed, markFileUpdatesUndone, pendingFileUpdates } from "@/assistant/multiFileOperation";
+import { applyCanonicalRevisionResults, currentRevisionToken, fileRevisionMatches, fileUpdateCounts, markFileUpdatesApplied, markFileUpdatesFailed, markFileUpdatesUndone, pendingFileUpdates, type AppliedFileUpdateResult } from "@/assistant/multiFileOperation";
 import { buildCanonEntityDocument } from "@/narrarium/canon";
 import { BrowserSpeechFallbackRequired } from "@/assistant/mediaFallback";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
 import { refreshBookAfterMutation, runPromptWithMutationRefresh } from "@/assistant/mutationRefresh";
 import { captureLiveVoiceRewriteSnapshot, generateLiveVoiceRewrite, liveVoiceRewriteMatches, persistLiveVoiceRewrite, resolveLiveVoiceRewrite, type LiveVoiceRewriteContext, type LiveVoiceSource, type PendingLiveVoiceRewrite } from "@/assistant/liveVoiceRewrite";
+import { commitCanonicalScriptMutation } from "@/narrarium/scriptLedger";
 
 ensureBuiltinCopilotToolsRegistered();
 
@@ -1621,6 +1622,7 @@ export function AssistantPanel() {
     const token = book ? resolveBookToken(book, settingsRef.current) : "";
     if (!book || !token) return makeAssistantReply(t("assistant.rewriteSourceChanged"));
     let persistence: Awaited<ReturnType<typeof persistLiveVoiceRewrite>>;
+    let scriptWarnings: string[] = [];
     try {
       persistence = await persistLiveVoiceRewrite({
         pending,
@@ -1630,7 +1632,7 @@ export function AssistantPanel() {
         hashText: sha256Text,
         preparePersistence: (signal) => resolveRepositoryHeadForMutation({ token, book, branch: pending.branch, signal }),
         persist: async (expectedRemoteHeadSha, content, expectedSourceHash, signal) => {
-          await commitAndPushTextFileMutation({
+          const mutationInput = {
             token,
             book,
             branch: pending.branch,
@@ -1638,7 +1640,12 @@ export function AssistantPanel() {
             mutations: [{ path: pending.path, content, expectedCurrentHash: expectedSourceHash }],
             message: `Apply confirmed live-voice rewrite to ${pending.path}`,
             signal,
-          });
+          };
+          if (/^scripts\/.*\.md$/.test(pending.path)) {
+            const result = await commitCanonicalScriptMutation(mutationInput);
+            scriptWarnings = result.checks.filter((check) => check.severity === "warning").map((check) => `${check.path}${check.line ? `:${check.line}` : ""}: ${check.message}`);
+          }
+          else await commitAndPushTextFileMutation(mutationInput);
         },
       });
     } catch (error) {
@@ -1646,9 +1653,11 @@ export function AssistantPanel() {
       return makeAssistantReply(error instanceof RepositoryConflictError ? t("assistant.rewriteSourceChanged") : t("assistant.rewriteFailed", { error: String(error) }));
     }
     if (persistence.status === "conflict") return makeAssistantReply(t("assistant.rewriteSourceChanged"));
+    if (scriptWarnings.length) toast({ title: t("assistant.rewriteApplied"), description: scriptWarnings.join("\n") });
+    const rewriteAppliedMessage = `${t("assistant.rewriteApplied")}${scriptWarnings.length ? `\n\nLedger warnings:\n${scriptWarnings.map((warning) => `- ${warning}`).join("\n")}` : ""}`;
     await refreshBookAfterMutation({ book, token, branch: pending.branch });
     const activeAfterPersistence = activeLiveVoiceRewriteContext({ from: pending.from, to: pending.to });
-    if (!activeAfterPersistence || !liveVoiceRewriteMatches(pending, activeAfterPersistence)) return makeAssistantReply(t("assistant.rewriteApplied"));
+    if (!activeAfterPersistence || !liveVoiceRewriteMatches(pending, activeAfterPersistence)) return makeAssistantReply(rewriteAppliedMessage);
     const segments = [...liveStrofeRef.current];
     const sources = [...liveStrofeSourcesRef.current];
     segments.splice(pending.from, pending.to - pending.from + 1, ...pending.segments);
@@ -1666,7 +1675,7 @@ export function AssistantPanel() {
     const controller = await readText("", { segments, sources, startIndex: pending.from, operation });
     if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
     localAudioDoneRef.current = controller?.done ?? Promise.resolve();
-    return makeAssistantReply(t("assistant.rewriteApplied"));
+    return makeAssistantReply(rewriteAppliedMessage);
   }
 
   function stripFrontmatterForSpeech(raw: string): string {
@@ -1859,7 +1868,7 @@ export function AssistantPanel() {
     setBusy(true);
     try {
       const currentFiles = await Promise.all(updates.map((update) => optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, update.path))));
-      const results: Record<string, { previousContent: string | null; appliedHash: string }> = {};
+      let results: Record<string, AppliedFileUpdateResult> = {};
       const mutations = await Promise.all(updates.map(async (update, index) => {
         const current = currentFiles[index];
         const currentHash = current ? await sha256Text(current.content) : null;
@@ -1868,15 +1877,21 @@ export function AssistantPanel() {
         return { path: update.path, content: update.content, expectedCurrentHash: currentHash };
       }));
       const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch });
-      await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: `Apply ${updates.length} Copilot file update${updates.length === 1 ? "" : "s"}` });
+      const messageText = `Apply ${updates.length} Copilot file update${updates.length === 1 ? "" : "s"}`;
+      const scriptResult = mutations.some((mutation) => /^scripts\/.*\.md$/.test(mutation.path))
+        ? await commitCanonicalScriptMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText })
+        : null;
+      if (!scriptResult) await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText });
+      if (scriptResult) results = applyCanonicalRevisionResults(updates, results, scriptResult);
       await refreshBookAfterMutation({ book, token, branch });
       const nextUpdates = markFileUpdatesApplied(action.updates, results);
       const nextRevisions = { ...action.sourceRevisions };
       for (const update of updates) nextRevisions[update.path] = results[update.path].appliedHash;
       const allApplied = nextUpdates.every((update) => update.status === "applied");
+      const persistedChangeCount = scriptResult ? scriptResult.changedPaths.length : updates.length;
       useAssistantStore.getState().updateMessage(message.id, {
-        text: `${message.text}\n\n${t("assistant.appliedFileChanges", { count: updates.length })}`,
-        mutation: { changedPaths: updates.map((update) => update.path).sort(), refresh: "book-structure-and-context" },
+        text: `${message.text}\n\n${t("assistant.appliedFileChanges", { count: persistedChangeCount })}`,
+        mutation: { changedPaths: (scriptResult?.changedPaths ?? updates.map((update) => update.path)).sort(), refresh: "book-structure-and-context" },
         action: {
           kind: allApplied ? "undo-file-updates" : "apply-file-updates",
           bookId: action.bookId,
@@ -1890,7 +1905,7 @@ export function AssistantPanel() {
           generatedAt: new Date().toISOString(),
         },
       });
-      toast({ title: t("assistant.toastFileUpdatesApplied") });
+      toast({ title: t("assistant.toastFileUpdatesApplied"), description: scriptResult?.warningCount ? scriptResult.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") : undefined });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       const conflictPath = err instanceof RepositoryConflictError ? err.path : undefined;
@@ -1945,18 +1960,30 @@ export function AssistantPanel() {
     if (!await validatePersistedMutation(action, book, token)) return;
     setBusy(true);
     try {
+      let changedPaths = [action.path];
+      let deleteWasNoOp = false;
       if (action.target === "paragraph") {
         const structure = structures[action.bookId];
         const chapter = structure?.chapters.find((entry) => entry.slug === action.chapterSlug);
         if (!chapter) throw new Error("Chapter not found for paragraph deletion.");
         const remaining = chapter.paragraphs.filter((paragraph) => paragraph.path !== action.path);
-        await reorderParagraphsInChapter(token, book.owner, book.repo, branch, chapter.path, chapter.paragraphs, remaining, `Delete paragraph: ${action.title}`);
+        const outcome = await reorderParagraphsInChapter(token, book.owner, book.repo, branch, chapter.path, chapter.paragraphs, remaining, `Delete paragraph: ${action.title}`);
+        changedPaths = outcome.canonical?.changedPaths ?? [action.path];
+        if (outcome.canonical?.warningCount) toast({ title: t("assistant.toastDeleted", { title: action.title }), description: outcome.canonical.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
       } else {
         const existing = await optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, action.path));
-        if (existing) await deleteFile(token, book.owner, book.repo, branch, action.path, existing.sha, `Delete ${action.target}: ${action.title}`);
+        if (existing && /^scripts\/.*\.md$/.test(action.path)) {
+          const result = await commitCanonicalScriptMutation({ token, book, branch, message: `Delete ${action.target}: ${action.title}`, mutations: [{ path: action.path, content: null, expectedCurrentHash: await sha256Text(existing.content) }] });
+          changedPaths = result.changedPaths;
+          if (result.warningCount) toast({ title: t("assistant.toastDeleted", { title: action.title }), description: result.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
+        } else if (existing) await deleteFile(token, book.owner, book.repo, branch, action.path, existing.sha, `Delete ${action.target}: ${action.title}`);
+        else {
+          changedPaths = [];
+          deleteWasNoOp = true;
+        }
       }
-      useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("assistant.deleteApplied")}`, mutation: { changedPaths: [action.path], refresh: "book-structure-and-context" } });
-      toast({ title: t("assistant.toastDeleted", { title: action.title }) });
+      useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${deleteWasNoOp ? t("assistant.deleteAlreadyAbsent") : t("assistant.deleteApplied")}`, mutation: { changedPaths, refresh: "book-structure-and-context" } });
+      toast({ title: deleteWasNoOp ? t("assistant.deleteAlreadyAbsent") : t("assistant.toastDeleted", { title: action.title }) });
       await refreshBookAfterMutation({ book, token, branch });
     } catch (err) {
       toast({ title: t("assistant.toastDeleteFailed"), description: String(err), variant: "destructive" });
@@ -2009,13 +2036,19 @@ export function AssistantPanel() {
         return { path: update.path, content: update.previousContent ?? null, expectedCurrentHash: update.appliedHash };
       }));
       const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch });
-      await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: `Undo ${applied.length} Copilot file update${applied.length === 1 ? "" : "s"}` });
+      const messageText = `Undo ${applied.length} Copilot file update${applied.length === 1 ? "" : "s"}`;
+      const priorLedger = applied.find((update) => update.path === "state/script-ledger.md")?.previousContent;
+      const ledgerGeneratedAt = priorLedger ? /^generated_at:\s*["']?([^"'\r\n]+)["']?\s*$/m.exec(priorLedger)?.[1].trim() : undefined;
+      const scriptResult = mutations.some((mutation) => /^scripts\/.*\.md$/.test(mutation.path))
+        ? await commitCanonicalScriptMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, ledgerGeneratedAt })
+        : null;
+      if (!scriptResult) await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText });
       await refreshBookAfterMutation({ book, token, branch });
       const nextUpdates = markFileUpdatesUndone(action.updates, applied.map((update) => update.path));
       const nextRevisions = { ...action.sourceRevisions };
-      await Promise.all(applied.map(async (update) => { nextRevisions[update.path] = update.previousContent == null ? null : await sha256Text(update.previousContent); }));
-      useAssistantStore.getState().updateMessage(message.id, { action: { ...action, kind: "apply-file-updates", updates: nextUpdates, sourceRevision: sourceRevisionFromFiles(nextRevisions), sourceRevisions: nextRevisions, generatedAt: new Date().toISOString() }, text: `${message.text}\n\n${t("assistant.undoApplied")}`, mutation: { changedPaths: applied.map((update) => update.path).sort(), refresh: "book-structure-and-context" } });
-      toast({ title: t("assistant.toastUndoApplied") });
+      await Promise.all(applied.map(async (update) => { nextRevisions[update.path] = scriptResult?.revisions[update.path]?.hash ?? (update.previousContent == null ? null : await sha256Text(update.previousContent)); }));
+      useAssistantStore.getState().updateMessage(message.id, { action: { ...action, kind: "apply-file-updates", updates: nextUpdates, sourceRevision: sourceRevisionFromFiles(nextRevisions), sourceRevisions: nextRevisions, generatedAt: new Date().toISOString() }, text: `${message.text}\n\n${t("assistant.undoApplied")}`, mutation: { changedPaths: (scriptResult?.changedPaths ?? applied.map((update) => update.path)).sort(), refresh: "book-structure-and-context" } });
+      toast({ title: t("assistant.toastUndoApplied"), description: scriptResult?.warningCount ? scriptResult.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") : undefined });
     } catch (err) {
       toast({ title: t("assistant.toastUndoFailed"), description: String(err), variant: "destructive" });
     } finally {
@@ -2051,7 +2084,16 @@ export function AssistantPanel() {
     if (!book || !structure || !token) return;
     setBusy(true);
     try {
-      await revertFileToRef(token, book.owner, book.repo, branch, file.filename, structure.defaultBranch);
+      if (/^scripts\/.*\.md$/.test(file.filename)) {
+        const [current, base] = await Promise.all([
+          optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, file.filename)),
+          loadFileContent(token, book.owner, book.repo, file.filename, structure.defaultBranch).catch(() => null),
+        ]);
+        const result = await commitCanonicalScriptMutation({ token, book, branch, message: `Revert ${file.filename} to ${structure.defaultBranch}`, mutations: [{ path: file.filename, content: base, expectedCurrentHash: current ? await sha256Text(current.content) : null }] });
+        if (result.warningCount) toast({ title: t("assistant.toastReverted", { file: file.filename }), description: result.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
+      } else {
+        await revertFileToRef(token, book.owner, book.repo, branch, file.filename, structure.defaultBranch);
+      }
       await refreshBookAfterMutation({ book, token, branch });
       toast({ title: t("assistant.toastReverted", { file: file.filename }) });
       await loadBranchDiff();

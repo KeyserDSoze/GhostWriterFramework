@@ -357,6 +357,7 @@ export async function applyLocalFileChangesAtomically(
   repoIdValue: string,
   deletePaths: Iterable<string>,
   writes: LocalFileAtomicWrite[],
+  expectedCurrentHashes: ReadonlyMap<string, string | null> = new Map(),
 ): Promise<void> {
   const originals = await allFromIndex<LocalRepositoryFile>("files", "repoId", repoIdValue);
   const originalsByPath = new Map(originals.map((file) => [file.path, file]));
@@ -392,16 +393,39 @@ export async function applyLocalFileChangesAtomically(
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction("files", "readwrite");
     const store = tx.objectStore("files");
-    for (const path of deletes) {
-      const existing = originalsByPath.get(path);
-      if (!existing) continue;
-      if (existing.status === "new") store.delete(existing.key);
-      else store.put({ ...existing, status: "deleted", committed: false, updatedAt: now });
+    let pending = expectedCurrentHashes.size;
+    let validationError: Error | null = null;
+    const apply = () => {
+      for (const path of deletes) {
+        const existing = originalsByPath.get(path);
+        if (!existing) continue;
+        if (existing.status === "new") store.delete(existing.key);
+        else store.put({ ...existing, status: "deleted", committed: false, updatedAt: now });
+      }
+      for (const file of prepared) store.put(file);
+    };
+    if (!pending) apply();
+    for (const [path, expected] of expectedCurrentHashes) {
+      const request = store.get(fileKey(repoIdValue, path));
+      request.onsuccess = () => {
+        const current = request.result as LocalRepositoryFile | undefined;
+        const actual = !current || current.status === "deleted" ? null : current.currentHash;
+        if (actual !== expected && !validationError) {
+          validationError = new Error(`File changed since it was read: ${path}`);
+          tx.abort();
+          return;
+        }
+        pending -= 1;
+        if (!pending && !validationError) apply();
+      };
+      request.onerror = () => {
+        validationError = request.error ?? new Error(`Failed to validate ${path}.`);
+        tx.abort();
+      };
     }
-    for (const file of prepared) store.put(file);
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error ?? new Error("Local file transaction aborted."));
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local file transaction aborted."));
   });
 }
 

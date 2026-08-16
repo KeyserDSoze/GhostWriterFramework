@@ -74,7 +74,7 @@ export function ChapterReorderList({
     if (!pending) return;
     setSaving(true);
     try {
-      await reorderChaptersInBook(
+      const outcome = await reorderChaptersInBook(
         token,
         book.owner,
         book.repo,
@@ -82,6 +82,7 @@ export function ChapterReorderList({
         pending.map((c) => ({ slug: c.slug })),
         "Reorder chapters",
       );
+      if (outcome.canonical?.warningCount) toast({ title: t("bookPage.chaptersReordered"), description: outcome.canonical.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
       setPending(null);
       toast({ title: t("bookPage.chaptersReordered") });
       onReordered();

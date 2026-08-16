@@ -399,6 +399,7 @@ const it = {
     toastCreatedFromResearch: "Creato {{title}}",
     toastCreateFromResearchFailed: "Impossibile creare l'entità dalla ricerca",
     deleteApplied: "Eliminato.",
+    deleteAlreadyAbsent: "Il file era gia assente; nessun file e stato modificato.",
     toastDeleted: "Eliminato {{title}}",
     toastDeleteFailed: "Eliminazione non riuscita",
     pauseAudio: "Pausa",
@@ -923,6 +924,7 @@ const it = {
     evaluationFailed: "Valutazione capitolo non riuscita",
     draftCreatedFor: "Bozza creata per {{title}}",
     scriptCreatedFor: "Script creato per {{title}}",
+    scriptAlreadyExists: "Lo script per {{title}} esiste gia; nessun file e stato modificato.",
     evaluationCreatedFor: "Valutazione creata per {{title}}",
     createKindFailed: "Creazione {{kind}} non riuscita"
   },

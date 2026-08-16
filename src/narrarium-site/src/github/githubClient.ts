@@ -15,6 +15,42 @@ import {
   type ParagraphArtifactMetadata,
   type ParagraphArtifactTarget,
 } from "@/narrarium/paragraphArtifacts";
+import { planCanonicalScriptMutation, SCRIPT_PATH_PATTERN, type CanonicalScriptMutationResult } from "@/narrarium/canonicalScriptMutationPlan";
+import { reconcileRemoteMutation, type IntendedRemoteRevision } from "@/repository/remoteMutationReconciliation";
+
+type StructuralTextWrite = { path: string; text: string };
+
+async function canonicalizeStructuralTextChanges(
+  files: Array<{ path: string; kind: string; text?: string }>,
+  deletePaths: Iterable<string>,
+  writes: StructuralTextWrite[],
+): Promise<{ mutations: Array<{ path: string; content: string | null; expectedCurrentHash?: string | null }>; result: CanonicalScriptMutationResult | null }> {
+  const source = new Map(files.filter((file) => file.kind === "text" && file.text !== undefined).map((file) => [file.path, file.text!]));
+  const prospective = new Map(source);
+  for (const path of deletePaths) prospective.delete(path);
+  for (const write of writes) prospective.set(write.path, write.text);
+  const paths = new Set([...source.keys(), ...prospective.keys()]);
+  const mutations = [...paths]
+    .filter((path) => source.get(path) !== prospective.get(path))
+    .map((path) => ({ path, content: prospective.get(path) ?? null }));
+  if (!mutations.some((mutation) => SCRIPT_PATH_PATTERN.test(mutation.path))) return { mutations, result: null };
+  const planned = await planCanonicalScriptMutation([...source].map(([path, content]) => ({ path, content })), mutations);
+  return { mutations: planned.mutations, result: planned.result };
+}
+
+async function updateStructuralRef(
+  octokit: Octokit,
+  input: { owner: string; repo: string; branch: string; expectedHeadSha: string; generatedCommitSha: string; revisions: IntendedRemoteRevision[]; signal?: AbortSignal },
+): Promise<void> {
+  try {
+    await octokit.rest.git.updateRef({ owner: input.owner, repo: input.repo, ref: `heads/${input.branch}`, sha: input.generatedCommitSha, force: false, request: { signal: input.signal } });
+  } catch (error) {
+    const reconciled = await reconcileRemoteMutation({ octokit, owner: input.owner, repo: input.repo, branch: input.branch, generatedCommitSha: input.generatedCommitSha, revisions: input.revisions });
+    if (reconciled.landed) return;
+    if (reconciled.headSha && reconciled.headSha !== input.expectedHeadSha) throw new RepositoryError("The generated structural commit is not an ancestor of the remote head, or its intended revisions no longer match.", "conflict", "update", 409, { cause: error });
+    throw error;
+  }
+}
 
 export function createGitHubClient(token: string): Octokit {
   return new Octokit({ auth: token });
@@ -821,7 +857,9 @@ export async function renameParagraphWithCompanions(
   newParagraphPath: string,
   updatedPrimaryContent: string,
   commitMessage: string,
-): Promise<Paragraph> {
+  options: { expectedRemoteHeadSha?: string; signal?: AbortSignal } = {},
+): Promise<{ paragraph: Paragraph; canonical: CanonicalScriptMutationResult | null }> {
+  options.signal?.throwIfAborted();
   const normalizedChapterPath = chapterPath.replace(/\/+$/, "");
   const chapterMatch = /^chapters\/([^/]+)$/.exec(normalizedChapterPath);
   if (!chapterMatch) throw new Error(`Invalid chapter path: ${chapterPath}`);
@@ -943,12 +981,15 @@ export async function renameParagraphWithCompanions(
 
   const localId = await localRepoId(owner, repo, branch);
   if (localId) {
+    const localMeta = await getLocalRepository(owner, repo, branch);
+    if (options.expectedRemoteHeadSha && localMeta?.remoteHeadSha !== options.expectedRemoteHeadSha) throw new RepositoryError("The local repository is based on a different remote head.", "conflict", "update", 409);
     const files = await listLocalFiles(localId);
     const sourcePaths = preflight(files.map((file) => file.path));
     if (files.find((file) => file.path === oldParagraph.path)?.kind !== "text") {
       throw new Error(`Paragraph file is not text: ${oldParagraph.path}`);
     }
-    const writes: LocalFileAtomicWrite[] = [];
+    const textWrites: StructuralTextWrite[] = [];
+    const binaryWrites: LocalFileAtomicWrite[] = [];
     const deletes = new Set<string>();
 
     // Capture every original before opening the mutation transaction.
@@ -960,24 +1001,34 @@ export async function renameParagraphWithCompanions(
         const source = file.path === oldParagraph.path ? updatedPrimaryContent : original;
         const next = moved ? rewriteMovedText(source) : rewriteRefs(source);
         if (moved || next !== original) {
-          writes.push({ path: destination ?? file.path, kind: "text", text: next });
+          textWrites.push({ path: destination ?? file.path, text: next });
           if (moved) deletes.add(file.path);
         }
       } else if (moved) {
         if (!file.blob) throw new Error(`Missing local binary content: ${file.path}`);
-        writes.push({ path: destination, kind: "binary", bytes: new Uint8Array(await file.blob.arrayBuffer()) });
+        binaryWrites.push({ path: destination, kind: "binary", bytes: new Uint8Array(await file.blob.arrayBuffer()) });
         deletes.add(file.path);
       }
     }
 
-    await applyLocalFileChangesAtomically(localId, deletes, writes);
-    return updatedParagraph(sourcePaths);
+    const canonical = await canonicalizeStructuralTextChanges(files, deletes, textWrites);
+    options.signal?.throwIfAborted();
+    const plannedDeletes = canonical.mutations.filter((mutation) => mutation.content === null).map((mutation) => mutation.path);
+    const plannedWrites: LocalFileAtomicWrite[] = canonical.mutations.flatMap((mutation) => typeof mutation.content === "string" ? [{ path: mutation.path, kind: "text" as const, text: mutation.content }] : []);
+    const writePaths = new Set([...plannedWrites, ...binaryWrites].map((write) => write.path));
+    const binarySources = [...deletes].filter((path) => files.find((file) => file.path === path)?.kind === "binary");
+    const expected = new Map(canonical.mutations.map((mutation) => [mutation.path, mutation.expectedCurrentHash ?? null]));
+    for (const path of [...binarySources, ...binaryWrites.map((write) => write.path)]) expected.set(path, files.find((file) => file.path === path)?.currentHash ?? null);
+    await applyLocalFileChangesAtomically(localId, new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
+    return { paragraph: updatedParagraph(sourcePaths), canonical: canonical.result };
   }
 
   const octokit = createGitHubClient(token);
   try {
   const { data: branchData } = await octokit.rest.repos.getBranch({ owner, repo, branch });
   const currentCommitSha = branchData.commit.sha;
+  options.signal?.throwIfAborted();
+  if (options.expectedRemoteHeadSha && currentCommitSha !== options.expectedRemoteHeadSha) throw new RepositoryError("The remote branch changed before the paragraph rename.", "conflict", "update", 409);
   const currentTreeSha = branchData.commit.commit.tree.sha;
   const { data: fullTree } = await octokit.rest.git.getTree({ owner, repo, tree_sha: currentTreeSha, recursive: "1" });
   if (fullTree.truncated) throw new RepositoryError("Repository tree is truncated; paragraph rename cannot safely continue.", "malformed", "update");
@@ -986,33 +1037,48 @@ export async function renameParagraphWithCompanions(
   const sourcePaths = preflight(blobs.map((node) => node.path!));
   const isTextPath = (path: string) => /\.(?:md|mdx|json|txt|ya?ml|toml|xml|opf|ncx|xhtml|css|html|js|jsx|ts|tsx)$/i.test(path);
   type TreeEntry = { path: string; mode: "100644"; type: "blob"; sha?: string | null; content?: string };
-  const treeUpdates: TreeEntry[] = [];
+  const binaryTreeUpdates: TreeEntry[] = [];
+  const sourceTextFiles: Array<{ path: string; kind: "text"; text: string }> = [];
+  const textWrites: StructuralTextWrite[] = [];
+  const textDeletes = new Set<string>();
 
   for (const node of blobs) {
     const path = node.path!;
     const destination = remapPath(path);
     const moved = destination !== null && destination !== path;
     if (moved) {
-      treeUpdates.push({ path, mode: "100644", type: "blob", sha: null });
       if (path === oldParagraph.path) {
-        treeUpdates.push({ path: destination, mode: "100644", type: "blob", content: rewriteMovedText(updatedPrimaryContent) });
+        const original = (await loadRemoteFileContentAtRef(token, owner, repo, path, currentCommitSha, options.signal)).content;
+        sourceTextFiles.push({ path, kind: "text", text: original });
+        textDeletes.add(path);
+        textWrites.push({ path: destination, text: rewriteMovedText(updatedPrimaryContent) });
       } else if (isTextPath(path)) {
-        const original = await loadFileContent(token, owner, repo, path, branch);
-        treeUpdates.push({ path: destination, mode: "100644", type: "blob", content: rewriteMovedText(original) });
+        const original = (await loadRemoteFileContentAtRef(token, owner, repo, path, currentCommitSha, options.signal)).content;
+        sourceTextFiles.push({ path, kind: "text", text: original });
+        textDeletes.add(path);
+        textWrites.push({ path: destination, text: rewriteMovedText(original) });
       } else if (node.sha) {
-        treeUpdates.push({ path: destination, mode: "100644", type: "blob", sha: node.sha });
+        binaryTreeUpdates.push({ path, mode: "100644", type: "blob", sha: null }, { path: destination, mode: "100644", type: "blob", sha: node.sha });
       }
     } else if (isTextPath(path)) {
-      const original = await loadFileContent(token, owner, repo, path, branch);
+      const original = (await loadRemoteFileContentAtRef(token, owner, repo, path, currentCommitSha, options.signal)).content;
+      sourceTextFiles.push({ path, kind: "text", text: original });
       const next = rewriteRefs(original);
-      if (next !== original) treeUpdates.push({ path, mode: "100644", type: "blob", content: next });
+      if (next !== original) textWrites.push({ path, text: next });
     }
   }
 
+  const canonical = await canonicalizeStructuralTextChanges(sourceTextFiles, textDeletes, textWrites);
+  options.signal?.throwIfAborted();
+  const treeUpdates: TreeEntry[] = [
+    ...binaryTreeUpdates,
+    ...canonical.mutations.map((mutation) => ({ path: mutation.path, mode: "100644" as const, type: "blob" as const, ...(mutation.content === null ? { sha: null } : { content: mutation.content }) })),
+  ];
+
   const { data: newTree } = await octokit.rest.git.createTree({ owner, repo, base_tree: currentTreeSha, tree: treeUpdates });
   const { data: newCommit } = await octokit.rest.git.createCommit({ owner, repo, message: commitMessage, tree: newTree.sha, parents: [currentCommitSha] });
-  await octokit.rest.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha: newCommit.sha });
-  return updatedParagraph(sourcePaths);
+  await updateStructuralRef(octokit, { owner, repo, branch, expectedHeadSha: currentCommitSha, generatedCommitSha: newCommit.sha, revisions: treeUpdates.map((entry) => ({ path: entry.path, ...(entry.content !== undefined ? { content: entry.content } : { blobSha: entry.sha }) })), signal: options.signal });
+  return { paragraph: updatedParagraph(sourcePaths), canonical: canonical.result };
   } catch (error) { throw classifyRepositoryError(error, "update", oldParagraph.path); }
 }
 
@@ -1040,7 +1106,9 @@ export async function reorderParagraphsInChapter(
   oldParagraphs: Paragraph[],
   newOrderedParagraphs: Paragraph[],
   commitMessage = "Reorder paragraphs",
-): Promise<Paragraph[]> {
+  options: { expectedRemoteHeadSha?: string; signal?: AbortSignal } = {},
+): Promise<{ paragraphs: Paragraph[]; canonical: CanonicalScriptMutationResult | null }> {
+  options.signal?.throwIfAborted();
   const chapterSlug = chapterPath.replace(/^chapters\//, "");
   const escapedChapter = chapterSlug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -1080,7 +1148,7 @@ export async function reorderParagraphsInChapter(
   const newSlugs = new Set(newOrderedParagraphs.map((p) => extractParagraphSlug(p.path)));
   const deleteSlugs = new Set(oldParagraphs.map((p) => extractParagraphSlug(p.path)).filter((slug) => !newSlugs.has(slug)));
 
-  if (remapBySlug.size === 0 && deleteSlugs.size === 0) return result;
+  if (remapBySlug.size === 0 && deleteSlugs.size === 0) return { paragraphs: result, canonical: null };
 
   // Classify a repo path to the paragraph slug it belongs to (or null).
   const slugOfPath = (path: string): string | null => {
@@ -1181,9 +1249,11 @@ export async function reorderParagraphsInChapter(
   // ── Local working copy ──────────────────────────────────────────────────────
   const id = await localRepoId(owner, repo, branch);
   if (id) {
+    const localMeta = await getLocalRepository(owner, repo, branch);
+    if (options.expectedRemoteHeadSha && localMeta?.remoteHeadSha !== options.expectedRemoteHeadSha) throw new RepositoryError("The local repository is based on a different remote head.", "conflict", "update", 409);
     const files = await listLocalFiles(id);
-    const textWrites: Array<{ path: string; text: string }> = [];
-    const binaryWrites: Array<{ path: string; bytes: Uint8Array }> = [];
+    const textWrites: StructuralTextWrite[] = [];
+    const binaryWrites: LocalFileAtomicWrite[] = [];
     const toDelete = new Set<string>();
 
     for (const file of files) {
@@ -1204,19 +1274,21 @@ export async function reorderParagraphsInChapter(
           if (moved) toDelete.add(file.path);
         }
       } else if (moved && file.blob) {
-        binaryWrites.push({ path: finalPath, bytes: new Uint8Array(await file.blob.arrayBuffer()) });
+        binaryWrites.push({ path: finalPath, kind: "binary", bytes: new Uint8Array(await file.blob.arrayBuffer()) });
         toDelete.add(file.path);
       }
     }
 
-    const writePaths = new Set([...textWrites.map((w) => w.path), ...binaryWrites.map((w) => w.path)]);
-    for (const path of toDelete) {
-      if (writePaths.has(path)) continue;
-      await deleteLocalFile(id, path);
-    }
-    for (const w of textWrites) await writeLocalText(id, w.path, w.text);
-    for (const w of binaryWrites) await writeLocalBinary(id, w.path, w.bytes);
-    return result;
+    const canonical = await canonicalizeStructuralTextChanges(files, toDelete, textWrites);
+    options.signal?.throwIfAborted();
+    const plannedWrites: LocalFileAtomicWrite[] = canonical.mutations.flatMap((mutation) => typeof mutation.content === "string" ? [{ path: mutation.path, kind: "text" as const, text: mutation.content }] : []);
+    const writePaths = new Set([...plannedWrites, ...binaryWrites].map((write) => write.path));
+    const plannedDeletes = canonical.mutations.filter((mutation) => mutation.content === null).map((mutation) => mutation.path);
+    const binarySources = [...toDelete].filter((path) => files.find((file) => file.path === path)?.kind === "binary");
+    const expected = new Map(canonical.mutations.map((mutation) => [mutation.path, mutation.expectedCurrentHash ?? null]));
+    for (const path of [...binarySources, ...binaryWrites.map((write) => write.path)]) expected.set(path, files.find((file) => file.path === path)?.currentHash ?? null);
+    await applyLocalFileChangesAtomically(id, new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
+    return { paragraphs: result, canonical: canonical.result };
   }
 
   // ── Remote: single atomic commit via the Git Trees API ──────────────────────
@@ -1224,13 +1296,18 @@ export async function reorderParagraphsInChapter(
   try {
   const { data: branchData } = await octokit.rest.repos.getBranch({ owner, repo, branch });
   const currentCommitSha = branchData.commit.sha;
+  options.signal?.throwIfAborted();
+  if (options.expectedRemoteHeadSha && currentCommitSha !== options.expectedRemoteHeadSha) throw new RepositoryError("The remote branch changed before the paragraph reorder.", "conflict", "update", 409);
   const currentTreeSha = branchData.commit.commit.tree.sha;
 
   const { data: fullTree } = await octokit.rest.git.getTree({ owner, repo, tree_sha: currentTreeSha, recursive: "1" });
   if (fullTree.truncated) throw new RepositoryError("Repository tree is truncated; paragraph reorder cannot safely continue.", "malformed", "update");
 
   type TreeEntry = { path: string; mode: "100644"; type: "blob"; sha?: string | null; content?: string };
-  const treeUpdates: TreeEntry[] = [];
+  const binaryTreeUpdates: TreeEntry[] = [];
+  const sourceTextFiles: Array<{ path: string; kind: "text"; text: string }> = [];
+  const textWrites: StructuralTextWrite[] = [];
+  const textDeletes = new Set<string>();
   const isTextPath = (path: string) => /\.(md|json|txt|ya?ml)$/i.test(path);
 
   for (const node of fullTree.tree) {
@@ -1238,7 +1315,11 @@ export async function reorderParagraphsInChapter(
     const path = node.path;
 
     if (isDeletedPath(path)) {
-      treeUpdates.push({ path, mode: "100644", type: "blob", sha: null });
+      if (isTextPath(path)) {
+        const raw = (await loadRemoteFileContentAtRef(token, owner, repo, path, currentCommitSha, options.signal)).content;
+        sourceTextFiles.push({ path, kind: "text", text: raw });
+        textDeletes.add(path);
+      } else binaryTreeUpdates.push({ path, mode: "100644", type: "blob", sha: null });
       continue;
     }
 
@@ -1247,27 +1328,36 @@ export async function reorderParagraphsInChapter(
     const finalPath = newPath ?? path;
 
     if (moved) {
-      treeUpdates.push({ path, mode: "100644", type: "blob", sha: null });
       if (isTextPath(path)) {
-        const raw = await loadFileContent(token, owner, repo, path, branch);
-        treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", content: fixNumber(finalPath, rewriteRefs(raw)) });
+        const raw = (await loadRemoteFileContentAtRef(token, owner, repo, path, currentCommitSha, options.signal)).content;
+        sourceTextFiles.push({ path, kind: "text", text: raw });
+        textDeletes.add(path);
+        textWrites.push({ path: finalPath, text: fixNumber(finalPath, rewriteRefs(raw)) });
       } else if (node.sha) {
-        treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", sha: node.sha });
+        binaryTreeUpdates.push({ path, mode: "100644", type: "blob", sha: null }, { path: finalPath, mode: "100644", type: "blob", sha: node.sha });
       }
-    } else if (isTextPath(path) && remapBySlug.size > 0) {
-      const raw = await loadFileContent(token, owner, repo, path, branch);
+    } else if (isTextPath(path)) {
+      const raw = (await loadRemoteFileContentAtRef(token, owner, repo, path, currentCommitSha, options.signal)).content;
+      sourceTextFiles.push({ path, kind: "text", text: raw });
       const next = rewriteRefs(raw);
-      if (next !== raw) treeUpdates.push({ path, mode: "100644", type: "blob", content: next });
+      if (next !== raw) textWrites.push({ path, text: next });
     }
   }
 
-  if (treeUpdates.length === 0) return result;
+  const canonical = await canonicalizeStructuralTextChanges(sourceTextFiles, textDeletes, textWrites);
+  options.signal?.throwIfAborted();
+  const treeUpdates: TreeEntry[] = [
+    ...binaryTreeUpdates,
+    ...canonical.mutations.map((mutation) => ({ path: mutation.path, mode: "100644" as const, type: "blob" as const, ...(mutation.content === null ? { sha: null } : { content: mutation.content }) })),
+  ];
+
+  if (treeUpdates.length === 0) return { paragraphs: result, canonical: canonical.result };
 
   const { data: newTree } = await octokit.rest.git.createTree({ owner, repo, base_tree: currentTreeSha, tree: treeUpdates });
   const { data: newCommit } = await octokit.rest.git.createCommit({ owner, repo, message: commitMessage, tree: newTree.sha, parents: [currentCommitSha] });
-  await octokit.rest.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha: newCommit.sha });
+  await updateStructuralRef(octokit, { owner, repo, branch, expectedHeadSha: currentCommitSha, generatedCommitSha: newCommit.sha, revisions: treeUpdates.map((entry) => ({ path: entry.path, ...(entry.content !== undefined ? { content: entry.content } : { blobSha: entry.sha }) })), signal: options.signal });
 
-  return result;
+  return { paragraphs: result, canonical: canonical.result };
   } catch (error) { throw classifyRepositoryError(error, "update", chapterPath); }
 }
 
@@ -1296,7 +1386,9 @@ export async function reorderChaptersInBook(
   branch: string,
   newOrderedChapters: ChapterReorderEntry[],
   commitMessage = "Reorder chapters",
-): Promise<Map<string, string>> {
+  options: { expectedRemoteHeadSha?: string; signal?: AbortSignal } = {},
+): Promise<{ remap: Map<string, string>; canonical: CanonicalScriptMutationResult | null }> {
+  options.signal?.throwIfAborted();
   // Build old→new slug remap and the new number per (new) slug.
   const remap = new Map<string, string>();
   const newNumberForNewSlug = new Map<string, number>();
@@ -1309,7 +1401,7 @@ export async function reorderChaptersInBook(
     if (newSlug !== chapter.slug) remap.set(chapter.slug, newSlug);
   });
 
-  if (remap.size === 0) return remap;
+  if (remap.size === 0) return { remap, canonical: null };
 
   // Map a repo path to its new path if it belongs to a remapped chapter.
   const remapPath = (path: string): string | null => {
@@ -1386,9 +1478,11 @@ export async function reorderChaptersInBook(
   // ── Local working copy ──────────────────────────────────────────────────────
   const id = await localRepoId(owner, repo, branch);
   if (id) {
+    const localMeta = await getLocalRepository(owner, repo, branch);
+    if (options.expectedRemoteHeadSha && localMeta?.remoteHeadSha !== options.expectedRemoteHeadSha) throw new RepositoryError("The local repository is based on a different remote head.", "conflict", "update", 409);
     const files = await listLocalFiles(id);
-    const textWrites: Array<{ path: string; text: string }> = [];
-    const binaryWrites: Array<{ path: string; bytes: Uint8Array }> = [];
+    const textWrites: StructuralTextWrite[] = [];
+    const binaryWrites: LocalFileAtomicWrite[] = [];
     const toDelete = new Set<string>();
 
     for (const file of files) {
@@ -1405,19 +1499,21 @@ export async function reorderChaptersInBook(
           if (moved) toDelete.add(file.path);
         }
       } else if (moved && file.blob) {
-        binaryWrites.push({ path: finalPath, bytes: new Uint8Array(await file.blob.arrayBuffer()) });
+        binaryWrites.push({ path: finalPath, kind: "binary", bytes: new Uint8Array(await file.blob.arrayBuffer()) });
         toDelete.add(file.path);
       }
     }
 
-    const writePaths = new Set([...textWrites.map((w) => w.path), ...binaryWrites.map((w) => w.path)]);
-    for (const path of toDelete) {
-      if (writePaths.has(path)) continue;
-      await deleteLocalFile(id, path);
-    }
-    for (const w of textWrites) await writeLocalText(id, w.path, w.text);
-    for (const w of binaryWrites) await writeLocalBinary(id, w.path, w.bytes);
-    return remap;
+    const canonical = await canonicalizeStructuralTextChanges(files, toDelete, textWrites);
+    options.signal?.throwIfAborted();
+    const plannedWrites: LocalFileAtomicWrite[] = canonical.mutations.flatMap((mutation) => typeof mutation.content === "string" ? [{ path: mutation.path, kind: "text" as const, text: mutation.content }] : []);
+    const writePaths = new Set([...plannedWrites, ...binaryWrites].map((write) => write.path));
+    const plannedDeletes = canonical.mutations.filter((mutation) => mutation.content === null).map((mutation) => mutation.path);
+    const binarySources = [...toDelete].filter((path) => files.find((file) => file.path === path)?.kind === "binary");
+    const expected = new Map(canonical.mutations.map((mutation) => [mutation.path, mutation.expectedCurrentHash ?? null]));
+    for (const path of [...binarySources, ...binaryWrites.map((write) => write.path)]) expected.set(path, files.find((file) => file.path === path)?.currentHash ?? null);
+    await applyLocalFileChangesAtomically(id, new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
+    return { remap, canonical: canonical.result };
   }
 
   // ── Remote: single atomic commit via the Git Trees API ──────────────────────
@@ -1425,6 +1521,8 @@ export async function reorderChaptersInBook(
   try {
   const { data: branchData } = await octokit.rest.repos.getBranch({ owner, repo, branch });
   const currentCommitSha = branchData.commit.sha;
+  options.signal?.throwIfAborted();
+  if (options.expectedRemoteHeadSha && currentCommitSha !== options.expectedRemoteHeadSha) throw new RepositoryError("The remote branch changed before the chapter reorder.", "conflict", "update", 409);
   const currentTreeSha = branchData.commit.commit.tree.sha;
 
   const { data: fullTree } = await octokit.rest.git.getTree({
@@ -1436,7 +1534,10 @@ export async function reorderChaptersInBook(
   if (fullTree.truncated) throw new RepositoryError("Repository tree is truncated; chapter reorder cannot safely continue.", "malformed", "update");
 
   type TreeEntry = { path: string; mode: "100644"; type: "blob"; sha?: string | null; content?: string };
-  const treeUpdates: TreeEntry[] = [];
+  const binaryTreeUpdates: TreeEntry[] = [];
+  const sourceTextFiles: Array<{ path: string; kind: "text"; text: string }> = [];
+  const textWrites: StructuralTextWrite[] = [];
+  const textDeletes = new Set<string>();
 
   const blobs = fullTree.tree.filter((node) => node.type === "blob" && node.path);
   const isTextPath = (path: string) => /\.(md|json|txt|ya?ml|opf|ncx|xhtml|css|html)$/i.test(path);
@@ -1449,23 +1550,30 @@ export async function reorderChaptersInBook(
     const affectsRefs = isTextPath(path);
 
     if (moved) {
-      // Remove the old path.
-      treeUpdates.push({ path, mode: "100644", type: "blob", sha: null });
       if (affectsRefs) {
-        const raw = await loadFileContent(token, owner, repo, path, branch);
-        treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", content: fixChapterNumber(finalPath, rewriteRefs(raw)) });
+        const raw = (await loadRemoteFileContentAtRef(token, owner, repo, path, currentCommitSha, options.signal)).content;
+        sourceTextFiles.push({ path, kind: "text", text: raw });
+        textDeletes.add(path);
+        textWrites.push({ path: finalPath, text: fixChapterNumber(finalPath, rewriteRefs(raw)) });
       } else if (node.sha) {
-        treeUpdates.push({ path: finalPath, mode: "100644", type: "blob", sha: node.sha });
+        binaryTreeUpdates.push({ path, mode: "100644", type: "blob", sha: null }, { path: finalPath, mode: "100644", type: "blob", sha: node.sha });
       }
     } else if (affectsRefs) {
-      // Not moved, but may reference a remapped chapter.
-      const raw = await loadFileContent(token, owner, repo, path, branch);
+      const raw = (await loadRemoteFileContentAtRef(token, owner, repo, path, currentCommitSha, options.signal)).content;
+      sourceTextFiles.push({ path, kind: "text", text: raw });
       const next = rewriteRefs(raw);
-      if (next !== raw) treeUpdates.push({ path, mode: "100644", type: "blob", content: next });
+      if (next !== raw) textWrites.push({ path, text: next });
     }
   }
 
-  if (treeUpdates.length === 0) return remap;
+  const canonical = await canonicalizeStructuralTextChanges(sourceTextFiles, textDeletes, textWrites);
+  options.signal?.throwIfAborted();
+  const treeUpdates: TreeEntry[] = [
+    ...binaryTreeUpdates,
+    ...canonical.mutations.map((mutation) => ({ path: mutation.path, mode: "100644" as const, type: "blob" as const, ...(mutation.content === null ? { sha: null } : { content: mutation.content }) })),
+  ];
+
+  if (treeUpdates.length === 0) return { remap, canonical: canonical.result };
 
   const { data: newTree } = await octokit.rest.git.createTree({
     owner,
@@ -1480,9 +1588,9 @@ export async function reorderChaptersInBook(
     tree: newTree.sha,
     parents: [currentCommitSha],
   });
-  await octokit.rest.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha: newCommit.sha });
+  await updateStructuralRef(octokit, { owner, repo, branch, expectedHeadSha: currentCommitSha, generatedCommitSha: newCommit.sha, revisions: treeUpdates.map((entry) => ({ path: entry.path, ...(entry.content !== undefined ? { content: entry.content } : { blobSha: entry.sha }) })), signal: options.signal });
 
-  return remap;
+  return { remap, canonical: canonical.result };
   } catch (error) { throw classifyRepositoryError(error, "update"); }
 }
 

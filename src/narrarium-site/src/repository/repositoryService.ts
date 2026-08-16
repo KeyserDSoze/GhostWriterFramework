@@ -414,6 +414,13 @@ async function removePulledFile(repoId: string, path: string): Promise<void> {
   await removeLocalFileEntry(repoId, path);
 }
 
+export class AmbiguousLocalPushError extends Error {
+  constructor(message: string, readonly generatedCommitSha: string, readonly cause?: unknown) {
+    super(message);
+    this.name = "AmbiguousLocalPushError";
+  }
+}
+
 export async function pushLocalCommits(input: PushLocalCommitsInput): Promise<PushResult> {
   input.signal?.throwIfAborted();
   const exactRepositorySupplied = Boolean(input.owner || input.repo || input.branch);
@@ -509,7 +516,11 @@ export async function pushLocalCommits(input: PushLocalCommitsInput): Promise<Pu
   input.signal?.throwIfAborted();
   const commit = await octokit.rest.git.createCommit({ owner: meta.owner, repo: meta.repo, message: commits.map((entry) => entry.message).join("\n\n"), tree: tree.data.sha, parents: [remoteHeadSha], ...request });
   input.signal?.throwIfAborted();
-  await octokit.rest.git.updateRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, sha: commit.data.sha, ...request });
+  try {
+    await octokit.rest.git.updateRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, sha: commit.data.sha, ...request });
+  } catch (error) {
+    throw new AmbiguousLocalPushError("The local push ref update had an ambiguous outcome.", commit.data.sha, error);
+  }
   const settlement = await markLocalCommitsPushed(meta.id, commits.map((entry) => entry.id), commit.data.sha, pushedShas);
   await addLocalRepoLog(meta.id, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
     ? `Push completed with newer local edits preserved for recovery: ${settlement.skippedPaths.join(", ")}`

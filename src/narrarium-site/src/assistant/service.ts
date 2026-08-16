@@ -52,6 +52,7 @@ import {
   buildParagraphScriptArtifact,
 } from "@/narrarium/workspace";
 import { commitScriptWithCanonicalLedger } from "@/narrarium/scriptLedger";
+import { describeCopilotScriptCreation } from "@/assistant/scriptMutationResult";
 import { defaultEvaluationCriteria, defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
 import { emptyReaderPersona } from "@/narrarium/readerPersona";
 import { generateReaderEvaluationSummary, hashReaderSource, loadReaderPersonas, parseReaderEvaluation, readerEvaluationPath, runReaderEvaluations, saveReaderPersona, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
@@ -1297,8 +1298,8 @@ async function createScriptFromPrompt(input: PromptInput & { book: BookEntry; br
   const nextNumber = input.context.paragraph ? Number(input.context.paragraph.number) : (chapter.paragraphs.length || 0) + 1;
   const paragraphSlug = input.context.paragraph?.path.split("/").pop()?.replace(/\.md$/i, "");
   const script = buildParagraphScriptArtifact({ chapterSlug: chapter.slug, number: nextNumber, title, paragraphSlug, location });
-  await commitScriptWithCanonicalLedger({ token: input.token, book: input.book, branch: input.branch, script, message: `Add script ${script.slug}`, expectedRemoteHeadSha: remoteHeadSha, signal: input.signal });
-  return mutationMessage(`I created a script for \`${title}\` in chapter \`${chapter.slug}\`.`, [script.path, "state/script-ledger.md"]);
+  const result = await commitScriptWithCanonicalLedger({ token: input.token, book: input.book, branch: input.branch, script, message: `Add script ${script.slug}`, expectedRemoteHeadSha: remoteHeadSha, signal: input.signal, ifAbsent: true });
+  return mutationMessage(describeCopilotScriptCreation({ title, chapterSlug: chapter.slug, scriptPath: script.path, result }), result.changedPaths);
 }
 
 async function createDraftFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -1346,8 +1347,10 @@ async function importAttachmentsAsScript(input: PromptInput & { book: BookEntry;
   const number = input.context.paragraph ? Number(input.context.paragraph.number) : chapter.paragraphs.length + 1;
   const paragraphSlug = input.context.paragraph ? slugFromPath(input.context.paragraph.path) : undefined;
   const script = buildParagraphScriptArtifact({ chapterSlug: chapter.slug, number, title, paragraphSlug, location, body: parsed.body });
-  await commitScriptWithCanonicalLedger({ token: input.token, book: input.book, branch: input.branch, script, message: `Import script ${script.slug} and refresh script ledger`, expectedRemoteHeadSha: remoteHeadSha, signal: input.signal, replace: true });
-  return mutationMessage(`I imported the attachments as script \`${script.path}\` and refreshed the canonical script ledger.`, [script.path, "state/script-ledger.md"]);
+  const result = await commitScriptWithCanonicalLedger({ token: input.token, book: input.book, branch: input.branch, script, message: `Import script ${script.slug} and refresh script ledger`, expectedRemoteHeadSha: remoteHeadSha, signal: input.signal, replace: true });
+  const warnings = result.checks.filter((check) => check.severity === "warning").map((check) => `${check.path}${check.line ? `:${check.line}` : ""}: ${check.message}`);
+  const summary = result.changed ? `I imported the attachments as script \`${script.path}\` and refreshed the canonical script ledger.` : `The existing script \`${script.path}\` already matches the import; no files changed.`;
+  return mutationMessage(`${summary}${warnings.length ? `\n\nLedger warnings:\n${warnings.map((warning) => `- ${warning}`).join("\n")}` : ""}`, result.changedPaths);
 }
 
 async function importAttachmentsAsDraft(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {

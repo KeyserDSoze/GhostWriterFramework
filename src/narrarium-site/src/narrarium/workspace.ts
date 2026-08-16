@@ -1,6 +1,8 @@
 import { stringify } from "yaml";
 import { createFileIfAbsent, createOrUpdateTextFile } from "@/github/githubClient";
 import { chapterSlug, formatOrdinal, slugify } from "@/narrarium/canon";
+import { commitCanonicalScriptMutation, type CanonicalScriptMutationResult } from "@/narrarium/scriptLedger";
+import type { BookEntry } from "@/types/settings";
 
 function renderMarkdown(frontmatter: Record<string, unknown>, body: string): string {
   return `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${body.replace(/^\n+/, "")}\n`;
@@ -186,14 +188,18 @@ export function buildParagraphDraftArtifact(input: { chapterSlug: string; number
 
 export async function createParagraphScriptArtifact(
   token: string,
-  owner: string,
-  repo: string,
+  book: BookEntry,
   branch: string,
   input: { chapterSlug: string; number: number; title: string; paragraphSlug?: string; location?: string; body?: string; replace?: boolean },
-) {
+): Promise<CanonicalScriptMutationResult> {
   const artifact = buildParagraphScriptArtifact(input);
-  await writeWorkspaceFile(token, owner, repo, branch, artifact.path, artifact.content, `Add script ${artifact.slug}`, input.replace);
-  return artifact.path;
+  return commitCanonicalScriptMutation({
+    token,
+    book,
+    branch,
+    message: `${input.replace ? "Update" : "Add"} script ${artifact.slug}`,
+    mutations: [{ path: artifact.path, content: artifact.content, ...(input.replace ? {} : { ifAbsent: true }) }],
+  });
 }
 
 export function buildParagraphScriptArtifact(

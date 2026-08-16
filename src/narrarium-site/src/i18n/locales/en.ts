@@ -399,6 +399,7 @@ const en = {
     toastCreatedFromResearch: "Created {{title}}",
     toastCreateFromResearchFailed: "Could not create entity from research",
     deleteApplied: "Deleted.",
+    deleteAlreadyAbsent: "The file was already absent; no files changed.",
     toastDeleted: "Deleted {{title}}",
     toastDeleteFailed: "Delete failed",
     pauseAudio: "Pause",
@@ -923,6 +924,7 @@ const en = {
     evaluationFailed: "Chapter evaluation failed",
     draftCreatedFor: "Draft created for {{title}}",
     scriptCreatedFor: "Script created for {{title}}",
+    scriptAlreadyExists: "The script for {{title}} already exists; no files changed.",
     evaluationCreatedFor: "Evaluation created for {{title}}",
     createKindFailed: "Create {{kind}} failed"
   },

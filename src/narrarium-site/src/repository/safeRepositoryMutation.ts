@@ -12,9 +12,10 @@ import {
   sha256Text,
   type LocalTextFileMutation,
 } from "@/repository/localRepository";
-import { pushLocalCommits, RemoteHeadMismatchError } from "@/repository/repositoryService";
+import { AmbiguousLocalPushError, pushLocalCommits, RemoteHeadMismatchError } from "@/repository/repositoryService";
 import { loadRemoteFileContentAtRef } from "@/github/githubClient";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
+import { reconcileRemoteMutation } from "@/repository/remoteMutationReconciliation";
 
 export type RepositoryTextMutation = LocalTextFileMutation;
 
@@ -121,11 +122,10 @@ async function mutateRemoteTextFiles(input: {
   try {
     await octokit.rest.git.updateRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}`, sha: nextCommit.data.sha, force: false, ...request });
   } catch (error) {
-    const latest = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}` }).catch(() => null);
-    if (latest && latest.data.object.sha !== input.expectedRemoteHeadSha) {
-      throw new RepositoryConflictError("The remote branch advanced while saving the operation.");
-    }
-    throw error;
+    const reconciled = await reconcileRemoteMutation({ octokit, owner: input.book.owner, repo: input.book.repo, branch: input.branch, generatedCommitSha: nextCommit.data.sha, revisions: input.mutations });
+    if (reconciled.landed && reconciled.headSha) return reconciled.headSha;
+    if (!reconciled.headSha || reconciled.headSha === input.expectedRemoteHeadSha) throw error;
+    throw new RepositoryConflictError("The generated commit is not an ancestor of the remote head, or its intended revisions no longer match.");
   }
   return nextCommit.data.sha;
 }
@@ -198,28 +198,16 @@ export async function commitAndPushTextFileMutation(input: {
       await restoreLocalFilesAndDeleteCommit(local.id, localCommit.id, snapshots);
       throw error;
     }
-    const octokit = new Octokit({ auth: input.token });
-    const remoteRef = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}` }).catch(() => null);
-    const remoteHead = remoteRef?.data.object.sha;
-    if (remoteHead && remoteHead !== input.expectedRemoteHeadSha) {
-      const pushedShas: Record<string, string | null> = {};
-      let matchesOperation = true;
-      await Promise.all(input.mutations.map(async (mutation) => {
-        const remote = await loadRemoteFileContentAtRef(input.token, input.book.owner, input.book.repo, mutation.path, remoteHead).catch(() => null);
-        pushedShas[mutation.path] = remote?.sha ?? null;
-        if (mutation.content === undefined) return;
-        if (mutation.content === null) {
-          if (remote) matchesOperation = false;
-          return;
-        }
-        if (!remote || await sha256Text(remote.content) !== await sha256Text(mutation.content)) matchesOperation = false;
-      }));
-      if (!matchesOperation) {
-        await restoreLocalFilesAndDeleteCommit(local.id, localCommit.id, snapshots);
-        throw new RepositoryConflictError("The remote branch advanced with different content while saving the operation.");
+    if (error instanceof AmbiguousLocalPushError) {
+      const octokit = new Octokit({ auth: input.token });
+      const reconciled = await reconcileRemoteMutation({ octokit, owner: input.book.owner, repo: input.book.repo, branch: input.branch, generatedCommitSha: error.generatedCommitSha, revisions: input.mutations });
+      if (reconciled.landed && reconciled.headSha) {
+        await markLocalCommitsPushed(local.id, [localCommit.id], reconciled.headSha, reconciled.blobShas ?? {}).catch(() => undefined);
+        return { commitSha: reconciled.headSha, mode: "local" };
       }
-      await markLocalCommitsPushed(local.id, [localCommit.id], remoteHead, pushedShas).catch(() => undefined);
-      return { commitSha: remoteHead, mode: "local" };
+      await restoreLocalFilesAndDeleteCommit(local.id, localCommit.id, snapshots);
+      if (error.cause instanceof DOMException && error.cause.name === "AbortError") throw error.cause;
+      throw new RepositoryConflictError("The local push outcome could not be proven by generated-commit ancestry and revision parity.");
     }
     await restoreLocalFilesAndDeleteCommit(local.id, localCommit.id, snapshots);
     if (error instanceof RemoteHeadMismatchError) throw new RepositoryConflictError(error.message);
