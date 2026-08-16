@@ -33,3 +33,53 @@ test("abort prevents fallback", async () => {
   await assert.rejects(executeCompletionFallback({ candidates, signal: controller.signal, run: async (candidate) => { calls.push(candidate.label); controller.abort(); throw new DOMException("stopped", "AbortError"); } }), (error) => error instanceof Error && error.name === "AbortError");
   assert.deepEqual(calls, ["one"]);
 });
+
+test("provider AbortError advances fallback when the operation remains active", async () => {
+  const calls = [];
+  const result = await executeCompletionFallback({ candidates, run: async (candidate) => {
+    calls.push(candidate.label);
+    if (candidate.label === "one") throw new DOMException("provider aborted", "AbortError");
+    return "fallback";
+  } });
+  assert.equal(result, "fallback");
+  assert.deepEqual(calls, ["one", "two"]);
+});
+
+test("candidate timeout advances fallback and aborts the stalled request", async () => {
+  const calls = [];
+  const result = await executeCompletionFallback({
+    candidates,
+    timeoutMs: 5,
+    run: async (candidate, signal) => {
+      calls.push(candidate.label);
+      if (candidate.label === "two") return "fallback";
+      await new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+      return "unreachable";
+    },
+  });
+  assert.equal(result, "fallback");
+  assert.deepEqual(calls, ["one", "two"]);
+});
+
+test("total timeout exhaustion reports every candidate", async () => {
+  await assert.rejects(executeCompletionFallback({
+    candidates,
+    timeoutMs: 2,
+    run: async (_candidate, signal) => {
+      await new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+      return "unreachable";
+    },
+  }), (error) => error instanceof CompletionFallbackError && error.failures.length === 2 && error.message.includes("timed out"));
+});
+
+test("user cancellation settles immediately even when a provider ignores AbortSignal", async () => {
+  const controller = new AbortController();
+  const pending = executeCompletionFallback({
+    candidates,
+    signal: controller.signal,
+    timeoutMs: 1_000,
+    run: async () => new Promise(() => undefined),
+  });
+  controller.abort(new DOMException("cancelled", "AbortError"));
+  await assert.rejects(pending, (error) => error instanceof Error && error.name === "AbortError");
+});

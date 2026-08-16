@@ -37,6 +37,8 @@ export interface LocalRepositoryMeta {
   cloneComplete?: boolean;
   /** Number of blobs the remote tree had at clone/verify time. */
   expectedFileCount?: number;
+  /** Last repository-scoped commit order allocated transactionally. */
+  nextCommitOrder?: number;
 }
 
 export interface LocalRepositoryFile {
@@ -72,6 +74,12 @@ export interface LocalCommit {
   files: LocalCommitFile[];
   pushed: boolean;
   remoteCommitSha?: string;
+  /** Repository-scoped creation order. Missing only on legacy records. */
+  order?: number;
+}
+
+export interface LocalCommitSettlementResult {
+  skippedPaths: string[];
 }
 
 export type LocalRepoLogKind = "clone" | "fetch" | "pull" | "commit" | "push" | "backup" | "reset" | "error";
@@ -189,9 +197,24 @@ export function makeRepoId(owner: string, repo: string, branch: string): string 
 
 export async function putLocalRepository(meta: Omit<LocalRepositoryMeta, "id" | "updatedAt">): Promise<LocalRepositoryMeta> {
   const now = new Date().toISOString();
-  const full: LocalRepositoryMeta = { ...meta, id: repoId(meta.owner, meta.repo, meta.branch), updatedAt: now };
-  await txStore("repositories", "readwrite", (store) => store.put(full));
-  return full;
+  const id = repoId(meta.owner, meta.repo, meta.branch);
+  const db = await openDb();
+  return new Promise<LocalRepositoryMeta>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readwrite");
+    const store = tx.objectStore("repositories");
+    const request = store.get(id);
+    let full: LocalRepositoryMeta;
+    request.onsuccess = () => {
+      const existing = request.result as LocalRepositoryMeta | undefined;
+      const nextCommitOrder = Math.max(existing?.nextCommitOrder ?? 0, meta.nextCommitOrder ?? 0);
+      full = { ...meta, id, updatedAt: now, ...(nextCommitOrder ? { nextCommitOrder } : {}) };
+      store.put(full);
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve(full!);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error("Local repository transaction aborted."));
+  });
 }
 
 export async function getLocalRepository(owner: string, repo: string, branch: string): Promise<LocalRepositoryMeta | null> {
@@ -407,13 +430,15 @@ async function applyLocalTextFileMutations(
 
   const db = await openDb();
   return new Promise<LocalCommit | null>((resolve, reject) => {
-    const tx = db.transaction(commitMessage === undefined ? "files" : ["files", "commits"], "readwrite");
+    const tx = db.transaction(commitMessage === undefined ? "files" : ["repositories", "files", "commits"], "readwrite");
     const store = tx.objectStore("files");
     const commitsStore = commitMessage === undefined ? null : tx.objectStore("commits");
+    const repositoriesStore = commitMessage === undefined ? null : tx.objectStore("repositories");
     const existing = new Map<string, LocalRepositoryFile | undefined>();
-    let pending = mutations.length;
+    let pending = mutations.length + (commitMessage === undefined ? 0 : 1);
     let validationError: Error | null = null;
     let localCommit: LocalCommit | null = null;
+    let commitOrder: number | undefined;
     const now = new Date().toISOString();
 
     const apply = () => {
@@ -476,6 +501,7 @@ async function applyLocalTextFileMutations(
           repoId: repoIdValue,
           message: commitMessage,
           createdAt: now,
+          order: commitOrder,
           files: commitFiles,
           pushed: false,
         };
@@ -483,6 +509,25 @@ async function applyLocalTextFileMutations(
       }
     };
 
+    if (repositoriesStore) {
+      const request = repositoriesStore.get(repoIdValue);
+      request.onsuccess = () => {
+        const repository = request.result as LocalRepositoryMeta | undefined;
+        if (!repository) {
+          validationError = new Error("Local repository is not ready.");
+          tx.abort();
+          return;
+        }
+        commitOrder = (repository.nextCommitOrder ?? 0) + 1;
+        repositoriesStore.put({ ...repository, nextCommitOrder: commitOrder });
+        pending -= 1;
+        if (pending === 0) apply();
+      };
+      request.onerror = () => {
+        validationError = request.error ?? new Error("Failed to allocate local commit order.");
+        tx.abort();
+      };
+    }
     if (!pending) apply();
     for (const mutation of mutations) {
       const request = store.get(fileKey(repoIdValue, mutation.path));
@@ -522,21 +567,61 @@ export async function restoreLocalFilesAndDeleteCommit(
   repoIdValue: string,
   commitId: string,
   snapshots: Array<{ path: string; file: LocalRepositoryFile | null }>,
-): Promise<void> {
+): Promise<LocalCommitSettlementResult> {
   const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<LocalCommitSettlementResult>((resolve, reject) => {
     const tx = db.transaction(["files", "commits"], "readwrite");
     const files = tx.objectStore("files");
     const commits = tx.objectStore("commits");
+    const current = new Map<string, LocalRepositoryFile | undefined>();
+    let commit: LocalCommit | undefined;
+    let pending = snapshots.length + 1;
+    let result: LocalCommitSettlementResult = { skippedPaths: [] };
+
+    const apply = () => {
+      const committedByPath = new Map(commit?.files.map((file) => [file.path, file]) ?? []);
+      const skippedPaths: string[] = [];
+      for (const snapshot of snapshots) {
+        const committedFile = committedByPath.get(snapshot.path);
+        const row = current.get(snapshot.path);
+        if (!committedFile || !localFileMatchesCommitResult(row, committedFile)) {
+          skippedPaths.push(snapshot.path);
+          continue;
+        }
+        if (snapshot.file) files.put(snapshot.file);
+        else files.delete(fileKey(repoIdValue, snapshot.path));
+      }
+      commits.delete(commitId);
+      result = { skippedPaths: skippedPaths.sort() };
+    };
+
+    const loaded = () => {
+      pending -= 1;
+      if (pending === 0) apply();
+    };
+    const commitRequest = commits.get(commitId);
+    commitRequest.onsuccess = () => {
+      commit = commitRequest.result as LocalCommit | undefined;
+      loaded();
+    };
+    commitRequest.onerror = () => tx.abort();
     for (const snapshot of snapshots) {
-      if (snapshot.file) files.put(snapshot.file);
-      else files.delete(fileKey(repoIdValue, snapshot.path));
+      const request = files.get(fileKey(repoIdValue, snapshot.path));
+      request.onsuccess = () => {
+        current.set(snapshot.path, request.result as LocalRepositoryFile | undefined);
+        loaded();
+      };
+      request.onerror = () => tx.abort();
     }
-    commits.delete(commitId);
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => resolve(result);
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error ?? new Error("Local rollback transaction aborted."));
   });
+}
+
+function localFileMatchesCommitResult(file: LocalRepositoryFile | undefined, committedFile: LocalCommitFile): boolean {
+  if (!file || file.committed !== true || file.currentHash !== committedFile.hash || file.kind !== committedFile.kind) return false;
+  return committedFile.status === "deleted" ? file.status === "deleted" : file.status === "clean";
 }
 
 export async function deleteLocalFile(repoIdValue: string, path: string): Promise<void> {
@@ -586,19 +671,37 @@ export async function createLocalCommit(repoIdValue: string, message: string, al
     pushed: false,
   };
   const db = await openDb();
+  let validationError: Error | null = null;
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(["files", "commits"], "readwrite");
+    const tx = db.transaction(["repositories", "files", "commits"], "readwrite");
+    const repoStore = tx.objectStore("repositories");
     const filesStore = tx.objectStore("files");
     const commitsStore = tx.objectStore("commits");
-    commitsStore.put(commit);
-    for (const file of dirty) {
-      const next = file.status === "deleted"
-        ? { ...file, committed: true, updatedAt: new Date().toISOString() }
-        : { ...file, status: "clean" as const, committed: true, updatedAt: new Date().toISOString() };
-      filesStore.put(next);
-    }
+    const repoRequest = repoStore.get(repoIdValue);
+    repoRequest.onsuccess = () => {
+      const repository = repoRequest.result as LocalRepositoryMeta | undefined;
+      if (!repository) {
+        validationError = new Error("Local repository is not ready.");
+        tx.abort();
+        return;
+      }
+      commit.order = (repository.nextCommitOrder ?? 0) + 1;
+      repoStore.put({ ...repository, nextCommitOrder: commit.order });
+      commitsStore.put(commit);
+      for (const file of dirty) {
+        const next = file.status === "deleted"
+          ? { ...file, committed: true, updatedAt: new Date().toISOString() }
+          : { ...file, status: "clean" as const, committed: true, updatedAt: new Date().toISOString() };
+        filesStore.put(next);
+      }
+    };
+    repoRequest.onerror = () => {
+      validationError = repoRequest.error ?? new Error("Failed to allocate local commit order.");
+      tx.abort();
+    };
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local commit transaction aborted."));
   });
   return commit;
 }
@@ -606,7 +709,14 @@ export async function createLocalCommit(repoIdValue: string, message: string, al
 export async function listUnpushedLocalCommits(repoIdValue: string): Promise<LocalCommit[]> {
   return (await allFromIndex<LocalCommit>("commits", "repoId", repoIdValue))
     .filter((commit) => !commit.pushed)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    .sort(compareLocalCommitOrder);
+}
+
+function compareLocalCommitOrder(a: LocalCommit, b: LocalCommit): number {
+  if (a.order !== undefined && b.order !== undefined && a.order !== b.order) return a.order - b.order;
+  if (a.order === undefined && b.order !== undefined) return -1;
+  if (a.order !== undefined && b.order === undefined) return 1;
+  return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
 }
 
 export async function discardUnpushedLocalCommits(repoIdValue: string): Promise<void> {
@@ -646,36 +756,66 @@ export async function restoreUnpushedCommitsAsDirty(repoIdValue: string): Promis
   return commits;
 }
 
-export async function markLocalCommitsPushed(repoIdValue: string, commitIds: string[], remoteHeadSha: string, pushedShas: Record<string, string | null>): Promise<void> {
+export async function markLocalCommitsPushed(repoIdValue: string, commitIds: string[], remoteHeadSha: string, pushedShas: Record<string, string | null>): Promise<LocalCommitSettlementResult> {
   const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<LocalCommitSettlementResult>((resolve, reject) => {
     const tx = db.transaction(["repositories", "files", "commits"], "readwrite");
     const repoStore = tx.objectStore("repositories");
     const fileStore = tx.objectStore("files");
     const commitStore = tx.objectStore("commits");
+    const committedByPath = new Map<string, LocalCommitFile>();
+    const commitsById = new Map<string, LocalCommit>();
+    const skippedPaths: string[] = [];
+    let pendingCommits = commitIds.length;
     const repoReq = repoStore.get(repoIdValue);
     repoReq.onsuccess = () => {
       const repo = repoReq.result as LocalRepositoryMeta | undefined;
       if (repo) repoStore.put({ ...repo, remoteHeadSha, remoteChanged: false, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString() });
     };
+
+    const settleFiles = () => {
+      for (const id of commitIds) {
+        const commit = commitsById.get(id);
+        if (commit) for (const file of commit.files) committedByPath.set(file.path, file);
+      }
+      for (const [path, sha] of Object.entries(pushedShas)) {
+        const expected = committedByPath.get(path);
+        const req = fileStore.get(fileKey(repoIdValue, path));
+        req.onsuccess = () => {
+          const file = req.result as LocalRepositoryFile | undefined;
+          if (!expected || !file || !localFileMatchesCommitResult(file, expected)) {
+            skippedPaths.push(path);
+            if (!file || !expected) return;
+            if (sha === null) {
+              fileStore.put({ ...file, baseSha: undefined, baseHash: undefined, committed: false, status: file.status === "deleted" ? "deleted" : "new", updatedAt: new Date().toISOString() });
+            } else {
+              fileStore.put({ ...file, baseSha: sha, baseHash: expected.hash, committed: false, status: file.status === "deleted" ? "deleted" : "modified", updatedAt: new Date().toISOString() });
+            }
+            return;
+          }
+          if (sha === null) fileStore.delete(file.key);
+          else fileStore.put({ ...file, baseSha: sha, baseHash: file.currentHash, committed: false, status: "clean", updatedAt: new Date().toISOString() });
+        };
+      }
+    };
+
+    if (!pendingCommits) settleFiles();
     for (const id of commitIds) {
       const req = commitStore.get(id);
       req.onsuccess = () => {
         const commit = req.result as LocalCommit | undefined;
-        if (commit) commitStore.put({ ...commit, pushed: true, remoteCommitSha: remoteHeadSha });
+        if (commit) {
+          commitsById.set(id, commit);
+          commitStore.put({ ...commit, pushed: true, remoteCommitSha: remoteHeadSha });
+        }
+        pendingCommits -= 1;
+        if (pendingCommits === 0) settleFiles();
       };
+      req.onerror = () => tx.abort();
     }
-    for (const [path, sha] of Object.entries(pushedShas)) {
-      const req = fileStore.get(fileKey(repoIdValue, path));
-      req.onsuccess = () => {
-        const file = req.result as LocalRepositoryFile | undefined;
-        if (!file) return;
-        if (sha === null) fileStore.delete(file.key);
-        else fileStore.put({ ...file, baseSha: sha, baseHash: file.currentHash, committed: false, status: "clean", updatedAt: new Date().toISOString() });
-      };
-    }
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => resolve({ skippedPaths: [...new Set(skippedPaths)].sort() });
     tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error("Local push settlement transaction aborted."));
   });
 }
 
@@ -712,7 +852,9 @@ function splitFrontmatter(raw: string): Record<string, unknown> {
   const language = /^language:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
   const ghostwriter = /^ghostwriter:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
   const paragraph = /^paragraph:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
-  return { title, name, description, language, ghostwriter, paragraph };
+  const known_from = /^known_from:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
+  const reveal_in = /^reveal_in:\s*(.+)$/m.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
+  return { title, name, description, language, ghostwriter, paragraph, known_from, reveal_in };
 }
 
 function markdownBody(raw: string): string {
@@ -780,7 +922,16 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
       const slug = (p.split("/").pop() ?? "").replace(/\.md$/i, "");
       const assetBase = prefix === "timelines" ? `assets/timelines/events/${slug}/primary` : `assets/${prefix}/${slug}/primary`;
       const file = files.find((entry) => entry.path === p);
-      return { path: p, sha: file?.baseSha ?? file?.currentHash ?? "", size: file?.size ?? 0, name: titleName(p, slugToTitle(slug)), imagePath: firstExistingImage(assetBase) };
+      const frontmatter = splitFrontmatter(textMap.get(p) ?? "");
+      return {
+        path: p,
+        sha: file?.baseSha ?? file?.currentHash ?? "",
+        size: file?.size ?? 0,
+        name: titleName(p, slugToTitle(slug)),
+        imagePath: firstExistingImage(assetBase),
+        knownFrom: typeof frontmatter.known_from === "string" && frontmatter.known_from ? frontmatter.known_from : undefined,
+        revealIn: typeof frontmatter.reveal_in === "string" && frontmatter.reveal_in ? frontmatter.reveal_in : undefined,
+      };
     });
 
   const chapterFolders = [...new Set(allPaths.filter((p) => p.startsWith("chapters/")).map((p) => p.split("/").slice(0, 2).join("/")))].sort();

@@ -36,3 +36,29 @@ test("abort stops fallback", async () => {
   assert.deepEqual(calls, ["one"]);
   await assert.rejects(executeMediaFallback({ candidates: [ai("one"), ai("two")], runAi: async () => { throw new DOMException("stopped", "AbortError"); } }), (error) => error instanceof Error && error.name === "AbortError");
 });
+
+test("provider AbortError advances media fallback when the operation remains active", async () => {
+  const calls = [];
+  const result = await executeMediaFallback({ candidates: [ai("one"), ai("two")], runAi: async (candidate) => {
+    calls.push(candidate.model);
+    if (candidate.model === "one") throw new DOMException("provider aborted", "AbortError");
+    return "ok";
+  } });
+  assert.equal(result, "ok");
+  assert.deepEqual(calls, ["one", "two"]);
+});
+
+test("provider timeout aborts one media attempt and advances fallback", async () => {
+  const candidates = [
+    { integration: { id: "one", requestTimeoutMs: 5 }, model: "one" },
+    { integration: { id: "two", requestTimeoutMs: 5 }, model: "two" },
+  ];
+  const calls = [];
+  const result = await executeMediaFallback({ candidates, runAi: async (candidate, signal) => {
+    calls.push(candidate.model);
+    if (candidate.model === "two") return "ok";
+    await new Promise((_, reject) => signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true }));
+  } });
+  assert.equal(result, "ok");
+  assert.deepEqual(calls, ["one", "two"]);
+});

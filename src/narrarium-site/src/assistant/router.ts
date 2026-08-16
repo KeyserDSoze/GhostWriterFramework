@@ -1,6 +1,8 @@
 import type { AIIntegration, AIPricing, AppSettings, ChatCapability, RoutingTarget, RoutingTaskKind, TaskRoute } from "@/types/settings";
-import { integrationChatModels, resolveReviewIntegration, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, type ForcedToolDefinition, type LlmMessage, type LlmResult } from "@/assistant/llm";
+import { integrationChatModels, resolveReviewIntegration, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmMessage, type LlmResult } from "@/assistant/llm";
 import { executeCompletionFallback } from "@/assistant/completionFallback";
+import { runWithCandidateTimeout } from "@/assistant/executionLimits";
+import { budgetLlmMessages, resolveModelTokenBudgets, textTokenUpperBound } from "@/assistant/promptBudget";
 
 export type RoutedLlmRunMetadata = LlmResult<unknown>["metadata"] & { routeCandidateIndex: number; usedFallback: boolean };
 
@@ -12,6 +14,9 @@ export interface TaskCandidate {
   integration?: AIIntegration;
   model?: string;
   pricing?: AIPricing;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+  underlyingModel?: string;
   /** True for the browser TTS/STT engine (no integration). */
   browser?: boolean;
 }
@@ -28,6 +33,22 @@ export class StaleRoutingConfigurationError extends Error {
     super(`The configured ${task} route no longer references an available compatible model.`);
     this.name = "StaleRoutingConfigurationError";
   }
+}
+
+export class CandidateInputBudgetError extends Error {
+  constructor() {
+    super("Candidate input budget exhausted: the forced-tool schema and required message do not fit.");
+    this.name = "CandidateInputBudgetError";
+  }
+}
+
+function budgetForcedToolMessages(messages: LlmMessage[], candidate: TaskCandidate, tool: ForcedToolDefinition): LlmMessage[] {
+  const inputTokens = resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).inputTokens;
+  const toolTokens = textTokenUpperBound(JSON.stringify(tool)) + 8;
+  if (toolTokens > inputTokens) throw new CandidateInputBudgetError();
+  const budgeted = budgetLlmMessages(messages, candidate.maxInputTokens, candidate.maxOutputTokens, toolTokens);
+  if (messages.length > 0 && budgeted.length === 0) throw new CandidateInputBudgetError();
+  return budgeted;
 }
 
 const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit"]);
@@ -128,7 +149,7 @@ function chatCandidateFromTarget(settings: AppSettings, target: RoutingTarget): 
   if (!model) return null;
   const modelEntry = integrationChatModels(integration).find((m) => m.name === model);
   if (!modelEntry) return null;
-  return { integration, model, pricing: modelEntry.pricing ?? integration.pricing };
+  return { integration, model, pricing: modelEntry.pricing ?? integration.pricing, maxInputTokens: modelEntry.maxInputTokens, maxOutputTokens: modelEntry.maxOutputTokens, underlyingModel: modelEntry.underlyingModel };
 }
 
 /** Media (tts/stt/image): the browser engine, or an OpenAI/Azure integration. */
@@ -180,7 +201,8 @@ function legacyChatCandidates(settings: AppSettings, capability: ChatCapability)
   const out: TaskCandidate[] = [];
   const push = (integration: AIIntegration, model?: string, pricing?: AIPricing) => {
     if (!model || integration.provider === "m365_copilot") return;
-    out.push({ integration, model, pricing });
+    const entry = integrationChatModels(integration).find((candidate) => candidate.name === model);
+    out.push({ integration, model, pricing, maxInputTokens: entry?.maxInputTokens, maxOutputTokens: entry?.maxOutputTokens, underlyingModel: entry?.underlyingModel });
   };
   // Review precedence: explicit route (handled by the caller) → default review integration
   // → capability tags → default writing integration → any remaining integration.
@@ -241,10 +263,6 @@ export function resolveTaskCandidates(settings: AppSettings, task: RoutingTaskKi
   return dedupe([...router, ...legacy]);
 }
 
-function isAbort(err: unknown): boolean {
-  return err instanceof Error && (err.name === "AbortError" || err.message.includes("aborted"));
-}
-
 /**
  * Run a chat completion for a capability using the configured router (primary + fallbacks),
  * then the legacy resolution, trying each candidate in order until one succeeds.
@@ -253,9 +271,10 @@ export async function completeTextRouted(
   settings: AppSettings,
   messages: LlmMessage[],
   capability: ChatCapability,
-  options?: { signal?: AbortSignal; label?: string; onText?: (text: string) => void },
+  options?: { signal?: AbortSignal; label?: string; onText?: (text: string) => void; preferred?: RoutingTarget },
 ): Promise<string> {
-  const candidates = resolveTaskCandidates(settings, capability);
+  const preferred = options?.preferred ? chatCandidateFromTarget(settings, options.preferred) : null;
+  const candidates = dedupe([...(preferred ? [preferred] : []), ...resolveTaskCandidates(settings, capability)]);
   if (!candidates.length) {
     if (hasConfiguredRoute(settings, capability)) throw new StaleRoutingConfigurationError(capability);
     throw new NoCompletionCandidatesError();
@@ -263,14 +282,16 @@ export async function completeTextRouted(
   const purpose = capability === "review" ? "review" : "writing";
   const executable = candidates.map((candidate, routeCandidateIndex) => ({ ...candidate, routeCandidateIndex })).filter((candidate) => candidate.integration && candidate.model).map((candidate) => ({ ...candidate, integration: candidate.integration!, model: candidate.model!, label: `${candidate.integration!.provider}/${candidate.model!}` }));
   if (!executable.length) throw new NoCompletionCandidatesError();
-  return executeCompletionFallback({ candidates: executable, signal: options?.signal, resetPartial: () => options?.onText?.(""), run: (candidate) => completeText(candidate.integration, messages, purpose, {
+  return executeCompletionFallback({ candidates: executable, signal: options?.signal, timeoutMs: (candidate) => candidate.integration.requestTimeoutMs, resetPartial: () => options?.onText?.(""), run: (candidate, signal) => completeText(candidate.integration, budgetLlmMessages(messages, candidate.maxInputTokens, candidate.maxOutputTokens), purpose, {
         modelName: candidate.model,
         capability,
-        signal: options?.signal,
+        signal,
         label: options?.label,
         onText: options?.onText,
         routeCandidateIndex: candidate.routeCandidateIndex,
         usedFallback: candidate.routeCandidateIndex > 0,
+        maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens,
+        underlyingModel: candidate.underlyingModel,
       }) });
 }
 
@@ -290,14 +311,15 @@ export async function completeToolRouted<T>(
   for (const [candidateIndex, candidate] of candidates.entries()) {
     if (!candidate.integration || !candidate.model) continue;
     try {
-      const result = await completeToolWith<T>(candidate.integration, candidate.model, candidate.pricing, messages, capability, tool, { signal: options?.signal, label: options?.label, currency: settings.costCurrency, validate: options?.validate, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0 });
+      const budgetedMessages = budgetForcedToolMessages(messages, candidate, tool);
+      const result = await runWithCandidateTimeout((signal) => completeToolWith<T>(candidate.integration!, candidate.model!, candidate.pricing, budgetedMessages, capability, tool, { signal, label: options?.label, currency: settings.costCurrency, validate: options?.validate, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens, underlyingModel: candidate.underlyingModel }), options?.signal, candidate.integration.requestTimeoutMs);
       return {
         ...result,
         output: options?.validate ? options.validate(result.output) : result.output as T,
         metadata: { ...result.metadata, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0 },
       };
     } catch (err) {
-      if (isAbort(err) || options?.signal?.aborted) throw err;
+      if (options?.signal?.aborted) throw err;
       lastError = err;
     }
   }
@@ -328,13 +350,22 @@ export function sttMode(settings: AppSettings, candidateIndex = 0): "browser" | 
 }
 
 /** Confirmation classification with router (simple-tasks) + fallbacks. Returns "unclear" if all fail. */
-export async function classifyConfirmationRouted(settings: AppSettings, utterance: string): Promise<"yes" | "no" | "unclear"> {
+export async function classifyConfirmationRouted(settings: AppSettings, utterance: string, operationSignal?: AbortSignal): Promise<"yes" | "no" | "unclear"> {
   const candidates = resolveTaskCandidates(settings, "simple-tasks");
-  for (const candidate of candidates) {
+  for (const [candidateIndex, candidate] of candidates.entries()) {
+    operationSignal?.throwIfAborted();
     if (!candidate.integration || !candidate.model) continue;
     try {
-      return await classifyConfirmationWith(candidate.integration, candidate.model, candidate.pricing, utterance);
-    } catch {
+      const budgetedMessages = budgetForcedToolMessages([{ role: "user", content: utterance }], candidate, CONFIRMATION_TOOL_DEFINITION);
+      const budgetedUtterance = budgetedMessages[0]?.content;
+      if (typeof budgetedUtterance !== "string") throw new CandidateInputBudgetError();
+      return await runWithCandidateTimeout(
+        (signal) => classifyConfirmationWith(candidate.integration!, candidate.model!, candidate.pricing, budgetedUtterance, { signal, maxOutputTokens: Math.min(32, resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens), routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, underlyingModel: candidate.underlyingModel }),
+        operationSignal,
+        candidate.integration.requestTimeoutMs,
+      );
+    } catch (error) {
+      if (operationSignal?.aborted) throw error;
       // try next fallback
     }
   }

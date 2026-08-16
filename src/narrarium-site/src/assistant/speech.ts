@@ -1,12 +1,14 @@
 import OpenAI, { AzureOpenAI } from "openai";
 import type { AIIntegration, AppSettings } from "@/types/settings";
 import { resolveWritingIntegration } from "@/assistant/llm";
-import { resolveTaskCandidates } from "@/assistant/router";
+import { resolveTaskCandidates, type TaskCandidate } from "@/assistant/router";
 import { sttDelta, ttsDelta, useCostsStore } from "@/costs/costsStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import { BrowserSpeechFallbackRequired, executeMediaFallback } from "@/assistant/mediaFallback";
+import { CandidateTimeoutError } from "@/assistant/executionLimits";
 
 const MAX_TTS_CHARS = 1200;
+const BROWSER_TTS_FALLBACK = "narrarium:browser-tts-fallback";
 
 /** Options shared by every TTS engine. */
 export interface SpeakOptions {
@@ -127,16 +129,16 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings, signal?
   const candidates = resolveTaskCandidates(settings, "stt").slice(startCandidateIndex);
   if (!candidates.length) throw new Error("No AI speech-to-text model is configured.");
   const sizeKb = Math.round(blob.size / 1024);
-  return executeMediaFallback<string>({ candidates, signal, runBrowser: async (index) => { throw new BrowserSpeechFallbackRequired(startCandidateIndex + index + 1); }, runAi: async (candidate) => {
+  return executeMediaFallback<string>({ candidates, signal, runBrowser: async (index) => { throw new BrowserSpeechFallbackRequired(startCandidateIndex + index + 1); }, runAi: async (candidate, attemptSignal, candidateIndex) => {
     const integration = candidate.integration as AIIntegration;
     const model = candidate.model!;
     const pricing = candidates.find((entry) => entry.integration === integration && entry.model === model)?.pricing;
     const file = new File([blob], "speech.webm", { type: blob.type || "audio/webm" });
     const client = createAudioClient(integration);
-    const debugId = useLlmDebugStore.getState().begin({ kind: "stt", label: "stt", model, messages: [{ role: "input", content: `audio ${sizeKb} KB` }] });
+    const debugId = useLlmDebugStore.getState().begin({ kind: "stt", label: "stt", model, provider: integration.provider, integrationId: integration.id, routeCandidateIndex: startCandidateIndex + candidateIndex, usedFallback: startCandidateIndex + candidateIndex > 0, messages: [{ role: "input", content: `audio ${sizeKb} KB` }] });
     try {
-      const response = await client.audio.transcriptions.create({ file, model }, { signal });
-      signal?.throwIfAborted();
+      const response = await client.audio.transcriptions.create({ file, model }, { signal: attemptSignal });
+      attemptSignal?.throwIfAborted();
       const estimatedHours = blob.size > 0 ? blob.size / (16000 * 3600) : 0;
       const cost = pricing ? sttDelta(estimatedHours, pricing).sttCost : undefined;
       if (estimatedHours > 0 && pricing) useCostsStore.getState().recordCurrent(sttDelta(estimatedHours, pricing));
@@ -144,7 +146,7 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings, signal?
       useLlmDebugStore.getState().finish(debugId, { status: "done", response: text, cost });
       return text;
     } catch (err) {
-      useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
+      useLlmDebugStore.getState().finish(debugId, mediaDebugFailure(err, attemptSignal));
       throw err;
     }
   } });
@@ -155,11 +157,8 @@ export async function speakText(text: string, settings: AppSettings, options: Sp
   const voice = settings.speech.ttsVoice || "nova";
   const candidates = resolveTaskCandidates(settings, "tts");
   if (!candidates.length) throw new Error("No text-to-speech route is configured.");
-  return executeMediaFallback<SpeechController>({ candidates, signal: options.signal, runBrowser: () => speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, options), runAi: async (candidate) => {
-      const integration = candidate.integration as AIIntegration;
-      const model = candidate.model!;
-      const pricing = candidates.find((entry) => entry.integration === integration && entry.model === model)?.pricing;
-      return speakWithOpenAICompatible(text, integration, model, voice, options, pricing);
+  return executeMediaFallback<SpeechController>({ candidates, signal: options.signal, timeoutAi: false, runBrowser: () => speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, options), runAi: async (_candidate, _attemptSignal, candidateIndex) => {
+      return speakWithOpenAICompatible(text, candidates, candidateIndex, voice, options, (startIndex) => speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, { ...options, startIndex }));
   } });
 }
 
@@ -287,41 +286,48 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number, u
   return controller;
 }
 
-async function speakWithOpenAICompatible(text: string, integration: AIIntegration, model: string, voice: string, options: SpeakOptions, pricingOverride?: import("@/types/settings").AIPricing): Promise<SpeechController> {
+async function speakWithOpenAICompatible(text: string, candidates: TaskCandidate[], candidateIndex: number, voice: string, options: SpeakOptions, browserFallback: (startIndex: number) => Promise<SpeechController>): Promise<SpeechController> {
   const segments = resolveSegments(text, options);
   const startIndex = Math.max(0, options.startIndex ?? 0);
-  const pricing = pricingOverride ?? integration.pricing;
   let stopped = false;
   let paused = false;
   let currentIndex = startIndex;
   let audio: HTMLAudioElement | null = null;
+  let browserController: SpeechController | null = null;
   const activeUrls = new Set<string>();
   const pendingDebug = new Map<string, { id: string; chars: number; cost?: number }>();
   const synthesisController = new AbortController();
-  const abortSynthesis = () => synthesisController.abort();
+  const abortSynthesis = () => synthesisController.abort(options.signal?.reason);
   options.signal?.addEventListener("abort", abortSynthesis, { once: true });
   // Set when a pause arrives between "fetch" and "play": resume() will start it.
   let heldPlay: (() => void) | null = null;
   options.signal?.throwIfAborted();
-  const synthesize = async (segment: string): Promise<string> => {
-    const debugId = useLlmDebugStore.getState().begin({ kind: "tts", label: `tts (${voice})`, model, messages: [{ role: "input", content: segment.slice(0, 400) }] });
-    let url: string;
-    try {
-      url = await synthesizeChunk(segment, integration, model, voice, synthesisController.signal);
-    } catch (error) {
-      useLlmDebugStore.getState().finish(debugId, { status: "error", error: error instanceof Error ? error.message : String(error) });
-      throw error;
-    }
-    const cost = pricing ? ttsDelta(segment.length, pricing).ttsCost : undefined;
-    if (pricing) useCostsStore.getState().recordCurrent(ttsDelta(segment.length, pricing));
-    if (stopped || synthesisController.signal.aborted) {
-      URL.revokeObjectURL(url);
-      useLlmDebugStore.getState().finish(debugId, { status: "done", response: `${segment.length} generated chars, 0 played chars`, cost });
-      throw synthesisController.signal.reason ?? new DOMException("Aborted", "AbortError");
-    }
-    activeUrls.add(url);
-    pendingDebug.set(url, { id: debugId, chars: segment.length, cost });
-    return url;
+  const synthesize = async (segment: string, allowFallback = true): Promise<string> => {
+    const attempts = allowFallback ? candidates.slice(candidateIndex) : [candidates[candidateIndex]];
+    return executeMediaFallback<string, TaskCandidate>({ candidates: attempts, signal: synthesisController.signal, runBrowser: async () => BROWSER_TTS_FALLBACK, runAi: async (candidate, attemptSignal, relativeIndex) => {
+      const integration = candidate.integration as AIIntegration;
+      const model = candidate.model!;
+      const absoluteIndex = allowFallback ? candidateIndex + relativeIndex : candidateIndex;
+      const pricing = candidate.pricing ?? integration.pricing;
+      const debugId = useLlmDebugStore.getState().begin({ kind: "tts", label: `tts (${voice})`, model, provider: integration.provider, integrationId: integration.id, routeCandidateIndex: absoluteIndex, usedFallback: absoluteIndex > 0, messages: [{ role: "input", content: segment.slice(0, 400) }] });
+      let url: string;
+      try {
+        url = await synthesizeChunk(segment, integration, model, voice, attemptSignal);
+      } catch (error) {
+        useLlmDebugStore.getState().finish(debugId, mediaDebugFailure(error, attemptSignal));
+        throw error;
+      }
+      const cost = pricing ? ttsDelta(segment.length, pricing).ttsCost : undefined;
+      if (pricing) useCostsStore.getState().recordCurrent(ttsDelta(segment.length, pricing));
+      if (stopped || synthesisController.signal.aborted) {
+        URL.revokeObjectURL(url);
+        useLlmDebugStore.getState().finish(debugId, { status: "done", response: `${segment.length} generated chars, 0 played chars`, cost });
+        throw synthesisController.signal.reason ?? new DOMException("Aborted", "AbortError");
+      }
+      activeUrls.add(url);
+      pendingDebug.set(url, { id: debugId, chars: segment.length, cost });
+      return url;
+    } });
   };
   const finishChunkDebug = (url: string, played: boolean, error?: unknown) => {
     const debug = pendingDebug.get(url);
@@ -338,7 +344,7 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
   );
   let initialUrl: string;
   try {
-    initialUrl = await synthesize(segments[startIndex] ?? text.slice(0, 200));
+    initialUrl = await synthesize(segments[startIndex] ?? text.slice(0, 200), false);
   } catch (error) {
     options.signal?.removeEventListener("abort", abortSynthesis);
     throw error;
@@ -385,6 +391,11 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
       return;
     }
     const { url } = result;
+    if (url === BROWSER_TTS_FALLBACK) {
+      browserController = await browserFallback(index);
+      void browserController.done.then(() => finish(), finish);
+      return;
+    }
     // Prefetch the following segment, but never while paused (freezes mp3 generation too).
     nextPromise = !paused && segments[index + 1] ? queuedSynthesis(segments[index + 1]) : null;
     if (stopped) {
@@ -425,16 +436,22 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
   const controller: SpeechController = {
     stop: () => {
       window.speechSynthesis.cancel();
+      browserController?.stop();
       finish();
     },
     pause: () => {
       if (stopped || paused) return;
       paused = true;
       audio?.pause();
+      browserController?.pause();
     },
     resume: () => {
       if (stopped || !paused) return;
       paused = false;
+      if (browserController) {
+        browserController.resume();
+        return;
+      }
       // Re-arm prefetch of the upcoming segment if it was suppressed during pause.
       if (!nextPromise && segments[currentIndex + 1]) {
         nextPromise = queuedSynthesis(segments[currentIndex + 1]);
@@ -453,7 +470,7 @@ async function speakWithOpenAICompatible(text: string, integration: AIIntegratio
     },
     isPaused: () => paused,
     segments,
-    getCurrentIndex: () => currentIndex,
+    getCurrentIndex: () => browserController?.getCurrentIndex() ?? currentIndex,
     done,
   };
   const abort = () => controller.stop();
@@ -471,4 +488,11 @@ async function synthesizeChunk(text: string, integration: AIIntegration, model: 
   const blob = new Blob([await response.arrayBuffer()], { type: "audio/mpeg" });
   signal?.throwIfAborted();
   return URL.createObjectURL(blob);
+}
+
+function mediaDebugFailure(error: unknown, signal?: AbortSignal): { status: "error"; error: string; failureKind: "timeout" | "cancelled" | "provider"; timeoutMs?: number } {
+  const converted = signal?.reason instanceof CandidateTimeoutError ? signal.reason : error;
+  if (converted instanceof CandidateTimeoutError) return { status: "error", error: converted.message, failureKind: "timeout", timeoutMs: converted.timeoutMs };
+  const cancelled = signal?.aborted === true;
+  return { status: "error", error: converted instanceof Error ? converted.message : String(converted), failureKind: cancelled ? "cancelled" : "provider" };
 }

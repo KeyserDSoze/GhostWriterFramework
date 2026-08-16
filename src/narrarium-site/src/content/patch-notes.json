@@ -1,5 +1,41 @@
 [
   {
+    "version": "0.76.35",
+    "date": "2026-08-16",
+    "en": {
+      "title": "Bounded, revision-safe Copilot workflows",
+      "summary": "This safety release hardens ten Copilot workflows across attachments, rendered answers, voice rewrites, secret visibility, AI execution limits, long-running sessions, cloud notes, runtime prerequisites, and repository mutations.",
+      "changes": [
+        "Bounded attachment count, source size, extracted text, pages, images, and prompt tokens, with cancellable isolated PDF processing and measured DOCX decompression that rejects hostile documents safely.",
+        "Blocked external resources and unsafe markup in Copilot answers through sanitized Markdown rendering and a restrictive content security policy while retaining supported formatting.",
+        "Made live voice rewrites explicit, confirmable, interruptible, revision-bound proposals that are invalidated when their session, book, branch, route, path, or source changes.",
+        "Applied secret known-from and reveal-in thresholds consistently to local and remote manifests, search, context, models, and direct reads, failing closed outside explicit author access.",
+        "Enforced per-model input and output envelopes, candidate timeouts, cancellation, and ordered fallback across text, tools, confirmations, research, speech, and image operations with privacy-safe diagnostics.",
+        "Kept long chats and prompts bounded through incremental compaction, auditable hash-chain rollups, complete visible provenance, sub-limit cloud serialization, and classified bounded autosave retries.",
+        "Bound saved chat notes explicitly to their book, repository, branch, and path, with conflict-safe local appends and recoverable, idempotent save and delete operations.",
+        "Versioned and validated cloud chat payloads for Google Drive and OneDrive, migrated compatible legacy sessions, enforced size limits, and quarantined executable actions without complete provenance.",
+        "Centralized runtime prerequisite enforcement so capabilities, dispatch, resume generation, mutation intent, and execution all use the same integration and model requirements.",
+        "Protected direct repository edits with source and head revision barriers, atomic reader evaluations, cancellation-aware pushes, deterministic local commit ordering, and race-safe rollback and settlement."
+      ]
+    },
+    "it": {
+      "title": "Flussi Copilota limitati e revision-safe",
+      "summary": "Questa release di sicurezza rafforza dieci flussi del Copilota per allegati, risposte renderizzate, riscritture vocali, visibilita dei segreti, limiti AI, sessioni lunghe, note cloud, prerequisiti runtime e mutazioni repository.",
+      "changes": [
+        "Limitati numero, dimensione sorgente, testo estratto, pagine, immagini e token prompt degli allegati, con PDF isolati e cancellabili e decompressione DOCX misurata che rifiuta in sicurezza i documenti ostili.",
+        "Bloccate risorse esterne e markup non sicuro nelle risposte del Copilota tramite Markdown sanificato e una content security policy restrittiva, preservando la formattazione supportata.",
+        "Rese le riscritture vocali proposte esplicite, confermabili, interrompibili e legate alla revisione, invalidate quando cambiano sessione, libro, branch, route, path o sorgente.",
+        "Applicate uniformemente le soglie known-from e reveal-in dei segreti a manifest locali e remoti, ricerca, contesto, modelli e letture dirette, con comportamento fail-closed fuori dall'accesso autore esplicito.",
+        "Applicati envelope input e output per modello, timeout candidato, cancellazione e fallback ordinato a testo, tool, conferme, ricerca, voce e immagini, con diagnostica privacy-safe.",
+        "Mantenuti limitati chat lunghe e prompt tramite compaction incrementale, rollup audit con hash chain, provenance completa e visibile, serializzazione cloud sotto soglia e retry autosave classificati e limitati.",
+        "Legate esplicitamente le note salvate dalla chat a libro, repository, branch e path, con append locali conflict-safe e operazioni di salvataggio e cancellazione recuperabili e idempotenti.",
+        "Versionati e validati i payload chat cloud per Google Drive e OneDrive, migrate le sessioni legacy compatibili, applicati limiti dimensionali e messi in quarantena gli action eseguibili senza provenance completa.",
+        "Centralizzato il controllo dei prerequisiti runtime affinche capability, dispatch, generazione resume, intento di mutazione ed esecuzione usino gli stessi requisiti di integrazione e modello.",
+        "Protette le modifiche dirette al repository con barriere su revisione sorgente e head, valutazioni reader atomiche, push cancellabili, ordine deterministico dei commit locali e rollback e settlement race-safe."
+      ]
+    }
+  },
+  {
     "version": "0.76.34",
     "date": "2026-08-15",
     "en": {

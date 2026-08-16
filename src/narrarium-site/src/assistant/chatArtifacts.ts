@@ -1,21 +1,54 @@
 import { marked } from "marked";
-import type { AssistantMessage, AssistantSession } from "@/assistant/store";
+import type { AssistantArchivedAction, AssistantArchivedAttachment, AssistantAttachment, AssistantMessage, AssistantSession } from "@/assistant/store";
 import { markdownToSpeechText } from "@/assistant/speech";
 
+const ALLOWED_TAGS = new Set([
+  "a", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "li", "ol", "p", "pre", "strong",
+  "table", "tbody", "td", "th", "thead", "tr", "ul",
+]);
+const DROP_WITH_CONTENT = new Set(["audio", "canvas", "embed", "form", "iframe", "img", "math", "object", "script", "style", "svg", "video"]);
+
 function sanitizeHtml(html: string): string {
-  if (typeof window === "undefined") return html;
+  if (typeof DOMParser === "undefined") return escapeHtml(html);
   const parser = new DOMParser();
   const document = parser.parseFromString(html, "text/html");
-  document.querySelectorAll("script,style,iframe,object,embed").forEach((node) => node.remove());
-  document.querySelectorAll("*").forEach((element) => {
-    [...element.attributes].forEach((attribute) => {
-      const name = attribute.name.toLowerCase();
-      const value = attribute.value.trim().toLowerCase();
-      if (name.startsWith("on")) element.removeAttribute(attribute.name);
-      if ((name === "href" || name === "src") && value.startsWith("javascript:")) element.removeAttribute(attribute.name);
-    });
-  });
+  sanitizeChildren(document.body);
   return document.body.innerHTML;
+}
+
+function sanitizeChildren(parent: Element): void {
+  for (const child of [...parent.children]) {
+    const tag = child.tagName.toLowerCase();
+    if (DROP_WITH_CONTENT.has(tag)) {
+      child.remove();
+      continue;
+    }
+    sanitizeChildren(child);
+    if (!ALLOWED_TAGS.has(tag)) {
+      child.replaceWith(...child.childNodes);
+      continue;
+    }
+    const href = tag === "a" ? child.getAttribute("href") : null;
+    for (const attribute of [...child.attributes]) child.removeAttribute(attribute.name);
+    if (tag === "a") sanitizeLink(child, href);
+  }
+}
+
+function sanitizeLink(element: Element, rawHref: string | null): void {
+  if (!rawHref) return;
+  const href = rawHref.replace(/[\u0000-\u0020\u007f]+/g, "").trim();
+  if (!isSafeLink(href)) return;
+  element.setAttribute("href", href);
+  element.setAttribute("rel", "noopener noreferrer nofollow");
+  if (/^https?:/i.test(href)) element.setAttribute("target", "_blank");
+}
+
+function isSafeLink(href: string): boolean {
+  return /^(?:https?:|mailto:|#|\/|\.\.?(?:\/|$))/i.test(href);
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 export function renderAssistantMarkdownHtml(markdown: string): string {
@@ -27,23 +60,66 @@ export function assistantMarkdownToRichPlainText(markdown: string): string {
   const parser = new DOMParser();
   const html = renderAssistantMarkdownHtml(markdown);
   const document = parser.parseFromString(html, "text/html");
-  return document.body.textContent?.trim() || markdownToSpeechText(markdown);
+  return document.body.textContent?.trim() ?? markdownToSpeechText(markdown);
 }
 
 function messageHeading(message: AssistantMessage): string {
   return message.role === "user" ? "User" : message.role === "assistant" ? "Assistant" : "System";
 }
 
+function attachmentLine(attachment: AssistantAttachment | AssistantArchivedAttachment): string {
+  return `- ${attachment.name} (${attachment.mimeType}, ${attachment.kind}, ${attachment.sizeBytes} bytes; id: ${attachment.id})`;
+}
+
+export function archivedActionDetails(action: AssistantArchivedAction): string[] {
+  const lines = [
+    `- Message: ${action.messageId}`,
+    `  Kind: ${action.kind}`,
+    `  Book: ${action.bookId ?? "n/a"}`,
+    `  Tool: ${action.toolId ?? "n/a"}`,
+    `  Repository: ${action.owner && action.repo ? `${action.owner}/${action.repo}` : "n/a"}`,
+    `  Branch: ${action.branch ?? "n/a"}`,
+    `  Source revision: ${action.sourceRevision ?? "n/a"}`,
+    `  Generated: ${action.generatedAt ?? "n/a"}`,
+    `  Paths: ${action.paths.length ? action.paths.join(", ") : "none"}`,
+  ];
+  const revisions = Object.entries(action.sourceRevisions ?? {});
+  lines.push(`  Source revisions: ${revisions.length ? revisions.map(([path, revision]) => `${path}=${revision ?? "missing"}`).join(", ") : "none"}`);
+  return lines;
+}
+
+export function assistantArchiveHistoryLines(session: AssistantSession): string[] {
+  const archive = session.archive;
+  if (!archive) return [];
+  const lines = archive.actions.flatMap(archivedActionDetails);
+  const rollup = archive.rollup;
+  if (rollup?.actionCount) lines.push(`- Rolled actions: ${rollup.actionCount}; ${rollup.algorithm}: ${rollup.actionDigest}`);
+  if (rollup?.attachmentCount) lines.push(`- Rolled attachments: ${rollup.attachmentCount}; ${rollup.algorithm}: ${rollup.attachmentDigest}`);
+  return lines;
+}
+
+export function hasAssistantSessionArchiveContent(session: AssistantSession): boolean {
+  const archive = session.archive;
+  return Boolean((archive?.summary || session.compactSummary).trim() || archive?.actions.length || archive?.attachments.length || archive?.rollup?.actionCount || archive?.rollup?.attachmentCount);
+}
+
 export function buildAssistantSessionMarkdown(session: AssistantSession): string {
+  const archive = session.archive;
   const lines = [
     `# ${session.title}`,
     "",
     `Context: ${session.contextTitle}`,
     `Updated: ${session.updatedAt}`,
   ];
-  if (session.compactSummary.trim()) {
-    lines.push("", "## Compaction Summary", "", session.compactSummary.trim());
+  const archiveSummary = archive?.summary.trim() || session.compactSummary.trim();
+  if (hasAssistantSessionArchiveContent(session)) {
+    lines.push("", `## Archived Conversation (${archive?.messageCount ?? session.compactedMessageCount} messages)`);
+    if (archiveSummary) lines.push("", archiveSummary);
+    const provenance = assistantArchiveHistoryLines(session);
+    if (provenance.length) lines.push("", "### Archived Audit Provenance", "", ...provenance);
+    if (archive?.attachments.length) lines.push("", "### Archived Attachments", "", ...archive.attachments.map(attachmentLine));
   }
+  if (session.attachments.length) lines.push("", "## Active Attachments", "", ...session.attachments.map(attachmentLine));
   for (const message of session.messages) {
     lines.push("", `## ${messageHeading(message)}`, "", message.text.trim() || "(empty)");
   }
@@ -77,10 +153,18 @@ export async function buildAssistantSessionPdfBlob(session: AssistantSession): P
   y += 6;
   writeBlock(`Context: ${session.contextTitle}`);
   writeBlock(`Updated: ${new Date(session.updatedAt).toLocaleString()}`);
-  if (session.compactSummary.trim()) {
+  const archiveSummary = session.archive?.summary.trim() || session.compactSummary.trim();
+  if (hasAssistantSessionArchiveContent(session)) {
     y += 8;
-    writeBlock("Compaction Summary", 13, true);
-    writeBlock(assistantMarkdownToRichPlainText(session.compactSummary));
+    writeBlock(`Archived Conversation (${session.archive?.messageCount ?? session.compactedMessageCount} messages)`, 13, true);
+    if (archiveSummary) writeBlock(assistantMarkdownToRichPlainText(archiveSummary));
+    for (const line of assistantArchiveHistoryLines(session)) writeBlock(line);
+    for (const attachment of session.archive?.attachments ?? []) writeBlock(attachmentLine(attachment));
+  }
+  if (session.attachments.length) {
+    y += 8;
+    writeBlock("Active Attachments", 13, true);
+    for (const attachment of session.attachments) writeBlock(attachmentLine(attachment));
   }
   for (const message of session.messages) {
     y += 8;

@@ -39,20 +39,22 @@ import {
   type AssistantSessionMeta,
 } from "@/assistant/store";
 import { appendAssistantNote, applyParagraphRewrite, compactAssistantSession, runAssistantPrompt } from "@/assistant/service";
-import { assistantMarkdownToRichPlainText, buildAssistantSessionMarkdown, buildAssistantSessionPdfBlob, renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
+import { assistantMarkdownToRichPlainText, buildAssistantSessionMarkdown, buildAssistantSessionPdfBlob, hasAssistantSessionArchiveContent, renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
+import { AssistantArchiveProvenance } from "@/components/assistant/AssistantArchiveProvenance";
 import { loadWriterContext, parseAppRoute } from "@/assistant/context";
-import { resolveNavigateAction, resolveReadAloudAction, type ReadAloudAction } from "@/assistant/planner";
+import { bindReadAloudActionProvenance, readAloudReplaySource, resolveNavigateAction, resolveReadAloudAction, type ReadAloudAction } from "@/assistant/planner";
 import { deleteAssistantSession, listAssistantSessions, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
-import { AssistantSessionSaveQueue, assistantSessionSaveFingerprint, attachAssistantSessionCloudHandle, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
+import { AssistantSessionSaveQueue, assistantSessionSaveFingerprint, assistantSessionSaveRetryPlan, attachAssistantSessionCloudHandle, clearFailedAssistantSessionSaveFingerprint, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
 import { assistantSessionCompactionTarget, mergeAssistantSessionCompaction } from "@/assistant/sessionCompaction";
 import { isAssistantRequestOwned } from "@/assistant/sessionOwnership";
+import { resolveChatNoteDestination, reusableChatNoteOperation, type ChatNoteDestination } from "@/assistant/chatNoteSave";
 import { isMediaOperationOwned, stopMediaStreamTracks } from "@/assistant/mediaOwnership";
 import { assistantActionToolId, policyTargetEnabled, quickActionToolId } from "@/assistant/toolPolicy";
 import { hasAssistantActionProvenance, sourceRevisionFromFiles, validateAssistantAction } from "@/assistant/actionValidation";
 import { copilotToolRegistry, isCopilotToolIdEnabled } from "@/assistant/tools/registry";
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
 import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
-import { parseAttachment } from "@/assistant/attachments";
+import { parseAttachments } from "@/assistant/attachments";
 import type { AttachmentImportTarget } from "@/assistant/attachmentImport";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -98,6 +100,7 @@ import { buildCanonEntityDocument } from "@/narrarium/canon";
 import { BrowserSpeechFallbackRequired } from "@/assistant/mediaFallback";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
 import { refreshBookAfterMutation, runPromptWithMutationRefresh } from "@/assistant/mutationRefresh";
+import { captureLiveVoiceRewriteSnapshot, generateLiveVoiceRewrite, liveVoiceRewriteMatches, persistLiveVoiceRewrite, resolveLiveVoiceRewrite, type LiveVoiceRewriteContext, type LiveVoiceSource, type PendingLiveVoiceRewrite } from "@/assistant/liveVoiceRewrite";
 
 ensureBuiltinCopilotToolsRegistered();
 
@@ -160,17 +163,28 @@ export function AssistantPanel() {
   // Live "strofe" memory: every spoken segment of the current reading, the live index,
   // and a pending rewrite proposal awaiting a spoken "yes"/"no" confirmation.
   const liveStrofeRef = useRef<string[]>([]);
+  const liveStrofeSourcesRef = useRef<Array<LiveVoiceSource | null>>([]);
   const liveStrofeIndexRef = useRef(0);
   const speechControllerRef = useRef<SpeechController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const manualEndRef = useRef(false);
-  const pendingRewriteRef = useRef<{ from: number; to: number; segments: string[] } | null>(null);
+  const pendingRewriteRef = useRef<PendingLiveVoiceRewrite | null>(null);
+  const activeBookIdRef = useRef(bookId);
+  const activeBranchRef = useRef(branch);
+  const activePathnameRef = useRef(location.pathname);
+  const settingsRef = useRef(settings);
   const sessionSaveQueueRef = useRef(new AssistantSessionSaveQueue());
-  const queuedSessionFingerprintsRef = useRef(new Map<string, string>());
+  const savedSessionFingerprintsRef = useRef(new Map<string, string>());
+  const pendingSessionFingerprintsRef = useRef(new Map<string, string>());
+  const autosaveAttemptsRef = useRef(new Map<string, { fingerprint: string; failedAttempts: number }>());
+  const autosaveRetryTimerRef = useRef<number | null>(null);
+  const [autosaveRetry, setAutosaveRetry] = useState(0);
+  const [autosaveStatus, setAutosaveStatus] = useState<{ sessionId: string; kind: "retrying" | "stopped"; attempt?: number; message: string } | null>(null);
   const compactionRunRef = useRef(0);
   const activePromptRef = useRef<{ requestId: string; sessionId: string; controller: AbortController } | null>(null);
   const attachmentRunRef = useRef(0);
   const activeAttachmentRunRef = useRef<number | null>(null);
+  const attachmentAbortRef = useRef<AbortController | null>(null);
   const openSessionRunRef = useRef(0);
   const activeOpenSessionRunRef = useRef<number | null>(null);
   const openSessionAbortRef = useRef<AbortController | null>(null);
@@ -186,11 +200,16 @@ export function AssistantPanel() {
     busy,
     setBusy,
   } = useAssistantStore();
+  activeBookIdRef.current = bookId;
+  activeBranchRef.current = branch;
+  activePathnameRef.current = location.pathname;
+  settingsRef.current = settings;
 
   const [draft, setDraft] = useState("");
   const [contextLabel, setContextLabel] = useState("Narrarium");
   const [contextSummary, setContextSummary] = useState("");
   const [contextFiles, setContextFiles] = useState<string[]>([]);
+  const [sessionContext, setSessionContext] = useState<ChatNoteDestination | undefined>();
   const [availableCount, setAvailableCount] = useState(0);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
@@ -244,14 +263,27 @@ export function AssistantPanel() {
   }, [manualEnd]);
 
   useEffect(() => {
+    pendingRewriteRef.current = resolveLiveVoiceRewrite(pendingRewriteRef.current, "source-switch").pending;
+  }, [currentSession?.id, bookId, branch, location.pathname]);
+
+  useEffect(() => {
     cloudAccountAbortRef.current.abort();
     cloudAccountAbortRef.current = new AbortController();
     sessionSaveQueueRef.current.reset();
-    queuedSessionFingerprintsRef.current.clear();
+    savedSessionFingerprintsRef.current.clear();
+    pendingSessionFingerprintsRef.current.clear();
+    autosaveAttemptsRef.current.clear();
+    if (autosaveRetryTimerRef.current !== null) window.clearTimeout(autosaveRetryTimerRef.current);
+    autosaveRetryTimerRef.current = null;
+    setAutosaveStatus(null);
     return () => {
       cloudAccountAbortRef.current.abort();
       sessionSaveQueueRef.current.reset();
-      queuedSessionFingerprintsRef.current.clear();
+      savedSessionFingerprintsRef.current.clear();
+      pendingSessionFingerprintsRef.current.clear();
+      autosaveAttemptsRef.current.clear();
+      if (autosaveRetryTimerRef.current !== null) window.clearTimeout(autosaveRetryTimerRef.current);
+      autosaveRetryTimerRef.current = null;
       cancelSessionOperations();
     };
   }, [user?.provider, user?.email, accessToken]);
@@ -269,9 +301,11 @@ export function AssistantPanel() {
       setContextSummary(ctx.summary);
       setContextFiles(ctx.loadedFilePaths);
       setAvailableCount(ctx.availableFiles.length);
+      setSessionContext(ctx.book && ctx.branch && ctx.noteTargetPath ? { bookId: ctx.book.id, owner: ctx.book.owner, repo: ctx.book.repo, branch: ctx.branch, noteTargetPath: ctx.noteTargetPath } : undefined);
     }).catch((error) => {
       if (!active) return;
       setContextFiles([]);
+      setSessionContext(undefined);
       toast({ title: settings.ui.language === "it" ? "Impossibile caricare il contesto repository" : "Could not load repository context", description: String(error), variant: "destructive" });
     });
     return () => {
@@ -304,14 +338,25 @@ export function AssistantPanel() {
     if (!user || !accessToken || !currentSession) return;
     const expectedIdentity = accountIdentity(user);
     const fingerprint = assistantSessionSaveFingerprint(currentSession);
-    if (queuedSessionFingerprintsRef.current.get(currentSession.id) === fingerprint) return;
+    const previousAttempt = autosaveAttemptsRef.current.get(currentSession.id);
+    if (previousAttempt && previousAttempt.fingerprint !== fingerprint) {
+      autosaveAttemptsRef.current.delete(currentSession.id);
+      if (autosaveRetryTimerRef.current !== null) window.clearTimeout(autosaveRetryTimerRef.current);
+      autosaveRetryTimerRef.current = null;
+      setAutosaveStatus(null);
+    }
+    if (savedSessionFingerprintsRef.current.get(currentSession.id) === fingerprint || pendingSessionFingerprintsRef.current.get(currentSession.id) === fingerprint) return;
     const timer = setTimeout(() => {
-      queuedSessionFingerprintsRef.current.set(currentSession.id, fingerprint);
+      pendingSessionFingerprintsRef.current.set(currentSession.id, fingerprint);
       void sessionSaveQueueRef.current.enqueue(
         currentSession,
         (session) => saveAssistantSession(user.provider, accessToken, session),
         (savedSnapshot, handle) => {
           if (!isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
+          clearFailedAssistantSessionSaveFingerprint(pendingSessionFingerprintsRef.current, savedSnapshot.id, fingerprint);
+          savedSessionFingerprintsRef.current.set(savedSnapshot.id, fingerprint);
+          autosaveAttemptsRef.current.delete(savedSnapshot.id);
+          setAutosaveStatus(null);
           const state = useAssistantStore.getState();
           const latest = state.currentSession?.id === savedSnapshot.id ? state.currentSession : null;
           const sessionWithFileId = attachAssistantSessionCloudHandle(state.currentSession, savedSnapshot.id, handle);
@@ -321,13 +366,28 @@ export function AssistantPanel() {
         },
         (err) => {
           if (isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
+            const failedAttempts = autosaveAttemptsRef.current.get(currentSession.id)?.fingerprint === fingerprint
+              ? autosaveAttemptsRef.current.get(currentSession.id)!.failedAttempts
+              : 0;
+            const plan = assistantSessionSaveRetryPlan(err, failedAttempts);
+            if (plan.kind === "retry") {
+              if (!clearFailedAssistantSessionSaveFingerprint(pendingSessionFingerprintsRef.current, currentSession.id, fingerprint)) return;
+              autosaveAttemptsRef.current.set(currentSession.id, { fingerprint, failedAttempts: plan.attempt });
+              setAutosaveStatus({ sessionId: currentSession.id, kind: "retrying", attempt: plan.attempt, message: String(err) });
+              autosaveRetryTimerRef.current = window.setTimeout(() => {
+                autosaveRetryTimerRef.current = null;
+                setAutosaveRetry((value) => value + 1);
+              }, plan.delayMs);
+            } else {
+              setAutosaveStatus({ sessionId: currentSession.id, kind: "stopped", message: String(err) });
+            }
             toast({ title: t("assistant.toastSaveChatFailed"), description: String(err), variant: "destructive" });
           }
         },
       );
     }, 300);
     return () => clearTimeout(timer);
-  }, [currentSession, user, accessToken, toast]);
+  }, [currentSession, user, accessToken, toast, autosaveRetry]);
 
   useEffect(() => {
     if (!currentSession || busy || assistantSessionCompactionTarget(currentSession) === null) return;
@@ -347,12 +407,13 @@ export function AssistantPanel() {
         }
       });
     return () => controller.abort();
-  }, [currentSession?.id, currentSession?.messages.length, currentSession?.compactedMessageCount, settings, busy, toast]);
+  }, [currentSession?.id, currentSession?.messages.length, currentSession?.attachments.length, currentSession?.compactedMessageCount, settings, busy, toast]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      attachmentAbortRef.current?.abort(new DOMException("Attachment extraction cancelled.", "AbortError"));
       cancelMediaOperations({ disableVoice: true, updateUi: false });
     };
   }, []);
@@ -395,8 +456,15 @@ export function AssistantPanel() {
 
   function ensureSession() {
     const existing = useAssistantStore.getState().currentSession;
-    if (existing) return existing;
-    const next = createEmptyAssistantSession(contextLabel);
+    if (existing) {
+      if (!existing.provenance && !existing.messages.length && sessionContext) {
+        const bound = { ...existing, provenance: sessionContext };
+        setCurrentSession(bound);
+        return bound;
+      }
+      return existing;
+    }
+    const next = createEmptyAssistantSession(contextLabel, sessionContext);
     setCurrentSession(next);
     return next;
   }
@@ -409,6 +477,8 @@ export function AssistantPanel() {
       releasedBusy = true;
     }
     if (activeAttachmentRunRef.current !== null) {
+      attachmentAbortRef.current?.abort(new DOMException("Attachment extraction cancelled.", "AbortError"));
+      attachmentAbortRef.current = null;
       attachmentRunRef.current += 1;
       activeAttachmentRunRef.current = null;
       releasedBusy = true;
@@ -485,7 +555,7 @@ export function AssistantPanel() {
     window.speechSynthesis?.cancel();
     localAudioHandledRef.current = false;
     localAudioDoneRef.current = null;
-    pendingRewriteRef.current = null;
+    pendingRewriteRef.current = resolveLiveVoiceRewrite(pendingRewriteRef.current, "interrupt").pending;
     if (options.disableVoice) voiceModeRef.current = false;
 
     if (options.updateUi !== false && mountedRef.current) {
@@ -499,7 +569,7 @@ export function AssistantPanel() {
 
   function newChat() {
     cancelSessionOperations();
-    setCurrentSession(createEmptyAssistantSession(contextLabel));
+    setCurrentSession(createEmptyAssistantSession(contextLabel, sessionContext));
     setActiveTab("chat");
     setOpen(true);
   }
@@ -517,12 +587,14 @@ export function AssistantPanel() {
   async function attachFiles(files: FileList | null) {
     if (!files?.length) return;
     const session = ensureSession();
+    attachmentAbortRef.current?.abort(new DOMException("Attachment extraction replaced.", "AbortError"));
+    const controller = new AbortController();
+    attachmentAbortRef.current = controller;
     const runId = ++attachmentRunRef.current;
     activeAttachmentRunRef.current = runId;
     setBusy(true);
     try {
-      const parsed: AssistantAttachment[] = [];
-      for (const file of Array.from(files)) parsed.push(await parseAttachment(file));
+      const parsed: AssistantAttachment[] = await parseAttachments(Array.from(files), session.attachments, controller.signal);
       if (activeAttachmentRunRef.current !== runId) return;
       useAssistantStore.getState().updateSession(session.id, (current) => ({
         ...current,
@@ -536,6 +608,7 @@ export function AssistantPanel() {
       }
     } finally {
       if (activeAttachmentRunRef.current === runId) {
+        attachmentAbortRef.current = null;
         activeAttachmentRunRef.current = null;
         setBusy(false);
       }
@@ -770,16 +843,23 @@ export function AssistantPanel() {
   }
 
   /** Read prose as sentence-level "strofe", tracking the live index and heard count. */
-  async function readText(text: string, opts?: { startIndex?: number; segments?: string[]; operation?: MediaOperation }): Promise<SpeechController | null> {
+  async function readText(text: string, opts?: { startIndex?: number; segments?: string[]; sources?: Array<LiveVoiceSource | null>; operation?: MediaOperation; trackLiveSource?: boolean }): Promise<SpeechController | null> {
     const operation = opts?.operation ?? (voiceModeRef.current ? currentMediaOperation() : beginMediaOperation());
     if (!ownsMediaOperation(operation.generation, operation.signal)) return null;
     stopReading();
     const segments = opts?.segments ?? splitIntoStrofe(text);
-    liveStrofeRef.current = segments;
-    setLiveStrofeCount(segments.length);
+    const trackLiveSource = opts?.trackLiveSource !== false;
+    if (trackLiveSource) {
+      pendingRewriteRef.current = resolveLiveVoiceRewrite(pendingRewriteRef.current, "source-switch").pending;
+      liveStrofeRef.current = segments;
+      liveStrofeSourcesRef.current = opts?.sources?.length === segments.length ? opts.sources : segments.map(() => null);
+      setLiveStrofeCount(segments.length);
+    }
     const startIndex = Math.max(0, opts?.startIndex ?? 0);
-    liveStrofeIndexRef.current = startIndex;
-    setLiveStrofeIndex(startIndex);
+    if (trackLiveSource) {
+      liveStrofeIndexRef.current = startIndex;
+      setLiveStrofeIndex(startIndex);
+    }
     try {
       const controller = await speakText(text, settings, {
         segments,
@@ -787,8 +867,10 @@ export function AssistantPanel() {
         signal: operation.signal,
         onSegment: (index) => {
           if (!ownsMediaOperation(operation.generation, operation.signal)) return;
-          liveStrofeIndexRef.current = index;
-          setLiveStrofeIndex(index);
+          if (trackLiveSource) {
+            liveStrofeIndexRef.current = index;
+            setLiveStrofeIndex(index);
+          }
         },
         onError: (error) => {
           if (!ownsMediaOperation(operation.generation, operation.signal)) return;
@@ -903,37 +985,27 @@ export function AssistantPanel() {
     }
   }
 
-  async function deleteCurrentSavedChat() {
-    if (!user || !accessToken || !currentSession) return;
-    const expectedIdentity = accountIdentity(user);
-    const signal = cloudAccountAbortRef.current.signal;
-    cancelSessionOperations();
-    const fileId = currentSession.fileId;
-    if (fileId) await deleteAssistantSession(user.provider, accessToken, fileId, signal);
-    if (signal.aborted || !isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
-    const state = useAssistantStore.getState();
-    state.setSessions(state.sessions.filter((session) => (session.fileId ?? session.id) !== (fileId ?? currentSession.id)));
-    setCurrentSession(null);
-  }
-
   async function saveCurrentChatAsNote(options: { mode: "full" | "reply-summary"; deleteAfter?: boolean }) {
-    if (!currentSession?.messages.length || !bookId) return;
-    if (!branchReady || branchEnsuring) {
-      toast({ title: "Copilot branch is not ready", description: branchError ?? `Waiting for branch ${branch}.`, variant: "destructive" });
+    if (!currentSession?.messages.length || !user || !accessToken) return;
+    const sourceSessionId = currentSession.id;
+    const resolved = resolveChatNoteDestination(currentSession, sessionContext);
+    if (!resolved) {
+      toast({ title: t("assistant.toastNoNoteTarget"), variant: "destructive" });
       return;
     }
-    const book = settings.books.find((entry) => entry.id === bookId);
+    const destination = resolved.destination;
+    const book = settings.books.find((entry) => entry.id === destination.bookId && entry.owner === destination.owner && entry.repo === destination.repo);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) {
       toast({ title: t("assistant.toastNoBookToken"), variant: "destructive" });
       return;
     }
-    const booksState = useBooksStore.getState();
-    const routeContext = await loadWriterContext(location.pathname, settings, settings.books, booksState.structures, booksState.workingBranches, branch);
-    if (!routeContext.noteTargetPath) {
-      toast({ title: t("assistant.toastNoNoteTarget"), variant: "destructive" });
-      return;
-    }
+    const language = settings.ui.language;
+    const warning = resolved.legacyOrCrossBook
+      ? language === "it" ? "La chat non appartiene al libro attualmente aperto o non ha una provenienza salvata. Conferma esplicitamente la destinazione." : "This chat does not belong to the currently open book or has no saved provenance. Explicitly confirm the destination."
+      : language === "it" ? "Conferma la destinazione esatta della nota." : "Confirm the exact note destination.";
+    const destinationLabel = `${book.name} (${destination.owner}/${destination.repo})\n${language === "it" ? "Ramo" : "Branch"}: ${destination.branch}\n${language === "it" ? "Percorso" : "Path"}: ${destination.noteTargetPath}`;
+    if (!window.confirm(`${warning}\n\n${destinationLabel}`)) return;
     const latestReply = [...currentSession.messages].reverse().find((message) => message.role === "assistant" && message.text.trim());
     let noteBody = "";
     if (options.mode === "full") {
@@ -948,19 +1020,53 @@ export function AssistantPanel() {
       noteBody = [`**Chat:** ${currentSession.title}`, "", summary.trim()].join("\n");
     }
     setBusy(true);
+    let retired = false;
     try {
-      await appendAssistantNote({
-        token,
-        owner: book.owner,
-        repo: book.repo,
-        branch: routeContext.branch ?? branch,
-        path: routeContext.noteTargetPath,
-        noteBody,
-      });
-      await refreshBookAfterMutation({ book, token, branch: routeContext.branch ?? branch });
-      if (options.deleteAfter) await deleteCurrentSavedChat();
+      await sessionSaveQueueRef.current.retire(sourceSessionId);
+      retired = true;
+      const latest = useAssistantStore.getState().currentSession;
+      if (!latest || latest.id !== sourceSessionId) throw new Error("The selected chat changed before it could be archived.");
+      const reusable = reusableChatNoteOperation(latest, options.mode, destination, Boolean(options.deleteAfter));
+      const operation = reusable ?? { id: crypto.randomUUID(), mode: options.mode, destination, status: "pending" as const, deleteAfter: Boolean(options.deleteAfter), updatedAt: new Date().toISOString() };
+
+      // A prior ambiguous delete may already have removed the cloud file. Never save it again before retrying deletion.
+      if (!(options.deleteAfter && (operation.status === "note-saved" || operation.status === "delete-failed"))) {
+        const pending = { ...latest, noteSaveOperation: { ...operation, status: "pending" as const, updatedAt: new Date().toISOString() } };
+        const pendingHandle = await saveAssistantSession(user.provider, accessToken, pending);
+        useAssistantStore.getState().setCurrentSession({ ...pending, ...pendingHandle });
+        await appendAssistantNote({
+          token,
+          owner: book.owner,
+          repo: book.repo,
+          branch: destination.branch,
+          path: destination.noteTargetPath,
+          noteBody,
+          idempotencyKey: operation.id,
+        });
+        const noteSaved = { ...useAssistantStore.getState().currentSession!, noteSaveOperation: { ...operation, status: options.deleteAfter ? "note-saved" as const : "complete" as const, updatedAt: new Date().toISOString() } };
+        const savedHandle = await saveAssistantSession(user.provider, accessToken, noteSaved);
+        useAssistantStore.getState().setCurrentSession({ ...noteSaved, ...savedHandle });
+      }
+      await refreshBookAfterMutation({ book, token, branch: destination.branch });
+      if (options.deleteAfter) {
+        const saved = useAssistantStore.getState().currentSession;
+        if (saved?.fileId) await deleteAssistantSession(user.provider, accessToken, saved.fileId, cloudAccountAbortRef.current.signal);
+        const state = useAssistantStore.getState();
+        state.setSessions(state.sessions.filter((entry) => entry.id !== sourceSessionId && entry.fileId !== saved?.fileId));
+        state.setCurrentSession(null);
+      } else {
+        sessionSaveQueueRef.current.resume(sourceSessionId);
+        retired = false;
+      }
       toast({ title: t("assistant.toastChatNoteSaved") });
     } catch (err) {
+      const state = useAssistantStore.getState();
+      if (options.deleteAfter && state.currentSession?.id === sourceSessionId && state.currentSession.noteSaveOperation?.status === "note-saved") {
+        state.setCurrentSession({ ...state.currentSession, noteSaveOperation: { ...state.currentSession.noteSaveOperation, status: "delete-failed", updatedAt: new Date().toISOString() } });
+        // Keep the queue retired: the delete response may be ambiguous, so autosave must not recreate the file.
+      } else if (retired) {
+        sessionSaveQueueRef.current.resume(sourceSessionId);
+      }
       toast({ title: t("assistant.toastChatNoteSaveFailed"), description: String(err), variant: "destructive" });
     } finally {
       setBusy(false);
@@ -1158,7 +1264,7 @@ export function AssistantPanel() {
       const localReply = await tryHandleLocalVoiceTool(trimmed, { context: routeContext, book, token, spokenMode: options?.spokenMode, operation: mediaOperation });
       if (!ownsRequest()) return null;
       if (localReply) {
-        const ownedReply = { ...localReply, branch: routeContext.branch, action: localReply.action ? { ...localReply.action, branch: routeContext.branch } : undefined };
+        const ownedReply = { ...localReply, branch: routeContext.branch, action: localReply.action ? { ...localReply.action, branch: localReply.action.branch ?? routeContext.branch } : undefined };
         useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, ownedReply] }));
         setOpen(true);
         return ownedReply;
@@ -1173,7 +1279,7 @@ export function AssistantPanel() {
         branch,
         token,
         history: latestSession.messages,
-        compactSummary: latestSession.compactSummary,
+        compactSummary: latestSession.archive?.summary ?? latestSession.compactSummary,
         compactedMessageCount: latestSession.compactedMessageCount,
         attachments: latestSession.attachments,
         attachmentTarget: options?.attachmentTarget,
@@ -1184,7 +1290,8 @@ export function AssistantPanel() {
         if (book) await refreshBookAfterMutation({ book, token, branch: routeContext.branch ?? branch });
       });
       if (!ownsRequest()) return null;
-      const ownedReply = { ...reply, branch: routeContext.branch, action: reply.action ? { ...reply.action, branch: reply.action.branch ?? routeContext.branch } : undefined };
+      const actionBranch = reply.action?.kind === "read-aloud" ? routeContext.structure?.loadedBranch ?? branch : routeContext.branch;
+      const ownedReply = { ...reply, branch: routeContext.branch, action: reply.action ? { ...reply.action, branch: reply.action.branch ?? actionBranch } : undefined };
       const finalReply = streamedMessageId ? { ...ownedReply, id: streamedMessageId } : ownedReply;
       if (streamedMessageId) {
         useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: ownedReply.text, action: ownedReply.action, branch: ownedReply.branch, mutation: ownedReply.mutation });
@@ -1196,7 +1303,8 @@ export function AssistantPanel() {
         await executeNavigationAction(reply.action);
       } else if (reply.action?.kind === "read-aloud" && book && token && isAssistantActionEnabled(reply.action)) {
         const readBranch = routeContext.structure?.loadedBranch ?? branch;
-        await speakReadAloud(reply.action, book, token, readBranch, mediaOperation);
+        const spokenAction = await speakReadAloud(ownedReply.action as ReadAloudAction, book, token, readBranch, mediaOperation);
+        if (spokenAction) useAssistantStore.getState().updateSessionMessage(session.id, finalReply.id, { action: spokenAction });
       }
       return finalReply;
     } catch (err) {
@@ -1238,10 +1346,11 @@ export function AssistantPanel() {
     // No-LLM read-aloud: "leggi questo paragrafo", "read chapter 3".
     const readAction = resolveReadAloudAction(prompt, input.context, input.book.id);
     if (readAction && isAssistantActionEnabled(readAction)) {
-      const spoke = await speakReadAloud(readAction, input.book, input.token, input.context.structure.loadedBranch, input.operation);
-      if (!spoke) return makeAssistantReply(t("assistant.readTargetEmpty"));
+      const sourceAction = { ...readAction, branch: input.context.structure.loadedBranch };
+      const spokenAction = await speakReadAloud(sourceAction, input.book, input.token, sourceAction.branch, input.operation);
+      if (!spokenAction) return makeAssistantReply(t("assistant.readTargetEmpty"));
       const reply = makeAssistantReply(t("assistant.readingTarget", { title: readAction.title }));
-      reply.action = readAction;
+      reply.action = spokenAction;
       return reply;
     }
 
@@ -1255,26 +1364,41 @@ export function AssistantPanel() {
     token: string,
     readBranch: string,
     requestedOperation?: MediaOperation,
-  ): Promise<boolean> {
+  ): Promise<ReadAloudAction | null> {
     const operation = requestedOperation ?? (voiceModeRef.current ? currentMediaOperation() : beginMediaOperation());
-    if (!ownsMediaOperation(operation.generation, operation.signal)) return false;
+    if (!ownsMediaOperation(operation.generation, operation.signal)) return null;
     const raws = await Promise.all(action.paths.map((path) => loadFileContent(token, book.owner, book.repo, path, readBranch)));
-    if (!ownsMediaOperation(operation.generation, operation.signal)) return false;
-    const text = raws
-      .map((raw) => (action.includeFrontmatter ? raw.trim() : stripFrontmatterForSpeech(raw)))
-      .filter(Boolean)
-      .join("\n\n");
-    if (!text.trim()) return false;
+    if (!ownsMediaOperation(operation.generation, operation.signal)) return null;
+    const documents = await Promise.all(raws.map(async (raw, index) => {
+      const text = action.includeFrontmatter ? raw.trim() : stripFrontmatterForSpeech(raw);
+      const source = {
+        bookId: book.id,
+        owner: book.owner,
+        repo: book.repo,
+        branch: readBranch,
+        path: action.paths[index],
+        sourceHash: await sha256Text(raw),
+        sourceContent: raw,
+      };
+      const segments = splitIntoStrofe(text);
+      return { text, segments, source, sources: segments.map(() => source) };
+    }));
+    const text = documents.map((document) => document.text).filter(Boolean).join("\n\n");
+    const segments = documents.flatMap((document) => document.segments);
+    const sources = documents.flatMap((document) => document.sources);
+    if (!text.trim()) return null;
+    const sourceRevisions = Object.fromEntries(documents.map((document, index) => [action.paths[index], document.source.sourceHash]));
+    const boundAction = bindReadAloudActionProvenance(action, { owner: book.owner, repo: book.repo, branch: readBranch, sourceRevisions });
     localAudioHandledRef.current = true;
     setVoiceStatus("speaking");
-    const controller = await readText(text, { operation });
-    if (!controller) return false;
+    const controller = await readText(text, { operation, segments, sources });
+    if (!controller) return null;
     if (!ownsMediaOperation(operation.generation, operation.signal)) {
       controller.stop();
-      return false;
+      return null;
     }
     localAudioDoneRef.current = controller.done;
-    return true;
+    return boundAction;
   }
 
   /** Re-run a read-aloud action attached to a rendered message (manual "play" button). */
@@ -1283,13 +1407,16 @@ export function AssistantPanel() {
     if (!message?.action || message.action.kind !== "read-aloud") return;
     const action = message.action;
     if (!requireAssistantActionEnabled(action)) return;
-    const book = settings.books.find((entry) => entry.id === action.bookId);
+    const source = readAloudReplaySource(action);
+    const book = source ? settings.books.find((entry) => entry.id === source.bookId && entry.owner === source.owner && entry.repo === source.repo) : undefined;
     const token = book ? resolveBookToken(book, settings) : "";
-    if (!book || !token) return;
-    const readBranch = structures[action.bookId]?.loadedBranch ?? branch;
+    if (!source || !book || !token) {
+      toast({ title: t("assistant.rewriteSourceChanged") });
+      return;
+    }
     localAudioHandledRef.current = false;
-    const spoke = await speakReadAloud(action, book, token, readBranch);
-    if (!spoke) toast({ title: t("assistant.readTargetEmpty") });
+    const spokenAction = await speakReadAloud(action, book, token, source.branch);
+    if (!spokenAction) toast({ title: t("assistant.readTargetEmpty") });
   }
 
   function makeAssistantReply(text: string): AssistantMessage {
@@ -1342,6 +1469,38 @@ export function AssistantPanel() {
     return liveStrofeRef.current.slice(window.from, window.to + 1).join(" ").trim();
   }
 
+  function activeLiveVoiceRewriteContext(window: { from: number; to: number }): LiveVoiceRewriteContext | null {
+    const session = useAssistantStore.getState().currentSession;
+    const activeBookId = activeBookIdRef.current;
+    const activeBranch = activeBranchRef.current;
+    const book = activeBookId ? settingsRef.current.books.find((entry) => entry.id === activeBookId) : undefined;
+    const selected = liveStrofeSourcesRef.current.slice(window.from, window.to + 1);
+    const source = selected[0];
+    if (!session || !book || !source || selected.length !== window.to - window.from + 1) return null;
+    if (book.id !== source.bookId || book.owner !== source.owner || book.repo !== source.repo || activeBranch !== source.branch) return null;
+    if (!activeRouteContainsSource(source.path)) return null;
+    if (selected.some((entry) => !entry || entry.bookId !== source.bookId || entry.owner !== source.owner || entry.repo !== source.repo || entry.branch !== source.branch || entry.path !== source.path || entry.sourceHash !== source.sourceHash)) return null;
+    return {
+      sessionId: session.id,
+      pathname: activePathnameRef.current,
+      bookId: book.id,
+      owner: book.owner,
+      repo: book.repo,
+      branch: activeBranch,
+      path: source.path,
+      sourceHash: source.sourceHash,
+    };
+  }
+
+  function activeRouteContainsSource(path: string): boolean {
+    if (!("bookId" in route) || route.bookId !== activeBookIdRef.current || !("chapterId" in route)) return false;
+    const structure = structures[route.bookId];
+    const chapter = structure?.chapters.find((entry) => entry.slug === route.chapterId);
+    if (!chapter) return false;
+    if ("paragraphNum" in route) return chapter.paragraphs.find((entry) => String(entry.number) === route.paragraphNum)?.path === path;
+    return path === `${chapter.path}/chapter.md` || chapter.paragraphs.some((entry) => entry.path === path);
+  }
+
   /** Handle in-memory strofe commands (repeat / quote / rewrite / synonym / confirm). */
   async function tryHandleStrofaCommand(prompt: string, operation?: MediaOperation): Promise<AssistantMessage | null> {
     if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
@@ -1353,15 +1512,15 @@ export function AssistantPanel() {
       const no = /\b(no|annulla|lascia|cancel|keep|stop)\b/.test(lower);
       if (yes) return applyPendingRewrite(operation);
       if (no) {
-        pendingRewriteRef.current = null;
+        pendingRewriteRef.current = resolveLiveVoiceRewrite(pendingRewriteRef.current, "reject").pending;
         return makeAssistantReply(t("assistant.rewriteCancelled"));
       }
       // Ambiguous → ask the cheap "simple-tasks" model with a forced tool to decide.
-      const decision = await classifyConfirmationRouted(settings, prompt);
+      const decision = await classifyConfirmationRouted(settings, prompt, operation?.signal);
       if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
       if (decision === "yes") return applyPendingRewrite(operation);
       if (decision === "no") {
-        pendingRewriteRef.current = null;
+        pendingRewriteRef.current = resolveLiveVoiceRewrite(pendingRewriteRef.current, "reject").pending;
         return makeAssistantReply(t("assistant.rewriteCancelled"));
       }
       // Still unclear → fall through to other handlers/LLM.
@@ -1406,18 +1565,31 @@ export function AssistantPanel() {
   ): Promise<AssistantMessage | null> {
     const original = strofeSlice(window);
     if (!original) return makeAssistantReply(t("assistant.strofaEmpty"));
+    const snapshot = captureLiveVoiceRewriteSnapshot({
+      active: activeLiveVoiceRewriteContext(window),
+      sources: liveStrofeSourcesRef.current,
+      from: window.from,
+      to: window.to,
+      original,
+    });
+    if (!snapshot) return makeAssistantReply(t("assistant.rewritePersistentUnavailable"));
     const langName = settings.ui.language === "it" ? "Italian" : "English";
     const task = opts.synonymWord
       ? `Rewrite the passage replacing the word "${opts.synonymWord}" with a fitting synonym, keeping everything else identical in meaning and tone.`
       : `Rewrite the passage following this instruction: "${opts.instruction}". Keep the same language, meaning and roughly the same length.`;
     setVoiceStatus("thinking");
     startWaitingTone();
-    let rewritten = "";
+    let generated: Awaited<ReturnType<typeof generateLiveVoiceRewrite>>;
     try {
-      rewritten = (await completeTextRouted(settings, [
-        { role: "system", content: `You are a prose editor. ${task} Reply with ONLY the rewritten passage in ${langName}, no quotes, no preamble.` },
-        { role: "user", content: original },
-      ], "default", { label: "live-voice:rewrite", signal: operation?.signal })).trim();
+      generated = await generateLiveVoiceRewrite({
+        snapshot,
+        generate: () => completeTextRouted(settings, [
+          { role: "system", content: `You are a prose editor. ${task} Reply with ONLY the rewritten passage in ${langName}, no quotes, no preamble.` },
+          { role: "user", content: original },
+        ], "default", { label: "live-voice:rewrite", signal: operation?.signal }),
+        getActiveContext: () => activeLiveVoiceRewriteContext(window),
+        split: splitIntoStrofe,
+      });
       if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
     } catch (err) {
       if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
@@ -1427,31 +1599,71 @@ export function AssistantPanel() {
     }
     if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
     stopWaitingTone();
-    if (!rewritten) return makeAssistantReply(t("assistant.rewriteFailed", { error: "empty" }));
-    const newSegments = splitIntoStrofe(rewritten);
-    pendingRewriteRef.current = { from: window.from, to: window.to, segments: newSegments };
-    const spoken = `${t("assistant.rewriteProposal")} ${rewritten} ${t("assistant.rewriteConfirmAsk")}`;
+    if (!generated) return makeAssistantReply(t("assistant.rewriteSourceChanged"));
+    pendingRewriteRef.current = generated.pending;
+    const spoken = `${t("assistant.rewriteProposal")} ${generated.rewritten} ${t("assistant.rewriteConfirmAsk", { path: generated.pending.path })}`;
     localAudioHandledRef.current = true;
     setVoiceStatus("speaking");
-    const controller = await readText(spoken, { operation });
+    const controller = await readText(spoken, { operation, trackLiveSource: false });
     if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
     localAudioDoneRef.current = controller?.done ?? Promise.resolve();
     return makeAssistantReply(spoken);
   }
 
-  /** Replace the proposed strofe in memory and resume reading from there. */
+  /** Persist the confirmed source rewrite after revalidating its complete provenance. */
   async function applyPendingRewrite(operation?: MediaOperation): Promise<AssistantMessage | null> {
     if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
     const pending = pendingRewriteRef.current;
-    pendingRewriteRef.current = null;
     if (!pending) return makeAssistantReply(t("assistant.rewriteCancelled"));
+    pendingRewriteRef.current = resolveLiveVoiceRewrite(pending, "reject").pending;
+    const activeBookId = activeBookIdRef.current;
+    const book = activeBookId ? settingsRef.current.books.find((entry) => entry.id === activeBookId) : undefined;
+    const token = book ? resolveBookToken(book, settingsRef.current) : "";
+    if (!book || !token) return makeAssistantReply(t("assistant.rewriteSourceChanged"));
+    let persistence: Awaited<ReturnType<typeof persistLiveVoiceRewrite>>;
+    try {
+      persistence = await persistLiveVoiceRewrite({
+        pending,
+        signal: operation?.signal ?? currentMediaOperation().signal,
+        getActiveContext: () => activeLiveVoiceRewriteContext({ from: pending.from, to: pending.to }),
+        readSource: async (signal) => (await readFileWithSha(token, book.owner, book.repo, pending.branch, pending.path, signal)).content,
+        hashText: sha256Text,
+        preparePersistence: (signal) => resolveRepositoryHeadForMutation({ token, book, branch: pending.branch, signal }),
+        persist: async (expectedRemoteHeadSha, content, expectedSourceHash, signal) => {
+          await commitAndPushTextFileMutation({
+            token,
+            book,
+            branch: pending.branch,
+            expectedRemoteHeadSha,
+            mutations: [{ path: pending.path, content, expectedCurrentHash: expectedSourceHash }],
+            message: `Apply confirmed live-voice rewrite to ${pending.path}`,
+            signal,
+          });
+        },
+      });
+    } catch (error) {
+      if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
+      return makeAssistantReply(error instanceof RepositoryConflictError ? t("assistant.rewriteSourceChanged") : t("assistant.rewriteFailed", { error: String(error) }));
+    }
+    if (persistence.status === "conflict") return makeAssistantReply(t("assistant.rewriteSourceChanged"));
+    await refreshBookAfterMutation({ book, token, branch: pending.branch });
+    const activeAfterPersistence = activeLiveVoiceRewriteContext({ from: pending.from, to: pending.to });
+    if (!activeAfterPersistence || !liveVoiceRewriteMatches(pending, activeAfterPersistence)) return makeAssistantReply(t("assistant.rewriteApplied"));
     const segments = [...liveStrofeRef.current];
+    const sources = [...liveStrofeSourcesRef.current];
     segments.splice(pending.from, pending.to - pending.from + 1, ...pending.segments);
+    const nextHash = await sha256Text(persistence.content);
+    const nextSource = { bookId: pending.bookId, owner: pending.owner, repo: pending.repo, branch: pending.branch, path: pending.path, sourceHash: nextHash, sourceContent: persistence.content };
+    for (let index = 0; index < sources.length; index += 1) {
+      if (sources[index]?.path === pending.path) sources[index] = nextSource;
+    }
+    sources.splice(pending.from, pending.to - pending.from + 1, ...pending.segments.map(() => nextSource));
     liveStrofeRef.current = segments;
+    liveStrofeSourcesRef.current = sources;
     setLiveStrofeCount(segments.length);
     localAudioHandledRef.current = true;
     setVoiceStatus("speaking");
-    const controller = await readText("", { segments, startIndex: pending.from, operation });
+    const controller = await readText("", { segments, sources, startIndex: pending.from, operation });
     if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
     localAudioDoneRef.current = controller?.done ?? Promise.resolve();
     return makeAssistantReply(t("assistant.rewriteApplied"));
@@ -1506,6 +1718,7 @@ export function AssistantPanel() {
     const expectedIdentity = accountIdentity(user);
     const signal = cloudAccountAbortRef.current.signal;
     try {
+      if (useAssistantStore.getState().currentSession?.id === session.id) await sessionSaveQueueRef.current.retire(session.id);
       await deleteAssistantSession(user.provider, accessToken, fileId, signal);
       if (signal.aborted || !isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
       const state = useAssistantStore.getState();
@@ -1516,6 +1729,7 @@ export function AssistantPanel() {
       }
       toast({ title: t("assistant.toastChatDeleted") });
     } catch (err) {
+      sessionSaveQueueRef.current.resume(session.id);
       if (!signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
         toast({ title: t("assistant.toastDeleteChatFailed"), description: String(err), variant: "destructive" });
       }
@@ -2188,7 +2402,7 @@ export function AssistantPanel() {
               <div className="flex flex-wrap gap-2 border-b px-3 py-2">
                 {currentSession.attachments.map((attachment) => (
                   <Badge key={attachment.id} variant="secondary" className="gap-1 pr-1">
-                    {attachment.name}
+                    {attachment.name}{attachment.truncated ? " (truncated)" : ""}
                     <button type="button" onClick={() => removeAttachment(attachment.id)} className="rounded p-0.5 hover:bg-black/10"><X className="h-3 w-3" /></button>
                   </Badge>
                 ))}
@@ -2196,7 +2410,8 @@ export function AssistantPanel() {
             ) : null}
 
             <ScrollArea className="min-h-0 flex-1 px-3 py-4">
-              {currentSession?.compactSummary && <div className="mb-3 rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground whitespace-pre-wrap"><p className="mb-1 font-medium text-foreground">{t("assistant.compactionSummary")}</p>{currentSession.compactSummary}</div>}
+              {autosaveStatus && autosaveStatus.sessionId === currentSession?.id && <div role="status" className="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-100"><p className="font-medium">{autosaveStatus.kind === "retrying" ? t("assistant.autosaveRetrying", { attempt: autosaveStatus.attempt }) : t("assistant.autosaveStopped")}</p><p className="mt-1 break-words opacity-80">{autosaveStatus.message}</p></div>}
+              {currentSession && hasAssistantSessionArchiveContent(currentSession) && <div className="mb-3 rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground whitespace-pre-wrap"><p className="mb-1 font-medium text-foreground">{t("assistant.compactionSummary", { count: currentSession.archive?.messageCount ?? currentSession.compactedMessageCount })}</p>{currentSession.compactSummary}<AssistantArchiveProvenance session={currentSession} />{currentSession.archive?.attachments.map((attachment) => <div key={attachment.id} className="mt-1 font-mono">{attachment.name}</div>)}</div>}
               {messagesView}
             </ScrollArea>
 

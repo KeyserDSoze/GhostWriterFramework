@@ -5,12 +5,14 @@ import { copilotToolRegistry, isCopilotToolEnabled } from "@/assistant/tools/reg
 import type { AssistantMessage } from "@/assistant/store";
 import { isExplicitNavigationPrompt, isReaderEvaluationsNavigationPrompt, matchesToolKeyword } from "@/assistant/orchestratorRules";
 import { classifyMutationIntent, type MutationIntent } from "@/assistant/mutationIntent";
+import type { CopilotToolContractResult } from "@/assistant/tools/runtimeContract";
 
 export interface OrchestratorToolContext {
   prompt: string;
   lowered: string;
   settings: AppSettings;
   spokenMode?: boolean;
+  evaluateContract?: (tool: ReturnType<typeof copilotToolRegistry.list>[number]) => CopilotToolContractResult;
 }
 
 export type OrchestratorHandler = () => Promise<AssistantMessage>;
@@ -21,6 +23,7 @@ export interface OrchestratorToolMatch {
   handlerId: string;
   enabled: boolean;
   mutationIntent?: MutationIntent;
+  missingRequirements: string[];
 }
 
 
@@ -28,13 +31,14 @@ export function isCapabilityQuestion(prompt: string): boolean {
   return /\b(cosa puoi fare|che strumenti hai|come mi puoi aiutare|quali funzionalita supporti|quali funzionalità supporti|what can you do|what tools do you have|how can you help)\b/i.test(prompt);
 }
 
-export function buildCapabilitiesMessage(prompt: string, settings: AppSettings, availableHandlerIds: ReadonlySet<string>): AssistantMessage {
+export function buildCapabilitiesMessage(prompt: string, settings: AppSettings, availableHandlerIds: ReadonlySet<string>, evaluateContract?: OrchestratorToolContext["evaluateContract"]): AssistantMessage {
   ensureBuiltinCopilotToolsRegistered();
   const language = capabilityMessageLanguage(prompt, settings);
   const tools = copilotToolRegistry.list().filter((tool) => (
     isCopilotToolEnabled(settings, tool)
     && Boolean(tool.handlerId)
     && availableHandlerIds.has(tool.handlerId!)
+    && (!evaluateContract || evaluateContract(tool).available)
   ));
   const grouped = new Map<string, string[]>();
   for (const tool of tools) {
@@ -53,7 +57,7 @@ export function buildCapabilitiesMessage(prompt: string, settings: AppSettings, 
 
 export function chooseToolHandlerId(context: OrchestratorToolContext, availableHandlerIds: Set<string>): string | null {
   const match = chooseToolMatch(context, availableHandlerIds);
-  return match?.enabled && match.mutationIntent !== "ambiguous" ? match.handlerId : null;
+  return match?.enabled && (!match.mutationIntent || match.mutationIntent === "positive") ? match.handlerId : null;
 }
 
 export function chooseToolMatch(context: OrchestratorToolContext, availableHandlerIds: Set<string>): OrchestratorToolMatch | null {
@@ -61,7 +65,7 @@ export function chooseToolMatch(context: OrchestratorToolContext, availableHandl
   const prompt = context.lowered;
   if (isReaderEvaluationsNavigationPrompt(prompt) && availableHandlerIds.has("open-reader-evaluations")) {
     const tool = copilotToolRegistry.get("open-reader-evaluations");
-    if (tool?.handlerId) return { toolId: tool.id, handlerId: tool.handlerId, enabled: isCopilotToolEnabled(context.settings, tool) };
+    if (tool?.handlerId) return { toolId: tool.id, handlerId: tool.handlerId, enabled: isCopilotToolEnabled(context.settings, tool), missingRequirements: context.evaluateContract?.(tool).missing ?? [] };
   }
   let best: { tool: ReturnType<typeof copilotToolRegistry.list>[number]; score: number } | null = null;
   for (const tool of copilotToolRegistry.list()) {
@@ -75,8 +79,6 @@ export function chooseToolMatch(context: OrchestratorToolContext, availableHandl
       if (matchesToolKeyword(prompt, keyword)) score += Math.max(1, keyword.length);
     }
     if (score <= 0) continue;
-    const mutationIntent = tool.mutatesData ? classifyMutationIntent(prompt, tool.id) : undefined;
-    if (mutationIntent === "negated" || mutationIntent === "read-only") continue;
     // Prefer local/non-LLM tools on ties to reduce token usage.
     if (!best || score > best.score || (score === best.score && isBetterTie(tool, best.tool, context.settings))) {
       best = { tool, score };
@@ -87,6 +89,7 @@ export function chooseToolMatch(context: OrchestratorToolContext, availableHandl
     toolId: best.tool.id,
     handlerId: best.tool.handlerId,
     enabled: isCopilotToolEnabled(context.settings, best.tool),
+    missingRequirements: context.evaluateContract?.(best.tool).missing ?? [],
     mutationIntent: best.tool.mutatesData ? classifyMutationIntent(prompt, best.tool.id) : undefined,
   };
 }

@@ -26,6 +26,7 @@ import {
   updateLocalRepositoryHead,
   writeLocalBinary,
   writeLocalText,
+  type LocalCommitFile,
   type LocalRepositoryMeta,
   type LocalRepositoryFile,
 } from "@/repository/localRepository";
@@ -46,6 +47,7 @@ export interface RemoteStatusResult {
 export interface PushResult {
   commitSha: string;
   files: number;
+  recoveryPaths?: string[];
 }
 
 export class RemoteHeadMismatchError extends Error {
@@ -64,6 +66,7 @@ export interface PushLocalCommitsInput {
   owner?: string;
   repo?: string;
   branch?: string;
+  signal?: AbortSignal;
 }
 
 export interface SyncResult {
@@ -412,6 +415,7 @@ async function removePulledFile(repoId: string, path: string): Promise<void> {
 }
 
 export async function pushLocalCommits(input: PushLocalCommitsInput): Promise<PushResult> {
+  input.signal?.throwIfAborted();
   const exactRepositorySupplied = Boolean(input.owner || input.repo || input.branch);
   if (exactRepositorySupplied && !(input.owner && input.repo && input.branch)) {
     throw new Error("owner, repo, and branch must all be supplied for an exact repository push.");
@@ -421,41 +425,58 @@ export async function pushLocalCommits(input: PushLocalCommitsInput): Promise<Pu
     : input.owner && input.repo && input.branch
       ? await getLocalRepository(input.owner, input.repo, input.branch)
       : await getLocalRepositoryByBook(input.bookId);
+  input.signal?.throwIfAborted();
   if (!meta) throw new Error("Local repository is not ready.");
   if (meta.bookId !== input.bookId) throw new Error("The selected local repository does not belong to this book.");
   if (input.owner && (meta.owner !== input.owner || meta.repo !== input.repo || meta.branch !== input.branch)) {
     throw new Error("The selected local repository does not match the requested owner, repository, and branch.");
   }
   const dirty = await listDirtyLocalFiles(meta.id);
+  input.signal?.throwIfAborted();
   if (dirty.length) throw new Error("Commit local changes before pushing.");
   const commits = await listUnpushedLocalCommits(meta.id);
+  input.signal?.throwIfAborted();
   if (!commits.length) throw new Error("No local commits to push.");
 
   const octokit = new Octokit({ auth: input.token });
-  const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
+  const request = { request: { signal: input.signal } };
+  const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, ...request });
+  input.signal?.throwIfAborted();
   const remoteHeadSha = ref.data.object.sha;
   if (input.expectedRemoteHeadSha && remoteHeadSha !== input.expectedRemoteHeadSha) {
     throw new RemoteHeadMismatchError(input.expectedRemoteHeadSha, remoteHeadSha);
   }
-  const baseCommit = await octokit.rest.git.getCommit({ owner: meta.owner, repo: meta.repo, commit_sha: remoteHeadSha });
+  const baseCommit = await octokit.rest.git.getCommit({ owner: meta.owner, repo: meta.repo, commit_sha: remoteHeadSha, ...request });
+  input.signal?.throwIfAborted();
   const files = await listAllLocalFiles(meta.id);
+  input.signal?.throwIfAborted();
   const fileByPath = new Map(files.map((file) => [file.path, file]));
+  const committedByPath = new Map<string, LocalCommitFile>();
+  for (const commit of commits) for (const file of commit.files) committedByPath.set(file.path, file);
   const changedPaths = new Map<string, LocalRepositoryFile | null>();
-  for (const commit of commits) {
-    for (const file of commit.files) changedPaths.set(file.path, file.status === "deleted" ? null : fileByPath.get(file.path) ?? null);
+  for (const file of committedByPath.values()) {
+    const current = fileByPath.get(file.path);
+    const matchesCommit = current?.committed === true
+      && current.currentHash === file.hash
+      && current.kind === file.kind
+      && (file.status === "deleted" ? current.status === "deleted" : current.status === "clean");
+    if (!matchesCommit) throw new Error(`Local file changed after it was committed: ${file.path}`);
+    changedPaths.set(file.path, file.status === "deleted" ? null : current);
   }
 
   // A deletion entry whose path is a directory (or missing) on the remote tree
   // triggers GitRPC::BadObjectState. Only keep deletions that target an actual blob.
   const remoteBlobPaths = new Set<string>();
   try {
-    const baseTree = await octokit.rest.git.getTree({ owner: meta.owner, repo: meta.repo, tree_sha: baseCommit.data.tree.sha, recursive: "1" });
+    const baseTree = await octokit.rest.git.getTree({ owner: meta.owner, repo: meta.repo, tree_sha: baseCommit.data.tree.sha, recursive: "1", ...request });
     for (const entry of baseTree.data.tree ?? []) {
       if (entry.type === "blob" && entry.path) remoteBlobPaths.add(entry.path);
     }
   } catch {
+    input.signal?.throwIfAborted();
     // If we cannot read the base tree, fall back to attempting all deletions.
   }
+  input.signal?.throwIfAborted();
 
   const pushedShas: Record<string, string | null> = {};
   const treeEntries = [] as Array<{ path: string; mode: "100644"; type: "blob"; sha: string | null }>;
@@ -470,23 +491,30 @@ export async function pushLocalCommits(input: PushLocalCommitsInput): Promise<Pu
       pushedShas[path] = null;
       continue;
     }
-    const blob = await createBlobForFile(octokit, meta, file);
+    const blob = await createBlobForFile(octokit, meta, file, input.signal);
     treeEntries.push({ path, mode: "100644", type: "blob", sha: blob });
     pushedShas[path] = blob;
   }
   if (treeEntries.length === 0) {
     // Nothing valid to push (e.g. only stale directory-deletions). Mark commits
     // pushed against the current remote head so the local state settles.
-    await markLocalCommitsPushed(meta.id, commits.map((entry) => entry.id), remoteHeadSha, pushedShas);
-    await addLocalRepoLog(meta.id, "push", `No pushable changes; settled local commits at ${remoteHeadSha.slice(0, 7)}`);
-    return { commitSha: remoteHeadSha, files: 0 };
+    const settlement = await markLocalCommitsPushed(meta.id, commits.map((entry) => entry.id), remoteHeadSha, pushedShas);
+    await addLocalRepoLog(meta.id, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
+      ? `Push settled with newer local edits preserved for recovery: ${settlement.skippedPaths.join(", ")}`
+      : `No pushable changes; settled local commits at ${remoteHeadSha.slice(0, 7)}`);
+    return { commitSha: remoteHeadSha, files: 0, ...(settlement.skippedPaths.length ? { recoveryPaths: settlement.skippedPaths } : {}) };
   }
-  const tree = await octokit.rest.git.createTree({ owner: meta.owner, repo: meta.repo, base_tree: baseCommit.data.tree.sha, tree: treeEntries });
-  const commit = await octokit.rest.git.createCommit({ owner: meta.owner, repo: meta.repo, message: commits.map((entry) => entry.message).join("\n\n"), tree: tree.data.sha, parents: [remoteHeadSha] });
-  await octokit.rest.git.updateRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, sha: commit.data.sha });
-  await markLocalCommitsPushed(meta.id, commits.map((entry) => entry.id), commit.data.sha, pushedShas);
-  await addLocalRepoLog(meta.id, "push", `Pushed ${treeEntries.length} files to ${commit.data.sha.slice(0, 7)} (local wins)`);
-  return { commitSha: commit.data.sha, files: treeEntries.length };
+  input.signal?.throwIfAborted();
+  const tree = await octokit.rest.git.createTree({ owner: meta.owner, repo: meta.repo, base_tree: baseCommit.data.tree.sha, tree: treeEntries, ...request });
+  input.signal?.throwIfAborted();
+  const commit = await octokit.rest.git.createCommit({ owner: meta.owner, repo: meta.repo, message: commits.map((entry) => entry.message).join("\n\n"), tree: tree.data.sha, parents: [remoteHeadSha], ...request });
+  input.signal?.throwIfAborted();
+  await octokit.rest.git.updateRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, sha: commit.data.sha, ...request });
+  const settlement = await markLocalCommitsPushed(meta.id, commits.map((entry) => entry.id), commit.data.sha, pushedShas);
+  await addLocalRepoLog(meta.id, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
+    ? `Push completed with newer local edits preserved for recovery: ${settlement.skippedPaths.join(", ")}`
+    : `Pushed ${treeEntries.length} files to ${commit.data.sha.slice(0, 7)} (local wins)`);
+  return { commitSha: commit.data.sha, files: treeEntries.length, ...(settlement.skippedPaths.length ? { recoveryPaths: settlement.skippedPaths } : {}) };
 }
 
 export async function syncFullRepository(input: { bookId: string; token: string }): Promise<SyncResult> {
@@ -684,14 +712,17 @@ export async function overwriteRemoteWithLocal(input: { bookId: string; token: s
   return { commitSha: commit.data.sha, files: files.length };
 }
 
-async function createBlobForFile(octokit: Octokit, meta: LocalRepositoryMeta, file: LocalRepositoryFile): Promise<string> {
+async function createBlobForFile(octokit: Octokit, meta: LocalRepositoryMeta, file: LocalRepositoryFile, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   if (file.kind === "text") {
-    const result = await octokit.rest.git.createBlob({ owner: meta.owner, repo: meta.repo, content: file.text ?? "", encoding: "utf-8" });
+    const result = await octokit.rest.git.createBlob({ owner: meta.owner, repo: meta.repo, content: file.text ?? "", encoding: "utf-8", request: { signal } });
     return result.data.sha;
   }
   const bytes = file.blob ? new Uint8Array(await file.blob.arrayBuffer()) : new Uint8Array();
+  signal?.throwIfAborted();
   let binary = "";
   bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
-  const result = await octokit.rest.git.createBlob({ owner: meta.owner, repo: meta.repo, content: btoa(binary), encoding: "base64" });
+  signal?.throwIfAborted();
+  const result = await octokit.rest.git.createBlob({ owner: meta.owner, repo: meta.repo, content: btoa(binary), encoding: "base64", request: { signal } });
   return result.data.sha;
 }

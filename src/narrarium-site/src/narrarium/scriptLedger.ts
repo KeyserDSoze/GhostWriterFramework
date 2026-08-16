@@ -1,9 +1,11 @@
 import { Octokit } from "@octokit/rest";
+import { parseDocument, stringify } from "yaml";
 import { buildScriptLedgerDocument, SCRIPT_LEDGER_PATH, type ScriptLedgerSourceFile } from "narrarium/script-ledger";
 import { loadRemoteFileContentAtRef } from "@/github/githubClient";
 import { getLocalRepository, listLocalFiles } from "@/repository/localRepository";
-import { commitAndPushTextFileMutation, preflightRepositoryOperation, sha256Text } from "@/repository/safeRepositoryMutation";
+import { commitAndPushTextFileMutation, preflightRepositoryOperation, RepositoryConflictError, sha256Text } from "@/repository/safeRepositoryMutation";
 import type { BookEntry } from "@/types/settings";
+import { mergeManagedFrontmatter } from "@/assistant/immediateMutation";
 
 const isLedgerSource = (path: string) => path === SCRIPT_LEDGER_PATH || /^scripts\/.*\.md$/.test(path) || /^chapters\/.*\.md$/.test(path) || /^secrets\/[^/]+\.md$/.test(path);
 
@@ -33,13 +35,20 @@ export async function commitScriptWithCanonicalLedger(input: {
   branch: string;
   script: ScriptLedgerSourceFile;
   message: string;
+  expectedRemoteHeadSha?: string;
+  signal?: AbortSignal;
+  replace?: boolean;
 }): Promise<void> {
   const snapshot = await collectSources(input);
+  if (input.expectedRemoteHeadSha && snapshot.headSha !== input.expectedRemoteHeadSha) throw new RepositoryConflictError("The source branch changed while generating the script.");
   const byPath = new Map(snapshot.files.map((file) => [file.path, file.content]));
   const previousScript = byPath.get(input.script.path) ?? null;
+  if (previousScript !== null && !input.replace) throw new RepositoryConflictError(`File already exists: ${input.script.path}`, input.script.path);
   const previousLedger = byPath.get(SCRIPT_LEDGER_PATH) ?? null;
-  byPath.set(input.script.path, input.script.content);
+  const scriptContent = previousScript !== null ? mergeScriptFrontmatter(previousScript, input.script.content) : input.script.content;
+  byPath.set(input.script.path, scriptContent);
   const ledger = buildScriptLedgerDocument([...byPath].map(([path, content]) => ({ path, content })));
+  input.signal?.throwIfAborted();
   await commitAndPushTextFileMutation({
     token: input.token,
     book: input.book,
@@ -47,8 +56,19 @@ export async function commitScriptWithCanonicalLedger(input: {
     expectedRemoteHeadSha: snapshot.headSha,
     message: input.message,
     mutations: [
-      { path: input.script.path, content: input.script.content, expectedCurrentHash: previousScript === null ? null : await sha256Text(previousScript) },
+      { path: input.script.path, content: scriptContent, expectedCurrentHash: previousScript === null ? null : await sha256Text(previousScript) },
       { path: SCRIPT_LEDGER_PATH, content: ledger.content, expectedCurrentHash: previousLedger === null ? null : await sha256Text(previousLedger) },
     ],
   });
+}
+
+function mergeScriptFrontmatter(existingRaw: string, generatedRaw: string): string {
+  const parse = (raw: string) => {
+    const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
+    return match ? { frontmatter: (parseDocument(match[1]).toJSON() as Record<string, unknown>) ?? {}, body: match[2] } : { frontmatter: {}, body: raw };
+  };
+  const existing = parse(existingRaw);
+  const generated = parse(generatedRaw);
+  const frontmatter = mergeManagedFrontmatter(existing.frontmatter, generated.frontmatter, Object.keys(generated.frontmatter));
+  return `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${generated.body.replace(/^\n+/, "")}`;
 }

@@ -1,7 +1,7 @@
 import { parseDocument, stringify } from "yaml";
 import { completeToolRouted } from "@/assistant/router";
 import type { LlmRunMetadata } from "@/assistant/llm";
-import { createOrUpdateTextFile, deleteFile, readFileWithSha } from "@/github/githubClient";
+import { deleteFile, readFileWithSha } from "@/github/githubClient";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
 import {
   buildBookAuditPath,
@@ -18,6 +18,7 @@ import {
   type AuditSettings,
   type BookEntry,
 } from "@/types/settings";
+import { captureImmediateMutation, commitImmediateMutation, mergeManagedFrontmatter } from "@/assistant/immediateMutation";
 
 export type AuditScope = "book" | "chapter" | "paragraph";
 export type AuditSeverity = "critical" | "high" | "medium" | "low" | "informational";
@@ -176,6 +177,8 @@ interface AuditServiceBase {
   branch: string;
   structure: BookStructure;
   target: AuditTarget;
+  expectedRemoteHeadSha?: string;
+  signal?: AbortSignal;
 }
 
 export interface RunAuditInput extends AuditServiceBase {
@@ -811,8 +814,8 @@ export async function runAudit(input: RunAuditInput): Promise<AuditReport> {
   if (!auditSettings.enabled) throw new Error("Audit is disabled for this book.");
   const depth = input.depth ?? auditSettings.defaultDepth;
   const language = reportLanguage(input.structure, input.settings, auditSettings);
-  const previousFile = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, target.reportPath));
-  const previousReport = previousFile ? parseAuditReport(target.reportPath, previousFile.content) : null;
+  const reportSnapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path: target.reportPath, remoteHeadSha: input.expectedRemoteHeadSha });
+  const previousReport = reportSnapshot.content ? parseAuditReport(target.reportPath, reportSnapshot.content) : null;
   const previousFindings = new Map((previousReport?.findings ?? []).map((finding) => [finding.id, finding]));
   input.onProgress?.({ state: "preparingContext", completedCalls: 0, totalCalls: 0, detail: target.sourcePath });
   let context: AuditContext;
@@ -958,7 +961,10 @@ export async function runAudit(input: RunAuditInput): Promise<AuditReport> {
     };
     report.body = renderAuditBody(report);
     assertNotAborted(input.signal);
-    await createOrUpdateTextFile(input.token, input.book.owner, input.book.repo, input.branch, target.reportPath, serializeAuditReport(report), `Update ${target.scope} audit: ${target.title}`);
+    const generated = parseMarkdownDocument(serializeAuditReport(report));
+    const existingFrontmatter = reportSnapshot.content ? parseMarkdownDocument(reportSnapshot.content).frontmatter : {};
+    const content = renderMarkdownDocument(mergeManagedFrontmatter(existingFrontmatter, generated.frontmatter, Object.keys(generated.frontmatter)), generated.body);
+    await commitImmediateMutation({ token: input.token, book: input.book, branch: input.branch, snapshot: reportSnapshot, content, message: `Update ${target.scope} audit: ${target.title}`, signal: input.signal });
     input.onProgress?.({ state: "completed", completedCalls, totalCalls: completedCalls, currentPass: passCount, detail: target.reportPath });
     return report;
   } catch (error) {
@@ -1337,8 +1343,9 @@ export async function deleteAudit(input: AuditServiceBase): Promise<void> {
 
 export async function updateAuditFinding(input: AuditServiceBase & { findingId: string; status?: AuditFindingStatus; authorNote?: string }): Promise<AuditReport> {
   const target = resolveAuditTarget(input.structure, input.target);
-  const existing = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, target.reportPath);
-  const report = parseAuditReport(target.reportPath, existing.content);
+  const snapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path: target.reportPath, remoteHeadSha: input.expectedRemoteHeadSha });
+  if (!snapshot.content) throw new Error(`Audit report not found: ${target.reportPath}`);
+  const report = parseAuditReport(target.reportPath, snapshot.content);
   if (!report) throw new Error(`Invalid audit report: ${target.reportPath}`);
   const index = report.findings.findIndex((finding) => finding.id === input.findingId);
   if (index < 0) throw new Error(`Audit finding not found: ${input.findingId}`);
@@ -1352,8 +1359,20 @@ export async function updateAuditFinding(input: AuditServiceBase & { findingId: 
   };
   report.updatedAt = now;
   report.body = renderAuditBody(report);
-  await createOrUpdateTextFile(input.token, input.book.owner, input.book.repo, input.branch, target.reportPath, serializeAuditReport(report), `Update audit finding: ${current.description.slice(0, 72)}`);
+  const generated = parseMarkdownDocument(serializeAuditReport(report));
+  const existingFrontmatter = parseMarkdownDocument(snapshot.content).frontmatter;
+  const content = renderMarkdownDocument(mergeManagedFrontmatter(existingFrontmatter, generated.frontmatter, Object.keys(generated.frontmatter)), generated.body);
+  await commitImmediateMutation({ token: input.token, book: input.book, branch: input.branch, snapshot, content, message: `Update audit finding: ${current.description.slice(0, 72)}`, signal: input.signal });
   return report;
+}
+
+function parseMarkdownDocument(raw: string): { frontmatter: Record<string, unknown>; body: string } {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
+  return match ? { frontmatter: record(parseDocument(match[1]).toJSON()), body: match[2] } : { frontmatter: {}, body: raw };
+}
+
+function renderMarkdownDocument(frontmatter: Record<string, unknown>, body: string): string {
+  return `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${body.replace(/^\n+/, "")}`;
 }
 
 export { findOrphanAuditPaths };

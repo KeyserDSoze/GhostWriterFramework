@@ -1,3 +1,5 @@
+import { runWithCandidateTimeout } from "./executionLimits.ts";
+
 export interface CompletionCandidate { label: string; }
 
 export function isValidTextCompletion(value: unknown): boolean {
@@ -19,20 +21,21 @@ export class CompletionFallbackError extends Error {
   }
 }
 
-export async function executeCompletionFallback<T extends CompletionCandidate>(input: { candidates: T[]; run: (candidate: T) => Promise<string>; resetPartial?: () => void; signal?: AbortSignal }): Promise<string> {
+export async function executeCompletionFallback<T extends CompletionCandidate>(input: { candidates: T[]; run: (candidate: T, signal: AbortSignal) => Promise<string>; resetPartial?: () => void; signal?: AbortSignal; timeoutMs?: number | ((candidate: T) => number | undefined) }): Promise<string> {
   input.signal?.throwIfAborted();
   const failures: string[] = [];
   for (const candidate of input.candidates) {
     input.signal?.throwIfAborted();
     input.resetPartial?.();
     try {
-      const value = await input.run(candidate);
+      const configuredTimeout = typeof input.timeoutMs === "function" ? input.timeoutMs(candidate) : input.timeoutMs;
+      const value = await runWithCandidateTimeout((signal) => input.run(candidate, signal), input.signal, configuredTimeout);
       input.signal?.throwIfAborted();
       if (!isValidTextCompletion(value)) throw new Error(value.trim() ? "filtered or invalid response" : "empty response");
       return value;
     } catch (error) {
       input.resetPartial?.();
-      if (input.signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+      if (input.signal?.aborted) throw error;
       failures.push(`${diagnostic(candidate.label)}: ${diagnostic(error)}`);
     }
   }

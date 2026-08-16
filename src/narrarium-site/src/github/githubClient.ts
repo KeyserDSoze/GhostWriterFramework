@@ -1,6 +1,6 @@
 import { Octokit } from "@octokit/rest";
 import { BookStructure, Chapter, Paragraph, BookFile, ResearchFile } from "@/types/book";
-import { applyLocalFileChangesAtomically, deleteLocalFile, getLocalFile, getLocalRepository, listLocalFiles, writeLocalBinary, writeLocalText, type LocalFileAtomicWrite } from "@/repository/localRepository";
+import { applyLocalFileChangesAtomically, deleteLocalFile, getLocalFile, getLocalRepository, listLocalFiles, mutateLocalTextFilesAtomically, sha256Text, writeLocalBinary, writeLocalText, type LocalFileAtomicWrite } from "@/repository/localRepository";
 import { buildInitialBookFiles } from "@/narrarium/bookScaffold";
 import {
   buildBookAuditPath,
@@ -36,6 +36,7 @@ async function fetchContentJson(
   path: string,
   ref?: string,
   fresh = false,
+  signal?: AbortSignal,
 ): Promise<{ content?: string; sha?: string }> {
   let response: Response;
   try {
@@ -46,6 +47,7 @@ async function fetchContentJson(
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
       },
+      signal,
     });
   } catch (error) {
     const kind = typeof error === "object" && error !== null && "name" in error && error.name === "AbortError"
@@ -250,6 +252,8 @@ interface FrontmatterMetadata {
   name?: string;
   ghostwriter?: string;
   paragraph?: string;
+  knownFrom?: string;
+  revealIn?: string;
 }
 
 /**
@@ -284,7 +288,9 @@ async function fetchFrontmatterMetadata(
           const name = nameFromFrontmatter(text);
           const ghostwriter = frontmatterString(text, "ghostwriter");
           const paragraph = frontmatterString(text, "paragraph");
-          if (name || ghostwriter || paragraph) result[p] = { name, ghostwriter, paragraph };
+          const knownFrom = frontmatterString(text, "known_from");
+          const revealIn = frontmatterString(text, "reveal_in");
+          if (name || ghostwriter || paragraph || knownFrom || revealIn) result[p] = { name, ghostwriter, paragraph, knownFrom, revealIn };
         }
       });
     } catch {
@@ -394,6 +400,8 @@ export async function loadBookStructure(
           size: treeData.tree.find((n) => n.path === p)?.size ?? 0,
           name: metaMap[p]?.name,
           imagePath: firstExistingImage(assetBase),
+          knownFrom: metaMap[p]?.knownFrom,
+          revealIn: metaMap[p]?.revealIn,
         };
       });
   }
@@ -566,8 +574,9 @@ export async function loadRemoteFileContentAtRef(
   repo: string,
   path: string,
   ref: string,
+  signal?: AbortSignal,
 ): Promise<FileContent> {
-  const data = await fetchContentJson(token, owner, repo, path, ref, true);
+  const data = await fetchContentJson(token, owner, repo, path, ref, true, signal);
   if (data.content && data.sha) {
     try { return { content: decodeContent(data.content), sha: data.sha }; } catch (error) { throw new RepositoryError(`GitHub returned malformed file content for ${path}.`, "malformed", "read", 200, { cause: error }); }
   }
@@ -654,14 +663,18 @@ export async function readFileWithSha(
   repo: string,
   branch: string,
   path: string,
+  signal?: AbortSignal,
 ): Promise<FileContent> {
+  signal?.throwIfAborted();
   const id = await localRepoId(owner, repo, branch);
+  signal?.throwIfAborted();
   if (id) {
     const file = await getLocalFile(id, path);
+    signal?.throwIfAborted();
     if (file?.kind === "text" && file.text !== undefined) return { content: file.text, sha: file.currentHash };
     if (file?.kind === "binary" && file.blob) return { content: new TextDecoder().decode(await file.blob.arrayBuffer()), sha: file.currentHash };
   }
-  const data = await fetchContentJson(token, owner, repo, path, branch, true);
+  const data = await fetchContentJson(token, owner, repo, path, branch, true, signal);
   if (data.content && data.sha) {
     try { return { content: decodeContent(data.content), sha: data.sha }; } catch (error) { throw new RepositoryError(`GitHub returned malformed file content for ${path}.`, "malformed", "read", 200, { cause: error }); }
   }
@@ -680,7 +693,15 @@ export async function updateFile(
   message: string,
 ): Promise<string> {
   const id = await localRepoId(owner, repo, branch);
-  if (id) return (await writeLocalText(id, path, content)).currentHash;
+  if (id) {
+    try {
+      await mutateLocalTextFilesAtomically(id, [{ path, content, expectedCurrentHash: sha }]);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("File changed since")) throw new RepositoryError(error.message, "conflict", "update", 409, { cause: error });
+      throw classifyRepositoryError(error, "update", path);
+    }
+    return sha256Text(content);
+  }
   const octokit = createGitHubClient(token);
   let data: Awaited<ReturnType<typeof octokit.rest.repos.createOrUpdateFileContents>>["data"];
   try {
@@ -735,9 +756,13 @@ export async function createFile(
 ): Promise<string> {
   const id = await localRepoId(owner, repo, branch);
   if (id) {
-    const existing = await getLocalFile(id, path);
-    if (existing) throw new RepositoryError(`File already exists: ${path}`, "conflict", "create", 409);
-    return (await writeLocalText(id, path, content)).currentHash;
+    try {
+      await mutateLocalTextFilesAtomically(id, [{ path, content, expectedCurrentHash: null }]);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("File changed since")) throw new RepositoryError(`File already exists: ${path}`, "conflict", "create", 409, { cause: error });
+      throw classifyRepositoryError(error, "create", path);
+    }
+    return sha256Text(content);
   }
   const octokit = createGitHubClient(token);
   let data: Awaited<ReturnType<typeof octokit.rest.repos.createOrUpdateFileContents>>["data"];

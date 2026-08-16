@@ -1,11 +1,37 @@
 import type { LoadedWriterContext } from "@/assistant/context";
 import type { AssistantAction } from "@/assistant/store";
+import { hasAssistantActionProvenance, sourceRevisionFromFiles } from "@/assistant/actionValidation";
 import type { Chapter } from "@/types/book";
 import { resolveChapterTarget, resolveParagraphTarget } from "@/assistant/targetRules";
 import { isReaderEvaluationsNavigationPrompt } from "@/assistant/orchestratorRules";
 
 export type NavigateAction = Extract<AssistantAction, { kind: "navigate" }>;
 export type ReadAloudAction = Extract<AssistantAction, { kind: "read-aloud" }>;
+
+export function bindReadAloudActionProvenance(action: ReadAloudAction, input: {
+  owner: string;
+  repo: string;
+  branch: string;
+  sourceRevisions: Record<string, string>;
+  generatedAt?: string;
+}): ReadAloudAction {
+  return {
+    ...action,
+    toolId: "read-current-page",
+    owner: input.owner,
+    repo: input.repo,
+    branch: input.branch,
+    sourceRevision: sourceRevisionFromFiles(input.sourceRevisions),
+    sourceRevisions: input.sourceRevisions,
+    generatedAt: input.generatedAt ?? new Date().toISOString(),
+  };
+}
+
+export function readAloudReplaySource(action: ReadAloudAction): { bookId: string; owner: string; repo: string; branch: string } | null {
+  return hasAssistantActionProvenance(action)
+    ? { bookId: action.bookId, owner: action.owner, repo: action.repo, branch: action.branch }
+    : null;
+}
 
 const READ_KEYWORDS = /\b(leggi|leggimi|leggile|leggilo|riproduci|ascolta|recita|read|read aloud|read out|play)\b/i;
 const NAV_KEYWORDS = /\b(apri|apre|aprimi|vai|va'|vammi|portami|mostra|mostrami|naviga|open|go to|goto|show me|show|navigate|take me|jump to)\b/i;

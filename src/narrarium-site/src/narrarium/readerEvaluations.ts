@@ -1,11 +1,13 @@
 import { parseDocument, stringify } from "yaml";
 import { completeToolRouted } from "@/assistant/router";
 import type { LlmRunMetadata } from "@/assistant/llm";
-import { createFile, deleteFile, loadFileContent, readFileWithSha, updateFile } from "@/github/githubClient";
+import { deleteFile, loadFileContent, readFileWithSha } from "@/github/githubClient";
 import type { BookStructure } from "@/types/book";
 import type { AppSettings, BookEntry } from "@/types/settings";
 import { builtinReaderPersonas, mergeReaderPersonas, parseReaderPersona, readerPersonaSystemPrompt, serializeReaderPersona, type ReaderEvaluationDepth, type ReaderPersonaProfile } from "@/narrarium/readerPersona";
 import { isRepositoryError, optionalRepositoryRead } from "@/repository/repositoryError";
+import { captureImmediateMutation, commitImmediateMutation, mergeManagedFrontmatter } from "@/assistant/immediateMutation";
+import { commitAndPushTextFileMutation, RepositoryConflictError, resolveRepositoryHeadForMutation } from "@/repository/safeRepositoryMutation";
 
 export type ReaderEvaluationTargetType = "chapter" | "paragraph" | "selection";
 
@@ -18,6 +20,7 @@ export interface ReaderEvaluationTarget {
   text: string;
   sourcePath: string;
   sourceVersion: string;
+  sourceRevisions?: Record<string, string>;
 }
 
 export interface ReaderEvaluationOutput {
@@ -112,12 +115,17 @@ export async function loadReaderPersonas(input: { token: string; book: BookEntry
   return mergeReaderPersonas(input.structure.language, overrides.filter((profile): profile is ReaderPersonaProfile => Boolean(profile)));
 }
 
-export async function saveReaderPersona(input: { token: string; book: BookEntry; branch: string; profile: ReaderPersonaProfile }): Promise<string> {
+export async function saveReaderPersona(input: { token: string; book: BookEntry; branch: string; profile: ReaderPersonaProfile; remoteHeadSha?: string; signal?: AbortSignal }): Promise<string> {
   const path = `personas/${input.profile.slug}.md`;
-  const content = serializeReaderPersona({ ...input.profile, path });
-  const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path));
-  if (existing) await updateFile(input.token, input.book.owner, input.book.repo, input.branch, path, existing.sha, content, `Update simulated reader ${input.profile.name}`);
-  else await createFile(input.token, input.book.owner, input.book.repo, input.branch, path, content, `Add simulated reader ${input.profile.name}`);
+  const snapshot = await captureImmediateMutation({ ...input, path, remoteHeadSha: input.remoteHeadSha });
+  const generated = serializeReaderPersona({ ...input.profile, path });
+  const generatedMatch = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(generated)!;
+  const managed = (parseDocument(generatedMatch[1]).toJSON() as Record<string, unknown>) ?? {};
+  const existingMatch = snapshot.content ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(snapshot.content) : null;
+  const existingFrontmatter = existingMatch ? ((parseDocument(existingMatch[1]).toJSON() as Record<string, unknown>) ?? {}) : {};
+  const frontmatter = mergeManagedFrontmatter(existingFrontmatter, managed, Object.keys(managed));
+  const content = renderFile(frontmatter, generatedMatch[2]);
+  await commitImmediateMutation({ ...input, snapshot, content, message: `${snapshot.content ? "Update" : "Add"} simulated reader ${input.profile.name}` });
   return path;
 }
 
@@ -227,11 +235,6 @@ function createdAtFromFile(raw: string | undefined, fallback: string): string {
   } catch { return fallback; }
 }
 
-async function writeStableFile(input: { token: string; book: BookEntry; branch: string; path: string; content: string; message: string; existing?: { sha: string } | null }): Promise<void> {
-  if (input.existing) await updateFile(input.token, input.book.owner, input.book.repo, input.branch, input.path, input.existing.sha, input.content, input.message);
-  else await createFile(input.token, input.book.owner, input.book.repo, input.branch, input.path, input.content, input.message);
-}
-
 async function limitedMap<T, R>(items: T[], limit: number, run: (item: T, index: number) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
   const results: PromiseSettledResult<R>[] = new Array(items.length);
   let cursor = 0;
@@ -259,6 +262,23 @@ async function optionalContext(input: { token: string; book: BookEntry; branch: 
   return [style ? `WRITING STYLE:\n${style}` : "", resume ? `CHAPTER RESUME:\n${resume}` : "", canon ? `RELEVANT CANON MANIFEST:\n${canon}` : ""].filter(Boolean).join("\n\n");
 }
 
+async function assertReaderEvaluationTargetCurrent(input: {
+  token: string;
+  book: BookEntry;
+  branch: string;
+  target: ReaderEvaluationTarget;
+  remoteHeadSha: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const currentHeadSha = await resolveRepositoryHeadForMutation(input);
+  if (currentHeadSha !== input.remoteHeadSha) throw new RepositoryConflictError("The source branch changed while generating the reader evaluation.");
+  const revisions = input.target.sourceRevisions ?? { [input.target.sourcePath]: input.target.sourceVersion };
+  await Promise.all(Object.entries(revisions).map(async ([path, expectedVersion]) => {
+    const current = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path, input.signal);
+    if (!current || current.sha !== expectedVersion) throw new RepositoryConflictError(`Reader evaluation source changed since it was loaded: ${path}`, path);
+  }));
+}
+
 export async function runReaderEvaluations(input: {
   token: string;
   book: BookEntry;
@@ -272,8 +292,11 @@ export async function runReaderEvaluations(input: {
   includeContext?: boolean;
   concurrency?: number;
   signal?: AbortSignal;
+  remoteHeadSha?: string;
   onProgress?: (progress: ReaderEvaluationProgress) => void;
 }): Promise<ReaderEvaluationRunResult> {
+  const remoteHeadSha = input.remoteHeadSha ?? await resolveRepositoryHeadForMutation(input);
+  await assertReaderEvaluationTargetCurrent({ ...input, remoteHeadSha });
   const outputLanguage = input.language || input.structure.language || input.settings.ui.language || "en";
   const sourceHash = await hashReaderSource(input.target.text);
   const context = await optionalContext(input);
@@ -284,8 +307,8 @@ export async function runReaderEvaluations(input: {
     input.onProgress?.({ readerId: reader.id, readerName: reader.name, status: "running", completed: completedCount, total: input.readers.length });
     const updatedAt = new Date().toISOString();
     const path = evaluationPath(input.target, reader);
-    const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path));
-    const createdAt = createdAtFromFile(existing?.content, updatedAt);
+    const snapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path, remoteHeadSha });
+    const createdAt = createdAtFromFile(snapshot.content ?? undefined, updatedAt);
     try {
       const result = await completeToolRouted<ReaderEvaluationOutput>(input.settings, [
         { role: "system", content: readerPersonaSystemPrompt(reader, outputLanguage, input.depth) },
@@ -293,38 +316,40 @@ export async function runReaderEvaluations(input: {
       ], "reader-evaluation", EVALUATION_TOOL, { signal: input.signal, label: `reader-evaluation:${reader.slug}` });
       const id = `reader-evaluation:${input.target.type}:${input.target.chapterId}:${input.target.paragraphId ?? "chapter"}:${reader.slug}`;
       const frontmatter = evaluationFrontmatter({ id, createdAt, updatedAt, input, reader, sourceHash, status: "completed", score: result.output.score, generation: result.metadata });
-      await writeStableFile({ token: input.token, book: input.book, branch: input.branch, path, existing, content: renderFile(frontmatter, renderEvaluationBody(result.output, outputLanguage)), message: `Update reader evaluation ${reader.name}: ${input.target.title}` });
-      changedPaths.add(path);
+      const existingMatch = snapshot.content ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(snapshot.content) : null;
+      const existingFrontmatter = existingMatch ? ((parseDocument(existingMatch[1]).toJSON() as Record<string, unknown>) ?? {}) : {};
+      const content = renderFile(mergeManagedFrontmatter(existingFrontmatter, frontmatter, Object.keys(frontmatter)), renderEvaluationBody(result.output, outputLanguage));
       const legacyPrefix = legacyEvaluationPrefix(input.target, reader);
-      for (const legacy of input.structure.readerEvaluationFiles.filter((file) => file.path.startsWith(legacyPrefix))) {
-        const old = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, legacy.path));
-        if (old) {
-          await deleteFile(input.token, input.book.owner, input.book.repo, input.branch, legacy.path, old.sha, `Remove legacy reader evaluation ${reader.name}`);
-          changedPaths.add(legacy.path);
-        }
-      }
+      const legacySnapshots = await Promise.all(input.structure.readerEvaluationFiles.filter((file) => file.path.startsWith(legacyPrefix)).map((file) => captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path: file.path, remoteHeadSha })));
       completedCount += 1;
       const record: ReaderEvaluationRecord = { path, id, targetType: input.target.type, targetId: targetId(input.target), readerId: reader.id, readerName: reader.name, readerType: reader.readerType, createdAt, sourceContentHash: sourceHash, sourceContentVersion: input.target.sourceVersion, status: "completed", score: result.output.score, body: renderEvaluationBody(result.output, outputLanguage), stale: false };
       input.onProgress?.({ readerId: reader.id, readerName: reader.name, status: "completed", completed: completedCount, total: input.readers.length });
-      return record;
+      return { record, snapshot, content, legacySnapshots };
     } catch (err) {
       if (isRepositoryError(err)) throw err;
       completedCount += 1;
       const error = err instanceof Error ? err.message : String(err);
       const id = `reader-evaluation:${input.target.type}:${input.target.chapterId}:${input.target.paragraphId ?? "chapter"}:${reader.slug}`;
       const frontmatter = evaluationFrontmatter({ id, createdAt, updatedAt, input, reader, sourceHash, status: input.signal?.aborted ? "cancelled" : "failed", error });
-      if (!existing) {
-        await createFile(input.token, input.book.owner, input.book.repo, input.branch, path, renderFile(frontmatter, `# Evaluation failed\n\n${error}`), `Record failed reader evaluation ${reader.name}`);
-        changedPaths.add(path);
-      }
+      const content = snapshot.content ? null : renderFile(frontmatter, `# Evaluation failed\n\n${error}`);
       input.onProgress?.({ readerId: reader.id, readerName: reader.name, status: input.signal?.aborted ? "cancelled" : "failed", completed: completedCount, total: input.readers.length, error });
-      throw Object.assign(new Error(error), { record: { path, id, targetType: input.target.type, targetId: targetId(input.target), readerId: reader.id, readerName: reader.name, readerType: reader.readerType, createdAt, sourceContentHash: sourceHash, sourceContentVersion: input.target.sourceVersion, status: input.signal?.aborted ? "cancelled" : "failed", body: "", error } satisfies ReaderEvaluationRecord });
+      const record = { path, id, targetType: input.target.type, targetId: targetId(input.target), readerId: reader.id, readerName: reader.name, readerType: reader.readerType, createdAt, sourceContentHash: sourceHash, sourceContentVersion: input.target.sourceVersion, status: input.signal?.aborted ? "cancelled" as const : "failed" as const, body: "", error } satisfies ReaderEvaluationRecord;
+      return { record, snapshot, content, legacySnapshots: [] };
     }
   });
   const repositoryFailure = records.find((result): result is PromiseRejectedResult => result.status === "rejected" && isRepositoryError(result.reason));
   if (repositoryFailure) throw repositoryFailure.reason;
-  const completed = records.filter((result): result is PromiseFulfilledResult<ReaderEvaluationRecord> => result.status === "fulfilled").map((result) => result.value);
-  const failed = records.filter((result): result is PromiseRejectedResult => result.status === "rejected").map((result) => (result.reason as { record?: ReaderEvaluationRecord }).record).filter((record): record is ReaderEvaluationRecord => Boolean(record));
+  const prepared = records.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+  const mutations = prepared.flatMap((item) => [
+    ...(item.content === null ? [] : [{ path: item.snapshot.path, content: item.content, expectedCurrentHash: item.snapshot.hash }]),
+    ...item.legacySnapshots.filter((snapshot) => snapshot.content !== null).map((snapshot) => ({ path: snapshot.path, content: null, expectedCurrentHash: snapshot.hash })),
+  ]);
+  input.signal?.throwIfAborted();
+  await assertReaderEvaluationTargetCurrent({ ...input, remoteHeadSha });
+  if (mutations.length) await commitAndPushTextFileMutation({ token: input.token, book: input.book, branch: input.branch, expectedRemoteHeadSha: remoteHeadSha, message: `Update reader evaluations: ${input.target.title}`, mutations, signal: input.signal });
+  for (const mutation of mutations) changedPaths.add(mutation.path);
+  const completed = prepared.map((item) => item.record).filter((record) => record.status === "completed");
+  const failed = prepared.map((item) => item.record).filter((record) => record.status !== "completed");
   return { completed, failed, changedPaths: [...changedPaths].sort() };
 }
 
@@ -367,16 +392,18 @@ function evaluationFrontmatter(input: { id: string; createdAt: string; updatedAt
   };
 }
 
-export async function generateReaderEvaluationSummary(input: { token: string; book: BookEntry; branch: string; settings: AppSettings; target: ReaderEvaluationTarget; evaluations: ReaderEvaluationRecord[]; language?: string; signal?: AbortSignal }): Promise<ReaderEvaluationRecord> {
+export async function generateReaderEvaluationSummary(input: { token: string; book: BookEntry; branch: string; settings: AppSettings; target: ReaderEvaluationTarget; evaluations: ReaderEvaluationRecord[]; language?: string; signal?: AbortSignal; remoteHeadSha?: string }): Promise<ReaderEvaluationRecord> {
   const language = input.language || input.settings.ui.language;
   const createdAt = new Date().toISOString();
+  const path = readerEvaluationSummaryPath(input.target);
+  const remoteHeadSha = input.remoteHeadSha ?? await resolveRepositoryHeadForMutation(input);
+  await assertReaderEvaluationTargetCurrent({ ...input, remoteHeadSha });
+  const snapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path, remoteHeadSha });
   const result = await completeToolRouted<Record<string, unknown>>(input.settings, [
     { role: "system", content: `Compare the separate simulated-reader evaluations. Preserve disagreements rather than flattening them. Return the summary in ${language}.` },
     { role: "user", content: input.evaluations.map((evaluation) => `READER: ${evaluation.readerName}\nSCORE: ${evaluation.score ?? "n/a"}\n${evaluation.body}`).join("\n\n---\n\n") },
   ], "reader-evaluation-summary", SUMMARY_TOOL, { signal: input.signal, label: "reader-evaluation-summary" });
-  const path = readerEvaluationSummaryPath(input.target);
-  const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, path));
-  const originalCreatedAt = createdAtFromFile(existing?.content, createdAt);
+  const originalCreatedAt = createdAtFromFile(snapshot.content ?? undefined, createdAt);
   const id = `reader-evaluation-summary:${input.target.type}:${input.target.chapterId}:${input.target.paragraphId ?? "chapter"}`;
   const sourceHash = await hashReaderSource(input.target.text);
   const body = renderSummaryBody(result.output, language);
@@ -407,7 +434,11 @@ export async function generateReaderEvaluationSummary(input: { token: string; bo
     status: "completed",
     refs: input.evaluations.map((evaluation) => evaluation.id),
   };
-  await writeStableFile({ token: input.token, book: input.book, branch: input.branch, path, existing, content: renderFile(frontmatter, body), message: `Update reader evaluation summary: ${input.target.title}` });
+  const existingMatch = snapshot.content ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(snapshot.content) : null;
+  const existingFrontmatter = existingMatch ? ((parseDocument(existingMatch[1]).toJSON() as Record<string, unknown>) ?? {}) : {};
+  const content = renderFile(mergeManagedFrontmatter(existingFrontmatter, frontmatter, Object.keys(frontmatter)), body);
+  await assertReaderEvaluationTargetCurrent({ ...input, remoteHeadSha });
+  await commitImmediateMutation({ token: input.token, book: input.book, branch: input.branch, snapshot, content, message: `Update reader evaluation summary: ${input.target.title}`, signal: input.signal });
   return { path, id, targetType: input.target.type, targetId: targetId(input.target), readerId: "summary", readerName: "Summary", readerType: "summary", createdAt: originalCreatedAt, sourceContentHash: sourceHash, sourceContentVersion: input.target.sourceVersion, status: "completed", score: Number(result.output.overallScore ?? 0), body, stale: false };
 }
 

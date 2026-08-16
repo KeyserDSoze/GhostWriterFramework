@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AssistantSessionConflictError,
+  MAX_PERSISTED_CHAT_BYTES,
   listAssistantSessions,
+  loadAssistantSession,
   saveAssistantSession,
 } from "../src/assistant/chatCloud.ts";
 import { resetGoogleAppFolderCacheForTests } from "../src/drive/googleAppFolder.ts";
@@ -36,6 +38,70 @@ function installWindow() {
       setItem: (key, value) => values.set(key, value),
       removeItem: (key) => values.delete(key),
     },
+  });
+}
+
+test("cloud saves reject oversized payloads before a provider write", async () => {
+  installWindow();
+  let fetched = false;
+  globalThis.fetch = async () => { fetched = true; throw new Error("must not write"); };
+  const messages = Array.from({ length: 8 }, (_, index) => ({ id: `huge-${index}`, role: "user", text: "x".repeat(950_000) }));
+  await assert.rejects(() => saveAssistantSession("google", "token", session({ messages })), /cloud limit/);
+  assert.equal(fetched, false);
+});
+
+/** @type {Array<"google" | "microsoft">} */
+const loadProviders = ["google", "microsoft"];
+for (const provider of loadProviders) {
+  test(`${provider} load accepts payloads above the obsolete 5 MiB limit`, async () => {
+    const payload = session({
+      messages: Array.from({ length: 6 }, (_, index) => ({ id: `message-${index}`, role: "user", text: "x".repeat(900_000) })),
+    });
+    globalThis.fetch = async (url) => {
+      const value = String(url);
+      if (provider === "microsoft" && value.includes("?$select=")) return response({ eTag: "r1" });
+      return response(payload, 200, { ETag: "r1" });
+    };
+    const loaded = await loadAssistantSession(provider, "token", "file-1");
+    assert.equal(loaded.messages.length, 6);
+  });
+
+  test(`${provider} load migrates legacy payloads and quarantines unsafe actions`, async () => {
+    const payload = session({ messages: [{ id: "message-1", role: "assistant", text: "Unsafe", action: { kind: "confirm-delete", bookId: "book-1", target: "note", path: "../book.md", title: "Book" } }] });
+    globalThis.fetch = async (url) => {
+      const value = String(url);
+      if (provider === "microsoft" && value.includes("?$select=")) return response({ eTag: "r1" });
+      return response(payload, 200, { ETag: "r1" });
+    };
+    const loaded = await loadAssistantSession(provider, "token", "file-1");
+    assert.equal(loaded.schemaVersion, 1);
+    assert.equal(loaded.messages[0].action, undefined);
+    assert.equal(loaded.quarantinedActions.length, 1);
+  });
+
+  test(`${provider} load rejects malformed session payloads`, async () => {
+    globalThis.fetch = async (url) => {
+      const value = String(url);
+      if (provider === "microsoft" && value.includes("?$select=")) return response({ eTag: "r1" });
+      return response({ ...session(), updatedAt: "invalid" });
+    };
+    await assert.rejects(() => loadAssistantSession(provider, "token", "file-1"), /updatedAt is invalid/);
+  });
+
+  test(`${provider} load strips executable navigate and read-aloud actions without provenance`, async () => {
+    const payload = session({ messages: [
+      { id: "navigate-message", role: "assistant", text: "Open settings", action: { kind: "navigate", to: "/app/settings", label: "Settings" } },
+      { id: "read-message", role: "assistant", text: "Read chapter", action: { kind: "read-aloud", bookId: "book-1", title: "Chapter", paths: ["chapters/001/chapter.md"] } },
+    ] });
+    globalThis.fetch = async (url) => {
+      const value = String(url);
+      if (provider === "microsoft" && value.includes("?$select=")) return response({ eTag: "r1" });
+      return response(payload, 200, { ETag: "r1" });
+    };
+    const loaded = await loadAssistantSession(provider, "token", "file-1");
+    assert.deepEqual(loaded.messages.map((message) => message.action), [undefined, undefined]);
+    assert.deepEqual(loaded.quarantinedActions.map((entry) => entry.messageId), ["navigate-message", "read-message"]);
+    assert.ok(loaded.quarantinedActions.every((entry) => /missing required provenance/.test(entry.reason)));
   });
 }
 

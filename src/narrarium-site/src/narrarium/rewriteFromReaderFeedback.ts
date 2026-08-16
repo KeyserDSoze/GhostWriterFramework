@@ -337,6 +337,7 @@ async function chapterReaderTarget(context: RewriteWorkspaceContext, chapter: Ch
     text,
     sourcePath: `${chapter.path}/chapter.md`,
     sourceVersion: files.map((file) => file.hash).join(":"),
+    sourceRevisions: Object.fromEntries(chapter.paragraphs.map((paragraph, index) => [paragraph.path, files[index].hash])),
   };
 }
 
@@ -350,6 +351,7 @@ function paragraphReaderTarget(context: RewriteRepositoryContext, chapter: Chapt
     text: source.body,
     sourcePath: paragraph.path,
     sourceVersion: source.hash,
+    sourceRevisions: { [paragraph.path]: source.hash },
   };
 }
 

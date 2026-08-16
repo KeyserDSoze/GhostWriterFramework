@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   AssistantSessionSaveQueue,
   assistantSessionSaveFingerprint,
+  assistantSessionSaveRetryPlan,
   attachAssistantSessionCloudHandle,
+  clearFailedAssistantSessionSaveFingerprint,
   upsertAssistantSessionMeta,
 } from "../src/assistant/sessionAutosave.ts";
 
@@ -40,6 +42,30 @@ test("save fingerprint ignores cloud file identity but tracks chat content", () 
     assistantSessionSaveFingerprint(original),
     assistantSessionSaveFingerprint({ ...original, messages: [{ id: "m1", role: "user", text: "New" }] }),
   );
+});
+
+test("a transient failure clears only its unchanged fingerprint so the same session can retry", () => {
+  const fingerprints = new Map([["session-1", "failed"]]);
+  assert.equal(clearFailedAssistantSessionSaveFingerprint(fingerprints, "session-1", "failed"), true);
+  assert.equal(fingerprints.has("session-1"), false);
+
+  fingerprints.set("session-1", "newer");
+  assert.equal(clearFailedAssistantSessionSaveFingerprint(fingerprints, "session-1", "failed"), false);
+  assert.equal(fingerprints.get("session-1"), "newer");
+});
+
+test("permanent autosave failures stop without retrying", () => {
+  assert.deepEqual(assistantSessionSaveRetryPlan({ code: "ASSISTANT_SESSION_TOO_LARGE" }, 0), { kind: "stop", reason: "permanent" });
+  assert.deepEqual(assistantSessionSaveRetryPlan({ code: "INVALID_ASSISTANT_SESSION" }, 0), { kind: "stop", reason: "permanent" });
+  assert.deepEqual(assistantSessionSaveRetryPlan({ code: "ASSISTANT_SESSION_CONFLICT" }, 0), { kind: "stop", reason: "permanent" });
+  assert.deepEqual(assistantSessionSaveRetryPlan({ status: 401 }, 0), { kind: "stop", reason: "permanent" });
+});
+
+test("transient autosave failures use bounded exponential retries", () => {
+  assert.deepEqual(assistantSessionSaveRetryPlan({ status: 503 }, 0), { kind: "retry", attempt: 1, delayMs: 1_000 });
+  assert.deepEqual(assistantSessionSaveRetryPlan({ status: 429 }, 1), { kind: "retry", attempt: 2, delayMs: 2_000 });
+  assert.deepEqual(assistantSessionSaveRetryPlan(new TypeError("offline"), 2), { kind: "retry", attempt: 3, delayMs: 4_000 });
+  assert.deepEqual(assistantSessionSaveRetryPlan({ status: 503 }, 3), { kind: "stop", reason: "exhausted" });
 });
 
 test("session metadata upsert removes id and file duplicates", () => {
@@ -139,4 +165,26 @@ test("account reset ignores an in-flight save and clears its cloud handle", asyn
     return { fileId: "new-account-file", revision: "new-revision" };
   }, () => undefined, (error) => errors.push(error));
   assert.equal(calls[0].fileId, undefined);
+});
+
+test("retiring a session waits for its in-flight autosave and blocks recreation", async () => {
+  const queue = new AssistantSessionSaveQueue();
+  const pending = deferred();
+  const started = deferred();
+  let saves = 0;
+  const first = queue.enqueue(session({ fileId: "cloud-file" }), async () => {
+    saves += 1;
+    started.resolve();
+    return pending.promise;
+  }, () => undefined, () => undefined);
+  await started.promise;
+  const retired = queue.retire("session-1");
+  await queue.enqueue(session({ updatedAt: "2026-08-15T11:00:00.000Z" }), async () => {
+    saves += 1;
+    return { fileId: "recreated" };
+  }, () => undefined, () => undefined);
+  assert.equal(saves, 1);
+  pending.resolve({ fileId: "cloud-file", revision: "r1" });
+  await Promise.all([first, retired]);
+  assert.equal(saves, 1);
 });

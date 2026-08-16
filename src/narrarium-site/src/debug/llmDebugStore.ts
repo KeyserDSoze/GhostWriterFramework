@@ -29,6 +29,9 @@ export interface LlmDebugEntry {
   integrationId?: string;
   routeCandidateIndex?: number;
   usedFallback?: boolean;
+  /** Privacy-safe failure classification; raw provider details remain redacted. */
+  failureKind?: "timeout" | "cancelled" | "provider";
+  timeoutMs?: number;
   status: LlmRequestStatus;
   /** Message roles are retained, but content is always redacted before entering the store. */
   messages?: LlmDebugMessage[];

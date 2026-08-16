@@ -3,6 +3,7 @@ import type { AIIntegration, AIPricing, AppSettings, ChatCapability, ChatModel }
 import { chatDelta, useCostsStore } from "@/costs/costsStore";
 import { flattenLlmContent, useLlmDebugStore, type LlmDebugMessage } from "@/debug/llmDebugStore";
 import { GITHUB_MODELS_INFERENCE_URL } from "@/config/githubModels";
+import { CandidateTimeoutError } from "@/assistant/executionLimits";
 
 export type LlmContentPart =
   | { type: "text"; text: string }
@@ -36,6 +37,18 @@ export interface ForcedToolDefinition {
   description: string;
   parameters: Record<string, unknown>;
 }
+
+export const CONFIRMATION_TOOL_DEFINITION: ForcedToolDefinition = {
+  name: "confirm",
+  description: "Report whether the user is confirming, rejecting, or being unclear.",
+  parameters: {
+    type: "object",
+    properties: {
+      decision: { type: "string", enum: ["yes", "no", "unclear"], description: "yes = confirms/accepts, no = rejects/cancels, unclear = neither" },
+    },
+    required: ["decision"],
+  },
+};
 
 export function resolveWritingIntegration(settings: AppSettings): AIIntegration | null {
   const integrations = settings.aiIntegrations ?? [];
@@ -160,11 +173,26 @@ export class ContentFilteredCompletionError extends Error {
   }
 }
 
+export function completionTokenLimit(provider: AIIntegration["provider"], model: string, maxOutputTokens?: number, underlyingModel?: string): Record<string, number> {
+  if (!maxOutputTokens || maxOutputTokens <= 0) return {};
+  const identity = provider === "azure_openai" ? underlyingModel?.trim() : model.trim();
+  if (!identity) return {};
+  const modernReasoningModel = /(?:^|[/_.-])(?:o[134](?:[-_.]|$)|gpt-5(?:[-_.]|$)|codex-mini(?:[-_.]|$))/i.test(identity);
+  return modernReasoningModel ? { max_completion_tokens: maxOutputTokens } : { max_tokens: maxOutputTokens };
+}
+
+function debugFailure(error: unknown, signal?: AbortSignal): { status: "error"; error: string; failureKind: "timeout" | "cancelled" | "provider"; timeoutMs?: number } {
+  const converted = signal?.reason instanceof CandidateTimeoutError ? signal.reason : error;
+  if (converted instanceof CandidateTimeoutError) return { status: "error", error: converted.message, failureKind: "timeout", timeoutMs: converted.timeoutMs };
+  const cancelled = signal?.aborted === true;
+  return { status: "error", error: converted instanceof Error ? converted.message : String(converted), failureKind: cancelled ? "cancelled" : "provider" };
+}
+
 export async function completeText(
   integration: AIIntegration,
   messages: LlmMessage[],
   purpose: "writing" | "review" = "writing",
-  options?: { signal?: AbortSignal; capability?: ChatCapability; modelName?: string; label?: string; onText?: (text: string) => void; routeCandidateIndex?: number; usedFallback?: boolean },
+  options?: { signal?: AbortSignal; capability?: ChatCapability; modelName?: string; label?: string; onText?: (text: string) => void; routeCandidateIndex?: number; usedFallback?: boolean; maxOutputTokens?: number; underlyingModel?: string },
 ): Promise<string> {
   const { model, pricing } = resolveModelForCall(integration, purpose, options);
 
@@ -191,7 +219,7 @@ export async function completeText(
         dangerouslyAllowBrowser: true,
       });
       if (options?.onText) {
-        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true } } as never, { signal: options.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
+        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true }, ...completionTokenLimit(integration.provider, model, options.maxOutputTokens, options.underlyingModel) } as never, { signal: options.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
         let text = "";
         let usage: unknown;
         let filtered = false;
@@ -209,7 +237,7 @@ export async function completeText(
         if (filtered) throw new ContentFilteredCompletionError();
         return text;
       }
-      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
+      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never, ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel) }, { signal: options?.signal });
       recordChatUsage(model, pricing, response.usage);
       const text = response.choices[0]?.message?.content ?? "";
       finishChatDebug(debugId, pricing, response.usage, text);
@@ -224,7 +252,7 @@ export async function completeText(
         dangerouslyAllowBrowser: true,
       });
       if (options?.onText) {
-        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true } } as never, { signal: options.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
+        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true }, ...completionTokenLimit(integration.provider, model, options.maxOutputTokens, options.underlyingModel) } as never, { signal: options.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
         let text = "";
         let usage: unknown;
         let filtered = false;
@@ -242,7 +270,7 @@ export async function completeText(
         if (filtered) throw new ContentFilteredCompletionError();
         return text;
       }
-      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never }, { signal: options?.signal });
+      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never, ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel) }, { signal: options?.signal });
       recordChatUsage(model, pricing, response.usage);
       const text = response.choices[0]?.message?.content ?? "";
       finishChatDebug(debugId, pricing, response.usage, text);
@@ -254,7 +282,7 @@ export async function completeText(
     throw new Error("Microsoft 365 Copilot is not yet wired into the in-browser assistant.");
   } catch (err) {
     if (integration.provider !== "m365_copilot") {
-      useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
+      useLlmDebugStore.getState().finish(debugId, debugFailure(err, options?.signal));
     }
     throw err;
   }
@@ -267,7 +295,7 @@ export async function completeToolWith<T>(
   messages: LlmMessage[],
   capability: ChatCapability,
   tool: ForcedToolDefinition,
-  options?: { signal?: AbortSignal; label?: string; currency?: string; validate?: (output: unknown) => T; routeCandidateIndex?: number; usedFallback?: boolean },
+  options?: { signal?: AbortSignal; label?: string; currency?: string; validate?: (output: unknown) => T; routeCandidateIndex?: number; usedFallback?: boolean; maxOutputTokens?: number; underlyingModel?: string },
 ): Promise<LlmResult<T>> {
   if (integration.provider === "m365_copilot") throw new Error("Microsoft 365 Copilot does not support browser tool calls.");
   const normalizedMessages = messages.map((message) => ({
@@ -287,6 +315,7 @@ export async function completeToolWith<T>(
       messages: normalizedMessages as never,
       tools: [{ type: "function", function: tool }],
       tool_choice: { type: "function", function: { name: tool.name } },
+      ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel),
     } as never, { signal: options?.signal });
     const usage = response.usage;
     recordChatUsage(model, pricing, usage);
@@ -313,7 +342,7 @@ export async function completeToolWith<T>(
       },
     };
   } catch (err) {
-    useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
+    useLlmDebugStore.getState().finish(debugId, debugFailure(err, options?.signal));
     throw err;
   }
 }
@@ -340,37 +369,26 @@ export async function classifyConfirmationWith(
   model: string,
   pricing: AIPricing | undefined,
   utterance: string,
+  options?: { signal?: AbortSignal; maxOutputTokens?: number; routeCandidateIndex?: number; usedFallback?: boolean; underlyingModel?: string },
 ): Promise<"yes" | "no" | "unclear"> {
   if (integration.provider === "m365_copilot") return "unclear";
 
-  const tools = [{
-    type: "function" as const,
-    function: {
-      name: "confirm",
-      description: "Report whether the user is confirming, rejecting, or being unclear.",
-      parameters: {
-        type: "object",
-        properties: {
-          decision: { type: "string", enum: ["yes", "no", "unclear"], description: "yes = confirms/accepts, no = rejects/cancels, unclear = neither" },
-        },
-        required: ["decision"],
-      },
-    },
-  }];
+  const tools = [{ type: "function" as const, function: CONFIRMATION_TOOL_DEFINITION }];
 
   const body = {
     model,
     messages: [{ role: "user", content: utterance }],
     tools,
-    tool_choice: { type: "function", function: { name: "confirm" } },
+    tool_choice: { type: "function", function: { name: CONFIRMATION_TOOL_DEFINITION.name } },
+    ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel),
   };
 
-  const debugId = useLlmDebugStore.getState().begin({ kind: "chat", label: "confirm", model, provider: integration.provider, integrationId: integration.id, messages: [{ role: "user", content: utterance }] });
+  const debugId = useLlmDebugStore.getState().begin({ kind: "chat", label: "confirm", model, provider: integration.provider, integrationId: integration.id, routeCandidateIndex: options?.routeCandidateIndex, usedFallback: options?.usedFallback, messages: [{ role: "user", content: utterance }] });
   try {
     const client = integration.provider === "azure_openai"
       ? new AzureOpenAI({ endpoint: integration.endpoint ?? "", apiKey: integration.apiKey, apiVersion: integration.apiVersion || "2024-10-21", dangerouslyAllowBrowser: true })
       : new OpenAI({ apiKey: integration.apiKey, baseURL: openAiBaseUrl(integration), dangerouslyAllowBrowser: true });
-    const response = await client.chat.completions.create(body as never);
+    const response = await client.chat.completions.create(body as never, { signal: options?.signal });
     recordChatUsage(model, pricing, (response as { usage?: unknown }).usage);
     const call = (response as { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> }).choices?.[0]?.message?.tool_calls?.[0];
     const args = call?.function?.arguments ? JSON.parse(call.function.arguments) : null;
@@ -379,7 +397,7 @@ export async function classifyConfirmationWith(
     finishChatDebug(debugId, pricing, (response as { usage?: unknown }).usage, `decision: ${result}`);
     return result;
   } catch (err) {
-    useLlmDebugStore.getState().finish(debugId, { status: "error", error: err instanceof Error ? err.message : String(err) });
+    useLlmDebugStore.getState().finish(debugId, debugFailure(err, options?.signal));
     throw err;
   }
 }

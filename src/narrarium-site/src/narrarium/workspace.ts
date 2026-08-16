@@ -19,6 +19,21 @@ export function chapterDraftArtifactPaths(slug: string): [string, string, string
   ];
 }
 
+export function buildChapterDraftArtifactDocuments(input: { number: number; title: string; chapterSlug?: string; body?: string }) {
+  const slug = input.chapterSlug ?? chapterSlug(input.number, input.title);
+  const chapterId = `chapter:${slug}`;
+  const [path, ...bucketPaths] = chapterDraftArtifactPaths(slug);
+  const documents = [{
+    path,
+    content: renderMarkdown({ type: "chapter-draft", id: `draft:chapter:${slug}`, chapter: chapterId, number: input.number, title: input.title, canon: "draft" }, input.body?.trim() || `# ${input.title}\n\nStart the chapter draft here.\n`),
+  }];
+  for (const [index, bucket] of (["notes", "ideas", "promoted"] as const).entries()) {
+    const title = bucket === "ideas" ? `Chapter Draft Ideas ${slug}` : bucket === "promoted" ? `Chapter Draft Promoted ${slug}` : `Chapter Draft Notes ${slug}`;
+    documents.push({ path: bucketPaths[index], content: renderMarkdown({ type: "note", id: `note:chapter-draft:${bucket}:${slug}`, title, scope: "chapter-draft", bucket, chapter: chapterId }, `# ${title}\n\nKeep working material for this chapter draft here.\n`) });
+  }
+  return { slug, path, documents };
+}
+
 async function writeWorkspaceFile(token: string, owner: string, repo: string, branch: string, path: string, content: string, message: string, replace = false) {
   if (replace) {
     await createOrUpdateTextFile(token, owner, repo, branch, path, content, message);
@@ -148,29 +163,25 @@ export async function createParagraphDraftArtifact(
   branch: string,
   input: { chapterSlug: string; number: number; title: string; paragraphSlug?: string; body?: string; replace?: boolean },
 ) {
-  const slug = input.paragraphSlug ?? `${formatOrdinal(input.number)}-${slugify(input.title)}`;
+  const artifact = buildParagraphDraftArtifact(input);
   await writeWorkspaceFile(
     token,
     owner,
     repo,
     branch,
-    `drafts/${input.chapterSlug}/${slug}.md`,
-    renderMarkdown(
-      {
-        type: "paragraph-draft",
-        id: `draft:paragraph:${input.chapterSlug}:${slug}`,
-        paragraph: `paragraph:${input.chapterSlug}:${slug}`,
-        chapter: `chapter:${input.chapterSlug}`,
-        number: input.number,
-        title: input.title,
-        canon: "draft",
-      },
-      input.body?.trim() ?? "",
-    ),
-    `Add paragraph draft ${slug}`,
+    artifact.path,
+    artifact.content,
+    `Add paragraph draft ${artifact.slug}`,
     input.replace,
   );
-  return `drafts/${input.chapterSlug}/${slug}.md`;
+  return artifact.path;
+}
+
+export function buildParagraphDraftArtifact(input: { chapterSlug: string; number: number; title: string; paragraphSlug?: string; body?: string }) {
+  const slug = input.paragraphSlug ?? `${formatOrdinal(input.number)}-${slugify(input.title)}`;
+  const path = `drafts/${input.chapterSlug}/${slug}.md`;
+  const content = renderMarkdown({ type: "paragraph-draft", id: `draft:paragraph:${input.chapterSlug}:${slug}`, paragraph: `paragraph:${input.chapterSlug}:${slug}`, chapter: `chapter:${input.chapterSlug}`, number: input.number, title: input.title, canon: "draft" }, input.body?.trim() ?? "");
+  return { slug, path, content };
 }
 
 export async function createParagraphScriptArtifact(

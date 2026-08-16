@@ -491,6 +491,9 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
             {isGithub && <p className="text-xs text-muted-foreground">{t("settings.githubModelsHint")}</p>}
           </div>
         )}
+        {integration.provider !== "m365_copilot" && (
+          <TokenLimitField label={t("settings.requestTimeoutMs")} value={integration.requestTimeoutMs} onChange={(requestTimeoutMs) => onChange({ requestTimeoutMs })} />
+        )}
         {usesMedia && (
           <>
             <div className="grid gap-2">
@@ -690,6 +693,12 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange }: { pr
               </Button>
             </div>
             <div className="mt-2 grid gap-2 sm:grid-cols-3">
+              {provider === "azure_openai" && (
+                <div className="grid gap-1">
+                  <Label className="text-xs">{t("settings.underlyingModel")}</Label>
+                  <Input value={model.underlyingModel ?? ""} onChange={(e) => patchModel(model.id, { underlyingModel: e.target.value.trim() || undefined })} placeholder="o3-mini / gpt-4o" className="h-8 text-sm" />
+                </div>
+              )}
               {provider === "github_models" && (
                 <div className="grid gap-1">
                   <Label className="text-xs">{t("settings.modelTier")}</Label>

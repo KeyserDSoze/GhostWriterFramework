@@ -9,6 +9,11 @@ export interface AssistantAttachment {
   sizeBytes: number;
   textContent?: string;
   imageDataUrl?: string;
+  extractedBytes?: number;
+  extractedPages?: number;
+  estimatedTokens?: number;
+  truncated?: boolean;
+  truncationReason?: string;
 }
 
 export interface AssistantFileUpdate {
@@ -102,6 +107,44 @@ export interface AssistantMutationResult {
   refresh: "book-structure-and-context";
 }
 
+export interface AssistantArchivedAction {
+  messageId: string;
+  kind: AssistantAction["kind"];
+  bookId?: string;
+  toolId?: string;
+  owner?: string;
+  repo?: string;
+  branch?: string;
+  sourceRevision?: string;
+  sourceRevisions?: Record<string, string | null>;
+  generatedAt?: string;
+  paths: string[];
+}
+
+export interface AssistantArchivedAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  kind: AssistantAttachment["kind"];
+  sizeBytes: number;
+}
+
+export interface AssistantArchiveRollup {
+  algorithm: "SHA-256-chain-v1";
+  actionCount: number;
+  actionDigest: string;
+  attachmentCount: number;
+  attachmentDigest: string;
+}
+
+export interface AssistantSessionArchive {
+  summary: string;
+  messageCount: number;
+  actions: AssistantArchivedAction[];
+  attachments: AssistantArchivedAttachment[];
+  rollup?: AssistantArchiveRollup;
+}
+
 export interface AssistantSessionMeta {
   id: string;
   fileId?: string;
@@ -111,11 +154,40 @@ export interface AssistantSessionMeta {
   updatedAt: string;
 }
 
+export interface AssistantSessionProvenance {
+  bookId: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  noteTargetPath?: string;
+}
+
+export interface AssistantNoteSaveOperation {
+  id: string;
+  mode: "full" | "reply-summary";
+  destination: AssistantSessionProvenance & { noteTargetPath: string };
+  status: "pending" | "note-saved" | "complete" | "delete-failed";
+  deleteAfter: boolean;
+  updatedAt: string;
+}
+
+export interface AssistantQuarantinedAction {
+  messageId: string;
+  reason: string;
+  action: unknown;
+}
+
 export interface AssistantSession extends AssistantSessionMeta {
+  schemaVersion?: 1;
   messages: AssistantMessage[];
   attachments: AssistantAttachment[];
+  archive?: AssistantSessionArchive;
+  /** Legacy mirrors retained while existing cloud chats are migrated on save. */
   compactSummary: string;
   compactedMessageCount: number;
+  provenance?: AssistantSessionProvenance;
+  noteSaveOperation?: AssistantNoteSaveOperation;
+  quarantinedActions?: AssistantQuarantinedAction[];
 }
 
 interface AssistantState {
@@ -176,21 +248,82 @@ export const useAssistantStore = create<AssistantState>((set) => ({
   clearMessages: () =>
     set((state) => ({
       currentSession: state.currentSession
-        ? { ...state.currentSession, messages: [], compactSummary: "", compactedMessageCount: 0 }
+        ? { ...state.currentSession, messages: [], attachments: [], archive: emptyAssistantSessionArchive(), compactSummary: "", compactedMessageCount: 0 }
         : state.currentSession,
     })),
 }));
 
-export function createEmptyAssistantSession(contextTitle: string): AssistantSession {
+export function createEmptyAssistantSession(contextTitle: string, provenance?: AssistantSessionProvenance): AssistantSession {
   const timestamp = new Date().toISOString();
   return {
+    schemaVersion: 1,
     id: crypto.randomUUID(),
     title: `${contextTitle} ${timestamp.slice(0, 16).replace("T", " ")}`,
     contextTitle,
     updatedAt: timestamp,
     messages: [],
     attachments: [],
+    archive: emptyAssistantSessionArchive(),
     compactSummary: "",
     compactedMessageCount: 0,
+    ...(provenance ? { provenance } : {}),
+    quarantinedActions: [],
   };
+}
+
+export function emptyAssistantSessionArchive(): AssistantSessionArchive {
+  return { summary: "", messageCount: 0, actions: [], attachments: [], rollup: emptyAssistantArchiveRollup() };
+}
+
+export function emptyAssistantArchiveRollup(): AssistantArchiveRollup {
+  return { algorithm: "SHA-256-chain-v1", actionCount: 0, actionDigest: "", attachmentCount: 0, attachmentDigest: "" };
+}
+
+export function normalizeAssistantSession(session: AssistantSession): AssistantSession {
+  const legacyCount = Number.isSafeInteger(session.compactedMessageCount) ? Math.max(0, session.compactedMessageCount) : 0;
+  const legacyPrefix = session.archive ? [] : (Array.isArray(session.messages) ? session.messages.slice(0, legacyCount) : []);
+  const archive = session.archive ?? {
+    summary: typeof session.compactSummary === "string" ? session.compactSummary : "",
+    messageCount: legacyCount,
+    actions: legacyPrefix.flatMap((message) => message.action ? [{
+      messageId: message.id,
+      kind: message.action.kind,
+      ...("bookId" in message.action ? { bookId: message.action.bookId } : {}),
+      toolId: message.action.toolId,
+      owner: message.action.owner,
+      repo: message.action.repo,
+      branch: message.action.branch,
+      sourceRevision: message.action.sourceRevision,
+      sourceRevisions: message.action.sourceRevisions,
+      generatedAt: message.action.generatedAt,
+      paths: archivedActionPaths(message.action),
+    }] : []),
+    attachments: legacyCount > 0 ? (Array.isArray(session.attachments) ? session.attachments : []).map(({ id, name, mimeType, kind, sizeBytes }) => ({ id, name, mimeType, kind, sizeBytes })) : [],
+    rollup: emptyAssistantArchiveRollup(),
+  };
+  return {
+    ...session,
+    schemaVersion: 1,
+    messages: Array.isArray(session.messages) ? session.messages.slice(legacyPrefix.length) : [],
+    attachments: (session.archive || legacyCount === 0) && Array.isArray(session.attachments) ? session.attachments : [],
+    archive: {
+      summary: typeof archive.summary === "string" ? archive.summary : "",
+      messageCount: Number.isSafeInteger(archive.messageCount) ? archive.messageCount : 0,
+      actions: Array.isArray(archive.actions) ? archive.actions : [],
+      attachments: Array.isArray(archive.attachments) ? archive.attachments : [],
+      rollup: archive.rollup ?? emptyAssistantArchiveRollup(),
+    },
+    compactSummary: typeof archive.summary === "string" ? archive.summary : "",
+    compactedMessageCount: Number.isSafeInteger(archive.messageCount) ? archive.messageCount : 0,
+    quarantinedActions: Array.isArray(session.quarantinedActions) ? session.quarantinedActions : [],
+  };
+}
+
+function archivedActionPaths(action: AssistantAction): string[] {
+  if ("updates" in action) return action.updates.map((update) => update.path);
+  if ("path" in action) return [action.path];
+  if ("paragraphPath" in action) return [action.paragraphPath];
+  if ("researchPath" in action) return [action.researchPath, action.destinationPath];
+  if ("paths" in action) return action.paths;
+  return [];
 }

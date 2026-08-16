@@ -1,3 +1,5 @@
+import { runWithCandidateTimeout } from "./executionLimits.ts";
+
 export interface MediaFallbackCandidate {
   browser?: boolean;
   integration?: unknown;
@@ -18,11 +20,13 @@ function throwIfAborted(signal?: AbortSignal): void {
   signal?.throwIfAborted();
 }
 
-export async function executeMediaFallback<T>(input: {
-  candidates: MediaFallbackCandidate[];
+export async function executeMediaFallback<T, C extends MediaFallbackCandidate = MediaFallbackCandidate>(input: {
+  candidates: C[];
   signal?: AbortSignal;
-  runAi: (candidate: MediaFallbackCandidate) => Promise<T>;
+  runAi: (candidate: C, signal: AbortSignal | undefined, candidateIndex: number) => Promise<T>;
   runBrowser?: (candidateIndex: number) => Promise<T>;
+  /** TTS manages a timeout per synthesized chunk after returning its playback controller. */
+  timeoutAi?: boolean;
 }): Promise<T> {
   throwIfAborted(input.signal);
   let lastError: unknown = null;
@@ -35,9 +39,12 @@ export async function executeMediaFallback<T>(input: {
         return await input.runBrowser(index);
       }
       if (!candidate.integration || !candidate.model) continue;
-      return await input.runAi(candidate);
+       const timeoutMs = (candidate.integration as { requestTimeoutMs?: number }).requestTimeoutMs;
+       return input.timeoutAi === false
+         ? await input.runAi(candidate, input.signal, index)
+         : await runWithCandidateTimeout((signal) => input.runAi(candidate, signal, index), input.signal, timeoutMs);
     } catch (error) {
-      if (error instanceof BrowserSpeechFallbackRequired || (error instanceof Error && error.name === "AbortError")) throw error;
+      if (error instanceof BrowserSpeechFallbackRequired) throw error;
       throwIfAborted(input.signal);
       lastError = error;
     }

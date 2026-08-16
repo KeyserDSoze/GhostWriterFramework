@@ -37,9 +37,9 @@ import type {
   AssistantSession,
 } from "@/assistant/store";
 import {
-  createCanonEntity,
-  createChapter,
-  createParagraphDocument,
+  buildCanonEntityDocument,
+  buildChapterDocuments,
+  buildParagraphDocument,
   ENTITY_DIRECTORY,
   slugify,
   type EntityKind,
@@ -47,10 +47,9 @@ import {
 import { generateEntityFromResearchProposal } from "@/research/createFromResearch";
 import { isCreateFromResearchPrompt, resolveResearchTarget } from "@/assistant/researchTarget";
 import {
-  createChapterDraftArtifacts,
+  buildChapterDraftArtifactDocuments,
+  buildParagraphDraftArtifact,
   buildParagraphScriptArtifact,
-  createParagraphDraftArtifact,
-  createParagraphScriptArtifact,
 } from "@/narrarium/workspace";
 import { commitScriptWithCanonicalLedger } from "@/narrarium/scriptLedger";
 import { defaultEvaluationCriteria, defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
@@ -62,13 +61,19 @@ import { resolveDeepResearchRequest } from "@/assistant/deepResearchRequest";
 import { executeDeepResearchFromCopilot } from "@/assistant/deepResearchHandler";
 import { searchBookTexts } from "@/assistant/bookSearch";
 import { buildChapterResumeChunks, loadCompleteChapterSource, mergeResumeFrontmatter, resolveResumeChapter } from "@/assistant/chapterSource";
-import { commitAndPushTextFileMutation, resolveRepositoryHeadForMutation, sha256Text } from "@/repository/safeRepositoryMutation";
+import { RepositoryConflictError, resolveRepositoryHeadForMutation } from "@/repository/safeRepositoryMutation";
+import { captureImmediateMutation, commitImmediateMutation, commitImmediateMutations, mergeManagedFrontmatter, type ImmediateMutationSnapshot } from "@/assistant/immediateMutation";
 import { chapterOutputSchema, entityOutputSchema, importedDraftOutputSchema, importedScriptOutputSchema, multiFileOutputSchema, paragraphOutputSchema, parseStructuredOutput, readerOutputSchema, scriptOutputSchema, StructuredOutputError } from "@/assistant/structuredOutput";
 import type { z } from "zod";
 import { attachmentImportRoute, validateImportAttachments, type AttachmentImportTarget } from "@/assistant/attachmentImport";
+import { ATTACHMENT_LIMITS, constrainAttachmentsToTokenBudget } from "@/assistant/attachments";
 import { assertExecutableHandlerMap } from "@/assistant/handlerCatalog";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
+import { retryChatNoteConflict } from "@/assistant/chatNoteSave";
 import { auditRunBlocker } from "@/narrarium/auditAvailability";
+import { canDiscloseSecretBody, canSearchAvailableFile, secretAccessFromManifest } from "@/assistant/secretPolicy";
+import { appendAssistantArchiveRecords, archiveAction, assistantSessionCompactionTarget, compactionText, MAX_ARCHIVE_SUMMARY_CHARS, truncateText } from "@/assistant/sessionCompaction";
+import { assertToolExecutionResult, evaluateToolContract, llmTaskForTool, missingToolRequirementsMessage, type CopilotToolRuntimeContext } from "@/assistant/tools/runtimeContract";
 
 async function completeForTask(
   settings: AppSettings,
@@ -140,12 +145,13 @@ export async function runAssistantPrompt(input: {
     history,
     compactSummary,
     compactedMessageCount,
-    attachments,
+    attachments: rawAttachments,
     attachmentTarget,
     spokenMode,
     signal,
     onText,
   } = input;
+  const attachments = constrainAttachmentsToTokenBudget(rawAttachments, selectedAttachmentTokenBudget(settings));
   const lowered = prompt.toLowerCase();
   const promptInput: PromptInput = {
     prompt,
@@ -227,26 +233,37 @@ export async function runAssistantPrompt(input: {
   assertExecutableHandlerMap(handlers);
 
   const availableHandlerIds = new Set(Object.keys(handlers));
+  const runtime: CopilotToolRuntimeContext = { settings, book: selectedBook, token, branch, context, attachments, attachmentTarget };
+  const executeTool = async (toolId: string, mutationIntent?: MutationIntent): Promise<AssistantMessage> => {
+    const tool = copilotToolRegistry.get(toolId);
+    if (!tool?.handlerId || !(tool.handlerId in handlers)) throw new Error(`Copilot tool ${toolId} has no runtime handler.`);
+    if (!isCopilotHandlerEnabled(settings, tool.handlerId)) return disabledCopilotToolMessage(settings, tool.id);
+    const intent = mutationIntent ?? (tool.mutatesData ? classifyMutationIntent(prompt, tool.id) : undefined);
+    if (intent === "ambiguous") return ambiguousMutationMessage(settings, tool.id);
+    if (intent === "negated" || intent === "read-only") return nonPositiveMutationMessage(settings, tool.id, intent);
+    const contract = evaluateToolContract(tool, runtime);
+    if (!contract.available) {
+      const text = contract.missing.includes("configured compatible AI model")
+        ? `No executable AI model is configured for ${tool.name}. ${missingToolRequirementsMessage(tool, contract.missing, settings.ui.language)}`
+        : missingToolRequirementsMessage(tool, contract.missing, settings.ui.language);
+      const message = makeAssistantMessage("assistant", text);
+      return contract.missing.includes("configured compatible AI model")
+        ? { ...message, action: { kind: "navigate", to: "/app/settings/ai-router", label: "AI Router" } }
+        : message;
+    }
+    const message = await runImmediateHandler(handlers[tool.handlerId as keyof typeof handlers]);
+    assertToolExecutionResult(tool, message);
+    return message;
+  };
   if (isCapabilityQuestion(prompt)) {
-    const capabilities = new Set(availableHandlerIds);
-    if (!selectedBook || !token || !context.structure || !context.branchReady || context.branch !== branch || !resolveTaskCandidates(settings, "deep-research").some((candidate) => candidate.integration && candidate.model)) capabilities.delete("deep-research");
-    if (!selectedBook || !token || !context.structure?.researchFiles.length || !context.branchReady || context.branch !== branch || !resolveTaskCandidates(settings, "create-from-research").some((candidate) => candidate.integration && candidate.model)) capabilities.delete("create-from-research");
-    return buildCapabilitiesMessage(prompt, settings, capabilities);
+    return buildCapabilitiesMessage(prompt, settings, availableHandlerIds, (tool) => evaluateToolContract(tool, runtime));
   }
-  if (!context.branchReady || context.branch !== branch) return makeAssistantMessage("assistant", `Copilot is waiting for the authoritative branch \`${branch}\` to finish loading before it can read or write repository context.`);
-  if (!selectedBook || !token) return makeAssistantMessage("assistant", "No GitHub token is configured for the current book, so I cannot read or write repository files from this context.");
-  if (!context.structure) return makeAssistantMessage("assistant", "The current book structure is not loaded yet. Open the book page first so I can gather the right context.");
   if (isCreateFromResearchPrompt(prompt)) {
-    const available = context.structure.researchFiles.length > 0 && resolveTaskCandidates(settings, "create-from-research").some((candidate) => candidate.integration && candidate.model);
-    if (!available || !isCopilotHandlerEnabled(settings, "create-from-research")) return disabledCopilotToolMessage(settings, "create-from-research");
-    const intent = handlerMutationIntent(prompt, "create-from-research");
-    if (intent === "ambiguous") return ambiguousMutationMessage(settings, "create-from-research");
-    if (intent === "positive") return handlers["create-from-research"]();
+    return executeTool("create-from-research");
   }
-  const match = chooseToolMatch({ prompt, lowered, settings, spokenMode }, availableHandlerIds);
+  const match = chooseToolMatch({ prompt, lowered, settings, spokenMode, evaluateContract: (tool) => evaluateToolContract(tool, runtime) }, availableHandlerIds);
   if (match && !match.enabled) return disabledCopilotToolMessage(settings, match.toolId);
-  if (match?.mutationIntent === "ambiguous") return ambiguousMutationMessage(settings, match.toolId);
-  if (match?.handlerId && match.handlerId in handlers) return handlers[match.handlerId as keyof typeof handlers]();
+  if (match) return executeTool(match.toolId, match.mutationIntent);
 
   // Fallback while the registry coverage is still growing. Keep existing behavior for unmatched prompts.
   let legacyHandlerId: keyof typeof handlers | null = null;
@@ -266,17 +283,47 @@ export async function runAssistantPrompt(input: {
   else if (looksLikeSummary(lowered)) legacyHandlerId = "summarize-context";
 
   if (legacyHandlerId) {
-    if (!isCopilotHandlerEnabled(settings, legacyHandlerId)) return disabledCopilotToolMessage(settings);
-    const mutationIntent = handlerMutationIntent(lowered, legacyHandlerId);
-    if (mutationIntent === "ambiguous") return ambiguousMutationMessage(settings);
-    if (mutationIntent === "negated" || mutationIntent === "read-only") {
-      if (!isCopilotHandlerEnabled(settings, "answer-from-context")) return disabledCopilotToolMessage(settings, "answer-from-context");
-      return handlers["answer-from-context"]();
-    }
-    return handlers[legacyHandlerId]();
+    const tool = copilotToolRegistry.list().find((entry) => entry.handlerId === legacyHandlerId);
+    if (!tool) throw new Error(`Copilot handler ${legacyHandlerId} has no tool descriptor.`);
+    return executeTool(tool.id, handlerMutationIntent(lowered, legacyHandlerId) ?? undefined);
   }
-  if (!isCopilotHandlerEnabled(settings, "answer-from-context")) return disabledCopilotToolMessage(settings, "answer-from-context");
-  return handlers["answer-from-context"]();
+  return executeTool("answer-from-context");
+}
+
+async function runImmediateHandler(handler: () => Promise<AssistantMessage>): Promise<AssistantMessage> {
+  try {
+    return await handler();
+  } catch (error) {
+    if (!(error instanceof RepositoryConflictError)) throw error;
+    const target = error.path ? ` \`${error.path}\`` : " the target files";
+    return makeAssistantMessage("assistant", `I did not overwrite${target} because the source or branch changed while I was generating the update. Choose one safe next step:\n\n- **Diff**: inspect the current file against the generated result.\n- **Regenerate**: run the request again using the latest source.\n- **Merge**: ask me to merge the generated result with the current file.`);
+  }
+}
+
+type GeneratedDocumentWrite = { path: string; content: string; mode?: "create" | "replace" | "if-absent" };
+
+async function commitGeneratedDocuments(
+  input: PromptInput & { book: BookEntry; branch: string; token: string },
+  remoteHeadSha: string,
+  documents: GeneratedDocumentWrite[],
+  message: string,
+): Promise<string[]> {
+  const prepared = await Promise.all(documents.map(async (document) => {
+    const snapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path: document.path, remoteHeadSha });
+    if (snapshot.content !== null && (document.mode ?? "create") === "create") throw new RepositoryConflictError(`File already exists: ${document.path}`, document.path);
+    if (snapshot.content !== null && document.mode === "if-absent") return null;
+    let content = document.content;
+    if (snapshot.content !== null && document.mode === "replace") {
+      const existing = parseMarkdown(snapshot.content);
+      const generated = parseMarkdown(document.content);
+      content = renderMarkdown(mergeManagedFrontmatter(existing.frontmatter, generated.frontmatter, Object.keys(generated.frontmatter)), generated.body);
+    }
+    return { snapshot, content };
+  }));
+  const writes = prepared.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+  if (!writes.length) return [];
+  await commitImmediateMutations({ token: input.token, book: input.book, branch: input.branch, snapshots: writes, message, signal: input.signal });
+  return writes.map(({ snapshot }) => snapshot.path);
 }
 
 async function actionProvenance(
@@ -325,6 +372,20 @@ function ambiguousMutationMessage(settings: AppSettings, toolId?: string): Assis
   );
 }
 
+function nonPositiveMutationMessage(settings: AppSettings, toolId: string, intent: "negated" | "read-only"): AssistantMessage {
+  const negated = intent === "negated";
+  return makeAssistantMessage(
+    "assistant",
+    settings.ui.language === "it"
+      ? negated
+        ? `Non ho eseguito il tool (${toolId}) e non ho generato modifiche o proposte applicabili.`
+        : `Il tool (${toolId}) può generare una modifica o una proposta applicabile. Per eseguirlo, invia una richiesta esplicita di modifica.`
+      : negated
+        ? `I did not run the tool (${toolId}) and did not generate changes or an applyable proposal.`
+        : `The tool (${toolId}) can generate a change or an applyable proposal. Send an explicit editing request to run it.`,
+  );
+}
+
 function disabledCopilotToolMessage(settings: AppSettings, toolId?: string): AssistantMessage {
   const name = toolId ? ` (${toolId})` : "";
   return makeAssistantMessage(
@@ -341,26 +402,35 @@ export async function compactAssistantSession(input: {
   signal?: AbortSignal;
 }): Promise<AssistantSession> {
   const { session, settings, signal } = input;
-  if (session.messages.length <= 12) return session;
-  const targetCount = session.messages.length - 6;
-  if (targetCount <= session.compactedMessageCount) return session;
+  const removeCount = assistantSessionCompactionTarget(session);
+  if (removeCount === null) return session;
+  const content = compactionText(session, removeCount);
+  const summary = removeCount > 0 ? await completeForTask(settings, [
+      {
+        role: "system",
+        content:
+          "Merge the previous archive summary with only the new messages being archived. Keep goals, decisions, open questions, created notes, requested edits, action outcomes, and canon-sensitive facts. Return concise bullet points. Do not imply that full file contents are preserved; file contents must be reloaded when needed.",
+      },
+      { role: "user", content },
+    ], "chat-resume", { label: "copilot:compact", signal }) : (session.archive?.summary || session.compactSummary);
+  if (removeCount > 0 && !summary) return session;
 
-  const content = session.messages
-    .slice(0, targetCount)
-    .map((message) => `${message.role.toUpperCase()}: ${message.text}`)
-    .join("\n\n");
-
-  const summary = await completeForTask(settings, [
-    {
-      role: "system",
-      content:
-        "Summarize the conversation so far for future continuation. Keep goals, decisions, open questions, created notes, requested edits, and canon-sensitive facts. Return concise bullet points. Do not imply that full file contents are preserved; file contents must be reloaded when needed.",
-    },
-    { role: "user", content },
-  ], "chat-resume", { label: "copilot:compact", signal });
-  if (!summary) return session;
-
-  return { ...session, compactSummary: summary.trim(), compactedMessageCount: targetCount };
+  const removed = session.messages.slice(0, removeCount);
+  const previousArchive = session.archive ?? { summary: session.compactSummary, messageCount: session.compactedMessageCount, actions: [], attachments: [] };
+  const records = await appendAssistantArchiveRecords(previousArchive, removed.flatMap((message) => message.action ? [archiveAction(message.id, message.action)] : []), session.attachments);
+  const archive = {
+    summary: truncateText(summary?.trim() ?? "", MAX_ARCHIVE_SUMMARY_CHARS),
+    messageCount: previousArchive.messageCount + removeCount,
+    ...records,
+  };
+  return {
+    ...session,
+    messages: session.messages.slice(removeCount),
+    attachments: [],
+    archive,
+    compactSummary: archive.summary,
+    compactedMessageCount: archive.messageCount,
+  };
 }
 
 export async function applyParagraphRewrite(input: {
@@ -566,6 +636,7 @@ async function listSimulatedReaders(input: PromptInput & { book: BookEntry; bran
 async function createSimulatedReaderFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const structure = input.context.structure;
   if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
+  const remoteHeadSha = await resolveRepositoryHeadForMutation(input);
   const parsed = await completeStructuredForTask(input.settings, [
     { role: "system", content: "Return ONLY JSON for a useful simulated reader profile: {\"name\":\"...\",\"description\":\"...\",\"profile\":\"...\",\"aspects\":[\"...\"],\"preferredGenres\":[\"...\"],\"dislikedGenres\":[],\"experienceLevel\":\"...\",\"severity\":1-10,\"audienceAge\":\"...\",\"interests\":[],\"appreciatedElements\":[],\"frequentCriticisms\":[],\"customPrompt\":\"...\"}. Keep it revision-useful, not theatrical roleplay." },
     { role: "user", content: input.prompt },
@@ -573,19 +644,20 @@ async function createSimulatedReaderFromPrompt(input: PromptInput & { book: Book
   const profile = emptyReaderPersona(structure.language ?? input.settings.ui.language);
   const name = parsed.name;
   const next = { ...profile, ...parsed, slug: slugToTitle(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") };
-  const path = await saveReaderPersona({ token: input.token, book: input.book, branch: input.branch, profile: next });
+  const path = await saveReaderPersona({ token: input.token, book: input.book, branch: input.branch, profile: next, remoteHeadSha, signal: input.signal });
   return mutationMessage(`Created simulated reader **${next.name}** at \`${path}\`.`, [path]);
 }
 
 async function toggleSimulatedReaderFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const structure = input.context.structure;
   if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
+  const remoteHeadSha = await resolveRepositoryHeadForMutation(input);
   const readers = await loadReaderPersonas({ token: input.token, book: input.book, branch: input.branch, structure });
   const lower = input.prompt.toLowerCase();
   const reader = readers.sort((a, b) => b.name.length - a.name.length).find((entry) => lower.includes(entry.name.toLowerCase()) || lower.includes(entry.slug.replace(/-/g, " ")));
   if (!reader) return makeAssistantMessage("assistant", "Tell me which simulated reader to enable or disable.");
   const enabled = !/\b(disable|disabilita|spegni|off)\b/.test(lower);
-  const path = await saveReaderPersona({ token: input.token, book: input.book, branch: input.branch, profile: { ...reader, enabled } });
+  const path = await saveReaderPersona({ token: input.token, book: input.book, branch: input.branch, profile: { ...reader, enabled }, remoteHeadSha, signal: input.signal });
   return mutationMessage(`${reader.name} is now ${enabled ? "enabled" : "disabled"}.`, [path]);
 }
 
@@ -596,10 +668,10 @@ async function evaluationTargetFromContext(input: PromptInput & { book: BookEntr
   const paragraph = resolveParagraphFromPrompt(input);
   if (paragraph) {
     const file = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, paragraph.paragraph.path);
-    return { type: "paragraph", bookId: input.book.id, chapterId: chapter.slug, paragraphId: paragraph.paragraph.path.split("/").pop()?.replace(/\.md$/i, ""), title: paragraph.paragraph.title, text: parseMarkdown(file.content).body.trim(), sourcePath: paragraph.paragraph.path, sourceVersion: file.sha };
+    return { type: "paragraph", bookId: input.book.id, chapterId: chapter.slug, paragraphId: paragraph.paragraph.path.split("/").pop()?.replace(/\.md$/i, ""), title: paragraph.paragraph.title, text: parseMarkdown(file.content).body.trim(), sourcePath: paragraph.paragraph.path, sourceVersion: file.sha, sourceRevisions: { [paragraph.paragraph.path]: file.sha } };
   }
   const files = await Promise.all(chapter.paragraphs.map((entry) => readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, entry.path)));
-  return { type: "chapter", bookId: input.book.id, chapterId: chapter.slug, title: chapter.title, text: files.map((file, index) => `## ${chapter.paragraphs[index].title}\n\n${parseMarkdown(file.content).body.trim()}`).join("\n\n"), sourcePath: `${chapter.path}/chapter.md`, sourceVersion: files.map((file) => file.sha).join(":") };
+  return { type: "chapter", bookId: input.book.id, chapterId: chapter.slug, title: chapter.title, text: files.map((file, index) => `## ${chapter.paragraphs[index].title}\n\n${parseMarkdown(file.content).body.trim()}`).join("\n\n"), sourcePath: `${chapter.path}/chapter.md`, sourceVersion: files.map((file) => file.sha).join(":"), sourceRevisions: Object.fromEntries(chapter.paragraphs.map((paragraph, index) => [paragraph.path, files[index].sha])) };
 }
 
 async function evaluateWithReadersFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -607,13 +679,14 @@ async function evaluateWithReadersFromPrompt(input: PromptInput & { book: BookEn
   if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
   const unresolved = unresolvedTargetMessage(input);
   if (unresolved) return unresolved;
+  const remoteHeadSha = await resolveRepositoryHeadForMutation(input);
   const [target, readers] = await Promise.all([evaluationTargetFromContext(input), loadReaderPersonas({ token: input.token, book: input.book, branch: input.branch, structure })]);
   if (!target) return makeAssistantMessage("assistant", "Open or name a chapter or paragraph first.");
   const lower = input.prompt.toLowerCase();
   const named = readers.filter((reader) => lower.includes(reader.name.toLowerCase()) || reader.preferredGenres.some((genre) => lower.includes(genre.toLowerCase())));
   const selected = named.length ? named.filter((reader) => reader.enabled) : readers.filter((reader) => reader.enabled);
   if (!selected.length) return makeAssistantMessage("assistant", "No matching simulated readers are enabled.");
-  const result = await runReaderEvaluations({ token: input.token, book: input.book, branch: input.branch, structure, settings: input.settings, target, readers: selected, depth: /\b(deep|approfondit)\b/.test(lower) ? "deep" : "brief", includeContext: true, concurrency: 2, signal: input.signal, onProgress: (progress) => input.onText?.(`**${progress.readerName}**: ${progress.status} (${progress.completed}/${progress.total})`) });
+  const result = await runReaderEvaluations({ token: input.token, book: input.book, branch: input.branch, structure, settings: input.settings, target, readers: selected, depth: /\b(deep|approfondit)\b/.test(lower) ? "deep" : "brief", includeContext: true, concurrency: 2, signal: input.signal, remoteHeadSha, onProgress: (progress) => input.onText?.(`**${progress.readerName}**: ${progress.status} (${progress.completed}/${progress.total})`) });
   return mutationMessage(`Completed ${result.completed.length} reader evaluations${result.failed.length ? `; ${result.failed.length} failed` : ""}.\n\n${result.completed.map((record) => `- **${record.readerName}**: ${record.score ?? "-"}/10 — \`${record.path}\``).join("\n")}`, result.changedPaths);
 }
 
@@ -628,6 +701,7 @@ async function summarizeReaderEvaluationsFromPrompt(input: PromptInput & { book:
   if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
   const unresolved = unresolvedTargetMessage(input);
   if (unresolved) return unresolved;
+  const remoteHeadSha = await resolveRepositoryHeadForMutation(input);
   const target = await evaluationTargetFromContext(input);
   if (!target) return makeAssistantMessage("assistant", "Open or name a chapter or paragraph first.");
   const hash = await hashReaderSource(target.text);
@@ -643,7 +717,7 @@ async function summarizeReaderEvaluationsFromPrompt(input: PromptInput & { book:
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .filter((record) => !seen.has(record.readerId) && Boolean(seen.add(record.readerId)));
   if (latest.length < 2) return makeAssistantMessage("assistant", "At least two current reader evaluations are needed to create a summary.");
-  const summary = await generateReaderEvaluationSummary({ token: input.token, book: input.book, branch: input.branch, settings: input.settings, target, evaluations: latest, language: structure.language, signal: input.signal });
+  const summary = await generateReaderEvaluationSummary({ token: input.token, book: input.book, branch: input.branch, settings: input.settings, target, evaluations: latest, language: structure.language, signal: input.signal, remoteHeadSha });
   return mutationMessage(`Saved the simulated-reader summary to \`${summary.path}\`.\n\n${summary.body}`, [summary.path]);
 }
 
@@ -707,10 +781,10 @@ async function feedbackTargetForResolvedContext(
 ): Promise<ReaderEvaluationTarget> {
   if (paragraph) {
     const file = await readFileWithSha(input.token!, input.book.owner, input.book.repo, input.branch!, paragraph.path);
-    return { type: "paragraph", bookId: input.book.id, chapterId: chapter.slug, paragraphId: slugFromPath(paragraph.path), title: paragraph.title, text: parseMarkdown(file.content).body.trim(), sourcePath: paragraph.path, sourceVersion: file.sha };
+    return { type: "paragraph", bookId: input.book.id, chapterId: chapter.slug, paragraphId: slugFromPath(paragraph.path), title: paragraph.title, text: parseMarkdown(file.content).body.trim(), sourcePath: paragraph.path, sourceVersion: file.sha, sourceRevisions: { [paragraph.path]: file.sha } };
   }
   const files = await Promise.all(chapter.paragraphs.map((entry) => readFileWithSha(input.token!, input.book.owner, input.book.repo, input.branch!, entry.path)));
-  return { type: "chapter", bookId: input.book.id, chapterId: chapter.slug, title: chapter.title, text: files.map((file, index) => `## ${chapter.paragraphs[index].title}\n\n${parseMarkdown(file.content).body.trim()}`).join("\n\n"), sourcePath: `${chapter.path}/chapter.md`, sourceVersion: files.map((file) => file.sha).join(":") };
+  return { type: "chapter", bookId: input.book.id, chapterId: chapter.slug, title: chapter.title, text: files.map((file, index) => `## ${chapter.paragraphs[index].title}\n\n${parseMarkdown(file.content).body.trim()}`).join("\n\n"), sourcePath: `${chapter.path}/chapter.md`, sourceVersion: files.map((file) => file.sha).join(":"), sourceRevisions: Object.fromEntries(chapter.paragraphs.map((paragraph, index) => [paragraph.path, files[index].sha])) };
 }
 
 async function cancelFeedbackRewrite(input: PromptInput & { book: BookEntry }): Promise<AssistantMessage> {
@@ -865,6 +939,7 @@ async function setAuditFindingStatusFromPrompt(input: PromptInput & { book: Book
   if (!findingId) return makeAssistantMessage("assistant", "Include the complete finding ID, for example `audit-0123456789abcdef0123`. No finding was changed.");
   const status = auditFindingStatusFromPrompt(input.prompt);
   if (!status) return makeAssistantMessage("assistant", "Specify one status: open, resolved, ignored, false positive, or needs review. No finding was changed.");
+  const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation(input);
   let report;
   try {
     report = await loadAuditReport({ token: input.token, book: input.book, branch: input.branch, structure, target });
@@ -875,7 +950,7 @@ async function setAuditFindingStatusFromPrompt(input: PromptInput & { book: Book
   if (!report.findings.some((finding) => finding.id === findingId)) {
     return makeAssistantMessage("assistant", `Finding \`${findingId}\` does not exist in the resolved report. No finding was changed.`);
   }
-  await updateAuditFinding({ token: input.token, book: input.book, branch: input.branch, structure, target, findingId, status });
+  await updateAuditFinding({ token: input.token, book: input.book, branch: input.branch, structure, target, findingId, status, expectedRemoteHeadSha, signal: input.signal });
   return mutationMessage(`Updated finding \`${findingId}\` to **${status}**.`, [resolveAuditTarget(structure, target).reportPath]);
 }
 
@@ -1050,12 +1125,23 @@ async function getParagraphInfo(input: PromptInput & { book: BookEntry; branch: 
 async function getCanonEntityInfo(section: CanonSectionKey, input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const structure = input.context.structure;
   if (!structure) return makeAssistantMessage("assistant", "Open a book first.");
-  const files = canonList(structure, section);
+  const allFiles = canonList(structure, section);
+  const explicitlyRequested = section === "secrets" ? findCanonFileByPrompt(allFiles, input.prompt) : null;
+  if (explicitlyRequested && secretAccessFromManifest(input.context, explicitlyRequested.path) === "hidden") {
+    return makeAssistantMessage("assistant", "That secret is not available at the current story position. Open its canon page for explicit author access, or move to a chapter at or after its disclosure threshold.");
+  }
+  const files = section === "secrets"
+    ? allFiles.filter((file) => secretAccessFromManifest(input.context, file.path) !== "hidden")
+    : allFiles;
+  if (section === "secrets" && !files.length) return makeAssistantMessage("assistant", "No secret is available at the current story position. Open the secret's canon page for explicit author access, or move to a chapter at or after its disclosure threshold.");
   if (!files.length) return makeAssistantMessage("assistant", `There are no ${section} in this book yet.`);
-  const file = findCanonFileByPrompt(files, input.prompt) ?? (files.length === 1 ? files[0] : null);
+  const file = explicitlyRequested ?? findCanonFileByPrompt(files, input.prompt) ?? (files.length === 1 ? files[0] : null);
   if (!file) {
     const names = files.slice(0, 20).map((entry) => `- ${entry.name ?? slugToTitle(slugFromPath(entry.path))}`).join("\n");
     return makeAssistantMessage("assistant", `Which one? Available ${section}:\n${names}`);
+  }
+  if (section === "secrets" && !canDiscloseSecretBody(secretAccessFromManifest(input.context, file.path))) {
+    return makeAssistantMessage("assistant", "That secret is known at the current story position but is not fully revealed yet, so its secret sheet remains hidden.");
   }
   const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, file.path, input.branch);
   const { frontmatter, body } = parseMarkdown(raw);
@@ -1158,44 +1244,51 @@ async function requestDeleteReaderEvaluation(input: PromptInput & { book: BookEn
 async function createChapterFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const structure = input.context.structure;
   if (!structure) return makeAssistantMessage("assistant", "Open a book first so I can create a chapter in the right repository.");
+  const remoteHeadSha = await resolveRepositoryHeadForMutation(input);
   const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new chapter: {"title":"...","summary":"...","body":"..."}. Keep it concise and aligned with the current book context.', "book"),
     buildUserMessage(input, `Create a new chapter. Request: ${input.prompt}`),
   ], "default", chapterOutputSchema, { signal: input.signal, label: "copilot:create-chapter" });
   const { title, summary, body } = parsed;
   const nextNumber = (structure.chapters.length || 0) + 1;
-  const created = await createChapter(input.token, input.book.owner, input.book.repo, input.branch, { number: nextNumber, title, summary, body });
-  return mutationMessage(`I created chapter ${created.slug} at \`${created.chapterFilePath}\`.`, created.changedPaths);
+  const created = buildChapterDocuments({ number: nextNumber, title, summary, body });
+  const changedPaths = await commitGeneratedDocuments(input, remoteHeadSha, created.documents, `Add chapter ${created.slug}`);
+  return mutationMessage(`I created chapter ${created.slug} at \`${created.chapterFilePath}\`.`, changedPaths);
 }
 
 async function createParagraphFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const chapter = resolveResumeChapter(input.context);
   if (!chapter) return makeAssistantMessage("assistant", "Open a chapter first so I know where to create the paragraph.");
+  const remoteHeadSha = await resolveRepositoryHeadForMutation(input);
   const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new paragraph: {"title":"...","summary":"...","body":"..."}. Preserve current chapter context.', "book"),
     buildUserMessage(input, `Create a new paragraph in chapter ${chapter.slug}. Request: ${input.prompt}`),
   ], "default", paragraphOutputSchema, { signal: input.signal, label: "copilot:create-paragraph" });
   const { title, summary, body } = parsed;
   const nextNumber = (chapter.paragraphs.length || 0) + 1;
-  const created = await createParagraphDocument(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: chapter.slug, number: nextNumber, title, summary, body });
+  const created = buildParagraphDocument({ chapterSlug: chapter.slug, number: nextNumber, title, summary, body });
+  await commitGeneratedDocuments(input, remoteHeadSha, [{ path: created.paragraphFilePath, content: created.content }], `Add paragraph ${created.slug}`);
   return mutationMessage(`I created paragraph ${created.slug} at \`${created.paragraphFilePath}\`.`, [created.paragraphFilePath]);
 }
 
 async function createEntityFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }, forcedKind?: EntityKind): Promise<AssistantMessage> {
   const kind = forcedKind ?? detectEntityKind(input.prompt);
   if (!kind) return makeAssistantMessage("assistant", "Tell me which entity to create: character, location, faction, item, secret, or timeline event.");
+  const remoteHeadSha = await resolveRepositoryHeadForMutation(input);
   const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new canon entity: {"label":"...","summary":"...","body":"...","extraFrontmatter":{...}}.', "book"),
     buildUserMessage(input, `Create a ${kind}. Request: ${input.prompt}`),
   ], "default", entityOutputSchema, { signal: input.signal, label: "copilot:create-entity" });
   const { label, summary, body, extraFrontmatter } = parsed;
-  const created = await createCanonEntity(input.token, input.book.owner, input.book.repo, input.branch, { kind, label, summary, body, extraFrontmatter });
+  const created = buildCanonEntityDocument({ kind, label, summary, body, extraFrontmatter });
+  await commitGeneratedDocuments(input, remoteHeadSha, [{ path: created.path, content: created.content }], `Add ${kind} ${label}`);
   return mutationMessage(`I created ${kind} \`${label}\` at \`${created.path}\`.`, [created.path]);
 }
 
 async function createScriptFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Open a chapter first so I know where to create the script.");
+  const remoteHeadSha = await resolveRepositoryHeadForMutation(input);
   const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'Return ONLY JSON for a new script scene: {"title":"...","location":"..."}.'),
     buildUserMessage(input, `Create a new scene script in chapter ${chapter.slug}. Request: ${input.prompt}`),
@@ -1203,21 +1296,26 @@ async function createScriptFromPrompt(input: PromptInput & { book: BookEntry; br
   const { title, location } = parsed;
   const nextNumber = input.context.paragraph ? Number(input.context.paragraph.number) : (chapter.paragraphs.length || 0) + 1;
   const paragraphSlug = input.context.paragraph?.path.split("/").pop()?.replace(/\.md$/i, "");
-  const path = await createParagraphScriptArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: chapter.slug, number: nextNumber, title, paragraphSlug, location });
-  return mutationMessage(`I created a script for \`${title}\` in chapter \`${chapter.slug}\`.`, [path]);
+  const script = buildParagraphScriptArtifact({ chapterSlug: chapter.slug, number: nextNumber, title, paragraphSlug, location });
+  await commitScriptWithCanonicalLedger({ token: input.token, book: input.book, branch: input.branch, script, message: `Add script ${script.slug}`, expectedRemoteHeadSha: remoteHeadSha, signal: input.signal });
+  return mutationMessage(`I created a script for \`${title}\` in chapter \`${chapter.slug}\`.`, [script.path, "state/script-ledger.md"]);
 }
 
 async function createDraftFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   if (input.context.chapter) {
+    const remoteHeadSha = await resolveRepositoryHeadForMutation(input);
     if (input.context.paragraph) {
       const paragraphSlug = input.context.paragraph.path.split("/").pop()?.replace(/\.md$/i, "");
-      const path = await createParagraphDraftArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: input.context.chapter.slug, number: Number(input.context.paragraph.number), title: input.context.paragraph.title, paragraphSlug });
+      const artifact = buildParagraphDraftArtifact({ chapterSlug: input.context.chapter.slug, number: Number(input.context.paragraph.number), title: input.context.paragraph.title, paragraphSlug });
+      await commitGeneratedDocuments(input, remoteHeadSha, [{ path: artifact.path, content: artifact.content, mode: "if-absent" }], `Add paragraph draft ${artifact.slug}`);
+      const path = artifact.path;
       return mutationMessage(`I created a paragraph draft for \`${input.context.paragraph.title}\`.`, [path]);
     }
     const match = /^(\d{3})-/.exec(input.context.chapter.slug);
     const number = Number(match?.[1] ?? 1);
-    const created = await createChapterDraftArtifacts(input.token, input.book.owner, input.book.repo, input.branch, { number, title: input.context.chapter.title });
-    return mutationMessage(`I created a chapter draft workspace for \`${input.context.chapter.title}\`.`, created.changedPaths);
+    const created = buildChapterDraftArtifactDocuments({ number, title: input.context.chapter.title, chapterSlug: input.context.chapter.slug });
+    const changedPaths = await commitGeneratedDocuments(input, remoteHeadSha, created.documents.map((document) => ({ ...document, mode: "if-absent" as const })), `Add chapter draft ${created.slug}`);
+    return mutationMessage(`I created a chapter draft workspace for \`${input.context.chapter.title}\`.`, changedPaths);
   }
   return makeAssistantMessage("assistant", "Open a chapter or paragraph first so I know which draft workspace to create.");
 }
@@ -1239,6 +1337,7 @@ async function importAttachmentsIntoBook(input: PromptInput & { book: BookEntry;
 async function importAttachmentsAsScript(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Open a chapter or paragraph before importing attachments as a script.");
+  const remoteHeadSha = await resolveRepositoryHeadForMutation(input);
   const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'Convert the attached source into one Narrarium scene script. Return ONLY JSON: {"title":"...","location":"...","body":"..."}. The body must contain ordered script beats, not finished prose.', "book"),
     buildUserMessage(input, input.prompt),
@@ -1247,13 +1346,14 @@ async function importAttachmentsAsScript(input: PromptInput & { book: BookEntry;
   const number = input.context.paragraph ? Number(input.context.paragraph.number) : chapter.paragraphs.length + 1;
   const paragraphSlug = input.context.paragraph ? slugFromPath(input.context.paragraph.path) : undefined;
   const script = buildParagraphScriptArtifact({ chapterSlug: chapter.slug, number, title, paragraphSlug, location, body: parsed.body });
-  await commitScriptWithCanonicalLedger({ token: input.token, book: input.book, branch: input.branch, script, message: `Import script ${script.slug} and refresh script ledger` });
+  await commitScriptWithCanonicalLedger({ token: input.token, book: input.book, branch: input.branch, script, message: `Import script ${script.slug} and refresh script ledger`, expectedRemoteHeadSha: remoteHeadSha, signal: input.signal, replace: true });
   return mutationMessage(`I imported the attachments as script \`${script.path}\` and refreshed the canonical script ledger.`, [script.path, "state/script-ledger.md"]);
 }
 
 async function importAttachmentsAsDraft(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Open a chapter or paragraph before importing attachments as a draft.");
+  const remoteHeadSha = await resolveRepositoryHeadForMutation(input);
   const parsed = await completeStructuredForTask(input.settings, [
     buildSystemMessage(input, 'Convert the attached source into a Narrarium prose draft. Return ONLY JSON: {"title":"...","body":"..."}. Preserve source facts and do not add wrapper commentary.', "book"),
     buildUserMessage(input, input.prompt),
@@ -1262,13 +1362,14 @@ async function importAttachmentsAsDraft(input: PromptInput & { book: BookEntry; 
   let path: string;
   let changedPaths: string[];
   if (input.context.paragraph) {
-    path = await createParagraphDraftArtifact(input.token, input.book.owner, input.book.repo, input.branch, { chapterSlug: chapter.slug, number: Number(input.context.paragraph.number), title, paragraphSlug: slugFromPath(input.context.paragraph.path), body: parsed.body, replace: true });
-    changedPaths = draftImportChangedPaths(path);
+    const artifact = buildParagraphDraftArtifact({ chapterSlug: chapter.slug, number: Number(input.context.paragraph.number), title, paragraphSlug: slugFromPath(input.context.paragraph.path), body: parsed.body });
+    path = artifact.path;
+    changedPaths = await commitGeneratedDocuments(input, remoteHeadSha, [{ path, content: artifact.content, mode: "replace" }], `Import paragraph draft ${artifact.slug}`);
   } else {
     const number = Number(/^(\d{3})-/.exec(chapter.slug)?.[1] ?? 1);
-    const created = await createChapterDraftArtifacts(input.token, input.book.owner, input.book.repo, input.branch, { number, title, chapterSlug: chapter.slug, body: parsed.body, replace: true });
+    const created = buildChapterDraftArtifactDocuments({ number, title, chapterSlug: chapter.slug, body: parsed.body });
     path = created.path;
-    changedPaths = draftImportChangedPaths(created);
+    changedPaths = await commitGeneratedDocuments(input, remoteHeadSha, created.documents.map((document, index) => ({ ...document, mode: index === 0 ? "replace" as const : "if-absent" as const })), `Import chapter draft ${created.slug}`);
   }
   return mutationMessage(`I imported the attachments as draft \`${path}\`.`, changedPaths);
 }
@@ -1280,7 +1381,8 @@ export function draftImportChangedPaths(created: string | { changedPaths: string
 async function runDeepResearchFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const request = resolveDeepResearchRequest(input.prompt);
   if (!request) return makeAssistantMessage("assistant", "Tell me what topic to research, for example: run deep research on Roman aqueduct construction.");
-  const result = await executeDeepResearchFromCopilot({ ...input, structureLanguage: input.context.structure?.language });
+  const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation(input);
+  const result = await executeDeepResearchFromCopilot({ ...input, structureLanguage: input.context.structure?.language, expectedRemoteHeadSha });
   if (!result) return makeAssistantMessage("assistant", "Tell me what topic to research.");
   return mutationMessage(`Saved deep research **${result.title}** to \`${result.path}\` using ${result.providers.join(", ") || "the configured research providers"}.`, [result.path]);
 }
@@ -1315,25 +1417,26 @@ async function writeResume(input: PromptInput & { book: BookEntry; branch: strin
   const chapter = input.context.chapter;
   if (!chapter) return makeAssistantMessage("assistant", "Resume writing works when you are inside a chapter or one of its paragraph/workspace pages.");
   const targetPath = `resumes/chapters/${chapter.slug}.md`;
-  const existingResume = chapter.hasResume ? await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, targetPath) : null;
-  const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token: input.token, book: input.book, branch: input.branch });
+  const snapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path: targetPath });
   const parts = await loadCompleteChapterSource(chapter, (path) => loadFileContent(input.token, input.book.owner, input.book.repo, path, input.branch));
   input.signal?.throwIfAborted();
   const chunks = buildChapterResumeChunks(parts);
   const renderParts = (items: typeof parts) => items.map((part) => `SOURCE: ${part.path}\nTITLE: ${part.title}\n${part.content}`).join("\n\n---\n\n");
+  const resumeTask = llmTaskForTool("write-resume");
+  if (!resumeTask) throw new Error("Write Resume has no configured LLM runtime contract.");
   let answer: string | null;
   if (chunks.length === 1) {
     answer = await completeForTask(input.settings, [
       { role: "system", content: `Write a complete chronological chapter resume from every labelled source below. Preserve facts and visible canon. Return only Markdown body.${languageInstruction(input, "book")}` },
       { role: "user", content: `Chapter ${chapter.slug}. Request: ${input.prompt}\n\n${renderParts(chunks[0])}` },
-    ], "default", { signal: input.signal, label: "copilot:write-resume" });
+    ], resumeTask, { signal: input.signal, label: "copilot:write-resume" });
   } else {
     const partials: string[] = [];
     for (let index = 0; index < chunks.length; index++) {
       const partial = await completeForTask(input.settings, [
         { role: "system", content: "Summarize every labelled source in this chronological chapter segment. Keep all events, characters, changes, and open threads. Return only Markdown." },
         { role: "user", content: `Segment ${index + 1}/${chunks.length}\n\n${renderParts(chunks[index])}` },
-      ], "chat-resume", { signal: input.signal, label: `copilot:resume-map-${index + 1}` });
+      ], resumeTask, { signal: input.signal, label: `copilot:resume-map-${index + 1}` });
       if (!partial) return noAiMessage();
       partials.push(`SEGMENT ${index + 1}\n${partial}`);
     }
@@ -1348,27 +1451,27 @@ async function writeResume(input: PromptInput & { book: BookEntry; branch: strin
       if (group.length) groups.push(group);
       const next: string[] = [];
       for (let index = 0; index < groups.length; index++) {
-        const reduced = await completeForTask(input.settings, [{ role: "system", content: "Merge all ordered summaries without dropping events or later material. Return only Markdown." }, { role: "user", content: groups[index].join("\n\n---\n\n") }], "chat-resume", { signal: input.signal, label: `copilot:resume-reduce-${round}-${index}` });
+        const reduced = await completeForTask(input.settings, [{ role: "system", content: "Merge all ordered summaries without dropping events or later material. Return only Markdown." }, { role: "user", content: groups[index].join("\n\n---\n\n") }], resumeTask, { signal: input.signal, label: `copilot:resume-reduce-${round}-${index}` });
         if (!reduced) return noAiMessage(); next.push(reduced);
       }
       level = next; round += 1;
     }
-    answer = await completeForTask(input.settings, [{ role: "system", content: `Merge every ordered summary into one complete chronological chapter resume. Do not omit later material. Return only Markdown.${languageInstruction(input, "book")}` }, { role: "user", content: level.join("\n\n---\n\n") }], "chat-resume", { signal: input.signal, label: "copilot:resume-final" });
+    answer = await completeForTask(input.settings, [{ role: "system", content: `Merge every ordered summary into one complete chronological chapter resume. Do not omit later material. Return only Markdown.${languageInstruction(input, "book")}` }, { role: "user", content: level.join("\n\n---\n\n") }], resumeTask, { signal: input.signal, label: "copilot:resume-final" });
   }
   if (!answer) return noAiMessage();
   input.signal?.throwIfAborted();
-  const parsed = existingResume ? parseMarkdown(existingResume.content) : { frontmatter: {} };
+  const parsed = snapshot.content ? parseMarkdown(snapshot.content) : { frontmatter: {} };
   const content = renderMarkdown(mergeResumeFrontmatter(parsed.frontmatter, chapter.slug), `${answer.trim()}\n`);
-  await commitAndPushTextFileMutation({ token: input.token, book: input.book, branch: input.branch, expectedRemoteHeadSha, message: `${existingResume ? "Update" : "Add"} chapter resume ${chapter.slug}`, mutations: [{ path: targetPath, content, expectedCurrentHash: existingResume ? await sha256Text(existingResume.content) : null }] });
+  await commitImmediateMutation({ token: input.token, book: input.book, branch: input.branch, snapshot, content, message: `${snapshot.content ? "Update" : "Add"} chapter resume ${chapter.slug}`, signal: input.signal });
   return mutationMessage(`I wrote the chapter resume to \`${targetPath}\`.\n\n${answer.trim()}`, [targetPath]);
 }
 
-async function ensureEvaluationGuidelines(input: { token: string; owner: string; repo: string; branch: string; language?: string }): Promise<{ content: string; created: boolean }> {
-  const existing = await optionalRepositoryRead(() => loadFileContent(input.token, input.owner, input.repo, EVALUATION_GUIDELINES_PATH, input.branch));
-  if (existing) return { content: existing, created: false };
+async function ensureEvaluationGuidelines(input: { token: string; book: BookEntry; branch: string; language?: string; remoteHeadSha: string }): Promise<{ content: string; created: boolean; snapshot: ImmediateMutationSnapshot }> {
+  const snapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path: EVALUATION_GUIDELINES_PATH, remoteHeadSha: input.remoteHeadSha });
+  const existing = snapshot.content;
+  if (existing) return { content: existing, created: false, snapshot };
   const fallback = defaultEvaluationGuidelinesMarkdown(input.language);
-  await createFile(input.token, input.owner, input.repo, input.branch, EVALUATION_GUIDELINES_PATH, fallback, "Add default evaluation guidelines");
-  return { content: fallback, created: true };
+  return { content: fallback, created: true, snapshot };
 }
 
 export type EvaluationCriterionScore = { score: number; explanation: string };
@@ -1505,12 +1608,13 @@ async function resolveEvaluationTarget(input: PromptInput & { book: BookEntry; b
 
 type ResolvedEvaluationTarget = NonNullable<Awaited<ReturnType<typeof resolveEvaluationTarget>>>;
 
-async function evaluateAndWriteTarget(
+async function prepareEvaluationTarget(
   input: PromptInput & { book: BookEntry; branch: string; token: string },
   target: ResolvedEvaluationTarget,
   guidelines: string,
   criteria: Record<string, string>,
-): Promise<{ answer: string; path: string }> {
+  snapshot: ImmediateMutationSnapshot,
+): Promise<{ answer: string; path: string; snapshot: ImmediateMutationSnapshot; content: string }> {
   const targetLabel = target.kind === "paragraph" ? `paragraph in chapter ${target.chapterSlug}` : `chapter ${target.chapterSlug}`;
   const evaluationPayload = [
     `Write or refresh the evaluation for ${targetLabel}. Request: ${input.prompt}`,
@@ -1567,17 +1671,12 @@ async function evaluateAndWriteTarget(
         ...(scoreGeneration ? { score_generation: scoreGeneration } : {}),
       };
 
-  await upsertStructuredMarkdownFile({
-    token: input.token,
-    owner: input.book.owner,
-    repo: input.book.repo,
-    branch: input.branch,
-    path: target.targetPath,
-    frontmatter,
-    body: answer.trim(),
-    message: `Update ${target.kind} evaluation ${target.chapterSlug}`,
-  });
-  return { answer: answer.trim(), path: target.targetPath };
+  const existingFrontmatter = snapshot.content ? parseMarkdown(snapshot.content).frontmatter : {};
+  const managedKeys = target.kind === "paragraph"
+    ? ["type", "id", "title", "chapter", "paragraph", "scores", "score_generation"]
+    : ["type", "id", "title", "scores", "score_generation"];
+  const content = renderMarkdown(mergeManagedFrontmatter(existingFrontmatter, frontmatter, managedKeys), `${answer.trim()}\n`);
+  return { answer: answer.trim(), path: target.targetPath, snapshot, content };
 }
 
 async function writeAllParagraphEvaluations(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -1588,7 +1687,8 @@ async function writeAllParagraphEvaluations(input: PromptInput & { book: BookEnt
   if (!chapter.paragraphs.length) return makeAssistantMessage("assistant", `Chapter \`${chapter.slug}\` has no paragraphs to evaluate.`);
 
   const language = input.context.structure?.language;
-  const guidelineResult = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, language });
+  const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation(input);
+  const guidelineResult = await ensureEvaluationGuidelines({ token: input.token, book: input.book, branch: input.branch, language, remoteHeadSha: expectedRemoteHeadSha });
   const guidelines = guidelineResult.content;
   const criteria = resolveEvaluationCriteria(guidelines, language);
   const italian = /\b(tutti|paragraf|capitolo|valutazione|scene)\b/i.test(input.prompt);
@@ -1596,6 +1696,7 @@ async function writeAllParagraphEvaluations(input: PromptInput & { book: BookEnt
   const paths: string[] = [];
   if (guidelineResult.created) paths.push(EVALUATION_GUIDELINES_PATH);
 
+  const prepared: Array<Awaited<ReturnType<typeof prepareEvaluationTarget>>> = [];
   for (let index = 0; index < chapter.paragraphs.length; index++) {
     const paragraph = chapter.paragraphs[index];
     input.onText?.(italian
@@ -1612,7 +1713,9 @@ async function writeAllParagraphEvaluations(input: PromptInput & { book: BookEnt
       body: parsed.body.trim(),
       fileFrontmatter: parsed.frontmatter,
     };
-    const result = await evaluateAndWriteTarget(input, target, guidelines, criteria);
+    const snapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path: target.targetPath, remoteHeadSha: expectedRemoteHeadSha });
+    const result = await prepareEvaluationTarget(input, target, guidelines, criteria, snapshot);
+    prepared.push(result);
     paths.push(result.path);
     paragraphBodies.push({ title: paragraph.title, body: parsed.body.trim() });
   }
@@ -1630,8 +1733,24 @@ async function writeAllParagraphEvaluations(input: PromptInput & { book: BookEnt
     body: [chapterParsed.body.trim(), ...paragraphBodies.map((paragraph) => `### ${paragraph.title}\n\n${paragraph.body}`)].filter(Boolean).join("\n\n"),
     fileFrontmatter: chapterParsed.frontmatter,
   };
-  const total = await evaluateAndWriteTarget(input, chapterTarget, guidelines, criteria);
+  const chapterSnapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path: chapterTarget.targetPath, remoteHeadSha: expectedRemoteHeadSha });
+  const total = await prepareEvaluationTarget(input, chapterTarget, guidelines, criteria, chapterSnapshot);
+  prepared.push(total);
   paths.push(total.path);
+
+  input.signal?.throwIfAborted();
+  if (await resolveRepositoryHeadForMutation(input) !== expectedRemoteHeadSha) throw new RepositoryConflictError("The source branch changed while generating the evaluations.");
+  await commitImmediateMutations({
+    token: input.token,
+    book: input.book,
+    branch: input.branch,
+    snapshots: [
+      ...prepared.map((result) => ({ snapshot: result.snapshot, content: result.content })),
+      ...(guidelineResult.created ? [{ snapshot: guidelineResult.snapshot, content: guidelines }] : []),
+    ],
+    message: `Update all evaluations for ${chapter.slug}`,
+    signal: input.signal,
+  });
 
   const intro = italian
     ? `Ho valutato tutti i ${chapter.paragraphs.length} paragrafi del capitolo e salvato anche la valutazione complessiva.`
@@ -1642,22 +1761,40 @@ async function writeAllParagraphEvaluations(input: PromptInput & { book: BookEnt
 async function writeEvaluation(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const unresolved = unresolvedTargetMessage(input);
   if (unresolved) return unresolved;
+  const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation(input);
   const target = await resolveEvaluationTarget(input);
   if (!target) return makeAssistantMessage("assistant", "Tell me which chapter or paragraph to evaluate, for example: evaluate chapter 1 or evaluate paragraph 2 of chapter 1.");
-  const guidelineResult = await ensureEvaluationGuidelines({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, language: input.context.structure?.language });
+  const guidelineResult = await ensureEvaluationGuidelines({ token: input.token, book: input.book, branch: input.branch, language: input.context.structure?.language, remoteHeadSha: expectedRemoteHeadSha });
   const guidelines = guidelineResult.content;
   const criteria = resolveEvaluationCriteria(guidelines, input.context.structure?.language);
-  const result = await evaluateAndWriteTarget(input, target, guidelines, criteria);
+  const snapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path: target.targetPath, remoteHeadSha: expectedRemoteHeadSha });
+  const result = await prepareEvaluationTarget(input, target, guidelines, criteria, snapshot);
+  input.signal?.throwIfAborted();
+  if (await resolveRepositoryHeadForMutation(input) !== expectedRemoteHeadSha) throw new RepositoryConflictError("The source branch changed while generating the evaluation.");
+  await commitImmediateMutations({
+    token: input.token,
+    book: input.book,
+    branch: input.branch,
+    snapshots: [
+      { snapshot: result.snapshot, content: result.content },
+      ...(guidelineResult.created ? [{ snapshot: guidelineResult.snapshot, content: guidelines }] : []),
+    ],
+    message: `Update ${target.kind} evaluation ${target.chapterSlug}`,
+    signal: input.signal,
+  });
   return mutationMessage(`I wrote the ${target.kind} evaluation to \`${result.path}\`.\n\n${result.answer}`, guidelineResult.created ? [result.path, EVALUATION_GUIDELINES_PATH] : [result.path]);
 }
 
 async function writePlotUpdate(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const snapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path: "plot.md" });
   const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "Update the book plot document in markdown. Keep it concise, structural, and consistent with the loaded canon. Return only the body, no frontmatter.", "book"),
     buildUserMessage(input, `Refresh plot.md for this book. Request: ${input.prompt}`),
   ], "default", { signal: input.signal, label: "copilot:update-plot" });
   if (!answer) return noAiMessage();
-  await upsertStructuredMarkdownFile({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, path: "plot.md", frontmatter: { type: "plot", id: "plot:main", title: "Plot" }, body: answer.trim(), message: "Update plot.md" });
+  const existingFrontmatter = snapshot.content ? parseMarkdown(snapshot.content).frontmatter : {};
+  const frontmatter = mergeManagedFrontmatter(existingFrontmatter, { type: "plot", id: "plot:main", title: "Plot" }, ["type", "id", "title"]);
+  await commitImmediateMutation({ token: input.token, book: input.book, branch: input.branch, snapshot, content: renderMarkdown(frontmatter, `${answer.trim()}\n`), message: "Update plot.md", signal: input.signal });
   return mutationMessage(`I updated \`plot.md\`.\n\n${answer.trim()}`, ["plot.md"]);
 }
 
@@ -1704,12 +1841,20 @@ async function proposeMultiFileUpdates(input: PromptInput & { book: BookEntry; b
 async function createContextNote(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
   const targetPath = input.context.noteTargetPath;
   if (!targetPath) return makeAssistantMessage("assistant", "I could not determine where to save a note from the current screen.");
+  const snapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path: targetPath });
   const answer = await completeForTask(input.settings, [
     buildSystemMessage(input, "You create concise writer notes for the current context. Return only the note body in markdown, no frontmatter and no wrapping commentary."),
     buildUserMessage(input, `Create a note for this request: ${input.prompt}`),
   ], "default", { signal: input.signal, label: "copilot:create-note" });
   if (!answer) return noAiMessage();
-  await upsertNoteFile({ token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch, path: targetPath, title: defaultNoteTitle(targetPath), noteBody: answer.trim() });
+  const timestamp = new Date().toISOString();
+  const section = `## ${timestamp}\n\n${answer.trim()}\n`;
+  const parsed = snapshot.content ? parseMarkdown(snapshot.content) : null;
+  const frontmatter = parsed?.frontmatter ?? (targetPath === "notes.md"
+    ? { type: "note", id: "note:book:notes", title: defaultNoteTitle(targetPath), scope: "book", bucket: "notes", entries: [] }
+    : chapterDraftNoteFrontmatter(targetPath, defaultNoteTitle(targetPath)));
+  const body = parsed ? `${parsed.body.trim()}\n\n${section}`.trim() + "\n" : section;
+  await commitImmediateMutation({ token: input.token, book: input.book, branch: input.branch, snapshot, content: renderMarkdown(frontmatter, body), message: `${snapshot.content ? "Update" : "Add"} notes ${targetPath}`, signal: input.signal });
   return mutationMessage(`I saved a note to \`${targetPath}\`.\n\n${answer.trim()}`, [targetPath]);
 }
 
@@ -1717,7 +1862,7 @@ async function searchCurrentBook(input: PromptInput & { book: BookEntry; token: 
   const { context, prompt, book, token } = input;
   const structure = context.structure;
   if (!structure) return makeAssistantMessage("assistant", "The book structure is not loaded yet.");
-  const candidates = context.availableFiles.filter((file) => file.exists && /\.(md|txt)$/i.test(file.path));
+  const candidates = context.availableFiles.filter((file) => file.exists && /\.(md|txt)$/i.test(file.path) && canSearchAvailableFile(file));
   const loaded: Array<{ ok: true; path: string; role: string; content: string } | { ok: false; path: string }> = [];
   for (let offset = 0; offset < candidates.length; offset += 8) {
     const batch = await Promise.all(candidates.slice(offset, offset + 8).map(async (file) => {
@@ -1734,38 +1879,25 @@ async function searchCurrentBook(input: PromptInput & { book: BookEntry; token: 
   return makeAssistantMessage("assistant", `Search results (${search.total} matches):\n${lines.join("\n")}${search.total > search.results.length ? `\n${search.total - search.results.length} additional matches omitted.` : ""}${failed ? `\n${failed} files could not be searched.` : ""}`);
 }
 
-async function upsertStructuredMarkdownFile(input: { token: string; owner: string; repo: string; branch: string; path: string; frontmatter: Record<string, unknown>; body: string; message: string }) {
-  const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.owner, input.repo, input.branch, input.path));
-  const content = renderMarkdown(input.frontmatter, `${input.body.trim()}\n`);
-  if (existing) await updateFile(input.token, input.owner, input.repo, input.branch, input.path, existing.sha, content, input.message);
-  else await createFile(input.token, input.owner, input.repo, input.branch, input.path, content, input.message);
-}
-
-async function upsertNoteFile(input: { token: string; owner: string; repo: string; branch: string; path: string; title: string; noteBody: string }) {
+export async function appendAssistantNote(input: { token: string; owner: string; repo: string; branch: string; path: string; title?: string; noteBody: string; idempotencyKey?: string }): Promise<"appended" | "already-appended"> {
+  const marker = input.idempotencyKey ? `<!-- narrarium-chat-note:${input.idempotencyKey} -->` : "";
   const timestamp = new Date().toISOString();
-  const section = `## ${timestamp}\n\n${input.noteBody.trim()}\n`;
-  const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.owner, input.repo, input.branch, input.path));
-  if (existing) {
-    const parsed = parseMarkdown(existing.content);
-    const nextBody = `${parsed.body.trim()}\n\n${section}`.trim() + "\n";
-    await updateFile(input.token, input.owner, input.repo, input.branch, input.path, existing.sha, renderMarkdown(parsed.frontmatter, nextBody), `Update notes ${input.path}`);
-  } else {
-    const frontmatter = input.path === "notes.md"
-      ? { type: "note", id: "note:book:notes", title: input.title, scope: "book", bucket: "notes", entries: [] }
-      : chapterDraftNoteFrontmatter(input.path, input.title);
-    await createFile(input.token, input.owner, input.repo, input.branch, input.path, renderMarkdown(frontmatter, section), `Add notes ${input.path}`);
-  }
-}
-
-export async function appendAssistantNote(input: { token: string; owner: string; repo: string; branch: string; path: string; title?: string; noteBody: string }) {
-  await upsertNoteFile({
-    token: input.token,
-    owner: input.owner,
-    repo: input.repo,
-    branch: input.branch,
-    path: input.path,
-    title: input.title ?? defaultNoteTitle(input.path),
-    noteBody: input.noteBody,
+  const section = `## ${timestamp}\n\n${marker ? `${marker}\n\n` : ""}${input.noteBody.trim()}\n`;
+  return retryChatNoteConflict(async () => {
+    const existing = await optionalRepositoryRead(() => readFileWithSha(input.token, input.owner, input.repo, input.branch, input.path));
+    if (existing && marker && existing.content.includes(marker)) return "already-appended";
+    if (existing) {
+      const parsed = parseMarkdown(existing.content);
+      const nextBody = `${parsed.body.trim()}\n\n${section}`.trim() + "\n";
+      await updateFile(input.token, input.owner, input.repo, input.branch, input.path, existing.sha, renderMarkdown(parsed.frontmatter, nextBody), `Update notes ${input.path}`);
+    } else {
+      const title = input.title ?? defaultNoteTitle(input.path);
+      const frontmatter = input.path === "notes.md"
+        ? { type: "note", id: "note:book:notes", title, scope: "book", bucket: "notes", entries: [] }
+        : chapterDraftNoteFrontmatter(input.path, title);
+      await createFile(input.token, input.owner, input.repo, input.branch, input.path, renderMarkdown(frontmatter, section), `Add notes ${input.path}`);
+    }
+    return "appended";
   });
 }
 
@@ -1793,9 +1925,17 @@ function languageInstruction(input: PromptInput, taskLanguage?: "book" | "user")
 }
 
 function buildUserMessage(input: PromptInput, requestText: string): LlmMessage {
+  const text = boundedUserPrompt(input, requestText);
+  let imageBytes = 0;
+  const images = input.attachments.filter((attachment) => {
+    if (attachment.kind !== "image" || !attachment.imageDataUrl) return false;
+    if (imageBytes + attachment.sizeBytes > 8 * 1024 * 1024) return false;
+    imageBytes += attachment.sizeBytes;
+    return true;
+  });
   const parts: LlmContentPart[] = [
-    { type: "text", text: `${userContextBundle(input)}\n\n${requestText}` },
-    ...input.attachments.filter((attachment) => attachment.kind === "image" && attachment.imageDataUrl).map((attachment) => ({ type: "image" as const, dataUrl: attachment.imageDataUrl! })),
+    { type: "text", text },
+    ...images.map((attachment) => ({ type: "image" as const, dataUrl: attachment.imageDataUrl! })),
   ];
   return { role: "user", content: parts };
 }
@@ -1803,27 +1943,46 @@ function buildUserMessage(input: PromptInput, requestText: string): LlmMessage {
 function systemContextBundle(input: PromptInput): string {
   const available = input.context.availableFiles.slice(0, 200).map((entry) => `- ${entry.path} (${entry.role}; ${entry.exists ? "exists" : "conventional path, not confirmed"})`).join("\n");
   const loadedList = input.context.loadedFilePaths.length ? input.context.loadedFilePaths.map((path) => `- ${path}`).join("\n") : "- none";
-  return [
+  return truncateText([
     `Current route title: ${input.context.title}`,
     `Current route summary: ${input.context.summary}`,
     `Available repository files (manifest only):\n${available || "- none"}`,
     `Loaded files available in full this turn:\n${loadedList}`,
     input.context.noteTargetPath ? `Default note target: ${input.context.noteTargetPath}` : "",
-  ].filter(Boolean).join("\n\n");
+  ].filter(Boolean).join("\n\n"), 24_000);
 }
 
 function userContextBundle(input: PromptInput): string {
-  const files = input.context.relevantFiles.map((entry) => `LOADED FILE: ${entry.path}\n${entry.content}`).join("\n\n---\n\n");
-  const recentMessages = input.history.slice(input.compactedMessageCount).slice(-8).map((message) => `${message.role.toUpperCase()}: ${message.text}`).join("\n\n");
-  const textAttachments = input.attachments.filter((attachment) => attachment.kind === "text" && attachment.textContent).map((attachment) => `ATTACHMENT: ${attachment.name}\n${attachment.textContent}`).join("\n\n---\n\n");
-  const imageAttachments = input.attachments.filter((attachment) => attachment.kind === "image").map((attachment) => `IMAGE ATTACHMENT: ${attachment.name} (${attachment.mimeType})`).join("\n");
+  const files = truncateText(input.context.relevantFiles.map((entry) => `LOADED FILE: ${entry.path}\n${entry.content}`).join("\n\n---\n\n"), 48_000);
+  const recentMessages = truncateText(input.history.slice(-8).map((message) => `${message.role.toUpperCase()}: ${message.text}`).join("\n\n"), 32_000);
+  const textAttachments = truncateText(input.attachments.filter((attachment) => attachment.kind === "text").map((attachment) => {
+    const status = attachment.truncated ? `\n[TRUNCATED: ${attachment.truncationReason ?? "safe extraction limit reached"}]` : "";
+    return `ATTACHMENT: ${attachment.name}${status}\n${attachment.textContent || "[No text excerpt included]"}`;
+  }).join("\n\n---\n\n"), 24_000);
+  const imageAttachments = input.attachments.filter((attachment) => attachment.kind === "image").map((attachment) => {
+    const status = attachment.truncated ? ` [TRUNCATED: ${attachment.truncationReason ?? "safe attachment limit reached"}]` : "";
+    return `IMAGE ATTACHMENT: ${attachment.name} (${attachment.mimeType})${status}`;
+  }).join("\n");
   return [
-    input.compactSummary ? `Conversation compact summary (does not preserve full file contents):\n${input.compactSummary}` : "",
+    input.compactSummary ? `Archived conversation summary (does not preserve full file contents):\n${truncateText(input.compactSummary, 20_000)}` : "",
     recentMessages ? `Recent conversation:\n${recentMessages}` : "",
     files ? `Loaded repository file contents:\n\n${files}` : "",
     textAttachments ? `Extracted attachment text:\n\n${textAttachments}` : "",
-    imageAttachments ? `Image attachments included separately in this request:\n${imageAttachments}` : "",
+    imageAttachments ? `Image attachment status (only entries without an omission marker are included separately):\n${imageAttachments}` : "",
   ].filter(Boolean).join("\n\n");
+}
+
+function boundedUserPrompt(input: PromptInput, requestText: string): string {
+  const request = truncateText(requestText, 80_000);
+  const availableContext = Math.max(0, 120_000 - request.length - 2);
+  return `${truncateText(userContextBundle(input), availableContext)}\n\n${request}`.trim();
+}
+
+function selectedAttachmentTokenBudget(settings: AppSettings): number {
+  const candidate = resolveTaskCandidates(settings, "copilot").find((entry) => entry.integration && entry.model);
+  const model = candidate?.integration?.chatModels?.find((entry) => entry.name === candidate.model);
+  if (!model?.maxInputTokens) return ATTACHMENT_LIMITS.estimatedTokens;
+  return Math.max(0, Math.min(ATTACHMENT_LIMITS.estimatedTokens, Math.floor(model.maxInputTokens * 0.25)));
 }
 
 function chapterDraftNoteFrontmatter(path: string, title: string) {

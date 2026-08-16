@@ -137,12 +137,33 @@ export interface CreatedChapter {
   changedPaths: string[];
 }
 
+export interface GeneratedDocument { path: string; content: string }
+
 export function chapterCreationPaths(slug: string): [string, string, string] {
   return [
     `chapters/${slug}/chapter.md`,
     `resumes/chapters/${slug}.md`,
     `evaluations/chapters/${slug}.md`,
   ];
+}
+
+export function buildChapterDocuments(input: CreateChapterInput): CreatedChapter & { documents: GeneratedDocument[] } {
+  const slug = chapterSlug(input.number, input.title);
+  const id = `chapter:${slug}`;
+  const [chapterFilePath, resumePath, evaluationPath] = chapterCreationPaths(slug);
+  const frontmatter = clean({ type: "chapter", id, number: input.number, title: input.title, canon: "draft", summary: input.summary, pov: input.pov });
+  const body = input.body?.trim() ? `${input.body.trim()}\n` : `# ${input.title}\n\nStart the chapter here.\n`;
+  return {
+    slug,
+    id,
+    chapterFilePath,
+    changedPaths: [chapterFilePath, resumePath, evaluationPath],
+    documents: [
+      { path: chapterFilePath, content: renderMarkdown(frontmatter, body) },
+      { path: resumePath, content: renderMarkdown({ type: "resume", id: `resume:chapter:${slug}`, title: `Resume ${slug}` }, "# Summary\n\nSummarize the chapter here.\n") },
+      { path: evaluationPath, content: renderMarkdown({ type: "evaluation", id: `evaluation:chapter:${slug}`, title: `Evaluation ${slug}` }, "# Evaluation\n\nEvaluate the chapter here.\n") },
+    ],
+  };
 }
 
 export async function createChapter(
@@ -152,29 +173,13 @@ export async function createChapter(
   branch: string,
   input: CreateChapterInput,
 ): Promise<CreatedChapter> {
-  const slug = chapterSlug(input.number, input.title);
-  const id = `chapter:${slug}`;
-  const [chapterFilePath, resumePath, evaluationPath] = chapterCreationPaths(slug);
-
-  const frontmatter = clean({
-    type: "chapter",
-    id,
-    number: input.number,
-    title: input.title,
-    canon: "draft",
-    summary: input.summary,
-    pov: input.pov,
-  });
-
-  const body = input.body?.trim()
-    ? `${input.body.trim()}\n`
-    : `# ${input.title}\n\nStart the chapter here.\n`;
-
-  const changedPaths = [chapterFilePath];
-  await createFile(token, owner, repo, branch, chapterFilePath, renderMarkdown(frontmatter, body), `Add chapter ${formatOrdinal(input.number)}: ${input.title}`);
-  await createFile(token, owner, repo, branch, resumePath, renderMarkdown({ type: "resume", id: `resume:chapter:${slug}`, title: `Resume ${slug}` }, "# Summary\n\nSummarize the chapter here.\n"), `Add resume for chapter ${slug}`).then(() => changedPaths.push(resumePath)).catch(() => undefined);
-  await createFile(token, owner, repo, branch, evaluationPath, renderMarkdown({ type: "evaluation", id: `evaluation:chapter:${slug}`, title: `Evaluation ${slug}` }, "# Evaluation\n\nEvaluate the chapter here.\n"), `Add evaluation for chapter ${slug}`).then(() => changedPaths.push(evaluationPath)).catch(() => undefined);
-  return { slug, id, chapterFilePath, changedPaths };
+  const generated = buildChapterDocuments(input);
+  const changedPaths = [generated.chapterFilePath];
+  await createFile(token, owner, repo, branch, generated.documents[0].path, generated.documents[0].content, `Add chapter ${formatOrdinal(input.number)}: ${input.title}`);
+  for (const document of generated.documents.slice(1)) {
+    await createFile(token, owner, repo, branch, document.path, document.content, `Add chapter artifact ${generated.slug}`).then(() => changedPaths.push(document.path)).catch(() => undefined);
+  }
+  return { slug: generated.slug, id: generated.id, chapterFilePath: generated.chapterFilePath, changedPaths };
 }
 
 export interface CreateParagraphInput {
@@ -191,6 +196,15 @@ export interface CreatedParagraph {
   paragraphFilePath: string;
 }
 
+export function buildParagraphDocument(input: CreateParagraphInput): CreatedParagraph & { content: string } {
+  const slug = paragraphSlug(input.number, input.title);
+  const id = `paragraph:${input.chapterSlug}:${slug}`;
+  const paragraphFilePath = `chapters/${input.chapterSlug}/${slug}.md`;
+  const frontmatter = clean({ type: "paragraph", id, chapter: `chapter:${input.chapterSlug}`, number: input.number, title: input.title, canon: "draft", summary: input.summary });
+  const body = input.body?.trim() ? `${input.body.trim()}\n` : `# ${input.title}\n\nStart the paragraph here.\n`;
+  return { slug, id, paragraphFilePath, content: renderMarkdown(frontmatter, body) };
+}
+
 export async function createParagraphDocument(
   token: string,
   owner: string,
@@ -198,21 +212,7 @@ export async function createParagraphDocument(
   branch: string,
   input: CreateParagraphInput,
 ): Promise<CreatedParagraph> {
-  const slug = paragraphSlug(input.number, input.title);
-  const id = `paragraph:${input.chapterSlug}:${slug}`;
-  const paragraphFilePath = `chapters/${input.chapterSlug}/${slug}.md`;
-  const frontmatter = clean({
-    type: "paragraph",
-    id,
-    chapter: `chapter:${input.chapterSlug}`,
-    number: input.number,
-    title: input.title,
-    canon: "draft",
-    summary: input.summary,
-  });
-  const body = input.body?.trim()
-    ? `${input.body.trim()}\n`
-    : `# ${input.title}\n\nStart the paragraph here.\n`;
-  await createFile(token, owner, repo, branch, paragraphFilePath, renderMarkdown(frontmatter, body), `Add paragraph ${slug}`);
-  return { slug, id, paragraphFilePath };
+  const document = buildParagraphDocument(input);
+  await createFile(token, owner, repo, branch, document.paragraphFilePath, document.content, `Add paragraph ${document.slug}`);
+  return { slug: document.slug, id: document.id, paragraphFilePath: document.paragraphFilePath };
 }

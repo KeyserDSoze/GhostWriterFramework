@@ -34,6 +34,7 @@ export function AssetImageDialog(props: {
   const { toast } = useToast();
   const { settings } = useSettingsStore();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const generationControllerRef = useRef<AbortController | null>(null);
   const [internalOpen, setInternalOpen] = useState(false);
   const controlled = props.open !== undefined;
   const open = controlled ? props.open! : internalOpen;
@@ -87,6 +88,10 @@ export function AssetImageDialog(props: {
   }, [book.owner, book.repo, branch, chapterSlug, kind, open, paragraphSlug, token]);
 
   useEffect(() => () => clearPendingGenerated(), []);
+  useEffect(() => {
+    if (!open) generationControllerRef.current?.abort(new DOMException("Dialog closed", "AbortError"));
+    return () => generationControllerRef.current?.abort(new DOMException("Dialog closed", "AbortError"));
+  }, [open]);
 
   async function loadSourceText(): Promise<string> {
     const path = source === "resume" ? resumePath : source === "text" ? textPath : undefined;
@@ -166,10 +171,13 @@ export function AssetImageDialog(props: {
   }
 
   async function handleGenerate() {
+    generationControllerRef.current?.abort(new DOMException("Superseded", "AbortError"));
+    const controller = new AbortController();
+    generationControllerRef.current = controller;
     setBusy(true);
     try {
       clearPendingGenerated();
-      const generated = await generateAssetImage({ settings, prompt, orientation });
+      const generated = await generateAssetImage({ settings, prompt, orientation, signal: controller.signal });
       const url = URL.createObjectURL(new Blob([bytesToArrayBuffer(generated.bytes)], { type: "image/png" }));
       if (previewUrl) {
         setPendingGenerated({ ...generated, url });
@@ -181,6 +189,7 @@ export function AssetImageDialog(props: {
     } catch (err) {
       toast({ title: t("images.generationFailed"), description: String(err), variant: "destructive" });
     } finally {
+      if (generationControllerRef.current === controller) generationControllerRef.current = null;
       setBusy(false);
     }
   }

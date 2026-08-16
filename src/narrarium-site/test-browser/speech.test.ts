@@ -2,28 +2,35 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings } from "@/types/settings";
 
 const speechCreate = vi.hoisted(() => vi.fn());
+const transcriptionCreate = vi.hoisted(() => vi.fn());
+const speechCandidate = vi.hoisted(() => ({
+  integration: { id: "tts", name: "TTS", provider: "openai" as const, apiKey: "key", modelTextToSpeech: "tts-1", requestTimeoutMs: undefined as number | undefined },
+  model: "tts-1",
+}));
+const fallbackSpeechCandidate = vi.hoisted(() => ({
+  integration: { id: "tts-fallback", name: "TTS fallback", provider: "openai" as const, apiKey: "key", modelTextToSpeech: "tts-2", requestTimeoutMs: undefined as number | undefined },
+  model: "tts-2",
+}));
+const speechCandidates = vi.hoisted(() => [speechCandidate]);
 const debugBegin = vi.hoisted(() => vi.fn());
 const debugFinish = vi.hoisted(() => vi.fn());
 
 vi.mock("openai", () => {
   class AudioClient {
-    audio = { speech: { create: speechCreate } };
+    audio = { speech: { create: speechCreate }, transcriptions: { create: transcriptionCreate } };
   }
   return { default: AudioClient, AzureOpenAI: AudioClient };
 });
 
 vi.mock("@/assistant/router", () => ({
-  resolveTaskCandidates: () => [{
-    integration: { id: "tts", name: "TTS", provider: "openai", apiKey: "key", modelTextToSpeech: "tts-1" },
-    model: "tts-1",
-  }],
+  resolveTaskCandidates: () => speechCandidates,
 }));
 
 vi.mock("@/debug/llmDebugStore", () => ({
   useLlmDebugStore: { getState: () => ({ begin: debugBegin, finish: debugFinish }) },
 }));
 
-import { speakText } from "@/assistant/speech";
+import { speakText, transcribeAudio } from "@/assistant/speech";
 
 class FakeAudio {
   static instances: FakeAudio[] = [];
@@ -50,14 +57,16 @@ const settings = {
 const response = () => ({ arrayBuffer: async () => new ArrayBuffer(1) });
 
 async function flushPlayback() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let index = 0; index < 10; index += 1) await Promise.resolve();
 }
 
 describe("AI speech playback", () => {
   beforeEach(() => {
     speechCreate.mockReset();
+    transcriptionCreate.mockReset();
+    speechCandidate.integration.requestTimeoutMs = undefined;
+    fallbackSpeechCandidate.integration.requestTimeoutMs = undefined;
+    speechCandidates.splice(0, speechCandidates.length, speechCandidate);
     debugBegin.mockReset();
     debugBegin.mockImplementation(() => `debug-${debugBegin.mock.calls.length}`);
     debugFinish.mockReset();
@@ -101,6 +110,24 @@ describe("AI speech playback", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:1");
   });
 
+  it("advances to the next TTS candidate when a later chunk fails", async () => {
+    speechCandidates.push(fallbackSpeechCandidate);
+    speechCreate.mockResolvedValueOnce(response()).mockRejectedValueOnce(new DOMException("provider aborted", "AbortError")).mockResolvedValueOnce(response());
+
+    const controller = await speakText("First. Second.", settings, { segments: ["First.", "Second."] });
+    await flushPlayback();
+    expect(speechCreate.mock.calls.map(([input]) => [input.model, input.input])).toEqual([
+      ["tts-1", "First."],
+      ["tts-1", "Second."],
+      ["tts-2", "Second."],
+    ]);
+    FakeAudio.instances[0].onended?.();
+    await flushPlayback();
+    FakeAudio.instances[1].onended?.();
+    await controller.done;
+    expect(debugFinish.mock.calls.some(([, patch]) => patch.failureKind === "provider")).toBe(true);
+  });
+
   it("rejects done for playback failure without requiring an onError callback", async () => {
     speechCreate.mockResolvedValue(response());
     const controller = await speakText("First.", settings, { segments: ["First."] });
@@ -126,5 +153,26 @@ describe("AI speech playback", () => {
 
     expect(prefetchSignal?.aborted).toBe(true);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:1");
+  });
+
+  it("times out TTS synthesis and records privacy-safe candidate diagnostics", async () => {
+    speechCandidate.integration.requestTimeoutMs = 5;
+    speechCreate.mockImplementation((_input, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(new DOMException("provider secret", "AbortError")), { once: true });
+    }));
+
+    await expect(speakText("First.", settings, { segments: ["First."] })).rejects.toMatchObject({ name: "CandidateTimeoutError" });
+    expect(debugBegin.mock.calls[0][0]).toMatchObject({ provider: "openai", integrationId: "tts", routeCandidateIndex: 0, usedFallback: false });
+    expect(debugFinish.mock.calls[0][1]).toMatchObject({ failureKind: "timeout", timeoutMs: 5 });
+  });
+
+  it("times out STT with the configured provider timeout", async () => {
+    speechCandidate.integration.requestTimeoutMs = 5;
+    transcriptionCreate.mockImplementation((_input, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    }));
+
+    await expect(transcribeAudio(new Blob(["audio"]), settings)).rejects.toMatchObject({ name: "CandidateTimeoutError" });
+    expect(debugFinish.mock.calls[0][1]).toMatchObject({ failureKind: "timeout", timeoutMs: 5 });
   });
 });

@@ -114,6 +114,8 @@ function RequestDetail({ entry }: { entry: LlmDebugEntry }) {
         <Stat label={t("debug.cost")} value={eur(entry.cost)} />
         <Stat label={t("debug.tokensIn")} value={num(entry.inputTokens)} />
         <Stat label={t("debug.tokensOut")} value={num(entry.outputTokens)} />
+        <Stat label={t("debug.failureKind")} value={entry.failureKind ? t(`debug.failure.${entry.failureKind}`) : "—"} />
+        <Stat label={t("debug.timeout")} value={entry.timeoutMs == null ? "—" : `${entry.timeoutMs} ms`} />
       </div>
 
       {entry.error && (

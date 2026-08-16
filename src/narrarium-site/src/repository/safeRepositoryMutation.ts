@@ -36,27 +36,35 @@ export async function preflightRepositoryOperation(input: {
   token: string;
   book: BookEntry;
   branch: string;
+  signal?: AbortSignal;
 }): Promise<RepositoryOperationPreflight> {
+  input.signal?.throwIfAborted();
   const meta = await getLocalRepository(input.book.owner, input.book.repo, input.branch);
+  input.signal?.throwIfAborted();
   if (!meta) {
     throw new Error("A local working copy for the selected branch is required.");
   }
   if (meta.cloneComplete !== true) throw new Error("The local working copy has not been fully verified.");
   const [dirty, ahead] = await Promise.all([listDirtyLocalFiles(meta.id), listUnpushedLocalCommits(meta.id)]);
+  input.signal?.throwIfAborted();
   if (dirty.length) throw new Error("The local working copy must be clean before starting this operation.");
   if (ahead.length) throw new Error("Push or discard existing local commits before starting this operation.");
   const octokit = new Octokit({ auth: input.token });
-  const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}` });
+  const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}`, request: { signal: input.signal } });
+  input.signal?.throwIfAborted();
   const remoteHeadSha = ref.data.object.sha;
   if (remoteHeadSha !== meta.remoteHeadSha) throw new RepositoryConflictError("The remote branch changed. Pull and retry the operation.");
   return { repoId: meta.id, remoteHeadSha, branch: input.branch };
 }
 
-export async function resolveRepositoryHeadForMutation(input: { token: string; book: BookEntry; branch: string }): Promise<string> {
+export async function resolveRepositoryHeadForMutation(input: { token: string; book: BookEntry; branch: string; signal?: AbortSignal }): Promise<string> {
+  input.signal?.throwIfAborted();
   const local = await getLocalRepository(input.book.owner, input.book.repo, input.branch).catch(() => null);
+  input.signal?.throwIfAborted();
   if (local) return (await preflightRepositoryOperation(input)).remoteHeadSha;
   const octokit = new Octokit({ auth: input.token });
-  const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}` });
+  const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}`, request: { signal: input.signal } });
+  input.signal?.throwIfAborted();
   return ref.data.object.sha;
 }
 
@@ -67,15 +75,21 @@ async function mutateRemoteTextFiles(input: {
   expectedRemoteHeadSha: string;
   message: string;
   mutations: RepositoryTextMutation[];
+  signal?: AbortSignal;
 }): Promise<string> {
+  input.signal?.throwIfAborted();
   const octokit = new Octokit({ auth: input.token });
-  const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}` });
+  const request = { request: { signal: input.signal } };
+  const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}`, ...request });
+  input.signal?.throwIfAborted();
   if (ref.data.object.sha !== input.expectedRemoteHeadSha) throw new RepositoryConflictError("The remote branch changed before the operation could be saved.");
-  const commit = await octokit.rest.git.getCommit({ owner: input.book.owner, repo: input.book.repo, commit_sha: input.expectedRemoteHeadSha });
+  const commit = await octokit.rest.git.getCommit({ owner: input.book.owner, repo: input.book.repo, commit_sha: input.expectedRemoteHeadSha, ...request });
+  input.signal?.throwIfAborted();
 
   for (const mutation of input.mutations) {
     if (mutation.expectedCurrentHash === undefined) continue;
-    const current = await optionalRepositoryRead(() => loadRemoteFileContentAtRef(input.token, input.book.owner, input.book.repo, mutation.path, input.expectedRemoteHeadSha));
+    const current = await optionalRepositoryRead(() => loadRemoteFileContentAtRef(input.token, input.book.owner, input.book.repo, mutation.path, input.expectedRemoteHeadSha, input.signal));
+    input.signal?.throwIfAborted();
     const actual = current ? await sha256Text(current.content) : null;
     if (actual !== mutation.expectedCurrentHash) throw new RepositoryConflictError(`File changed since it was read: ${mutation.path}`, mutation.path);
   }
@@ -92,15 +106,27 @@ async function mutateRemoteTextFiles(input: {
       type: "blob" as const,
       ...(mutation.content === null ? { sha: null } : { content: mutation.content }),
     })),
+    ...request,
   });
+  input.signal?.throwIfAborted();
   const nextCommit = await octokit.rest.git.createCommit({
     owner: input.book.owner,
     repo: input.book.repo,
     message: input.message,
     tree: tree.data.sha,
     parents: [input.expectedRemoteHeadSha],
+    ...request,
   });
-  await octokit.rest.git.updateRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}`, sha: nextCommit.data.sha, force: false });
+  input.signal?.throwIfAborted();
+  try {
+    await octokit.rest.git.updateRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}`, sha: nextCommit.data.sha, force: false, ...request });
+  } catch (error) {
+    const latest = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}` }).catch(() => null);
+    if (latest && latest.data.object.sha !== input.expectedRemoteHeadSha) {
+      throw new RepositoryConflictError("The remote branch advanced while saving the operation.");
+    }
+    throw error;
+  }
   return nextCommit.data.sha;
 }
 
@@ -116,8 +142,11 @@ export async function commitAndPushTextFileMutation(input: {
   expectedRemoteHeadSha: string;
   message: string;
   mutations: RepositoryTextMutation[];
+  signal?: AbortSignal;
 }): Promise<{ commitSha: string; mode: "local" | "remote" }> {
+  input.signal?.throwIfAborted();
   const local = await getLocalRepository(input.book.owner, input.book.repo, input.branch).catch(() => null);
+  input.signal?.throwIfAborted();
   if (!local) {
     const commitSha = await mutateRemoteTextFiles(input);
     return { commitSha, mode: "remote" };
@@ -125,6 +154,7 @@ export async function commitAndPushTextFileMutation(input: {
   if (local.remoteHeadSha !== input.expectedRemoteHeadSha) throw new RepositoryConflictError("The local working copy is based on a different remote head.");
   const writes = input.mutations.filter((mutation) => mutation.content !== undefined);
   const snapshots = await Promise.all(writes.map(async (mutation) => ({ path: mutation.path, file: await getLocalFile(local.id, mutation.path) ?? null })));
+  input.signal?.throwIfAborted();
   if (!writes.length) {
     try {
       await mutateLocalTextFilesAtomically(local.id, input.mutations);
@@ -139,6 +169,7 @@ export async function commitAndPushTextFileMutation(input: {
   }
   let localCommit;
   try {
+    input.signal?.throwIfAborted();
     localCommit = await mutateLocalTextFilesAndCreateCommitAtomically(local.id, input.message, input.mutations);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("File changed since")) {
@@ -148,7 +179,10 @@ export async function commitAndPushTextFileMutation(input: {
     throw error;
   }
   let pushed;
+  let pushStarted = false;
   try {
+    input.signal?.throwIfAborted();
+    pushStarted = true;
     pushed = await pushLocalCommits({
       bookId: input.book.id,
       token: input.token,
@@ -157,8 +191,13 @@ export async function commitAndPushTextFileMutation(input: {
       owner: input.book.owner,
       repo: input.book.repo,
       branch: input.branch,
+      signal: input.signal,
     });
   } catch (error) {
+    if (!pushStarted) {
+      await restoreLocalFilesAndDeleteCommit(local.id, localCommit.id, snapshots);
+      throw error;
+    }
     const octokit = new Octokit({ auth: input.token });
     const remoteRef = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}` }).catch(() => null);
     const remoteHead = remoteRef?.data.object.sha;

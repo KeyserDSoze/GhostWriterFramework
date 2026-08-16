@@ -2,7 +2,6 @@
 // Takes a saved research document and generates a Narrarium canon entity from it.
 
 import type { AppSettings, BookEntry } from "@/types/settings";
-import { completeText } from "@/assistant/llm";
 import { completeTextRouted } from "@/assistant/router";
 import { createCanonEntity } from "@/narrarium/canon";
 import type { EntityKind } from "@/narrarium/canon";
@@ -22,7 +21,7 @@ export interface CreateFromResearchInput {
   customPrompt?: string;
   /** Language for the generated entity */
   language: string;
-  /** Optional: bypass the router and use a specific integration+model */
+  /** Optional preferred integration/model; normal routed fallbacks remain available. */
   overrideIntegrationId?: string;
   overrideModelName?: string;
   signal?: AbortSignal;
@@ -126,27 +125,13 @@ export async function generateEntityFromResearchProposal(input: CreateFromResear
   ];
 
   let raw: string;
-  if (input.overrideIntegrationId && input.overrideModelName) {
-    const integration = (input.settings.aiIntegrations ?? []).find((i) => i.id === input.overrideIntegrationId);
-    if (integration) {
-      raw = await completeText(integration, messages, "writing", {
-        modelName: input.overrideModelName,
-        capability: "create-from-research",
-        signal: input.signal,
-        label: `create-from-research:${input.entityKind}`,
-      });
-    } else {
-      raw = await completeTextRouted(input.settings, messages, "create-from-research", {
-        signal: input.signal,
-        label: `create-from-research:${input.entityKind}`,
-      });
-    }
-  } else {
-    raw = await completeTextRouted(input.settings, messages, "create-from-research", {
-      signal: input.signal,
-      label: `create-from-research:${input.entityKind}`,
-    });
-  }
+  raw = await completeTextRouted(input.settings, messages, "create-from-research", {
+    signal: input.signal,
+    label: `create-from-research:${input.entityKind}`,
+    ...(input.overrideIntegrationId && input.overrideModelName
+      ? { preferred: { integrationId: input.overrideIntegrationId, model: input.overrideModelName } }
+      : {}),
+  });
 
   return parseEntityFromResearchResponse(input.entityKind, raw, input.researchMarkdown);
 }

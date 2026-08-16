@@ -4,15 +4,16 @@
 import { stringify } from "yaml";
 import type { AppSettings } from "@/types/settings";
 import type { BookEntry } from "@/types/settings";
-import { completeText } from "@/assistant/llm";
 import { completeTextRouted } from "@/assistant/router";
-import { createOrUpdateTextFile } from "@/github/githubClient";
 import type { ChatCapability, ResearchIntent } from "@/types/settings";
 import type { LlmMessage } from "@/assistant/llm";
 import type { ResearchFrontmatter, ResearchResult, ResearchDepth, ResearchSourceMode } from "./types";
 import { DEPTH_CONFIG } from "./types";
 import { useCostsStore, bucketTotal, aggregateAll } from "@/costs/costsStore";
 import { runResearchRouter } from "./ResearchRouter";
+import { captureImmediateMutation, commitImmediateMutation, mergeManagedFrontmatter } from "@/assistant/immediateMutation";
+import { resolveRepositoryHeadForMutation } from "@/repository/safeRepositoryMutation";
+import { parseDocument } from "yaml";
 
 export interface RunDeepResearchInput {
   settings: AppSettings;
@@ -31,6 +32,7 @@ export interface RunDeepResearchInput {
   overrideModelName?: string;
   signal?: AbortSignal;
   onProgress?: (message: string) => void;
+  expectedRemoteHeadSha?: string;
 }
 
 export interface RunDeepResearchResult {
@@ -61,15 +63,10 @@ async function completeForResearch(
   options?: { signal?: AbortSignal; label?: string },
 ): Promise<string> {
   if (input.overrideIntegrationId && input.overrideModelName) {
-    const integration = (input.settings.aiIntegrations ?? []).find((i) => i.id === input.overrideIntegrationId);
-    if (integration) {
-      return await completeText(integration, messages, "writing", {
-        modelName: input.overrideModelName,
-        capability,
-        signal: options?.signal,
-        label: options?.label,
-      });
-    }
+    return await completeTextRouted(input.settings, messages, capability, {
+      ...options,
+      preferred: { integrationId: input.overrideIntegrationId, model: input.overrideModelName },
+    });
   }
   return await completeTextRouted(input.settings, messages, capability, options);
 }
@@ -165,12 +162,8 @@ function slugifyResearch(query: string): string {
     .slice(0, 60);
 }
 
-function renderResearchFile(frontmatter: ResearchFrontmatter, body: string): string {
-  const fm = stringify(frontmatter as unknown as Record<string, unknown>).trimEnd();
-  return `---\n${fm}\n---\n\n${body.replace(/^\n+/, "")}\n`;
-}
-
 export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunDeepResearchResult> {
+  const expectedRemoteHeadSha = input.expectedRemoteHeadSha ?? await resolveRepositoryHeadForMutation(input);
   const costBefore = bucketTotal(aggregateAll(useCostsStore.getState().file));
 
   reportProgress(input, "Generating search queries…");
@@ -231,9 +224,14 @@ export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunD
     ...(input.relatedEntityType ? { relatedEntityType: input.relatedEntityType } : {}),
   };
 
-  const fullMarkdown = renderResearchFile(frontmatter, body);
+  const snapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path, remoteHeadSha: expectedRemoteHeadSha });
+  const existingMatch = snapshot.content ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(snapshot.content) : null;
+  const existingFrontmatter = existingMatch ? ((parseDocument(existingMatch[1]).toJSON() as Record<string, unknown>) ?? {}) : {};
+  if (typeof existingFrontmatter.createdAt === "string") frontmatter.createdAt = existingFrontmatter.createdAt;
+  const mergedFrontmatter = mergeManagedFrontmatter(existingFrontmatter, frontmatter as unknown as Record<string, unknown>, [...Object.keys(frontmatter), "relatedEntityId", "relatedEntityType"]);
+  const fullMarkdown = `---\n${stringify(mergedFrontmatter).trimEnd()}\n---\n\n${body.replace(/^\n+/, "")}\n`;
   reportProgress(input, "Saving research document…");
-  await createOrUpdateTextFile(input.token, input.book.owner, input.book.repo, input.branch, path, fullMarkdown, `Add research: ${title}`);
+  await commitImmediateMutation({ token: input.token, book: input.book, branch: input.branch, snapshot, content: fullMarkdown, message: `${snapshot.content ? "Update" : "Add"} research: ${title}`, signal: input.signal });
 
   return { path, slug, title, markdown: fullMarkdown, cost: costDelta, providers: frontmatter.providers, providerUsage, intentsResolved, unavailableSummary: [...unavailableSummary] };
 }

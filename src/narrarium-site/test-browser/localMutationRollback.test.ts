@@ -4,6 +4,7 @@ import {
   getLocalFile,
   listDirtyLocalFiles,
   listUnpushedLocalCommits,
+  markLocalCommitsPushed,
   mutateLocalTextFilesAndCreateCommitAtomically,
   putCleanLocalFile,
   putLocalRepository,
@@ -68,6 +69,41 @@ describe("atomic local multi-file recovery", () => {
     await restoreLocalFilesAndDeleteCommit(repoId, commit.id, [{ path: "target.md", file: target }]);
     expect((await getLocalFile(repoId, "target.md"))?.text).toBe("old target");
     expect((await getLocalFile(repoId, "unrelated.md"))?.text).toBe("dirty unrelated");
+  });
+
+  it("does not overwrite a newer same-path edit when a push failure rolls back the mutation commit", async () => {
+    const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "draft", defaultBranch: "main", remoteHeadSha: "remote", clonedAt: new Date().toISOString(), cloneComplete: true });
+    repoId = repo.id;
+    const original = await putCleanLocalFile({ repoId, path: "target.md", kind: "text", text: "old target", size: 10 });
+    const commit = await mutateLocalTextFilesAndCreateCommitAtomically(repoId, "target change", [
+      { path: "target.md", content: "mutation result", expectedCurrentHash: original.currentHash },
+    ]);
+    await writeLocalText(repoId, "target.md", "newer local edit");
+
+    const recovery = await restoreLocalFilesAndDeleteCommit(repoId, commit.id, [{ path: "target.md", file: original }]);
+
+    expect(recovery.skippedPaths).toEqual(["target.md"]);
+    expect((await getLocalFile(repoId, "target.md"))?.text).toBe("newer local edit");
+    expect((await listDirtyLocalFiles(repoId)).map((file) => file.path)).toEqual(["target.md"]);
+    expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
+  });
+
+  it("keeps a newer same-path edit dirty when the mutation commit is marked pushed", async () => {
+    const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "draft", defaultBranch: "main", remoteHeadSha: "remote", clonedAt: new Date().toISOString(), cloneComplete: true });
+    repoId = repo.id;
+    const original = await putCleanLocalFile({ repoId, path: "target.md", kind: "text", text: "old target", size: 10 });
+    const commit = await mutateLocalTextFilesAndCreateCommitAtomically(repoId, "target change", [
+      { path: "target.md", content: "pushed mutation", expectedCurrentHash: original.currentHash },
+    ]);
+    await writeLocalText(repoId, "target.md", "newer local edit");
+
+    const settlement = await markLocalCommitsPushed(repoId, [commit.id], "pushed-head", { "target.md": "pushed-blob" });
+
+    const current = await getLocalFile(repoId, "target.md");
+    expect(settlement.skippedPaths).toEqual(["target.md"]);
+    expect(current).toMatchObject({ text: "newer local edit", status: "modified", committed: false, baseSha: "pushed-blob", baseHash: commit.files[0].hash });
+    expect((await listDirtyLocalFiles(repoId)).map((file) => file.path)).toEqual(["target.md"]);
+    expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
   });
 
   it("validates every target hash before applying writes or creating a commit", async () => {

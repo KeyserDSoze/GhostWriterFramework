@@ -45,11 +45,13 @@ export interface ChatModel {
   id: string;
   /** Provider deployment or model name (e.g. "gpt-4o", "gpt-4o-mini"). */
   name: string;
+  /** Actual model family behind an Azure deployment, used for provider-specific request parameters. */
+  underlyingModel?: string;
   /** Roles this model is allowed to serve. */
   capabilities: ChatCapability[];
   /** Provider-specific tier label. Currently populated from GitHub Models rate_limit_tier. */
   tier?: string;
-  /** Maximum input/context tokens accepted by this model. */
+  /** Total model context window; prompt budgeting reserves output and a safety margin within it. */
   maxInputTokens?: number;
   /** Maximum output tokens this model can generate. */
   maxOutputTokens?: number;
@@ -85,6 +87,8 @@ export interface AIIntegration {
   endpoint?: string;
   /** Not used by Microsoft 365 Copilot. */
   apiKey: string;
+  /** Maximum duration of one provider request before the router tries its next candidate. */
+  requestTimeoutMs?: number;
   /**
    * Chat models offered by this integration, each with its own roles and pricing.
    * Replaces the single modelWriting/modelReview fields (kept below for back-compat).

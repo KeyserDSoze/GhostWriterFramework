@@ -4,6 +4,7 @@ import { loadFileContent } from "@/github/githubClient";
 import { resolveBookToken } from "@/types/settings";
 import { resolveAuthoritativeBranch } from "@/github/branchRules";
 import { isRepositoryNotFoundError } from "@/repository/repositoryError";
+import { canDiscloseSecretBody, isSecretPath, secretAccessMapForRoute, visibleSecretManifestEntries, type SecretAccess } from "@/assistant/secretPolicy";
 
 export type AppRouteContext =
   | { kind: "app-home" }
@@ -38,6 +39,7 @@ export interface AvailableFile {
   path: string;
   role: string;
   exists: boolean;
+  secretAccess?: Exclude<SecretAccess, "hidden">;
 }
 
 export interface LoadedWriterContext {
@@ -218,13 +220,15 @@ export async function loadWriterContext(
   const branchResolution = bookId ? resolveAuthoritativeBranch({ activeBranch: book?.activeBranch, workingBranch: requestedBranch ?? workingBranches[bookId], loadedBranch: structure?.loadedBranch, defaultBranch: structure?.defaultBranch }) : null;
   const readBranch = branchResolution?.branch;
   const branchReady = Boolean(!structure || branchResolution?.structureMatches);
-  const availableFiles = structure ? buildAvailableFileManifest(structure) : [];
   const relevantFiles: Array<{ path: string; content: string }> = [];
   const loaded = new Set<string>();
+  const secretAccess = structure ? secretAccessMapForRoute({ structure, route, chapter }) : new Map<string, SecretAccess>();
+  const availableFiles = structure ? buildAvailableFileManifest(structure, secretAccess) : [];
 
   if (book && structure && token && branchReady) {
     const pushFile = async (path: string | undefined, required = false) => {
       if (!path || loaded.has(path)) return;
+      if (isSecretPath(path) && !canDiscloseSecretBody(secretAccess.get(path) ?? "hidden")) return;
       try {
         const content = await readFile(token, book.owner, book.repo, path, readBranch);
         relevantFiles.push({ path, content });
@@ -310,7 +314,7 @@ export async function loadWriterContext(
         break;
       }
       case "canon":
-        await pushFile(resolveCanonPath(route.section, route.slug), true);
+        await pushFile(resolveCanonPath(route.section, route.slug), route.section !== "secrets");
         break;
       default:
         break;
@@ -494,7 +498,7 @@ export function resolveResearchDetailPath(structure: BookStructure, researchSlug
   return structure.researchFiles.find((file) => file.slug === researchSlug)?.path;
 }
 
-export function buildAvailableFileManifest(structure: BookStructure): AvailableFile[] {
+export function buildAvailableFileManifest(structure: BookStructure, secretAccess: ReadonlyMap<string, SecretAccess> = new Map()): AvailableFile[] {
   const files: AvailableFile[] = [];
   const add = (path: string | undefined, role: string, exists = true) => {
     if (path) files.push({ path, role, exists });
@@ -513,7 +517,7 @@ export function buildAvailableFileManifest(structure: BookStructure): AvailableF
   structure.researchFiles.forEach((file) => add(file.path, "research document"));
   structure.notesFiles.forEach((file) => add(file.path, "note"));
   structure.operationManifestFiles.forEach((file) => add(file.path, "operation manifest"));
-  (structure.searchableFiles ?? []).forEach((file) => add(file.path, file.role, true));
+  (structure.searchableFiles ?? []).filter((file) => !isSecretPath(file.path)).forEach((file) => add(file.path, file.role, true));
 
   for (const chapter of structure.chapters) {
     add(`${chapter.path}/chapter.md`, "chapter metadata/body");
@@ -535,7 +539,7 @@ export function buildAvailableFileManifest(structure: BookStructure): AvailableF
     ...structure.locations.map((file) => ({ path: file.path, role: "location", exists: true })),
     ...structure.factions.map((file) => ({ path: file.path, role: "faction", exists: true })),
     ...structure.items.map((file) => ({ path: file.path, role: "item", exists: true })),
-    ...structure.secrets.map((file) => ({ path: file.path, role: "secret", exists: true })),
+    ...visibleSecretManifestEntries(structure.secrets, secretAccess),
     ...structure.timelines.map((file) => ({ path: file.path, role: "timeline event", exists: true })),
   ];
   files.push(...canon);

@@ -5,5 +5,6 @@ export interface PromptInputLike {
   settings: AppSettings;
   structureLanguage?: string;
   signal?: AbortSignal;
+  expectedRemoteHeadSha?: string;
   onText?: (text: string) => void;
 }

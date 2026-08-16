@@ -1,8 +1,9 @@
 import type { AuthProvider } from "../store/authStore.ts";
-import type { AssistantSession, AssistantSessionMeta } from "./store.ts";
+import { normalizeAssistantSession, type AssistantSession, type AssistantSessionMeta } from "./store.ts";
 import type { AssistantSessionCloudHandle } from "./sessionAutosave.ts";
 import { ensureGoogleAppFolder } from "../drive/googleAppFolder.ts";
 import { beginCloudWrite } from "../drive/cloudWriteBarrier.ts";
+import { MAX_ASSISTANT_SESSION_BYTES, parseAssistantSessionJson, serializeAssistantSession } from "./sessionSchema.ts";
 
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -12,6 +13,7 @@ const CHATS_FOLDER = "chats";
 const MIME_JSON = "application/json";
 const CHAT_MARKER = "v1";
 const CHAT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$/;
+export const MAX_PERSISTED_CHAT_BYTES = 7 * 1024 * 1024;
 
 interface ListOptions {
   signal?: AbortSignal;
@@ -42,6 +44,36 @@ export class AssistantSessionConflictError extends Error {
   }
 }
 
+export class AssistantSessionPayloadTooLargeError extends Error {
+  readonly code = "ASSISTANT_SESSION_TOO_LARGE";
+  readonly permanent = true;
+  readonly payloadBytes: number;
+  constructor(payloadBytes: number) {
+    super(`Chat payload is ${payloadBytes} bytes; the cloud limit is ${MAX_PERSISTED_CHAT_BYTES}.`);
+    this.name = "AssistantSessionPayloadTooLargeError";
+    this.payloadBytes = payloadBytes;
+  }
+}
+
+export class AssistantCloudRequestError extends Error {
+  readonly code = "ASSISTANT_CLOUD_REQUEST_FAILED";
+  readonly status: number;
+  constructor(context: string, status: number) {
+    super(`${context}: ${status}`);
+    this.name = "AssistantCloudRequestError";
+    this.status = status;
+  }
+}
+
+export class AssistantSessionPermanentSaveError extends Error {
+  readonly code = "INVALID_ASSISTANT_SESSION";
+  readonly permanent = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "AssistantSessionPermanentSaveError";
+  }
+}
+
 export async function listAssistantSessions(provider: AuthProvider, accessToken: string, options: ListOptions = {}): Promise<AssistantSessionMeta[]> {
   return provider === "microsoft" ? listMicrosoftSessions(accessToken, options) : listGoogleSessions(accessToken, options);
 }
@@ -55,10 +87,13 @@ export async function loadAssistantSession(provider: AuthProvider, accessToken: 
 }
 
 export async function saveAssistantSession(provider: AuthProvider, accessToken: string, session: AssistantSession): Promise<AssistantSessionCloudHandle> {
-  if (!CHAT_NAME.test(chatFileName(session))) throw new Error(`Invalid chat session identity: ${session.id}`);
+  if (!CHAT_NAME.test(chatFileName(session))) throw new AssistantSessionPermanentSaveError(`Invalid chat session identity: ${session.id}`);
+  const normalized = normalizeAssistantSession(session);
+  const payloadBytes = new TextEncoder().encode(serializeAssistantSession(normalized)).length;
+  if (payloadBytes > MAX_PERSISTED_CHAT_BYTES) throw new AssistantSessionPayloadTooLargeError(payloadBytes);
   const endWrite = beginCloudWrite(provider, accessToken);
   try {
-    return await (provider === "microsoft" ? saveMicrosoftSession(accessToken, session) : saveGoogleSession(accessToken, session));
+    return await (provider === "microsoft" ? saveMicrosoftSession(accessToken, normalized) : saveGoogleSession(accessToken, normalized));
   } finally {
     endWrite();
   }
@@ -73,11 +108,17 @@ function authHeaders(accessToken: string) {
 }
 
 function assertOk(response: Response, context: string): void {
-  if (!response.ok) throw new Error(`${context}: ${response.status}`);
+  if (!response.ok) throw new AssistantCloudRequestError(context, response.status);
 }
 
 function assertCurrent(options: ListOptions): void {
   if (options.signal?.aborted || options.isCurrent?.() === false) throw new DOMException("The cloud history request was cancelled.", "AbortError");
+}
+
+async function parseSessionResponse(response: Response): Promise<AssistantSession> {
+  const declaredLength = Number(response.headers.get("Content-Length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_ASSISTANT_SESSION_BYTES) throw new Error("Chat session exceeds the size limit.");
+  return parseAssistantSessionJson(await response.text());
 }
 
 function chatFileName(session: Pick<AssistantSession, "id">): string {
@@ -100,13 +141,8 @@ function normalizeSessionMeta(raw: NativeChatMeta): AssistantSessionMeta {
   };
 }
 
-function persistedSession(session: AssistantSession): Omit<AssistantSession, "fileId" | "revision"> {
-  const { fileId: _fileId, revision: _revision, ...persisted } = session;
-  return persisted;
-}
-
 function sameSession(left: AssistantSession, right: AssistantSession): boolean {
-  return JSON.stringify(persistedSession(left)) === JSON.stringify(persistedSession(right));
+  return serializeAssistantSession(left) === serializeAssistantSession(right);
 }
 
 function responseRevision(response: Response, body?: { eTag?: string; etag?: string }): string | undefined {
@@ -227,7 +263,7 @@ async function listGoogleSessions(accessToken: string, options: ListOptions): Pr
 async function loadGoogleSession(accessToken: string, fileId: string, signal?: AbortSignal): Promise<AssistantSession> {
   const response = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media`, { headers: authHeaders(accessToken), signal });
   assertOk(response, "Google chat download");
-  const session = await response.json() as AssistantSession;
+  const session = await parseSessionResponse(response);
   return { ...session, fileId, revision: responseRevision(response) };
 }
 
@@ -266,7 +302,7 @@ async function idempotentOrConflict(provider: AuthProvider, accessToken: string,
 async function saveGoogleSession(accessToken: string, session: AssistantSession): Promise<AssistantSessionCloudHandle> {
   const root = await ensureGoogleAppFolder(accessToken);
   const chats = await ensureGoogleFolder(accessToken, CHATS_FOLDER, root);
-  const body = JSON.stringify(persistedSession(session), null, 2);
+  const body = serializeAssistantSession(session);
   let fileId = session.fileId;
   if (!fileId) {
     const existing = await resolveGoogleIdentity(accessToken, chats, session);
@@ -317,13 +353,13 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
     const nextPath = currentPath ? `${currentPath}/${part}` : part;
     const exists = await fetch(`${GRAPH_DRIVE_API}/root:/${nextPath}`, { headers: authHeaders(accessToken) });
     if (exists.ok) { currentPath = nextPath; continue; }
-    if (exists.status !== 404) throw new Error(`OneDrive folder lookup: ${exists.status}`);
+    if (exists.status !== 404) throw new AssistantCloudRequestError("OneDrive folder lookup", exists.status);
     const createUrl = currentPath ? `${GRAPH_DRIVE_API}/root:/${currentPath}:/children` : `${GRAPH_DRIVE_API}/root/children`;
     const created = await fetch(createUrl, {
       method: "POST", headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
       body: JSON.stringify({ name: part, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
     });
-    if (!(created.ok || created.status === 409)) throw new Error(`OneDrive folder create: ${created.status}`);
+    if (!(created.ok || created.status === 409)) throw new AssistantCloudRequestError("OneDrive folder create", created.status);
     currentPath = nextPath;
   }
 }
@@ -366,7 +402,7 @@ async function loadMicrosoftSessionState(accessToken: string, fileId: string, si
   const metadata = await metadataResponse.json() as { eTag?: string; description?: string };
   const response = await fetch(`${GRAPH_DRIVE_API}/items/${encodeURIComponent(fileId)}/content`, { headers: authHeaders(accessToken), signal });
   assertOk(response, "OneDrive chat download");
-  const session = await response.json() as AssistantSession;
+  const session = await parseSessionResponse(response);
   return { session: { ...session, fileId, revision: responseRevision(metadataResponse, metadata) }, description: metadata.description };
 }
 
@@ -403,7 +439,7 @@ async function repairMicrosoftSession(accessToken: string, session: AssistantSes
 async function saveMicrosoftSession(accessToken: string, session: AssistantSession): Promise<AssistantSessionCloudHandle> {
   const folderPath = `${ONE_DRIVE_APP_FOLDER}/${CHATS_FOLDER}`;
   await ensureMicrosoftFolderPath(accessToken, folderPath);
-  const body = JSON.stringify(persistedSession(session), null, 2);
+  const body = serializeAssistantSession(session);
   let fileId = session.fileId;
   if (!fileId) {
     const existing = await findMicrosoftSessionByIdentity(accessToken, folderPath, session);
@@ -415,7 +451,7 @@ async function saveMicrosoftSession(accessToken: string, session: AssistantSessi
     });
     if (create.status === 409 || create.status === 412) {
       const raced = await findMicrosoftSessionByIdentity(accessToken, folderPath, session);
-      if (!raced) throw new Error(`OneDrive chat create conflict: ${create.status}`);
+      if (!raced) throw new AssistantCloudRequestError("OneDrive chat create conflict", create.status);
       return raced.metadataMatches
         ? idempotentOrConflict("microsoft", accessToken, session, raced.fileId)
         : repairMicrosoftSession(accessToken, session, raced);

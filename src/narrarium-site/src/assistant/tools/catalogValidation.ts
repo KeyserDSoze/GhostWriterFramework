@@ -1,4 +1,5 @@
 import type { CopilotToolDescriptor, CopilotToolPrerequisite } from "./types";
+import { llmTaskForTool } from "./runtimeContract";
 
 export const COPILOT_TOOL_PREREQUISITES: ReadonlySet<CopilotToolPrerequisite> = new Set([
   "attachments", "book open", "canon entity open", "chapter open", "chapter or paragraph open", "context loaded",
@@ -17,10 +18,13 @@ export function validateToolCatalog(descriptors: readonly CopilotToolDescriptor[
     if (descriptorHandlers.has(tool.handlerId)) throw new Error(`Duplicate Copilot handler ID: ${tool.handlerId}`);
     descriptorHandlers.add(tool.handlerId);
     if (!tool.name.trim() || !tool.description.trim() || !tool.output.trim()) throw new Error(`Copilot tool ${tool.id} has incomplete display metadata.`);
+    const paramNames = tool.params.map((param) => param.name);
+    if (new Set(paramNames).size !== paramNames.length || tool.params.some((param) => !param.name.trim() || !param.type.trim() || !param.description.trim())) throw new Error(`Copilot tool ${tool.id} has invalid parameter metadata.`);
     if (!tool.prerequisites.length || new Set(tool.prerequisites).size !== tool.prerequisites.length || tool.prerequisites.some((item) => !COPILOT_TOOL_PREREQUISITES.has(item))) throw new Error(`Copilot tool ${tool.id} has invalid prerequisites.`);
     if (tool.destructive && (!tool.mutatesData || tool.defaultEnabled)) throw new Error(`Destructive Copilot tool ${tool.id} must mutate data and default to disabled.`);
     if (tool.mutatesData !== mutationToolIds.has(tool.id)) throw new Error(`Copilot mutation policy mismatch for ${tool.id}.`);
     if (tool.requiresLlm !== llmToolIds.has(tool.id)) throw new Error(`Copilot LLM metadata mismatch for ${tool.id}.`);
+    if (tool.requiresLlm !== Boolean(llmTaskForTool(tool.id))) throw new Error(`Copilot LLM runtime contract mismatch for ${tool.id}.`);
     if (new Set(tool.keywords).size !== tool.keywords.length || tool.keywords.some((keyword) => !keyword.trim())) throw new Error(`Copilot tool ${tool.id} has invalid keywords.`);
   }
   const missing = [...descriptorHandlers].filter((id) => !executableHandlers.has(id));

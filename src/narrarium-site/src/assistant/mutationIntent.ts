@@ -13,6 +13,7 @@ const MUTATION_VERBS: Record<string, RegExp> = {
   "write-evaluation": /\b(write|create|refresh|update|save|evaluate|review|scrivi|scrivere|crea|creare|aggiorna|aggiornare|salva|salvare|valuta|valutare|recensisci|recensire)\b/i,
   "evaluate-chapter-paragraphs": /\b(evaluate|review|run|write|valuta|valutare|recensisci|recensire|esegui|eseguire|scrivi|scrivere)\b/i,
   "create-note": /\b(create|add|write|save|take|append|crea|creare|aggiungi|aggiungere|scrivi|scrivere|salva|salvare|annota|annotare)\b/i,
+  "rewrite-current-paragraph": /\b(rewrite|revise|fix|improve|edit|riscrivi|riscrivere|rivedi|rivedere|correggi|correggere|migliora|migliorare|modifica|modificare)\b/i,
   "multi-file-edit": /\b(edit|update|change|rewrite|apply|modify|modifica|modificare|aggiorna|aggiornare|cambia|cambiare|riscrivi|riscrivere|applica|applicare)\b/i,
   "deep-research": /\b(run|start|conduct|perform|do|save|esegui|eseguire|avvia|avviare|fai|fare|conduci|condurre|salva|salvare)\b/i,
   "create-from-research": /\b(create|add|generate|crea|creare|aggiungi|aggiungere|genera|generare)\b/i,

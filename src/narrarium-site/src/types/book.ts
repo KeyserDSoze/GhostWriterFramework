@@ -11,6 +11,9 @@ export interface BookFile {
   name?: string;
   /** Primary image path (assets/<section>/<slug>/primary.*) when one exists. */
   imagePath?: string;
+  /** Spoiler thresholds are populated for secret files so access can be decided without loading their bodies. */
+  knownFrom?: string;
+  revealIn?: string;
 }
 
 export interface ResearchFile {

@@ -90,20 +90,26 @@ export function ReaderEvaluationsPage() {
       let text = "";
       let sourcePath = `${chapter.path}/chapter.md`;
       let version = branch;
+      let sourceRevisions: Record<string, string> = {};
       if (selection) {
         text = selection;
         sourcePath = paragraph?.path ?? sourcePath;
+        const file = await readFileWithSha(token, book.owner, book.repo, branch, sourcePath);
+        version = file.sha;
+        sourceRevisions = { [sourcePath]: file.sha };
       } else if (paragraph) {
         const file = await readFileWithSha(token, book.owner, book.repo, branch, paragraph.path);
         text = stripFrontmatter(file.content);
         sourcePath = paragraph.path;
         version = file.sha;
+        sourceRevisions = { [paragraph.path]: file.sha };
       } else {
         const files = await Promise.all(chapter.paragraphs.map((entry) => readFileWithSha(token, book.owner, book.repo, branch, entry.path).catch(() => null)));
         text = files.map((file, index) => file ? `## ${chapter.paragraphs[index].title}\n\n${stripFrontmatter(file.content)}` : "").filter(Boolean).join("\n\n");
         version = files.map((file) => file?.sha ?? "").join(":");
+        sourceRevisions = Object.fromEntries(chapter.paragraphs.flatMap((entry, index) => files[index] ? [[entry.path, files[index]!.sha]] : []));
       }
-      const nextTarget: ReaderEvaluationTarget = { type: selection ? "selection" : paragraph ? "paragraph" : "chapter", bookId: book.id, chapterId: chapter.slug, paragraphId: paragraph ? paragraphSlug(paragraph.path) : undefined, title: selection ? t("readerEvaluations.selectionTitle") : paragraph?.title ?? chapter.title, text, sourcePath, sourceVersion: version };
+      const nextTarget: ReaderEvaluationTarget = { type: selection ? "selection" : paragraph ? "paragraph" : "chapter", bookId: book.id, chapterId: chapter.slug, paragraphId: paragraph ? paragraphSlug(paragraph.path) : undefined, title: selection ? t("readerEvaluations.selectionTitle") : paragraph?.title ?? chapter.title, text, sourcePath, sourceVersion: version, sourceRevisions };
       const [loadedPersonas, currentHash] = await Promise.all([loadReaderPersonas({ token, book, branch, structure }), hashReaderSource(text)]);
       if (!active) return;
       setTarget(nextTarget);

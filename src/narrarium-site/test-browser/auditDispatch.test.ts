@@ -4,11 +4,27 @@ import { auditRunBlocker, claimAuditQueryOperation } from "@/narrarium/auditAvai
 import type { LoadedWriterContext } from "@/assistant/context";
 import type { AppSettings, BookEntry } from "@/types/settings";
 
-const { listBranchCommits } = vi.hoisted(() => ({ listBranchCommits: vi.fn() }));
+const { listBranchCommits, loadAuditReport, updateAuditFinding, resolveRepositoryHeadForMutation } = vi.hoisted(() => ({
+  listBranchCommits: vi.fn(),
+  loadAuditReport: vi.fn(),
+  updateAuditFinding: vi.fn(),
+  resolveRepositoryHeadForMutation: vi.fn(),
+}));
 
 vi.mock("@/github/githubClient", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/github/githubClient")>(),
   listBranchCommits,
+}));
+
+vi.mock("@/narrarium/audit", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/narrarium/audit")>(),
+  loadAuditReport,
+  updateAuditFinding,
+}));
+
+vi.mock("@/repository/safeRepositoryMutation", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/repository/safeRepositoryMutation")>(),
+  resolveRepositoryHeadForMutation,
 }));
 
 const book = {
@@ -65,6 +81,10 @@ describe("audit Copilot dispatch", () => {
   beforeEach(() => {
     listBranchCommits.mockReset();
     listBranchCommits.mockResolvedValue([{ sha: "head-sha" }]);
+    resolveRepositoryHeadForMutation.mockReset();
+    resolveRepositoryHeadForMutation.mockResolvedValue("source-head");
+    loadAuditReport.mockReset();
+    updateAuditFinding.mockReset();
   });
 
   it.each([
@@ -115,5 +135,17 @@ describe("audit Copilot dispatch", () => {
     expect(claimAuditQueryOperation(handled, "nav-1", "audit/book.md", "?action=run")).toBe(true);
     expect(claimAuditQueryOperation(handled, "nav-1", "audit/book.md", "?action=run")).toBe(false);
     expect(claimAuditQueryOperation(handled, "nav-2", "audit/book.md", "?action=run")).toBe(true);
+  });
+
+  it("passes a pre-mutation head through the audit finding handler", async () => {
+    loadAuditReport.mockResolvedValue({ findings: [{ id: "audit-0123456789abcdef0123" }] });
+    updateAuditFinding.mockResolvedValue({});
+    const message = await prompt("mark finding audit-0123456789abcdef0123 resolved");
+    expect(updateAuditFinding).toHaveBeenCalledWith(expect.objectContaining({
+      findingId: "audit-0123456789abcdef0123",
+      status: "resolved",
+      expectedRemoteHeadSha: "source-head",
+    }));
+    expect(message.mutation?.changedPaths).toEqual(["audit/book.md"]);
   });
 });

@@ -4,7 +4,6 @@
 // Does NOT write to GitHub – returns the proposed body for the user to review.
 
 import type { AppSettings, BookEntry } from "@/types/settings";
-import { completeText } from "@/assistant/llm";
 import { completeTextRouted } from "@/assistant/router";
 import type { EntityKind } from "@/narrarium/canon";
 import { DEFAULT_CREATE_PROMPTS } from "./createFromResearch";
@@ -75,27 +74,13 @@ export async function regenerateEntity(input: RegenerateEntityInput): Promise<Re
   ];
 
   let raw: string;
-  if (input.overrideIntegrationId && input.overrideModelName) {
-    const integration = (input.settings.aiIntegrations ?? []).find((i) => i.id === input.overrideIntegrationId);
-    if (integration) {
-      raw = await completeText(integration, messages, "writing", {
-        modelName: input.overrideModelName,
-        capability: "create-from-research",
-        signal: input.signal,
-        label: `regenerate-entity:${input.entityKind}`,
-      });
-    } else {
-      raw = await completeTextRouted(input.settings, messages, "create-from-research", {
-        signal: input.signal,
-        label: `regenerate-entity:${input.entityKind}`,
-      });
-    }
-  } else {
-    raw = await completeTextRouted(input.settings, messages, "create-from-research", {
-      signal: input.signal,
-      label: `regenerate-entity:${input.entityKind}`,
-    });
-  }
+  raw = await completeTextRouted(input.settings, messages, "create-from-research", {
+    signal: input.signal,
+    label: `regenerate-entity:${input.entityKind}`,
+    ...(input.overrideIntegrationId && input.overrideModelName
+      ? { preferred: { integrationId: input.overrideIntegrationId, model: input.overrideModelName } }
+      : {}),
+  });
 
   const parsed = extractJson(raw);
   const body = str(parsed.body) || "# Entity\n\nGenerated from research.\n";
