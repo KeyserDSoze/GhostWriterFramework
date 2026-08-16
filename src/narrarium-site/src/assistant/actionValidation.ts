@@ -1,4 +1,5 @@
 import type { AssistantAction, AssistantActionProvenance } from "@/assistant/store";
+import { isValidGitBranchName } from "../github/branchNameParser.ts";
 
 export const ASSISTANT_ACTION_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 
@@ -52,7 +53,12 @@ export function isValidAssistantActionShape(action: AssistantAction): boolean {
   if (!action || typeof action !== "object" || typeof action.kind !== "string") return false;
   if (action.kind === "apply-paragraph-rewrite") return safePath(action.paragraphPath) && typeof action.proposedBody === "string";
   if (action.kind === "apply-file-updates" || action.kind === "undo-file-updates") return validUpdates(action.updates) && revisionsMatchUpdates(action);
-  if (action.kind === "switch-book-branch") return typeof action.branchName === "string" && /^[A-Za-z0-9._/-]+$/.test(action.branchName) && !action.branchName.includes("..");
+  if (action.kind === "switch-book-branch") return typeof action.branchName === "string" && isValidGitBranchName(action.branchName);
+  if (action.kind === "confirm-create-pull-request") return isValidGitBranchName(action.base) && isValidGitBranchName(action.head) && action.base !== action.head
+    && typeof action.title === "string" && action.title.trim().length > 0 && typeof action.body === "string"
+    && typeof action.baseRevision === "string" && action.baseRevision.length > 0 && typeof action.headRevision === "string" && action.headRevision.length > 0
+    && Array.isArray(action.changedFiles) && action.changedFiles.length <= 1000 && action.changedFiles.every((file) => safePath(file.filename) && typeof file.status === "string" && Number.isSafeInteger(file.additions) && file.additions >= 0 && Number.isSafeInteger(file.deletions) && file.deletions >= 0)
+    && Array.isArray(action.existingPullRequests) && action.existingPullRequests.length <= 100 && action.existingPullRequests.every((pull) => Number.isSafeInteger(pull.number) && pull.number > 0 && typeof pull.title === "string" && typeof pull.htmlUrl === "string" && typeof pull.state === "string");
   if (action.kind === "confirm-delete") return safePath(action.path) && ["note", "paragraph", "entity", "reader-evaluation"].includes(action.target);
   if (action.kind === "confirm-create-from-research") {
     const revisions = action.sourceRevisions;
@@ -60,6 +66,11 @@ export function isValidAssistantActionShape(action: AssistantAction): boolean {
       && typeof action.label === "string" && action.label.trim().length > 0 && typeof action.body === "string" && action.body.trim().length > 0
       && Boolean(revisions && Object.keys(revisions).length === 2 && typeof revisions[action.researchPath] === "string" && revisions[action.destinationPath] === null);
   }
+  if (action.kind === "confirm-cancel-feedback-rewrite") return typeof action.bookId === "string" && typeof action.operationId === "string"
+    && (action.scope === "chapter" || action.scope === "paragraph") && typeof action.chapterSlug === "string"
+    && (action.scope === "chapter" ? action.paragraphSlug === undefined : typeof action.paragraphSlug === "string")
+    && Number.isSafeInteger(action.workflowRequestId) && action.workflowRequestId >= 0
+    && typeof action.ownerSessionId === "string" && typeof action.ownerRequestId === "string";
   if (action.kind === "navigate") return typeof action.to === "string" && action.to.startsWith("/app/") && !action.to.includes("\\");
   if (action.kind === "read-aloud") return Array.isArray(action.paths) && action.paths.length > 0 && action.paths.every(safePath);
   return false;

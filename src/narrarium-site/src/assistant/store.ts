@@ -62,6 +62,18 @@ export type AssistantAction = (
       baseBranch?: string;
     }
   | {
+      kind: "confirm-create-pull-request";
+      bookId: string;
+      base: string;
+      head: string;
+      title: string;
+      body: string;
+      baseRevision: string;
+      headRevision: string;
+      changedFiles: Array<{ filename: string; status: string; additions: number; deletions: number }>;
+      existingPullRequests: Array<{ number: number; title: string; htmlUrl: string; state: string }>;
+    }
+  | {
       kind: "navigate";
       to: string;
       label?: string;
@@ -90,6 +102,17 @@ export type AssistantAction = (
       body: string;
       extraFrontmatter: Record<string, unknown>;
       destinationPath: string;
+    }
+  | {
+      kind: "confirm-cancel-feedback-rewrite";
+      bookId: string;
+      operationId: string;
+      scope: "chapter" | "paragraph";
+      chapterSlug: string;
+      paragraphSlug?: string;
+      workflowRequestId: number;
+      ownerSessionId: string;
+      ownerRequestId: string;
     }
 ) & Partial<AssistantActionProvenance>;
 
@@ -145,6 +168,39 @@ export interface AssistantSessionArchive {
   rollup?: AssistantArchiveRollup;
 }
 
+export interface AssistantLosslessSegment {
+  format: "narrarium-assistant-chat-segment";
+  version: 1;
+  id: string;
+  createdAt: string;
+  previous?: AssistantLosslessSegmentRef;
+  messages: AssistantMessage[];
+  attachments: AssistantAttachment[];
+}
+
+export interface AssistantLosslessSegmentRef {
+  id: string;
+  sha256: string;
+}
+
+export interface AssistantArchiveOrigin {
+  provider: "google" | "microsoft";
+  account: string;
+  fileId?: string;
+}
+
+export interface AssistantLosslessArchiveManifest {
+  version: 1;
+  head?: AssistantLosslessSegmentRef;
+  segmentCount: number;
+  messageCount: number;
+  attachmentCount: number;
+  actionCount: number;
+  complete: boolean;
+  missingRanges: Array<{ from: number; to: number; reason: string }>;
+  origin?: AssistantArchiveOrigin;
+}
+
 export interface AssistantSessionMeta {
   id: string;
   fileId?: string;
@@ -152,6 +208,8 @@ export interface AssistantSessionMeta {
   title: string;
   contextTitle: string;
   updatedAt: string;
+  /** Monotonic revision of persisted session content. Cloud ETags remain in `revision`. */
+  contentRevision?: number;
 }
 
 export interface AssistantSessionProvenance {
@@ -182,6 +240,9 @@ export interface AssistantSession extends AssistantSessionMeta {
   messages: AssistantMessage[];
   attachments: AssistantAttachment[];
   archive?: AssistantSessionArchive;
+  /** Immutable, lossless source records removed from the active context by compaction. */
+  losslessSegments?: AssistantLosslessSegment[];
+  losslessArchive?: AssistantLosslessArchiveManifest;
   /** Legacy mirrors retained while existing cloud chats are migrated on save. */
   compactSummary: string;
   compactedMessageCount: number;
@@ -194,10 +255,14 @@ interface AssistantState {
   open: boolean;
   busy: boolean;
   sessions: AssistantSessionMeta[];
+  sessionAccountIdentity: string | null;
+  sessionsLoading: boolean;
   currentSession: AssistantSession | null;
   setOpen: (open: boolean) => void;
   setBusy: (busy: boolean) => void;
   setSessions: (sessions: AssistantSessionMeta[]) => void;
+  setSessionAccountIdentity: (identity: string | null) => void;
+  setSessionsLoading: (loading: boolean) => void;
   setCurrentSession: (session: AssistantSession | null) => void;
   updateCurrentSession: (updater: (session: AssistantSession) => AssistantSession) => void;
   updateSession: (sessionId: string, updater: (session: AssistantSession) => AssistantSession) => void;
@@ -210,45 +275,55 @@ export const useAssistantStore = create<AssistantState>((set) => ({
   open: false,
   busy: false,
   sessions: [],
+  sessionAccountIdentity: null,
+  sessionsLoading: false,
   currentSession: null,
   setOpen: (open) => set({ open }),
   setBusy: (busy) => set({ busy }),
   setSessions: (sessions) => set({ sessions }),
-  setCurrentSession: (currentSession) => set({ currentSession }),
+  setSessionAccountIdentity: (identity) => set((state) => state.sessionAccountIdentity === identity
+    ? state
+    : { sessionAccountIdentity: identity, sessions: [], sessionsLoading: false }),
+  setSessionsLoading: (sessionsLoading) => set({ sessionsLoading }),
+  setCurrentSession: (currentSession) => set((state) => ({
+    currentSession: state.currentSession && currentSession && state.currentSession.id === currentSession.id && assistantSessionContentChanged(state.currentSession, currentSession)
+      ? touchAssistantSession(state.currentSession, currentSession)
+      : currentSession,
+  })),
   updateCurrentSession: (updater) =>
     set((state) => ({
-      currentSession: state.currentSession ? updater(state.currentSession) : state.currentSession,
+      currentSession: state.currentSession ? mutateAssistantSession(state.currentSession, updater) : state.currentSession,
     })),
   updateSession: (sessionId, updater) =>
     set((state) => ({
-      currentSession: state.currentSession?.id === sessionId ? updater(state.currentSession) : state.currentSession,
+      currentSession: state.currentSession?.id === sessionId ? mutateAssistantSession(state.currentSession, updater) : state.currentSession,
     })),
   updateMessage: (messageId, patch) =>
     set((state) => ({
       currentSession: state.currentSession
-        ? {
+        ? touchAssistantSession(state.currentSession, {
             ...state.currentSession,
             messages: state.currentSession.messages.map((message) =>
               message.id === messageId ? { ...message, ...patch } : message,
             ),
-          }
+          })
         : state.currentSession,
     })),
   updateSessionMessage: (sessionId, messageId, patch) =>
     set((state) => ({
       currentSession: state.currentSession?.id === sessionId
-        ? {
+        ? touchAssistantSession(state.currentSession, {
             ...state.currentSession,
             messages: state.currentSession.messages.map((message) =>
               message.id === messageId ? { ...message, ...patch } : message,
             ),
-          }
+          })
         : state.currentSession,
     })),
   clearMessages: () =>
     set((state) => ({
       currentSession: state.currentSession
-        ? { ...state.currentSession, messages: [], attachments: [], archive: emptyAssistantSessionArchive(), compactSummary: "", compactedMessageCount: 0 }
+        ? touchAssistantSession(state.currentSession, { ...state.currentSession, messages: [], attachments: [], archive: emptyAssistantSessionArchive(), compactSummary: "", compactedMessageCount: 0 })
         : state.currentSession,
     })),
 }));
@@ -261,9 +336,12 @@ export function createEmptyAssistantSession(contextTitle: string, provenance?: A
     title: `${contextTitle} ${timestamp.slice(0, 16).replace("T", " ")}`,
     contextTitle,
     updatedAt: timestamp,
+    contentRevision: 0,
     messages: [],
     attachments: [],
     archive: emptyAssistantSessionArchive(),
+    losslessSegments: [],
+    losslessArchive: { version: 1, segmentCount: 0, messageCount: 0, attachmentCount: 0, actionCount: 0, complete: true, missingRanges: [] },
     compactSummary: "",
     compactedMessageCount: 0,
     ...(provenance ? { provenance } : {}),
@@ -304,6 +382,7 @@ export function normalizeAssistantSession(session: AssistantSession): AssistantS
   return {
     ...session,
     schemaVersion: 1,
+    contentRevision: typeof session.contentRevision === "number" && Number.isSafeInteger(session.contentRevision) && session.contentRevision >= 0 ? session.contentRevision : 0,
     messages: Array.isArray(session.messages) ? session.messages.slice(legacyPrefix.length) : [],
     attachments: (session.archive || legacyCount === 0) && Array.isArray(session.attachments) ? session.attachments : [],
     archive: {
@@ -313,10 +392,38 @@ export function normalizeAssistantSession(session: AssistantSession): AssistantS
       attachments: Array.isArray(archive.attachments) ? archive.attachments : [],
       rollup: archive.rollup ?? emptyAssistantArchiveRollup(),
     },
+    losslessSegments: Array.isArray(session.losslessSegments) ? session.losslessSegments : [],
+    losslessArchive: session.losslessArchive ?? {
+      version: 1,
+      segmentCount: 0,
+      messageCount: 0,
+      attachmentCount: 0,
+      actionCount: 0,
+      complete: legacyCount === 0,
+      missingRanges: legacyCount > 0 ? [{ from: 0, to: legacyCount - 1, reason: "Legacy compaction did not preserve original records." }] : [],
+    },
     compactSummary: typeof archive.summary === "string" ? archive.summary : "",
     compactedMessageCount: Number.isSafeInteger(archive.messageCount) ? archive.messageCount : 0,
     quarantinedActions: Array.isArray(session.quarantinedActions) ? session.quarantinedActions : [],
   };
+}
+
+export function touchAssistantSession(previous: AssistantSession, next: AssistantSession): AssistantSession {
+  if (next === previous) return previous;
+  const previousTime = Date.parse(previous.updatedAt);
+  const now = Date.now();
+  const updatedAt = new Date(Math.max(now, Number.isFinite(previousTime) ? previousTime + 1 : now)).toISOString();
+  return { ...next, updatedAt, contentRevision: Math.max(previous.contentRevision ?? 0, next.contentRevision ?? 0) + 1 };
+}
+
+function mutateAssistantSession(previous: AssistantSession, updater: (session: AssistantSession) => AssistantSession): AssistantSession {
+  return touchAssistantSession(previous, updater(previous));
+}
+
+function assistantSessionContentChanged(previous: AssistantSession, next: AssistantSession): boolean {
+  const { fileId: _previousFile, revision: _previousCloudRevision, updatedAt: _previousUpdated, contentRevision: _previousContentRevision, ...previousContent } = previous;
+  const { fileId: _nextFile, revision: _nextCloudRevision, updatedAt: _nextUpdated, contentRevision: _nextContentRevision, ...nextContent } = next;
+  return JSON.stringify(previousContent) !== JSON.stringify(nextContent);
 }
 
 function archivedActionPaths(action: AssistantAction): string[] {

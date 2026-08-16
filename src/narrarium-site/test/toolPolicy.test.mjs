@@ -28,6 +28,7 @@ test("maps persisted actions to the setting that must be rechecked", () => {
   assert.equal(assistantActionToolId({ kind: "apply-paragraph-rewrite", bookId: "book", chapterSlug: "001", paragraphPath: "p.md", proposedBody: "text" }), "rewrite-current-paragraph");
   assert.equal(assistantActionToolId({ kind: "apply-file-updates", bookId: "book", updates: [{ path: "a.md", content: "A" }] }), "multi-file-edit");
   assert.equal(assistantActionToolId({ kind: "switch-book-branch", bookId: "book", branchName: "draft" }), "switch-branch");
+  assert.equal(assistantActionToolId({ kind: "confirm-create-pull-request", bookId: "book", base: "main", head: "draft", title: "Draft", body: "", baseRevision: "a", headRevision: "b", changedFiles: [], existingPullRequests: [] }), "create-pull-request");
   assert.equal(assistantActionToolId({ kind: "read-aloud", bookId: "book", title: "Chapter", paths: ["chapter.md"] }), "read-current-page");
   assert.equal(assistantActionToolId({ kind: "confirm-delete", bookId: "book", target: "paragraph", path: "p.md", title: "Paragraph" }), "delete-current-paragraph");
   assert.equal(assistantActionToolId({ kind: "navigate", to: "/app/books/book/reader" }), "open-reader");

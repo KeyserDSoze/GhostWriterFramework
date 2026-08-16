@@ -4,6 +4,7 @@ import { loadCosts, saveCosts } from "@/costs/costsCloud";
 import { loadAppJson, saveAppJson } from "@/drive/jsonFile";
 import {
   listAssistantSessionsStrict,
+  hydrateAssistantSessionArchive,
   loadAssistantSession,
   saveAssistantSession,
 } from "@/assistant/chatCloud";
@@ -47,6 +48,7 @@ export interface CloudDeleteResult {
 
 export interface MigrationPreflight {
   settings: Awaited<ReturnType<typeof loadCloudSettingsForMigration>>["settings"];
+  diagnostics: string[];
   costs: Awaited<ReturnType<typeof loadCosts>>["file"];
   clipboard: unknown[];
   chats: AssistantSession[];
@@ -174,7 +176,7 @@ export async function migrateCloudData(
       for (const session of preflight.chats) {
         const targetMeta = targetsByIdentity.get(session.id);
         if (!targetMeta?.fileId) continue;
-        const existing = await loadAssistantSession(target.provider, target.accessToken, targetMeta.fileId);
+        const existing = await hydrateAssistantSessionArchive(target.provider, target.accessToken, await loadAssistantSession(target.provider, target.accessToken, targetMeta.fileId));
         assertMigrationChatCompatible(session.id, session, existing, canonicalSession);
         compatibleTargets.set(session.id, existing);
       }
@@ -188,7 +190,7 @@ export async function migrateCloudData(
         const targetMeta = targetsByIdentity.get(session.id);
         const clean: AssistantSession = { ...session, fileId: targetMeta?.fileId, revision: targetMeta?.revision };
         const handle = await saveAssistantSession(target.provider, target.accessToken, clean);
-        const verified = await loadAssistantSession(target.provider, target.accessToken, handle.fileId);
+        const verified = await hydrateAssistantSessionArchive(target.provider, target.accessToken, await loadAssistantSession(target.provider, target.accessToken, handle.fileId));
         if (!sameJson(canonicalSession(verified), canonicalSession(clean))) throw new Error(`Target chat verification failed for ${clean.id}.`);
         copied += 1;
         onProgress?.({ step: "chats", status: "start", count: copied });
@@ -228,7 +230,7 @@ export async function preflightCloudMigration(source: MigrationEndpoint): Promis
   const chats: AssistantSession[] = [];
   for (const meta of metas) {
     if (!meta.fileId) throw new Error(`Source chat ${meta.id} has no file identity.`);
-    const session = await loadAssistantSession(source.provider, source.accessToken, meta.fileId);
+    const session = await hydrateAssistantSessionArchive(source.provider, source.accessToken, await loadAssistantSession(source.provider, source.accessToken, meta.fileId));
     if (!validSession(session)) throw new Error(`Source chat ${meta.id} is malformed.`);
     if (session.id !== meta.id) throw new Error(`Source chat ${meta.id} has mismatched session identity.`);
     chats.push(session);
@@ -237,6 +239,7 @@ export async function preflightCloudMigration(source: MigrationEndpoint): Promis
   const fingerprint = JSON.stringify({ settings: settingsResult.settings, costs: costsResult.file, clipboard, chats: chats.map(canonicalSession) });
   return {
     settings: settingsResult.settings,
+    diagnostics: settingsResult.diagnostics,
     costs: costsResult.file,
     clipboard,
     chats,

@@ -1,5 +1,6 @@
 import { parseDocument, stringify } from "yaml";
 import { completeToolRouted } from "@/assistant/router";
+import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import type { LlmRunMetadata } from "@/assistant/llm";
 import { loadFileContent, loadRemoteFileContentAtRef } from "@/github/githubClient";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
@@ -163,6 +164,7 @@ export interface RewriteRepositoryContext {
   branch: string;
   structure: BookStructure;
   settings: AppSettings;
+  accountScope: string | null;
 }
 
 export interface GeneratedFeedbackDraft {
@@ -510,7 +512,7 @@ async function generateParagraph(input: {
     },
     {
       role: "user",
-      content: [
+      content: `${currentRequest("Rewrite the paragraph using the selected feedback while preserving canon and continuity.")}\n\n${untrustedData("repository_content", [
         input.writingContext,
         input.feedbackMode === "panel-summary"
           ? `REQUIRED TARGET FEEDBACK RECAP:\n${input.primaryFeedback.body}`
@@ -523,9 +525,9 @@ async function generateParagraph(input: {
         input.evaluations.length ? `CURRENT INDIVIDUAL READER EVALUATIONS:\n${input.evaluations.map((record) => `${record.readerName}:\n${record.body}`).join("\n\n")}` : "",
         `FINAL PARAGRAPH SOURCE (canon and continuity baseline):\n${input.finalBody}`,
         input.draftBody ? `CURRENT DRAFT TO REVISE:\n${input.draftBody}` : "No draft exists. Create one from the final source and feedback.",
-      ].filter(Boolean).join("\n\n"),
+      ].filter(Boolean).join("\n\n"))}`,
     },
-  ], "rewrite-from-reader-feedback", GENERATED_DRAFT_TOOL, { signal: input.signal, label: `rewrite-from-reader-feedback:${paragraphSlug(input.paragraph)}` });
+  ], "rewrite-from-reader-feedback", GENERATED_DRAFT_TOOL, { accountScope: input.context.accountScope, signal: input.signal, label: `rewrite-from-reader-feedback:${paragraphSlug(input.paragraph)}` });
   const body = result.output.body?.trim();
   if (!body) throw new Error("The model returned an empty draft body.");
   return { output: { body, feedbackApplied: result.output.feedbackApplied?.filter(Boolean) ?? [] }, metadata: result.metadata };
@@ -559,6 +561,7 @@ export async function inspectReaderFeedbackSummary(input: RewriteRepositoryConte
 export async function prepareParagraphFeedbackProposal(input: RewriteRepositoryContext & {
   chapterSlug: string;
   paragraphSlug: string;
+  operationId?: string;
   feedbackSource?: FeedbackSourceSelection;
   signal?: AbortSignal;
 }): Promise<ParagraphFeedbackProposal> {
@@ -591,7 +594,7 @@ export async function prepareParagraphFeedbackProposal(input: RewriteRepositoryC
     ? replaceMarkdownBody(draft.sourceContent, generated.output.body)
     : canonicalDraftContent(chapter, paragraph!, final.raw, generated.output.body);
   return {
-    operationId: crypto.randomUUID(),
+    operationId: input.operationId ?? crypto.randomUUID(),
     chapterSlug: chapter.slug,
     paragraphSlug: paragraphSlug(paragraph!),
     draftPath: draft.canonicalPath,
@@ -782,6 +785,7 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
 
 export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext & {
   chapterSlug: string;
+  operationId?: string;
   feedbackSource?: FeedbackSourceSelection;
   confirmed: boolean;
   confirmStaleFeedback?: boolean;
@@ -795,7 +799,7 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
   const chapterTarget = await chapterReaderTarget(context, chapter, finalSources);
   const chapterFeedback = await loadFeedbackSource(context, chapterTarget, input.feedbackSource);
   if (chapterFeedback.primary.stale && !input.confirmStaleFeedback) throw new StaleReaderFeedbackConfirmationError();
-  const operationId = crypto.randomUUID();
+  const operationId = input.operationId ?? crypto.randomUUID();
   const drafts = await Promise.all(chapter.paragraphs.map((paragraph) => loadCurrentDraft(context, chapter, paragraph)));
   const modifiedFiles = chapter.paragraphs.map((paragraph, index): RewriteModifiedFile => {
     const slug = paragraphSlug(paragraph);
@@ -1148,6 +1152,7 @@ export async function restorePreviousDrafts(input: RewriteRepositoryContext & {
   manifest.status = "rollingBack";
   await saveLocalRewriteOperation(manifest);
   const mutations = [] as Parameters<typeof mutateLocalTextFilesAtomically>[1];
+  const restoredFiles: RewriteModifiedFile[] = [];
   try {
     for (const file of restorableFiles) {
       const current = currentByPath.get(file.path)!;
@@ -1158,9 +1163,10 @@ export async function restorePreviousDrafts(input: RewriteRepositoryContext & {
       }
       if (file.existedBefore && file.beforeContent === null) throw new Error(`Missing local before-snapshot for ${file.path}.`);
       mutations.push({ path: file.path, content: file.existedBefore ? file.beforeContent : null, expectedCurrentHash: policy === "force-restore" ? undefined : current.hash });
-      file.status = "restored";
+      restoredFiles.push(file);
     }
     await mutateLocalDraftFiles(context.repoId, mutations);
+    for (const file of restoredFiles) file.status = "restored";
   } catch (error) {
     manifest.status = error instanceof RepositoryConflictError ? "conflict" : "failed";
     manifest.error = error instanceof Error ? error.message : String(error);

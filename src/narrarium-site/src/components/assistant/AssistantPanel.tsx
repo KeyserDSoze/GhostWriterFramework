@@ -43,8 +43,9 @@ import { assistantMarkdownToRichPlainText, buildAssistantSessionMarkdown, buildA
 import { AssistantArchiveProvenance } from "@/components/assistant/AssistantArchiveProvenance";
 import { loadWriterContext, parseAppRoute } from "@/assistant/context";
 import { bindReadAloudActionProvenance, readAloudReplaySource, resolveNavigateAction, resolveReadAloudAction, type ReadAloudAction } from "@/assistant/planner";
-import { deleteAssistantSession, listAssistantSessions, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
-import { AssistantSessionSaveQueue, assistantSessionSaveFingerprint, assistantSessionSaveRetryPlan, attachAssistantSessionCloudHandle, clearFailedAssistantSessionSaveFingerprint, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
+import { deleteAssistantSession, hydrateAssistantSessionArchive, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
+import { refreshAssistantSessionIndex, resetAssistantSessionIndex } from "@/assistant/sessionIndex";
+import { assistantSessionSaveQueue, assistantSessionSaveFingerprint, assistantSessionSaveRetryPlan, attachAssistantSessionCloudHandle, clearFailedAssistantSessionSaveFingerprint, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
 import { assistantSessionCompactionTarget, mergeAssistantSessionCompaction } from "@/assistant/sessionCompaction";
 import { isAssistantRequestOwned } from "@/assistant/sessionOwnership";
 import { resolveChatNoteDestination, reusableChatNoteOperation, type ChatNoteDestination } from "@/assistant/chatNoteSave";
@@ -61,6 +62,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useAuthStore } from "@/store/authStore";
 import { useUiStore } from "@/store/uiStore";
+import { useFeedbackRewriteWorkflowStore } from "@/store/feedbackRewriteWorkflowStore";
 import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -80,19 +82,26 @@ import { resolveBookExportSettings, resolveBookToken } from "@/types/settings";
 import {
   compareBranches,
   createBranchFromBase,
+  createPullRequest,
   deleteFile,
+  getDefaultBranch,
   isGitHubFileNotFoundError,
   listBranchCommits,
+  listBranches,
+  listOpenPullRequests,
   loadFileContent,
   readFileWithSha,
   reorderParagraphsInChapter,
   revertFileToRef,
   type BranchDiffFile,
 } from "@/github/githubClient";
+import { confirmPullRequestProposal } from "@/assistant/pullRequestProposal";
 import { uploadDriveFile } from "@/drive/exportDriveClient";
+import { createAssistantChatArchive, serializeAssistantChatArchive } from "@/assistant/chatArchive";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { speakText, splitIntoStrofe, transcribeAudio, type SpeechController } from "@/assistant/speech";
 import { classifyConfirmationRouted, completeTextRouted, sttMode } from "@/assistant/router";
+import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
 import { commitAndPushTextFileMutation, RepositoryConflictError, resolveRepositoryHeadForMutation, sha256Text } from "@/repository/safeRepositoryMutation";
 import { applyCanonicalRevisionResults, currentRevisionToken, fileRevisionMatches, fileUpdateCounts, markFileUpdatesApplied, markFileUpdatesFailed, markFileUpdatesUndone, pendingFileUpdates, type AppliedFileUpdateResult } from "@/assistant/multiFileOperation";
@@ -135,7 +144,7 @@ export function AssistantPanel() {
   const navigate = useNavigate();
   const route = useMemo(() => parseAppRoute(location.pathname), [location.pathname]);
   const bookId = "bookId" in route ? route.bookId : undefined;
-  const { branch, ensuring: branchEnsuring, ready: branchReady, error: branchError } = useWorkingBranch(bookId);
+  const { branch } = useWorkingBranch(bookId);
   const { settings, patchSettings } = useSettingsStore();
   const { structures, workingBranches, clearBook } = useBooksStore();
   const { save } = useSettings();
@@ -174,7 +183,7 @@ export function AssistantPanel() {
   const activeBranchRef = useRef(branch);
   const activePathnameRef = useRef(location.pathname);
   const settingsRef = useRef(settings);
-  const sessionSaveQueueRef = useRef(new AssistantSessionSaveQueue());
+  const sessionSaveQueueRef = useRef(assistantSessionSaveQueue);
   const savedSessionFingerprintsRef = useRef(new Map<string, string>());
   const pendingSessionFingerprintsRef = useRef(new Map<string, string>());
   const autosaveAttemptsRef = useRef(new Map<string, { fingerprint: string; failedAttempts: number }>());
@@ -212,7 +221,7 @@ export function AssistantPanel() {
   const [contextFiles, setContextFiles] = useState<string[]>([]);
   const [sessionContext, setSessionContext] = useState<ChatNoteDestination | undefined>();
   const [availableCount, setAvailableCount] = useState(0);
-  const [loadingSessions, setLoadingSessions] = useState(false);
+  const loadingSessions = useAssistantStore((state) => state.sessionsLoading);
   const [syncOpen, setSyncOpen] = useState(false);
   const [diffFiles, setDiffFiles] = useState<BranchDiffFile[]>([]);
   const [loadingDiff, setLoadingDiff] = useState(false);
@@ -315,24 +324,15 @@ export function AssistantPanel() {
   }, [branch, location.pathname, settings, structures, workingBranches]);
 
   useEffect(() => {
-    if (!open || !user || !accessToken) return;
-    let active = true;
-    const controller = new AbortController();
+    if (!user || !accessToken) { resetAssistantSessionIndex(null); return; }
+    if (!open) return;
     const expectedIdentity = accountIdentity(user);
-    setLoadingSessions(true);
-    void listAssistantSessions(user.provider, accessToken, { signal: controller.signal, isCurrent: () => isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user) })
-      .then((items) => {
-        if (active && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setSessions(items);
-      })
+    void refreshAssistantSessionIndex(user.provider, accessToken, expectedIdentity!)
       .catch((err) => {
-        if (active && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
+        if (!(err instanceof DOMException && err.name === "AbortError") && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
           toast({ title: t("assistant.toastLoadChatsFailed"), description: String(err), variant: "destructive" });
         }
-      })
-      .finally(() => {
-        if (active && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setLoadingSessions(false);
       });
-    return () => { active = false; controller.abort(); };
   }, [open, user, accessToken, setSessions, toast]);
 
   useEffect(() => {
@@ -351,7 +351,7 @@ export function AssistantPanel() {
       pendingSessionFingerprintsRef.current.set(currentSession.id, fingerprint);
       void sessionSaveQueueRef.current.enqueue(
         currentSession,
-        (session) => saveAssistantSession(user.provider, accessToken, session),
+        (session) => saveAssistantSession(user.provider, accessToken, session, cloudAccountAbortRef.current.signal),
         (savedSnapshot, handle) => {
           if (!isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
           clearFailedAssistantSessionSaveFingerprint(pendingSessionFingerprintsRef.current, savedSnapshot.id, fingerprint);
@@ -395,7 +395,7 @@ export function AssistantPanel() {
     const sourceSession = currentSession;
     const controller = new AbortController();
     const runId = ++compactionRunRef.current;
-    void compactAssistantSession({ session: sourceSession, settings, signal: controller.signal })
+    void compactAssistantSession({ session: sourceSession, settings, accountScope: accountIdentity(user), signal: controller.signal })
       .then((compacted) => {
         if (controller.signal.aborted || compactionRunRef.current !== runId) return;
         const state = useAssistantStore.getState();
@@ -719,7 +719,7 @@ export function AssistantPanel() {
           if (voiceModeRef.current) setVoiceStatus("thinking");
           try {
             const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
-            const transcript = (await transcribeAudio(blob, settings, operation.signal, candidateIndex)).trim();
+            const transcript = (await transcribeAudio(blob, settings, operation.signal, candidateIndex, accountIdentity(user))).trim();
             if (!ownsMediaOperation(operation.generation, operation.signal)) return;
             if (transcript) {
               if (voiceModeRef.current) void handleVoiceTranscript(transcript, operation.generation, operation.signal);
@@ -863,6 +863,7 @@ export function AssistantPanel() {
     }
     try {
       const controller = await speakText(text, settings, {
+        accountScope: accountIdentity(user),
         segments,
         startIndex,
         signal: operation.signal,
@@ -978,8 +979,8 @@ export function AssistantPanel() {
           role: "system",
           content: `Summarize the assistant reply below as a concise writer note in markdown. Keep only the useful takeaways and next actions. No frontmatter, no wrapper commentary. Respond in ${settings.ui.language === "it" ? "Italian" : "English"}.`,
         },
-        { role: "user", content: text },
-      ], "chat-resume", { label: "assistant:reply-summary" });
+        { role: "user", content: `${currentRequest("Summarize this assistant reply.")}\n\n${untrustedData("prior_transcript", text)}` },
+      ], "chat-resume", { accountScope: accountIdentity(user), label: "assistant:reply-summary" });
     } catch (err) {
       toast({ title: t("assistant.toastChatSummaryFailed"), description: String(err), variant: "destructive" });
       return null;
@@ -1007,6 +1008,12 @@ export function AssistantPanel() {
       : language === "it" ? "Conferma la destinazione esatta della nota." : "Confirm the exact note destination.";
     const destinationLabel = `${book.name} (${destination.owner}/${destination.repo})\n${language === "it" ? "Ramo" : "Branch"}: ${destination.branch}\n${language === "it" ? "Percorso" : "Path"}: ${destination.noteTargetPath}`;
     if (!window.confirm(`${warning}\n\n${destinationLabel}`)) return;
+    if (options.deleteAfter) {
+      const lossyWarning = language === "it"
+        ? "La nota non è un backup completo: omette contenuti degli allegati, payload completi di azioni/proposte, contenuti file proposti, snapshot di annullamento e identità cloud. Eliminare comunque la chat?"
+        : "The note is not a complete backup: it omits attachment contents, full action/proposal payloads, proposed file contents, undo snapshots, and cloud identity. Delete the chat anyway?";
+      if (!window.confirm(lossyWarning)) return;
+    }
     const latestReply = [...currentSession.messages].reverse().find((message) => message.role === "assistant" && message.text.trim());
     let noteBody = "";
     if (options.mode === "full") {
@@ -1033,8 +1040,8 @@ export function AssistantPanel() {
       // A prior ambiguous delete may already have removed the cloud file. Never save it again before retrying deletion.
       if (!(options.deleteAfter && (operation.status === "note-saved" || operation.status === "delete-failed"))) {
         const pending = { ...latest, noteSaveOperation: { ...operation, status: "pending" as const, updatedAt: new Date().toISOString() } };
-        const pendingHandle = await saveAssistantSession(user.provider, accessToken, pending);
-        useAssistantStore.getState().setCurrentSession({ ...pending, ...pendingHandle });
+        const pendingHandle = await saveAssistantSession(user.provider, accessToken, pending, cloudAccountAbortRef.current.signal);
+        useAssistantStore.getState().setCurrentSession({ ...pending, ...pendingHandle, losslessSegments: [] });
         await appendAssistantNote({
           token,
           owner: book.owner,
@@ -1045,13 +1052,13 @@ export function AssistantPanel() {
           idempotencyKey: operation.id,
         });
         const noteSaved = { ...useAssistantStore.getState().currentSession!, noteSaveOperation: { ...operation, status: options.deleteAfter ? "note-saved" as const : "complete" as const, updatedAt: new Date().toISOString() } };
-        const savedHandle = await saveAssistantSession(user.provider, accessToken, noteSaved);
-        useAssistantStore.getState().setCurrentSession({ ...noteSaved, ...savedHandle });
+        const savedHandle = await saveAssistantSession(user.provider, accessToken, noteSaved, cloudAccountAbortRef.current.signal);
+        useAssistantStore.getState().setCurrentSession({ ...noteSaved, ...savedHandle, losslessSegments: [] });
       }
       await refreshBookAfterMutation({ book, token, branch: destination.branch });
       if (options.deleteAfter) {
         const saved = useAssistantStore.getState().currentSession;
-        if (saved?.fileId) await deleteAssistantSession(user.provider, accessToken, saved.fileId, cloudAccountAbortRef.current.signal);
+        if (saved?.fileId) await deleteAssistantSession(user.provider, accessToken, saved.fileId, cloudAccountAbortRef.current.signal, sourceSessionId);
         const state = useAssistantStore.getState();
         state.setSessions(state.sessions.filter((entry) => entry.id !== sourceSessionId && entry.fileId !== saved?.fileId));
         state.setCurrentSession(null);
@@ -1074,18 +1081,29 @@ export function AssistantPanel() {
     }
   }
 
-  async function exportCurrentChat(options: { format: "markdown" | "pdf"; destination: "download" | "drive" }) {
+  async function exportCurrentChat(options: { format: "json" | "markdown" | "pdf"; destination: "download" | "drive" }) {
     if (!currentSession) return;
     const baseName = sessionFileBaseName(currentSession);
     setBusy(true);
     try {
-      const markdown = buildAssistantSessionMarkdown(currentSession);
-      const artifact = options.format === "markdown"
+      const exportSession = currentSession.losslessArchive?.head && !currentSession.losslessSegments?.length && user && accessToken
+        ? await hydrateAssistantSessionArchive(user.provider, accessToken, currentSession, cloudAccountAbortRef.current.signal)
+        : currentSession;
+      const markdown = options.format === "markdown" ? buildAssistantSessionMarkdown(exportSession) : "";
+      const artifact = options.format === "json"
+        ? (() => {
+            if (!user) throw new Error(t("assistant.toastChatDriveUnavailable"));
+            return { fileName: `${baseName}.narrarium-chat.json`, mimeType: "application/json", archive: createAssistantChatArchive(exportSession, user.provider, user.email) };
+          })()
+        : options.format === "markdown"
         ? { fileName: `${baseName}.md`, mimeType: "text/markdown", blob: new Blob([markdown], { type: "text/markdown;charset=utf-8" }) }
-        : { fileName: `${baseName}.pdf`, mimeType: "application/pdf", blob: await buildAssistantSessionPdfBlob(currentSession) };
+        : { fileName: `${baseName}.pdf`, mimeType: "application/pdf", blob: await buildAssistantSessionPdfBlob(exportSession) };
+      const blob = "archive" in artifact
+        ? new Blob([await serializeAssistantChatArchive(artifact.archive)], { type: "application/json;charset=utf-8" })
+        : artifact.blob;
 
       if (options.destination === "download") {
-        downloadBlob(artifact.fileName, artifact.blob);
+        downloadBlob(artifact.fileName, blob);
       } else {
         if (!bookId) throw new Error(t("assistant.toastChatDriveBookRequired"));
         const book = settings.books.find((entry) => entry.id === bookId);
@@ -1098,7 +1116,7 @@ export function AssistantPanel() {
           microsoftFolderPath: exportSettings.microsoftDriveFolderPath,
           fileName: artifact.fileName,
           mimeType: artifact.mimeType,
-          blob: artifact.blob,
+          blob,
         });
       }
       toast({ title: options.destination === "download" ? t("assistant.toastChatExported") : t("assistant.toastChatSavedToDrive") });
@@ -1207,12 +1225,9 @@ export function AssistantPanel() {
   }
 
   async function sendPrompt(prompt: string, options?: { spokenMode?: boolean; signal?: AbortSignal; attachmentTarget?: AttachmentImportTarget }): Promise<AssistantMessage | null> {
+    const accountScope = accountIdentity(user);
     const trimmed = prompt.trim();
     if (!trimmed || useAssistantStore.getState().busy) return null;
-    if (bookId && (!branchReady || branchEnsuring)) {
-      toast({ title: "Copilot branch is not ready", description: branchError ?? `Waiting for branch ${branch} to finish loading.`, variant: "destructive" });
-      return null;
-    }
     const session = ensureSession();
     const requestId = crypto.randomUUID();
     const controller = new AbortController();
@@ -1279,7 +1294,7 @@ export function AssistantPanel() {
         book,
         branch,
         token,
-        history: latestSession.messages,
+        history: latestSession.messages.filter((message) => message.id !== userMessage.id),
         compactSummary: latestSession.archive?.summary ?? latestSession.compactSummary,
         compactedMessageCount: latestSession.compactedMessageCount,
         attachments: latestSession.attachments,
@@ -1287,6 +1302,8 @@ export function AssistantPanel() {
         spokenMode: options?.spokenMode,
         signal: controller.signal,
         onText: updateStreamedReply,
+        requestOwner: { requestId, sessionId: session.id },
+        accountScope,
       }), async () => {
         if (book) await refreshBookAfterMutation({ book, token, branch: routeContext.branch ?? branch });
       });
@@ -1333,10 +1350,8 @@ export function AssistantPanel() {
       operation?: MediaOperation;
     },
   ): Promise<AssistantMessage | null> {
-    if (!input.book || !input.token || !input.context.structure) return null;
-
     // No-LLM navigation: "apri il reader", "vai al capitolo 3", "open research".
-    const navAction = resolveNavigateAction(prompt, input.context, input.book.id);
+    const navAction = resolveNavigateAction(prompt, input.context, input.book?.id ?? null);
     if (navAction && isAssistantActionEnabled(navAction)) {
       navigate(navAction.to);
       const reply = makeAssistantReply(t("assistant.navigatingTo", { target: navAction.label ?? navAction.to }));
@@ -1345,6 +1360,7 @@ export function AssistantPanel() {
     }
 
     // No-LLM read-aloud: "leggi questo paragrafo", "read chapter 3".
+    if (!input.book || !input.token || !input.context.structure) return null;
     const readAction = resolveReadAloudAction(prompt, input.context, input.book.id);
     if (readAction && isAssistantActionEnabled(readAction)) {
       const sourceAction = { ...readAction, branch: input.context.structure.loadedBranch };
@@ -1517,7 +1533,7 @@ export function AssistantPanel() {
         return makeAssistantReply(t("assistant.rewriteCancelled"));
       }
       // Ambiguous → ask the cheap "simple-tasks" model with a forced tool to decide.
-      const decision = await classifyConfirmationRouted(settings, prompt, operation?.signal);
+      const decision = await classifyConfirmationRouted(settings, prompt, operation?.signal, accountIdentity(user));
       if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
       if (decision === "yes") return applyPendingRewrite(operation);
       if (decision === "no") {
@@ -1575,9 +1591,7 @@ export function AssistantPanel() {
     });
     if (!snapshot) return makeAssistantReply(t("assistant.rewritePersistentUnavailable"));
     const langName = settings.ui.language === "it" ? "Italian" : "English";
-    const task = opts.synonymWord
-      ? `Rewrite the passage replacing the word "${opts.synonymWord}" with a fitting synonym, keeping everything else identical in meaning and tone.`
-      : `Rewrite the passage following this instruction: "${opts.instruction}". Keep the same language, meaning and roughly the same length.`;
+    const task = opts.synonymWord ? "Replace the selected word with a fitting synonym." : "Rewrite the passage according to the supplied user request.";
     setVoiceStatus("thinking");
     startWaitingTone();
     let generated: Awaited<ReturnType<typeof generateLiveVoiceRewrite>>;
@@ -1585,9 +1599,9 @@ export function AssistantPanel() {
       generated = await generateLiveVoiceRewrite({
         snapshot,
         generate: () => completeTextRouted(settings, [
-          { role: "system", content: `You are a prose editor. ${task} Reply with ONLY the rewritten passage in ${langName}, no quotes, no preamble.` },
-          { role: "user", content: original },
-        ], "default", { label: "live-voice:rewrite", signal: operation?.signal }),
+          { role: "system", content: `You are a prose editor. ${task} Reply with only the rewritten passage in ${langName}.` },
+          { role: "user", content: `${currentRequest(opts.synonymWord ? `Replace ${opts.synonymWord} with a fitting synonym.` : opts.instruction)}\n\n${untrustedData("repository_content", original)}` },
+        ], "default", { accountScope: accountIdentity(user), label: "live-voice:rewrite", signal: operation?.signal }),
         getActiveContext: () => activeLiveVoiceRewriteContext(window),
         split: splitIntoStrofe,
       });
@@ -1728,7 +1742,7 @@ export function AssistantPanel() {
     const signal = cloudAccountAbortRef.current.signal;
     try {
       if (useAssistantStore.getState().currentSession?.id === session.id) await sessionSaveQueueRef.current.retire(session.id);
-      await deleteAssistantSession(user.provider, accessToken, fileId, signal);
+      await deleteAssistantSession(user.provider, accessToken, fileId, signal, session.id);
       if (signal.aborted || !isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
       const state = useAssistantStore.getState();
       state.setSessions(state.sessions.filter((entry) => entry.fileId !== fileId));
@@ -1782,7 +1796,7 @@ export function AssistantPanel() {
       sourceRevision: action.sourceRevision,
     });
     if (scopeFailure) return fail(scopeFailure);
-    if (action.kind === "apply-file-updates" || action.kind === "undo-file-updates") return true;
+    if (action.kind === "apply-file-updates" || action.kind === "undo-file-updates" || action.kind === "confirm-create-pull-request") return true;
 
     let currentRevision: string;
     const paths = Object.keys(action.sourceRevisions);
@@ -1992,6 +2006,27 @@ export function AssistantPanel() {
     }
   }
 
+  function confirmFeedbackRewriteCancellation(messageIndex: number) {
+    const message = currentSession?.messages[messageIndex];
+    if (!message?.action || message.action.kind !== "confirm-cancel-feedback-rewrite") return;
+    const action = message.action;
+    if (!requireAssistantActionEnabled(action) || currentSession?.id !== action.ownerSessionId) return;
+    const cancelled = useFeedbackRewriteWorkflowStore.getState().cancelActive({
+      bookId: action.bookId,
+      operationId: action.operationId,
+      scope: action.scope,
+      chapterSlug: action.chapterSlug,
+      paragraphSlug: action.paragraphSlug,
+      requestId: action.workflowRequestId,
+      ownerSessionId: action.ownerSessionId,
+      ownerRequestId: action.ownerRequestId,
+    });
+    useAssistantStore.getState().updateMessage(message.id, {
+      action: undefined,
+      text: `${message.text}\n\n${cancelled ? "Cancellation requested. Completed writes were kept and were not restored." : "This operation no longer matches the active workflow, so nothing was cancelled."}`,
+    });
+  }
+
   async function confirmCreateFromResearch(messageIndex: number) {
     const message = currentSession?.messages[messageIndex];
     if (!message?.action || message.action.kind !== "confirm-create-from-research") return;
@@ -2011,6 +2046,26 @@ export function AssistantPanel() {
       toast({ title: t("assistant.toastCreatedFromResearch", { title: action.label }) });
     } catch (err) {
       toast({ title: t("assistant.toastCreateFromResearchFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmCreatePullRequest(messageIndex: number) {
+    const message = currentSession?.messages[messageIndex];
+    if (!message?.action || message.action.kind !== "confirm-create-pull-request") return;
+    const action = message.action;
+    if (!requireAssistantActionEnabled(action)) return;
+    const book = settings.books.find((entry) => entry.id === action.bookId);
+    const token = book ? resolveBookToken(book, settings) : "";
+    if (!book || !token || !await validatePersistedMutation(action, book, token)) return;
+    setBusy(true);
+    try {
+      const pull = await confirmPullRequestProposal({ token, action }, { getDefaultBranch, listBranches, listBranchCommits, compareBranches, listOpenPullRequests, createPullRequest });
+      useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\nOpened pull request #${pull.number}: ${pull.htmlUrl}` });
+      toast({ title: `Opened pull request #${pull.number}` });
+    } catch (err) {
+      toast({ title: "Pull request was not created", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -2309,7 +2364,9 @@ export function AssistantPanel() {
             {message.action?.kind === "navigate" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" disabled={!isAssistantActionEnabled(message.action)} onClick={() => void executeNavigationAction(message.action!)}><BookOpen className="mr-1.5 h-3.5 w-3.5" />{message.action.label ?? t("assistant.openLocation")}</Button></div>}
             {message.action?.kind === "read-aloud" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" onClick={() => void replayReadAloud(index)} disabled={!isAssistantActionEnabled(message.action)}><Play className="mr-1.5 h-3.5 w-3.5" />{t("assistant.playAloud")}</Button></div>}
             {message.action?.kind === "confirm-delete" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="destructive">{t("assistant.destructive")}</Badge><Button size="sm" variant="destructive" onClick={() => void confirmDeleteAction(index)} disabled={busy || !isAssistantActionEnabled(message.action)}><Trash2 className="mr-1.5 h-3.5 w-3.5" />{t("assistant.confirmDelete")}</Button><Button size="sm" variant="outline" onClick={() => useAssistantStore.getState().updateMessage(message.id, { action: undefined })} disabled={busy}>{t("assistant.cancel")}</Button></div>}
+            {message.action?.kind === "confirm-cancel-feedback-rewrite" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="destructive">{message.action.operationId}</Badge><Button size="sm" variant="destructive" onClick={() => confirmFeedbackRewriteCancellation(index)} disabled={busy || !isAssistantActionEnabled(message.action)}><Square className="mr-1.5 h-3.5 w-3.5" />Confirm cancellation</Button><Button size="sm" variant="outline" onClick={() => useAssistantStore.getState().updateMessage(message.id, { action: undefined })} disabled={busy}>{t("assistant.cancel")}</Button></div>}
             {message.action?.kind === "confirm-create-from-research" && <div className="mt-2 flex flex-wrap items-center gap-2"><Button size="sm" onClick={() => void confirmCreateFromResearch(index)} disabled={busy || !isAssistantActionEnabled(message.action)}><Sparkles className="mr-1.5 h-3.5 w-3.5" />{t("assistant.confirmCreate")}</Button><Button size="sm" variant="outline" onClick={() => useAssistantStore.getState().updateMessage(message.id, { action: undefined })} disabled={busy}>{t("assistant.cancel")}</Button></div>}
+            {message.action?.kind === "confirm-create-pull-request" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">Pull request proposal</Badge><Button size="sm" onClick={() => void confirmCreatePullRequest(index)} disabled={busy || !isAssistantActionEnabled(message.action)}><GitBranch className="mr-1.5 h-3.5 w-3.5" />Confirm and create</Button><Button size="sm" variant="outline" onClick={() => useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\nPull request creation cancelled.` })} disabled={busy}>{t("assistant.cancel")}</Button></div>}
           </div>
         </div>
       ))}
@@ -2420,8 +2477,10 @@ export function AssistantPanel() {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "markdown", destination: "download" })}><Download className="mr-2 h-4 w-4" />{t("assistant.downloadChatMarkdown")}</DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "pdf", destination: "download" })}><Download className="mr-2 h-4 w-4" />{t("assistant.downloadChatPdf")}</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "json", destination: "download" })}><Download className="mr-2 h-4 w-4" />{t("assistant.downloadChatJson")}</DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "markdown", destination: "drive" })}><FileText className="mr-2 h-4 w-4" />{t("assistant.saveChatMarkdownToDrive")}</DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "pdf", destination: "drive" })}><FileText className="mr-2 h-4 w-4" />{t("assistant.saveChatPdfToDrive")}</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "json", destination: "drive" })}><FileText className="mr-2 h-4 w-4" />{t("assistant.saveChatJsonToDrive")}</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
               <DropdownMenu>

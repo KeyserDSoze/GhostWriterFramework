@@ -19,6 +19,7 @@ export function CopilotToolsSettingsBody({ settings, patchSettings }: { settings
   function setToolEnabled(toolId: string, enabled: boolean) {
     patchSettings({
       copilotTools: {
+        schemaVersion: 1,
         toolOverrides: {
           ...settings.copilotTools.toolOverrides,
           [toolId]: { enabled },

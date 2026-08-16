@@ -40,6 +40,13 @@ export interface TaskRoute {
   fallbacks: RoutingTarget[];
 }
 
+export interface FallbackDisclosurePolicy {
+  /** Never send fallback content outside the primary integration/account boundary. */
+  sameBoundaryOnly: boolean;
+  /** Ask once, durably scoped by content kind and boundary pair, before crossing a boundary. */
+  requireAcknowledgement: boolean;
+}
+
 /** A single chat model entry inside an integration, with its own price and roles. */
 export interface ChatModel {
   id: string;
@@ -452,6 +459,7 @@ export interface CopilotToolOverride {
 }
 
 export interface CopilotToolSettings {
+  schemaVersion: 1;
   toolOverrides: Record<string, CopilotToolOverride>;
 }
 
@@ -466,6 +474,7 @@ export interface AppSettings {
   defaultReviewIntegrationId?: string;
   /** Optional configurable router: per task, a primary integration+model and ordered fallbacks. */
   taskRouting?: Partial<Record<RoutingTaskKind, TaskRoute>>;
+  fallbackDisclosure: FallbackDisclosurePolicy;
   /** Currency symbol/code used for cost display (e.g. "USD", "EUR", "GBP"). Default: "USD". */
   costCurrency: string;
   ui: {
@@ -477,6 +486,7 @@ export interface AppSettings {
   deepSearch: DeepSearchProviderSettings;
   copilotTools: CopilotToolSettings;
   reader: ReaderSettings;
+  customActionsSchemaVersion: 1;
   customActions: CustomAction[];
   books: BookEntry[];
 }
@@ -496,6 +506,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   aiIntegrations: [],
   defaultWritingIntegrationId: undefined,
   defaultReviewIntegrationId: undefined,
+  fallbackDisclosure: {
+    sameBoundaryOnly: false,
+    requireAcknowledgement: false,
+  },
   costCurrency: "USD",
   ui: {
     language: "en",
@@ -523,6 +537,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     },
   },
   copilotTools: {
+    schemaVersion: 1,
     toolOverrides: {},
   },
   reader: {
@@ -538,6 +553,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     showExitFullscreenButton: false,
     bookmarks: [],
   },
+  customActionsSchemaVersion: 1,
   customActions: [],
   books: [],
 };

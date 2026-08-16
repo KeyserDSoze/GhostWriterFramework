@@ -294,6 +294,11 @@ const en = {
     pickModel: "Pick model",
     browser: "Browser (built-in)",
     noModel: "No model",
+    sameBoundaryOnly: "Same account boundary only",
+    sameBoundaryOnlyHint: "Skip fallbacks belonging to another integration/account.",
+    requireAcknowledgement: "Acknowledge cross-boundary fallback",
+    requireAcknowledgementHint: "Ask before each content kind first crosses a specific account boundary. Cancelling sends nothing to that fallback.",
+    boundaryChain: "Provider/account boundaries: {{chain}}",
     invalidSave: "Fix or remove broken task routes before saving.",
     task: {
       default: "Chat (default)",
@@ -453,8 +458,14 @@ const en = {
     saveReplySummaryToNoteAndDelete: "Save reply summary to note and delete chat",
     downloadChatMarkdown: "Download chat as Markdown",
     downloadChatPdf: "Download chat as PDF",
+    downloadChatJson: "Download validated JSON archive",
     saveChatMarkdownToDrive: "Save chat Markdown to Drive",
     saveChatPdfToDrive: "Save chat PDF to Drive",
+    saveChatJsonToDrive: "Save validated JSON archive to Drive",
+    importChatArchive: "Import chat archive",
+    importChatAccountConfirm: "This archive came from {{account}} on another account boundary. Import a migrated copy into this account?",
+    importChatComplete: "Chat archive imported",
+    importChatFailed: "Chat archive import failed",
     floatingButton: "Copilot",
     contextFollows: "Context follows the current route and repository files.",
     none: "none",
@@ -1299,6 +1310,9 @@ const en = {
   bookActions: {
     title: "Actions"
   },
+  settingsRepair: {
+    title: "Some cloud settings were repaired"
+  },
   customActions: {
     title: "Custom Actions",
     description: "Create contextual actions that run through the app router and appear in the right-click menu.",
@@ -1357,7 +1371,8 @@ const en = {
     stopReading: "Stop reading",
     confirmReplace: "Confirm replacement",
     replaceNeedsEditor: "Open the action from an editable text field to replace content.",
-    replaced: "Content replaced. Save to persist the change."
+    replaced: "Content replaced. Save to persist the change.",
+    replaceStale: "Replacement not applied"
   },
   ctx: {
     improveAll: "Improve paragraph",
@@ -1397,6 +1412,7 @@ const en = {
     model: "Model",
     provider: "Provider",
     integration: "Integration (private ID)",
+    contentKinds: "Content sent",
     routeCandidate: "Route candidate",
     primaryCandidate: "Primary",
     fallbackCandidate: "Fallback {{n}}",
@@ -2140,6 +2156,7 @@ const en = {
     prerequisiteValues: {
       "book-open": "book open",
       "git-token": "GitHub token available",
+      "local-app": "local app route",
       attachments: "attachments available",
       "chapter-open": "chapter open",
       "chapter-or-paragraph-open": "chapter or paragraph open",

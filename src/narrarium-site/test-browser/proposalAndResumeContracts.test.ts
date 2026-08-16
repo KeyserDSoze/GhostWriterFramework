@@ -68,14 +68,14 @@ const integration = { id: "ai", name: "AI", provider: "openai", apiKey: "key", c
 const settings = { ui: { language: "en" }, copilotTools: { toolOverrides: {} }, aiIntegrations: [integration] } as unknown as AppSettings;
 
 function prompt(text: string) {
-  return runAssistantPrompt({ prompt: text, context, settings, book, branch: "main", token: "token", history: [], compactSummary: "", compactedMessageCount: 0, attachments: [] });
+  return runAssistantPrompt({ prompt: text, context, settings, book, branch: "main", token: "token", history: [], compactSummary: "", compactedMessageCount: 0, attachments: [], accountScope: null });
 }
 
 function evaluateAllPrompt(signal?: AbortSignal) {
   const second = { number: "002", title: "Middle", path: "chapters/001-start/002-middle.md" };
   const multiChapter = { ...chapter, paragraphs: [paragraph, second] };
   const multiContext = { ...context, route: { kind: "chapter", bookId: "book", chapterId: chapter.slug }, chapter: multiChapter, paragraph: undefined, structure: { ...structure, chapters: [multiChapter] } } as unknown as LoadedWriterContext;
-  return runAssistantPrompt({ prompt: "evaluate all paragraphs of chapter 1", context: multiContext, settings, book, branch: "main", token: "token", history: [], compactSummary: "", compactedMessageCount: 0, attachments: [], signal });
+  return runAssistantPrompt({ prompt: "evaluate all paragraphs of chapter 1", context: multiContext, settings, book, branch: "main", token: "token", history: [], compactSummary: "", compactedMessageCount: 0, attachments: [], accountScope: null, signal });
 }
 
 describe("proposal mutation contracts", () => {
@@ -176,6 +176,7 @@ describe("immediate creation handler paths", () => {
       compactedMessageCount: 0,
       attachments: [{ id: "a", name: "source.txt", mimeType: "text/plain", kind: "text", sizeBytes: 4, textContent: "text" }],
       attachmentTarget: "draft",
+      accountScope: null,
     });
 
     expect(mocks.resolveRepositoryHeadForMutation.mock.invocationCallOrder[0]).toBeLessThan(mocks.completeTextRouted.mock.invocationCallOrder[0]);

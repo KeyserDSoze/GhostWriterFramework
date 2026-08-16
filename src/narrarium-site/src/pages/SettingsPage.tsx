@@ -17,10 +17,11 @@ import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { CHAT_CAPABILITIES, ROUTING_TASKS, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget, type RoutingTaskKind, type TaskRoute } from "@/types/settings";
 import { integrationChatModels } from "@/assistant/llm";
-import { BROWSER_ROUTING_ID, reconcileTaskRouting, routingIssues } from "@/assistant/router";
+import { BROWSER_ROUTING_ID, reconcileTaskRouting, resolveEffectiveTaskCandidates, routingIssues } from "@/assistant/router";
 import { DeepSearchSettingsBody } from "@/components/settings/DeepSearchSettingsBody";
 import { CopilotToolsSettingsBody } from "@/components/settings/CopilotToolsSettingsBody";
 import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
+import { candidateBoundaryLabel, clearFallbackAcknowledgements } from "@/assistant/fallbackDisclosure";
 
 const PROVIDERS: Array<{ value: AIProviderType; labelKey: string; fallback: string }> = [
   { value: "azure_openai", labelKey: "settings.providers.azure_openai", fallback: "Azure OpenAI" },
@@ -874,6 +875,7 @@ function normalizeRoutingTarget(target: RoutingTarget | undefined, task: Routing
 }
 
 function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
+  const { t } = useTranslation();
   const integrations = settings.aiIntegrations ?? [];
   const routing = settings.taskRouting ?? {};
 
@@ -886,10 +888,21 @@ function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; p
 
   return (
     <div className="space-y-4">
+      <div className="space-y-3 rounded-lg border bg-muted/10 p-3">
+        <div className="flex items-center justify-between gap-4">
+          <div><Label>{t("routing.sameBoundaryOnly")}</Label><p className="text-xs text-muted-foreground">{t("routing.sameBoundaryOnlyHint")}</p></div>
+          <Switch checked={settings.fallbackDisclosure?.sameBoundaryOnly ?? false} onCheckedChange={(sameBoundaryOnly) => patchSettings({ fallbackDisclosure: { ...settings.fallbackDisclosure, sameBoundaryOnly } })} />
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <div><Label>{t("routing.requireAcknowledgement")}</Label><p className="text-xs text-muted-foreground">{t("routing.requireAcknowledgementHint")}</p></div>
+          <Switch checked={settings.fallbackDisclosure?.requireAcknowledgement ?? false} onCheckedChange={(requireAcknowledgement) => { clearFallbackAcknowledgements(); patchSettings({ fallbackDisclosure: { ...settings.fallbackDisclosure, requireAcknowledgement } }); }} />
+        </div>
+      </div>
       {ROUTING_TASKS.map((task) => (
         <TaskRouteEditor
           key={task}
           task={task}
+          settings={settings}
           integrations={integrations}
           route={routing[task]}
           onChange={(route) => setRoute(task, route)}
@@ -899,7 +912,7 @@ function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; p
   );
 }
 
-function TaskRouteEditor({ task, integrations, route, onChange }: { task: RoutingTaskKind; integrations: AIIntegration[]; route?: TaskRoute; onChange: (route: TaskRoute | undefined) => void }) {
+function TaskRouteEditor({ task, settings, integrations, route, onChange }: { task: RoutingTaskKind; settings: AppSettings; integrations: AIIntegration[]; route?: TaskRoute; onChange: (route: TaskRoute | undefined) => void }) {
   const { t } = useTranslation();
   const current: TaskRoute = route ?? { primary: undefined, fallbacks: [] };
   const firstChoice = taskIntegrationChoices(integrations, task, t)[0];
@@ -935,6 +948,7 @@ function TaskRouteEditor({ task, integrations, route, onChange }: { task: Routin
   }
 
   const label = t(`routing.task.${task}`);
+  const boundaries = resolveEffectiveTaskCandidates(settings, task).map((candidate) => `${candidateBoundaryLabel(candidate)} (${candidate.browser ? "browser" : candidate.model})`);
 
   return (
     <div className="rounded-lg border bg-muted/10 p-3">
@@ -952,6 +966,7 @@ function TaskRouteEditor({ task, integrations, route, onChange }: { task: Routin
           {t("routing.swapPrimaryFallback")}
         </Button>
       </div>
+      {boundaries.length > 0 && <p className="mb-2 text-xs text-muted-foreground">{t("routing.boundaryChain", { chain: boundaries.join(" → ") })}</p>}
       <div className="grid gap-2">
         <div className="grid gap-1">
           <Label className="text-xs">{t("routing.primary")}</Label>

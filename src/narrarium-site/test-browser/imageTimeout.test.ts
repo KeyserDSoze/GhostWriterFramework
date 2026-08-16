@@ -39,7 +39,7 @@ describe("image provider timeouts", () => {
       options.signal.addEventListener("abort", () => reject(new DOMException("sk-private-secret", "AbortError")), { once: true });
     })).mockResolvedValueOnce({ data: [{ b64_json: btoa("png") }] });
 
-    const result = await generateAssetImage({ settings: settings(), prompt: "private prompt", orientation: "square" });
+    const result = await generateAssetImage({ settings: settings(), prompt: "private prompt", orientation: "square", accountScope: null });
     expect(result.model).toBe("fallback-image");
     const primary = useLlmDebugStore.getState().entries.find((entry) => entry.routeCandidateIndex === 0);
     const fallback = useLlmDebugStore.getState().entries.find((entry) => entry.routeCandidateIndex === 1);
@@ -57,7 +57,7 @@ describe("image provider timeouts", () => {
       options.signal.addEventListener("abort", () => reject(new DOMException("download aborted", "AbortError")), { once: true });
     })));
 
-    const result = await generateAssetImage({ settings: settings(), prompt: "prompt", orientation: "portrait" });
+    const result = await generateAssetImage({ settings: settings(), prompt: "prompt", orientation: "portrait", accountScope: null });
     expect(result.model).toBe("fallback-image");
     expect(useLlmDebugStore.getState().entries.find((entry) => entry.routeCandidateIndex === 0)).toMatchObject({ failureKind: "timeout", timeoutMs: 5 });
   });
@@ -69,7 +69,7 @@ describe("image provider timeouts", () => {
       controller.abort(new DOMException("user cancelled", "AbortError"));
     }));
 
-    await expect(generateAssetImage({ settings: settings(), prompt: "prompt", orientation: "portrait", signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    await expect(generateAssetImage({ settings: settings(), prompt: "prompt", orientation: "portrait", signal: controller.signal, accountScope: null })).rejects.toMatchObject({ name: "AbortError" });
     expect(imageGenerate).toHaveBeenCalledTimes(1);
   });
 });

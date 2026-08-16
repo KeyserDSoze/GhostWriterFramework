@@ -65,3 +65,12 @@ test("rejects expired, invalid, and implausibly future generation timestamps", (
 test("source revision serialization is stable across path insertion order", () => {
   assert.equal(sourceRevisionFromFiles({ "b.md": null, "a.md": "sha-a" }), sourceRevisionFromFiles({ "a.md": "sha-a", "b.md": null }));
 });
+
+test("validates persisted pull request proposal shape and runtime policy binding", () => {
+  /** @type {import("../src/assistant/store.ts").AssistantAction} */
+  const proposal = { kind: "confirm-create-pull-request", bookId: "book", base: "main", head: "feature/x", title: "Proposal", body: "", baseRevision: "base", headRevision: "head", changedFiles: [{ filename: "plot.md", status: "modified", additions: 1, deletions: 0 }], existingPullRequests: [], toolId: "create-pull-request", owner: "owner", repo: "book", branch: "feature/x", sourceRevision: "revision", sourceRevisions: {}, generatedAt: "2026-08-14T11:00:00.000Z" };
+  const input = { action: proposal, owner: "owner", repo: "book", branch: "feature/x", expectedToolId: "create-pull-request", toolEnabled: true, sourceRevision: "revision", now };
+  assert.equal(validateAssistantAction(input), null);
+  assert.equal(validateAssistantAction({ ...input, toolEnabled: false }), "tool-disabled");
+  assert.equal(validateAssistantAction({ ...input, branch: "main" }), "branch-mismatch");
+});

@@ -14,6 +14,8 @@ import { runResearchRouter } from "./ResearchRouter";
 import { captureImmediateMutation, commitImmediateMutation, mergeManagedFrontmatter } from "@/assistant/immediateMutation";
 import { resolveRepositoryHeadForMutation } from "@/repository/safeRepositoryMutation";
 import { parseDocument } from "yaml";
+import { currentRequest, untrustedData } from "@/assistant/promptTrust";
+import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
 
 export interface RunDeepResearchInput {
   settings: AppSettings;
@@ -33,6 +35,7 @@ export interface RunDeepResearchInput {
   signal?: AbortSignal;
   onProgress?: (message: string) => void;
   expectedRemoteHeadSha?: string;
+  accountScope: string | null;
 }
 
 export interface RunDeepResearchResult {
@@ -64,11 +67,12 @@ async function completeForResearch(
 ): Promise<string> {
   if (input.overrideIntegrationId && input.overrideModelName) {
     return await completeTextRouted(input.settings, messages, capability, {
+      accountScope: input.accountScope,
       ...options,
       preferred: { integrationId: input.overrideIntegrationId, model: input.overrideModelName },
     });
   }
-  return await completeTextRouted(input.settings, messages, capability, options);
+  return await completeTextRouted(input.settings, messages, capability, { ...options, accountScope: input.accountScope });
 }
 
 async function generateQueries(input: RunDeepResearchInput): Promise<string[]> {
@@ -87,7 +91,7 @@ async function generateQueries(input: RunDeepResearchInput): Promise<string[]> {
     },
     {
       role: "user" as const,
-      content: `Research request: "${input.query}"\n\nGenerate ${maxQueries} search queries as a JSON array.`,
+      content: `${currentRequest(`Generate ${maxQueries} search queries as a JSON array.`)}\n\n${untrustedData("user_content", input.query)}`,
     },
   ];
 
@@ -137,7 +141,7 @@ async function synthesize(input: RunDeepResearchInput, results: ResearchResult[]
     },
     {
       role: "user" as const,
-      content: `Original research request: "${input.query}"${entityContext}\n\nDepth: ${input.depth}\n\nProvider summary:\n${providerSummary.join("\n")}\n\nCollected sources:\n\n${resultsText}`,
+      content: `${currentRequest("Synthesize the collected research into the requested document.")}\n\n${untrustedData("user_content", `Original request: ${input.query}${entityContext}\nDepth: ${input.depth}`)}\n\n${untrustedData("metadata", providerSummary.join("\n"))}\n\n${untrustedData("external_content", resultsText)}`,
     },
   ];
 
@@ -163,6 +167,10 @@ function slugifyResearch(query: string): string {
 }
 
 export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunDeepResearchResult> {
+  const operation = beginAccountScopedAiOperation(input.signal, input.accountScope);
+  operation.signal.throwIfAborted();
+  input = { ...input, signal: operation.signal, accountScope: operation.accountScope };
+  try {
   const expectedRemoteHeadSha = input.expectedRemoteHeadSha ?? await resolveRepositoryHeadForMutation(input);
   const costBefore = bucketTotal(aggregateAll(useCostsStore.getState().file));
 
@@ -234,6 +242,9 @@ export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunD
   await commitImmediateMutation({ token: input.token, book: input.book, branch: input.branch, snapshot, content: fullMarkdown, message: `${snapshot.content ? "Update" : "Add"} research: ${title}`, signal: input.signal });
 
   return { path, slug, title, markdown: fullMarkdown, cost: costDelta, providers: frontmatter.providers, providerUsage, intentsResolved, unavailableSummary: [...unavailableSummary] };
+  } finally {
+    operation.dispose();
+  }
 }
 
 function buildProviderSummary(providerUsage: NonNullable<ResearchFrontmatter["providerUsage"]>, unavailableIntents: Set<string>): string[] {

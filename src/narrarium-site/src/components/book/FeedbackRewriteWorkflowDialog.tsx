@@ -29,6 +29,8 @@ import {
 import { useSettingsStore } from "@/store/settingsStore";
 import { useFeedbackRewriteWorkflowStore, type FeedbackRewriteIntent } from "@/store/feedbackRewriteWorkflowStore";
 import { resolveBookToken } from "@/types/settings";
+import { useAuthStore } from "@/store/authStore";
+import { accountIdentity } from "@/auth/accountIdentity";
 
 export function FeedbackRewriteWorkflowDialog() {
   const { t } = useTranslation();
@@ -39,7 +41,7 @@ export function FeedbackRewriteWorkflowDialog() {
   const { book, structure, reload } = useBookStructure(state.intent?.bookId);
   const token = book ? resolveBookToken(book, settings) : "";
   const context: RewriteRepositoryContext | null = book && structure && token
-    ? { token, book, branch, structure, settings }
+    ? { token, book, branch, structure, settings, accountScope: accountIdentity(useAuthStore.getState().user) }
     : null;
   const busy = Boolean(state.abortController);
   const [restoreScopePaths, setRestoreScopePaths] = useState<string[] | null>(null);
@@ -67,6 +69,7 @@ export function FeedbackRewriteWorkflowDialog() {
           state.patch({
             manifest: latest,
             operationId: latest.operationId,
+            operationIdentity: operationIdentity(latest.operationId),
             progress: latest.progress,
             phase: intent.mode === "restore" ? "rollback-confirmation" : resultPhase(latest),
           });
@@ -98,6 +101,24 @@ export function FeedbackRewriteWorkflowDialog() {
     state.patch({ abortController: controller, abortable: Boolean(controller && abortable) });
   }
 
+  function operationIdentity(operationId: string) {
+    return {
+      bookId: intent.bookId,
+      operationId,
+      scope: intent.scope,
+      chapterSlug: intent.chapterSlug,
+      paragraphSlug: intent.paragraphSlug,
+      requestId: state.requestId,
+      ownerSessionId: intent.ownerSessionId!,
+      ownerRequestId: intent.ownerRequestId!,
+    };
+  }
+
+  function cancelCurrentOperation() {
+    const identity = state.operationIdentity;
+    return identity ? state.cancelActive(identity) : false;
+  }
+
   function patchOperationError(error: unknown, phase: "failed" | "cancelled") {
     if (error instanceof RewriteFinalizationError) {
       state.patch({
@@ -127,15 +148,17 @@ export function FeedbackRewriteWorkflowDialog() {
   async function startGeneration() {
     if (!context) return;
     const controller = new AbortController();
+    const operationId = crypto.randomUUID();
     setController(controller, true);
-    state.patch({ error: null, phase: intent.scope === "paragraph" ? "preparing" : "chapter-progress", progress: intent.scope === "chapter" ? { completed: 0, total: chapter?.paragraphs.length ?? 0 } : null });
+    state.patch({ error: null, operationId, operationIdentity: operationIdentity(operationId), phase: intent.scope === "paragraph" ? "preparing" : "chapter-progress", progress: intent.scope === "chapter" ? { completed: 0, total: chapter?.paragraphs.length ?? 0 } : null });
     try {
       if (intent.scope === "paragraph" && intent.paragraphSlug) {
-        const proposal = await prepareParagraphFeedbackProposal({ ...context, chapterSlug: intent.chapterSlug, paragraphSlug: intent.paragraphSlug, feedbackSource, signal: controller.signal });
+        const proposal = await prepareParagraphFeedbackProposal({ ...context, operationId, chapterSlug: intent.chapterSlug, paragraphSlug: intent.paragraphSlug, feedbackSource, signal: controller.signal });
         state.patch({ proposal, staleFeedback: proposal.staleFeedback, phase: "paragraph-preview" });
       } else {
         const manifest = await runChapterFeedbackRewrite({
           ...context,
+          operationId,
           chapterSlug: intent.chapterSlug,
           feedbackSource,
           confirmed: true,
@@ -210,7 +233,7 @@ export function FeedbackRewriteWorkflowDialog() {
       });
       const relevantConflicts = selected ? result.conflicts.filter((conflict) => selected.has(conflict.path)) : result.conflicts;
       if (!relevantConflicts.length) {
-        state.patch({ manifest: result.manifest, phase: "completed" });
+        state.patch(restoreResultPatch(result.manifest));
         setRestoreScopePaths(null);
         await reload();
         return;
@@ -246,7 +269,7 @@ export function FeedbackRewriteWorkflowDialog() {
         policies: buildRestorePolicies(restoreScopePaths, policies),
         defaultPolicy: restoreScopePaths?.length ? "keep-current" : "cancel",
       });
-      state.patch({ manifest: result.manifest, conflicts: [], phase: "completed" });
+      state.patch({ ...restoreResultPatch(result.manifest), conflicts: [] });
       setRestoreScopePaths(null);
       await reload();
     } catch (error) {
@@ -272,7 +295,7 @@ export function FeedbackRewriteWorkflowDialog() {
 
         {intent.mode === "generate" && <Alert><AlertTitle>{t(`feedbackRewrite.source.${displayedMode}.title`, { reader: displayedReaderName })}</AlertTitle><AlertDescription>{t(`feedbackRewrite.source.${displayedMode}.description`, { reader: displayedReaderName })}</AlertDescription></Alert>}
 
-        {(state.phase === "loading" || state.phase === "preparing" || state.phase === "generating" || state.phase === "rolling-back") && <BusyState label={t(`feedbackRewrite.phase.${state.phase}`)} cancellable={state.phase === "preparing"} />}
+        {(state.phase === "loading" || state.phase === "preparing" || state.phase === "generating" || state.phase === "rolling-back") && <BusyState label={t(`feedbackRewrite.phase.${state.phase}`)} cancellable={state.phase === "preparing"} onCancel={cancelCurrentOperation} />}
 
         {state.phase === "configure" && (
           <Alert variant={state.missingSummary ? "destructive" : "default"}>
@@ -303,7 +326,7 @@ export function FeedbackRewriteWorkflowDialog() {
           </div>
         )}
 
-        {state.phase === "chapter-progress" && <ChapterProgress manifest={state.manifest} progress={state.progress} title={chapter?.paragraphs.find((entry) => slugOf(entry.path) === state.progress?.currentParagraphSlug)?.title} />}
+        {state.phase === "chapter-progress" && <ChapterProgress manifest={state.manifest} progress={state.progress} title={chapter?.paragraphs.find((entry) => slugOf(entry.path) === state.progress?.currentParagraphSlug)?.title} onCancel={cancelCurrentOperation} />}
 
         {(state.phase === "completed" || state.phase === "failed" || state.phase === "cancelled") && (
           <ResultState phase={state.phase} manifest={state.manifest} error={state.error} context={context} busy={busy} onRestoreFile={(path) => void beginRestore([path])} />
@@ -345,18 +368,16 @@ export function FeedbackRewriteWorkflowDialog() {
   );
 }
 
-function BusyState({ label, cancellable = false }: { label: string; cancellable?: boolean }) {
+function BusyState({ label, cancellable = false, onCancel }: { label: string; cancellable?: boolean; onCancel: () => boolean }) {
   const { t } = useTranslation();
-  const cancel = useFeedbackRewriteWorkflowStore((state) => state.cancelActive);
-  return <div className="flex min-h-40 flex-col items-center justify-center gap-3 text-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /><p className="text-sm text-muted-foreground">{label}</p>{cancellable && <Button variant="destructive" onClick={cancel}><Square className="mr-2 h-4 w-4" />{t("common.cancel")}</Button>}</div>;
+  return <div className="flex min-h-40 flex-col items-center justify-center gap-3 text-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /><p className="text-sm text-muted-foreground">{label}</p>{cancellable && <Button variant="destructive" onClick={onCancel}><Square className="mr-2 h-4 w-4" />{t("common.cancel")}</Button>}</div>;
 }
 
-function ChapterProgress({ manifest, progress, title }: { manifest: RewriteOperationManifest | null; progress: RewriteOperationManifest["progress"] | null; title?: string }) {
+function ChapterProgress({ manifest, progress, title, onCancel }: { manifest: RewriteOperationManifest | null; progress: RewriteOperationManifest["progress"] | null; title?: string; onCancel: () => boolean }) {
   const { t } = useTranslation();
   const current = progress ?? manifest?.progress;
   const percent = current?.total ? Math.round((current.completed / current.total) * 100) : 0;
-  const cancel = useFeedbackRewriteWorkflowStore((state) => state.cancelActive);
-  return <div className="space-y-4"><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary transition-all" style={{ width: `${percent}%` }} /></div><div className="flex flex-wrap justify-between gap-2 text-sm"><span>{t("feedbackRewrite.progress", { completed: current?.completed ?? 0, total: current?.total ?? 0 })}</span><Badge variant="outline">{t(`feedbackRewrite.operationStatus.${manifest?.status ?? "rewriting"}`)}</Badge></div>{current?.currentParagraphSlug && <p className="text-sm text-muted-foreground">{t("feedbackRewrite.currentParagraph", { title: title ?? current.currentParagraphSlug, slug: current.currentParagraphSlug })}</p>}<Button variant="destructive" onClick={cancel}><Square className="mr-2 h-4 w-4" />{t("common.cancel")}</Button></div>;
+  return <div className="space-y-4"><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary transition-all" style={{ width: `${percent}%` }} /></div><div className="flex flex-wrap justify-between gap-2 text-sm"><span>{t("feedbackRewrite.progress", { completed: current?.completed ?? 0, total: current?.total ?? 0 })}</span><Badge variant="outline">{t(`feedbackRewrite.operationStatus.${manifest?.status ?? "rewriting"}`)}</Badge></div>{current?.currentParagraphSlug && <p className="text-sm text-muted-foreground">{t("feedbackRewrite.currentParagraph", { title: title ?? current.currentParagraphSlug, slug: current.currentParagraphSlug })}</p>}<Button variant="destructive" onClick={onCancel}><Square className="mr-2 h-4 w-4" />{t("common.cancel")}</Button></div>;
 }
 
 function ResultState({
@@ -385,9 +406,10 @@ function ResultState({
     setCurrentDrafts({});
   }, [manifest?.operationId, manifest?.updatedAt]);
 
-  const restored = manifest?.status === "rolledBack";
+  const resultSummary = feedbackRewriteResultSummary(manifest);
+  const restored = resultSummary.restorationVerified;
   const partial = manifest?.modifiedFiles.some((file) => file.status === "kept-current") ?? false;
-  const completed = manifest?.modifiedFiles.filter((file) => file.status === "completed").length ?? 0;
+  const completed = resultSummary.completedWrites;
 
   async function toggleExpanded(file: RewriteOperationManifest["modifiedFiles"][number]) {
     const expanded = !expandedPaths[file.path];
@@ -510,6 +532,22 @@ function resultPhase(manifest: RewriteOperationManifest | null): "completed" | "
   if (manifest.status === "completed" || manifest.status === "rolledBack") return "completed";
   if (manifest.status === "cancelled") return "cancelled";
   return "failed";
+}
+
+export function feedbackRewriteResultSummary(manifest: RewriteOperationManifest | null): { completedWrites: number; restorationVerified: boolean } {
+  return {
+    completedWrites: manifest?.modifiedFiles.filter((file) => file.status === "completed").length ?? 0,
+    restorationVerified: manifest?.status === "rolledBack",
+  };
+}
+
+export function restoreResultPatch(manifest: RewriteOperationManifest): { manifest: RewriteOperationManifest; phase: "completed" | "failed"; error: string | null } {
+  const restored = manifest.status === "rolledBack";
+  return {
+    manifest,
+    phase: restored ? "completed" : "failed",
+    error: restored ? null : manifest.error ?? `Restore did not complete (status: ${manifest.status}).`,
+  };
 }
 
 function isRestorableRewriteFile(file: RewriteOperationManifest["modifiedFiles"][number]): boolean {

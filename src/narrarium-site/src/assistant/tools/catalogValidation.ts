@@ -3,7 +3,7 @@ import { llmTaskForTool } from "./runtimeContract";
 
 export const COPILOT_TOOL_PREREQUISITES: ReadonlySet<CopilotToolPrerequisite> = new Set([
   "attachments", "book open", "canon entity open", "chapter open", "chapter or paragraph open", "context loaded",
-  "current page", "git token", "non-default branch", "note open", "paragraph open", "reader evaluations available", "research available",
+  "current page", "git token", "local app", "non-default branch", "note open", "paragraph open", "reader evaluations available", "research available",
 ]);
 
 export function validateToolCatalog(descriptors: readonly CopilotToolDescriptor[], handlerIds: readonly string[], mutationToolIds: ReadonlySet<string>, llmToolIds: ReadonlySet<string>): void {

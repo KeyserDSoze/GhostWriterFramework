@@ -1,5 +1,6 @@
 import { parseDocument, stringify } from "yaml";
 import { completeToolRouted } from "@/assistant/router";
+import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import type { LlmRunMetadata } from "@/assistant/llm";
 import { deleteFile, readFileWithSha } from "@/github/githubClient";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
@@ -183,6 +184,7 @@ interface AuditServiceBase {
 
 export interface RunAuditInput extends AuditServiceBase {
   settings: AppSettings;
+  accountScope: string | null;
   depth?: AuditDepth;
   signal?: AbortSignal;
   onProgress?: (progress: AuditProgress) => void;
@@ -844,8 +846,8 @@ export async function runAudit(input: RunAuditInput): Promise<AuditReport> {
     input.onProgress?.({ state: synthesis ? "synthesizing" : "running", completedCalls, totalCalls, currentPass: passCount + 1, detail: label });
     const result = await completeToolRouted<AuditPassOutput>(input.settings, [
       { role: "system", content: systemPrompt(language, depth, maxFindings, auditSettings.customPrompt, synthesis) },
-      { role: "user", content },
-    ], "audit", AUDIT_TOOL, { signal: input.signal, label: `audit:${target.scope}:${label}` });
+      { role: "user", content: `${currentRequest(synthesis ? "Synthesize the audit findings." : "Audit the supplied repository material.")}\n\n${untrustedData(synthesis ? "compaction_summary" : "repository_content", content)}` },
+    ], "audit", AUDIT_TOOL, { accountScope: input.accountScope, signal: input.signal, label: `audit:${target.scope}:${label}` });
     generationRuns.push(result.metadata);
     completedCalls += 1;
     passCount += 1;

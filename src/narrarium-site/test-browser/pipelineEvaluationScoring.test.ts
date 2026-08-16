@@ -24,6 +24,7 @@ import { generateParagraphEvaluationWithScores, type PipelineSource } from "@/na
 
 function source(signal?: AbortSignal): PipelineSource {
   return {
+    accountScope: null,
     token: "token",
     owner: "owner",
     repo: "repo",

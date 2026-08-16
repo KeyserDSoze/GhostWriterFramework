@@ -35,6 +35,7 @@ import { resolveContextualNavigation } from "@/lib/contextualNavigation";
 import { useCurrentObjectPendingCommit } from "@/hooks/useCurrentObjectPendingCommit";
 import { useAppUpdateStore } from "@/store/appUpdateStore";
 import { activateAvailableUpdate } from "@/pwa";
+import { accountIdentity } from "@/auth/accountIdentity";
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -194,7 +195,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       }
       const main = document.querySelector("main");
       const text = main?.textContent?.trim() ?? document.body.textContent?.trim() ?? "";
-      speechRef.current = await speakText(text, settings);
+      speechRef.current = await speakText(text, settings, { accountScope: accountIdentity(user) });
     } catch (err) {
       toast({ title: t("shell.ttsFailed"), description: String(err), variant: "destructive" });
     }

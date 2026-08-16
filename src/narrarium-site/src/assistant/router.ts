@@ -3,6 +3,9 @@ import { integrationChatModels, resolveReviewIntegration, resolveWritingIntegrat
 import { executeCompletionFallback } from "@/assistant/completionFallback";
 import { runWithCandidateTimeout } from "@/assistant/executionLimits";
 import { budgetLlmMessages, resolveModelTokenBudgets, textTokenUpperBound } from "@/assistant/promptBudget";
+import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/assistant/fallbackDisclosure";
+import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
+import { currentRequest } from "@/assistant/promptTrust";
 
 export type RoutedLlmRunMetadata = LlmResult<unknown>["metadata"] & { routeCandidateIndex: number; usedFallback: boolean };
 
@@ -263,6 +266,11 @@ export function resolveTaskCandidates(settings: AppSettings, task: RoutingTaskKi
   return dedupe([...router, ...legacy]);
 }
 
+/** The candidates execution can actually use after disclosure policy is applied. */
+export function resolveEffectiveTaskCandidates(settings: AppSettings, task: RoutingTaskKind): TaskCandidate[] {
+  return applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, task));
+}
+
 /**
  * Run a chat completion for a capability using the configured router (primary + fallbacks),
  * then the legacy resolution, trying each candidate in order until one succeeds.
@@ -271,10 +279,12 @@ export async function completeTextRouted(
   settings: AppSettings,
   messages: LlmMessage[],
   capability: ChatCapability,
-  options?: { signal?: AbortSignal; label?: string; onText?: (text: string) => void; preferred?: RoutingTarget },
+  options: { accountScope: string | null; signal?: AbortSignal; label?: string; onText?: (text: string) => void; preferred?: RoutingTarget },
 ): Promise<string> {
+  const operation = beginAccountScopedAiOperation(options?.signal, options?.accountScope);
+  try {
   const preferred = options?.preferred ? chatCandidateFromTarget(settings, options.preferred) : null;
-  const candidates = dedupe([...(preferred ? [preferred] : []), ...resolveTaskCandidates(settings, capability)]);
+  const candidates = applySameBoundaryPolicy(settings, dedupe([...(preferred ? [preferred] : []), ...resolveTaskCandidates(settings, capability)]));
   if (!candidates.length) {
     if (hasConfiguredRoute(settings, capability)) throw new StaleRoutingConfigurationError(capability);
     throw new NoCompletionCandidatesError();
@@ -282,7 +292,7 @@ export async function completeTextRouted(
   const purpose = capability === "review" ? "review" : "writing";
   const executable = candidates.map((candidate, routeCandidateIndex) => ({ ...candidate, routeCandidateIndex })).filter((candidate) => candidate.integration && candidate.model).map((candidate) => ({ ...candidate, integration: candidate.integration!, model: candidate.model!, label: `${candidate.integration!.provider}/${candidate.model!}` }));
   if (!executable.length) throw new NoCompletionCandidatesError();
-  return executeCompletionFallback({ candidates: executable, signal: options?.signal, timeoutMs: (candidate) => candidate.integration.requestTimeoutMs, resetPartial: () => options?.onText?.(""), run: (candidate, signal) => completeText(candidate.integration, budgetLlmMessages(messages, candidate.maxInputTokens, candidate.maxOutputTokens), purpose, {
+  return await executeCompletionFallback({ candidates: executable, signal: operation.signal, timeoutMs: (candidate) => candidate.integration.requestTimeoutMs, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: executable[index - 1], to: candidate, accountScope: operation.accountScope }); }, resetPartial: () => options?.onText?.(""), run: (candidate, signal) => completeText(candidate.integration, budgetLlmMessages(messages, candidate.maxInputTokens, candidate.maxOutputTokens), purpose, {
         modelName: candidate.model,
         capability,
         signal,
@@ -292,7 +302,11 @@ export async function completeTextRouted(
         usedFallback: candidate.routeCandidateIndex > 0,
         maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens,
         underlyingModel: candidate.underlyingModel,
+        accountScope: operation.accountScope,
       }) });
+  } finally {
+    operation.dispose();
+  }
 }
 
 export async function completeToolRouted<T>(
@@ -300,30 +314,37 @@ export async function completeToolRouted<T>(
   messages: LlmMessage[],
   capability: ChatCapability,
   tool: ForcedToolDefinition,
-  options?: { signal?: AbortSignal; label?: string; validate?: (output: unknown) => T },
+  options: { accountScope: string | null; signal?: AbortSignal; label?: string; validate?: (output: unknown) => T },
 ): Promise<LlmResult<T> & { metadata: RoutedLlmRunMetadata }> {
-  const candidates = resolveTaskCandidates(settings, capability);
+  const operation = beginAccountScopedAiOperation(options?.signal, options?.accountScope);
+  try {
+  const candidates = applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, capability));
   if (!candidates.length) {
     if (hasConfiguredRoute(settings, capability)) throw new StaleRoutingConfigurationError(capability);
     throw new NoCompletionCandidatesError();
   }
   let lastError: unknown = null;
   for (const [candidateIndex, candidate] of candidates.entries()) {
+    operation.signal.throwIfAborted();
     if (!candidate.integration || !candidate.model) continue;
+    if (candidateIndex > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: candidates[candidateIndex - 1], to: candidate, accountScope: operation.accountScope });
     try {
       const budgetedMessages = budgetForcedToolMessages(messages, candidate, tool);
-      const result = await runWithCandidateTimeout((signal) => completeToolWith<T>(candidate.integration!, candidate.model!, candidate.pricing, budgetedMessages, capability, tool, { signal, label: options?.label, currency: settings.costCurrency, validate: options?.validate, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens, underlyingModel: candidate.underlyingModel }), options?.signal, candidate.integration.requestTimeoutMs);
+      const result = await runWithCandidateTimeout((signal) => completeToolWith<T>(candidate.integration!, candidate.model!, candidate.pricing, budgetedMessages, capability, tool, { accountScope: operation.accountScope, signal, label: options.label, currency: settings.costCurrency, validate: options.validate, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens, underlyingModel: candidate.underlyingModel }), operation.signal, candidate.integration.requestTimeoutMs);
       return {
         ...result,
         output: options?.validate ? options.validate(result.output) : result.output as T,
         metadata: { ...result.metadata, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0 },
       };
     } catch (err) {
-      if (options?.signal?.aborted) throw err;
+      if (operation.signal.aborted) throw err;
       lastError = err;
     }
   }
   throw lastError ?? new Error("All AI candidates failed for this task.");
+  } finally {
+    operation.dispose();
+  }
 }
 
 /** True when TTS should use the browser engine as the first candidate. */
@@ -350,24 +371,30 @@ export function sttMode(settings: AppSettings, candidateIndex = 0): "browser" | 
 }
 
 /** Confirmation classification with router (simple-tasks) + fallbacks. Returns "unclear" if all fail. */
-export async function classifyConfirmationRouted(settings: AppSettings, utterance: string, operationSignal?: AbortSignal): Promise<"yes" | "no" | "unclear"> {
-  const candidates = resolveTaskCandidates(settings, "simple-tasks");
+export async function classifyConfirmationRouted(settings: AppSettings, utterance: string, operationSignal: AbortSignal | undefined, accountScope: string | null): Promise<"yes" | "no" | "unclear"> {
+  const operation = beginAccountScopedAiOperation(operationSignal, accountScope);
+  try {
+  const candidates = applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, "simple-tasks"));
   for (const [candidateIndex, candidate] of candidates.entries()) {
-    operationSignal?.throwIfAborted();
+    operation.signal.throwIfAborted();
     if (!candidate.integration || !candidate.model) continue;
+    if (candidateIndex > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: candidates[candidateIndex - 1], to: candidate, accountScope: operation.accountScope });
     try {
-      const budgetedMessages = budgetForcedToolMessages([{ role: "user", content: utterance }], candidate, CONFIRMATION_TOOL_DEFINITION);
+      const budgetedMessages = budgetForcedToolMessages([{ role: "user", content: currentRequest(utterance) }], candidate, CONFIRMATION_TOOL_DEFINITION);
       const budgetedUtterance = budgetedMessages[0]?.content;
       if (typeof budgetedUtterance !== "string") throw new CandidateInputBudgetError();
       return await runWithCandidateTimeout(
-        (signal) => classifyConfirmationWith(candidate.integration!, candidate.model!, candidate.pricing, budgetedUtterance, { signal, maxOutputTokens: Math.min(32, resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens), routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, underlyingModel: candidate.underlyingModel }),
-        operationSignal,
+        (signal) => classifyConfirmationWith(candidate.integration!, candidate.model!, candidate.pricing, budgetedUtterance, { accountScope: operation.accountScope, signal, maxOutputTokens: Math.min(32, resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens), routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, underlyingModel: candidate.underlyingModel }),
+        operation.signal,
         candidate.integration.requestTimeoutMs,
       );
     } catch (error) {
-      if (operationSignal?.aborted) throw error;
+      if (operation.signal.aborted) throw error;
       // try next fallback
     }
   }
   return "unclear";
+  } finally {
+    operation.dispose();
+  }
 }

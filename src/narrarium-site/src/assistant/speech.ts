@@ -6,6 +6,8 @@ import { sttDelta, ttsDelta, useCostsStore } from "@/costs/costsStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import { BrowserSpeechFallbackRequired, executeMediaFallback } from "@/assistant/mediaFallback";
 import { CandidateTimeoutError } from "@/assistant/executionLimits";
+import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/assistant/fallbackDisclosure";
+import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
 
 const MAX_TTS_CHARS = 1200;
 const BROWSER_TTS_FALLBACK = "narrarium:browser-tts-fallback";
@@ -21,6 +23,7 @@ export interface SpeakOptions {
   /** Reports playback or synthesis failures that happen after a controller is returned. */
   onError?: (error: unknown) => void;
   signal?: AbortSignal;
+  accountScope: string | null;
 }
 
 export interface SpeechController {
@@ -124,18 +127,21 @@ export function getSpeechIntegration(settings: AppSettings): AIIntegration | nul
   return integration;
 }
 
-export async function transcribeAudio(blob: Blob, settings: AppSettings, signal?: AbortSignal, startCandidateIndex = 0): Promise<string> {
-  signal?.throwIfAborted();
-  const candidates = resolveTaskCandidates(settings, "stt").slice(startCandidateIndex);
+export async function transcribeAudio(blob: Blob, settings: AppSettings, signal: AbortSignal | undefined, startCandidateIndex: number, accountScope: string | null): Promise<string> {
+  const operation = beginAccountScopedAiOperation(signal, accountScope);
+  operation.signal.throwIfAborted();
+  try {
+  const routeCandidates = applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, "stt"));
+  const candidates = routeCandidates.slice(startCandidateIndex);
   if (!candidates.length) throw new Error("No AI speech-to-text model is configured.");
   const sizeKb = Math.round(blob.size / 1024);
-  return executeMediaFallback<string>({ candidates, signal, runBrowser: async (index) => { throw new BrowserSpeechFallbackRequired(startCandidateIndex + index + 1); }, runAi: async (candidate, attemptSignal, candidateIndex) => {
+  return await executeMediaFallback<string, TaskCandidate>({ candidates, signal: operation.signal, beforeCandidate: (candidate, index) => { const previous = routeCandidates[startCandidateIndex + index - 1]; if (previous) acknowledgeCrossBoundaryFallback({ settings, kind: "audio", from: previous, to: candidate, accountScope: operation.accountScope }); }, runBrowser: async (index) => { throw new BrowserSpeechFallbackRequired(startCandidateIndex + index + 1); }, runAi: async (candidate, attemptSignal, candidateIndex) => {
     const integration = candidate.integration as AIIntegration;
     const model = candidate.model!;
     const pricing = candidates.find((entry) => entry.integration === integration && entry.model === model)?.pricing;
     const file = new File([blob], "speech.webm", { type: blob.type || "audio/webm" });
     const client = createAudioClient(integration);
-    const debugId = useLlmDebugStore.getState().begin({ kind: "stt", label: "stt", model, provider: integration.provider, integrationId: integration.id, routeCandidateIndex: startCandidateIndex + candidateIndex, usedFallback: startCandidateIndex + candidateIndex > 0, messages: [{ role: "input", content: `audio ${sizeKb} KB` }] });
+    const debugId = useLlmDebugStore.getState().begin({ kind: "stt", contentKinds: ["audio"], label: "stt", model, provider: integration.provider, integrationId: integration.id, routeCandidateIndex: startCandidateIndex + candidateIndex, usedFallback: startCandidateIndex + candidateIndex > 0, messages: [{ role: "input", content: `audio ${sizeKb} KB` }] });
     try {
       const response = await client.audio.transcriptions.create({ file, model }, { signal: attemptSignal });
       attemptSignal?.throwIfAborted();
@@ -150,16 +156,28 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings, signal?
       throw err;
     }
   } });
+  } finally {
+    operation.dispose();
+  }
 }
 
-export async function speakText(text: string, settings: AppSettings, options: SpeakOptions = {}): Promise<SpeechController> {
-  options.signal?.throwIfAborted();
+export async function speakText(text: string, settings: AppSettings, options: SpeakOptions): Promise<SpeechController> {
+  const operation = beginAccountScopedAiOperation(options.signal, options.accountScope);
+  operation.signal.throwIfAborted();
   const voice = settings.speech.ttsVoice || "nova";
-  const candidates = resolveTaskCandidates(settings, "tts");
+  const candidates = applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, "tts"));
   if (!candidates.length) throw new Error("No text-to-speech route is configured.");
-  return executeMediaFallback<SpeechController>({ candidates, signal: options.signal, timeoutAi: false, runBrowser: () => speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, options), runAi: async (_candidate, _attemptSignal, candidateIndex) => {
-      return speakWithOpenAICompatible(text, candidates, candidateIndex, voice, options, (startIndex) => speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, { ...options, startIndex }));
-  } });
+  try {
+    const scopedOptions = { ...options, signal: operation.signal, accountScope: operation.accountScope };
+    const controller = await executeMediaFallback<SpeechController, TaskCandidate>({ candidates, signal: operation.signal, timeoutAi: false, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: candidates[index - 1], to: candidate, accountScope: operation.accountScope }); }, runBrowser: () => speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, scopedOptions), runAi: async (_candidate, _attemptSignal, candidateIndex) => {
+        return speakWithOpenAICompatible(text, settings, candidates, candidateIndex, voice, scopedOptions, (startIndex) => speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, { ...scopedOptions, startIndex }));
+    } });
+    void controller.done.then(operation.dispose, operation.dispose);
+    return controller;
+  } catch (error) {
+    operation.dispose();
+    throw error;
+  }
 }
 
 function createAudioClient(integration: AIIntegration): AzureOpenAI | OpenAI {
@@ -286,7 +304,7 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number, u
   return controller;
 }
 
-async function speakWithOpenAICompatible(text: string, candidates: TaskCandidate[], candidateIndex: number, voice: string, options: SpeakOptions, browserFallback: (startIndex: number) => Promise<SpeechController>): Promise<SpeechController> {
+async function speakWithOpenAICompatible(text: string, settings: AppSettings, candidates: TaskCandidate[], candidateIndex: number, voice: string, options: SpeakOptions, browserFallback: (startIndex: number) => Promise<SpeechController>): Promise<SpeechController> {
   const segments = resolveSegments(text, options);
   const startIndex = Math.max(0, options.startIndex ?? 0);
   let stopped = false;
@@ -304,12 +322,12 @@ async function speakWithOpenAICompatible(text: string, candidates: TaskCandidate
   options.signal?.throwIfAborted();
   const synthesize = async (segment: string, allowFallback = true): Promise<string> => {
     const attempts = allowFallback ? candidates.slice(candidateIndex) : [candidates[candidateIndex]];
-    return executeMediaFallback<string, TaskCandidate>({ candidates: attempts, signal: synthesisController.signal, runBrowser: async () => BROWSER_TTS_FALLBACK, runAi: async (candidate, attemptSignal, relativeIndex) => {
+    return executeMediaFallback<string, TaskCandidate>({ candidates: attempts, signal: synthesisController.signal, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: attempts[index - 1], to: candidate, accountScope: options.accountScope }); }, runBrowser: async () => BROWSER_TTS_FALLBACK, runAi: async (candidate, attemptSignal, relativeIndex) => {
       const integration = candidate.integration as AIIntegration;
       const model = candidate.model!;
       const absoluteIndex = allowFallback ? candidateIndex + relativeIndex : candidateIndex;
       const pricing = candidate.pricing ?? integration.pricing;
-      const debugId = useLlmDebugStore.getState().begin({ kind: "tts", label: `tts (${voice})`, model, provider: integration.provider, integrationId: integration.id, routeCandidateIndex: absoluteIndex, usedFallback: absoluteIndex > 0, messages: [{ role: "input", content: segment.slice(0, 400) }] });
+      const debugId = useLlmDebugStore.getState().begin({ kind: "tts", contentKinds: ["text"], label: `tts (${voice})`, model, provider: integration.provider, integrationId: integration.id, routeCandidateIndex: absoluteIndex, usedFallback: absoluteIndex > 0, messages: [{ role: "input", content: segment.slice(0, 400) }] });
       let url: string;
       try {
         url = await synthesizeChunk(segment, integration, model, voice, attemptSignal);

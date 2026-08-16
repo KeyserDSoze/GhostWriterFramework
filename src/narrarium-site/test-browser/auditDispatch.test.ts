@@ -74,6 +74,7 @@ function prompt(text: string, nextBook = book, nextSettings = settings) {
     compactSummary: "",
     compactedMessageCount: 0,
     attachments: [],
+    accountScope: null,
   });
 }
 

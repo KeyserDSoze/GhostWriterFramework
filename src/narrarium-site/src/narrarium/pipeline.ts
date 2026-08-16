@@ -2,6 +2,7 @@ import type { AppSettings } from "@/types/settings";
 import type { BookStructure, Chapter, Paragraph } from "@/types/book";
 import type { LlmMessage } from "@/assistant/llm";
 import { completeTextRouted, completeToolRouted, type RoutedLlmRunMetadata } from "@/assistant/router";
+import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import { resolveEvaluationCriteria, scoreEvaluationRouted, type EvaluationCriterionScore } from "@/assistant/service";
 import { loadFileContent } from "@/github/githubClient";
 import { ghostwriterPrompt, parseGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
@@ -17,6 +18,7 @@ interface PipelineSource {
   repo: string;
   branch: string;
   settings: AppSettings;
+  accountScope: string | null;
   structure: BookStructure;
   /** Optional: present when working inside a chapter/paragraph/draft. Absent for canon, prompts, etc. */
   chapter?: Chapter;
@@ -45,8 +47,12 @@ export async function loadGhostwriterProfile(src: PipelineSource, slug?: string)
   const entry = src.structure.ghostwriters.find((g) => g.slug === slug);
   if (!entry) return null;
   try {
-    return parseGhostwriter(slug, await loadFileContent(src.token, src.owner, src.repo, entry.path, src.branch));
-  } catch {
+    const raw = await loadFileContent(src.token, src.owner, src.repo, entry.path, src.branch, src.signal);
+    src.signal?.throwIfAborted();
+    return parseGhostwriter(slug, raw);
+  } catch (error) {
+    if (src.signal?.aborted) throw src.signal.reason;
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
     return null;
   }
 }
@@ -86,19 +92,19 @@ const LANG = (src: PipelineSource) => {
 export async function scriptToProse(src: PipelineSource, scriptBody: string, ghostwriterSlug?: string): Promise<string> {
   const { style, story } = await buildContext(src, ghostwriterSlug);
   const messages: LlmMessage[] = [
-    { role: "system", content: `You turn a Narrarium scene script into finished prose. Each script line is an action, beat, or note in sequence. Follow the beat order. Write only the prose body, no frontmatter, no commentary, no markdown fences. Write in ${LANG(src)}.\n\n${style}` },
-    { role: "user", content: `${story}\n\nSCENE SCRIPT:\n${scriptBody}\n\nWrite the scene as polished prose following these beats.` },
+    { role: "system", content: `You turn a Narrarium scene script into finished prose. Follow the beat order. Write only prose in ${LANG(src)}.` },
+    { role: "user", content: `${currentRequest("Write the scene as polished prose following the supplied beats.")}\n\n${untrustedData("repository_content", [style, story, scriptBody].filter(Boolean).join("\n\n"))}` },
   ];
-  return (await completeTextRouted(src.settings, messages, "default", { label: "pipeline:script-to-prose" })).trim();
+  return (await completeTextRouted(src.settings, messages, "default", { accountScope: src.accountScope, label: "pipeline:script-to-prose" })).trim();
 }
 
 export async function refineProse(src: PipelineSource, draftBody: string, ghostwriterSlug?: string): Promise<string> {
   const { style, story } = await buildContext(src, ghostwriterSlug);
   const messages: LlmMessage[] = [
-    { role: "system", content: `You polish a draft scene into the final paragraph. Preserve facts, names, chronology, and visible canon. Improve prose, rhythm, and clarity. Return only the body, no frontmatter, no commentary. Write in ${LANG(src)}.\n\n${style}` },
-    { role: "user", content: `${story}\n\nDRAFT:\n${draftBody}\n\nReturn the polished final version.` },
+    { role: "system", content: `Polish a draft scene while preserving facts and canon. Return only the body in ${LANG(src)}.` },
+    { role: "user", content: `${currentRequest("Return the polished final version.")}\n\n${untrustedData("repository_content", [style, story, draftBody].filter(Boolean).join("\n\n"))}` },
   ];
-  return (await completeTextRouted(src.settings, messages, "default", { label: "pipeline:refine-prose" })).trim();
+  return (await completeTextRouted(src.settings, messages, "default", { accountScope: src.accountScope, label: "pipeline:refine-prose" })).trim();
 }
 
 export async function improveProse(
@@ -113,10 +119,10 @@ export async function improveProse(
     ? `Improve ONLY the selected fragment. Return ONLY the improved fragment, same language, ready to drop back in place of the selection. Keep length similar.`
     : `Improve the whole paragraph. Return only the improved body.`;
   const messages: LlmMessage[] = [
-    { role: "system", content: `You are a prose editor. ${scope} Preserve facts, names, and canon. Write in ${LANG(src)}.\n\n${style}` },
-    { role: "user", content: `${story}\n\nFULL PARAGRAPH:\n${fullBody}\n\nTEXT TO IMPROVE:\n${target}\n\nReturn the improved text.` },
+    { role: "system", content: `You are a prose editor. Preserve facts, names, and canon. Write in ${LANG(src)}.` },
+    { role: "user", content: `${currentRequest(`${scope} Return the improved text.`)}\n\n${untrustedData("repository_content", [style, story, `FULL PARAGRAPH:\n${fullBody}`, `TEXT TO IMPROVE:\n${target}`].filter(Boolean).join("\n\n"))}` },
   ];
-  return (await completeTextRouted(src.settings, messages, "default", { label: "pipeline:improve-prose" })).trim();
+  return (await completeTextRouted(src.settings, messages, "default", { accountScope: src.accountScope, label: "pipeline:improve-prose" })).trim();
 }
 
 export interface MergeDraftFinalResult {
@@ -169,13 +175,10 @@ export async function mergeDraftAndFinal(
     `- Return the merged body via the tool "text", and a short markdown rationale via "explanation" describing what you took from the draft, what from the final, and what you improved and why.`,
     `- IMPORTANT: write BOTH the merged "text" AND the "explanation" entirely in ${LANG(src)}. Never write the explanation in another language.`,
     ``,
-    style,
   ].join("\n");
   const user = [
-    story,
-    `DRAFT VERSION:\n${draftBody?.trim() || "(empty)"}`,
-    `FINAL VERSION:\n${finalBody?.trim() || "(empty)"}`,
-    `Merge and improve them into one best version, and explain your choices.`,
+    currentRequest("Merge and improve the two versions into one best version, and explain your choices."),
+    untrustedData("repository_content", [style, story, `DRAFT VERSION:\n${draftBody?.trim() || "(empty)"}`, `FINAL VERSION:\n${finalBody?.trim() || "(empty)"}`].filter(Boolean).join("\n\n")),
   ].filter(Boolean).join("\n\n");
   const result = await completeToolRouted<MergeDraftFinalResult>(
     src.settings,
@@ -185,7 +188,7 @@ export async function mergeDraftAndFinal(
     ],
     "default",
     MERGE_TOOL,
-    { label: "pipeline:merge-draft-final" },
+    { accountScope: src.accountScope, label: "pipeline:merge-draft-final" },
   );
   return {
     text: String(result.output.text ?? "").trim(),
@@ -205,10 +208,10 @@ export async function synonymsFor(
   const { style, story } = await buildContext(src, options?.ghostwriterSlug);
   const excludeNote = exclude.length ? `\nDo NOT repeat any of these already-proposed options: ${exclude.join(", ")}.` : "";
   const messages: LlmMessage[] = [
-    { role: "system", content: `You are a precise lexical editor. The user selected a short word or phrase and wants ${count} alternative synonyms/replacements that fit the sentence, register, and style, matching the grammatical form. Return ONLY a JSON array of ${count} strings, no commentary. Write in ${LANG(src)}.${excludeNote}\n\n${style}` },
-    { role: "user", content: `${story}\n\nPARAGRAPH:\n${fullBody}\n\nSELECTED TEXT:\n${selection}\n\nReturn ${count} replacements as a JSON array.` },
+    { role: "system", content: `You are a precise lexical editor. Return only a JSON array of ${count} strings in ${LANG(src)}.` },
+    { role: "user", content: `${currentRequest(`Return ${count} fitting replacements.${excludeNote}`)}\n\n${untrustedData("repository_content", [style, story, `PARAGRAPH:\n${fullBody}`, `SELECTED TEXT:\n${selection}`].filter(Boolean).join("\n\n"))}` },
   ];
-  const raw = (await completeTextRouted(src.settings, messages, "simple-tasks", { label: "pipeline:synonyms" })).trim();
+  const raw = (await completeTextRouted(src.settings, messages, "simple-tasks", { accountScope: src.accountScope, label: "pipeline:synonyms" })).trim();
   return parseStringList(raw, count, exclude);
 }
 
@@ -248,10 +251,10 @@ export async function proseToScript(src: PipelineSource, prose: string, ghostwri
     "Return ONLY the script body, no commentary, no code fences. Keep dialogue text in its original language.",
   ].join("\n");
   const messages: LlmMessage[] = [
-    { role: "system", content: `You convert prose into a Narrarium scene script: a compact, ordered, faithful sequence of beats that captures the scene's structure and dialogue. Return ONLY the script body, no commentary, no code fences. Write notes/telling beats in ${LANG(src)}.\n\n${legend}\n\n${style}` },
-    { role: "user", content: `${story}\n\nPROSE:\n${prose}\n\nWrite the scene script that reconstructs this scene beat by beat.` },
+    { role: "system", content: `Convert prose into the documented Narrarium scene-script format. Return only the script body in ${LANG(src)}.\n\n${legend}` },
+    { role: "user", content: `${currentRequest("Write the scene script that reconstructs this scene beat by beat.")}\n\n${untrustedData("repository_content", [style, story, prose].filter(Boolean).join("\n\n"))}` },
   ];
-  return (await completeTextRouted(src.settings, messages, "default", { label: "pipeline:prose-to-script" })).trim();
+  return (await completeTextRouted(src.settings, messages, "default", { accountScope: src.accountScope, label: "pipeline:prose-to-script" })).trim();
 }
 
 export type { PipelineSource };
@@ -264,10 +267,10 @@ export async function generateChapterResume(src: PipelineSource, paragraphs: Arr
     .map((p, i) => `### ${i + 1}. ${p.title}\n${p.text.trim()}`)
     .join("\n\n");
   const messages: LlmMessage[] = [
-    { role: "system", content: `You write a chapter "riassunto" (recap) for the chapter resume file. Start with a 2-4 sentence overview, then a blank line, then one "- " bullet per scene in order, each one concise sentence capturing what happens and what changes. Preserve chronology and visible canon. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src)}.\n\n${style}` },
-    { role: "user", content: `${story}\n\nSCENES:\n${scenes}\n\nWrite the chapter recap.` },
+    { role: "system", content: `Write a chronological chapter recap in ${LANG(src)} with a short overview and one bullet per scene. Return only Markdown.` },
+    { role: "user", content: `${currentRequest("Write the chapter recap.")}\n\n${untrustedData("repository_content", [style, story, scenes].filter(Boolean).join("\n\n"))}` },
   ];
-  return (await completeTextRouted(src.settings, messages, "default", { label: "resume:chapter" })).trim();
+  return (await completeTextRouted(src.settings, messages, "default", { accountScope: src.accountScope, label: "resume:chapter" })).trim();
 }
 
 /** Generate a chapter evaluation body (uses the review model when configured). */
@@ -277,20 +280,20 @@ export async function generateChapterEvaluation(src: PipelineSource, paragraphs:
     .map((p, i) => `### ${i + 1}. ${p.title}\n${p.text.trim()}`)
     .join("\n\n");
   const messages: LlmMessage[] = [
-    { role: "system", content: `You are an editorial reviewer. Follow the evaluation-guidelines.md contract below. Be critical and specific: do not give comfort scores or generic praise. Write a chapter evaluation using the required markdown headings and concrete revision suggestions. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src)}.\n\n${guidelines}\n\n${style}` },
-    { role: "user", content: `${story}\n\nCHAPTER SCENES:\n${scenes}\n\nWrite the chapter evaluation.` },
+    { role: "system", content: `You are a critical editorial reviewer. Return only a chapter evaluation in ${LANG(src)}.` },
+    { role: "user", content: `${currentRequest("Write the chapter evaluation using the supplied guidelines as data constraints.")}\n\n${untrustedData("repository_content", [guidelines, style, story, scenes].filter(Boolean).join("\n\n"))}` },
   ];
-  return (await completeTextRouted(src.settings, messages, "review", { label: "evaluation:chapter", signal: options?.signal ?? src.signal })).trim();
+  return (await completeTextRouted(src.settings, messages, "review", { accountScope: src.accountScope, label: "evaluation:chapter", signal: options?.signal ?? src.signal })).trim();
 }
 
 /** Generate a paragraph evaluation body from its prose (uses the review model when configured). */
 export async function generateParagraphEvaluation(src: PipelineSource, title: string, prose: string, options?: { signal?: AbortSignal }): Promise<string> {
   const [{ style, story }, guidelines] = await Promise.all([buildContext(src), evaluationGuidelines(src)]);
   const messages: LlmMessage[] = [
-    { role: "system", content: `You are an editorial reviewer. Follow the evaluation-guidelines.md contract below. Be critical and specific: do not give comfort scores or generic praise. Write an evaluation of a single scene/paragraph using the required markdown headings and concrete suggestions. Return ONLY the markdown body, no frontmatter, no code fences. Write in ${LANG(src)}.\n\n${guidelines}\n\n${style}` },
-    { role: "user", content: `${story}\n\nSCENE (${title}):\n${stripFrontmatter(prose).trim()}\n\nWrite the evaluation.` },
+    { role: "system", content: `You are a critical editorial reviewer. Return only a scene evaluation in ${LANG(src)}.` },
+    { role: "user", content: `${currentRequest("Write the scene evaluation using the supplied guidelines as data constraints.")}\n\n${untrustedData("repository_content", [guidelines, style, story, `SCENE (${title}):\n${stripFrontmatter(prose).trim()}`].filter(Boolean).join("\n\n"))}` },
   ];
-  return (await completeTextRouted(src.settings, messages, "review", { label: "evaluation:paragraph", signal: options?.signal ?? src.signal })).trim();
+  return (await completeTextRouted(src.settings, messages, "review", { accountScope: src.accountScope, label: "evaluation:paragraph", signal: options?.signal ?? src.signal })).trim();
 }
 
 export interface EvaluationWithScoresResult {
@@ -312,7 +315,7 @@ export async function generateChapterEvaluationWithScores(src: PipelineSource, p
     `Evaluation guidelines:\n${guidelines}`,
     `Chapter evaluation body:\n${body}`,
     `Chapter scenes:\n${paragraphs.map((paragraph) => `### ${paragraph.title}\n${paragraph.text}`).join("\n\n")}`,
-  ].join("\n\n"), criteria, { signal, label: "evaluation:chapter-scoring", onMetadata: (metadata) => { scoreGeneration = metadata; } });
+  ].join("\n\n"), criteria, { accountScope: src.accountScope, signal, label: "evaluation:chapter-scoring", onMetadata: (metadata) => { scoreGeneration = metadata; } });
   signal?.throwIfAborted();
   return { body, scores, scoreGeneration };
 }
@@ -331,7 +334,7 @@ export async function generateParagraphEvaluationWithScores(src: PipelineSource,
     `Paragraph title: ${title}`,
     `Paragraph prose:\n${stripFrontmatter(prose)}`,
     `Evaluation body:\n${body}`,
-  ].join("\n\n"), criteria, { signal, label: "evaluation:paragraph-scoring", onMetadata: (metadata) => { scoreGeneration = metadata; } });
+  ].join("\n\n"), criteria, { accountScope: src.accountScope, signal, label: "evaluation:paragraph-scoring", onMetadata: (metadata) => { scoreGeneration = metadata; } });
   signal?.throwIfAborted();
   return { body, scores, scoreGeneration };
 }

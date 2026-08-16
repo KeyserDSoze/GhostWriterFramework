@@ -1,5 +1,6 @@
 import { parseDocument, stringify } from "yaml";
 import { completeToolRouted } from "@/assistant/router";
+import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import type { LlmRunMetadata } from "@/assistant/llm";
 import { deleteFile, loadFileContent, readFileWithSha } from "@/github/githubClient";
 import type { BookStructure } from "@/types/book";
@@ -249,6 +250,10 @@ async function limitedMap<T, R>(items: T[], limit: number, run: (item: T, index:
   return results;
 }
 
+function isAbortError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
+}
+
 async function optionalContext(input: { token: string; book: BookEntry; branch: string; structure: BookStructure; target: ReaderEvaluationTarget; includeContext?: boolean }): Promise<string> {
   if (!input.includeContext) return "";
   const style = input.structure.globalWritingStylePath ? await optionalRepositoryRead(() => loadFileContent(input.token, input.book.owner, input.book.repo, input.structure.globalWritingStylePath!, input.branch)) ?? "" : "";
@@ -285,6 +290,7 @@ export async function runReaderEvaluations(input: {
   branch: string;
   structure: BookStructure;
   settings: AppSettings;
+  accountScope: string | null;
   target: ReaderEvaluationTarget;
   readers: ReaderPersonaProfile[];
   depth: ReaderEvaluationDepth;
@@ -312,8 +318,8 @@ export async function runReaderEvaluations(input: {
     try {
       const result = await completeToolRouted<ReaderEvaluationOutput>(input.settings, [
         { role: "system", content: readerPersonaSystemPrompt(reader, outputLanguage, input.depth) },
-        { role: "user", content: [`TARGET: ${input.target.type} — ${input.target.title}`, context, `TEXT TO EVALUATE:\n${input.target.text}`].filter(Boolean).join("\n\n") },
-      ], "reader-evaluation", EVALUATION_TOOL, { signal: input.signal, label: `reader-evaluation:${reader.slug}` });
+        { role: "user", content: `${currentRequest("Evaluate the target as the configured simulated reader.")}\n\n${untrustedData("repository_content", [`TARGET: ${input.target.type} — ${input.target.title}`, context, input.target.text].filter(Boolean).join("\n\n"))}` },
+      ], "reader-evaluation", EVALUATION_TOOL, { accountScope: input.accountScope, signal: input.signal, label: `reader-evaluation:${reader.slug}` });
       const id = `reader-evaluation:${input.target.type}:${input.target.chapterId}:${input.target.paragraphId ?? "chapter"}:${reader.slug}`;
       const frontmatter = evaluationFrontmatter({ id, createdAt, updatedAt, input, reader, sourceHash, status: "completed", score: result.output.score, generation: result.metadata });
       const existingMatch = snapshot.content ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(snapshot.content) : null;
@@ -326,7 +332,7 @@ export async function runReaderEvaluations(input: {
       input.onProgress?.({ readerId: reader.id, readerName: reader.name, status: "completed", completed: completedCount, total: input.readers.length });
       return { record, snapshot, content, legacySnapshots };
     } catch (err) {
-      if (isRepositoryError(err)) throw err;
+      if (isRepositoryError(err) || isAbortError(err)) throw err;
       completedCount += 1;
       const error = err instanceof Error ? err.message : String(err);
       const id = `reader-evaluation:${input.target.type}:${input.target.chapterId}:${input.target.paragraphId ?? "chapter"}:${reader.slug}`;
@@ -337,6 +343,8 @@ export async function runReaderEvaluations(input: {
       return { record, snapshot, content, legacySnapshots: [] };
     }
   });
+  const cancellation = records.find((result): result is PromiseRejectedResult => result.status === "rejected" && isAbortError(result.reason));
+  if (cancellation) throw cancellation.reason;
   const repositoryFailure = records.find((result): result is PromiseRejectedResult => result.status === "rejected" && isRepositoryError(result.reason));
   if (repositoryFailure) throw repositoryFailure.reason;
   const prepared = records.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
@@ -392,7 +400,7 @@ function evaluationFrontmatter(input: { id: string; createdAt: string; updatedAt
   };
 }
 
-export async function generateReaderEvaluationSummary(input: { token: string; book: BookEntry; branch: string; settings: AppSettings; target: ReaderEvaluationTarget; evaluations: ReaderEvaluationRecord[]; language?: string; signal?: AbortSignal; remoteHeadSha?: string }): Promise<ReaderEvaluationRecord> {
+export async function generateReaderEvaluationSummary(input: { token: string; book: BookEntry; branch: string; settings: AppSettings; accountScope: string | null; target: ReaderEvaluationTarget; evaluations: ReaderEvaluationRecord[]; language?: string; signal?: AbortSignal; remoteHeadSha?: string }): Promise<ReaderEvaluationRecord> {
   const language = input.language || input.settings.ui.language;
   const createdAt = new Date().toISOString();
   const path = readerEvaluationSummaryPath(input.target);
@@ -401,8 +409,8 @@ export async function generateReaderEvaluationSummary(input: { token: string; bo
   const snapshot = await captureImmediateMutation({ token: input.token, book: input.book, branch: input.branch, path, remoteHeadSha });
   const result = await completeToolRouted<Record<string, unknown>>(input.settings, [
     { role: "system", content: `Compare the separate simulated-reader evaluations. Preserve disagreements rather than flattening them. Return the summary in ${language}.` },
-    { role: "user", content: input.evaluations.map((evaluation) => `READER: ${evaluation.readerName}\nSCORE: ${evaluation.score ?? "n/a"}\n${evaluation.body}`).join("\n\n---\n\n") },
-  ], "reader-evaluation-summary", SUMMARY_TOOL, { signal: input.signal, label: "reader-evaluation-summary" });
+    { role: "user", content: `${currentRequest("Summarize and compare these reader evaluations.")}\n\n${untrustedData("repository_content", input.evaluations.map((evaluation) => `READER: ${evaluation.readerName}\nSCORE: ${evaluation.score ?? "n/a"}\n${evaluation.body}`).join("\n\n---\n\n"))}` },
+  ], "reader-evaluation-summary", SUMMARY_TOOL, { accountScope: input.accountScope, signal: input.signal, label: "reader-evaluation-summary" });
   const originalCreatedAt = createdAtFromFile(snapshot.content ?? undefined, createdAt);
   const id = `reader-evaluation-summary:${input.target.type}:${input.target.chapterId}:${input.target.paragraphId ?? "chapter"}`;
   const sourceHash = await hashReaderSource(input.target.text);

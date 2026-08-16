@@ -7,6 +7,8 @@ import type { AppSettings, BookEntry } from "@/types/settings";
 import { completeTextRouted } from "@/assistant/router";
 import type { EntityKind } from "@/narrarium/canon";
 import { DEFAULT_CREATE_PROMPTS } from "./createFromResearch";
+import { currentRequest, untrustedData } from "@/assistant/promptTrust";
+import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
 
 export interface RegenerateEntityInput {
   settings: AppSettings;
@@ -22,6 +24,7 @@ export interface RegenerateEntityInput {
   overrideIntegrationId?: string;
   overrideModelName?: string;
   signal?: AbortSignal;
+  accountScope: string | null;
 }
 
 export interface RegenerateEntityResult {
@@ -53,9 +56,11 @@ function str(value: unknown): string {
 }
 
 export async function regenerateEntity(input: RegenerateEntityInput): Promise<RegenerateEntityResult> {
-  const basePrompt = input.customPrompt
-    ? `${DEFAULT_CREATE_PROMPTS[input.entityKind]}\n\nAdditional instructions: ${input.customPrompt}`
-    : DEFAULT_CREATE_PROMPTS[input.entityKind];
+  const operation = beginAccountScopedAiOperation(input.signal, input.accountScope);
+  operation.signal.throwIfAborted();
+  input = { ...input, signal: operation.signal, accountScope: operation.accountScope };
+  try {
+  const basePrompt = DEFAULT_CREATE_PROMPTS[input.entityKind];
 
   const researchSection = input.researchMarkdowns.length > 0
     ? `\n\nResearch documents (${input.researchMarkdowns.length}):\n\n` +
@@ -69,12 +74,13 @@ export async function regenerateEntity(input: RegenerateEntityInput): Promise<Re
     },
     {
       role: "user" as const,
-      content: `Current entity content:\n\n${input.currentContent}${researchSection}\n\nRewrite this ${input.entityKind} entity from scratch.`,
+      content: `${currentRequest(`Rewrite this ${input.entityKind} entity from scratch.${input.customPrompt ? " Apply the supplied additional user requirements." : ""}`)}${input.customPrompt ? `\n\n${untrustedData("user_content", input.customPrompt)}` : ""}\n\n${untrustedData("repository_content", `${input.currentContent}${researchSection}`)}`,
     },
   ];
 
   let raw: string;
   raw = await completeTextRouted(input.settings, messages, "create-from-research", {
+    accountScope: input.accountScope,
     signal: input.signal,
     label: `regenerate-entity:${input.entityKind}`,
     ...(input.overrideIntegrationId && input.overrideModelName
@@ -89,4 +95,7 @@ export async function regenerateEntity(input: RegenerateEntityInput): Promise<Re
     : {};
 
   return { proposedBody: body, proposedFrontmatterPatches: frontmatterPatches };
+  } finally {
+    operation.dispose();
+  }
 }

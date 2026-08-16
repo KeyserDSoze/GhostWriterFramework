@@ -36,6 +36,8 @@ export function canonicalAssistantActionToolIds(action: AssistantAction): string
       return ["rewrite-current-paragraph"];
     case "switch-book-branch":
       return ["switch-branch"];
+    case "confirm-create-pull-request":
+      return ["create-pull-request"];
     case "read-aloud":
       return ["read-current-page"];
     case "confirm-delete":
@@ -45,6 +47,8 @@ export function canonicalAssistantActionToolIds(action: AssistantAction): string
       return action.target === "entity" ? ["delete-current-entity"] : [];
     case "confirm-create-from-research":
       return ["create-from-research"];
+    case "confirm-cancel-feedback-rewrite":
+      return ["cancel-feedback-rewrite"];
     case "navigate":
       if (typeof action.to !== "string") return [];
       if (/\/reader\/evaluations(?:[/?#]|$)/.test(action.to)) return ["open-reader-evaluations"];

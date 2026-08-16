@@ -589,18 +589,32 @@ export async function loadFileContent(
   repo: string,
   path: string,
   ref?: string,
+  signal?: AbortSignal,
 ): Promise<string> {
-  const id = await localRepoId(owner, repo, ref);
+  signal?.throwIfAborted();
+  const id = await settleOnAbort(localRepoId(owner, repo, ref), signal);
   if (id) {
-    const file = await getLocalFile(id, path);
+    const file = await settleOnAbort(getLocalFile(id, path), signal);
+    signal?.throwIfAborted();
     if (file?.kind === "text" && file.text !== undefined) return file.text;
-    if (file?.kind === "binary" && file.blob) return new TextDecoder().decode(await file.blob.arrayBuffer());
+    if (file?.kind === "binary" && file.blob) return new TextDecoder().decode(await settleOnAbort(file.blob.arrayBuffer(), signal));
   }
-  const data = await fetchContentJson(token, owner, repo, path, ref);
+  const data = await fetchContentJson(token, owner, repo, path, ref, false, signal);
+  signal?.throwIfAborted();
   if (data.content) {
     try { return decodeContent(data.content); } catch (error) { throw new RepositoryError(`GitHub returned malformed file content for ${path}.`, "malformed", "read", 200, { cause: error }); }
   }
   throw new RepositoryError(`${path} is not a file.`, "malformed", "read", 200);
+}
+
+function settleOnAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 /** Read text from GitHub at an exact branch, tag, or commit without consulting IndexedDB. */

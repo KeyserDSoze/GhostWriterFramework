@@ -9,5 +9,5 @@ export async function executeDeepResearchFromCopilot(
 ): Promise<RunDeepResearchResult | null> {
   const request = resolveDeepResearchRequest(input.prompt);
   if (!request) return null;
-  return runner({ settings: input.settings, book: input.book, branch: input.branch, token: input.token, query: request.query, depth: request.depth, intents: request.intents, language: input.structureLanguage ?? input.settings.ui.language, signal: input.signal, onProgress: input.onText, expectedRemoteHeadSha: input.expectedRemoteHeadSha });
+  return runner({ settings: input.settings, book: input.book, branch: input.branch, token: input.token, query: request.query, depth: request.depth, intents: request.intents, language: input.structureLanguage ?? input.settings.ui.language, accountScope: input.accountScope, signal: input.signal, onProgress: input.onText, expectedRemoteHeadSha: input.expectedRemoteHeadSha });
 }

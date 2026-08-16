@@ -17,6 +17,8 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useUiStore } from "@/store/uiStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { accountIdentity, shouldResetAccountScope } from "@/auth/accountIdentity";
+import { setFallbackAcknowledgementAccountScope } from "@/assistant/fallbackDisclosure";
+import { resetAssistantSessionIndex } from "@/assistant/sessionIndex";
 
 const ACCOUNT_SCOPE_KEY = "narrarium-account-scope-v1";
 let installed = false;
@@ -40,6 +42,7 @@ function loadAccountScope(): string | null {
 
 export function resetAccountScopedState(): void {
   useFeedbackRewriteWorkflowStore.getState().abortController?.abort();
+  resetAssistantSessionIndex(null);
   useAssistantStore.setState({ open: false, busy: false, sessions: [], currentSession: null });
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS, syncStatus: "idle", driveFileId: null, lastSynced: null, cloudLoaded: false });
   useBooksStore.setState({ structures: {}, loadingIds: new Set(), errors: {}, workingBranches: {}, cloneProgress: {} });
@@ -77,6 +80,7 @@ export function installAccountScopeIsolation(): void {
   if (installed) return;
   installed = true;
   let activeIdentity = accountIdentity(useAuthStore.getState().user);
+  setFallbackAcknowledgementAccountScope(activeIdentity);
   const storedIdentity = loadAccountScope();
   const accountChanged = shouldResetAccountScope(storedIdentity, activeIdentity);
   if (accountChanged) resetAccountScopedState();
@@ -88,6 +92,7 @@ export function installAccountScopeIsolation(): void {
     if (nextIdentity === activeIdentity) return;
     const previousIdentity = activeIdentity;
     activeIdentity = nextIdentity;
+    setFallbackAcknowledgementAccountScope(nextIdentity);
     resetAccountScopedState();
     useLlmDebugStore.getState().setAccount(nextIdentity, previousIdentity, true);
     storeAccountScope(nextIdentity);

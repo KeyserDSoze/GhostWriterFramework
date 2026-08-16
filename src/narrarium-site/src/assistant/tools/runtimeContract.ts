@@ -81,15 +81,22 @@ function hasPrerequisite(requirement: CopilotToolPrerequisite, runtime: CopilotT
     case "attachments": return runtime.attachments.length > 0;
     case "book open": return Boolean(runtime.book);
     case "canon entity open": return context.route?.kind === "canon";
-    case "chapter open": return Boolean(context.chapter);
-    case "chapter or paragraph open": return Boolean(context.chapter || context.paragraph);
+    case "chapter open": return Boolean(context.chapter || routeChapterTarget(context));
+    case "chapter or paragraph open": return Boolean(context.chapter || context.paragraph || routeChapterTarget(context));
     case "context loaded": return Boolean(context.structure && context.branchReady && context.branch === runtime.branch);
     case "current page": return Boolean(context.chapter || context.paragraph || context.relevantFiles?.length);
     case "git token": return Boolean(runtime.token);
+    case "local app": return true;
     case "non-default branch": return Boolean(context.structure && runtime.branch !== context.structure.defaultBranch);
     case "note open": return Boolean(context.noteTargetPath);
-    case "paragraph open": return Boolean(context.paragraph);
+    case "paragraph open": return Boolean(context.paragraph || routeChapterTarget(context)?.paragraphNum);
     case "reader evaluations available": return Boolean(context.structure?.readerEvaluationFiles?.length && context.chapter);
     case "research available": return Boolean(context.structure?.researchFiles?.length);
   }
+}
+
+function routeChapterTarget(context: LoadedWriterContext): { chapterId: string; paragraphNum?: string } | null {
+  const route = context.route;
+  if (!route || !("chapterId" in route)) return null;
+  return { chapterId: route.chapterId, ...("paragraphNum" in route ? { paragraphNum: route.paragraphNum } : {}) };
 }

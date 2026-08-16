@@ -29,6 +29,19 @@ export interface FeedbackRewriteIntent {
   feedbackPath?: string;
   readerId?: string;
   readerName?: string;
+  ownerSessionId?: string;
+  ownerRequestId?: string;
+}
+
+export interface FeedbackRewriteOperationIdentity {
+  bookId: string;
+  operationId: string;
+  scope: FeedbackRewriteScope;
+  chapterSlug: string;
+  paragraphSlug?: string;
+  requestId: number;
+  ownerSessionId: string;
+  ownerRequestId: string;
 }
 
 export interface RollbackConflictPreview extends RewriteConflict {
@@ -52,10 +65,11 @@ interface FeedbackRewriteWorkflowState {
   rollbackPolicies: Record<string, RewriteRollbackPolicy>;
   abortController: AbortController | null;
   abortable: boolean;
+  operationIdentity: FeedbackRewriteOperationIdentity | null;
   openWorkflow: (intent: FeedbackRewriteIntent) => void;
   closeWorkflow: () => void;
   patch: (patch: Partial<FeedbackRewriteWorkflowState>) => void;
-  cancelActive: () => boolean;
+  cancelActive: (identity: FeedbackRewriteOperationIdentity) => boolean;
 }
 
 const initialRuntime = {
@@ -71,6 +85,7 @@ const initialRuntime = {
   rollbackPolicies: {} as Record<string, RewriteRollbackPolicy>,
   abortController: null,
   abortable: false,
+  operationIdentity: null as FeedbackRewriteOperationIdentity | null,
 };
 
 export const useFeedbackRewriteWorkflowStore = create<FeedbackRewriteWorkflowState>()((set, get) => ({
@@ -78,19 +93,41 @@ export const useFeedbackRewriteWorkflowStore = create<FeedbackRewriteWorkflowSta
   requestId: 0,
   intent: null,
   ...initialRuntime,
-  openWorkflow: (intent) => set((state) => ({ open: true, requestId: state.requestId + 1, intent, ...initialRuntime })),
+  openWorkflow: (intent) => set((state) => state.abortController ? state : ({
+      open: true,
+      requestId: state.requestId + 1,
+      intent: {
+        ...intent,
+        ownerSessionId: intent.ownerSessionId ?? `ui:${crypto.randomUUID()}`,
+        ownerRequestId: intent.ownerRequestId ?? `ui:${crypto.randomUUID()}`,
+      },
+      ...initialRuntime,
+    })),
   closeWorkflow: () => {
     if (get().abortController) return;
     set({ open: false, intent: null, ...initialRuntime });
   },
   patch: (patch) => set(patch),
-  cancelActive: () => {
-    const controller = get().abortController;
-    if (!controller || !get().abortable) return false;
+  cancelActive: (identity) => {
+    const current = get();
+    const controller = current.abortController;
+    if (!controller || !current.abortable || !sameOperationIdentity(current.operationIdentity, identity)) return false;
     controller.abort();
     return true;
   },
 }));
+
+export function sameOperationIdentity(left: FeedbackRewriteOperationIdentity | null, right: FeedbackRewriteOperationIdentity): boolean {
+  return Boolean(left
+    && left.bookId === right.bookId
+    && left.operationId === right.operationId
+    && left.scope === right.scope
+    && left.chapterSlug === right.chapterSlug
+    && left.paragraphSlug === right.paragraphSlug
+    && left.requestId === right.requestId
+    && left.ownerSessionId === right.ownerSessionId
+    && left.ownerRequestId === right.ownerRequestId);
+}
 
 export function openFeedbackRewriteWorkflow(intent: FeedbackRewriteIntent): void {
   useFeedbackRewriteWorkflowStore.getState().openWorkflow(intent);

@@ -7,6 +7,7 @@ import { FileDiff } from "@/components/diff/DiffView";
 import { useToast } from "@/components/ui/use-toast";
 import { improveProse, synonymsFor, type PipelineSource } from "@/narrarium/pipeline";
 import { completeTextRouted } from "@/assistant/router";
+import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 
 /** Split a selection into leading whitespace, core text, and trailing whitespace
  * so a replacement keeps the surrounding spaces (e.g. double-click that grabs the trailing space). */
@@ -81,8 +82,8 @@ export function useProseAssist(opts: {
         ? await opts.summarizeText(opts.getBody(), selection)
         : await completeTextRouted(src!.settings, [
             { role: "system", content: "Summarize the selected text clearly and concisely. Return only the summary." },
-            { role: "user", content: selection ?? opts.getBody() },
-          ], "chat-resume", { label: "editor:summarize" }));
+            { role: "user", content: `${currentRequest("Summarize the selected text.")}\n\n${untrustedData("repository_content", selection ?? opts.getBody())}` },
+          ], "chat-resume", { accountScope: src!.accountScope, label: "editor:summarize" }));
     } catch (err) {
       toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
     } finally {

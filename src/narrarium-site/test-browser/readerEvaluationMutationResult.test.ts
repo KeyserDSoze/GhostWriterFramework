@@ -73,7 +73,7 @@ test("rejects a stale reader target before model generation", async () => {
   await expect(runReaderEvaluations({
     token: "token", book: { id: "book", owner: "owner", repo: "repo" } as any, branch: "main",
     structure: { language: "en", readerEvaluationFiles: [], characters: [], locations: [], items: [], factions: [] } as any,
-    settings: { ui: { language: "en" } } as any,
+    settings: { ui: { language: "en" } } as any, accountScope: null,
     target: { type: "paragraph", bookId: "book", chapterId: "001-start", paragraphId: "001-opening", title: "Opening", text: "Old", sourcePath: "chapters/001-start/001-opening.md", sourceVersion: "old-sha" },
     readers: [reader], depth: "brief",
   })).rejects.toMatchObject({ code: "REPOSITORY_CONFLICT" });
@@ -89,12 +89,28 @@ test("rejects a late source conflict after reader models finish", async () => {
   await expect(runReaderEvaluations({
     token: "token", book: { id: "book", owner: "owner", repo: "repo" } as any, branch: "main",
     structure: { language: "en", readerEvaluationFiles: [], characters: [], locations: [], items: [], factions: [] } as any,
-    settings: { ui: { language: "en" } } as any,
-    target: { type: "paragraph", bookId: "book", chapterId: "001-start", paragraphId: "001-opening", title: "Opening", text: "Text", sourcePath: "chapters/001-start/001-opening.md", sourceVersion: "sha" },
+    settings: { ui: { language: "en" } } as any, accountScope: null,
+    target: { type: "chapter", bookId: "book", chapterId: "001-start", title: "Start", text: "Text", sourcePath: "chapters/001-start/chapter.md", sourceVersion: "sha" },
     readers: [reader], depth: "brief",
   })).rejects.toMatchObject({ code: "REPOSITORY_CONFLICT" });
   expect(router.completeToolRouted).toHaveBeenCalledOnce();
   expect(safeMutation.commitAndPushTextFileMutation).not.toHaveBeenCalled();
+});
+
+test("propagates account-scope cancellation without persisting a failed evaluation", async () => {
+  router.completeToolRouted.mockRejectedValueOnce(new DOMException("The authenticated account changed.", "AbortError"));
+  const reader = { ...emptyReaderPersona("en"), id: "good", slug: "good", name: "good" };
+
+  await expect(runReaderEvaluations({
+    token: "token", book: { id: "book", owner: "owner", repo: "repo" } as any, branch: "main",
+    structure: { language: "en", readerEvaluationFiles: [], characters: [], locations: [], items: [], factions: [] } as any,
+    settings: { ui: { language: "en" } } as any, accountScope: "google:first@example.com",
+    target: { type: "chapter", bookId: "book", chapterId: "001-start", title: "Start", text: "Text", sourcePath: "chapters/001-start/chapter.md", sourceVersion: "sha" },
+    readers: [reader], depth: "brief",
+  })).rejects.toMatchObject({ name: "AbortError" });
+
+  expect(safeMutation.commitAndPushTextFileMutation).not.toHaveBeenCalled();
+  expect(immediateMutation.commitImmediateMutation).not.toHaveBeenCalled();
 });
 
 test("validates summary targets before generation and again before write", async () => {
@@ -105,7 +121,7 @@ test("validates summary targets before generation and again before write", async
   immediateMutation.captureImmediateMutation.mockResolvedValue({ path: "summary.md", content: null, sha: null, hash: null, remoteHeadSha: "head" });
   await expect(generateReaderEvaluationSummary({
     token: "token", book: { id: "book", owner: "owner", repo: "repo" } as any, branch: "main",
-    settings: { ui: { language: "en" } } as any,
+    settings: { ui: { language: "en" } } as any, accountScope: null,
     target: { type: "paragraph", bookId: "book", chapterId: "001-start", paragraphId: "001-opening", title: "Opening", text: "Text", sourcePath: "chapters/001-start/001-opening.md", sourceVersion: "sha" },
     evaluations: [{ path: "one.md", id: "one", targetType: "paragraph", targetId: "target", readerId: "one", readerName: "One", readerType: "standard", createdAt: "now", sourceContentHash: "hash", sourceContentVersion: "sha", status: "completed", body: "Body" }],
   })).rejects.toMatchObject({ code: "REPOSITORY_CONFLICT" });
@@ -124,7 +140,7 @@ test("reader evaluation mutation result includes completed, failed-record, and l
       readerEvaluationFiles: [{ path: legacyGood }],
       characters: [], locations: [], items: [], factions: [],
     } as any,
-    settings: { ui: { language: "en" } } as any,
+    settings: { ui: { language: "en" } } as any, accountScope: null,
     target: { type: "chapter", bookId: "book", chapterId: "001-start", title: "Start", text: "Text", sourcePath: "chapters/001-start/chapter.md", sourceVersion: "sha" },
     readers: [reader("good"), reader("bad")],
     depth: "brief",

@@ -28,7 +28,7 @@ describe("deep research engine integration", () => {
     mocks.complete.mockResolvedValueOnce('["roman roads"]').mockResolvedValueOnce("# Roman Roads\n\nFindings.\n\n## Sources\n- https://example.test");
     mocks.research.mockResolvedValue({ results: [{ id: "1", title: "Roads", url: "https://example.test", source: "web", provider: "wikipedia", intent: "encyclopedia", snippet: "facts" }], providerUsage: [{ provider: "wikipedia", intent: "encyclopedia", ok: true, resultCount: 1 }], intentsResolved: ["encyclopedia"], unavailableIntents: [] });
     const progress = vi.fn();
-    const result = await runDeepResearch({ settings: { aiIntegrations: [], ui: { language: "en" } } as any, book: { owner: "owner", repo: "repo" } as any, branch: "draft", token: "token", query: "Roman roads", depth: "low", language: "en", intents: ["encyclopedia"], overrideIntegrationId: "selected", overrideModelName: "reasoning", onProgress: progress });
+    const result = await runDeepResearch({ settings: { aiIntegrations: [], ui: { language: "en" } } as any, book: { owner: "owner", repo: "repo" } as any, branch: "draft", token: "token", query: "Roman roads", depth: "low", language: "en", intents: ["encyclopedia"], accountScope: null, overrideIntegrationId: "selected", overrideModelName: "reasoning", onProgress: progress });
     expect(mocks.complete).toHaveBeenCalledTimes(2);
     expect(mocks.complete).toHaveBeenNthCalledWith(1, expect.anything(), expect.anything(), "deep-research", expect.objectContaining({ preferred: { integrationId: "selected", model: "reasoning" } }));
     expect(mocks.research).toHaveBeenCalledWith(expect.objectContaining({ query: "roman roads", depth: "low", intents: ["encyclopedia"] }));
@@ -49,7 +49,7 @@ describe("deep research engine integration", () => {
       hash: "hash",
       remoteHeadSha,
     }));
-    await runDeepResearch({ settings: { aiIntegrations: [], ui: { language: "en" } } as any, book: { owner: "owner", repo: "repo" } as any, branch: "draft", token: "token", query: "Roman roads", depth: "low", language: "en", intents: ["encyclopedia"] });
+    await runDeepResearch({ settings: { aiIntegrations: [], ui: { language: "en" } } as any, book: { owner: "owner", repo: "repo" } as any, branch: "draft", token: "token", query: "Roman roads", depth: "low", language: "en", intents: ["encyclopedia"], accountScope: null });
     const content = mocks.commit.mock.calls[0][0].content as string;
     expect(content).toContain("custom: keep");
     expect(content).not.toContain("relatedEntityId");

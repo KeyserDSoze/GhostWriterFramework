@@ -45,6 +45,7 @@ export function MigratePage() {
   const [deleting, setDeleting] = useState<AuthProvider | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleteNotice, setDeleteNotice] = useState<string | null>(null);
+  const [migrationDiagnostics, setMigrationDiagnostics] = useState<string[]>([]);
   const [results, setResults] = useState<MigrationStepResult[] | null>(null);
   const [activeStep, setActiveStep] = useState<MigrationStepKind | null>(null);
 
@@ -121,6 +122,7 @@ export function MigratePage() {
   function connectTarget() {
     setResults(null);
     setDeleteNotice(null);
+    setMigrationDiagnostics([]);
     if (targetProvider === "google") {
       setConnecting(true);
       connectGoogle();
@@ -139,8 +141,10 @@ export function MigratePage() {
     const dst: MigrationEndpoint = { provider: target.provider, accessToken: target.accessToken };
     try {
       const preflight = await preflightCloudMigration(src);
+      setMigrationDiagnostics(preflight.diagnostics);
       const summary = Object.entries(preflight.counts).map(([step, count]) => `${step}: ${count}`).join("\n");
-      if (!window.confirm(`Migration preflight completed:\n\n${summary}\n\nContinue with verified target writes?`)) return;
+      const repairs = preflight.diagnostics.length ? `\n\nSettings repairs:\n${preflight.diagnostics.join("\n")}` : "";
+      if (!window.confirm(`Migration preflight completed:\n\n${summary}${repairs}\n\nContinue with verified target writes?`)) return;
       const out = await migrateCloudData(src, dst, (p) => {
         if (p.status === "start") setActiveStep(p.step);
       }, results ?? [], preflight);
@@ -205,6 +209,12 @@ export function MigratePage() {
 
       {deleteNotice && (
         <Alert><AlertDescription>{deleteNotice}</AlertDescription></Alert>
+      )}
+
+      {migrationDiagnostics.length > 0 && (
+        <Alert variant="destructive">
+          <AlertDescription className="whitespace-pre-line">{`${t("settingsRepair.title")}\n${migrationDiagnostics.join("\n")}`}</AlertDescription>
+        </Alert>
       )}
 
       <div className="rounded-xl border bg-card p-5">

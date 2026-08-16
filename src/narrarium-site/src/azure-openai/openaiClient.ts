@@ -1,5 +1,7 @@
 import { AzureOpenAI } from "openai";
 import type { AzureOpenAIConfig } from "@/types/settings";
+import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
+import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 
 /**
  * Create an AzureOpenAI client from the stored settings.
@@ -21,15 +23,27 @@ export function createOpenAIClient(
 export async function chatComplete(
   client: AzureOpenAI,
   model: string,
-  systemPrompt: string,
-  userMessage: string,
+  input: {
+    trustedInstruction: string;
+    request: string;
+    untrustedPayload: string;
+    payloadKind?: Parameters<typeof untrustedData>[0];
+    signal?: AbortSignal;
+    accountScope: string | null;
+  },
 ): Promise<string> {
-  const response = await client.chat.completions.create({
-    model,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
-    ],
-  });
-  return response.choices[0]?.message.content ?? "";
+  const operation = beginAccountScopedAiOperation(input.signal, input.accountScope);
+  operation.signal.throwIfAborted();
+  try {
+    const response = await client.chat.completions.create({
+      model,
+      messages: [
+        { role: "system", content: input.trustedInstruction },
+        { role: "user", content: `${currentRequest(input.request)}\n\n${untrustedData(input.payloadKind ?? "external_content", input.untrustedPayload)}` },
+      ],
+    }, { signal: operation.signal });
+    return response.choices[0]?.message.content ?? "";
+  } finally {
+    operation.dispose();
+  }
 }

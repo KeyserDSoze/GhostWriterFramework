@@ -19,7 +19,7 @@ import { CANON_SECTION_ORDER, type CanonSection } from "@/lib/canonSections";
 import type { BookStructure } from "@/types/book";
 import { useToast } from "@/components/ui/use-toast";
 import { CustomActionRunner, type CustomActionInvocation } from "@/components/custom-actions/CustomActionRunner";
-import { compatibleCustomActions, resolveCustomActionTarget } from "@/custom-actions/customActions";
+import { compatibleCustomActions, customActionRecordIdentity, customActionTargetIdentity, resolveCustomActionTarget } from "@/custom-actions/customActions";
 import type { CustomAction } from "@/types/settings";
 
 type Editable = HTMLTextAreaElement | HTMLInputElement;
@@ -298,11 +298,12 @@ export function GlobalContextMenu() {
   };
 
   function startCustomAction(action: CustomAction) {
+    if (!customTarget) return;
     const editable = menu.editable;
     const range = editable && (editable.selectionEnd ?? 0) > (editable.selectionStart ?? 0)
       ? { start: editable.selectionStart ?? 0, end: editable.selectionEnd ?? 0 }
       : null;
-    setCustomInvocation({ id: crypto.randomUUID(), action, selection: menu.selection, editable, range });
+    setCustomInvocation({ id: crypto.randomUUID(), action, selection: menu.selection, editable, range, sourceValue: editable?.value ?? "", targetIdentity: customActionTargetIdentity(customTarget), actionIdentity: customActionRecordIdentity(action) });
     setMenu(CLOSED);
     setCustomSubmenuOpen(false);
   }

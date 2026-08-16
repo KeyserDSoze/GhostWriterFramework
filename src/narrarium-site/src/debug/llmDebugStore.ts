@@ -21,6 +21,8 @@ export interface LlmDebugEntry {
   at: number;
   endedAt?: number;
   kind: LlmRequestKind;
+  /** Content categories sent to this provider. Never contains content itself. */
+  contentKinds?: Array<"text" | "image" | "audio">;
   /** Short label of the calling task, e.g. "copilot", "script→draft", "confirm", "tts". */
   label?: string;
   model: string;

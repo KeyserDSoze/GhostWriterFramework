@@ -7,7 +7,10 @@ import { CandidateTimeoutError } from "@/assistant/executionLimits";
 import { executeMediaFallback } from "@/assistant/mediaFallback";
 import { imageTokenDelta, useCostsStore } from "@/costs/costsStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
+import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/assistant/fallbackDisclosure";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
+import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
+import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 
 export type AssetSubjectKind = "book" | "chapter" | "paragraph";
 export type AssetPromptSource = "custom" | "text" | "resume";
@@ -153,6 +156,7 @@ export async function composeAssetPromptWithAI(input: {
   kind: AssetSubjectKind;
   title: string;
   sourceText: string;
+  accountScope: string | null;
 }): Promise<string | null> {
   const answer = await completeTextRouted(input.settings, [
     {
@@ -161,9 +165,9 @@ export async function composeAssetPromptWithAI(input: {
     },
     {
       role: "user",
-      content: `Asset kind: ${input.kind}\nTitle: ${input.title}\nSource text:\n${input.sourceText.slice(0, 6000)}`,
+      content: `${currentRequest(`Create an image prompt for ${input.kind} ${input.title}.`)}\n\n${untrustedData("repository_content", input.sourceText.slice(0, 6000))}`,
     },
-  ], "default", { label: "image:prompt" }).catch(() => "");
+  ], "default", { accountScope: input.accountScope, label: "image:prompt" });
   return answer.trim() || null;
 }
 
@@ -172,18 +176,23 @@ export async function generateAssetImage(input: {
   prompt: string;
   orientation: AssetOrientation;
   signal?: AbortSignal;
+  accountScope: string | null;
 }): Promise<{ bytes: Uint8Array; provider: string; model: string; cost?: number }> {
-  const candidates = resolveTaskCandidates(input.settings, "image").filter((c) => c.integration && c.model && c.integration.apiKey);
+  const operation = beginAccountScopedAiOperation(input.signal, input.accountScope);
+  operation.signal.throwIfAborted();
+  const providerPrompt = `${currentRequest("Generate an image matching the supplied visual brief.")}\n\n${untrustedData("user_content", input.prompt)}`;
+  try {
+  const candidates = applySameBoundaryPolicy(input.settings, resolveTaskCandidates(input.settings, "image").filter((c) => c.integration && c.model && c.integration.apiKey));
   if (!candidates.length) throw new Error("Image generation requires an OpenAI or Azure OpenAI integration.");
-  return executeMediaFallback({ candidates, signal: input.signal, runAi: async (candidate, attemptSignal, candidateIndex) => {
+  return await executeMediaFallback({ candidates, signal: operation.signal, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings: input.settings, kind: "image", from: candidates[index - 1], to: candidate, accountScope: operation.accountScope }); }, runAi: async (candidate, attemptSignal, candidateIndex) => {
     const integration = candidate.integration!;
     const model = candidate.model!;
     const client = createImageClient(integration);
-    const debugId = useLlmDebugStore.getState().begin({ kind: "image", label: "image", model, provider: integration.provider, integrationId: integration.id, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, messages: [{ role: "input", content: input.prompt }] });
+    const debugId = useLlmDebugStore.getState().begin({ kind: "image", contentKinds: ["text"], label: "image", model, provider: integration.provider, integrationId: integration.id, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, messages: [{ role: "input", content: providerPrompt }] });
     try {
       const request: Record<string, unknown> = {
         model,
-        prompt: input.prompt,
+        prompt: providerPrompt,
         n: 1,
         size: imageSize(input.orientation),
       };
@@ -216,6 +225,9 @@ export async function generateAssetImage(input: {
       throw err;
     }
   } });
+  } finally {
+    operation.dispose();
+  }
 }
 
 function createImageClient(integration: AIIntegration): AzureOpenAI | OpenAI {

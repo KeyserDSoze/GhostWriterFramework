@@ -8,11 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { FileDiff } from "@/components/diff/DiffView";
 import { useToast } from "@/components/ui/use-toast";
-import { runCustomAction } from "@/custom-actions/customActions";
+import { assertCurrentCustomActionRecord, assertFreshReplacementSource, customActionTargetIdentity, resolveCurrentCustomAction, runCustomAction, validateCustomActionExecution } from "@/custom-actions/customActions";
 import { speakText, type SpeechController } from "@/assistant/speech";
 import { useBooksStore } from "@/store/booksStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import type { CustomAction } from "@/types/settings";
+import { useAuthStore } from "@/store/authStore";
+import { accountIdentity } from "@/auth/accountIdentity";
 
 export interface CustomActionInvocation {
   id: string;
@@ -20,6 +22,9 @@ export interface CustomActionInvocation {
   selection: string;
   editable: HTMLTextAreaElement | HTMLInputElement | null;
   range: { start: number; end: number } | null;
+  sourceValue: string;
+  targetIdentity: string;
+  actionIdentity: string;
 }
 
 function splitEdges(text: string): { lead: string; trail: string } {
@@ -43,12 +48,14 @@ export function CustomActionRunner({ invocation, onDone }: { invocation: CustomA
   const bookId = "bookId" in route ? route.bookId : undefined;
   const { branch, ready: branchReady, error: branchError } = useWorkingBranch(bookId);
   const { settings } = useSettingsStore();
+  const user = useAuthStore((state) => state.user);
   const { structures, workingBranches } = useBooksStore();
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
   const [speaking, setSpeaking] = useState(false);
   const speechRef = useRef<SpeechController | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
 
   const action = invocation?.action ?? null;
   const previous = invocation
@@ -60,6 +67,9 @@ export function CustomActionRunner({ invocation, onDone }: { invocation: CustomA
   useEffect(() => {
     if (!invocation) return;
     let cancelled = false;
+    const controller = new AbortController();
+    requestRef.current?.abort();
+    requestRef.current = controller;
     setLoading(true);
     setResult("");
     setError("");
@@ -76,13 +86,27 @@ export function CustomActionRunner({ invocation, onDone }: { invocation: CustomA
       structures,
       workingBranches: bookId ? { ...workingBranches, [bookId]: branch } : workingBranches,
       selection: invocation.selection,
+      selectionRange: invocation.range,
       editorBody: invocation.editable?.value,
+      signal: controller.signal,
+      accountScope: accountIdentity(user),
+      getCurrentSettings: () => useSettingsStore.getState().settings,
+      getCurrentBookState: () => {
+        const state = useBooksStore.getState();
+        return { structures: state.structures, workingBranches: state.workingBranches };
+      },
+      expectedActionIdentity: invocation.actionIdentity,
+      expectedTargetIdentity: invocation.targetIdentity,
     })
       .then((text) => { if (!cancelled) setResult(text); })
       .catch((err) => { if (!cancelled) setError(String(err)); })
       .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [bookId, branch, branchError, branchReady, invocation, pathname, settings, structures, workingBranches]);
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (requestRef.current === controller) requestRef.current = null;
+    };
+  }, [bookId, branch, branchError, branchReady, invocation, pathname, settings, structures, user, workingBranches]);
 
   useEffect(() => () => {
     speechRef.current?.stop();
@@ -90,6 +114,8 @@ export function CustomActionRunner({ invocation, onDone }: { invocation: CustomA
   }, []);
 
   function close() {
+    requestRef.current?.abort();
+    requestRef.current = null;
     stopSpeech();
     setResult("");
     setError("");
@@ -120,7 +146,7 @@ export function CustomActionRunner({ invocation, onDone }: { invocation: CustomA
     if (!result.trim()) return;
     setSpeaking(true);
     try {
-      const controller = await speakText(result, settings);
+      const controller = await speakText(result, settings, { accountScope: accountIdentity(user) });
       speechRef.current = controller;
       await controller.done;
     } catch (err) {
@@ -138,8 +164,22 @@ export function CustomActionRunner({ invocation, onDone }: { invocation: CustomA
       toast({ title: t("customActions.replaceNeedsEditor") });
       return;
     }
+    const currentSettings = useSettingsStore.getState().settings;
+    let currentAction: CustomAction;
+    try {
+      currentAction = resolveCurrentCustomAction(currentSettings, action.id);
+      assertCurrentCustomActionRecord(currentAction, invocation.actionIdentity);
+      if (currentAction.outputMode !== "replace") throw new Error("This custom action is no longer configured for replacement.");
+      const currentBookState = useBooksStore.getState();
+      const currentTarget = validateCustomActionExecution({ action: currentAction, pathname, settings: currentSettings, books: currentSettings.books, structures: currentBookState.structures, workingBranches: currentBookState.workingBranches, selection: invocation.selection, selectionRange: invocation.range, editorBody: el.value });
+      if (customActionTargetIdentity(currentTarget) !== invocation.targetIdentity) throw new Error("The custom action target changed while it was running.");
+      assertFreshReplacementSource({ currentValue: el.value, sourceValue: invocation.sourceValue, selection: invocation.selection, range: invocation.range, activation: invocation.action.activation });
+    } catch (err) {
+      toast({ title: t("customActions.replaceStale"), description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+      return;
+    }
     const current = el.value;
-    if (action.activation === "selection" && invocation.range) {
+    if (invocation.action.activation === "selection" && invocation.range) {
       const selected = current.slice(invocation.range.start, invocation.range.end);
       const { lead, trail } = splitEdges(selected);
       const next = current.slice(0, invocation.range.start) + lead + result + trail + current.slice(invocation.range.end);

@@ -17,6 +17,48 @@ export interface UploadedDriveFile {
   webViewLink?: string;
 }
 
+export interface GoogleExportAllocation {
+  allocationId: string;
+  createdAt: string;
+  fileName: string;
+}
+
+interface GoogleExportEntry { id: string; name: string; appProperties?: Record<string, string> }
+
+/** Provider-neutral collision policy: keep the extension and append ` (n)` starting at 1. */
+export function nextAvailableDriveFileName(fileName: string, existingNames: Iterable<string>): string {
+  const existing = new Set([...existingNames].map((name) => name.toLocaleLowerCase()));
+  if (!existing.has(fileName.toLocaleLowerCase())) return fileName;
+  const dot = fileName.lastIndexOf(".");
+  const base = dot > 0 ? fileName.slice(0, dot) : fileName;
+  const extension = dot > 0 ? fileName.slice(dot) : "";
+  for (let index = 1; ; index += 1) {
+    const candidate = `${base} (${index})${extension}`;
+    if (!existing.has(candidate.toLocaleLowerCase())) return candidate;
+  }
+}
+
+export function uniqueGoogleExportName(fileName: string, allocationId: string): string {
+  const dot = fileName.lastIndexOf(".");
+  const base = dot > 0 ? fileName.slice(0, dot) : fileName;
+  const extension = dot > 0 ? fileName.slice(dot) : "";
+  return `${base} (narrarium-${allocationId})${extension}`;
+}
+
+async function listAllGoogleExportEntries(accessToken: string, folderId: string): Promise<GoogleExportEntry[]> {
+  const entries: GoogleExportEntry[] = [];
+  let pageToken: string | undefined;
+  do {
+    const query = new URLSearchParams({ q: `'${folderId.replace(/'/g, "\\'")}' in parents and trashed=false`, spaces: "drive", fields: "files(id,name,appProperties),nextPageToken", pageSize: "1000", ...(pageToken ? { pageToken } : {}) });
+    const response = await fetch(`${GOOGLE_DRIVE_API}/files?${query}`, { headers: authHeaders(accessToken) });
+    assertOk(response, "Google Drive export reconciliation");
+    const page = await response.json() as { files?: GoogleExportEntry[]; nextPageToken?: string };
+    entries.push(...(page.files ?? []));
+    pageToken = page.nextPageToken;
+  } while (pageToken);
+  return entries;
+}
+
 function authHeaders(accessToken: string) {
   return { Authorization: `Bearer ${accessToken}` };
 }
@@ -95,12 +137,17 @@ export async function uploadGoogleDriveFile(
   _mimeType: string,
   blob: Blob,
 ): Promise<UploadedDriveFile> {
+  // Listing is paginated for diagnostics/logical-name discovery only. Provider filenames remain immutable and unique.
+  await listAllGoogleExportEntries(accessToken, folderId);
+  const allocationId = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  const temporaryName = `.narrarium-export-${allocationId}.tmp`;
   const form = new FormData();
   form.append(
     "metadata",
-    new Blob([JSON.stringify({ name: fileName, parents: [folderId] })], { type: MIME_JSON }),
+    new Blob([JSON.stringify({ name: temporaryName, parents: [folderId], appProperties: { narrariumExportName: fileName, narrariumExportAllocation: allocationId, narrariumExportCreatedAt: createdAt } })], { type: MIME_JSON }),
   );
-  form.append("file", blob, fileName);
+  form.append("file", blob, temporaryName);
 
   const response = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=multipart&fields=id,name,webViewLink`, {
     method: "POST",
@@ -108,7 +155,16 @@ export async function uploadGoogleDriveFile(
     body: form,
   });
   assertOk(response, "Google Drive export upload");
-  return (await response.json()) as UploadedDriveFile;
+  const created = (await response.json()) as UploadedDriveFile;
+  const resolvedName = uniqueGoogleExportName(fileName, created.id);
+  const renamed = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(created.id)}?fields=id,name,webViewLink`, {
+    method: "PATCH",
+    headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
+    body: JSON.stringify({ name: resolvedName, appProperties: { narrariumExportName: fileName, narrariumExportAllocation: allocationId, narrariumExportCreatedAt: createdAt, narrariumExportFinal: "v1" } }),
+  });
+  assertOk(renamed, "Google Drive export allocation rename");
+  const result = (await renamed.json()) as UploadedDriveFile;
+  return result;
 }
 
 async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string): Promise<void> {
@@ -148,7 +204,7 @@ export async function uploadMicrosoftDriveFile(
 ): Promise<UploadedDriveFile> {
   await ensureMicrosoftFolderPath(accessToken, folderPath);
   const arrayBuffer = await blob.arrayBuffer();
-  const response = await fetch(`${GRAPH_DRIVE_API}/root:/${folderPath}/${fileName}:/content`, {
+  const response = await fetch(`${GRAPH_DRIVE_API}/root:/${folderPath}/${fileName}:/content?@microsoft.graph.conflictBehavior=rename`, {
     method: "PUT",
     headers: { ...authHeaders(accessToken), "Content-Type": mimeType },
     body: arrayBuffer,

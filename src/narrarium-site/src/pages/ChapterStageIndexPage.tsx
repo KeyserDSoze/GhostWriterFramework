@@ -17,6 +17,8 @@ import { GeneratePreviewDialog } from "@/components/book/GeneratePreviewDialog";
 import { proseToScript, refineProse, scriptToProse, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
 import { commitCanonicalScriptMutation } from "@/narrarium/scriptLedger";
 import { sha256Text } from "@/repository/safeRepositoryMutation";
+import { useAuthStore } from "@/store/authStore";
+import { accountIdentity } from "@/auth/accountIdentity";
 
 type Stage = "drafts" | "scripts";
 type GenKind = "draft" | "final" | "script";
@@ -46,7 +48,7 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
     return <Alert variant="destructive"><AlertDescription>{t("workspace.notFound")} <Link to={`/app/books/${bookId}`} className="underline">{t("workspace.backToBook")}</Link></AlertDescription></Alert>;
   }
 
-  const src = (): PipelineSource => ({ token, owner: book.owner, repo: book.repo, branch, settings, structure: structure!, chapter });
+  const src = (): PipelineSource => ({ token, owner: book.owner, repo: book.repo, branch, settings, structure: structure!, chapter, accountScope: accountIdentity(useAuthStore.getState().user) });
 
   function paraSlugOf(path: string) { return (path.split("/").pop() ?? "").replace(/\.md$/i, ""); }
 

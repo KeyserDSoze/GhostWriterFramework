@@ -110,6 +110,7 @@ function RequestDetail({ entry }: { entry: LlmDebugEntry }) {
         <Stat label={t("debug.model")} value={entry.model} />
         <Stat label={t("debug.provider")} value={entry.provider ?? "—"} />
         <Stat label={t("debug.integration")} value={entry.integrationId ?? "—"} />
+        <Stat label={t("debug.contentKinds")} value={entry.contentKinds?.join(", ") ?? "—"} />
         <Stat label={t("debug.routeCandidate")} value={entry.routeCandidateIndex == null ? "—" : entry.usedFallback ? t("debug.fallbackCandidate", { n: entry.routeCandidateIndex + 1 }) : t("debug.primaryCandidate")} />
         <Stat label={t("debug.cost")} value={eur(entry.cost)} />
         <Stat label={t("debug.tokensIn")} value={num(entry.inputTokens)} />

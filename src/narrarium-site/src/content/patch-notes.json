@@ -1,5 +1,41 @@
 [
   {
+    "version": "0.76.37",
+    "date": "2026-08-16",
+    "en": {
+      "title": "Complete Copilot quality remediation",
+      "summary": "This release completes the remaining Copilot quality audit with safer custom actions, transparent provider fallback, full-fidelity chat archives, synchronized history, confirmed pull requests, local navigation, scoped cancellation, normalized settings, trusted prompt boundaries, and robust branch parsing.",
+      "changes": [
+        "Revalidated custom actions, repository targets, structure identity, injection settings, selections, and source ranges before execution and apply, with cancellable preparation and explicit route support.",
+        "Displayed effective provider and account boundaries for fallback chains, recorded privacy-safe content recipients, and added account-scoped acknowledgement and same-boundary policies for text, image, and audio operations.",
+        "Added validated full-fidelity chat archives backed by hashed cloud segments, explicit legacy incompleteness, safe import and migration, loss disclosure, and collision-safe Google Drive and OneDrive exports.",
+        "Unified chat history behind one account-scoped session index with guarded listing, monotonic revisions, consistent timestamps, deletion barriers, and synchronized panel and history-page behavior.",
+        "Changed pull-request creation into an explicit review and confirmation flow showing exact repository, base, head, title, body, changed files, and existing pull-request state before revalidation and creation.",
+        "Allowed route-known local navigation without GitHub credentials while preserving strict token, structure, and context prerequisites for repository-reading and mutating tools.",
+        "Scoped feedback-rewrite cancellation to the exact book, operation, target, session, and request, with truthful reporting of completed writes and failed or successful restoration.",
+        "Versioned and normalized migrated Copilot tool settings and custom actions, rebuilt safe nested defaults, and surfaced quarantined malformed records for both cloud providers.",
+        "Preserved chat roles, included the current request exactly once, framed all repository and external content as untrusted data, and aborted AI workflows when the authenticated account changes.",
+        "Parsed quoted and natural English or Italian branch names, validated complete Git ref rules, and requested clarification for missing, malformed, or ambiguous targets."
+      ]
+    },
+    "it": {
+      "title": "Remediation qualita Copilota completata",
+      "summary": "Questa release completa l'audit qualita del Copilota con custom action piu sicure, fallback provider trasparente, archivi chat completi, cronologia sincronizzata, pull request confermate, navigazione locale, cancellazione scoped, impostazioni normalizzate, confini prompt affidabili e parsing branch robusto.",
+      "changes": [
+        "Rivalidate custom action, target repository, identita struttura, impostazioni di injection, selezioni e range sorgente prima di execute e apply, con preparazione cancellabile e route supportate esplicitamente.",
+        "Mostrati i confini effettivi di provider e account nelle catene fallback, registrati i destinatari dei contenuti in modo privacy-safe e aggiunte policy di acknowledgement account-scoped e same-boundary per testo, immagini e audio.",
+        "Aggiunti archivi chat full-fidelity validati e basati su segmenti cloud con hash, incompletezza legacy esplicita, import e migrazione sicuri, disclosure delle omissioni ed export Google Drive e OneDrive collision-safe.",
+        "Unificata la cronologia chat in un solo indice sessioni account-scoped con listing protetto, revisioni monotone, timestamp coerenti, barriere di eliminazione e comportamento sincronizzato tra pannello e pagina cronologia.",
+        "Trasformata la creazione pull request in un flusso esplicito di review e conferma che mostra repository, base, head, titolo, body, file modificati e stato PR esistente prima della rivalidazione e creazione.",
+        "Consentita la navigazione locale con route nota senza credenziali GitHub, mantenendo prerequisiti rigorosi di token, struttura e contesto per i tool che leggono o modificano il repository.",
+        "Limitata la cancellazione delle riscritture da feedback a libro, operazione, target, sessione e request esatti, riportando correttamente scritture completate e restoration fallite o riuscite.",
+        "Versionate e normalizzate le impostazioni migrate dei tool Copilota e delle custom action, ricostruiti default nested sicuri e mostrati i record malformati in quarantena per entrambi i provider cloud.",
+        "Preservati i ruoli chat, incluso il request corrente una sola volta, incorniciati come dati non affidabili tutti i contenuti repository ed esterni e interrotti i workflow AI al cambio account autenticato.",
+        "Interpretati nomi branch quotati e naturali in inglese o italiano, validate le regole complete dei Git ref e richiesta chiarificazione per target mancanti, malformati o ambigui."
+      ]
+    }
+  },
+  {
     "version": "0.76.36",
     "date": "2026-08-16",
     "en": {

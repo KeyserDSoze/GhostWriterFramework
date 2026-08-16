@@ -83,7 +83,7 @@ describe("AI speech playback", () => {
   it("plays the successful first synthesis instead of requesting it twice", async () => {
     speechCreate.mockResolvedValue(response());
 
-    const controller = await speakText("First. Second.", settings, { segments: ["First.", "Second."] });
+    const controller = await speakText("First. Second.", settings, { accountScope: null, segments: ["First.", "Second."] });
     await flushPlayback();
 
     expect(speechCreate.mock.calls.map(([input]) => input.input)).toEqual(["First.", "Second."]);
@@ -102,7 +102,7 @@ describe("AI speech playback", () => {
   it("rejects done for a later synthesis failure without requiring an onError callback", async () => {
     speechCreate.mockResolvedValueOnce(response()).mockRejectedValueOnce(new Error("provider failed"));
 
-    const controller = await speakText("First. Second.", settings, { segments: ["First.", "Second."] });
+    const controller = await speakText("First. Second.", settings, { accountScope: null, segments: ["First.", "Second."] });
     await flushPlayback();
     FakeAudio.instances[0].onended?.();
     await expect(controller.done).rejects.toThrow("provider failed");
@@ -114,7 +114,7 @@ describe("AI speech playback", () => {
     speechCandidates.push(fallbackSpeechCandidate);
     speechCreate.mockResolvedValueOnce(response()).mockRejectedValueOnce(new DOMException("provider aborted", "AbortError")).mockResolvedValueOnce(response());
 
-    const controller = await speakText("First. Second.", settings, { segments: ["First.", "Second."] });
+    const controller = await speakText("First. Second.", settings, { accountScope: null, segments: ["First.", "Second."] });
     await flushPlayback();
     expect(speechCreate.mock.calls.map(([input]) => [input.model, input.input])).toEqual([
       ["tts-1", "First."],
@@ -130,7 +130,7 @@ describe("AI speech playback", () => {
 
   it("rejects done for playback failure without requiring an onError callback", async () => {
     speechCreate.mockResolvedValue(response());
-    const controller = await speakText("First.", settings, { segments: ["First."] });
+    const controller = await speakText("First.", settings, { accountScope: null, segments: ["First."] });
     await flushPlayback();
 
     FakeAudio.instances[0].onerror?.();
@@ -145,7 +145,7 @@ describe("AI speech playback", () => {
       options.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
     }));
 
-    const controller = await speakText("First. Second.", settings, { segments: ["First.", "Second."] });
+    const controller = await speakText("First. Second.", settings, { accountScope: null, segments: ["First.", "Second."] });
     await flushPlayback();
     controller.stop();
     controller.stop();
@@ -161,7 +161,7 @@ describe("AI speech playback", () => {
       options.signal.addEventListener("abort", () => reject(new DOMException("provider secret", "AbortError")), { once: true });
     }));
 
-    await expect(speakText("First.", settings, { segments: ["First."] })).rejects.toMatchObject({ name: "CandidateTimeoutError" });
+    await expect(speakText("First.", settings, { accountScope: null, segments: ["First."] })).rejects.toMatchObject({ name: "CandidateTimeoutError" });
     expect(debugBegin.mock.calls[0][0]).toMatchObject({ provider: "openai", integrationId: "tts", routeCandidateIndex: 0, usedFallback: false });
     expect(debugFinish.mock.calls[0][1]).toMatchObject({ failureKind: "timeout", timeoutMs: 5 });
   });
@@ -172,7 +172,7 @@ describe("AI speech playback", () => {
       options.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
     }));
 
-    await expect(transcribeAudio(new Blob(["audio"]), settings)).rejects.toMatchObject({ name: "CandidateTimeoutError" });
+    await expect(transcribeAudio(new Blob(["audio"]), settings, undefined, 0, null)).rejects.toMatchObject({ name: "CandidateTimeoutError" });
     expect(debugFinish.mock.calls[0][1]).toMatchObject({ failureKind: "timeout", timeoutMs: 5 });
   });
 });

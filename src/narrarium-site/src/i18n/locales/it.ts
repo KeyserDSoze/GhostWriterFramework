@@ -294,6 +294,11 @@ const it = {
     pickModel: "Scegli modello",
     browser: "Browser (integrato)",
     noModel: "Nessun modello",
+    sameBoundaryOnly: "Solo stesso confine account",
+    sameBoundaryOnlyHint: "Ignora i fallback appartenenti a un'altra integrazione/account.",
+    requireAcknowledgement: "Conferma fallback tra confini",
+    requireAcknowledgementHint: "Chiede conferma prima che ogni tipo di contenuto attraversi per la prima volta uno specifico confine account. Annullando non viene inviato nulla.",
+    boundaryChain: "Confini provider/account: {{chain}}",
     invalidSave: "Correggi o rimuovi i routing non validi prima di salvare.",
     task: {
       default: "Chat (predefinito)",
@@ -453,8 +458,14 @@ const it = {
     saveReplySummaryToNoteAndDelete: "Salva riassunto della risposta in nota ed elimina la chat",
     downloadChatMarkdown: "Scarica chat in Markdown",
     downloadChatPdf: "Scarica chat in PDF",
+    downloadChatJson: "Scarica archivio JSON convalidato",
     saveChatMarkdownToDrive: "Salva chat Markdown su Drive",
     saveChatPdfToDrive: "Salva chat PDF su Drive",
+    saveChatJsonToDrive: "Salva archivio JSON convalidato su Drive",
+    importChatArchive: "Importa archivio chat",
+    importChatAccountConfirm: "Questo archivio proviene da {{account}} su un altro confine account. Importarne una copia migrata in questo account?",
+    importChatComplete: "Archivio chat importato",
+    importChatFailed: "Importazione archivio chat non riuscita",
     floatingButton: "Copilot",
     contextFollows: "Il contesto segue la rotta corrente e i file del repository.",
     none: "nessuno",
@@ -1299,6 +1310,9 @@ const it = {
   bookActions: {
     title: "Azioni"
   },
+  settingsRepair: {
+    title: "Alcune impostazioni cloud sono state ripristinate"
+  },
   customActions: {
     title: "Custom Actions",
     description: "Crea azioni contestuali che passano dal router dell'app e compaiono nel menu tasto destro.",
@@ -1357,7 +1371,8 @@ const it = {
     stopReading: "Ferma lettura",
     confirmReplace: "Conferma sostituzione",
     replaceNeedsEditor: "Apri l'azione da un campo di testo modificabile per sostituire il contenuto.",
-    replaced: "Contenuto sostituito. Salva per rendere persistente la modifica."
+    replaced: "Contenuto sostituito. Salva per rendere persistente la modifica.",
+    replaceStale: "Sostituzione non applicata"
   },
   ctx: {
     improveAll: "Migliora il paragrafo",
@@ -1397,6 +1412,7 @@ const it = {
     model: "Modello",
     provider: "Provider",
     integration: "Integrazione (ID privato)",
+    contentKinds: "Contenuto inviato",
     routeCandidate: "Candidato routing",
     primaryCandidate: "Primario",
     fallbackCandidate: "Fallback {{n}}",
@@ -2140,6 +2156,7 @@ const it = {
     prerequisiteValues: {
       "book-open": "libro aperto",
       "git-token": "token GitHub disponibile",
+      "local-app": "percorso locale dell'app",
       attachments: "allegati presenti",
       "chapter-open": "capitolo aperto",
       "chapter-or-paragraph-open": "capitolo o paragrafo aperto",

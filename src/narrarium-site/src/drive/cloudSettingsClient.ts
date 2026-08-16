@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget } from "@/types/settings";
+import { CHAT_CAPABILITIES, DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel, type CustomAction, type RoutingTarget } from "@/types/settings";
 import type { AuthProvider } from "@/store/authStore";
 import { BROWSER_ROUTING_ID, sanitizeTaskRouting } from "@/assistant/router";
 import { ensureGoogleAppFolder } from "@/drive/googleAppFolder";
@@ -21,13 +21,13 @@ const MIME_JSON = "application/json";
 export async function loadCloudSettings(
   provider: AuthProvider,
   accessToken: string,
-): Promise<{ settings: AppSettings; fileId: string }> {
+): Promise<{ settings: AppSettings; fileId: string; diagnostics: string[] }> {
   return provider === "microsoft"
     ? loadMicrosoftSettings(accessToken)
     : loadGoogleSettings(accessToken);
 }
 
-export async function loadCloudSettingsForMigration(provider: AuthProvider, accessToken: string): Promise<{ settings: AppSettings; fileId: string }> {
+export async function loadCloudSettingsForMigration(provider: AuthProvider, accessToken: string): Promise<{ settings: AppSettings; fileId: string; diagnostics: string[] }> {
   return provider === "microsoft"
     ? loadMicrosoftSettings(accessToken, true)
     : loadGoogleSettings(accessToken, true);
@@ -71,13 +71,13 @@ async function googleFindSettingsFile(accessToken: string, folderId: string): Pr
   return data.files?.[0]?.id ?? null;
 }
 
-async function loadGoogleSettings(accessToken: string, strict = false): Promise<{ settings: AppSettings; fileId: string }> {
+async function loadGoogleSettings(accessToken: string, strict = false): Promise<{ settings: AppSettings; fileId: string; diagnostics: string[] }> {
   const folderId = await ensureGoogleAppFolder(accessToken);
   const fileId = await googleFindSettingsFile(accessToken, folderId);
   if (!fileId) {
     if (strict) throw new Error("Source settings file is missing.");
     const createdId = await saveGoogleSettings(accessToken, DEFAULT_SETTINGS);
-    return { settings: DEFAULT_SETTINGS, fileId: createdId };
+    return { settings: DEFAULT_SETTINGS, fileId: createdId, diagnostics: [] };
   }
 
   const response = await fetch(`${GOOGLE_DRIVE_API}/files/${fileId}?alt=media`, {
@@ -86,7 +86,8 @@ async function loadGoogleSettings(accessToken: string, strict = false): Promise<
   assertOk(response, "Google Drive settings download");
   const raw = await response.json();
   if (strict && !isValidSettingsSource(raw)) throw new Error("Source settings are malformed.");
-  return { settings: migrateSettings(raw), fileId };
+  const migrated = migrateSettingsWithDiagnostics(raw);
+  return { ...migrated, fileId };
 }
 
 async function saveGoogleSettings(accessToken: string, settings: AppSettings): Promise<string> {
@@ -145,7 +146,7 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
   }
 }
 
-async function loadMicrosoftSettings(accessToken: string, strict = false): Promise<{ settings: AppSettings; fileId: string }> {
+async function loadMicrosoftSettings(accessToken: string, strict = false): Promise<{ settings: AppSettings; fileId: string; diagnostics: string[] }> {
   await ensureMicrosoftFolderPath(accessToken, ONE_DRIVE_APP_FOLDER);
   const meta = await fetch(`${GRAPH_DRIVE_API}/root:/${ONE_DRIVE_APP_FOLDER}/${SETTINGS_FILE_NAME}`, {
     headers: authHeaders(accessToken),
@@ -154,7 +155,7 @@ async function loadMicrosoftSettings(accessToken: string, strict = false): Promi
   if (meta.status === 404) {
     if (strict) throw new Error("Source settings file is missing.");
     const fileId = await saveMicrosoftSettings(accessToken, DEFAULT_SETTINGS);
-    return { settings: DEFAULT_SETTINGS, fileId };
+    return { settings: DEFAULT_SETTINGS, fileId, diagnostics: [] };
   }
   assertOk(meta, "OneDrive settings lookup");
   const metaData = (await meta.json()) as { id: string };
@@ -164,7 +165,8 @@ async function loadMicrosoftSettings(accessToken: string, strict = false): Promi
   assertOk(file, "OneDrive settings download");
   const raw = await file.json();
   if (strict && !isValidSettingsSource(raw)) throw new Error("Source settings are malformed.");
-  return { settings: migrateSettings(raw), fileId: metaData.id };
+  const migrated = migrateSettingsWithDiagnostics(raw);
+  return { ...migrated, fileId: metaData.id };
 }
 
 async function saveMicrosoftSettings(accessToken: string, settings: AppSettings): Promise<string> {
@@ -180,7 +182,15 @@ async function saveMicrosoftSettings(accessToken: string, settings: AppSettings)
 }
 
 export function migrateSettings(raw: unknown): AppSettings {
-  if (!raw || typeof raw !== "object") return DEFAULT_SETTINGS;
+  return migrateSettingsWithDiagnostics(raw).settings;
+}
+
+export function migrateSettingsWithDiagnostics(raw: unknown): { settings: AppSettings; diagnostics: string[] } {
+  const diagnostics: string[] = [];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    diagnostics.push("Cloud settings were malformed and reset to defaults.");
+    return { settings: DEFAULT_SETTINGS, diagnostics };
+  }
   const source = raw as Partial<AppSettings> & { version?: number };
   const azureOpenAI = {
     ...DEFAULT_SETTINGS.azureOpenAI,
@@ -207,7 +217,10 @@ export function migrateSettings(raw: unknown): AppSettings {
   ].map(ensureChatModels);
   const sourceReader = typeof source.reader === "object" && source.reader ? source.reader : {};
 
-  return {
+  const customActions = source.customActionsSchemaVersion !== undefined && source.customActionsSchemaVersion !== 1
+    ? (diagnostics.push("Custom actions use an unsupported schema version and were quarantined."), [])
+    : normalizeCustomActions(source.customActions, diagnostics);
+  const settings: AppSettings = {
     ...DEFAULT_SETTINGS,
     ...source,
     version: 2,
@@ -234,9 +247,95 @@ export function migrateSettings(raw: unknown): AppSettings {
       ...sourceReader,
       bookmarks: Array.isArray((sourceReader as Partial<AppSettings["reader"]>).bookmarks) ? (sourceReader as Partial<AppSettings["reader"]>).bookmarks! : [],
     },
-    customActions: Array.isArray(source.customActions) ? source.customActions : [],
+    copilotTools: normalizeCopilotTools(source.copilotTools, diagnostics),
+    customActionsSchemaVersion: 1,
+    customActions,
     books: Array.isArray(source.books) ? source.books : [],
     taskRouting: normalizeTaskRouting(source.taskRouting, aiIntegrations),
+    fallbackDisclosure: {
+      ...DEFAULT_SETTINGS.fallbackDisclosure,
+      ...(typeof source.fallbackDisclosure === "object" && source.fallbackDisclosure ? source.fallbackDisclosure : {}),
+    },
+  };
+  return { settings, diagnostics };
+}
+
+function normalizeCopilotTools(raw: unknown, diagnostics: string[]): AppSettings["copilotTools"] {
+  if (raw == null) return { ...DEFAULT_SETTINGS.copilotTools, toolOverrides: {} };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    diagnostics.push("Copilot tool settings were malformed and reset to defaults.");
+    return { ...DEFAULT_SETTINGS.copilotTools, toolOverrides: {} };
+  }
+  if ("schemaVersion" in raw && (raw as { schemaVersion?: unknown }).schemaVersion !== 1) {
+    diagnostics.push("Copilot tool settings use an unsupported schema version and were reset to defaults.");
+    return { ...DEFAULT_SETTINGS.copilotTools, toolOverrides: {} };
+  }
+  const overrides = (raw as Record<string, unknown>).toolOverrides;
+  if (overrides == null) return { ...DEFAULT_SETTINGS.copilotTools, toolOverrides: {} };
+  if (typeof overrides !== "object" || Array.isArray(overrides)) {
+    diagnostics.push("Copilot tool overrides were malformed and reset to defaults.");
+    return { ...DEFAULT_SETTINGS.copilotTools, toolOverrides: {} };
+  }
+  const toolOverrides: AppSettings["copilotTools"]["toolOverrides"] = {};
+  for (const [id, value] of Object.entries(overrides)) {
+    if (!id.trim() || !value || typeof value !== "object" || Array.isArray(value) || ("enabled" in value && typeof (value as { enabled?: unknown }).enabled !== "boolean")) {
+      diagnostics.push(`Copilot tool override "${id || "(empty)"}" was ignored because it is malformed.`);
+      continue;
+    }
+    toolOverrides[id] = "enabled" in value ? { enabled: (value as { enabled: boolean }).enabled } : {};
+  }
+  return { schemaVersion: 1, toolOverrides };
+}
+
+function normalizeCustomActions(raw: unknown, diagnostics: string[]): CustomAction[] {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) {
+    diagnostics.push("Custom actions were malformed and quarantined.");
+    return [];
+  }
+  const actions: CustomAction[] = [];
+  const ids = new Set<string>();
+  raw.forEach((value, index) => {
+    const action = normalizeCustomAction(value);
+    if (!action || ids.has(action.id)) {
+      diagnostics.push(`Custom action ${index + 1} was quarantined because it is malformed or has a duplicate ID.`);
+      return;
+    }
+    ids.add(action.id);
+    actions.push(action);
+  });
+  return actions;
+}
+
+function normalizeCustomAction(value: unknown): CustomAction | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== "string" || !raw.id.trim() || typeof raw.name !== "string" || typeof raw.prompt !== "string") return null;
+  if (raw.capability !== undefined && !CHAT_CAPABILITIES.includes(raw.capability as ChatCapability)) return null;
+  if (raw.activation !== undefined && raw.activation !== "selection" && raw.activation !== "element") return null;
+  if (raw.outputMode !== undefined && raw.outputMode !== "show" && raw.outputMode !== "replace") return null;
+  if (raw.enabled !== undefined && typeof raw.enabled !== "boolean") return null;
+  if (raw.targetTypes !== undefined && (!Array.isArray(raw.targetTypes) || raw.targetTypes.some((target) => typeof target !== "string" || !target.trim()))) return null;
+  if (raw.injections !== undefined && (!raw.injections || typeof raw.injections !== "object" || Array.isArray(raw.injections))) return null;
+  const injections = (raw.injections ?? {}) as Record<string, unknown>;
+  const injectionKeys = ["includeBody", "includeFrontmatter", "includeContext", "includeWritingStyle", "includeGhostwriter"] as const;
+  if (injectionKeys.some((key) => injections[key] !== undefined && typeof injections[key] !== "boolean")) return null;
+  return {
+    id: raw.id,
+    name: raw.name,
+    prompt: raw.prompt,
+    capability: (raw.capability as ChatCapability | undefined) ?? "default",
+    targetTypes: (raw.targetTypes as string[] | undefined) ?? ["*"],
+    activation: (raw.activation as CustomAction["activation"] | undefined) ?? "selection",
+    injections: {
+      includeBody: (injections.includeBody as boolean | undefined) ?? true,
+      includeFrontmatter: (injections.includeFrontmatter as boolean | undefined) ?? false,
+      includeContext: (injections.includeContext as boolean | undefined) ?? true,
+      includeWritingStyle: (injections.includeWritingStyle as boolean | undefined) ?? true,
+      includeGhostwriter: (injections.includeGhostwriter as boolean | undefined) ?? true,
+    },
+    outputMode: (raw.outputMode as CustomAction["outputMode"] | undefined) ?? "show",
+    enabled: (raw.enabled as boolean | undefined) ?? true,
   };
 }
 

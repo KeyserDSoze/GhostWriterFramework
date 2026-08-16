@@ -16,6 +16,8 @@ import { regenerateEntity } from "@/research/regenerateEntity";
 import type { EntityKind } from "@/narrarium/canon";
 import type { BookEntry } from "@/types/settings";
 import type { ResearchFile } from "@/types/book";
+import { useAuthStore } from "@/store/authStore";
+import { accountIdentity } from "@/auth/accountIdentity";
 
 export function RegenerateEntityDialog(props: {
   open: boolean;
@@ -99,6 +101,7 @@ export function RegenerateEntityDialog(props: {
       const markdowns = [...selectedResearch].map((slug) => researchContents[slug]).filter(Boolean);
 
       const result = await regenerateEntity({
+        accountScope: accountIdentity(useAuthStore.getState().user),
         settings,
         book: props.book,
         currentContent: props.currentContent,

@@ -46,6 +46,7 @@ export function upsertAssistantSessionMeta(
     title: session.title,
     contextTitle: session.contextTitle,
     updatedAt: session.updatedAt,
+    contentRevision: session.contentRevision,
   };
   return [next, ...sessions.filter((entry) => entry.id !== session.id && entry.fileId !== handle.fileId)];
 }
@@ -62,7 +63,7 @@ export function attachAssistantSessionCloudHandle(
 ): AssistantSession | null {
   if (!currentSession || currentSession.id !== sessionId) return currentSession;
   if (currentSession.fileId === handle.fileId && currentSession.revision === handle.revision) return currentSession;
-  return { ...currentSession, ...handle };
+  return { ...currentSession, ...handle, losslessSegments: [] };
 }
 
 type SaveSession = (session: AssistantSession) => Promise<AssistantSessionCloudHandle>;
@@ -118,3 +119,6 @@ export class AssistantSessionSaveQueue {
     return next;
   }
 }
+
+/** Shared by every chat UI so deletion can retire autosave before removing cloud data. */
+export const assistantSessionSaveQueue = new AssistantSessionSaveQueue();

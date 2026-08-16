@@ -20,6 +20,8 @@ import { useRegisterPageSave } from "@/store/saveStore";
 import { useProseAssist } from "@/components/editor/useProseAssist";
 import { RegenerateEntityDialog } from "@/components/book/RegenerateEntityDialog";
 import type { EntityKind } from "@/narrarium/canon";
+import { useAuthStore } from "@/store/authStore";
+import { accountIdentity } from "@/auth/accountIdentity";
 
 interface MetaEntry {
   key: string;
@@ -107,7 +109,7 @@ export function CanonEntityPage() {
     textareaRef: bodyRef,
     getBody: () => body,
     setBody,
-    buildSource: () => (book && structure && token ? { token, owner: book.owner, repo: book.repo, branch, settings, structure } : null),
+    buildSource: () => (book && structure && token ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, accountScope: accountIdentity(useAuthStore.getState().user) } : null),
   });
   useRegisterProseEditor(bodyRef, {
     improve: (s) => proseAssist.improve(s),

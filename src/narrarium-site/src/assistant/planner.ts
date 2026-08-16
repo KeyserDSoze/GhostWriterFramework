@@ -79,19 +79,27 @@ export function resolveReadAloudAction(
 export function resolveNavigateAction(
   prompt: string,
   context: LoadedWriterContext,
-  bookId: string,
+  bookId: string | null,
 ): NavigateAction | null {
   const lower = prompt.toLowerCase();
   if (!NAV_KEYWORDS.test(lower)) return null;
+  if (/\b(impostazion|settings|preferenz)\b/.test(lower) && !/\b(libro|book)\b/.test(lower)) {
+    return { kind: "navigate", to: `/app/settings`, label: "Settings" };
+  }
+  if (!bookId) return null;
   const base = `/app/books/${bookId}`;
+  const routeTarget = routeNavigationTarget(context);
   const chapterResolution = resolveChapterTarget(prompt, context.structure?.chapters ?? [], context.chapter);
   const paragraphResolution = resolveParagraphTarget(prompt, chapterResolution, context.chapter, context.paragraph);
-  if ((chapterResolution.explicit && !chapterResolution.value) || (paragraphResolution.explicit && !paragraphResolution.value)) return null;
-  if (isReaderEvaluationsNavigationPrompt(lower) && chapterResolution.value) {
-    const chapter = chapterResolution.value;
-    const to = paragraphResolution.value
-      ? `${base}/chapters/${chapter.slug}/paragraphs/${paragraphResolution.value.paragraph.number}/reader-evaluations`
-      : `${base}/chapters/${chapter.slug}/reader-evaluations`;
+  const routeMatchesExplicitChapter = routeTarget && explicitChapterMatchesRoute(lower, routeTarget.chapterId);
+  const routeMatchesExplicitParagraph = routeTarget?.paragraphNum && explicitParagraphMatchesRoute(lower, routeTarget.paragraphNum);
+  if ((chapterResolution.explicit && !chapterResolution.value && !routeMatchesExplicitChapter) || (paragraphResolution.explicit && !paragraphResolution.value && !routeMatchesExplicitParagraph)) return null;
+  if (isReaderEvaluationsNavigationPrompt(lower) && (chapterResolution.value || routeTarget)) {
+    const chapterId = chapterResolution.value?.slug ?? routeTarget!.chapterId;
+    const paragraphNum = paragraphResolution.value?.paragraph.number ?? routeTarget?.paragraphNum;
+    const to = paragraphNum
+      ? `${base}/chapters/${chapterId}/paragraphs/${paragraphNum}/reader-evaluations`
+      : `${base}/chapters/${chapterId}/reader-evaluations`;
     return { kind: "navigate", to, label: "Reader evaluations" };
   }
 
@@ -118,14 +126,32 @@ export function resolveNavigateAction(
   if (/\b(ghostwriter|ghostwriters|autor)\b/.test(lower)) {
     return { kind: "navigate", to: `${base}/ghostwriters`, label: "Ghostwriters" };
   }
-  if (/\b(impostazion|settings|preferenz)\b/.test(lower)) {
-    if (/\b(libro|book)\b/.test(lower)) return { kind: "navigate", to: `${base}/settings`, label: "Book settings" };
-    return { kind: "navigate", to: `/app/settings`, label: "Settings" };
+  if (/\b(impostazion|settings|preferenz)\b/.test(lower)) return { kind: "navigate", to: `${base}/settings`, label: "Book settings" };
+
+  if (/\b(paragrafo|paragraph|scena|scene)\b/.test(lower) && routeTarget?.paragraphNum) {
+    return { kind: "navigate", to: `${base}/chapters/${routeTarget.chapterId}/paragraphs/${routeTarget.paragraphNum}`, label: `Paragraph ${routeTarget.paragraphNum}` };
   }
 
-  if (/\b(capitolo|chapter)\b/.test(lower) && chapterResolution.value) {
-    return { kind: "navigate", to: `${base}/chapters/${chapterResolution.value.slug}`, label: chapterResolution.value.title };
+  if (/\b(capitolo|chapter)\b/.test(lower) && (chapterResolution.value || routeTarget)) {
+    const chapterId = chapterResolution.value?.slug ?? routeTarget!.chapterId;
+    return { kind: "navigate", to: `${base}/chapters/${chapterId}`, label: chapterResolution.value?.title ?? `Chapter ${chapterId}` };
   }
 
   return null;
+}
+
+function routeNavigationTarget(context: LoadedWriterContext): { chapterId: string; paragraphNum?: string } | null {
+  const route = context.route;
+  if (!route || !("chapterId" in route)) return null;
+  return { chapterId: route.chapterId, ...("paragraphNum" in route ? { paragraphNum: route.paragraphNum } : {}) };
+}
+
+function explicitChapterMatchesRoute(prompt: string, chapterId: string): boolean {
+  const numeric = prompt.match(/(?:capitolo|chapter)\s+(\d+)\b/i)?.[1];
+  return Boolean(numeric && Number(chapterId.match(/^\d+/)?.[0]) === Number(numeric));
+}
+
+function explicitParagraphMatchesRoute(prompt: string, paragraphNum: string): boolean {
+  const numeric = prompt.match(/(?:paragrafo|paragraph|scena|scene)\s+(\d+)\b/i)?.[1];
+  return Boolean(numeric && Number(paragraphNum) === Number(numeric));
 }

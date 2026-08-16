@@ -21,11 +21,12 @@ export class CompletionFallbackError extends Error {
   }
 }
 
-export async function executeCompletionFallback<T extends CompletionCandidate>(input: { candidates: T[]; run: (candidate: T, signal: AbortSignal) => Promise<string>; resetPartial?: () => void; signal?: AbortSignal; timeoutMs?: number | ((candidate: T) => number | undefined) }): Promise<string> {
+export async function executeCompletionFallback<T extends CompletionCandidate>(input: { candidates: T[]; run: (candidate: T, signal: AbortSignal) => Promise<string>; beforeCandidate?: (candidate: T, index: number) => void; resetPartial?: () => void; signal?: AbortSignal; timeoutMs?: number | ((candidate: T) => number | undefined) }): Promise<string> {
   input.signal?.throwIfAborted();
   const failures: string[] = [];
-  for (const candidate of input.candidates) {
+  for (const [index, candidate] of input.candidates.entries()) {
     input.signal?.throwIfAborted();
+    input.beforeCandidate?.(candidate, index);
     input.resetPartial?.();
     try {
       const configuredTimeout = typeof input.timeoutMs === "function" ? input.timeoutMs(candidate) : input.timeoutMs;

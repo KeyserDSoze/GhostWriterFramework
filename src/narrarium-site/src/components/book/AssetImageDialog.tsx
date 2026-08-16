@@ -13,6 +13,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useAuthStore } from "@/store/authStore";
+import { accountIdentity } from "@/auth/accountIdentity";
+
+export async function optionalAssetPrompt<T>(operation: Promise<T>): Promise<T | null> {
+  try {
+    return await operation;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError") throw error;
+    return null;
+  }
+}
 
 export function AssetImageDialog(props: {
   book: BookEntry;
@@ -33,6 +44,7 @@ export function AssetImageDialog(props: {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { settings } = useSettingsStore();
+  const user = useAuthStore((state) => state.user);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const generationControllerRef = useRef<AbortController | null>(null);
   const [internalOpen, setInternalOpen] = useState(false);
@@ -100,10 +112,11 @@ export function AssetImageDialog(props: {
   }
 
   async function composePrompt() {
+    const accountScope = accountIdentity(user);
     setBusy(true);
     try {
       const sourceText = await loadSourceText();
-      const aiPrompt = await composeAssetPromptWithAI({ settings, kind, title, sourceText }).catch(() => null);
+      const aiPrompt = await optionalAssetPrompt(composeAssetPromptWithAI({ settings, kind, title, sourceText, accountScope }));
       setPrompt(aiPrompt ?? defaultPrompt(kind, title, sourceText));
     } finally {
       setBusy(false);
@@ -177,7 +190,7 @@ export function AssetImageDialog(props: {
     setBusy(true);
     try {
       clearPendingGenerated();
-      const generated = await generateAssetImage({ settings, prompt, orientation, signal: controller.signal });
+      const generated = await generateAssetImage({ settings, prompt, orientation, signal: controller.signal, accountScope: accountIdentity(user) });
       const url = URL.createObjectURL(new Blob([bytesToArrayBuffer(generated.bytes)], { type: "image/png" }));
       if (previewUrl) {
         setPendingGenerated({ ...generated, url });

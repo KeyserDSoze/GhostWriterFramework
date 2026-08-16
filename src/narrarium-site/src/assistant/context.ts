@@ -202,7 +202,9 @@ export async function loadWriterContext(
   workingBranches: Record<string, string>,
   requestedBranch?: string,
   readFile: typeof loadFileContent = loadFileContent,
+  signal?: AbortSignal,
 ): Promise<LoadedWriterContext> {
+  signal?.throwIfAborted();
   const route = parseAppRoute(pathname);
   const bookId = "bookId" in route ? route.bookId : null;
   const book = bookId ? books.find((entry) => entry.id === bookId) ?? null : null;
@@ -230,7 +232,8 @@ export async function loadWriterContext(
       if (!path || loaded.has(path)) return;
       if (isSecretPath(path) && !canDiscloseSecretBody(secretAccess.get(path) ?? "hidden")) return;
       try {
-        const content = await readFile(token, book.owner, book.repo, path, readBranch);
+        const content = await readFile(token, book.owner, book.repo, path, readBranch, signal);
+        signal?.throwIfAborted();
         relevantFiles.push({ path, content });
         loaded.add(path);
       } catch (error) {

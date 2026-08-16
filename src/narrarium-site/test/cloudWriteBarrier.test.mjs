@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { beginCloudWrite, cloudWritesSuspended, registerCloudAccount, resumeCloudWrites, suspendCloudWrites } from "../src/drive/cloudWriteBarrier.ts";
+import { acquireCloudWriteLease, beginCloudWrite, cloudWritesSuspended, registerCloudAccount, resumeCloudWrites, suspendCloudWrites } from "../src/drive/cloudWriteBarrier.ts";
 
 test("deletion suspension waits for active writes to drain", async () => {
   const token = "drain-token";
@@ -46,4 +46,30 @@ test("write suspension follows one account across refreshed tokens", async () =>
   resumeCloudWrites("google", "new-token");
   const end = beginCloudWrite("google", "new-token");
   end();
+});
+
+test("exclusive leases serialize by provider account and allow provider parity", async () => {
+  for (const provider of /** @type {const} */ (["google", "microsoft"])) {
+    const token = `lease-${provider}`;
+    const releaseFirst = await acquireCloudWriteLease(provider, token);
+    let acquiredSecond = false;
+    const second = acquireCloudWriteLease(provider, token).then((release) => { acquiredSecond = true; return release; });
+    await Promise.resolve();
+    assert.equal(acquiredSecond, false);
+    releaseFirst();
+    const releaseSecond = await second;
+    assert.equal(acquiredSecond, true);
+    releaseSecond();
+  }
+});
+
+test("an aborted account-switch waiter never starts after the active lease", async () => {
+  const release = await acquireCloudWriteLease("microsoft", "lease-abort");
+  const controller = new AbortController();
+  const waiting = acquireCloudWriteLease("microsoft", "lease-abort", controller.signal);
+  controller.abort();
+  await assert.rejects(waiting, { name: "AbortError" });
+  release();
+  const releaseNext = await acquireCloudWriteLease("microsoft", "lease-abort");
+  releaseNext();
 });

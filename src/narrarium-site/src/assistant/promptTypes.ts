@@ -7,4 +7,5 @@ export interface PromptInputLike {
   signal?: AbortSignal;
   expectedRemoteHeadSha?: string;
   onText?: (text: string) => void;
+  accountScope: string | null;
 }

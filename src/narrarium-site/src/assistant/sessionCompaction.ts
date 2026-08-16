@@ -39,6 +39,7 @@ export function mergeAssistantSessionCompaction(
     ...currentSession,
     messages: currentSession.messages.slice(removedCount),
     attachments: currentSession.attachments.filter((attachment) => !archivedAttachmentIds.has(attachment.id)),
+    losslessSegments: compactedSession.losslessSegments ?? currentSession.losslessSegments ?? [],
     archive,
     compactSummary: compactedSession.compactSummary,
     compactedMessageCount: compactedSession.compactedMessageCount,

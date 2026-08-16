@@ -110,7 +110,14 @@ export function buildAssistantSessionMarkdown(session: AssistantSession): string
     "",
     `Context: ${session.contextTitle}`,
     `Updated: ${session.updatedAt}`,
+    "",
+    "## Export Limitations",
+    "",
+    session.losslessArchive?.complete === false
+      ? "This human-readable export is not a backup. It omits machine-restorable data, and this legacy chat also has unavailable historical ranges. The validated JSON archive preserves all records that remain available but cannot restore missing legacy records."
+      : "This human-readable export is not a backup. It omits attachment contents and image data, full action/proposal payloads, proposed file contents, undo snapshots, quarantined raw actions, cloud provider/account identity, cloud file identity, and machine-restorable schema metadata. Use the validated JSON archive for complete backup or migration.",
   ];
+  if (session.losslessArchive && !session.losslessArchive.complete) lines.push("", `WARNING: Historical records are incomplete. Missing ranges: ${session.losslessArchive.missingRanges.map((range) => `${range.from}-${range.to} (${range.reason})`).join(", ")}. No export can restore those records.`);
   const archiveSummary = archive?.summary.trim() || session.compactSummary.trim();
   if (hasAssistantSessionArchiveContent(session)) {
     lines.push("", `## Archived Conversation (${archive?.messageCount ?? session.compactedMessageCount} messages)`);
@@ -153,6 +160,9 @@ export async function buildAssistantSessionPdfBlob(session: AssistantSession): P
   y += 6;
   writeBlock(`Context: ${session.contextTitle}`);
   writeBlock(`Updated: ${new Date(session.updatedAt).toLocaleString()}`);
+  y += 8;
+  writeBlock("Export Limitations", 13, true);
+  writeBlock("This human-readable export is not a backup. It omits attachment contents and image data, full action/proposal payloads, proposed file contents, undo snapshots, quarantined raw actions, cloud provider/account identity, cloud file identity, and machine-restorable schema metadata. Use the JSON archive for full-fidelity backup or migration.");
   const archiveSummary = session.archive?.summary.trim() || session.compactSummary.trim();
   if (hasAssistantSessionArchiveContent(session)) {
     y += 8;

@@ -27,12 +27,14 @@ export async function executeMediaFallback<T, C extends MediaFallbackCandidate =
   runBrowser?: (candidateIndex: number) => Promise<T>;
   /** TTS manages a timeout per synthesized chunk after returning its playback controller. */
   timeoutAi?: boolean;
+  beforeCandidate?: (candidate: C, candidateIndex: number) => void;
 }): Promise<T> {
   throwIfAborted(input.signal);
   let lastError: unknown = null;
   for (let index = 0; index < input.candidates.length; index += 1) {
     const candidate = input.candidates[index];
     throwIfAborted(input.signal);
+    input.beforeCandidate?.(candidate, index);
     try {
       if (candidate.browser) {
         if (!input.runBrowser) continue;

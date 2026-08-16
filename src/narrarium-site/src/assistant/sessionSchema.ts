@@ -1,4 +1,4 @@
-import type { AssistantAction, AssistantAttachment, AssistantMessage, AssistantNoteSaveOperation, AssistantQuarantinedAction, AssistantSession, AssistantSessionArchive, AssistantSessionProvenance } from "./store.ts";
+import type { AssistantAction, AssistantAttachment, AssistantLosslessArchiveManifest, AssistantLosslessSegment, AssistantLosslessSegmentRef, AssistantMessage, AssistantNoteSaveOperation, AssistantQuarantinedAction, AssistantSession, AssistantSessionArchive, AssistantSessionProvenance } from "./store.ts";
 import { emptyAssistantArchiveRollup, emptyAssistantSessionArchive, normalizeAssistantSession } from "./store.ts";
 import { hasAssistantActionProvenance } from "./actionValidation.ts";
 
@@ -81,6 +81,12 @@ function action(value: unknown, label: string): AssistantAction {
       return { ...common, kind, bookId: bookId(), updates: raw.updates.map((item, index) => update(item, `${label}.updates[${index}]`)) } as AssistantAction;
     }
     case "switch-book-branch": return { ...common, kind, bookId: bookId(), branchName: branch(raw.branchName, `${label}.branchName`), ...(typeof raw.createIfMissing === "boolean" ? { createIfMissing: raw.createIfMissing } : {}), ...(raw.baseBranch === undefined ? {} : { baseBranch: branch(raw.baseBranch, `${label}.baseBranch`) }) } as AssistantAction;
+    case "confirm-create-pull-request": {
+      if (!Array.isArray(raw.changedFiles) || raw.changedFiles.length > 1000 || !Array.isArray(raw.existingPullRequests) || raw.existingPullRequests.length > 100) throw new AssistantSessionValidationError(`${label} pull request summary is invalid.`);
+      const changedFiles = raw.changedFiles.map((item, index) => { const file = object(item, `${label}.changedFiles[${index}]`); if (!Number.isSafeInteger(file.additions) || !Number.isSafeInteger(file.deletions)) throw new AssistantSessionValidationError(`${label}.changedFiles[${index}] is invalid.`); return { filename: repositoryPath(file.filename, `${label}.changedFiles[${index}].filename`), status: text(file.status, `${label}.changedFiles[${index}].status`, 32), additions: file.additions as number, deletions: file.deletions as number }; });
+      const existingPullRequests = raw.existingPullRequests.map((item, index) => { const pull = object(item, `${label}.existingPullRequests[${index}]`); if (!Number.isSafeInteger(pull.number) || (pull.number as number) < 1) throw new AssistantSessionValidationError(`${label}.existingPullRequests[${index}] is invalid.`); return { number: pull.number as number, title: text(pull.title, `${label}.existingPullRequests[${index}].title`, 500), htmlUrl: text(pull.htmlUrl, `${label}.existingPullRequests[${index}].htmlUrl`, 2048), state: text(pull.state, `${label}.existingPullRequests[${index}].state`, 32) }; });
+      return { ...common, kind, bookId: bookId(), base: branch(raw.base, `${label}.base`), head: branch(raw.head, `${label}.head`), title: text(raw.title, `${label}.title`, 500), body: text(raw.body, `${label}.body`), baseRevision: text(raw.baseRevision, `${label}.baseRevision`, 256), headRevision: text(raw.headRevision, `${label}.headRevision`, 256), changedFiles, existingPullRequests } as AssistantAction;
+    }
     case "navigate": {
       const to = text(raw.to, `${label}.to`, 2048);
       if (!to.startsWith("/app/") || to.includes("\\") || /[\x00-\x1f]/.test(to)) throw new AssistantSessionValidationError(`${label}.to is unsafe.`);
@@ -98,6 +104,11 @@ function action(value: unknown, label: string): AssistantAction {
       const entityKind = text(raw.entityKind, `${label}.entityKind`, 32);
       if (entityKind !== "character" && entityKind !== "item" && entityKind !== "location" && entityKind !== "faction" && entityKind !== "secret" && entityKind !== "timeline-event") throw new AssistantSessionValidationError(`${label}.entityKind is invalid.`);
       return { ...common, kind, bookId: bookId(), researchPath: repositoryPath(raw.researchPath, `${label}.researchPath`), entityKind, label: text(raw.label, `${label}.label`, 500), body: text(raw.body, `${label}.body`), extraFrontmatter: object(raw.extraFrontmatter, `${label}.extraFrontmatter`), destinationPath: repositoryPath(raw.destinationPath, `${label}.destinationPath`) } as AssistantAction;
+    }
+    case "confirm-cancel-feedback-rewrite": {
+      if (raw.scope !== "chapter" && raw.scope !== "paragraph") throw new AssistantSessionValidationError(`${label}.scope is invalid.`);
+      if (!Number.isSafeInteger(raw.workflowRequestId) || (raw.workflowRequestId as number) < 0) throw new AssistantSessionValidationError(`${label}.workflowRequestId is invalid.`);
+      return { ...common, kind, bookId: bookId(), operationId: identifier(raw.operationId, `${label}.operationId`), scope: raw.scope, chapterSlug: identifier(raw.chapterSlug, `${label}.chapterSlug`), ...(raw.paragraphSlug === undefined ? {} : { paragraphSlug: identifier(raw.paragraphSlug, `${label}.paragraphSlug`) }), workflowRequestId: raw.workflowRequestId as number, ownerSessionId: identifier(raw.ownerSessionId, `${label}.ownerSessionId`), ownerRequestId: identifier(raw.ownerRequestId, `${label}.ownerRequestId`) } as AssistantAction;
     }
     default: throw new AssistantSessionValidationError(`${label}.kind is unknown.`);
   }
@@ -137,6 +148,50 @@ function attachment(value: unknown, label: string): AssistantAttachment {
   }
   if (raw.truncated !== undefined && typeof raw.truncated !== "boolean") throw new AssistantSessionValidationError(`${label}.truncated is invalid.`);
   return { id: identifier(raw.id, `${label}.id`), name: text(raw.name, `${label}.name`, 255), mimeType: text(raw.mimeType, `${label}.mimeType`, 255), kind: raw.kind, sizeBytes: raw.sizeBytes as number, ...(raw.textContent === undefined ? {} : { textContent: text(raw.textContent, `${label}.textContent`) }), ...(raw.imageDataUrl === undefined ? {} : { imageDataUrl: text(raw.imageDataUrl, `${label}.imageDataUrl`, MAX_ASSISTANT_SESSION_BYTES) }), ...(raw.extractedBytes === undefined ? {} : { extractedBytes: raw.extractedBytes as number }), ...(raw.extractedPages === undefined ? {} : { extractedPages: raw.extractedPages as number }), ...(raw.estimatedTokens === undefined ? {} : { estimatedTokens: raw.estimatedTokens as number }), ...(raw.truncated === undefined ? {} : { truncated: raw.truncated as boolean }), ...(raw.truncationReason === undefined ? {} : { truncationReason: text(raw.truncationReason, `${label}.truncationReason`, 10_000) }) };
+}
+
+function losslessSegment(value: unknown, index: number, quarantine: AssistantQuarantinedAction[]): AssistantLosslessSegment {
+  const label = `losslessSegments[${index}]`;
+  const raw = object(value, label);
+  if (!Array.isArray(raw.messages) || raw.messages.length > 10_000 || !Array.isArray(raw.attachments) || raw.attachments.length > 20) throw new AssistantSessionValidationError(`${label} is invalid.`);
+  return {
+    format: raw.format === undefined ? "narrarium-assistant-chat-segment" : raw.format === "narrarium-assistant-chat-segment" ? raw.format : (() => { throw new AssistantSessionValidationError(`${label}.format is invalid.`); })(),
+    version: raw.version === undefined ? 1 : raw.version === 1 ? raw.version : (() => { throw new AssistantSessionValidationError(`${label}.version is invalid.`); })(),
+    id: identifier(raw.id, `${label}.id`),
+    createdAt: timestamp(raw.createdAt, `${label}.createdAt`),
+    ...(raw.previous === undefined ? {} : { previous: segmentRef(raw.previous, `${label}.previous`) }),
+    messages: raw.messages.map((item, messageIndex) => message(item, messageIndex, quarantine)),
+    attachments: raw.attachments.map((item, attachmentIndex) => attachment(item, `${label}.attachments[${attachmentIndex}]`)),
+  };
+}
+
+export function parseAssistantLosslessSegment(value: unknown): AssistantLosslessSegment {
+  const quarantine: AssistantQuarantinedAction[] = [];
+  const segment = losslessSegment(value, 0, quarantine);
+  if (quarantine.length) throw new AssistantSessionValidationError("Lossless segment contains an invalid action.");
+  return segment;
+}
+
+export function serializeAssistantLosslessSegment(segment: AssistantLosslessSegment): string {
+  return JSON.stringify(parseAssistantLosslessSegment(segment));
+}
+
+function segmentRef(value: unknown, label: string): AssistantLosslessSegmentRef {
+  const raw = object(value, label);
+  const sha256 = text(raw.sha256, `${label}.sha256`, 64);
+  if (!/^[a-f0-9]{64}$/.test(sha256)) throw new AssistantSessionValidationError(`${label}.sha256 is invalid.`);
+  return { id: identifier(raw.id, `${label}.id`), sha256 };
+}
+
+function losslessManifest(value: unknown, legacyCount: number): AssistantLosslessArchiveManifest {
+  if (value === undefined) return { version: 1, segmentCount: 0, messageCount: 0, attachmentCount: 0, actionCount: 0, complete: legacyCount === 0, missingRanges: legacyCount ? [{ from: 0, to: legacyCount - 1, reason: "Legacy compaction did not preserve original records." }] : [] };
+  const raw = object(value, "losslessArchive");
+  const actionCount = raw.actionCount ?? 0;
+  if (raw.version !== 1 || !Number.isSafeInteger(raw.segmentCount) || (raw.segmentCount as number) < 0 || !Number.isSafeInteger(raw.messageCount) || (raw.messageCount as number) < 0 || !Number.isSafeInteger(raw.attachmentCount) || (raw.attachmentCount as number) < 0 || !Number.isSafeInteger(actionCount) || (actionCount as number) < 0 || typeof raw.complete !== "boolean" || !Array.isArray(raw.missingRanges) || raw.missingRanges.length > 100) throw new AssistantSessionValidationError("losslessArchive is invalid.");
+  const missingRanges = raw.missingRanges.map((item, index) => { const range = object(item, `losslessArchive.missingRanges[${index}]`); if (!Number.isSafeInteger(range.from) || !Number.isSafeInteger(range.to) || (range.from as number) < 0 || (range.to as number) < (range.from as number)) throw new AssistantSessionValidationError("losslessArchive missing range is invalid."); return { from: range.from as number, to: range.to as number, reason: text(range.reason, `losslessArchive.missingRanges[${index}].reason`, 1000) }; });
+  let origin: AssistantLosslessArchiveManifest["origin"];
+  if (raw.origin !== undefined) { const entry = object(raw.origin, "losslessArchive.origin"); if ((entry.provider !== "google" && entry.provider !== "microsoft") || typeof entry.account !== "string" || !entry.account.trim() || (entry.fileId !== undefined && typeof entry.fileId !== "string")) throw new AssistantSessionValidationError("losslessArchive.origin is invalid."); origin = { provider: entry.provider, account: entry.account, ...(typeof entry.fileId === "string" && entry.fileId ? { fileId: entry.fileId } : {}) }; }
+  return { version: 1, ...(raw.head === undefined ? {} : { head: segmentRef(raw.head, "losslessArchive.head") }), segmentCount: raw.segmentCount as number, messageCount: raw.messageCount as number, attachmentCount: raw.attachmentCount as number, actionCount: actionCount as number, complete: raw.complete, missingRanges, ...(origin ? { origin } : {}) };
 }
 
 function archive(value: unknown): AssistantSessionArchive {
@@ -183,11 +238,19 @@ export function parseAssistantSession(value: unknown, byteLength?: number): Assi
   }) : [];
   const parsedArchive = archive(raw.archive);
   const legacyCount = raw.compactedMessageCount === undefined ? parsedArchive.messageCount : raw.compactedMessageCount;
+  const contentRevision = raw.contentRevision ?? 0;
+  if (!Number.isSafeInteger(contentRevision) || (contentRevision as number) < 0) throw new AssistantSessionValidationError("contentRevision is invalid.");
   if (!Number.isSafeInteger(legacyCount) || (legacyCount as number) < 0) throw new AssistantSessionValidationError("compactedMessageCount is invalid.");
   const parsedMessages = messages.map((item, index) => message(item, index, quarantinedActions));
   const parsedAttachments = attachments.map((item, index) => attachment(item, `attachments[${index}]`));
-  if (new Set(parsedMessages.map((item) => item.id)).size !== parsedMessages.length || new Set(parsedAttachments.map((item) => item.id)).size !== parsedAttachments.length) throw new AssistantSessionValidationError("Session IDs must be unique.");
-  return normalizeAssistantSession({ schemaVersion: 1, id: identifier(raw.id, "session.id"), title: text(raw.title, "session.title", 500), contextTitle: text(raw.contextTitle, "session.contextTitle", 500), updatedAt: timestamp(raw.updatedAt, "session.updatedAt"), messages: parsedMessages, attachments: parsedAttachments, ...(raw.archive === undefined ? {} : { archive: parsedArchive }), compactSummary: raw.compactSummary === undefined ? parsedArchive.summary : text(raw.compactSummary, "session.compactSummary"), compactedMessageCount: legacyCount as number, ...(raw.provenance === undefined ? {} : { provenance: provenance(raw.provenance, "provenance") }), ...(raw.noteSaveOperation === undefined ? {} : { noteSaveOperation: operation(raw.noteSaveOperation) }), quarantinedActions });
+  const segments = raw.losslessSegments === undefined ? [] : Array.isArray(raw.losslessSegments) && raw.losslessSegments.length <= 10_000
+    ? raw.losslessSegments.map((item, index) => losslessSegment(item, index, quarantinedActions))
+    : (() => { throw new AssistantSessionValidationError("losslessSegments is invalid."); })();
+  const allMessageIds = [...segments.flatMap((segment) => segment.messages), ...parsedMessages].map((item) => item.id);
+  const allAttachmentIds = [...segments.flatMap((segment) => segment.attachments), ...parsedAttachments].map((item) => item.id);
+  if (new Set(allMessageIds).size !== allMessageIds.length || new Set(allAttachmentIds).size !== allAttachmentIds.length || new Set(segments.map((segment) => segment.id)).size !== segments.length) throw new AssistantSessionValidationError("Session IDs must be unique.");
+  const manifest = losslessManifest(raw.losslessArchive, legacyCount as number);
+  return normalizeAssistantSession({ schemaVersion: 1, id: identifier(raw.id, "session.id"), title: text(raw.title, "session.title", 500), contextTitle: text(raw.contextTitle, "session.contextTitle", 500), updatedAt: timestamp(raw.updatedAt, "session.updatedAt"), contentRevision: contentRevision as number, messages: parsedMessages, attachments: parsedAttachments, losslessSegments: segments, losslessArchive: manifest, ...(raw.archive === undefined ? {} : { archive: parsedArchive }), compactSummary: raw.compactSummary === undefined ? parsedArchive.summary : text(raw.compactSummary, "session.compactSummary"), compactedMessageCount: legacyCount as number, ...(raw.provenance === undefined ? {} : { provenance: provenance(raw.provenance, "provenance") }), ...(raw.noteSaveOperation === undefined ? {} : { noteSaveOperation: operation(raw.noteSaveOperation) }), quarantinedActions });
 }
 
 export function parseAssistantSessionJson(json: string): AssistantSession {
@@ -198,7 +261,7 @@ export function parseAssistantSessionJson(json: string): AssistantSession {
 
 export function serializeAssistantSession(session: AssistantSession): string {
   const parsed = parseAssistantSession(session);
-  const { fileId: _fileId, revision: _revision, ...persisted } = parsed;
+  const { fileId: _fileId, revision: _revision, losslessSegments: _hydratedSegments, ...persisted } = parsed;
   const result = JSON.stringify(persisted, null, 2);
   if (new TextEncoder().encode(result).length > MAX_ASSISTANT_SESSION_BYTES) throw new AssistantSessionValidationError("Chat session exceeds the size limit.");
   return result;

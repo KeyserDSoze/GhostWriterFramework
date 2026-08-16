@@ -3,9 +3,13 @@ import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { loadCloudSettings, saveCloudSettings, TokenExpiredError } from "./cloudSettingsClient";
 import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
+import { useToast } from "@/components/ui/use-toast";
+import { useTranslation } from "react-i18next";
 
 /** Hook that provides load/save helpers for Google Drive or OneDrive settings. */
 export function useSettings() {
+  const { toast } = useToast();
+  const { t } = useTranslation();
   const { syncStatus, lastSynced } = useSettingsStore();
   const {
     setSettings,
@@ -30,6 +34,7 @@ export function useSettings() {
       if (!ownsLoad()) return;
       setDriveFileId(result.fileId);
       setSettings(result.settings);
+      if (result.diagnostics.length) toast({ title: t("settingsRepair.title"), description: result.diagnostics.join("\n"), variant: "destructive" });
       setLastSynced(new Date().toISOString());
       setCloudLoaded(true);
       setSyncStatus("idle");
@@ -43,7 +48,7 @@ export function useSettings() {
       console.error("Drive load error:", err);
       setSyncStatus("error");
     }
-  }, [setCloudLoaded, setDriveFileId, setLastSynced, setSettings, setSyncStatus]);
+  }, [setCloudLoaded, setDriveFileId, setLastSynced, setSettings, setSyncStatus, t, toast]);
 
   const save = useCallback(async () => {
     // Read token at call time to avoid stale closure

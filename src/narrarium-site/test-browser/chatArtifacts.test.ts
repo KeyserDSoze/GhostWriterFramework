@@ -45,6 +45,8 @@ describe("assistant chat artifacts", () => {
     expect(markdown).toContain("Generated: 2026-08-15T09:00:00.000Z");
     expect(markdown).toContain("plot.md=plot123");
     expect(markdown).toContain("notes.md=missing");
+    expect(markdown).toContain("This human-readable export is not a backup");
+    expect(markdown).toContain("undo snapshots");
     expect(assistantArchiveHistoryLines(session).join("\n")).toContain("Repository: writer/novel");
   });
 

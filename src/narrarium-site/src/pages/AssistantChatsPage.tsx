@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Loader2, Search, Trash2 } from "lucide-react";
+import { Bot, Loader2, Search, Trash2, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,19 +7,21 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import { useAuthStore } from "@/store/authStore";
 import { createEmptyAssistantSession, useAssistantStore, type AssistantSessionMeta } from "@/assistant/store";
-import { deleteAssistantSession, listAssistantSessions, loadAssistantSession } from "@/assistant/chatCloud";
+import { deleteAssistantSession, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
 import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
+import { refreshAssistantSessionIndex, resetAssistantSessionIndex } from "@/assistant/sessionIndex";
+import { migrateAssistantChatArchive, parseAssistantChatArchive } from "@/assistant/chatArchive";
+import { assistantSessionSaveQueue, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
 
 export function AssistantChatsPage() {
   const { t } = useTranslation();
   const { user, accessToken } = useAuthStore();
   const { toast } = useToast();
-  const { setOpen, setCurrentSession } = useAssistantStore();
-  const [sessions, setSessions] = useState<AssistantSessionMeta[]>([]);
-  const [loading, setLoading] = useState(false);
+  const { setOpen, setCurrentSession, sessions, sessionsLoading: loading } = useAssistantStore();
   const [deleting, setDeleting] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const accountRequestsRef = useRef(new Set<AbortController>());
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const filteredSessions = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -32,25 +34,14 @@ export function AssistantChatsPage() {
   useEffect(() => {
     for (const request of accountRequestsRef.current) request.abort();
     accountRequestsRef.current.clear();
-    setSessions([]);
     setQuery("");
     setDeleting(null);
-    setLoading(false);
-    if (!user || !accessToken) return;
+    if (!user || !accessToken) { resetAssistantSessionIndex(null); return; }
     const expectedIdentity = accountIdentity(user);
-    const controller = new AbortController();
-    accountRequestsRef.current.add(controller);
-    setLoading(true);
-    void listAssistantSessions(user.provider, accessToken, { signal: controller.signal, isCurrent: () => isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user) })
-      .then((items) => { if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setSessions(items); })
+    void refreshAssistantSessionIndex(user.provider, accessToken, expectedIdentity!)
       .catch((err) => {
-        if (!controller.signal.aborted) toast({ title: t("assistant.toastLoadChatsFailed"), description: String(err), variant: "destructive" });
-      })
-      .finally(() => {
-        accountRequestsRef.current.delete(controller);
-        if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setLoading(false);
+        if (!(err instanceof DOMException && err.name === "AbortError") && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) toast({ title: t("assistant.toastLoadChatsFailed"), description: String(err), variant: "destructive" });
       });
-    return () => { controller.abort(); accountRequestsRef.current.delete(controller); };
   }, [user, accessToken, toast, t]);
 
   async function openSession(fileId: string) {
@@ -58,7 +49,6 @@ export function AssistantChatsPage() {
     const expectedIdentity = accountIdentity(user);
     const controller = new AbortController();
     accountRequestsRef.current.add(controller);
-    setLoading(true);
     try {
       const loaded = await loadAssistantSession(user.provider, accessToken, fileId, controller.signal);
       if (controller.signal.aborted || !isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
@@ -68,7 +58,6 @@ export function AssistantChatsPage() {
       if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) toast({ title: t("assistant.toastOpenChatFailed"), description: String(err), variant: "destructive" });
     } finally {
       accountRequestsRef.current.delete(controller);
-      if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setLoading(false);
     }
   }
 
@@ -79,14 +68,65 @@ export function AssistantChatsPage() {
     const expectedIdentity = accountIdentity(user);
     const controller = new AbortController();
     accountRequestsRef.current.add(controller);
+    const current = useAssistantStore.getState().currentSession;
+    const deletingCurrent = current?.id === session.id || current?.fileId === session.fileId;
     try {
-      await deleteAssistantSession(user.provider, accessToken, session.fileId, controller.signal);
-      if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setSessions((current) => current.filter((entry) => entry.fileId !== session.fileId));
+      await assistantSessionSaveQueue.retire(session.id);
+      if (deletingCurrent) useAssistantStore.getState().setCurrentSession(null);
+      await deleteAssistantSession(user.provider, accessToken, session.fileId, controller.signal, session.id);
+      if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
+        const state = useAssistantStore.getState();
+        state.setSessions(state.sessions.filter((entry) => entry.fileId !== session.fileId));
+      }
     } catch (err) {
+      assistantSessionSaveQueue.resume(session.id);
+      if (deletingCurrent && current && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) useAssistantStore.getState().setCurrentSession(current);
       if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) toast({ title: t("assistant.toastDeleteChatFailed"), description: String(err), variant: "destructive" });
     } finally {
       accountRequestsRef.current.delete(controller);
       if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setDeleting(null);
+    }
+  }
+
+  async function importArchive(file: File | undefined) {
+    if (!file || !user || !accessToken) return;
+    const expectedIdentity = accountIdentity(user);
+    const expectedToken = accessToken;
+    const controller = new AbortController();
+    accountRequestsRef.current.add(controller);
+    const isCurrent = () => !controller.signal.aborted && expectedToken === useAuthStore.getState().accessToken && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user);
+    try {
+      const archive = await parseAssistantChatArchive(JSON.parse(await file.text()));
+      if (!isCurrent()) return;
+      const currentAccount = user.email.trim().toLocaleLowerCase();
+      if ((archive.provider.type !== user.provider || archive.provider.account.trim().toLocaleLowerCase() !== currentAccount)
+        && !window.confirm(t("assistant.importChatAccountConfirm", { account: archive.provider.account }))) return;
+      let knownIds = sessions.map((entry) => entry.id);
+      let imported = migrateAssistantChatArchive(archive, knownIds);
+      let handle;
+      for (let attempt = 0; ; attempt += 1) {
+        if (!isCurrent()) return;
+        try { handle = await saveAssistantSession(user.provider, expectedToken, imported, controller.signal); break; }
+        catch (error) {
+          if (attempt >= 2 || !(error && typeof error === "object" && "code" in error && error.code === "ASSISTANT_SESSION_CONFLICT")) throw error;
+          await refreshAssistantSessionIndex(user.provider, expectedToken, expectedIdentity!);
+          if (!isCurrent()) return;
+          knownIds = useAssistantStore.getState().sessions.map((entry) => entry.id);
+          imported = migrateAssistantChatArchive(archive, [...knownIds, imported.id]);
+        }
+      }
+      if (!isCurrent()) return;
+      const saved = { ...imported, ...handle, losslessSegments: [] };
+      const state = useAssistantStore.getState();
+      state.setSessions(upsertAssistantSessionMeta(state.sessions, saved, handle));
+      state.setCurrentSession(saved);
+      state.setOpen(true);
+      toast({ title: t("assistant.importChatComplete") });
+    } catch (err) {
+      if (isCurrent()) toast({ title: t("assistant.importChatFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      accountRequestsRef.current.delete(controller);
+      if (importInputRef.current) importInputRef.current.value = "";
     }
   }
 
@@ -102,10 +142,11 @@ export function AssistantChatsPage() {
           <h1 className="font-serif text-3xl font-semibold tracking-tight">{t("chats.title")}</h1>
           <p className="text-muted-foreground">{t("chats.subtitle")}</p>
         </div>
-        <Button onClick={newChat}>
-          <Bot className="mr-2 h-4 w-4" />
-          {t("assistant.new")}
-        </Button>
+        <div className="flex gap-2">
+          <input ref={importInputRef} type="file" accept=".json,application/json" className="hidden" onChange={(event) => void importArchive(event.target.files?.[0])} />
+          <Button variant="outline" onClick={() => importInputRef.current?.click()}><Upload className="mr-2 h-4 w-4" />{t("assistant.importChatArchive")}</Button>
+          <Button onClick={newChat}><Bot className="mr-2 h-4 w-4" />{t("assistant.new")}</Button>
+        </div>
       </div>
 
       {sessions.length > 0 && (
