@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.39",
+    "date": "2026-08-17",
+    "en": {
+      "title": "Google Drive login restored",
+      "summary": "This hotfix restores settings loading after Google login and strengthens revision detection for both Google Drive and OneDrive.",
+      "changes": [
+        "Loaded Google Drive settings using the file version returned in Drive metadata instead of requiring a browser-inaccessible ETag response header.",
+        "Kept conflict protection by checking the Google file version before and after downloads and immediately before and after settings updates.",
+        "Accepted OneDrive revisions from eTag, @odata.etag, response headers, or a verified follow-up metadata lookup, never persisting an empty revision.",
+        "Added regression coverage for headerless Google responses, stale and ambiguous Google updates, and all supported OneDrive revision response shapes."
+      ]
+    },
+    "it": {
+      "title": "Login Google Drive ripristinata",
+      "summary": "Questo hotfix ripristina il caricamento delle impostazioni dopo la login Google e rafforza il rilevamento delle revisioni per Google Drive e OneDrive.",
+      "changes": [
+        "Caricate le impostazioni Google Drive usando la versione file restituita nei metadata Drive invece di richiedere un header ETag non accessibile dal browser.",
+        "Mantenuta la protezione dai conflitti controllando la versione Google prima e dopo i download e immediatamente prima e dopo gli aggiornamenti delle impostazioni.",
+        "Accettate le revisioni OneDrive da eTag, @odata.etag, header di risposta o lookup metadata verificato, senza mai persistere una revisione vuota.",
+        "Aggiunti test di regressione per risposte Google senza header, aggiornamenti Google stale o ambigui e tutte le forme supportate di revisione OneDrive."
+      ]
+    }
+  },
+  {
     "version": "0.76.38",
     "date": "2026-08-17",
     "en": {
