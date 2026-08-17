@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.42",
+    "date": "2026-08-17",
+    "en": {
+      "title": "Patch notes route restored",
+      "summary": "This hotfix restores direct and post-update access to Narrarium routes on GitHub Pages.",
+      "changes": [
+        "Published physical HTML entry points for the app root, login, and patch-notes routes so direct navigation returns HTTP 200 instead of a GitHub Pages 404 fallback.",
+        "Reloaded the served site root when activating an update before navigating internally to patch notes, preventing failed PWA reloads on nested routes.",
+        "Added a build regression test that verifies every required static entry point is generated from the current application bundle."
+      ]
+    },
+    "it": {
+      "title": "Route delle note di versione ripristinata",
+      "summary": "Questo hotfix ripristina l'accesso diretto e post-aggiornamento alle route Narrarium su GitHub Pages.",
+      "changes": [
+        "Pubblicati entry point HTML fisici per root app, login e note di versione, cosi la navigazione diretta restituisce HTTP 200 invece del fallback 404 di GitHub Pages.",
+        "Ricaricata la root servita del sito durante l'attivazione di un aggiornamento prima della navigazione interna alle note, evitando reload PWA falliti su route annidate.",
+        "Aggiunto un test di regressione del build che verifica la generazione di ogni entry point statico richiesto dal bundle applicativo corrente."
+      ]
+    }
+  },
+  {
     "version": "0.76.41",
     "date": "2026-08-17",
     "en": {

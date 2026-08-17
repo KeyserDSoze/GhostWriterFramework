@@ -32,6 +32,10 @@ export function registerServiceWorker() {
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (refreshing) return;
     refreshing = true;
+    if (sessionStorage.getItem(OPEN_PATCH_NOTES_AFTER_UPDATE_KEY) === "1") {
+      window.location.replace(import.meta.env.BASE_URL || "/");
+      return;
+    }
     window.location.reload();
   });
 
