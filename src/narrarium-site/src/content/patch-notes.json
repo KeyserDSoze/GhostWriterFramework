@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.40",
+    "date": "2026-08-17",
+    "en": {
+      "title": "Existing local books restored",
+      "summary": "This hotfix restores local books created before immutable account identities, prevents unnecessary recloning, and stabilizes clone and synchronization status.",
+      "changes": [
+        "Detected legacy email-scoped working copies before starting a new clone and offered an explicit, freshly authenticated recovery into the current immutable account.",
+        "Migrated repository files, commits, logs, recoveries, and rewrite operations in place without downloading the book again or deleting the legacy copy before completion.",
+        "Preserved both copies whenever a newer competing clone contains any local work, while replacing only strictly verified disposable clones.",
+        "Made interrupted recovery resumable, protected rewrite-operation collisions, and prevented concurrent page loads from starting duplicate clone operations.",
+        "Kept clone progress visible through final database commit and read repository status atomically, removing clean/incomplete flicker and endless loading skeletons."
+      ]
+    },
+    "it": {
+      "title": "Libri locali esistenti ripristinati",
+      "summary": "Questo hotfix ripristina i libri locali creati prima delle identita account immutabili, evita reclone non necessari e stabilizza lo stato di clone e sincronizzazione.",
+      "changes": [
+        "Rilevate le copie di lavoro legacy indicizzate per email prima di avviare un nuovo clone e offerto un recupero esplicito, con nuova autenticazione, nell'account immutabile corrente.",
+        "Migrati in-place file repository, commit, log, recovery e operazioni di rewrite senza riscaricare il libro o eliminare la copia legacy prima del completamento.",
+        "Conservate entrambe le copie quando un clone concorrente piu recente contiene qualsiasi lavoro locale, sostituendo soltanto clone strettamente verificati come usa-e-getta.",
+        "Reso ripristinabile un recovery interrotto, protette le collisioni delle operazioni di rewrite e impedito ai caricamenti concorrenti della pagina di avviare clone duplicati.",
+        "Mantenuto visibile l'avanzamento clone fino al commit finale nel database e letto atomicamente lo stato repository, eliminando il lampeggio pulito/incompleto e gli skeleton infiniti."
+      ]
+    }
+  },
+  {
     "version": "0.76.39",
     "date": "2026-08-17",
     "en": {

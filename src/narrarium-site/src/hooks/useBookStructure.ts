@@ -2,7 +2,6 @@ import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
-import { loadBookStructure } from "@/github/githubClient";
 import { ensureAuthoritativePersonalBranch, resolveAuthoritativeBranch } from "@/github/branchResolution";
 import { resolveBookToken } from "@/types/settings";
 import { ensureLocalBookStructure, fetchRemoteStatus, getExistingLocalBookStructure, pullRemoteChanges, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
@@ -71,7 +70,7 @@ export function useBookStructure(bookId: string | undefined) {
           // When online, re-fetch any files missing from an interrupted clone before serving it.
           if (local.meta.cloneComplete !== true && navigator.onLine) {
             try {
-              const repaired = await verifyAndRepairLocalRepository({ meta: local.meta, token, accountIdentity: expectedIdentity, onProgress: (p) => { if (ownsLoad()) setCloneProgress(resolvedBookId, p); } });
+              const repaired = await verifyAndRepairLocalRepository({ meta: local.meta, token, accountIdentity: expectedIdentity, onProgress: (p) => { if (ownsLoad()) setCloneProgress(resolvedBookId, { ...p, phase: p.phase ?? "repairing" }); } });
               nextStructure = repaired.structure;
             } catch {
               nextStructure = local.structure;
@@ -106,14 +105,7 @@ export function useBookStructure(bookId: string | undefined) {
           }
         }
       } catch (localError) {
-        try {
-          const nextStructure = await loadBookStructure(token, book.owner, book.repo, authoritativeBranch);
-          if (!ownsLoad()) return;
-          setStructure(resolvedBookId, nextStructure, generation);
-          setError(resolvedBookId, "");
-        } catch (err) {
-          if (ownsLoad()) setError(resolvedBookId, err instanceof Error ? err.message : localError instanceof Error ? localError.message : t("common.loadFailed"));
-        }
+        if (ownsLoad()) setError(resolvedBookId, localError instanceof Error ? localError.message : t("common.loadFailed"));
       } finally {
         if (!ownsLoad()) return;
         setCloneProgress(resolvedBookId, undefined);

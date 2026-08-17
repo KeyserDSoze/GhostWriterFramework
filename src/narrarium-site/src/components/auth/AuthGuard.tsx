@@ -10,7 +10,7 @@ import { ensureMsalInitialized, findMicrosoftAccount, microsoftSilentRequest } f
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 import { WanderingAuthGhost } from "@/components/auth/WanderingAuthGhost";
-import { accountIdentity, isAccountIdentityCurrent, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
+import { accountIdentity, beginLegacyAccountUpgrade, isAccountIdentityCurrent, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -18,12 +18,10 @@ interface AuthGuardProps {
 
 type Status = "checking" | "ok" | "offline" | "unauthenticated";
 const SILENT_AUTH_TIMEOUT_MS = 4000;
-const LEGACY_MICROSOFT_EMAIL_KEY = "narrarium-legacy-microsoft-email";
-const LEGACY_GOOGLE_EMAIL_KEY = "narrarium-legacy-google-email";
 
 export function AuthGuard({ children }: AuthGuardProps) {
   const { t } = useTranslation();
-  const { accessToken, accessTokenExpiry, user, setAuth, clearAuth } =
+  const { accessToken, accessTokenExpiry, user, setAuth, clearAuth, clearAuthForLegacyUpgrade } =
     useAuthStore();
   const { instance } = useMsal();
   const location = useLocation();
@@ -131,9 +129,9 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
     const immutableIdentity = Boolean(user?.providerAccountId?.trim()) && (user?.provider !== "microsoft" || Boolean(user.homeAccountId?.trim() && user.localAccountId?.trim()));
     if (user && !immutableIdentity) {
-      sessionStorage.setItem(user.provider === "google" ? LEGACY_GOOGLE_EMAIL_KEY : LEGACY_MICROSOFT_EMAIL_KEY, user.email.trim().toLowerCase());
+      beginLegacyAccountUpgrade(user);
       clearSilentAuthTimeout();
-      clearAuth();
+      clearAuthForLegacyUpgrade();
       setStatus("unauthenticated");
     } else if (tokenValid) {
       clearSilentAuthTimeout();
@@ -169,7 +167,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
       clearSilentAuthTimeout();
       setStatus("unauthenticated");
     }
-  }, [accessToken, accessTokenExpiry, clearAuth, instance, setAuth, silentAttemptNonce, silentLogin, user]);
+  }, [accessToken, accessTokenExpiry, clearAuth, clearAuthForLegacyUpgrade, instance, setAuth, silentAttemptNonce, silentLogin, user]);
 
   useEffect(() => () => {
     silentAttemptActiveRef.current = false;

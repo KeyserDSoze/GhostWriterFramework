@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import { startInteractiveLegacyRecoveryLogin } from "@/components/auth/LoginScreen";
 import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { createFile, readFileWithSha, slugToTitle, updateFile } from "@/github/githubClient";
@@ -300,6 +301,7 @@ export function BookPage() {
             <Button size="sm" variant="outline" onClick={() => reload()}>
               {t("common.reloadBook")}
             </Button>
+            {error.includes("interactive sign-in") && <Button size="sm" onClick={startInteractiveLegacyRecoveryLogin}>Sign in again to recover</Button>}
           </AlertDescription>
         </Alert>
       )}

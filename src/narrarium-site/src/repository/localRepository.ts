@@ -10,12 +10,13 @@ import {
   type ParagraphArtifactMetadata,
   type ParagraphArtifactTarget,
 } from "@/narrarium/paragraphArtifacts";
-import { accountIdentity } from "@/auth/accountIdentity";
+import { accountIdentity, beginStrandedLegacyRecovery, consumeLegacyAccountUpgradeEvidence, getLegacyAccountUpgradeEvidence, legacyEmailAccountIdentity } from "@/auth/accountIdentity";
+import { finalizeLegacyRewriteOperationMigration, inspectLegacyRewriteOperationMigration, prepareLegacyRewriteOperationMigration } from "@/repository/localRewriteOperationStore";
 import { useAuthStore } from "@/store/authStore";
-import { assertRepositoryOperationScopeCurrent, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
+import { assertRepositoryOperationScopeCurrent, captureRepositoryOperationScope, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 const DB_NAME = "narrarium-local-repositories";
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 export type LocalFileStatus = "clean" | "modified" | "new" | "deleted";
 export type LocalFileKind = "text" | "binary";
@@ -145,6 +146,34 @@ export interface LocalRepositoryRecovery {
   commits: LocalCommit[];
 }
 
+interface RepositoryMigrationJournal {
+  id: string;
+  oldRepoId: string;
+  newRepoId: string;
+  bookId: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  legacyAccountIdentity: string;
+  immutableAccountIdentity: string;
+  phase: "prepared" | "primary-rekeyed";
+  createdAt: string;
+  replaceDisposableTarget?: boolean;
+}
+
+type RepositoryMigrationCrashPhase = "journal" | "rewrite-prepared" | "primary-rekeyed" | "rewrite-finalized";
+let nextRepositoryMigrationCrash: RepositoryMigrationCrashPhase | null = null;
+
+export function crashNextRepositoryMigrationForTests(phase: RepositoryMigrationCrashPhase): void {
+  nextRepositoryMigrationCrash = phase;
+}
+
+function simulateRepositoryMigrationCrash(phase: RepositoryMigrationCrashPhase): void {
+  if (nextRepositoryMigrationCrash !== phase) return;
+  nextRepositoryMigrationCrash = null;
+  throw new Error(`Simulated repository migration crash after ${phase}.`);
+}
+
 function activeAccountScope(): string | null {
   return accountIdentity(useAuthStore.getState().user);
 }
@@ -165,6 +194,15 @@ export class LocalCloneAlreadyInProgressError extends Error {
   constructor() {
     super("A local clone is already in progress for this repository.");
     this.name = "LocalCloneAlreadyInProgressError";
+  }
+}
+
+export class LegacyRepositoryMigrationRequiredError extends Error {
+  readonly code = "LEGACY_REPOSITORY_MIGRATION_REQUIRED";
+
+  constructor(message = "Legacy local recovery requires fresh interactive provider authentication and explicit adoption confirmation. Narrarium preserved every local copy and did not start another clone.") {
+    super(message);
+    this.name = "LegacyRepositoryMigrationRequiredError";
   }
 }
 
@@ -275,6 +313,7 @@ function openDb(): Promise<IDBDatabase> {
         const recoveries = db.createObjectStore("recoveries", { keyPath: "id" });
         recoveries.createIndex("repoId", "repoId", { unique: false });
       }
+      if (!db.objectStoreNames.contains("migrationJournals")) db.createObjectStore("migrationJournals", { keyPath: "id" });
     };
   }).catch((error) => {
     dbPromise = null;
@@ -636,6 +675,169 @@ export async function getLocalRepository(owner: string, repo: string, branch: st
   const scopedId = repoId(owner, repo, branch, scope);
   const scoped = await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(scopedId));
   return scoped?.accountScope === scope ? scoped : null;
+}
+
+/** Re-key a proven pre-0.76.38 email-scoped working copy without copying or downloading content. */
+export async function adoptLegacyEmailScopedRepository(input: {
+  bookId: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  scope: RepositoryOperationScope;
+}): Promise<LocalRepositoryMeta | null> {
+  assertRepositoryOperationScopeCurrent(input.scope);
+  const user = useAuthStore.getState().user;
+  if (!user || accountIdentity(user) !== input.scope.accountIdentity) throw new RepositoryOwnershipChangedError();
+  const legacyScope = legacyEmailAccountIdentity(user);
+  const oldId = repoId(input.owner, input.repo, input.branch, legacyScope);
+  const newId = repoId(input.owner, input.repo, input.branch, input.scope.accountIdentity);
+  const resumed = await resumeRepositoryMigrationForTarget(oldId, newId, input.scope);
+  if (resumed) return resumed;
+  const legacy = await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(oldId));
+  const exact = legacy?.id === oldId && legacy.accountScope === legacyScope && legacy.bookId === input.bookId
+    && legacy.owner === input.owner && legacy.repo === input.repo && legacy.branch === input.branch;
+  if (!legacy) {
+    const candidates = await allFromIndex<LocalRepositoryMeta>("repositories", "remote", IDBKeyRange.only([input.owner, input.repo, input.branch]));
+    if (candidates.some((row) => row.bookId === input.bookId && row.id !== newId)) throw new LegacyRepositoryMigrationRequiredError();
+    return null;
+  }
+  if (!exact) throw new LegacyRepositoryMigrationRequiredError();
+  const evidence = getLegacyAccountUpgradeEvidence(user, input.scope.accountIdentity);
+  if (!evidence) {
+    beginStrandedLegacyRecovery(user, legacyScope);
+    throw new LegacyRepositoryMigrationRequiredError("A legacy local working copy was found. Fresh interactive sign-in with this same provider account is required before recovery. Open Sign in again, then retry; no clone will start.");
+  }
+  const rewrites = await inspectLegacyRewriteOperationMigration({ oldRepoId: oldId, newRepoId: newId, legacyAccountIdentity: legacyScope, immutableAccountIdentity: input.scope.accountIdentity });
+  if (rewrites.collisions.length || rewrites.targetCount) throw new LegacyRepositoryMigrationRequiredError("Rewrite-operation records exist in both local copies or share an operation ID. Narrarium preserved both copies; export them before manual recovery.");
+  const targetDisposition = await inspectCompetingImmutableRepository(newId, input.scope.accountIdentity);
+  if (targetDisposition === "preserve") throw new LegacyRepositoryMigrationRequiredError("Both the legacy working copy and a newer local copy contain data that may be user-owned. Narrarium preserved both. Keep the newer clone or export both copies before choosing a manual recovery; automatic adoption is blocked.");
+  if (!window.confirm("Narrarium found a pre-upgrade local working copy for this email. Provider email history cannot prove that a recreated same-email account is the original account. Adopt the legacy copy now? Decline to preserve both copies and retry later.")) throw new LegacyRepositoryMigrationRequiredError("Legacy adoption was declined. The working copy and fresh authentication proof were preserved so you can retry; no competing clone will start.");
+  const journal: RepositoryMigrationJournal = { id: evidence.nonce, oldRepoId: oldId, newRepoId: newId, bookId: input.bookId, owner: input.owner, repo: input.repo, branch: input.branch, legacyAccountIdentity: legacyScope, immutableAccountIdentity: input.scope.accountIdentity, phase: "prepared", createdAt: new Date().toISOString(), replaceDisposableTarget: targetDisposition === "replace" };
+  await txStore("migrationJournals", "readwrite", (store) => store.add(journal));
+  simulateRepositoryMigrationCrash("journal");
+  await prepareLegacyRewriteOperationMigration({ journalId: journal.id, oldRepoId: oldId, newRepoId: newId, legacyAccountIdentity: legacyScope, immutableAccountIdentity: input.scope.accountIdentity });
+  simulateRepositoryMigrationCrash("rewrite-prepared");
+  return completeRepositoryMigration(journal, input.scope);
+}
+
+async function inspectCompetingImmutableRepository(newRepoId: string, immutableIdentity: string): Promise<"none" | "replace" | "preserve"> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(["repositories", "files", "commits", "logs", "recoveries"], "readonly");
+    const requests = {
+      repository: tx.objectStore("repositories").get(newRepoId),
+      files: tx.objectStore("files").index("repoId").getAll(newRepoId),
+      commits: tx.objectStore("commits").index("repoId").getAll(newRepoId),
+      logs: tx.objectStore("logs").index("repoId").getAll(newRepoId),
+      recoveries: tx.objectStore("recoveries").index("repoId").getAll(newRepoId),
+    };
+    Promise.all(Object.values(requests).map((request) => new Promise<unknown>((done, fail) => { request.onsuccess = () => done(request.result); request.onerror = () => fail(request.error); })))
+      .then(async ([repositoryValue, filesValue, commitsValue, logsValue, recoveriesValue]) => {
+        const repository = repositoryValue as LocalRepositoryMeta | undefined;
+        if (!repository) { resolve("none"); return; }
+        const files = filesValue as LocalRepositoryFile[];
+        const commits = commitsValue as LocalCommit[];
+        const logs = logsValue as LocalRepoLogEntry[];
+        const recoveries = recoveriesValue as LocalRepositoryRecovery[];
+        const rewrites = await inspectLegacyRewriteOperationMigration({ oldRepoId: "", newRepoId, legacyAccountIdentity: "", immutableAccountIdentity: immutableIdentity });
+        const filesAreRemoteMirrors = files.every((file) => file.status === "clean" && !file.committed && Boolean(file.baseSha) && Boolean(file.baseHash) && file.currentHash === file.baseHash);
+        const hasMutationLog = logs.some((log) => ["commit", "push", "pull", "backup", "reset"].includes(log.kind));
+        resolve(repository.accountScope === immutableIdentity && filesAreRemoteMirrors && commits.length === 0 && recoveries.length === 0 && rewrites.targetCount === 0 && !hasMutationLog ? "replace" : "preserve");
+      }).catch(reject);
+  });
+}
+
+async function completeRepositoryMigration(journal: RepositoryMigrationJournal, scope: RepositoryOperationScope): Promise<LocalRepositoryMeta> {
+  assertRepositoryOperationScopeCurrent(scope);
+  if (journal.immutableAccountIdentity !== scope.accountIdentity) throw new RepositoryOwnershipChangedError();
+  const db = await openDb();
+  const stores = ["repositories", "files", "commits", "logs", "recoveries", "migrationJournals"].filter((name) => db.objectStoreNames.contains(name));
+  if (journal.phase === "prepared") await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(stores, "readwrite");
+    const repositories = tx.objectStore("repositories");
+    let validationError: Error | null = null;
+    const legacyRequest = repositories.get(journal.oldRepoId);
+    const currentRequest = repositories.get(journal.newRepoId);
+    let legacy: LocalRepositoryMeta | undefined;
+    let current: LocalRepositoryMeta | undefined;
+    let loaded = 0;
+    let targetFiles: LocalRepositoryFile[] = [];
+    let targetCommits: LocalCommit[] = [];
+    let targetLogs: LocalRepoLogEntry[] = [];
+    let targetRecoveries: LocalRepositoryRecovery[] = [];
+    const apply = () => {
+      if (++loaded !== 6) return;
+      try { assertRepositoryOperationScopeCurrent(scope); } catch (error) { validationError = error as Error; tx.abort(); return; }
+      if (!legacy || legacy.bookId !== journal.bookId || legacy.accountScope !== journal.legacyAccountIdentity) { validationError = new RepositoryOwnershipChangedError(); tx.abort(); return; }
+      if (current) {
+        const disposable = journal.replaceDisposableTarget && current.accountScope === journal.immutableAccountIdentity
+          && targetFiles.every((file) => file.status === "clean" && !file.committed && Boolean(file.baseSha) && Boolean(file.baseHash) && file.currentHash === file.baseHash)
+          && targetCommits.length === 0 && targetRecoveries.length === 0
+          && !targetLogs.some((log) => ["commit", "push", "pull", "backup", "reset"].includes(log.kind));
+        if (!disposable) { validationError = new LegacyRepositoryMigrationRequiredError("The competing local copy changed during recovery. Both copies were preserved."); tx.abort(); return; }
+        for (const file of targetFiles) tx.objectStore("files").delete(file.key);
+        for (const commit of targetCommits) tx.objectStore("commits").delete(commit.id);
+        for (const log of targetLogs) tx.objectStore("logs").delete(log.id);
+        for (const recovery of targetRecoveries) tx.objectStore("recoveries").delete(recovery.id);
+        repositories.delete(journal.newRepoId);
+      }
+      repositories.add({ ...legacy, id: journal.newRepoId, accountScope: journal.immutableAccountIdentity, updatedAt: new Date().toISOString() });
+        const rekey = <T extends { repoId: string }>(storeName: string, update: (row: T) => T) => {
+          if (!stores.includes(storeName)) return;
+          const store = tx.objectStore(storeName);
+          const request = store.index("repoId").openCursor(IDBKeyRange.only(journal.oldRepoId));
+          request.onsuccess = () => { const cursor = request.result; if (!cursor) return; store.delete(cursor.primaryKey); store.put(update(cursor.value as T)); cursor.continue(); };
+          request.onerror = () => tx.abort();
+        };
+        rekey<LocalRepositoryFile>("files", (row) => ({ ...row, repoId: journal.newRepoId, key: fileKey(journal.newRepoId, row.path) }));
+        rekey<LocalCommit>("commits", (row) => ({ ...row, repoId: journal.newRepoId }));
+        rekey<LocalRepoLogEntry>("logs", (row) => ({ ...row, repoId: journal.newRepoId }));
+        rekey<LocalRepositoryRecovery>("recoveries", (row) => ({ ...row, repoId: journal.newRepoId, accountIdentity: journal.immutableAccountIdentity, repository: { ...row.repository, id: journal.newRepoId, accountScope: journal.immutableAccountIdentity }, files: row.files.map((file) => ({ ...file, repoId: journal.newRepoId, key: fileKey(journal.newRepoId, file.path) })), commits: row.commits.map((commit) => ({ ...commit, repoId: journal.newRepoId })) }));
+        repositories.delete(journal.oldRepoId);
+      tx.objectStore("migrationJournals").put({ ...journal, phase: "primary-rekeyed" });
+    };
+    legacyRequest.onsuccess = () => { legacy = legacyRequest.result as LocalRepositoryMeta | undefined; apply(); };
+    currentRequest.onsuccess = () => { current = currentRequest.result as LocalRepositoryMeta | undefined; apply(); };
+    const targetFilesRequest = tx.objectStore("files").index("repoId").getAll(journal.newRepoId);
+    const targetCommitsRequest = tx.objectStore("commits").index("repoId").getAll(journal.newRepoId);
+    const targetLogsRequest = tx.objectStore("logs").index("repoId").getAll(journal.newRepoId);
+    const targetRecoveriesRequest = tx.objectStore("recoveries").index("repoId").getAll(journal.newRepoId);
+    targetFilesRequest.onsuccess = () => { targetFiles = targetFilesRequest.result as LocalRepositoryFile[]; apply(); };
+    targetCommitsRequest.onsuccess = () => { targetCommits = targetCommitsRequest.result as LocalCommit[]; apply(); };
+    targetLogsRequest.onsuccess = () => { targetLogs = targetLogsRequest.result as LocalRepoLogEntry[]; apply(); };
+    targetRecoveriesRequest.onsuccess = () => { targetRecoveries = targetRecoveriesRequest.result as LocalRepositoryRecovery[]; apply(); };
+    legacyRequest.onerror = currentRequest.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve(); tx.onerror = () => reject(validationError ?? tx.error); tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Repository migration was aborted."));
+  });
+  if (journal.phase === "prepared") simulateRepositoryMigrationCrash("primary-rekeyed");
+  await finalizeLegacyRewriteOperationMigration({ journalId: journal.id, oldRepoId: journal.oldRepoId, newRepoId: journal.newRepoId, immutableAccountIdentity: journal.immutableAccountIdentity });
+  simulateRepositoryMigrationCrash("rewrite-finalized");
+  await txStore("migrationJournals", "readwrite", (store) => store.delete(journal.id));
+  const user = useAuthStore.getState().user;
+  if (user) consumeLegacyAccountUpgradeEvidence(user, journal.immutableAccountIdentity, journal.id);
+  const repository = await getLocalRepositoryById(journal.newRepoId, scope.accountIdentity);
+  if (!repository) throw new RepositoryOwnershipChangedError();
+  return repository;
+}
+
+async function resumeRepositoryMigrationForTarget(oldRepoId: string, newRepoId: string, scope: RepositoryOperationScope): Promise<LocalRepositoryMeta | null> {
+  const journals = await txStore<RepositoryMigrationJournal[]>("migrationJournals", "readonly", (store) => store.getAll());
+  const journal = journals.find((entry) => entry.oldRepoId === oldRepoId && entry.newRepoId === newRepoId);
+  if (!journal) return null;
+  if (journal.immutableAccountIdentity !== scope.accountIdentity) throw new LegacyRepositoryMigrationRequiredError();
+  await prepareLegacyRewriteOperationMigration({ journalId: journal.id, oldRepoId: journal.oldRepoId, newRepoId: journal.newRepoId, legacyAccountIdentity: journal.legacyAccountIdentity, immutableAccountIdentity: journal.immutableAccountIdentity });
+  return completeRepositoryMigration(journal, scope);
+}
+
+export async function resumeCurrentAccountRepositoryMigrations(): Promise<void> {
+  const identity = activeAccountScope();
+  if (!identity) return;
+  const scope = captureRepositoryOperationScope();
+  const journals = await txStore<RepositoryMigrationJournal[]>("migrationJournals", "readonly", (store) => store.getAll());
+  for (const journal of journals.filter((entry) => entry.immutableAccountIdentity === identity)) {
+    await prepareLegacyRewriteOperationMigration({ journalId: journal.id, oldRepoId: journal.oldRepoId, newRepoId: journal.newRepoId, legacyAccountIdentity: journal.legacyAccountIdentity, immutableAccountIdentity: journal.immutableAccountIdentity });
+    await completeRepositoryMigration(journal, scope);
+  }
 }
 
 export async function getLocalRepositoryById(repoIdValue: string, scope: string): Promise<LocalRepositoryMeta | null> {
@@ -1230,6 +1432,34 @@ export async function localStatus(repoIdValue: string): Promise<LocalRepoStatus>
   out.dirty = out.modified + out.new + out.deleted;
   out.ahead = (await listUnpushedLocalCommits(repoIdValue)).length;
   return out;
+}
+
+export async function getLocalRepositoryStatusSnapshot(owner: string, repo: string, branch: string, scope: string): Promise<{ meta: LocalRepositoryMeta; status: LocalRepoStatus } | null> {
+  if (!isCurrentAccountScope(scope)) return null;
+  const id = repoId(owner, repo, branch, scope);
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(["repositories", "files", "commits"], "readonly");
+    const repositoryRequest = tx.objectStore("repositories").get(id);
+    const filesRequest = tx.objectStore("files").index("repoId").getAll(id);
+    const commitsRequest = tx.objectStore("commits").index("repoId").getAll(id);
+    let meta: LocalRepositoryMeta | undefined;
+    let files: LocalRepositoryFile[] | undefined;
+    let commits: LocalCommit[] | undefined;
+    const finish = () => {
+      if (!files || !commits || repositoryRequest.readyState !== "done") return;
+      if (!meta || meta.accountScope !== scope || !isCurrentAccountScope(scope)) { resolve(null); return; }
+      const status: LocalRepoStatus = { clean: 0, modified: 0, new: 0, deleted: 0, dirty: 0, ahead: commits.filter((commit) => !commit.pushed).length };
+      for (const file of files) if (file.status === "clean" || !file.committed) status[file.status] += 1;
+      status.dirty = status.modified + status.new + status.deleted;
+      resolve({ meta, status });
+    };
+    repositoryRequest.onsuccess = () => { meta = repositoryRequest.result as LocalRepositoryMeta | undefined; finish(); };
+    filesRequest.onsuccess = () => { files = filesRequest.result as LocalRepositoryFile[]; finish(); };
+    commitsRequest.onsuccess = () => { commits = commitsRequest.result as LocalCommit[]; finish(); };
+    repositoryRequest.onerror = filesRequest.onerror = commitsRequest.onerror = () => reject(tx.error ?? new Error("Local repository status could not be read."));
+    tx.onabort = () => reject(tx.error ?? new Error("Local repository status transaction was aborted."));
+  });
 }
 
 export async function addLocalRepoLog(repoIdValue: string, kind: LocalRepoLogKind, message: string): Promise<void> {

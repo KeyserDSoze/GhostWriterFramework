@@ -22,7 +22,7 @@ afterEach(async () => {
 
 async function putLegacyCommits(commits: Array<Record<string, unknown>>): Promise<void> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("narrarium-local-repositories", 6);
+    const request = indexedDB.open("narrarium-local-repositories");
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });

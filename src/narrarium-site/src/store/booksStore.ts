@@ -5,6 +5,7 @@ export interface CloneProgress {
   done: number;
   total: number;
   path?: string;
+  phase?: "cloning" | "migrating" | "repairing" | "finalizing";
 }
 
 interface BooksState {

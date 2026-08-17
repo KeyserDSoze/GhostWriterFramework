@@ -162,7 +162,7 @@ test("failed clone after account switch leaves the original incomplete clone qua
   expect(await getLocalRepositoryById(originalRepoId, identity)).toMatchObject({ id: originalRepoId, accountScope: identity, cloneComplete: false });
 });
 
-test("concurrent clone cannot replace or clean up the active clone token", async () => {
+test("concurrent clone shares the active clone transaction", async () => {
   const blob = gate<{ data: { encoding: string; content: string } }>();
   octokit.getRepo.mockResolvedValue({ data: { default_branch: "main" } });
   octokit.getRef.mockResolvedValue({ data: { object: { sha: "clone-head" } } });
@@ -178,11 +178,13 @@ test("concurrent clone cannot replace or clean up the active clone token", async
   expect(active).toMatchObject({ cloneComplete: false });
   expect(active?.cloneOperationId).toBeTruthy();
 
-  await expect(ensureLocalBookStructure(input)).rejects.toMatchObject({ code: "LOCAL_CLONE_ALREADY_IN_PROGRESS" });
+  const concurrent = ensureLocalBookStructure(input);
   expect((await getLocalRepositoryById(activeId, identity))?.cloneOperationId).toBe(active?.cloneOperationId);
 
   blob.release({ data: { encoding: "base64", content: btoa("book") } });
   await expect(first).resolves.toMatchObject({ meta: { cloneComplete: true, lastCloneOperationId: active?.cloneOperationId } });
+  await expect(concurrent).resolves.toMatchObject({ meta: { cloneComplete: true, lastCloneOperationId: active?.cloneOperationId } });
+  expect(octokit.getBlob).toHaveBeenCalledTimes(1);
   expect(await getLocalFile(activeId, "book.md")).toMatchObject({ text: "book" });
 });
 
@@ -329,7 +331,7 @@ test("direct atomic merge applies nothing with a stale operation scope", async (
 
 async function overwriteRecovery(value: object): Promise<void> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("narrarium-local-repositories", 6);
+    const request = indexedDB.open("narrarium-local-repositories");
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
@@ -344,7 +346,7 @@ async function overwriteRecovery(value: object): Promise<void> {
 
 async function patchRepository(repoIdValue: string, patch: Record<string, unknown>): Promise<void> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("narrarium-local-repositories", 6);
+    const request = indexedDB.open("narrarium-local-repositories");
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });

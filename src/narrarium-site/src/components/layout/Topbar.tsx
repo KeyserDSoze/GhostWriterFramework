@@ -24,7 +24,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { useSettings } from "@/drive/useSettings";
 import { parseAppRoute } from "@/assistant/context";
-import { getLocalRepository, listUnpushedLocalCommits, localStatus } from "@/repository/localRepository";
+import { getLocalRepositoryStatusSnapshot, listUnpushedLocalCommits } from "@/repository/localRepository";
 import { RepositoryStatusDialog } from "@/components/repository/RepositoryStatusDialog";
 import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits, syncFullRepository } from "@/repository/repositoryService";
 import { resolveBookToken } from "@/types/settings";
@@ -59,7 +59,6 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { save, clearOfflineCache } = useSettings();
   const { theme, toggle: toggleTheme } = useTheme();
   const cloneProgress = useBooksStore((s) => s.cloneProgress);
-  const setCloneProgress = useBooksStore((s) => s.setCloneProgress);
   const workingBranches = useBooksStore((s) => s.workingBranches);
   const structures = useBooksStore((s) => s.structures);
   const { floatingHidden, toggleFloating } = useUiStore();
@@ -105,19 +104,16 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     let cancelled = false;
     async function refresh() {
       if (!bookId) { if (!cancelled) setRepoStatus({ label: "", tone: "none" }); return; }
-      let progress = cloneProgress[bookId];
-      if (progress?.total && progress.done >= progress.total) {
-        setCloneProgress(bookId, undefined);
-        progress = undefined;
-      }
+      const progress = cloneProgress[bookId];
       if (progress) {
         const percent = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
-        if (!cancelled) setRepoStatus({ label: t("repoStatus.cloning", { percent }), tone: "offline" });
+        const label = progress.phase === "migrating" ? t("repoStatus.migrating") : progress.phase === "finalizing" ? t("repoStatus.finalizing") : t("repoStatus.cloning", { percent });
+        if (!cancelled) setRepoStatus({ label, tone: "offline" });
         return;
       }
-      const repo = currentBook && currentBranch && currentAccountIdentity ? await getLocalRepository(currentBook.owner, currentBook.repo, currentBranch, currentAccountIdentity).catch(() => null) : null;
-      if (!repo) { if (!cancelled) setRepoStatus({ label: t("repoStatus.notCloned"), tone: "offline" }); return; }
-      const status = await localStatus(repo.id);
+      const snapshot = currentBook && currentBranch && currentAccountIdentity ? await getLocalRepositoryStatusSnapshot(currentBook.owner, currentBook.repo, currentBranch, currentAccountIdentity).catch(() => null) : null;
+      if (!snapshot) { if (!cancelled) setRepoStatus({ label: t("repoStatus.notCloned"), tone: "offline" }); return; }
+      const { meta: repo, status } = snapshot;
       if (cancelled) return;
       if (status.ahead > 0) {
         const commits = await listUnpushedLocalCommits(repo.id).catch(() => []);
@@ -136,7 +132,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         ? { label: t("repoStatus.dirty", { count: status.dirty }), tone: "dirty" }
         : status.ahead > 0
           ? { label: t("repoStatus.ahead", { count: status.ahead }), tone: "ahead" }
-          : repo.cloneComplete === false
+          : repo.cloneComplete !== true
             ? { label: t("repoStatus.incomplete"), tone: "behind" }
           : repo.remoteChanged
             ? { label: t("repoStatus.behind"), tone: "behind" }
@@ -145,7 +141,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [cloneProgress, currentAccountIdentity, currentBook, currentBookId, currentBranch, setCloneProgress, t, toast]);
+  }, [cloneProgress, currentAccountIdentity, currentBook, currentBookId, currentBranch, t, toast]);
 
   useEffect(() => {
     if (!currentBook || !settings.repository.autoFetchIntervalMinutes || settings.repository.autoFetchIntervalMinutes <= 0) return;

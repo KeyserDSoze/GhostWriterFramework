@@ -14,12 +14,9 @@ import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { cloudDeletionReconnectState, registerCloudAccount, resumeCloudWrites } from "@/drive/cloudWriteBarrier";
 
-const LEGACY_MICROSOFT_EMAIL_KEY = "narrarium-legacy-microsoft-email";
-const LEGACY_GOOGLE_EMAIL_KEY = "narrarium-legacy-google-email";
-
 export function LoginScreen() {
   const { t } = useTranslation();
-  const { setAuth } = useAuthStore();
+  const { setInteractiveAuth } = useAuthStore();
   const { load } = useSettings();
   const { instance } = useMsal();
   const navigate = useNavigate();
@@ -57,8 +54,6 @@ export function LoginScreen() {
         };
         if (!profile.email?.trim()) throw new Error("Google profile did not provide an email address.");
         const providerAccountId = requireGoogleProviderAccountId(profile);
-        const legacyEmail = sessionStorage.getItem(LEGACY_GOOGLE_EMAIL_KEY);
-        if (legacyEmail && profile.email.trim().toLowerCase() !== legacyEmail) throw new Error("Select the same Google account to replace the legacy session.");
 
         const user: GoogleUser = {
           provider: "google",
@@ -70,7 +65,7 @@ export function LoginScreen() {
 
         registerCloudAccount("google", tokenResponse.access_token, providerAccountId);
         await confirmAndResumeCloudWrites("google", tokenResponse.access_token);
-        setAuth(
+        setInteractiveAuth(
           tokenResponse.access_token,
           user,
           "expires_in" in tokenResponse
@@ -78,7 +73,6 @@ export function LoginScreen() {
             : 3600,
         );
         await load();
-        sessionStorage.removeItem(LEGACY_GOOGLE_EMAIL_KEY);
         returnToApp();
       } catch (err) {
         setError(err instanceof Error ? err.message : t("login.failed"));
@@ -122,15 +116,13 @@ export function LoginScreen() {
       };
       const email = profile.mail ?? profile.userPrincipalName ?? "";
       if (!email.trim()) throw new Error("Microsoft profile did not provide an email address.");
-      const legacyEmail = sessionStorage.getItem(LEGACY_MICROSOFT_EMAIL_KEY);
-      if (legacyEmail && email.trim().toLowerCase() !== legacyEmail) throw new Error("Select the same Microsoft account to upgrade the legacy session.");
       const name = profile.displayName ?? (email || t("login.microsoftUser"));
       const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
       const expiresIn = Math.max(120, Math.round((expiresAt - Date.now()) / 1000));
 
       registerCloudAccount("microsoft", graphToken, result.account.homeAccountId);
       await confirmAndResumeCloudWrites("microsoft", graphToken);
-      setAuth(
+      setInteractiveAuth(
         graphToken,
         {
           provider: "microsoft",
@@ -143,7 +135,6 @@ export function LoginScreen() {
         },
         expiresIn,
       );
-      sessionStorage.removeItem(LEGACY_MICROSOFT_EMAIL_KEY);
       await load();
       returnToApp();
     } catch (err) {
@@ -250,6 +241,11 @@ export function LoginScreen() {
       </div>
     </div>
   );
+}
+
+export function startInteractiveLegacyRecoveryLogin(): void {
+  sessionStorage.setItem("narrarium-legacy-recovery-login-requested", "1");
+  window.location.assign("/login");
 }
 
 async function confirmAndResumeCloudWrites(provider: "google" | "microsoft", token: string): Promise<void> {

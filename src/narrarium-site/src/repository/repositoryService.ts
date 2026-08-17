@@ -6,6 +6,7 @@ import { useAuthStore } from "@/store/authStore";
 import { assertRepositoryOperationScopeCurrent, captureRepositoryOperationScope, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import {
   addLocalRepoLog,
+  adoptLegacyEmailScopedRepository,
   applyCloneRepairAtomically,
   claimLocalRepositoryRepair,
   claimLegacyLocalRepositoryMigration,
@@ -55,6 +56,7 @@ export interface LocalCloneProgress {
   done: number;
   total: number;
   path?: string;
+  phase?: "cloning" | "migrating" | "repairing" | "finalizing";
 }
 
 export interface RemoteStatusResult {
@@ -112,6 +114,7 @@ interface RemoteChangeState {
 }
 
 const repositoryMutationQueues = new Map<string, Promise<void>>();
+const repositoryEnsureOperations = new Map<string, Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }>>();
 
 async function withRepositoryMutationLease<T>(repoId: string, run: () => Promise<T>): Promise<T> {
   const previous = repositoryMutationQueues.get(repoId) ?? Promise.resolve();
@@ -191,16 +194,36 @@ export async function ensureLocalBookStructure(input: {
   branch?: string;
   onProgress?: (progress: LocalCloneProgress) => void;
 }): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
+  const key = `${input.accountIdentity}::${input.bookId}::${input.book.owner}/${input.book.repo}#${input.branch ?? ""}`.toLocaleLowerCase();
+  const active = repositoryEnsureOperations.get(key);
+  if (active) return active;
+  const operation = ensureLocalBookStructureOnce(input);
+  repositoryEnsureOperations.set(key, operation);
+  try { return await operation; }
+  finally { if (repositoryEnsureOperations.get(key) === operation) repositoryEnsureOperations.delete(key); }
+}
+
+async function ensureLocalBookStructureOnce(input: {
+  bookId: string;
+  book: BookEntry;
+  token: string;
+  accountIdentity: string;
+  branch?: string;
+  onProgress?: (progress: LocalCloneProgress) => void;
+}): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
   const scope = operationScope({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch ?? "", accountIdentity: input.accountIdentity });
-  const octokit = new Octokit({ auth: input.token });
-  const repoData = await octokit.rest.repos.get({ owner: input.book.owner, repo: input.book.repo });
-  const defaultBranch = repoData.data.default_branch;
-  const branch = input.branch || defaultBranch;
-  const existing = await getLocalRepository(input.book.owner, input.book.repo, branch, input.accountIdentity);
+  const branch = input.branch;
+  let existing: LocalRepositoryMeta | null = null;
+  if (branch) {
+    input.onProgress?.({ done: 0, total: 0, phase: "migrating" });
+    existing = await adoptLegacyEmailScopedRepository({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch, scope });
+    existing ??= await getLocalRepository(input.book.owner, input.book.repo, branch, input.accountIdentity);
+  }
   if (existing) {
     // A repo is only trustworthy once its clone was verified complete. Legacy repos
     // (cloneComplete === undefined) and interrupted clones (=== false) get healed here.
     if (existing.cloneComplete === true) {
+      input.onProgress?.({ done: 1, total: 1, phase: "finalizing" });
       return { meta: existing, structure: await buildLocalBookStructure(existing), cloned: false };
     }
     if (existing.operationLease) {
@@ -215,8 +238,13 @@ export async function ensureLocalBookStructure(input: {
     return { meta: repaired.meta, structure: repaired.structure, cloned: false };
   }
 
+  const octokit = new Octokit({ auth: input.token });
+  const repoData = await octokit.rest.repos.get({ owner: input.book.owner, repo: input.book.repo });
+  const defaultBranch = repoData.data.default_branch;
+  const resolvedBranch = branch || defaultBranch;
+
   const persistent = await navigator.storage?.persist?.().catch(() => false);
-  const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${branch}` });
+  const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${resolvedBranch}` });
   const headSha = ref.data.object.sha;
   const tree = await octokit.rest.git.getTree({ owner: input.book.owner, repo: input.book.repo, tree_sha: headSha, recursive: "1" });
   const blobs = tree.data.tree
@@ -227,7 +255,7 @@ export async function ensureLocalBookStructure(input: {
     bookId: input.bookId,
     owner: input.book.owner,
     repo: input.book.repo,
-    branch,
+    branch: resolvedBranch,
     defaultBranch,
     remoteHeadSha: headSha,
     clonedAt: new Date().toISOString(),
@@ -238,7 +266,7 @@ export async function ensureLocalBookStructure(input: {
   if (persistent === false) await addLocalRepoLog(meta.id, "error", "Browser storage persistence was not granted; export backups regularly because the working copy may be evicted");
 
   let done = 0;
-  input.onProgress?.({ done, total: blobs.length });
+  input.onProgress?.({ done, total: blobs.length, phase: "cloning" });
   try {
     await withLifecycleHeartbeat(meta.id, scope, cloneOperationId, async () => {
     await mapLimit(blobs, 5, async (blob) => {
@@ -250,7 +278,7 @@ export async function ensureLocalBookStructure(input: {
         await putCleanLocalFileScoped({ repoId: meta.id, path: blob.path, kind: "binary", blob: new Blob([bytesToArrayBuffer(bytes)]), baseSha: blob.sha, size: bytes.byteLength }, scope, cloneOperationId);
       }
       done += 1;
-      input.onProgress?.({ done, total: blobs.length, path: blob.path });
+      input.onProgress?.({ done, total: blobs.length, path: blob.path, phase: "cloning" });
     });
     });
   } catch (error) {
@@ -264,11 +292,12 @@ export async function ensureLocalBookStructure(input: {
     await markLocalRepositoryRepairRequired(meta.id, scope, cloneOperationId);
     await addLocalRepoLog(meta.id, "error", `Remote tree truncated at ${blobs.length} files; clone left ready for repair`);
   } else {
+    input.onProgress?.({ done: blobs.length, total: blobs.length, phase: "finalizing" });
     await markLocalRepositoryCloneComplete(meta.id, scope, cloneOperationId, blobs.length, headSha);
   }
   await addLocalRepoLog(meta.id, "clone", `Cloned ${blobs.length} files from ${meta.branch}`);
 
-  const finalMeta = await getLocalRepository(input.book.owner, input.book.repo, branch, input.accountIdentity) ?? meta;
+  const finalMeta = await getLocalRepository(input.book.owner, input.book.repo, resolvedBranch, input.accountIdentity) ?? meta;
   return { meta: finalMeta, structure: await buildLocalBookStructure(finalMeta), cloned: true };
 }
 

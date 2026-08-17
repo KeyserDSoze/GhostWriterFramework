@@ -39,6 +39,8 @@ const it = {
     viewChangedFiles: "Vedi file modificati",
     clean: "Pulito",
     cloning: "Clone {{percent}}%",
+    migrating: "Migrazione copia di lavoro locale",
+    finalizing: "Finalizzazione copia di lavoro locale",
     dirty: "{{count}} modifiche locali",
     ahead: "{{count}} commit locali",
     behind: "Remote cambiato",

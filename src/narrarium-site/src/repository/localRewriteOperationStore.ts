@@ -2,16 +2,41 @@ import type { RewriteOperationManifest } from "@/narrarium/rewriteFromReaderFeed
 import { assertRepositoryOperationScopeCurrent, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 const DB_NAME = "narrarium-local-rewrite-operations";
-const DB_VERSION = 2;
-const STORE_NAME = "rewriteOperations";
+const DB_VERSION = 3;
+const STORE_NAME = "rewriteOperationsV3";
+const LEGACY_STORE_NAME = "rewriteOperations";
 
 export const LOCAL_REWRITE_OPERATIONS_CHANGED_EVENT = "narrarium:local-rewrite-operations-changed";
 
 interface StoredRewriteOperation extends RewriteOperationManifest {
+  storageId: string;
   accountIdentity?: string;
   repoId: string;
   repoKey: string;
   targetKey: string;
+  migrationCopyOf?: string;
+  migrationJournalId?: string;
+}
+
+function storageId(repoId: string, operationId: string): string {
+  return `${encodeURIComponent(repoId)}::${operationId}`;
+}
+
+async function assertNoRepositoryMigration(repoId: string): Promise<void> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("narrarium-local-repositories");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  if (!db.objectStoreNames.contains("migrationJournals")) { db.close(); return; }
+  const pending = await new Promise<boolean>((resolve, reject) => {
+    const tx = db.transaction("migrationJournals", "readonly");
+    const request = tx.objectStore("migrationJournals").getAll();
+    request.onsuccess = () => resolve((request.result as Array<{ oldRepoId: string; newRepoId: string }>).some((journal) => journal.oldRepoId === repoId || journal.newRepoId === repoId));
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+  if (pending) throw new RepositoryOwnershipChangedError("Local repository migration is incomplete and must resume before rewrite operations are available.");
 }
 
 export interface LocalRewriteOperationQuery {
@@ -45,10 +70,21 @@ function openDb(): Promise<IDBDatabase> {
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: "operationId" });
+        const store = db.createObjectStore(STORE_NAME, { keyPath: "storageId" });
         store.createIndex("repoKey", "repoKey", { unique: false });
         store.createIndex("bookId", "bookId", { unique: false });
         store.createIndex("repoTargetKey", ["repoKey", "targetKey"], { unique: false });
+        store.createIndex("operationId", "operationId", { unique: false });
+        if (db.objectStoreNames.contains(LEGACY_STORE_NAME)) {
+          const cursorRequest = request.transaction!.objectStore(LEGACY_STORE_NAME).openCursor();
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result;
+            if (!cursor) return;
+            const record = cursor.value as Omit<StoredRewriteOperation, "storageId">;
+            store.put({ ...record, storageId: storageId(record.repoId, record.operationId) });
+            cursor.continue();
+          };
+        }
       }
     };
   });
@@ -82,6 +118,7 @@ function allFromIndex<T>(indexName: string, query: IDBValidKey | IDBKeyRange): P
 function toStored(operation: RewriteOperationManifest, scope: RepositoryOperationScope): StoredRewriteOperation {
   return {
     ...structuredClone(operation),
+    storageId: storageId(operation.repoId, operation.operationId),
     accountIdentity: scope.accountIdentity,
     repoKey: repoKey(operation.owner, operation.repo, operation.branch),
     targetKey: targetKey(operation.scope, operation.chapterSlug, operation.paragraphSlug),
@@ -89,7 +126,7 @@ function toStored(operation: RewriteOperationManifest, scope: RepositoryOperatio
 }
 
 function fromStored(operation: StoredRewriteOperation): RewriteOperationManifest {
-  const { repoKey: _repoKey, targetKey: _targetKey, accountIdentity: _accountIdentity, ...record } = operation;
+  const { storageId: _storageId, repoKey: _repoKey, targetKey: _targetKey, accountIdentity: _accountIdentity, migrationCopyOf: _migrationCopyOf, migrationJournalId: _migrationJournalId, ...record } = operation;
   return structuredClone(record);
 }
 
@@ -100,8 +137,9 @@ function sortLatest(left: RewriteOperationManifest, right: RewriteOperationManif
 }
 
 export async function saveLocalRewriteOperation(operation: RewriteOperationManifest, scope: RepositoryOperationScope): Promise<void> {
+  await assertNoRepositoryMigration(operation.repoId);
   assertRepositoryOperationScopeCurrent(scope);
-  const existing = await txStore<StoredRewriteOperation | undefined>("readonly", (store) => store.get(operation.operationId));
+  const existing = await txStore<StoredRewriteOperation | undefined>("readonly", (store) => store.get(storageId(operation.repoId, operation.operationId)));
   if (existing && (existing.accountIdentity !== scope.accountIdentity || existing.repoId !== operation.repoId)) throw new RepositoryOwnershipChangedError("The rewrite operation belongs to another scoped repository.");
   assertRepositoryOperationScopeCurrent(scope);
   await txStore("readwrite", (store) => {
@@ -112,13 +150,15 @@ export async function saveLocalRewriteOperation(operation: RewriteOperationManif
 }
 
 export async function loadLocalRewriteOperation(operationId: string, repoId: string, scope: RepositoryOperationScope): Promise<RewriteOperationManifest | null> {
+  await assertNoRepositoryMigration(repoId);
   assertRepositoryOperationScopeCurrent(scope);
-  const record = await txStore<StoredRewriteOperation | undefined>("readonly", (store) => store.get(operationId));
+  const record = await txStore<StoredRewriteOperation | undefined>("readonly", (store) => store.get(storageId(repoId, operationId)));
   assertRepositoryOperationScopeCurrent(scope);
   return record?.accountIdentity === scope.accountIdentity && record.repoId === repoId ? fromStored(record) : null;
 }
 
 export async function listLocalRewriteOperations(query: LocalRewriteOperationQuery, scope: RepositoryOperationScope): Promise<RewriteOperationManifest[]> {
+  await assertNoRepositoryMigration(query.repoId);
   assertRepositoryOperationScopeCurrent(scope);
   const records = await allFromIndex<StoredRewriteOperation>("repoKey", repoKey(query.owner, query.repo, query.branch));
   assertRepositoryOperationScopeCurrent(scope);
@@ -155,6 +195,63 @@ export function loadLatestParagraphRewriteOperation(query: Omit<LocalRewriteOper
 export async function deleteLocalRewriteOperation(operationId: string, repoId: string, scope: RepositoryOperationScope): Promise<void> {
   const existing = await loadLocalRewriteOperation(operationId, repoId, scope);
   if (!existing) throw new RepositoryOwnershipChangedError("The rewrite operation is unavailable for this scoped repository.");
-  await txStore("readwrite", (store) => { assertRepositoryOperationScopeCurrent(scope); return store.delete(operationId); });
+  await txStore("readwrite", (store) => { assertRepositoryOperationScopeCurrent(scope); return store.delete(storageId(repoId, operationId)); });
   notifyChanged();
+}
+
+export async function prepareLegacyRewriteOperationMigration(input: { journalId: string; oldRepoId: string; newRepoId: string; legacyAccountIdentity: string; immutableAccountIdentity: string }): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.getAll();
+    request.onsuccess = () => {
+      const records = request.result as StoredRewriteOperation[];
+      const target = records.filter((record) => record.repoId === input.newRepoId && !record.migrationJournalId);
+      if (target.length) { tx.abort(); return; }
+      for (const record of records) {
+        if (record.repoId !== input.oldRepoId || (record.accountIdentity !== undefined && record.accountIdentity !== input.legacyAccountIdentity)) continue;
+        const copyStorageId = `${storageId(input.newRepoId, record.operationId)}::migration::${input.journalId}`;
+        store.put({ ...structuredClone(record), storageId: copyStorageId, repoId: input.newRepoId, accountIdentity: input.immutableAccountIdentity, migrationCopyOf: record.operationId, migrationJournalId: input.journalId });
+      }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error("Rewrite migration preparation was aborted."));
+  });
+}
+
+export async function inspectLegacyRewriteOperationMigration(input: { oldRepoId: string; newRepoId: string; legacyAccountIdentity: string; immutableAccountIdentity: string }): Promise<{ legacyCount: number; targetCount: number; collisions: string[] }> {
+  const records = await txStore<StoredRewriteOperation[]>("readonly", (store) => store.getAll());
+  const legacy = records.filter((record) => record.repoId === input.oldRepoId && (record.accountIdentity === undefined || record.accountIdentity === input.legacyAccountIdentity) && !record.migrationJournalId);
+  const target = records.filter((record) => record.repoId === input.newRepoId && record.accountIdentity === input.immutableAccountIdentity && !record.migrationJournalId);
+  const targetIds = new Set(target.map((record) => record.operationId));
+  return { legacyCount: legacy.length, targetCount: target.length, collisions: legacy.map((record) => record.operationId).filter((id) => targetIds.has(id)) };
+}
+
+export async function finalizeLegacyRewriteOperationMigration(input: { journalId: string; oldRepoId: string; newRepoId: string; immutableAccountIdentity: string }): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.getAll();
+    request.onsuccess = () => {
+      const records = request.result as StoredRewriteOperation[];
+      const copies = records.filter((record) => record.migrationJournalId === input.journalId);
+      const copyIds = new Set(copies.map((copy) => copy.migrationCopyOf));
+      const collision = records.some((record) => record.repoId === input.newRepoId && !record.migrationJournalId && copyIds.has(record.operationId));
+      if (collision) { tx.abort(); return; }
+      for (const record of records) if (record.repoId === input.oldRepoId && record.migrationJournalId !== input.journalId) store.delete(record.storageId);
+      for (const copy of copies) {
+        const originalId = copy.migrationCopyOf!;
+        store.put({ ...copy, storageId: storageId(input.newRepoId, originalId), operationId: originalId, repoId: input.newRepoId, accountIdentity: input.immutableAccountIdentity, migrationCopyOf: undefined, migrationJournalId: undefined });
+        store.delete(copy.storageId);
+      }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => { notifyChanged(); resolve(); };
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error("Rewrite migration finalization was aborted."));
+  });
 }

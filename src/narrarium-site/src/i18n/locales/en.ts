@@ -39,6 +39,8 @@ const en = {
     viewChangedFiles: "View changed files",
     clean: "Clean",
     cloning: "Clone {{percent}}%",
+    migrating: "Migrating local working copy",
+    finalizing: "Finalizing local working copy",
     dirty: "{{count}} local changes",
     ahead: "{{count}} local commits",
     behind: "Remote changed",

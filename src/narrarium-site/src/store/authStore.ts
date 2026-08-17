@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { clearLegacyAccountUpgrade, finalizeInteractiveLegacyAccountUpgrade } from "../auth/accountIdentity.ts";
 
 const AUTH_STORAGE_KEY = "narrarium-bms-auth";
 
@@ -33,7 +34,9 @@ interface AuthState {
   accessTokenExpiry: number | null;
   user: AppUser | null;
   setAuth: (accessToken: string, user: AppUser, expiresIn?: number) => void;
+  setInteractiveAuth: (accessToken: string, user: AppUser, expiresIn?: number) => void;
   clearAuth: () => void;
+  clearAuthForLegacyUpgrade: () => void;
   /** Nulls the token (but keeps user) so AuthGuard triggers silent re-auth */
   invalidateToken: () => void;
   isTokenValid: () => boolean;
@@ -52,8 +55,15 @@ export const useAuthStore = create<AuthState>()(
           // subtract 60s buffer so we refresh before actual expiry
           accessTokenExpiry: Date.now() + (expiresIn - 60) * 1000,
         }),
-      clearAuth: () =>
-        set({ accessToken: null, user: null, accessTokenExpiry: null }),
+      setInteractiveAuth: (accessToken, user, expiresIn = 3600) => {
+        finalizeInteractiveLegacyAccountUpgrade(user);
+        set({ accessToken, user, accessTokenExpiry: Date.now() + (expiresIn - 60) * 1000 });
+      },
+      clearAuth: () => {
+        clearLegacyAccountUpgrade();
+        set({ accessToken: null, user: null, accessTokenExpiry: null });
+      },
+      clearAuthForLegacyUpgrade: () => set({ accessToken: null, user: null, accessTokenExpiry: null }),
       invalidateToken: () =>
         set({ accessToken: null, accessTokenExpiry: null }),
       isTokenValid: () => {
