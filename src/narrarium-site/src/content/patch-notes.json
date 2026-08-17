@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.44",
+    "date": "2026-08-17",
+    "en": {
+      "title": "Safer PDF attachment parsing",
+      "summary": "This security release updates the PDF parser used for Copilot attachments and keeps executable viewer scripting outside the extraction worker.",
+      "changes": [
+        "Upgraded PDF.js to the patched 6.2.108 release that resolves CVE-2026-16633 for malicious PDF documents.",
+        "Kept attachment extraction limited to the PDF parser and dedicated worker modules without importing viewer, annotation-layer, or scripting-manager components.",
+        "Added a security regression contract that pins the allowed PDF.js worker imports and verifies the vulnerable package advisory is no longer present."
+      ]
+    },
+    "it": {
+      "title": "Parsing degli allegati PDF piu sicuro",
+      "summary": "Questa release di sicurezza aggiorna il parser PDF usato dagli allegati Copilota e mantiene lo scripting eseguibile del viewer fuori dal worker di estrazione.",
+      "changes": [
+        "Aggiornato PDF.js alla release corretta 6.2.108 che risolve CVE-2026-16633 per documenti PDF malevoli.",
+        "Limitata l'estrazione allegati ai moduli parser e worker PDF dedicati, senza importare viewer, annotation layer o scripting manager.",
+        "Aggiunto un contratto di regressione di sicurezza che fissa gli import PDF.js consentiti nel worker e verifica la rimozione dell'advisory del pacchetto vulnerabile."
+      ]
+    }
+  },
+  {
     "version": "0.76.43",
     "date": "2026-08-17",
     "en": {
