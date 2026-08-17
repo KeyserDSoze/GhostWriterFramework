@@ -1,136 +1,228 @@
 import { useCallback, useEffect } from "react";
-import { useTranslation } from "react-i18next";
-import { useSettingsStore } from "@/store/settingsStore";
-import { useBooksStore } from "@/store/booksStore";
-import { ensureAuthoritativePersonalBranch, resolveAuthoritativeBranch } from "@/github/branchResolution";
-import { resolveBookToken } from "@/types/settings";
-import { ensureLocalBookStructure, fetchRemoteStatus, getExistingLocalBookStructure, pullRemoteChanges, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
-import { useAuthStore } from "@/store/authStore";
-import { useToast } from "@/components/ui/use-toast";
+import i18n from "@/i18n";
+import { toast } from "@/components/ui/use-toast";
 import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
+import { ensureAuthoritativePersonalBranch, resolveAuthoritativeBranch } from "@/github/branchResolution";
+import { ensureLocalBookStructure, fetchRemoteStatus, getExistingLocalBookStructure, invalidateRepositoryEnsureOperations, pullRemoteChanges, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
+import { useAuthStore } from "@/store/authStore";
+import { useBooksStore } from "@/store/booksStore";
+import { useSettingsStore } from "@/store/settingsStore";
+import { resolveBookToken } from "@/types/settings";
+
+type Operation = { token: string; epoch: number; controller: AbortController; promise: Promise<void> };
+
+const operations = new Map<string, Operation>();
+const failedOperations = new Set<string>();
+let operationSequence = 0;
+let loadEpoch = 0;
+
+export function resetBookStructureLoadCoordinator(): number {
+  loadEpoch += 1;
+  invalidateRepositoryEnsureOperations(loadEpoch, accountIdentity(useAuthStore.getState().user) ?? undefined);
+  for (const operation of operations.values()) operation.controller.abort();
+  operations.clear();
+  failedOperations.clear();
+  return loadEpoch;
+}
 
 function remoteChangedNoticeKey(bookId: string, remoteHeadSha: string): string {
   return `narrarium-remote-changed-${bookId}-${remoteHeadSha}`;
 }
 
-export function useBookStructure(bookId: string | undefined) {
-  const { t } = useTranslation();
-  const user = useAuthStore((s) => s.user);
-  const { toast } = useToast();
-  const { settings } = useSettingsStore();
-  const {
-    structures,
-    loadingIds,
-    errors,
-    workingBranches,
-    cloneProgress,
-    setStructure,
-    setLoading,
-    setError,
-    setCloneProgress,
-    setWorkingBranch,
-    clearBook,
-  } = useBooksStore();
+function operationKey(epoch: number, identity: string, bookId: string, owner: string, repo: string, branch: string, generation: number): string {
+  return `${epoch}::${identity}::${bookId}::${owner}/${repo}#${branch}::${generation}`;
+}
 
-  const resolvedBookId = bookId ?? "";
-  const book = settings.books.find((entry) => entry.id === resolvedBookId);
-  const structure = resolvedBookId ? structures[resolvedBookId] : undefined;
-  const loading = resolvedBookId ? loadingIds.has(resolvedBookId) : false;
-  const error = resolvedBookId ? errors[resolvedBookId] : undefined;
-  const progress = resolvedBookId ? cloneProgress[resolvedBookId] : undefined;
-  const branchResolution = resolveAuthoritativeBranch({ activeBranch: book?.activeBranch, workingBranch: resolvedBookId ? workingBranches[resolvedBookId] : undefined, loadedBranch: structure?.loadedBranch, defaultBranch: structure?.defaultBranch, userEmail: user?.email });
-  const readBranch = branchResolution.branch;
+function startBookStructureOperation(bookId: string, requestedGeneration?: number): Promise<void> | undefined {
+  const user = useAuthStore.getState().user;
+  const identity = accountIdentity(user);
+  const settings = useSettingsStore.getState().settings;
+  const book = settings.books.find((entry) => entry.id === bookId);
+  if (!identity || !book) return;
 
-  const loadStructure = useCallback(() => {
-    if (!book || !resolvedBookId) return;
-    const expectedIdentity = accountIdentity(user);
-    if (!expectedIdentity) return;
-    const ownsLoad = () => isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user);
-    const token = resolveBookToken(book, settings);
-    const generation = useBooksStore.getState().structureGenerations[resolvedBookId] ?? 0;
-    if (!token) {
-      setError(resolvedBookId, t("bookPage.noTokenConfigured"));
-      return;
+  const books = useBooksStore.getState();
+  const epoch = loadEpoch;
+  if (books.structureLoadEpoch !== epoch) return;
+  const generation = requestedGeneration ?? books.structureGenerations[bookId] ?? 0;
+  if ((books.structureGenerations[bookId] ?? 0) !== generation) return;
+  const resolution = resolveAuthoritativeBranch({
+    activeBranch: book.activeBranch,
+    workingBranch: books.workingBranches[bookId],
+    loadedBranch: books.structures[bookId]?.loadedBranch,
+    defaultBranch: books.structures[bookId]?.defaultBranch,
+    userEmail: user?.email,
+  });
+  const branch = resolution.branch;
+  const key = operationKey(epoch, identity, bookId, book.owner, book.repo, branch, generation);
+  const bookKeyPart = `::${bookId}::`;
+  for (const [operationKeyValue, operation] of operations) {
+    if (operationKeyValue !== key && operation.epoch === epoch && operationKeyValue.includes(bookKeyPart)) {
+      operation.controller.abort();
+      operations.delete(operationKeyValue);
     }
-    setError(resolvedBookId, "");
-    setLoading(resolvedBookId, true);
-    setCloneProgress(resolvedBookId, undefined);
-    void (async () => {
-      let authoritativeBranch = readBranch;
-      if (branchResolution.requiresCreation && user?.email && !workingBranches[resolvedBookId]) {
-        authoritativeBranch = await ensureAuthoritativePersonalBranch({ token, owner: book.owner, repo: book.repo, defaultBranch: structure?.defaultBranch ?? "main", email: user.email });
-        if (!ownsLoad()) return;
-        setWorkingBranch(resolvedBookId, authoritativeBranch);
-      }
-      try {
-        const local = await getExistingLocalBookStructure(resolvedBookId, book.owner, book.repo, authoritativeBranch, expectedIdentity);
-        let nextStructure;
-        if (local && local.structure.loadedBranch === authoritativeBranch) {
-          // Heal partial/legacy clones: a repo is only trustworthy once verified complete.
-          // When online, re-fetch any files missing from an interrupted clone before serving it.
-          if (local.meta.cloneComplete !== true && navigator.onLine) {
-            try {
-              const repaired = await verifyAndRepairLocalRepository({ meta: local.meta, token, accountIdentity: expectedIdentity, onProgress: (p) => { if (ownsLoad()) setCloneProgress(resolvedBookId, { ...p, phase: p.phase ?? "repairing" }); } });
-              nextStructure = repaired.structure;
-            } catch {
-              nextStructure = local.structure;
-            }
-          } else {
-            nextStructure = local.structure;
-          }
-        } else {
-          nextStructure = (await ensureLocalBookStructure({ bookId: resolvedBookId, book, token, accountIdentity: expectedIdentity, branch: authoritativeBranch, onProgress: (p) => { if (ownsLoad()) setCloneProgress(resolvedBookId, p); } })).structure;
-        }
-        if (nextStructure.loadedBranch !== authoritativeBranch) throw new Error(`Loaded branch ${nextStructure.loadedBranch} does not match authoritative branch ${authoritativeBranch}.`);
-        if (!ownsLoad()) return;
-        setStructure(resolvedBookId, nextStructure, generation);
-        setError(resolvedBookId, "");
-        if (settings.repository.autoFetchOnOpen && navigator.onLine) {
-          try {
-          const target = { bookId: resolvedBookId, owner: book.owner, repo: book.repo, branch: authoritativeBranch, accountIdentity: expectedIdentity };
-            const remote = await fetchRemoteStatus({ ...target, token });
-            if (remote.changed && settings.repository.autoPullWhenClean) {
-              await pullRemoteChanges({ ...target, token });
-              const refreshed = await getExistingLocalBookStructure(resolvedBookId, book.owner, book.repo, authoritativeBranch, expectedIdentity);
-              if (refreshed && ownsLoad()) setStructure(resolvedBookId, refreshed.structure, generation);
-            } else if (remote.changed) {
-              const key = remoteChangedNoticeKey(resolvedBookId, remote.remoteHeadSha);
-              if (!sessionStorage.getItem(key)) {
-                sessionStorage.setItem(key, "1");
-                toast({ title: t("repoStatus.remoteBehindTitle"), description: t("repoStatus.remoteBehindDescription") });
-              }
-            }
-          } catch {
-            // Remote checks are opportunistic; local offline editing stays available.
-          }
-        }
-      } catch (localError) {
-        if (ownsLoad()) setError(resolvedBookId, localError instanceof Error ? localError.message : t("common.loadFailed"));
-      } finally {
-        if (!ownsLoad()) return;
-        setCloneProgress(resolvedBookId, undefined);
-        setLoading(resolvedBookId, false);
-      }
-    })().catch((err: unknown) => {
-        if (ownsLoad()) setError(resolvedBookId, err instanceof Error ? err.message : t("common.loadFailed"));
-        if (ownsLoad()) {
-          setCloneProgress(resolvedBookId, undefined);
-          setLoading(resolvedBookId, false);
-        }
+  }
+  for (const failedKey of failedOperations) {
+    if (failedKey !== key && failedKey.includes(bookKeyPart)) failedOperations.delete(failedKey);
+  }
+  const active = operations.get(key);
+  if (active) return active.promise;
+  if (failedOperations.has(key)) return;
+  if (books.structures[bookId]?.loadedBranch === branch) return;
+
+  const token = `${epoch}:${Date.now()}-${++operationSequence}`;
+  const controller = new AbortController();
+  let operationBranch = branch;
+  const scopeIsCurrent = () => {
+    const currentUser = useAuthStore.getState().user;
+    const currentBooks = useBooksStore.getState();
+    const currentBook = useSettingsStore.getState().settings.books.find((entry) => entry.id === bookId);
+    if (!currentBook || currentBook.owner !== book.owner || currentBook.repo !== book.repo) return false;
+    const currentBranch = resolveAuthoritativeBranch({
+      activeBranch: currentBook.activeBranch,
+      workingBranch: currentBooks.workingBranches[bookId],
+      loadedBranch: currentBooks.structures[bookId]?.loadedBranch,
+      defaultBranch: currentBooks.structures[bookId]?.defaultBranch,
+      userEmail: currentUser?.email,
+    }).branch;
+    return loadEpoch === epoch
+      && isAccountIdentityCurrent(identity, currentUser)
+      && (currentBooks.structureGenerations[bookId] ?? 0) === generation
+      && currentBranch === operationBranch;
+  };
+  const ownsOperation = () => {
+    const current = useBooksStore.getState();
+    return scopeIsCurrent()
+      && current.activeStructureOperations[bookId]?.token === token;
+  };
+  const finishLocalLoading = () => {
+    if (!ownsOperation()) return;
+    const state = useBooksStore.getState();
+    state.setCloneProgress(bookId, undefined);
+    state.endStructureOperation(bookId, token);
+  };
+
+  books.setError(bookId, "");
+  books.setCloneProgress(bookId, undefined);
+  books.beginStructureOperation(bookId, token, epoch, generation);
+
+  const promise = (async () => {
+    const tokenValue = resolveBookToken(book, settings);
+    if (!tokenValue) throw new Error(i18n.t("bookPage.noTokenConfigured"));
+
+    let authoritativeBranch = operationBranch;
+    if (resolution.requiresCreation && user?.email && !books.workingBranches[bookId]) {
+      authoritativeBranch = await ensureAuthoritativePersonalBranch({
+        token: tokenValue,
+        owner: book.owner,
+        repo: book.repo,
+        defaultBranch: books.structures[bookId]?.defaultBranch ?? "main",
+        email: user.email,
       });
-  }, [book, branchResolution.requiresCreation, readBranch, resolvedBookId, setCloneProgress, setError, setLoading, setStructure, setWorkingBranch, settings, structure?.defaultBranch, t, toast, user, workingBranches]);
+      operationBranch = authoritativeBranch;
+      if (!ownsOperation()) return;
+      useBooksStore.getState().setWorkingBranch(bookId, authoritativeBranch);
+    }
+
+    const local = await getExistingLocalBookStructure(bookId, book.owner, book.repo, authoritativeBranch, identity);
+    let nextStructure;
+    if (local?.structure.loadedBranch === authoritativeBranch) {
+      if (local.meta.cloneComplete !== true && navigator.onLine) {
+        try {
+          nextStructure = (await verifyAndRepairLocalRepository({
+            meta: local.meta,
+            token: tokenValue,
+            accountIdentity: identity,
+            onProgress: (progress) => {
+              if (ownsOperation()) useBooksStore.getState().setCloneProgress(bookId, { ...progress, phase: progress.phase ?? "repairing" });
+            },
+          })).structure;
+        } catch {
+          nextStructure = local.structure;
+        }
+      } else {
+        nextStructure = local.structure;
+      }
+    } else {
+      nextStructure = (await ensureLocalBookStructure({
+        bookId,
+        book,
+        token: tokenValue,
+        accountIdentity: identity,
+        branch: authoritativeBranch,
+        onProgress: (progress) => {
+          if (ownsOperation()) useBooksStore.getState().setCloneProgress(bookId, progress);
+        },
+      })).structure;
+    }
+    if (nextStructure.loadedBranch !== authoritativeBranch) {
+      throw new Error(`Loaded branch ${nextStructure.loadedBranch} does not match authoritative branch ${authoritativeBranch}.`);
+    }
+    if (!ownsOperation()) return;
+    useBooksStore.getState().setStructure(bookId, nextStructure, generation);
+    useBooksStore.getState().setError(bookId, "");
+
+    // A remote status check is opportunistic and must never hold the local loading UI.
+    finishLocalLoading();
+    const latestRepositorySettings = useSettingsStore.getState().settings.repository;
+    if (!latestRepositorySettings.autoFetchOnOpen || !navigator.onLine) return;
+    try {
+      const target = { bookId, owner: book.owner, repo: book.repo, branch: authoritativeBranch, accountIdentity: identity };
+      const remote = await fetchRemoteStatus({ ...target, token: tokenValue, signal: controller.signal });
+      if (!scopeIsCurrent()) return;
+      if (remote.changed && latestRepositorySettings.autoPullWhenClean) {
+        await pullRemoteChanges({ ...target, token: tokenValue, signal: controller.signal });
+        const refreshed = await getExistingLocalBookStructure(bookId, book.owner, book.repo, authoritativeBranch, identity);
+        if (refreshed && scopeIsCurrent()) {
+          useBooksStore.getState().setStructure(bookId, refreshed.structure, generation);
+        }
+      } else if (remote.changed) {
+        const noticeKey = remoteChangedNoticeKey(bookId, remote.remoteHeadSha);
+        if (!sessionStorage.getItem(noticeKey)) {
+          sessionStorage.setItem(noticeKey, "1");
+          toast({ title: i18n.t("repoStatus.remoteBehindTitle"), description: i18n.t("repoStatus.remoteBehindDescription") });
+        }
+      }
+    } catch {
+      // Local editing remains available when the optional remote check fails.
+    }
+  })().catch((error: unknown) => {
+    if (loadEpoch === epoch) failedOperations.add(key);
+    if (ownsOperation()) useBooksStore.getState().setError(bookId, error instanceof Error ? error.message : i18n.t("common.loadFailed"));
+  }).finally(() => {
+    finishLocalLoading();
+    if (operations.get(key)?.token === token) operations.delete(key);
+  });
+
+  operations.set(key, { token, epoch, controller, promise });
+  return promise;
+}
+
+export function useBookStructure(bookId: string | undefined) {
+  const resolvedBookId = bookId ?? "";
+  const user = useAuthStore((state) => state.user);
+  const book = useSettingsStore((state) => state.settings.books.find((entry) => entry.id === resolvedBookId));
+  const structure = useBooksStore((state) => resolvedBookId ? state.structures[resolvedBookId] : undefined);
+  const loading = useBooksStore((state) => resolvedBookId ? state.loadingIds.has(resolvedBookId) : false);
+  const error = useBooksStore((state) => resolvedBookId ? state.errors[resolvedBookId] : undefined);
+  const progress = useBooksStore((state) => resolvedBookId ? state.cloneProgress[resolvedBookId] : undefined);
+  const workingBranch = useBooksStore((state) => resolvedBookId ? state.workingBranches[resolvedBookId] : undefined);
+  const generation = useBooksStore((state) => resolvedBookId ? state.structureGenerations[resolvedBookId] ?? 0 : 0);
+  const epoch = useBooksStore((state) => state.structureLoadEpoch);
+  const readBranch = resolveAuthoritativeBranch({ activeBranch: book?.activeBranch, workingBranch, loadedBranch: structure?.loadedBranch, defaultBranch: structure?.defaultBranch, userEmail: user?.email }).branch;
 
   useEffect(() => {
-    if (!book || !resolvedBookId || loading || error) return;
-    if (structure && (!readBranch || structure.loadedBranch === readBranch)) return;
-    loadStructure();
-  }, [book, error, loadStructure, loading, readBranch, resolvedBookId, structure]);
+    if (!resolvedBookId || !book || structure?.loadedBranch === readBranch) return;
+    startBookStructureOperation(resolvedBookId, generation);
+  }, [resolvedBookId, book?.owner, book?.repo, book?.activeBranch, user?.provider, user?.providerAccountId, user?.homeAccountId, user?.email, readBranch, structure?.loadedBranch, generation, epoch]);
 
   const reload = useCallback(() => {
     if (!resolvedBookId) return;
-    clearBook(resolvedBookId);
-    loadStructure();
-  }, [clearBook, loadStructure, resolvedBookId]);
+    const nextGeneration = useBooksStore.getState().invalidateStructure(resolvedBookId);
+    failedOperations.forEach((key) => {
+      if (key.includes(`::${resolvedBookId}::`)) failedOperations.delete(key);
+    });
+    startBookStructureOperation(resolvedBookId, nextGeneration);
+  }, [resolvedBookId]);
 
   return { book, structure, loading, error, reload, cloneProgress: progress };
 }

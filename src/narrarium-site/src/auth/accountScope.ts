@@ -20,6 +20,7 @@ import { accountIdentity, shouldResetAccountScope } from "@/auth/accountIdentity
 import { setFallbackAcknowledgementAccountScope } from "@/assistant/fallbackDisclosure";
 import { resetAssistantSessionIndex } from "@/assistant/sessionIndex";
 import { resumeCurrentAccountRepositoryMigrations } from "@/repository/localRepository";
+import { resetBookStructureLoadCoordinator } from "@/hooks/useBookStructure";
 
 const ACCOUNT_SCOPE_KEY = "narrarium-account-scope-v1";
 let installed = false;
@@ -42,11 +43,12 @@ function loadAccountScope(): string | null {
 }
 
 export function resetAccountScopedState(): void {
+  const structureLoadEpoch = resetBookStructureLoadCoordinator();
   useFeedbackRewriteWorkflowStore.getState().abortController?.abort();
   resetAssistantSessionIndex(null);
   useAssistantStore.setState({ open: false, busy: false, sessions: [], currentSession: null });
   useSettingsStore.setState((state) => ({ settings: DEFAULT_SETTINGS, syncStatus: "idle", driveFileId: null, cloudRevision: null, lastSynced: null, cloudLoaded: false, offlineConflict: null, accountGeneration: state.accountGeneration + 1, accountIdentity: accountIdentity(useAuthStore.getState().user) }));
-  useBooksStore.setState({ structures: {}, loadingIds: new Set(), errors: {}, workingBranches: {}, cloneProgress: {} });
+  useBooksStore.setState({ structures: {}, loadingIds: new Set(), activeStructureOperations: {}, errors: {}, workingBranches: {}, cloneProgress: {}, structureGenerations: {}, structureLoadEpoch });
   useCostsStore.getState().setFile(emptyCostsFile(), undefined);
   useClipboardStore.getState().setItems([]);
   useLlmDebugStore.getState().clear();

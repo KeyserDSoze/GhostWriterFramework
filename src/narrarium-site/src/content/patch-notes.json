@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.43",
+    "date": "2026-08-17",
+    "en": {
+      "title": "Book loading request loop fixed",
+      "summary": "This hotfix restores book opening and stops repeated GitHub branch-head requests caused by concurrent structure loaders.",
+      "changes": [
+        "Coordinated every book structure consumer through one account-, branch-, and generation-scoped load instead of launching a GitHub workflow from each page and dialog.",
+        "Rendered verified local structure before opportunistic remote checks and limited auto-fetch on open to one request per deliberate load.",
+        "Fixed generation-zero structure updates that could discard a successful load and leave the book on permanent skeleton placeholders.",
+        "Fenced account switches and stale clone promises with monotonic epochs so old operations cannot clear or replace a newer load.",
+        "Added StrictMode and twenty-consumer regression tests for existing local books, new clones, reloads, branch changes, and A-to-B-to-A account switches."
+      ]
+    },
+    "it": {
+      "title": "Loop di richieste nel caricamento libro corretto",
+      "summary": "Questo hotfix ripristina l'apertura dei libri e interrompe le richieste ripetute agli head dei branch GitHub causate da loader struttura concorrenti.",
+      "changes": [
+        "Coordinati tutti i consumer della struttura libro tramite un solo caricamento limitato ad account, branch e generazione, invece di avviare un workflow GitHub da ogni pagina e dialog.",
+        "Mostrata la struttura locale verificata prima dei controlli remoti opportunistici e limitato l'auto-fetch all'apertura a una richiesta per caricamento intenzionale.",
+        "Corrette le modifiche struttura con generazione zero che potevano scartare un caricamento riuscito e lasciare il libro su skeleton permanenti.",
+        "Protetti cambi account e promise clone stale con epoche monotone, impedendo alle vecchie operazioni di cancellare o sostituire un caricamento piu recente.",
+        "Aggiunti test di regressione StrictMode con venti consumer per libri locali esistenti, nuovi clone, reload, cambi branch e cambi account A-B-A."
+      ]
+    }
+  },
+  {
     "version": "0.76.42",
     "date": "2026-08-17",
     "en": {

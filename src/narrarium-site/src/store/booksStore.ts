@@ -11,15 +11,18 @@ export interface CloneProgress {
 interface BooksState {
   structures: Record<string, BookStructure>;
   loadingIds: Set<string>;
+  activeStructureOperations: Record<string, { token: string; epoch: number; generation: number; count: number }>;
   errors: Record<string, string>;
   /** bookId → resolved personal dev branch name */
   workingBranches: Record<string, string>;
   cloneProgress: Record<string, CloneProgress | undefined>;
   structureGenerations: Record<string, number>;
+  structureLoadEpoch: number;
 
   setStructure: (bookId: string, structure: BookStructure, generation?: number) => void;
   invalidateStructure: (bookId: string) => number;
-  setLoading: (bookId: string, loading: boolean) => void;
+  beginStructureOperation: (bookId: string, token: string, epoch: number, generation: number) => void;
+  endStructureOperation: (bookId: string, token: string) => void;
   setError: (bookId: string, message: string) => void;
   setWorkingBranch: (bookId: string, branch: string) => void;
   setCloneProgress: (bookId: string, progress?: CloneProgress) => void;
@@ -34,13 +37,15 @@ interface BooksState {
 export const useBooksStore = create<BooksState>()((set) => ({
   structures: {},
   loadingIds: new Set(),
+  activeStructureOperations: {},
   errors: {},
   workingBranches: {},
   cloneProgress: {},
   structureGenerations: {},
+  structureLoadEpoch: 0,
 
   setStructure: (bookId, structure, generation) =>
-    set((s) => generation !== undefined && s.structureGenerations[bookId] !== generation
+    set((s) => generation !== undefined && (s.structureGenerations[bookId] ?? 0) !== generation
       ? {}
       : { structures: { ...s.structures, [bookId]: structure } }),
 
@@ -55,11 +60,30 @@ export const useBooksStore = create<BooksState>()((set) => ({
     return generation;
   },
 
-  setLoading: (bookId, loading) =>
+  beginStructureOperation: (bookId, token, epoch, generation) =>
     set((s) => {
-      const next = new Set(s.loadingIds);
-      loading ? next.add(bookId) : next.delete(bookId);
-      return { loadingIds: next };
+      const current = s.activeStructureOperations[bookId];
+      const operation = current?.token === token
+        ? { ...current, count: current.count + 1 }
+        : { token, epoch, generation, count: 1 };
+      const loadingIds = new Set(s.loadingIds);
+      loadingIds.add(bookId);
+      return { activeStructureOperations: { ...s.activeStructureOperations, [bookId]: operation }, loadingIds };
+    }),
+
+  endStructureOperation: (bookId, token) =>
+    set((s) => {
+      const current = s.activeStructureOperations[bookId];
+      if (!current || current.token !== token) return {};
+      const activeStructureOperations = { ...s.activeStructureOperations };
+      if (current.count > 1) {
+        activeStructureOperations[bookId] = { ...current, count: current.count - 1 };
+        return { activeStructureOperations };
+      }
+      delete activeStructureOperations[bookId];
+      const loadingIds = new Set(s.loadingIds);
+      loadingIds.delete(bookId);
+      return { activeStructureOperations, loadingIds };
     }),
 
   setError: (bookId, message) =>
@@ -90,12 +114,15 @@ export const useBooksStore = create<BooksState>()((set) => ({
       delete cloneProgress[bookId];
       const loadingIds = new Set(s.loadingIds);
       loadingIds.delete(bookId);
+      const activeStructureOperations = { ...s.activeStructureOperations };
+      delete activeStructureOperations[bookId];
       return {
         structures,
         errors,
         workingBranches,
         cloneProgress,
         loadingIds,
+        activeStructureOperations,
         structureGenerations: { ...s.structureGenerations, [bookId]: (s.structureGenerations[bookId] ?? 0) + 1 },
       };
     }),

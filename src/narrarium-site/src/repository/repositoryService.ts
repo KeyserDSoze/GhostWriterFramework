@@ -113,7 +113,25 @@ interface RemoteChangeState {
 }
 
 const repositoryMutationQueues = new Map<string, Promise<void>>();
-const repositoryEnsureOperations = new Map<string, Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }>>();
+type RepositoryEnsureOperation = {
+  scope: RepositoryOperationScope;
+  epoch: number;
+  controller: AbortController;
+  promise: Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }>;
+};
+
+const repositoryEnsureOperations = new Map<string, RepositoryEnsureOperation>();
+let repositoryEnsureEpoch = 0;
+
+export function invalidateRepositoryEnsureOperations(epoch: number, accountIdentity?: string): void {
+  repositoryEnsureEpoch = Math.max(repositoryEnsureEpoch, epoch);
+  for (const [key, operation] of repositoryEnsureOperations) {
+    if (!accountIdentity || operation.scope.accountIdentity === accountIdentity || operation.epoch < repositoryEnsureEpoch) {
+      operation.controller.abort();
+      repositoryEnsureOperations.delete(key);
+    }
+  }
+}
 
 async function withRepositoryMutationLease<T>(repoId: string, run: () => Promise<T>): Promise<T> {
   const previous = repositoryMutationQueues.get(repoId) ?? Promise.resolve();
@@ -193,12 +211,21 @@ export async function ensureLocalBookStructure(input: {
   branch?: string;
   onProgress?: (progress: LocalCloneProgress) => void;
 }): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
-  const key = `${input.accountIdentity}::${input.bookId}::${input.book.owner}/${input.book.repo}#${input.branch ?? ""}`.toLocaleLowerCase();
+  const scope = operationScope({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch ?? "", accountIdentity: input.accountIdentity });
+  const epoch = repositoryEnsureEpoch;
+  const key = `${epoch}::${scope.accountGeneration}::${scope.accountIdentity}::${input.bookId}::${input.book.owner}/${input.book.repo}#${input.branch ?? ""}`.toLocaleLowerCase();
   const active = repositoryEnsureOperations.get(key);
-  if (active) return active;
-  const operation = ensureLocalBookStructureOnce(input);
+  if (active) return active.promise;
+  const controller = new AbortController();
+  const promise = ensureLocalBookStructureOnce(input, scope, controller.signal);
+  const operation = { scope, epoch, controller, promise };
   repositoryEnsureOperations.set(key, operation);
-  try { return await operation; }
+  try {
+    const result = await promise;
+    assertRepositoryOperationScopeCurrent(scope);
+    if (repositoryEnsureEpoch !== epoch) throw new RepositoryOwnershipChangedError();
+    return result;
+  }
   finally { if (repositoryEnsureOperations.get(key) === operation) repositoryEnsureOperations.delete(key); }
 }
 
@@ -209,8 +236,8 @@ async function ensureLocalBookStructureOnce(input: {
   accountIdentity: string;
   branch?: string;
   onProgress?: (progress: LocalCloneProgress) => void;
-}): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
-  const scope = operationScope({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch ?? "", accountIdentity: input.accountIdentity });
+}, scope: RepositoryOperationScope, signal: AbortSignal): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
+  assertRepositoryOperationScopeCurrent(scope);
   const branch = input.branch;
   let existing: LocalRepositoryMeta | null = null;
   if (branch) {
@@ -226,26 +253,26 @@ async function ensureLocalBookStructureOnce(input: {
       return { meta: existing, structure: await buildLocalBookStructure(existing), cloned: false };
     }
     if (existing.operationLease) {
-      const recovered = await recoverExpiredRepositoryLifecycle({ meta: existing, token: input.token, accountIdentity: input.accountIdentity, onProgress: input.onProgress });
+      const recovered = await recoverExpiredRepositoryLifecycle({ meta: existing, token: input.token, accountIdentity: input.accountIdentity, onProgress: input.onProgress, scope });
       return { meta: recovered.meta, structure: recovered.structure, cloned: false };
     }
     const classified = existing.cloneComplete === undefined && existing.cloneStatus === undefined
-      ? await migrateLegacyLocalRepository({ meta: existing, token: input.token, accountIdentity: input.accountIdentity })
+      ? await migrateLegacyLocalRepository({ meta: existing, token: input.token, accountIdentity: input.accountIdentity, scope })
       : existing;
     if (classified.cloneComplete === true) return { meta: classified, structure: await buildLocalBookStructure(classified), cloned: false };
-    const repaired = await verifyAndRepairLocalRepository({ meta: classified, token: input.token, accountIdentity: input.accountIdentity, onProgress: input.onProgress });
+    const repaired = await verifyAndRepairLocalRepository({ meta: classified, token: input.token, accountIdentity: input.accountIdentity, onProgress: input.onProgress, scope });
     return { meta: repaired.meta, structure: repaired.structure, cloned: false };
   }
 
   const octokit = new Octokit({ auth: input.token });
-  const repoData = await octokit.rest.repos.get({ owner: input.book.owner, repo: input.book.repo });
+  const repoData = await octokit.rest.repos.get({ owner: input.book.owner, repo: input.book.repo, request: { signal } });
   const defaultBranch = repoData.data.default_branch;
   const resolvedBranch = branch || defaultBranch;
 
   const persistent = await navigator.storage?.persist?.().catch(() => false);
-  const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${resolvedBranch}` });
+  const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${resolvedBranch}`, request: { signal } });
   const headSha = ref.data.object.sha;
-  const tree = await octokit.rest.git.getTree({ owner: input.book.owner, repo: input.book.repo, tree_sha: headSha, recursive: "1" });
+  const tree = await octokit.rest.git.getTree({ owner: input.book.owner, repo: input.book.repo, tree_sha: headSha, recursive: "1", request: { signal } });
   const blobs = tree.data.tree
     .filter((item) => item.type === "blob" && item.path)
     .map((item) => ({ path: item.path!, sha: item.sha, size: item.size ?? 0 }));
@@ -270,7 +297,7 @@ async function ensureLocalBookStructureOnce(input: {
     await withLifecycleHeartbeat(meta.id, scope, cloneOperationId, async () => {
     await mapLimit(blobs, 5, async (blob) => {
       if (!blob.sha) throw new Error(`Remote tree entry has no immutable blob SHA: ${blob.path}`);
-      const bytes = await fetchBlobBytes(octokit, input.book.owner, input.book.repo, blob.sha);
+      const bytes = await fetchBlobBytes(octokit, input.book.owner, input.book.repo, blob.sha, signal);
       if (isTextPath(blob.path)) {
         await putCleanLocalFileScoped({ repoId: meta.id, path: blob.path, kind: "text", text: new TextDecoder().decode(bytes), baseSha: blob.sha, size: bytes.byteLength }, scope, cloneOperationId);
       } else {
@@ -300,8 +327,9 @@ async function ensureLocalBookStructureOnce(input: {
   return { meta: finalMeta, structure: await buildLocalBookStructure(finalMeta), cloned: true };
 }
 
-export async function migrateLegacyLocalRepository(input: { meta: LocalRepositoryMeta; token: string; accountIdentity: string }): Promise<LocalRepositoryMeta> {
-  const scope = operationScope({ ...input.meta, accountIdentity: input.accountIdentity });
+export async function migrateLegacyLocalRepository(input: { meta: LocalRepositoryMeta; token: string; accountIdentity: string; scope?: RepositoryOperationScope }): Promise<LocalRepositoryMeta> {
+  const scope = input.scope ?? operationScope({ ...input.meta, accountIdentity: input.accountIdentity });
+  assertRepositoryOperationScopeCurrent(scope);
   const migrationOperationId = crypto.randomUUID();
   const target = { ...input.meta, repoId: input.meta.id, accountIdentity: input.accountIdentity };
   const selected = await exactLocalRepository(target, scope);
@@ -334,8 +362,8 @@ export async function migrateLegacyLocalRepository(input: { meta: LocalRepositor
 /**
  * Fetch a single blob by its git object sha (exact content, independent of branch tip).
  */
-async function fetchBlobBytes(octokit: Octokit, owner: string, repo: string, fileSha: string): Promise<Uint8Array> {
-  const blob = await octokit.rest.git.getBlob({ owner, repo, file_sha: fileSha });
+async function fetchBlobBytes(octokit: Octokit, owner: string, repo: string, fileSha: string, signal?: AbortSignal): Promise<Uint8Array> {
+  const blob = await octokit.rest.git.getBlob({ owner, repo, file_sha: fileSha, request: { signal } });
   if (blob.data.encoding === "base64") {
     const binary = atob(blob.data.content.replace(/\n/g, ""));
     const bytes = new Uint8Array(binary.length);
@@ -394,12 +422,14 @@ export async function verifyAndRepairLocalRepository(input: {
   token: string;
   accountIdentity: string;
   onProgress?: (progress: LocalCloneProgress) => void;
+  scope?: RepositoryOperationScope;
 }): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; repaired: number }> {
   const { meta, token } = input;
-  const scope = operationScope({ ...meta, accountIdentity: input.accountIdentity });
+  const scope = input.scope ?? operationScope({ ...meta, accountIdentity: input.accountIdentity });
+  assertRepositoryOperationScopeCurrent(scope);
   const repairOperationId = crypto.randomUUID();
   const target = { ...meta, repoId: meta.id, accountIdentity: input.accountIdentity };
-  const selected = await exactLocalRepository(target);
+  const selected = await exactLocalRepository(target, scope);
   return withRepositoryMutationLease(selected.id, async () => {
     const claimed = await claimLocalRepositoryRepair(selected.id, scope, repairOperationId);
     try {
@@ -416,8 +446,10 @@ export async function recoverExpiredRepositoryLifecycle(input: {
   token: string;
   accountIdentity: string;
   onProgress?: (progress: LocalCloneProgress) => void;
+  scope?: RepositoryOperationScope;
 }): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; repaired: number }> {
-  const scope = operationScope({ ...input.meta, accountIdentity: input.accountIdentity });
+  const scope = input.scope ?? operationScope({ ...input.meta, accountIdentity: input.accountIdentity });
+  assertRepositoryOperationScopeCurrent(scope);
   const operationId = crypto.randomUUID();
   const reclaimed = await reclaimExpiredRepositoryLifecycleLease(input.meta.id, scope, operationId);
   if (reclaimed.cloneStatus === "cloning") {
@@ -426,14 +458,14 @@ export async function recoverExpiredRepositoryLifecycle(input: {
     await releaseLegacyLocalRepositoryMigration(reclaimed.id, scope, operationId);
     const legacy = await getLocalRepositoryById(reclaimed.id, input.accountIdentity);
     if (!legacy) throw new RepositoryOwnershipChangedError();
-    const migrated = await migrateLegacyLocalRepository({ meta: legacy, token: input.token, accountIdentity: input.accountIdentity });
+    const migrated = await migrateLegacyLocalRepository({ meta: legacy, token: input.token, accountIdentity: input.accountIdentity, scope });
     if (migrated.cloneComplete === true) return { meta: migrated, structure: await buildLocalBookStructure(migrated), repaired: 0 };
   } else if (reclaimed.cloneStatus === "repairing") {
     await releaseLocalRepositoryRepair(reclaimed.id, scope, operationId);
   }
   const retryable = await getLocalRepositoryById(reclaimed.id, input.accountIdentity);
   if (!retryable) throw new RepositoryOwnershipChangedError();
-  return verifyAndRepairLocalRepository({ meta: retryable, token: input.token, accountIdentity: input.accountIdentity, onProgress: input.onProgress });
+  return verifyAndRepairLocalRepository({ meta: retryable, token: input.token, accountIdentity: input.accountIdentity, onProgress: input.onProgress, scope });
 }
 
 async function verifyAndRepairLocalRepositoryLeased(
@@ -533,27 +565,30 @@ export function autoCommitMessage(paths: string[]): string {
   return message.slice(0, 120);
 }
 
-export async function fetchRemoteStatus(input: ExactRepositoryTarget & { token: string }): Promise<RemoteStatusResult> {
+export async function fetchRemoteStatus(input: ExactRepositoryTarget & { token: string; signal?: AbortSignal }): Promise<RemoteStatusResult> {
   const scope = operationScope(input);
   const meta = await exactLocalRepository(input, scope);
   const octokit = new Octokit({ auth: input.token });
-  const { remoteHeadSha, changed } = await resolveRemoteChangeState(octokit, meta);
+  const { remoteHeadSha, changed } = await resolveRemoteChangeState(octokit, meta, input.signal);
+  input.signal?.throwIfAborted();
   await markLocalRepositoryRemoteCheck(meta.id, scope, remoteHeadSha, changed);
   await addLocalRepoLog(meta.id, "fetch", changed ? `Remote changed: ${remoteHeadSha.slice(0, 7)}` : "Remote up to date");
   return { remoteHeadSha, changed };
 }
 
-async function resolveRemoteChangeState(octokit: Octokit, meta: LocalRepositoryMeta): Promise<RemoteChangeState> {
-  const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
+async function resolveRemoteChangeState(octokit: Octokit, meta: LocalRepositoryMeta, signal?: AbortSignal): Promise<RemoteChangeState> {
+  signal?.throwIfAborted();
+  const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, request: { signal } });
   const remoteHeadSha = ref.data.object.sha;
   if (remoteHeadSha === meta.remoteHeadSha) return { remoteHeadSha, changed: false };
   try {
     const [currentCommit, remoteCommit] = await Promise.all([
-      octokit.rest.git.getCommit({ owner: meta.owner, repo: meta.repo, commit_sha: meta.remoteHeadSha }),
-      octokit.rest.git.getCommit({ owner: meta.owner, repo: meta.repo, commit_sha: remoteHeadSha }),
+      octokit.rest.git.getCommit({ owner: meta.owner, repo: meta.repo, commit_sha: meta.remoteHeadSha, request: { signal } }),
+      octokit.rest.git.getCommit({ owner: meta.owner, repo: meta.repo, commit_sha: remoteHeadSha, request: { signal } }),
     ]);
     return { remoteHeadSha, changed: currentCommit.data.tree.sha !== remoteCommit.data.tree.sha };
   } catch {
+    signal?.throwIfAborted();
     return { remoteHeadSha, changed: true };
   }
 }
@@ -562,6 +597,7 @@ export async function pullRemoteChanges(input: ExactRepositoryTarget & {
   token: string;
   mode?: "safe" | "remote-wins";
   confirmed?: boolean;
+  signal?: AbortSignal;
 }): Promise<{ updated: number; remoteHeadSha: string; recoveryId?: string }> {
   const scope = operationScope(input);
   const selected = await exactLocalRepository(input, scope);
@@ -572,6 +608,7 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
   token: string;
   mode?: "safe" | "remote-wins";
   confirmed?: boolean;
+  signal?: AbortSignal;
 }, scope: RepositoryOperationScope): Promise<{ updated: number; remoteHeadSha: string; recoveryId?: string }> {
   const dirty = await listDirtyLocalFiles(meta.id);
   const ahead = await listUnpushedLocalCommits(meta.id);
@@ -582,14 +619,15 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
   if (destructive && !input.confirmed) throw new Error("Remote-wins pull requires explicit confirmation.");
 
   const octokit = new Octokit({ auth: input.token });
-  const { remoteHeadSha, changed } = await resolveRemoteChangeState(octokit, meta);
+  const { remoteHeadSha, changed } = await resolveRemoteChangeState(octokit, meta, input.signal);
+  input.signal?.throwIfAborted();
   if (remoteHeadSha === meta.remoteHeadSha && !dirty.length && !ahead.length) return { updated: 0, remoteHeadSha };
   if (!changed && !dirty.length && !ahead.length) {
     await updateLocalRepositoryHead(meta.id, scope, remoteHeadSha);
     await addLocalRepoLog(meta.id, "pull", `Remote head changed to ${remoteHeadSha.slice(0, 7)} with no file-content differences`);
     return { updated: 0, remoteHeadSha };
   }
-  const remoteTree = await octokit.rest.git.getTree({ owner: meta.owner, repo: meta.repo, tree_sha: remoteHeadSha, recursive: "1" });
+  const remoteTree = await octokit.rest.git.getTree({ owner: meta.owner, repo: meta.repo, tree_sha: remoteHeadSha, recursive: "1", request: { signal: input.signal } });
   if (remoteTree.data.truncated) throw new Error("Remote tree is truncated; pull stopped without advancing the local head.");
   const remoteBlobEntries = (remoteTree.data.tree ?? []).filter((entry) => entry.type === "blob" && entry.path);
   const remoteByPath = new Map(remoteBlobEntries.map((entry) => [entry.path!, entry.sha!]));
@@ -597,17 +635,19 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
   const prepared: RemoteTreeFile[] = [];
   let updated = localFiles.filter((file) => !remoteByPath.has(file.path)).length;
   for (const [path, blobSha] of remoteByPath) {
+    input.signal?.throwIfAborted();
     const local = localFiles.find((file) => file.path === path);
     let bytes: Uint8Array;
     if (local?.baseSha === blobSha && local.status === "clean" && !local.committed) {
       bytes = local.kind === "text" ? new TextEncoder().encode(local.text ?? "") : new Uint8Array(await (local.blob ?? new Blob()).arrayBuffer());
     } else {
-      bytes = await fetchBlobBytes(octokit, meta.owner, meta.repo, blobSha);
+      bytes = await fetchBlobBytes(octokit, meta.owner, meta.repo, blobSha, input.signal);
       updated += 1;
     }
     const kind = isTextPath(path) ? "text" as const : "binary" as const;
     prepared.push({ path, kind, text: kind === "text" ? new TextDecoder().decode(bytes) : undefined, blob: kind === "binary" ? new Blob([bytesToArrayBuffer(bytes)]) : undefined, baseSha: blobSha, size: bytes.byteLength });
   }
+  input.signal?.throwIfAborted();
   const recovery = await replaceLocalTreeAtomically(
     meta.id,
     scope,

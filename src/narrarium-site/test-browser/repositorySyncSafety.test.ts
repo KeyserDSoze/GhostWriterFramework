@@ -47,9 +47,10 @@ import {
   listDirtyLocalFiles,
   writeLocalText,
 } from "@/repository/localRepository";
-import { ensureLocalBookStructure, migrateLegacyLocalRepository, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
+import { ensureLocalBookStructure, invalidateRepositoryEnsureOperations, migrateLegacyLocalRepository, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
+import { useSettingsStore } from "@/store/settingsStore";
 
 let repoId = "";
 const identity = "google:sub-writer";
@@ -192,6 +193,37 @@ test("concurrent clone shares the active clone transaction", async () => {
   await expect(concurrent).resolves.toMatchObject({ meta: { cloneComplete: true, lastCloneOperationId: active?.cloneOperationId } });
   expect(octokit.getBlob).toHaveBeenCalledTimes(1);
   expect(await getLocalFile(activeId, "book.md")).toMatchObject({ text: "book" });
+});
+
+test("direct ensure never reuses an old A operation after B and same A generations", async () => {
+  const oldRepo = gate<{ data: { default_branch: string } }>();
+  octokit.getRepo
+    .mockReturnValueOnce(oldRepo.promise)
+    .mockResolvedValueOnce({ data: { default_branch: "main" } });
+  octokit.getRef.mockResolvedValue({ data: { object: { sha: "new-head" } } });
+  octokit.getTree.mockResolvedValue({ data: { truncated: false, tree: [{ type: "blob", path: "book.md", sha: "new-blob", size: 4 }] } });
+  octokit.getBlob.mockResolvedValue({ data: { encoding: "base64", content: btoa("book") } });
+  const input = { bookId: "book", book: { id: "book", owner: "owner", repo: "epoch-repo" } as any, token: "token", accountIdentity: identity, branch: "main" };
+  const originalGeneration = useSettingsStore.getState().accountGeneration;
+
+  const oldA = ensureLocalBookStructure(input);
+  await vi.waitFor(() => expect(octokit.getRepo).toHaveBeenCalledOnce());
+  switchAccount();
+  useSettingsStore.setState({ accountGeneration: originalGeneration + 1 });
+  invalidateRepositoryEnsureOperations(100, identity);
+  useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
+  useSettingsStore.setState({ accountGeneration: originalGeneration + 2 });
+  invalidateRepositoryEnsureOperations(101, identity);
+
+  const newA = ensureLocalBookStructure(input);
+  await expect(newA).resolves.toMatchObject({ structure: expect.any(Object), cloned: true });
+  repoId = `${identity}::owner/epoch-repo#main`;
+  expect(octokit.getRepo).toHaveBeenCalledTimes(2);
+
+  oldRepo.release({ data: { default_branch: "main" } });
+  await expect(oldA).rejects.toMatchObject({ code: "REPOSITORY_OWNERSHIP_CHANGED" });
+  expect(await getLocalRepositoryById(repoId, identity)).toMatchObject({ cloneComplete: true, remoteHeadSha: "new-head" });
+  useSettingsStore.setState({ accountGeneration: originalGeneration });
 });
 
 test("stale clone cleanup is rejected after the repository is replaced", async () => {
