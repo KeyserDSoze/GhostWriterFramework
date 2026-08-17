@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useAuthStore, type GoogleUser } from "@/store/authStore";
 import { clearLegacyAccountUpgrade, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
+import { readAccountContinuity } from "@/auth/accountContinuity";
 import { useSettings } from "@/drive/useSettings";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftSilentRequest } from "@/config/msal";
@@ -28,8 +29,10 @@ export function LoginScreen() {
   const [error, setError] = useState<string | null>(null);
   const microsoftClientId = MICROSOFT_CLIENT_ID;
   const [recoveryState] = useState(readLegacyRecoveryLoginRequest);
+  const knownUser = useAuthStore((state) => state.user);
   const recoveryRequest = recoveryState.status === "valid" ? recoveryState.request : null;
   const recoveryExpired = recoveryState.status === "expired" || recoveryState.status === "invalid";
+  const continuity = readAccountContinuity(knownUser?.provider ?? recoveryRequest?.provider);
 
   useEffect(() => {
     if (!recoveryExpired) return;
@@ -137,7 +140,23 @@ export function LoginScreen() {
       }
       instance.setActiveAccount(result.account);
 
-      const graphToken = (await instance.acquireTokenSilent(microsoftSilentRequest(result.account)).catch(() => result)).accessToken;
+       let graphToken: string;
+       let tokenExpiresOn = result.expiresOn;
+       let silentAccountMismatch = false;
+       try {
+         const silentResult = await instance.acquireTokenSilent(microsoftSilentRequest(result.account));
+         if (!silentResult.account
+           || silentResult.account.homeAccountId !== result.account.homeAccountId
+           || silentResult.account.localAccountId !== result.account.localAccountId) {
+           silentAccountMismatch = true;
+           throw new Error(t("auth.accountMismatch"));
+         }
+         graphToken = silentResult.accessToken;
+         tokenExpiresOn = silentResult.expiresOn;
+       } catch (error) {
+         if (silentAccountMismatch) throw error;
+         graphToken = result.accessToken;
+       }
 
       const profileRes = await fetch("https://graph.microsoft.com/v1.0/me", {
         headers: { Authorization: `Bearer ${graphToken}` },
@@ -151,7 +170,7 @@ export function LoginScreen() {
       const email = profile.mail ?? profile.userPrincipalName ?? "";
       if (!email.trim()) throw new Error("Microsoft profile did not provide an email address.");
       const name = profile.displayName ?? (email || t("login.microsoftUser"));
-      const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
+       const expiresAt = tokenExpiresOn?.getTime() ?? Date.now() + 3600_000;
       const expiresIn = Math.max(120, Math.round((expiresAt - Date.now()) / 1000));
 
       await finishLogin(
@@ -199,9 +218,9 @@ export function LoginScreen() {
         {/* Sign-in card */}
         <div className="rounded-xl border bg-card p-8 shadow-sm space-y-6">
           <div className="space-y-2">
-            <h2 className="text-lg font-semibold">{recoveryExpired ? t("auth.recoveryExpiredHeading") : recoveryRequest ? t("auth.recoveryHeading") : t("auth.heading")}</h2>
+            <h2 className="text-lg font-semibold">{recoveryExpired ? t("auth.recoveryExpiredHeading") : recoveryRequest ? t("auth.recoveryHeading") : continuity ? t("auth.continuityHeading", { email: continuity.normalizedEmail }) : t("auth.heading")}</h2>
             <p className="text-sm text-muted-foreground">
-              {recoveryExpired ? t("auth.recoveryExpiredDescription") : recoveryRequest ? t("auth.recoveryDescription", { provider: recoveryRequest.provider === "google" ? "Google" : "Microsoft", email: recoveryRequest.normalizedEmail }) : t("auth.description")}
+              {recoveryExpired ? t("auth.recoveryExpiredDescription") : recoveryRequest ? t("auth.recoveryDescription", { provider: recoveryRequest.provider === "google" ? "Google" : "Microsoft", email: recoveryRequest.normalizedEmail }) : continuity ? t("auth.continuityDescription") : t("auth.description")}
             </p>
           </div>
 

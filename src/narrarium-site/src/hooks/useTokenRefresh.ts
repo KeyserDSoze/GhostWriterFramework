@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useGoogleLogin } from "@react-oauth/google";
 import { useMsal } from "@azure/msal-react";
 import { useAuthStore } from "@/store/authStore";
@@ -15,21 +15,33 @@ export function useTokenRefresh() {
   const accessTokenExpiry = useAuthStore((state) => state.accessTokenExpiry);
   const { setAuth } = useAuthStore();
   const { instance } = useMsal();
+  const refreshStateRef = useRef<{ identity: string | null; generation: number }>({ identity: null, generation: 0 });
+  const identity = accountIdentity(user);
+  if (refreshStateRef.current.identity !== identity) {
+    refreshStateRef.current = { identity, generation: refreshStateRef.current.generation + 1 };
+  }
 
   const refreshGoogle = useGoogleLogin({
     scope: GOOGLE_DRIVE_SCOPES,
     prompt: "none",
     hint: user?.email,
     onSuccess: async (tokenResponse) => {
-      if (!user) return;
-      if (!isAccountIdentityCurrent(accountIdentity(user), useAuthStore.getState().user)) return;
+      if (!user || !identity) return;
+      const generation = refreshStateRef.current.generation;
+      const ownsRefresh = () => refreshStateRef.current.identity === identity
+        && refreshStateRef.current.generation === generation
+        && isAccountIdentityCurrent(identity, useAuthStore.getState().user);
+      if (!ownsRefresh()) return;
       const response = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: `Bearer ${tokenResponse.access_token}` } });
+      if (!ownsRefresh()) return;
       if (!response.ok) return;
-      const profile = await response.json() as { sub?: string };
+      const profile = await response.json() as { sub?: string; email?: string };
+      if (!ownsRefresh()) return;
       let providerAccountId: string;
       try { providerAccountId = requireGoogleProviderAccountId(profile); } catch { return; }
-      if (providerAccountId !== user.providerAccountId) return;
+      if (!ownsRefresh() || providerAccountId !== user.providerAccountId || profile.email?.trim().toLocaleLowerCase() !== user.email.trim().toLocaleLowerCase()) return;
       registerCloudAccount("google", tokenResponse.access_token, user.providerAccountId);
+      if (!ownsRefresh()) return;
       setAuth(tokenResponse.access_token, user, "expires_in" in tokenResponse ? tokenResponse.expires_in : 3600);
     },
     // Background refresh must never log the user out. A failed silent refresh
@@ -43,6 +55,12 @@ export function useTokenRefresh() {
 
     const refresh = () => {
       if (cancelled) return;
+      const expectedIdentity = identity;
+      const generation = refreshStateRef.current.generation;
+      const ownsRefresh = () => !cancelled && refreshStateRef.current.identity === expectedIdentity
+        && refreshStateRef.current.generation === generation
+        && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user);
+      if (!ownsRefresh()) return;
       if (user.provider === "google") {
         try { refreshGoogle(); } catch { /* ignore, will retry */ }
         return;
@@ -51,12 +69,13 @@ export function useTokenRefresh() {
       if (!account?.homeAccountId?.trim() || !account.localAccountId?.trim()) return; // keep current session; AuthGuard will prompt if truly needed
       instance.acquireTokenSilent({ ...microsoftSilentRequest(account), forceRefresh: true })
         .then((result) => {
-          if (cancelled) return;
-          if (!isAccountIdentityCurrent(accountIdentity(user), useAuthStore.getState().user)) return;
-          if (result.account) instance.setActiveAccount(result.account);
+          if (!ownsRefresh()) return;
+          if (!result.account || result.account.homeAccountId !== account.homeAccountId || result.account.localAccountId !== account.localAccountId) return;
+          instance.setActiveAccount(result.account);
           const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
           const upgradedUser = { ...user, providerAccountId: account.homeAccountId, homeAccountId: account.homeAccountId, localAccountId: account.localAccountId };
           registerCloudAccount("microsoft", result.accessToken, account.homeAccountId);
+          if (!ownsRefresh()) return;
           setAuth(result.accessToken, upgradedUser, Math.max(120, Math.round((expiresAt - Date.now()) / 1000)));
         })
         .catch((err) => {
@@ -87,5 +106,5 @@ export function useTokenRefresh() {
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [accessTokenExpiry, instance, refreshGoogle, setAuth, user]);
+  }, [accessTokenExpiry, identity, instance, refreshGoogle, setAuth, user]);
 }

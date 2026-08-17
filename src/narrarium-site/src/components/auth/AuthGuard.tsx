@@ -10,7 +10,7 @@ import { ensureMsalInitialized, findMicrosoftAccount, microsoftSilentRequest } f
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 import { WanderingAuthGhost } from "@/components/auth/WanderingAuthGhost";
-import { accountIdentity, beginLegacyAccountUpgrade, isAccountIdentityCurrent, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
+import { accountIdentity, beginLegacyAccountUpgrade, isAccountIdentityCurrent, normalizedAccountEmail, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
 import { markUpdateDestinationAuthRequired } from "@/pwaUpdateIntent";
 
 interface AuthGuardProps {
@@ -19,10 +19,12 @@ interface AuthGuardProps {
 
 type Status = "checking" | "ok" | "offline" | "unauthenticated";
 const SILENT_AUTH_TIMEOUT_MS = 4000;
+const SILENT_RETRY_LIMIT = 2;
+const SILENT_RETRY_BASE_MS = 500;
 
 export function AuthGuard({ children }: AuthGuardProps) {
   const { t } = useTranslation();
-  const { accessToken, accessTokenExpiry, user, setAuth, clearAuth, clearAuthForLegacyUpgrade } =
+  const { accessToken, accessTokenExpiry, provider, providerAccountId, user, setAuth, clearAuthForLegacyUpgrade, invalidateToken } =
     useAuthStore();
   const { instance } = useMsal();
   const location = useLocation();
@@ -31,6 +33,15 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const lastAttemptKeyRef = useRef("");
   const silentAuthTimeoutRef = useRef<number | null>(null);
   const silentAttemptActiveRef = useRef(false);
+  const silentRetryCountRef = useRef(0);
+  const retryIdentityRef = useRef<string | null>(null);
+  const silentRetryTimerRef = useRef<number | null>(null);
+  const attemptSequenceRef = useRef(0);
+  const currentAttemptRef = useRef<{ nonce: number; identity: string } | null>(null);
+  const observedIdentityRef = useRef<string | null>(null);
+  const silentFallbackIdentityRef = useRef<string | null>(null);
+  const retryTimerGenerationRef = useRef(0);
+  const googleInvocationQueueRef = useRef<Array<{ nonce: number; identity: string }>>([]);
 
   function clearSilentAuthTimeout() {
     if (silentAuthTimeoutRef.current != null) {
@@ -39,9 +50,48 @@ export function AuthGuard({ children }: AuthGuardProps) {
     }
   }
 
-  /** Give up gracefully: never nuke the session while offline or backgrounded. */
-  function giveUpSilent() {
+  function clearSilentRetryTimer() {
+    if (silentRetryTimerRef.current != null) {
+      window.clearTimeout(silentRetryTimerRef.current);
+      silentRetryTimerRef.current = null;
+    }
+  }
+
+  function currentIdentity(): string | null {
+    return accountIdentity(useAuthStore.getState().user);
+  }
+
+  function ownsAttempt(attempt: { nonce: number; identity: string } | null): boolean {
+    return !!attempt && currentAttemptRef.current?.nonce === attempt.nonce
+      && currentAttemptRef.current.identity === attempt.identity && currentIdentity() === attempt.identity;
+  }
+
+  function cancelAttempt(): void {
+    retryTimerGenerationRef.current += 1;
     silentAttemptActiveRef.current = false;
+    currentAttemptRef.current = null;
+    googleInvocationQueueRef.current = [];
+    clearSilentAuthTimeout();
+    clearSilentRetryTimer();
+  }
+
+  function beginAttempt(identity: string): { nonce: number; identity: string } {
+    cancelAttempt();
+    if (retryIdentityRef.current !== identity) {
+      retryIdentityRef.current = identity;
+      silentRetryCountRef.current = 0;
+    }
+    const attempt = { nonce: ++attemptSequenceRef.current, identity };
+    currentAttemptRef.current = attempt;
+    silentAttemptActiveRef.current = true;
+    return attempt;
+  }
+
+  /** Give up gracefully, but only for the attempt that is still current. */
+  function giveUpSilent(attempt: { nonce: number; identity: string }, retry = true) {
+    if (!ownsAttempt(attempt)) return;
+    silentAttemptActiveRef.current = false;
+    currentAttemptRef.current = null;
     clearSilentAuthTimeout();
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       // Offline: keep whatever we have; AuthGuard will retry when back online.
@@ -49,16 +99,38 @@ export function AuthGuard({ children }: AuthGuardProps) {
       setStatus("offline");
       return;
     }
+    if (retry && silentRetryCountRef.current < SILENT_RETRY_LIMIT) {
+      const delay = SILENT_RETRY_BASE_MS * 2 ** silentRetryCountRef.current;
+      silentRetryCountRef.current += 1;
+      const timerGeneration = retryTimerGenerationRef.current;
+      useUiStore.getState().setAuthActivity("refreshing");
+      silentRetryTimerRef.current = window.setTimeout(() => {
+        silentRetryTimerRef.current = null;
+        if (retryTimerGenerationRef.current !== timerGeneration || currentIdentity() !== attempt.identity || currentAttemptRef.current) return;
+        lastAttemptKeyRef.current = "";
+        setSilentAttemptNonce((value) => value + 1);
+      }, delay);
+      return;
+    }
+    silentFallbackIdentityRef.current = attempt.identity;
     useUiStore.getState().setAuthActivity("idle");
-    clearAuth();
+    invalidateToken();
     setStatus("unauthenticated");
   }
 
-  function startSilentAuthTimeout() {
+  function showInteractiveLogin(attempt?: { nonce: number; identity: string }) {
+    if (attempt && !ownsAttempt(attempt)) return;
+    silentFallbackIdentityRef.current = attempt?.identity ?? currentIdentity();
+    cancelAttempt();
+    useUiStore.getState().setAuthActivity("idle");
+    invalidateToken();
+    setStatus("unauthenticated");
+  }
+
+  function startSilentAuthTimeout(attempt: { nonce: number; identity: string }) {
     clearSilentAuthTimeout();
-    silentAttemptActiveRef.current = true;
     silentAuthTimeoutRef.current = window.setTimeout(() => {
-      giveUpSilent();
+      if (ownsAttempt(attempt)) giveUpSilent(attempt);
     }, SILENT_AUTH_TIMEOUT_MS);
   }
 
@@ -68,67 +140,104 @@ export function AuthGuard({ children }: AuthGuardProps) {
     prompt: "none",
     hint: user?.email,
     onSuccess: async (tokenResponse) => {
-      if (!silentAttemptActiveRef.current || !user || !isAccountIdentityCurrent(accountIdentity(user), useAuthStore.getState().user)) return;
+      const nonce = tokenResponse.state;
+      const index = nonce ? googleInvocationQueueRef.current.findIndex((entry) => String(entry.nonce) === nonce) : -1;
+      const attempt = index >= 0 ? googleInvocationQueueRef.current.splice(index, 1)[0] : null;
+      const currentUser = useAuthStore.getState().user;
+      if (!attempt || !silentAttemptActiveRef.current || !currentUser || !ownsAttempt(attempt) || !isAccountIdentityCurrent(attempt.identity, currentUser)) return;
       const response = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: `Bearer ${tokenResponse.access_token}` } });
-      if (!response.ok) { giveUpSilent(); return; }
-      const profile = await response.json() as { sub?: string };
+      if (!ownsAttempt(attempt)) return;
+      if (!response.ok) { giveUpSilent(attempt); return; }
+      const profile = await response.json() as { sub?: string; email?: string };
+      if (!ownsAttempt(attempt)) return;
       let providerAccountId: string;
-      try { providerAccountId = requireGoogleProviderAccountId(profile); } catch { giveUpSilent(); return; }
-      if (providerAccountId !== user.providerAccountId) { giveUpSilent(); return; }
+      try { providerAccountId = requireGoogleProviderAccountId(profile); } catch { giveUpSilent(attempt); return; }
+      const verifiedUser = useAuthStore.getState().user;
+      if (!verifiedUser || !ownsAttempt(attempt) || providerAccountId !== verifiedUser.providerAccountId || !profile.email || normalizedAccountEmail({ email: profile.email }) !== normalizedAccountEmail(verifiedUser)) { showInteractiveLogin(attempt); return; }
+      if (!ownsAttempt(attempt)) return;
       silentAttemptActiveRef.current = false;
       clearSilentAuthTimeout();
-      registerCloudAccount("google", tokenResponse.access_token, user.providerAccountId);
+      if (!ownsAttempt(attempt)) return;
+      registerCloudAccount("google", tokenResponse.access_token, verifiedUser.providerAccountId!);
+      if (!ownsAttempt(attempt)) return;
       setAuth(
         tokenResponse.access_token,
-        user,
+        verifiedUser,
         "expires_in" in tokenResponse
           ? (tokenResponse as { expires_in: number }).expires_in
           : 3600,
       );
+      currentAttemptRef.current = null;
       useUiStore.getState().setAuthActivity("idle");
       setStatus("ok");
+      silentRetryCountRef.current = 0;
     },
     // The token is already unusable here. One silent attempt is enough while
     // online; offline keeps the known user and retries when connectivity returns.
-    onError: () => {
-      if (silentAttemptActiveRef.current) giveUpSilent();
-    },
+    // Error callbacks do not carry the request nonce. Timeout ownership handles
+    // the current attempt, while ignoring this callback prevents an old popup
+    // error from affecting a newer account attempt.
+    onError: () => undefined,
   });
+
+  function invokeGoogleSilent(attempt: { nonce: number; identity: string }): void {
+    googleInvocationQueueRef.current.push(attempt);
+    try { silentLogin({ state: String(attempt.nonce) }); } catch { googleInvocationQueueRef.current = googleInvocationQueueRef.current.filter((entry) => entry !== attempt); giveUpSilent(attempt); }
+  }
 
   useEffect(() => {
     async function tryMicrosoftSilentLogin() {
+      const attempt = currentAttemptRef.current;
+      if (!attempt) return;
       try {
         await ensureMsalInitialized();
+        if (!ownsAttempt(attempt)) return;
         const account = user?.provider === "microsoft" ? findMicrosoftAccount(user) : null;
         if (!account?.homeAccountId?.trim() || !account.localAccountId?.trim()) {
           silentAttemptActiveRef.current = false;
           clearSilentAuthTimeout();
-          clearAuth();
+          if (!ownsAttempt(attempt)) return;
+          invalidateToken();
+          currentAttemptRef.current = null;
           setStatus("unauthenticated");
           return;
         }
         const result = await instance.acquireTokenSilent({ ...microsoftSilentRequest(account), forceRefresh: true });
-        if (!silentAttemptActiveRef.current || !user || !isAccountIdentityCurrent(accountIdentity(user), useAuthStore.getState().user)) return;
+        if (!ownsAttempt(attempt) || !user || !isAccountIdentityCurrent(accountIdentity(user), useAuthStore.getState().user)) return;
+        if (!result.account || result.account.homeAccountId !== account.homeAccountId || result.account.localAccountId !== account.localAccountId) { showInteractiveLogin(attempt); return; }
+        if (!ownsAttempt(attempt)) return;
         if (result.account) instance.setActiveAccount(result.account);
         const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
         const expiresIn = Math.max(120, Math.round((expiresAt - Date.now()) / 1000));
         silentAttemptActiveRef.current = false;
         clearSilentAuthTimeout();
         const upgradedUser = { ...user, providerAccountId: account.homeAccountId, homeAccountId: account.homeAccountId, localAccountId: account.localAccountId };
+        if (!ownsAttempt(attempt)) return;
         registerCloudAccount("microsoft", result.accessToken, account.homeAccountId);
+        if (!ownsAttempt(attempt)) return;
         setAuth(result.accessToken, upgradedUser, expiresIn);
+        currentAttemptRef.current = null;
         setStatus("ok");
+        silentRetryCountRef.current = 0;
       } catch {
-        if (silentAttemptActiveRef.current) giveUpSilent();
+        if (ownsAttempt(attempt)) giveUpSilent(attempt);
       }
     }
 
+    const tokenBound = user?.provider === provider && user.providerAccountId === providerAccountId;
     const tokenValid =
       !!accessToken &&
       !!accessTokenExpiry &&
-      Date.now() < accessTokenExpiry;
+      Date.now() < accessTokenExpiry &&
+      tokenBound;
 
     const immutableIdentity = Boolean(user?.providerAccountId?.trim()) && (user?.provider !== "microsoft" || Boolean(user.homeAccountId?.trim() && user.localAccountId?.trim()));
+    const identity = accountIdentity(user);
+    if (observedIdentityRef.current !== identity) {
+      cancelAttempt();
+      observedIdentityRef.current = identity;
+      silentFallbackIdentityRef.current = null;
+    }
     if (user && !immutableIdentity) {
       beginLegacyAccountUpgrade(user);
       clearSilentAuthTimeout();
@@ -138,6 +247,9 @@ export function AuthGuard({ children }: AuthGuardProps) {
       clearSilentAuthTimeout();
       useUiStore.getState().setAuthActivity("idle");
       setStatus("ok");
+    } else if (identity && silentFallbackIdentityRef.current === identity && !accessToken) {
+      useUiStore.getState().setAuthActivity("idle");
+      setStatus("unauthenticated");
     } else if (user?.provider === "google") {
       if (navigator.onLine === false) {
         useUiStore.getState().setAuthActivity("offline");
@@ -145,34 +257,41 @@ export function AuthGuard({ children }: AuthGuardProps) {
         return;
       }
       // Known user, but token missing/expired → try silent re-auth
-      const attemptKey = `google:${user.providerAccountId}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
+      const attemptKey = `google:${identity}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
       if (lastAttemptKeyRef.current === attemptKey) return;
       lastAttemptKeyRef.current = attemptKey;
       useUiStore.getState().setAuthActivity("refreshing");
       setStatus("checking");
-      startSilentAuthTimeout();
-      silentLogin();
+      beginAttempt(identity!);
+      setSilentAttemptNonce((value) => value + 1);
     } else if (user?.provider === "microsoft") {
       if (navigator.onLine === false) {
         useUiStore.getState().setAuthActivity("offline");
         setStatus("offline");
         return;
       }
-      const attemptKey = `microsoft:${user.email}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
+      const attemptKey = `microsoft:${identity}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
       if (lastAttemptKeyRef.current === attemptKey) return;
       lastAttemptKeyRef.current = attemptKey;
       setStatus("checking");
-      startSilentAuthTimeout();
+      startSilentAuthTimeout(beginAttempt(identity!));
       void tryMicrosoftSilentLogin();
     } else {
       clearSilentAuthTimeout();
       setStatus("unauthenticated");
     }
-  }, [accessToken, accessTokenExpiry, clearAuth, clearAuthForLegacyUpgrade, instance, setAuth, silentAttemptNonce, silentLogin, user]);
+  }, [accessToken, accessTokenExpiry, clearAuthForLegacyUpgrade, instance, invalidateToken, setAuth, silentAttemptNonce, silentLogin, user]);
+
+  useEffect(() => {
+    if (!silentAttemptNonce || user?.provider !== "google") return;
+    const attempt = currentAttemptRef.current;
+    if (!attempt || !ownsAttempt(attempt)) return;
+    startSilentAuthTimeout(attempt);
+    invokeGoogleSilent(attempt);
+  }, [silentAttemptNonce, silentLogin, user]);
 
   useEffect(() => () => {
-    silentAttemptActiveRef.current = false;
-    clearSilentAuthTimeout();
+    cancelAttempt();
     lastAttemptKeyRef.current = "";
   }, []);
 
@@ -183,6 +302,11 @@ export function AuthGuard({ children }: AuthGuardProps) {
       const valid = !!accessToken && !!accessTokenExpiry && Date.now() < accessTokenExpiry;
       const activity = useUiStore.getState().authActivity;
       if (user && !valid && navigator.onLine !== false && activity !== "refreshing") {
+        if (retryIdentityRef.current !== accountIdentity(user)) {
+          retryIdentityRef.current = accountIdentity(user);
+          silentRetryCountRef.current = 0;
+        }
+        silentFallbackIdentityRef.current = null;
         lastAttemptKeyRef.current = "";
         useUiStore.getState().setAuthActivity("refreshing");
         setStatus("checking");
@@ -209,6 +333,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
       document.removeEventListener("visibilitychange", onVisible);
+      clearSilentRetryTimer();
     };
   }, [accessToken, accessTokenExpiry, user]);
 

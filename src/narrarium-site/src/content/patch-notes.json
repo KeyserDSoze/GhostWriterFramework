@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.48",
+    "date": "2026-08-17",
+    "en": {
+      "title": "Provider login continuity restored",
+      "summary": "This release restores the stay-signed-in experience across PWA reloads while keeping bearer tokens volatile and provider identity checks strict.",
+      "changes": [
+        "Persisted only a minimal non-secret Google or Microsoft account continuity record so a recreated PWA can request a new provider token without storing bearer credentials.",
+        "Bound volatile access tokens to the exact provider and immutable account ID, rejecting cross-provider or mismatched session data during hydration.",
+        "Retried silent Google and Microsoft renewal with identity-bound attempt nonces, bounded backoff, visibility and online recovery, and explicit interactive fallback.",
+        "Preserved local books and continuity when cookies are blocked, providers are slow, tokens expire, or network access is unavailable; explicit sign-out still clears continuity."
+      ]
+    },
+    "it": {
+      "title": "Continuita della login provider ripristinata",
+      "summary": "Questa release ripristina l'esperienza di login persistente dopo i reload PWA mantenendo i bearer token volatili e i controlli di identita provider rigorosi.",
+      "changes": [
+        "Persistito soltanto un record minimo e non sensibile di continuita dell'account Google o Microsoft, cosi una PWA ricreata puo richiedere un nuovo token senza salvare credenziali bearer.",
+        "Associati i token volatili al provider esatto e all'identita account immutabile, rifiutando dati sessione cross-provider o non corrispondenti durante l'hydration.",
+        "Rinnovati silenziosamente Google e Microsoft con nonce legati all'identita, backoff limitato, ripresa su visibilita e connessione e fallback interattivo esplicito.",
+        "Conservati libri locali e continuita quando cookie sono bloccati, provider lenti, token scaduti o rete non disponibile; il logout esplicito cancella comunque la continuita."
+      ]
+    }
+  },
+  {
     "version": "0.76.47",
     "date": "2026-08-17",
     "en": {
