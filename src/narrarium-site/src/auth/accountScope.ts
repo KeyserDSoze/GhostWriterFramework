@@ -83,7 +83,7 @@ export function resetAccountScopedState(): void {
 export function installAccountScopeIsolation(): void {
   if (installed) return;
   installed = true;
-  let activeIdentity = accountIdentity(useAuthStore.getState().user);
+  let activeIdentity = accountIdentity(useAuthStore.getState().user) ?? useAuthStore.getState().interactiveRecoveryIdentity;
   setFallbackAcknowledgementAccountScope(activeIdentity);
   const storedIdentity = loadAccountScope();
   const accountChanged = shouldResetAccountScope(storedIdentity, activeIdentity);
@@ -94,7 +94,7 @@ export function installAccountScopeIsolation(): void {
   if (activeIdentity) void resumeCurrentAccountRepositoryMigrations().catch(() => undefined);
 
   useAuthStore.subscribe((state) => {
-    const nextIdentity = accountIdentity(state.user);
+    const nextIdentity = accountIdentity(state.user) ?? state.interactiveRecoveryIdentity;
     if (nextIdentity === activeIdentity) return;
     const previousIdentity = activeIdentity;
     activeIdentity = nextIdentity;

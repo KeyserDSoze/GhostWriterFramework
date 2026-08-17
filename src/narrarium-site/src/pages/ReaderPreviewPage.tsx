@@ -9,6 +9,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -361,7 +362,7 @@ export function ReaderPreviewPage() {
 
   if (!book) return <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   if (loading && !structure) return <ReaderSkeleton />;
-  if (error && !structure) return <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center gap-3"><span>{error}</span><Button size="sm" variant="outline" onClick={() => reload()}>{t("common.reloadBook")}</Button></AlertDescription></Alert>;
+  if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
 
   const fullScreen = readerSettings.fullScreen;
   const rootClass = fullScreen

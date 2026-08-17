@@ -11,6 +11,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { resolveBookToken } from "@/types/settings";
 import { createFile, deleteFile, readFileWithSha, updateFile } from "@/github/githubClient";
@@ -24,7 +25,7 @@ export function GhostwritersPage() {
   const { toast } = useToast();
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
-  const { book, structure, loading, reload } = useBookStructure(bookId);
+  const { book, structure, loading, error, reload } = useBookStructure(bookId);
   const token = book ? resolveBookToken(book, settings) : "";
 
   const [selected, setSelected] = useState<string | null>(null);
@@ -119,6 +120,7 @@ export function GhostwritersPage() {
   const csv = (arr: string[]) => arr.join(", ");
   const fromCsv = (v: string) => v.split(",").map((s) => s.trim()).filter(Boolean);
 
+  if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
 
   return (

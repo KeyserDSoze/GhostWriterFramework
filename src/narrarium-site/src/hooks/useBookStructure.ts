@@ -5,7 +5,7 @@ import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentit
 import { ensureAuthoritativePersonalBranch, resolveAuthoritativeBranch } from "@/github/branchResolution";
 import { ensureLocalBookStructure, fetchRemoteStatus, getExistingLocalBookStructure, invalidateRepositoryEnsureOperations, pullRemoteChanges, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
-import { useBooksStore } from "@/store/booksStore";
+import { useBooksStore, type LegacyBookStructureErrorCode } from "@/store/booksStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { resolveBookToken } from "@/types/settings";
 
@@ -23,6 +23,14 @@ export function resetBookStructureLoadCoordinator(): number {
   operations.clear();
   failedOperations.clear();
   return loadEpoch;
+}
+
+export function retryBookStructureLoad(bookId: string): number {
+  const generation = useBooksStore.getState().invalidateStructure(bookId);
+  failedOperations.forEach((key) => {
+    if (key.includes(`::${bookId}::`)) failedOperations.delete(key);
+  });
+  return generation;
 }
 
 function remoteChangedNoticeKey(bookId: string, remoteHeadSha: string): string {
@@ -101,7 +109,7 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
     state.endStructureOperation(bookId, token);
   };
 
-  books.setError(bookId, "");
+  books.setError(bookId);
   books.setCloneProgress(bookId, undefined);
   books.beginStructureOperation(bookId, token, epoch, generation);
 
@@ -159,7 +167,7 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
     }
     if (!ownsOperation()) return;
     useBooksStore.getState().setStructure(bookId, nextStructure, generation);
-    useBooksStore.getState().setError(bookId, "");
+    useBooksStore.getState().setError(bookId);
 
     // A remote status check is opportunistic and must never hold the local loading UI.
     finishLocalLoading();
@@ -187,7 +195,15 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
     }
   })().catch((error: unknown) => {
     if (loadEpoch === epoch) failedOperations.add(key);
-    if (ownsOperation()) useBooksStore.getState().setError(bookId, error instanceof Error ? error.message : i18n.t("common.loadFailed"));
+    if (ownsOperation()) {
+      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+      const legacy = typeof code === "string" && ["LEGACY_REPOSITORY_AUTH_REQUIRED", "LEGACY_REPOSITORY_COPY_CONFLICT", "LEGACY_REPOSITORY_ADOPTION_DECLINED", "LEGACY_REPOSITORY_CHANGED"].includes(code)
+        ? code as LegacyBookStructureErrorCode
+        : null;
+      useBooksStore.getState().setError(bookId, legacy
+        ? { code: legacy, adoptionTarget: error && typeof error === "object" && "adoptionTarget" in error ? error.adoptionTarget as import("@/auth/legacyAdoptionConsent").LegacyAdoptionTarget | undefined : undefined }
+        : { code: "BOOK_STRUCTURE_LOAD_FAILED", message: i18n.t("common.loadFailed") });
+    }
   }).finally(() => {
     finishLocalLoading();
     if (operations.get(key)?.token === token) operations.delete(key);
@@ -217,10 +233,7 @@ export function useBookStructure(bookId: string | undefined) {
 
   const reload = useCallback(() => {
     if (!resolvedBookId) return;
-    const nextGeneration = useBooksStore.getState().invalidateStructure(resolvedBookId);
-    failedOperations.forEach((key) => {
-      if (key.includes(`::${resolvedBookId}::`)) failedOperations.delete(key);
-    });
+    const nextGeneration = retryBookStructureLoad(resolvedBookId);
     startBookStructureOperation(resolvedBookId, nextGeneration);
   }, [resolvedBookId]);
 

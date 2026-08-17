@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BookExportDialog } from "@/components/book/BookExportDialog";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { BookExportSettingsDialog } from "@/components/book/BookExportSettingsDialog";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
@@ -35,14 +36,7 @@ export function BookExportPage() {
   if (loading && !structure) return <BookExportSkeleton />;
 
   if (error && !structure) {
-    return (
-      <Alert variant="destructive">
-        <AlertDescription className="flex flex-wrap items-center gap-3">
-          <span>{error}</span>
-          <Button size="sm" variant="outline" onClick={() => reload()}>{t("common.reloadBook")}</Button>
-        </AlertDescription>
-      </Alert>
-    );
+    return <BookStructureErrorAlert error={error} reload={reload} />;
   }
 
   if (!structure) return <BookExportSkeleton />;

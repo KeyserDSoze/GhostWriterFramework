@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { resolveBookToken } from "@/types/settings";
 import { isGitHubFileNotFoundError, loadFileContent, mutateTextFilesAtomically, readFileWithSha } from "@/github/githubClient";
 import { stringify } from "yaml";
@@ -29,7 +30,7 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
   const { toast } = useToast();
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
-  const { book, structure, loading, reload } = useBookStructure(bookId);
+  const { book, structure, loading, error, reload } = useBookStructure(bookId);
   const token = book ? resolveBookToken(book, settings) : "";
   const chapter = structure?.chapters.find((c) => c.slug === chapterId);
 
@@ -41,6 +42,7 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
   const [genPara, setGenPara] = useState<string>("");
   const genTargetHashRef = useRef<string | null>(null);
 
+  if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   if (loading && !structure) {
     return <div className="space-y-2">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-12" />)}</div>;

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useAuthStore } from "@/store/authStore";
 import { resolveBookExportProfiles, resolveBookExportSettings } from "@/types/settings";
@@ -47,15 +48,7 @@ export function BookDashboardPage() {
   }
 
   if (error && !structure) {
-    return (
-      <Alert variant="destructive">
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription className="flex flex-wrap items-center gap-3">
-          <span>{error}</span>
-          <Button size="sm" variant="outline" onClick={() => reload()}>{t("common.reloadBook")}</Button>
-        </AlertDescription>
-      </Alert>
-    );
+    return <BookStructureErrorAlert error={error} reload={reload} />;
   }
 
   if (!structure) return <DashboardSkeleton />;

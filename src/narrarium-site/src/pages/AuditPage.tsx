@@ -27,6 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import {
   AUDIT_CATEGORIES,
   deleteAudit,
@@ -275,7 +276,8 @@ export function AuditPage() {
   const criticalCount = report?.findings.filter((finding) => finding.severity === "critical").length ?? 0;
 
   if (!book && !structureLoading) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
-  if (structureError || targetError) return <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{structureError || targetError}</AlertDescription></Alert>;
+  if (structureError) return <BookStructureErrorAlert error={structureError} reload={reload} />;
+  if (targetError) return <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{targetError}</AlertDescription></Alert>;
   if (!structure || !target) return <div className="flex min-h-40 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
   return (

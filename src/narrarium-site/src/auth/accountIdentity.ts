@@ -51,18 +51,19 @@ export function finalizeInteractiveLegacyAccountUpgrade(user: AppUser): LegacyAc
   let pending: PendingLegacyRecovery | null = null;
   try {
     pending = JSON.parse(sessionStorage.getItem(LEGACY_UPGRADE_PENDING_KEY) ?? "null") as PendingLegacyAccountUpgrade | null;
-    sessionStorage.removeItem(LEGACY_UPGRADE_PENDING_KEY);
   } catch { return null; }
   if (!pending) return null;
   if (!immutableIdentity || Date.now() - pending.createdAt > LEGACY_UPGRADE_MAX_AGE_MS || pending.createdAt > Date.now()
     || pending.provider !== user.provider || pending.normalizedEmail !== normalizedAccountEmail(user)
     || pending.legacyIdentity !== legacyEmailAccountIdentity(user)
     || (pending.expectedImmutableIdentity !== undefined && pending.expectedImmutableIdentity !== immutableIdentity)) {
-    clearLegacyAccountUpgrade();
     throw new Error("Interactive recovery must use the same provider account and email as the currently authenticated account. Start recovery again to retry.");
   }
   const evidence: LegacyAccountUpgradeEvidence = { ...pending, immutableIdentity };
-  try { sessionStorage.setItem(LEGACY_UPGRADE_EVIDENCE_KEY, JSON.stringify(evidence)); } catch { return null; }
+  try {
+    sessionStorage.setItem(LEGACY_UPGRADE_EVIDENCE_KEY, JSON.stringify(evidence));
+    sessionStorage.removeItem(LEGACY_UPGRADE_PENDING_KEY);
+  } catch { return null; }
   return evidence;
 }
 

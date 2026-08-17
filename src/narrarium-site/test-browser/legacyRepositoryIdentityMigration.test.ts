@@ -71,6 +71,14 @@ async function freshStrandedProof(user: { provider: "google"; providerAccountId:
   useAuthStore.getState().setInteractiveAuth("fresh-token", user);
 }
 
+async function grantAdoptionConsent(user: { provider: "google"; providerAccountId: string; name: string; email: string; picture: string }, bookId: string, repo: string, replaceDisposableTarget = false): Promise<void> {
+  const { getLegacyAccountUpgradeEvidence } = await import("@/auth/accountIdentity");
+  const { createLegacyAdoptionConsent } = await import("@/auth/legacyAdoptionConsent");
+  const evidence = getLegacyAccountUpgradeEvidence(user, `google:${user.providerAccountId}`);
+  if (!evidence) throw new Error("Test recovery evidence is missing.");
+  createLegacyAdoptionConsent(user, { bookId, owner: "owner", repo, branch: "main", legacyIdentity: legacyScope, evidenceNonce: evidence.nonce, replaceDisposableTarget });
+}
+
 async function seedLegacyRewrite(operationId: string, bookId: string, repo: string, repoId: string): Promise<void> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open("narrarium-local-rewrite-operations");
@@ -121,7 +129,7 @@ describe.sequential("pre-0.76.38 repository identity migration", () => {
     const { beginLegacyAccountUpgrade } = await import("@/auth/accountIdentity");
     beginLegacyAccountUpgrade(legacyUser);
     useAuthStore.getState().setInteractiveAuth("token", { ...legacyUser, providerAccountId: "sub-a" });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await grantAdoptionConsent({ ...legacyUser, providerAccountId: "sub-a" }, "legacy-book", "legacy-repo");
 
     const first = ensureLocalBookStructure({ bookId: "legacy-book", book: { id: "legacy-book", owner: "owner", repo: "legacy-repo" } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" });
     const second = ensureLocalBookStructure({ bookId: "legacy-book", book: { id: "legacy-book", owner: "owner", repo: "legacy-repo" } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" });
@@ -145,7 +153,7 @@ describe.sequential("pre-0.76.38 repository identity migration", () => {
     useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-b", name: "Other", email, picture: "" } });
 
     await expect(ensureLocalBookStructure({ bookId: "isolated-book", book: { id: "isolated-book", owner: "owner", repo: "isolated-repo" } as never, token: "token", accountIdentity: "google:sub-b", branch: "main" }))
-      .rejects.toMatchObject({ code: "LEGACY_REPOSITORY_MIGRATION_REQUIRED" });
+      .rejects.toMatchObject({ code: "LEGACY_REPOSITORY_AUTH_REQUIRED" });
     const raw = await open();
     const preserved = await new Promise<unknown>((resolve, reject) => {
       const request = raw.transaction("repositories").objectStore("repositories").get(oldId);
@@ -164,9 +172,10 @@ describe.sequential("pre-0.76.38 repository identity migration", () => {
     const user = { provider: "google" as const, providerAccountId: "sub-a", name: "Writer", email, picture: "" };
     useAuthStore.setState({ user, accessToken: "persisted" });
     const input = { bookId: "stranded-book", book: { id: "stranded-book", owner: "owner", repo: "stranded-repo" } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" };
-    await expect(ensureLocalBookStructure(input)).rejects.toThrow("Fresh interactive sign-in");
+    await expect(ensureLocalBookStructure(input)).rejects.toMatchObject({ code: "LEGACY_REPOSITORY_AUTH_REQUIRED" });
     await freshStrandedProof(user);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await expect(ensureLocalBookStructure(input)).rejects.toMatchObject({ code: "LEGACY_REPOSITORY_ADOPTION_DECLINED" });
+    await grantAdoptionConsent(user, "stranded-book", "stranded-repo");
     await expect(ensureLocalBookStructure(input)).resolves.toMatchObject({ meta: { accountScope: "google:sub-a" }, structure: { title: "Existing Book" } });
     expect(octokit.getBlob).not.toHaveBeenCalled();
   });
@@ -179,7 +188,7 @@ describe.sequential("pre-0.76.38 repository identity migration", () => {
     const user = { provider: "google" as const, providerAccountId: "sub-a", name: "Writer", email, picture: "" };
     useAuthStore.setState({ user });
     await freshStrandedProof(user);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await grantAdoptionConsent(user, "replace-book", "replace-repo", true);
     await expect(ensureLocalBookStructure({ bookId: "replace-book", book: { id: "replace-book", owner: "owner", repo: "replace-repo" } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" })).resolves.toMatchObject({ structure: { title: "Existing Book" } });
     expect(await getLocalFile(targetId, "book.md", captureRepositoryOperationScope())).toMatchObject({ text: expect.stringContaining("Local prose") });
     expect(octokit.getBlob).not.toHaveBeenCalled();
@@ -193,25 +202,22 @@ describe.sequential("pre-0.76.38 repository identity migration", () => {
     const user = { provider: "google" as const, providerAccountId: "sub-a", name: "Writer", email, picture: "" };
     useAuthStore.setState({ user });
     await freshStrandedProof(user);
-    vi.spyOn(window, "confirm");
-    await expect(ensureLocalBookStructure({ bookId: "blocked-book", book: { id: "blocked-book", owner: "owner", repo: "blocked-repo" } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" })).rejects.toThrow("preserved both");
+    await expect(ensureLocalBookStructure({ bookId: "blocked-book", book: { id: "blocked-book", owner: "owner", repo: "blocked-repo" } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" })).rejects.toMatchObject({ code: "LEGACY_REPOSITORY_COPY_CONFLICT" });
     expect(await getLocalFile(targetId, "book.md", captureRepositoryOperationScope())).toMatchObject({ text: "user edit" });
     const raw = await open();
     const legacy = await new Promise((resolve) => { const request = raw.transaction("repositories").objectStore("repositories").get(legacyId); request.onsuccess = () => resolve(request.result); });
     raw.close();
     expect(legacy).toBeTruthy();
-    expect(window.confirm).not.toHaveBeenCalled();
   });
 
   it("decline leaves proof and data retryable", async () => {
     const db = await open(); await seedLegacy(db, "decline-book", "decline-repo"); db.close();
     const user = { provider: "google" as const, providerAccountId: "sub-a", name: "Writer", email, picture: "" };
     useAuthStore.setState({ user }); await freshStrandedProof(user);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
     const input = { bookId: "decline-book", book: { id: "decline-book", owner: "owner", repo: "decline-repo" } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" };
-    await expect(ensureLocalBookStructure(input)).rejects.toThrow("declined");
+    await expect(ensureLocalBookStructure(input)).rejects.toMatchObject({ code: "LEGACY_REPOSITORY_ADOPTION_DECLINED" });
+    await grantAdoptionConsent(user, "decline-book", "decline-repo");
     await expect(ensureLocalBookStructure(input)).resolves.toMatchObject({ structure: { title: "Existing Book" } });
-    expect(confirm).toHaveBeenCalledTimes(2);
   });
 
   it("keeps completion progress through the final lifecycle transaction", async () => {
@@ -237,7 +243,7 @@ describe.sequential("pre-0.76.38 repository identity migration", () => {
     const { crashNextRepositoryMigrationForTests } = await import("@/repository/localRepository");
     beginLegacyAccountUpgrade(legacyUser);
     useAuthStore.getState().setInteractiveAuth("token", { ...legacyUser, providerAccountId: "sub-a" });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await grantAdoptionConsent({ ...legacyUser, providerAccountId: "sub-a" }, bookId, repo);
     crashNextRepositoryMigrationForTests(phase);
     const input = { bookId, book: { id: bookId, owner: "owner", repo } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" };
     await expect(ensureLocalBookStructure(input)).rejects.toThrow("Simulated repository migration crash");
@@ -260,7 +266,7 @@ describe.sequential("pre-0.76.38 repository identity migration", () => {
     const { captureRepositoryOperationScope } = await import("@/repository/repositoryOperationScope");
     beginLegacyAccountUpgrade(legacyUser);
     useAuthStore.getState().setInteractiveAuth("token", { ...legacyUser, providerAccountId: "sub-a" });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await grantAdoptionConsent({ ...legacyUser, providerAccountId: "sub-a" }, bookId, repo);
     crashNextRepositoryMigrationForTests("primary-rekeyed");
     const input = { bookId, book: { id: bookId, owner: "owner", repo } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" };
     await expect(ensureLocalBookStructure(input)).rejects.toThrow("Simulated repository migration crash");
@@ -286,9 +292,7 @@ describe.sequential("pre-0.76.38 repository identity migration", () => {
     const now = new Date().toISOString();
     await saveLocalRewriteOperation({ operationId, operation: "rewriteFromReaderFeedback", scope: "chapter", bookId, chapterId: "chapter", paragraphIds: [], startedAt: now, completedAt: null, status: "preparing", createdAt: now, updatedAt: now, repoId: newRepoId, owner: "owner", repo, branch: "main", chapterSlug: "chapter", targetIds: [], feedbackMode: "summary", feedbackPath: "feedback.md", feedbackSummaryPath: "feedback.md", feedbackSourceHash: "hash", staleFeedback: false, progress: { completed: 0, total: 0 }, modifiedFiles: [], generationRuns: [], aggregateInputTokens: 0, aggregateCachedInputTokens: 0, aggregateOutputTokens: 0, aggregateCost: 0, conflicts: [] } as never, captureRepositoryOperationScope());
     await freshStrandedProof(user);
-    vi.spyOn(window, "confirm");
-    await expect(ensureLocalBookStructure({ bookId, book: { id: bookId, owner: "owner", repo } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" })).rejects.toThrow("Rewrite-operation records");
+    await expect(ensureLocalBookStructure({ bookId, book: { id: bookId, owner: "owner", repo } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" })).rejects.toMatchObject({ code: "LEGACY_REPOSITORY_COPY_CONFLICT" });
     await expect(loadLocalRewriteOperation(operationId, newRepoId, captureRepositoryOperationScope())).resolves.toMatchObject({ operationId, repoId: newRepoId });
-    expect(window.confirm).not.toHaveBeenCalled();
   });
 });

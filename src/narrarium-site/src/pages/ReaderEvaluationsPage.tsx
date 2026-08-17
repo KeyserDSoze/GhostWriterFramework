@@ -13,6 +13,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useHasLocalRewriteOperation } from "@/hooks/useHasLocalRewriteOperation";
 import { resolveBookToken } from "@/types/settings";
 import { deleteFile, loadFileContent, readFileWithSha } from "@/github/githubClient";
@@ -32,7 +33,7 @@ export function ReaderEvaluationsPage() {
   const { toast } = useToast();
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
-  const { book, structure, reload } = useBookStructure(bookId);
+  const { book, structure, error, reload } = useBookStructure(bookId);
   const token = book ? resolveBookToken(book, settings) : "";
   const chapter = structure?.chapters.find((entry) => entry.slug === chapterId);
   const paragraph = chapter?.paragraphs.find((entry) => entry.number === paragraphNum);
@@ -215,6 +216,7 @@ export function ReaderEvaluationsPage() {
   function toggleCard(key: string) {
     setOpenCards((current) => ({ ...current, [key]: !current[key] }));
   }
+  if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   if (!chapter) return <Alert variant="destructive"><AlertDescription>{t("chapter.notFound", { id: chapterId })}</AlertDescription></Alert>;
   return <div className="space-y-6">

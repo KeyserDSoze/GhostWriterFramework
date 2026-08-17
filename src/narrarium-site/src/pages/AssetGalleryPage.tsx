@@ -4,11 +4,11 @@ import { useTranslation } from "react-i18next";
 import { AlertCircle, ImageIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
 import { loadBinaryFileContent } from "@/github/githubClient";
@@ -101,7 +101,7 @@ export function AssetGalleryPage() {
 
   if (!book) return <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   if (loading && !structure) return <GallerySkeleton />;
-  if (error && !structure) return <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center gap-3"><span>{error}</span><Button size="sm" variant="outline" onClick={() => reload()}>{t("common.reloadBook")}</Button></AlertDescription></Alert>;
+  if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!structure) return <GallerySkeleton />;
 
   const filtered = cards.filter((card) => filter === "all" || (filter === "missing" ? !card.imagePath : card.kind === filter));

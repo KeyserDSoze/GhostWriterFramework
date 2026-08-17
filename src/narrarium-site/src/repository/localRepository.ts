@@ -11,6 +11,7 @@ import {
   type ParagraphArtifactTarget,
 } from "@/narrarium/paragraphArtifacts";
 import { accountIdentity, beginStrandedLegacyRecovery, consumeLegacyAccountUpgradeEvidence, getLegacyAccountUpgradeEvidence, legacyEmailAccountIdentity } from "@/auth/accountIdentity";
+import { consumeLegacyAdoptionConsent, type LegacyAdoptionTarget } from "@/auth/legacyAdoptionConsent";
 import { finalizeLegacyRewriteOperationMigration, inspectLegacyRewriteOperationMigration, prepareLegacyRewriteOperationMigration } from "@/repository/localRewriteOperationStore";
 import { useAuthStore } from "@/store/authStore";
 import { assertRepositoryOperationScopeCurrent, captureRepositoryOperationScope, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
@@ -197,11 +198,15 @@ export class LocalCloneAlreadyInProgressError extends Error {
   }
 }
 
-export class LegacyRepositoryMigrationRequiredError extends Error {
-  readonly code = "LEGACY_REPOSITORY_MIGRATION_REQUIRED";
+export type LegacyRepositoryMigrationErrorCode =
+  | "LEGACY_REPOSITORY_AUTH_REQUIRED"
+  | "LEGACY_REPOSITORY_COPY_CONFLICT"
+  | "LEGACY_REPOSITORY_ADOPTION_DECLINED"
+  | "LEGACY_REPOSITORY_CHANGED";
 
-  constructor(message = "Legacy local recovery requires fresh interactive provider authentication and explicit adoption confirmation. Narrarium preserved every local copy and did not start another clone.") {
-    super(message);
+export class LegacyRepositoryMigrationRequiredError extends Error {
+  constructor(readonly code: LegacyRepositoryMigrationErrorCode, readonly adoptionTarget?: LegacyAdoptionTarget) {
+    super(code);
     this.name = "LegacyRepositoryMigrationRequiredError";
   }
 }
@@ -719,20 +724,21 @@ export async function adoptLegacyEmailScopedRepository(input: {
     && legacy.owner === input.owner && legacy.repo === input.repo && legacy.branch === input.branch;
   if (!legacy) {
     const candidates = await allFromIndex<LocalRepositoryMeta>("repositories", "remote", IDBKeyRange.only([input.owner, input.repo, input.branch]));
-    if (candidates.some((row) => row.bookId === input.bookId && row.id !== newId)) throw new LegacyRepositoryMigrationRequiredError();
+    if (candidates.some((row) => row.bookId === input.bookId && row.id !== newId)) throw new LegacyRepositoryMigrationRequiredError("LEGACY_REPOSITORY_COPY_CONFLICT");
     return null;
   }
-  if (!exact) throw new LegacyRepositoryMigrationRequiredError();
+  if (!exact) throw new LegacyRepositoryMigrationRequiredError("LEGACY_REPOSITORY_CHANGED");
   const evidence = getLegacyAccountUpgradeEvidence(user, input.scope.accountIdentity);
   if (!evidence) {
     beginStrandedLegacyRecovery(user, legacyScope);
-    throw new LegacyRepositoryMigrationRequiredError("A legacy local working copy was found. Fresh interactive sign-in with this same provider account is required before recovery. Open Sign in again, then retry; no clone will start.");
+    throw new LegacyRepositoryMigrationRequiredError("LEGACY_REPOSITORY_AUTH_REQUIRED");
   }
   const rewrites = await inspectLegacyRewriteOperationMigration({ oldRepoId: oldId, newRepoId: newId, legacyAccountIdentity: legacyScope, immutableAccountIdentity: input.scope.accountIdentity });
-  if (rewrites.collisions.length || rewrites.targetCount) throw new LegacyRepositoryMigrationRequiredError("Rewrite-operation records exist in both local copies or share an operation ID. Narrarium preserved both copies; export them before manual recovery.");
+  if (rewrites.collisions.length || rewrites.targetCount) throw new LegacyRepositoryMigrationRequiredError("LEGACY_REPOSITORY_COPY_CONFLICT");
   const targetDisposition = await inspectCompetingImmutableRepository(newId, input.scope.accountIdentity);
-  if (targetDisposition === "preserve") throw new LegacyRepositoryMigrationRequiredError("Both the legacy working copy and a newer local copy contain data that may be user-owned. Narrarium preserved both. Keep the newer clone or export both copies before choosing a manual recovery; automatic adoption is blocked.");
-  if (!window.confirm("Narrarium found a pre-upgrade local working copy for this email. Provider email history cannot prove that a recreated same-email account is the original account. Adopt the legacy copy now? Decline to preserve both copies and retry later.")) throw new LegacyRepositoryMigrationRequiredError("Legacy adoption was declined. The working copy and fresh authentication proof were preserved so you can retry; no competing clone will start.");
+  if (targetDisposition === "preserve") throw new LegacyRepositoryMigrationRequiredError("LEGACY_REPOSITORY_COPY_CONFLICT");
+  const adoptionTarget: LegacyAdoptionTarget = { bookId: input.bookId, owner: input.owner, repo: input.repo, branch: input.branch, legacyIdentity: legacyScope, evidenceNonce: evidence.nonce, replaceDisposableTarget: targetDisposition === "replace" };
+  if (!consumeLegacyAdoptionConsent(user, adoptionTarget, evidence)) throw new LegacyRepositoryMigrationRequiredError("LEGACY_REPOSITORY_ADOPTION_DECLINED", adoptionTarget);
   const journal: RepositoryMigrationJournal = { id: evidence.nonce, oldRepoId: oldId, newRepoId: newId, bookId: input.bookId, owner: input.owner, repo: input.repo, branch: input.branch, legacyAccountIdentity: legacyScope, immutableAccountIdentity: input.scope.accountIdentity, phase: "prepared", createdAt: new Date().toISOString(), replaceDisposableTarget: targetDisposition === "replace" };
   await txStore("migrationJournals", "readwrite", (store) => store.add(journal));
   simulateRepositoryMigrationCrash("journal");
@@ -795,7 +801,7 @@ async function completeRepositoryMigration(journal: RepositoryMigrationJournal, 
           && targetFiles.every((file) => file.status === "clean" && !file.committed && Boolean(file.baseSha) && Boolean(file.baseHash) && file.currentHash === file.baseHash)
           && targetCommits.length === 0 && targetRecoveries.length === 0
           && !targetLogs.some((log) => ["commit", "push", "pull", "backup", "reset"].includes(log.kind));
-        if (!disposable) { validationError = new LegacyRepositoryMigrationRequiredError("The competing local copy changed during recovery. Both copies were preserved."); tx.abort(); return; }
+        if (!disposable) { validationError = new LegacyRepositoryMigrationRequiredError("LEGACY_REPOSITORY_COPY_CONFLICT"); tx.abort(); return; }
         for (const file of targetFiles) tx.objectStore("files").delete(file.key);
         for (const commit of targetCommits) tx.objectStore("commits").delete(commit.id);
         for (const log of targetLogs) tx.objectStore("logs").delete(log.id);
@@ -845,7 +851,7 @@ async function resumeRepositoryMigrationForTarget(oldRepoId: string, newRepoId: 
   const journals = await txStore<RepositoryMigrationJournal[]>("migrationJournals", "readonly", (store) => store.getAll());
   const journal = journals.find((entry) => entry.oldRepoId === oldRepoId && entry.newRepoId === newRepoId);
   if (!journal) return null;
-  if (journal.immutableAccountIdentity !== scope.accountIdentity) throw new LegacyRepositoryMigrationRequiredError();
+  if (journal.immutableAccountIdentity !== scope.accountIdentity) throw new LegacyRepositoryMigrationRequiredError("LEGACY_REPOSITORY_COPY_CONFLICT");
   await prepareLegacyRewriteOperationMigration({ journalId: journal.id, oldRepoId: journal.oldRepoId, newRepoId: journal.newRepoId, legacyAccountIdentity: journal.legacyAccountIdentity, immutableAccountIdentity: journal.immutableAccountIdentity });
   return completeRepositoryMigration(journal, scope);
 }

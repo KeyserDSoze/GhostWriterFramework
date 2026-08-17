@@ -3,20 +3,22 @@ import { useGoogleLogin } from "@react-oauth/google";
 import { useMsal } from "@azure/msal-react";
 import { useTranslation } from "react-i18next";
 import { BookOpen, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useAuthStore, type GoogleUser } from "@/store/authStore";
-import { requireGoogleProviderAccountId } from "@/auth/accountIdentity";
+import { clearLegacyAccountUpgrade, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
 import { useSettings } from "@/drive/useSettings";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftSilentRequest } from "@/config/msal";
 import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { cloudDeletionReconnectState, registerCloudAccount, resumeCloudWrites } from "@/drive/cloudWriteBarrier";
+import { clearLegacyRecoveryLoginRequest, consumeLegacyRecoveryLoginRequest, matchesLegacyRecoveryLoginRequest, normalizeAppReturnTo, readLegacyRecoveryLoginRequest } from "@/auth/legacyRecoveryLogin";
+import { retryBookStructureLoad } from "@/hooks/useBookStructure";
 
 export function LoginScreen() {
   const { t } = useTranslation();
-  const { setInteractiveAuth } = useAuthStore();
+  const { setInteractiveAuth, clearInteractiveRecoveryAuth } = useAuthStore();
   const { load } = useSettings();
   const { instance } = useMsal();
   const navigate = useNavigate();
@@ -24,14 +26,47 @@ export function LoginScreen() {
   const [loadingProvider, setLoadingProvider] = useState<"google" | "microsoft" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const microsoftClientId = MICROSOFT_CLIENT_ID;
+  const [recoveryState] = useState(readLegacyRecoveryLoginRequest);
+  const recoveryRequest = recoveryState.status === "valid" ? recoveryState.request : null;
+  const recoveryExpired = recoveryState.status === "expired" || recoveryState.status === "invalid";
+
+  useEffect(() => {
+    if (!recoveryExpired) return;
+    clearLegacyRecoveryLoginRequest();
+    clearLegacyAccountUpgrade();
+    clearInteractiveRecoveryAuth();
+  }, [clearInteractiveRecoveryAuth, recoveryExpired]);
 
   function returnToApp() {
     const returnTo =
-      (location.state as { returnTo?: string } | null)?.returnTo
-      ?? sessionStorage.getItem("narrarium-return-to")
+      recoveryRequest?.returnTo
+      ?? normalizeAppReturnTo((location.state as { returnTo?: string } | null)?.returnTo)
+      ?? normalizeAppReturnTo(sessionStorage.getItem("narrarium-return-to"))
       ?? "/app/books";
     sessionStorage.removeItem("narrarium-return-to");
     navigate(returnTo, { replace: true });
+  }
+
+  async function finishLogin(accessToken: string, user: GoogleUser, expiresIn: number): Promise<boolean> {
+    if (recoveryRequest && !matchesLegacyRecoveryLoginRequest(recoveryRequest, user)) {
+      setError(t("auth.recoveryMismatch"));
+      return false;
+    }
+    registerCloudAccount(user.provider, accessToken, user.providerAccountId!);
+    await confirmAndResumeCloudWrites(user.provider, accessToken);
+    setInteractiveAuth(accessToken, user, expiresIn);
+    await load();
+    if (recoveryRequest) {
+      const match = /^\/app\/books\/([^/?#]+)/.exec(recoveryRequest.returnTo);
+      if (match) {
+        let bookId = match[1];
+        try { bookId = decodeURIComponent(bookId); } catch { /* The validated route remains internal; an undecodable ID simply cannot match a book. */ }
+        retryBookStructureLoad(bookId);
+      }
+      consumeLegacyRecoveryLoginRequest(recoveryRequest);
+    }
+    returnToApp();
+    return true;
   }
 
   const login = useGoogleLogin({
@@ -63,29 +98,26 @@ export function LoginScreen() {
           picture: profile.picture,
         };
 
-        registerCloudAccount("google", tokenResponse.access_token, providerAccountId);
-        await confirmAndResumeCloudWrites("google", tokenResponse.access_token);
-        setInteractiveAuth(
+        await finishLogin(
           tokenResponse.access_token,
           user,
           "expires_in" in tokenResponse
             ? (tokenResponse as { expires_in: number }).expires_in
             : 3600,
         );
-        await load();
-        returnToApp();
       } catch (err) {
-        setError(err instanceof Error ? err.message : t("login.failed"));
+        setError(recoveryRequest ? t("auth.recoveryFailed") : err instanceof Error ? err.message : t("login.failed"));
       } finally {
         setLoadingProvider(null);
       }
     },
     onError: (err) => {
-      setError(err.error_description ?? t("login.googleFailed"));
+      setError(recoveryRequest ? t("auth.recoveryFailed") : err.error_description ?? t("login.googleFailed"));
     },
   });
 
   async function loginWithMicrosoft() {
+    if (recoveryRequest?.provider === "google") return;
     if (!microsoftClientId) {
       setError(t("auth.missingMicrosoft"));
       return;
@@ -120,9 +152,7 @@ export function LoginScreen() {
       const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
       const expiresIn = Math.max(120, Math.round((expiresAt - Date.now()) / 1000));
 
-      registerCloudAccount("microsoft", graphToken, result.account.homeAccountId);
-      await confirmAndResumeCloudWrites("microsoft", graphToken);
-      setInteractiveAuth(
+      await finishLogin(
         graphToken,
         {
           provider: "microsoft",
@@ -135,10 +165,8 @@ export function LoginScreen() {
         },
         expiresIn,
       );
-      await load();
-      returnToApp();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("login.microsoftFailed"));
+      setError(recoveryRequest ? t("auth.recoveryFailed") : err instanceof Error ? err.message : t("login.microsoftFailed"));
     } finally {
       setLoadingProvider(null);
     }
@@ -169,9 +197,9 @@ export function LoginScreen() {
         {/* Sign-in card */}
         <div className="rounded-xl border bg-card p-8 shadow-sm space-y-6">
           <div className="space-y-2">
-            <h2 className="text-lg font-semibold">{t("auth.heading")}</h2>
+            <h2 className="text-lg font-semibold">{recoveryExpired ? t("auth.recoveryExpiredHeading") : recoveryRequest ? t("auth.recoveryHeading") : t("auth.heading")}</h2>
             <p className="text-sm text-muted-foreground">
-              {t("auth.description")}
+              {recoveryExpired ? t("auth.recoveryExpiredDescription") : recoveryRequest ? t("auth.recoveryDescription", { provider: recoveryRequest.provider === "google" ? "Google" : "Microsoft", email: recoveryRequest.normalizedEmail }) : t("auth.description")}
             </p>
           </div>
 
@@ -184,7 +212,7 @@ export function LoginScreen() {
           <Button
             className="w-full"
             onClick={() => login()}
-            disabled={!!loadingProvider}
+            disabled={recoveryExpired || !!loadingProvider || recoveryRequest?.provider === "microsoft"}
           >
             {loadingProvider === "google" ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -218,7 +246,7 @@ export function LoginScreen() {
           <Button
             className="w-full bg-[#0078d4] text-white hover:bg-[#106ebe]"
             onClick={() => void loginWithMicrosoft()}
-            disabled={!!loadingProvider || !microsoftClientId}
+            disabled={recoveryExpired || !!loadingProvider || !microsoftClientId || recoveryRequest?.provider === "google"}
           >
             {loadingProvider === "microsoft" ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -233,6 +261,8 @@ export function LoginScreen() {
             )}
             {loadingProvider === "microsoft" ? t("auth.signingInMicrosoft") : t("auth.microsoft")}
           </Button>
+          {recoveryExpired && <Button variant="outline" className="w-full" onClick={() => navigate("/app/books", { replace: true })}>{t("auth.recoveryExpiredBack")}</Button>}
+
         </div>
 
         <p className="text-xs text-muted-foreground">
@@ -241,11 +271,6 @@ export function LoginScreen() {
       </div>
     </div>
   );
-}
-
-export function startInteractiveLegacyRecoveryLogin(): void {
-  sessionStorage.setItem("narrarium-legacy-recovery-login-requested", "1");
-  window.location.assign("/login");
 }
 
 async function confirmAndResumeCloudWrites(provider: "google" | "microsoft", token: string): Promise<void> {

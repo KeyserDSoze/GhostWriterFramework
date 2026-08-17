@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 import { useProseAssist } from "@/components/editor/useProseAssist";
@@ -102,7 +103,7 @@ export function EvaluationStylePage() {
   const { toast } = useToast();
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
-  const { book, structure, reload, loading: structureLoading } = useBookStructure(bookId);
+  const { book, structure, error, reload, loading: structureLoading } = useBookStructure(bookId);
   const token = book ? resolveBookToken(book, settings) : "";
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});
@@ -189,6 +190,7 @@ export function EvaluationStylePage() {
     setCriteria((currentCriteria) => currentCriteria.map((criterion, position) => position === index ? { ...criterion, ...patch } : criterion));
   }
 
+  if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   if (structureLoading && !structure) return <div className="flex min-h-[40vh] items-center justify-center"><Loader2 className="h-5 w-5 animate-spin" /></div>;
 

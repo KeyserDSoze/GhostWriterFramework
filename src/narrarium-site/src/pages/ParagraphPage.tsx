@@ -25,6 +25,7 @@ import {
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { resolveBookExportSettings, resolveBookToken, type ReaderSettings } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { improveProse, synonymsFor, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
@@ -543,14 +544,7 @@ export function ParagraphPage() {
     );
   }
   if (structureError && !structure) {
-    return (
-      <Alert variant="destructive">
-        <AlertDescription className="flex flex-wrap items-center gap-3">
-          <span>{structureError}</span>
-          <Button size="sm" variant="outline" onClick={() => reload()}>{t("common.reloadBook")}</Button>
-        </AlertDescription>
-      </Alert>
-    );
+    return <BookStructureErrorAlert error={structureError} reload={reload} />;
   }
   if (!chapter || !paragraph) {
     return (

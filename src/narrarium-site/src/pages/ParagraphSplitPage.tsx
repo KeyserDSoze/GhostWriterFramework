@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { resolveBookToken } from "@/types/settings";
 import { createFile, isGitHubFileNotFoundError, readFileWithSha, updateFile } from "@/github/githubClient";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
@@ -57,7 +58,7 @@ export function ParagraphSplitPage() {
   const { toast } = useToast();
   const { settings } = useSettingsStore();
   const { bookId, chapterId, paragraphNum } = useParams<{ bookId: string; chapterId: string; paragraphNum: string }>();
-  const { book, structure, loading: structureLoading, reload } = useBookStructure(bookId);
+  const { book, structure, loading: structureLoading, error: structureError, reload } = useBookStructure(bookId);
   const { branch } = useWorkingBranch(bookId);
 
   const chapter = structure?.chapters.find((c) => c.slug === chapterId);
@@ -227,6 +228,7 @@ export function ParagraphSplitPage() {
   if (structureLoading && !structure) {
     return <div className="space-y-2"><Loader2 className="h-5 w-5 animate-spin" /></div>;
   }
+  if (structureError && !structure) return <BookStructureErrorAlert error={structureError} reload={reload} />;
   if (!book || !paragraph || !chapter) {
     return <Alert variant="destructive"><AlertDescription>{t("workspace.notFound")} <Link to={`/app/books/${bookId}`} className="underline">{t("workspace.backToBook")}</Link></AlertDescription></Alert>;
   }

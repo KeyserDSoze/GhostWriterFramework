@@ -11,6 +11,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { resolveBookToken } from "@/types/settings";
 import { createOrUpdateTextFile, loadFileContent } from "@/github/githubClient";
@@ -38,7 +39,7 @@ export function WritingStylePage() {
   const { toast } = useToast();
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
-  const { book, structure, reload } = useBookStructure(bookId);
+  const { book, structure, error, reload } = useBookStructure(bookId);
   const token = book ? resolveBookToken(book, settings) : "";
   const chapter = chapterId ? structure?.chapters.find((c) => c.slug === chapterId) : undefined;
 
@@ -92,6 +93,7 @@ export function WritingStylePage() {
   const dirty = body !== saved || JSON.stringify(frontmatter) !== JSON.stringify(savedFrontmatter);
   useRegisterPageSave({ dirty, enabled: Boolean(book && token), onSave: () => save() });
 
+  if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
 
   return (

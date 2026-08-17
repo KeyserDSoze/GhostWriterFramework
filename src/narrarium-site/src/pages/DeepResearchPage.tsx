@@ -20,6 +20,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { resolveBookToken } from "@/types/settings";
 import { deleteFile, loadFileContent, readFileWithSha, updateFile } from "@/github/githubClient";
 import { runDeepResearch } from "@/research/engine";
@@ -431,6 +432,7 @@ function NewResearchForm({
   token,
   branch,
   bookLanguage,
+  structure,
   onDone,
   initialQuery,
   initialDepth,
@@ -439,6 +441,7 @@ function NewResearchForm({
   token: string;
   branch: string;
   bookLanguage?: string;
+  structure?: import("@/types/book").BookStructure;
   onDone: (slug: string, cost: number) => void;
   initialQuery?: string;
   initialDepth?: ResearchDepth;
@@ -446,7 +449,6 @@ function NewResearchForm({
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
   const { settings } = useSettingsStore();
-  const { structure } = useBookStructure(book.id);
   const [query, setQuery] = useState(initialQuery ?? "");
   const [depth, setDepth] = useState<ResearchDepth>(initialDepth ?? "medium");
   const [selectedIntents, setSelectedIntents] = useState<ResearchIntent[]>(["auto"]);
@@ -657,7 +659,7 @@ export function DeepResearchPage() {
   const { t } = useTranslation();
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
-  const { book, structure, loading, reload } = useBookStructure(bookId);
+  const { book, structure, loading, error, reload } = useBookStructure(bookId);
   const token = book ? resolveBookToken(book, settings) : "";
   const bookLanguage = structure?.language;
 
@@ -735,6 +737,7 @@ export function DeepResearchPage() {
     setSelected(null);
   }
 
+  if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book) return <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
 
   return (
@@ -796,6 +799,7 @@ export function DeepResearchPage() {
             token={token}
             branch={branch}
             bookLanguage={bookLanguage}
+            structure={structure}
             onDone={handleNewDone}
             initialQuery={prefillQuery}
             initialDepth={prefillDepth}

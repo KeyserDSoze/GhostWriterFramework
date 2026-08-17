@@ -13,6 +13,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { resolveBookToken } from "@/types/settings";
 import { deleteReaderPersonaOverride, findOrphanReaderEvaluationPaths, loadReaderPersonas, saveReaderPersona } from "@/narrarium/readerEvaluations";
 import { emptyReaderPersona, type ReaderPersonaProfile } from "@/narrarium/readerPersona";
@@ -27,7 +28,7 @@ export function ReaderPersonasPage() {
   const { toast } = useToast();
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
-  const { book, structure, reload } = useBookStructure(bookId);
+  const { book, structure, error, reload } = useBookStructure(bookId);
   const token = book ? resolveBookToken(book, settings) : "";
   const [profiles, setProfiles] = useState<ReaderPersonaProfile[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -143,6 +144,7 @@ export function ReaderPersonasPage() {
     await Promise.all([persist(next), persist(nextOther)]);
   }
 
+  if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   return (
     <div className="space-y-6">

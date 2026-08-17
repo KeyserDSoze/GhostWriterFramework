@@ -15,6 +15,7 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
 import { resolveBookToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { GeneratePreviewDialog } from "@/components/book/GeneratePreviewDialog";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { ScriptEditor } from "@/components/script/ScriptEditor";
@@ -500,14 +501,7 @@ export function WorkspaceDocPage() {
     );
   }
   if (structureError && !structure) {
-    return (
-      <Alert variant="destructive">
-        <AlertDescription className="flex flex-wrap items-center gap-3">
-          <span>{structureError}</span>
-          <Button size="sm" variant="outline" onClick={() => reload()}>{t("common.reloadBook")}</Button>
-        </AlertDescription>
-      </Alert>
-    );
+    return <BookStructureErrorAlert error={structureError} reload={reload} />;
   }
   if (!chapter || !path) {
     return (

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { BookStructure, Paragraph } from "@/types/book";
+import type { LegacyAdoptionTarget } from "@/auth/legacyAdoptionConsent";
 
 export interface CloneProgress {
   done: number;
@@ -8,11 +9,23 @@ export interface CloneProgress {
   phase?: "cloning" | "migrating" | "repairing" | "finalizing";
 }
 
+export const LEGACY_REPOSITORY_AUTH_REQUIRED = "LEGACY_REPOSITORY_AUTH_REQUIRED" as const;
+export const LEGACY_REPOSITORY_COPY_CONFLICT = "LEGACY_REPOSITORY_COPY_CONFLICT" as const;
+export const LEGACY_REPOSITORY_ADOPTION_DECLINED = "LEGACY_REPOSITORY_ADOPTION_DECLINED" as const;
+export const LEGACY_REPOSITORY_CHANGED = "LEGACY_REPOSITORY_CHANGED" as const;
+export type LegacyBookStructureErrorCode = typeof LEGACY_REPOSITORY_AUTH_REQUIRED | typeof LEGACY_REPOSITORY_COPY_CONFLICT | typeof LEGACY_REPOSITORY_ADOPTION_DECLINED | typeof LEGACY_REPOSITORY_CHANGED;
+
+export interface BookStructureLoadError {
+  code: LegacyBookStructureErrorCode | "BOOK_STRUCTURE_LOAD_FAILED";
+  message?: string;
+  adoptionTarget?: LegacyAdoptionTarget;
+}
+
 interface BooksState {
   structures: Record<string, BookStructure>;
   loadingIds: Set<string>;
   activeStructureOperations: Record<string, { token: string; epoch: number; generation: number; count: number }>;
-  errors: Record<string, string>;
+  errors: Record<string, BookStructureLoadError>;
   /** bookId → resolved personal dev branch name */
   workingBranches: Record<string, string>;
   cloneProgress: Record<string, CloneProgress | undefined>;
@@ -23,7 +36,7 @@ interface BooksState {
   invalidateStructure: (bookId: string) => number;
   beginStructureOperation: (bookId: string, token: string, epoch: number, generation: number) => void;
   endStructureOperation: (bookId: string, token: string) => void;
-  setError: (bookId: string, message: string) => void;
+  setError: (bookId: string, error?: BookStructureLoadError) => void;
   setWorkingBranch: (bookId: string, branch: string) => void;
   setCloneProgress: (bookId: string, progress?: CloneProgress) => void;
   clearBook: (bookId: string) => void;
@@ -86,8 +99,13 @@ export const useBooksStore = create<BooksState>()((set) => ({
       return { activeStructureOperations, loadingIds };
     }),
 
-  setError: (bookId, message) =>
-    set((s) => ({ errors: { ...s.errors, [bookId]: message } })),
+  setError: (bookId, error) =>
+    set((s) => {
+      const errors = { ...s.errors };
+      if (error) errors[bookId] = error;
+      else delete errors[bookId];
+      return { errors };
+    }),
 
   setWorkingBranch: (bookId, branch) =>
     set((s) => ({

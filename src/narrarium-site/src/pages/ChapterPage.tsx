@@ -54,6 +54,7 @@ import {
   createParagraphScriptArtifact,
 } from "@/narrarium/workspace";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
+import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { countChapterReaderEvaluations, countParagraphReaderEvaluations } from "@/narrarium/readerEvaluationCounts";
 import { parseDocument, stringify } from "yaml";
 
@@ -415,14 +416,7 @@ export function ChapterPage() {
     );
   }
   if (structureError && !structure) {
-    return (
-      <Alert variant="destructive">
-        <AlertDescription className="flex flex-wrap items-center gap-3">
-          <span>{structureError}</span>
-          <Button size="sm" variant="outline" onClick={() => reload()}>{t("common.reloadBook")}</Button>
-        </AlertDescription>
-      </Alert>
-    );
+    return <BookStructureErrorAlert error={structureError} reload={reload} />;
   }
   if (!chapter) {
     return (

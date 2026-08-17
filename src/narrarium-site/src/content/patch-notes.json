@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.45",
+    "date": "2026-08-17",
+    "en": {
+      "title": "Actionable local book recovery",
+      "summary": "This release turns legacy local-book recovery into a localized, guided Google or Microsoft reauthentication flow instead of an unusable reload loop.",
+      "changes": [
+        "Replaced raw repository exceptions with typed, localized recovery states across every page that loads a book structure.",
+        "Added exact-account Google and Microsoft reauthentication that preserves the requested book route and resumes recovery after successful login.",
+        "Required a short-lived, one-time, account- and repository-bound localized adoption confirmation before migrating or replacing a disposable local mirror.",
+        "Separated authentication, copy conflict, declined adoption, and changed-copy outcomes so each state offers only actions that can resolve it.",
+        "Restricted recovery return paths to internal application routes and preserved every local copy on cancellation, expiry, mismatch, or failure."
+      ]
+    },
+    "it": {
+      "title": "Recupero del libro locale utilizzabile",
+      "summary": "Questa release trasforma il recupero dei libri locali legacy in un flusso guidato e localizzato di riautenticazione Google o Microsoft, eliminando il loop inutilizzabile di ricaricamento.",
+      "changes": [
+        "Sostituite le eccezioni repository grezze con stati di recupero tipizzati e localizzati in ogni pagina che carica la struttura di un libro.",
+        "Aggiunta la riautenticazione Google e Microsoft per l'account esatto, preservando la route del libro e riprendendo il recupero dopo la login riuscita.",
+        "Richiesta una conferma di adozione localizzata, breve, monouso e legata ad account e repository prima di migrare o sostituire una copia locale usa-e-getta.",
+        "Separati gli esiti di autenticazione, conflitto copie, adozione rifiutata e copia modificata, mostrando per ciascuno solo azioni realmente risolutive.",
+        "Limitati i percorsi di ritorno alle route interne dell'app e conservata ogni copia locale in caso di annullamento, scadenza, account errato o errore."
+      ]
+    }
+  },
+  {
     "version": "0.76.44",
     "date": "2026-08-17",
     "en": {

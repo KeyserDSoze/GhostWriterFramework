@@ -67,7 +67,7 @@ function structure(title = "Local book"): BookStructure {
 function Consumer({ index, onReload }: { index: number; onReload?: (reload: () => void) => void }) {
   const result = useBookStructure(book.id);
   onReload?.(result.reload);
-  return <div data-testid={`consumer-${index}`}>{result.loading ? "loading" : result.structure?.title ?? result.error ?? "empty"}</div>;
+  return <div data-testid={`consumer-${index}`}>{result.loading ? "loading" : result.structure?.title ?? result.error?.message ?? result.error?.code ?? "empty"}</div>;
 }
 
 function Consumers({ count = 20, onReload }: { count?: number; onReload?: (reload: () => void) => void }) {

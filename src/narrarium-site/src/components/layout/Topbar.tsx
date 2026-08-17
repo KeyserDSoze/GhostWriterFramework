@@ -84,6 +84,11 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const speechGenerationRef = useRef(0);
   const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "behind" | "offline" | "none" }>({ label: "", tone: "none" });
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
+  useEffect(() => {
+    const openRepositoryStatus = () => setRepoDialogOpen(true);
+    window.addEventListener("narrarium:open-repository-status", openRepositoryStatus);
+    return () => window.removeEventListener("narrarium:open-repository-status", openRepositoryStatus);
+  }, []);
   const [repoActionBusy, setRepoActionBusy] = useState<string | null>(null);
   const previousDocument = useNavigationHistoryStore((s) => s.previous);
   const route = parseAppRoute(location.pathname);
