@@ -36,7 +36,8 @@ export function useHasLocalRewriteOperation(input: {
       setHasOperation(false);
       return () => { active = false; };
     }
-    void getLocalRepository(book.owner, book.repo, input.branch, identity).then((local) => {
+    const operationScope = captureRepositoryOperationScope();
+    void getLocalRepository(book.owner, book.repo, input.branch, operationScope).then((local) => {
       if (!local || local.cloneComplete !== true) return null;
       return loadLatestLocalRewriteOperation({
         repoId: local.id,
@@ -47,7 +48,7 @@ export function useHasLocalRewriteOperation(input: {
         scope,
         chapterSlug: input.chapterSlug,
         paragraphSlug: scope === "paragraph" ? input.paragraphSlug : undefined,
-      }, captureRepositoryOperationScope());
+      }, operationScope);
     }).then((operation) => {
       if (active) setHasOperation(Boolean(operation));
     }).catch(() => {

@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  getLocalFile,
+  getLocalFile as getLocalFileScoped,
   listDirtyLocalFiles,
   listUnpushedLocalCommits,
   markLocalCommitsPushed,
@@ -13,6 +13,8 @@ import {
   writeLocalText,
 } from "@/repository/localRepository";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
+
+const getLocalFile = (repoIdValue: string, path: string) => getLocalFileScoped(repoIdValue, path, captureRepositoryOperationScope());
 import { useAuthStore } from "@/store/authStore";
 
 useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });

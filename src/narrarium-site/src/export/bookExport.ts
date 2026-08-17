@@ -5,6 +5,10 @@ import { loadBinaryFileContent, loadFileContent } from "@/github/githubClient";
 import { slugify } from "@/narrarium/canon";
 import { paragraphSeparator, presentMetadata } from "@/export/metadataPresentation";
 import { renderEpubMarkdownHtml } from "@/markdown/safeMarkdown";
+import liberationSerifRegular from "@/export/fonts/LiberationSerif-Regular.ttf?inline";
+import liberationSerifBold from "@/export/fonts/LiberationSerif-Bold.ttf?inline";
+import liberationSerifItalic from "@/export/fonts/LiberationSerif-Italic.ttf?inline";
+import liberationSerifBoldItalic from "@/export/fonts/LiberationSerif-BoldItalic.ttf?inline";
 
 const PARAGRAPH_BREAK_NEWLINES = 3;
 
@@ -477,6 +481,8 @@ async function buildDocxArtifact(snapshot: ExportBookSnapshot, scope: BookExport
 async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportScope, settings: BookExportSettings): Promise<BookExportArtifact> {
   const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "pt", format: settings.pageSize === "a4" ? "a4" : "letter" });
+  const baseFont = "LiberationSerif";
+  registerPdfUnicodeFonts(doc);
   const width = doc.internal.pageSize.getWidth();
   const height = doc.internal.pageSize.getHeight();
   const margin = settings.marginInches * 72;
@@ -485,7 +491,6 @@ async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportS
 
   let pageNumber = 1;
   let y = margin;
-  const baseFont = mapPdfFont(settings.fontName);
   doc.setFont(baseFont, "normal");
   doc.setFontSize(settings.fontSize);
 
@@ -649,7 +654,7 @@ async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExport
   const navXhtml = wrapXhtml("Contents", `<nav epub:type="toc" id="toc"><h1>Contents</h1><ol>${chapterFiles.map((chapter) => `<li><a href="${chapter.fileName}">${escapeHtml(chapter.title)}</a></li>`).join("")}</ol></nav>`);
   oebps.file("nav.xhtml", navXhtml);
   oebps.file("toc.ncx", buildTocNcx(snapshot, chapterFiles));
-  oebps.file("content.opf", buildContentOpf(snapshot, chapterFiles, imageItems));
+  oebps.file("content.opf", buildContentOpf(snapshot, chapterFiles, imageItems, epubModifiedTimestamp()));
 
   const blob = await zip.generateAsync({ type: "blob", mimeType: "application/epub+zip" });
   return {
@@ -660,7 +665,7 @@ async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExport
   };
 }
 
-function buildContentOpf(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fileName: string; title: string }>, imageItems: Array<{ id: string; fileName: string; mimeType: string; properties?: string }>): string {
+function buildContentOpf(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fileName: string; title: string }>, imageItems: Array<{ id: string; fileName: string; mimeType: string; properties?: string }>, modified: string): string {
   const manifest = [
     `<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`,
     `<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>`,
@@ -671,7 +676,11 @@ function buildContentOpf(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fil
   ].join("\n    ");
   const spine = [`<itemref idref="opening"/>`, ...chapterFiles.map((_, index) => `<itemref idref="chapter-${index + 1}"/>`)].join("\n    ");
   const coverMeta = imageItems.some((image) => image.id === "cover-image") ? `\n    <meta name="cover" content="cover-image"/>` : "";
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0">\n  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n    <dc:identifier id="bookid">urn:narrarium:${slugify(snapshot.title) || "book"}</dc:identifier>\n    <dc:title>${escapeXml(snapshot.title)}</dc:title>\n    <dc:creator>${escapeXml(snapshot.author)}</dc:creator>\n    <dc:language>${escapeXml(snapshot.language)}</dc:language>${coverMeta}\n  </metadata>\n  <manifest>\n    ${manifest}\n  </manifest>\n  <spine toc="ncx">\n    ${spine}\n  </spine>\n</package>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0">\n  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n    <dc:identifier id="bookid">urn:narrarium:${slugify(snapshot.title) || "book"}</dc:identifier>\n    <dc:title>${escapeXml(snapshot.title)}</dc:title>\n    <dc:creator>${escapeXml(snapshot.author)}</dc:creator>\n    <dc:language>${escapeXml(snapshot.language)}</dc:language>\n    <meta property="dcterms:modified">${modified}</meta>${coverMeta}\n  </metadata>\n  <manifest>\n    ${manifest}\n  </manifest>\n  <spine toc="ncx">\n    ${spine}\n  </spine>\n</package>`;
+}
+
+export function epubModifiedTimestamp(date = new Date()): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
 function buildTocNcx(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fileName: string; title: string }>): string {
@@ -721,11 +730,18 @@ function roundWordCount(value: number): number {
   return value > 500 ? Math.round(value / 100) * 100 : value;
 }
 
-function mapPdfFont(fontName: string): "times" | "courier" | "helvetica" {
-  const normalized = fontName.trim().toLowerCase();
-  if (normalized.includes("courier")) return "courier";
-  if (normalized.includes("helvetica") || normalized.includes("arial")) return "helvetica";
-  return "times";
+function registerPdfUnicodeFonts(doc: import("jspdf").jsPDF): void {
+  const fonts = [
+    ["LiberationSerif-Regular.ttf", liberationSerifRegular, "normal"],
+    ["LiberationSerif-Bold.ttf", liberationSerifBold, "bold"],
+    ["LiberationSerif-Italic.ttf", liberationSerifItalic, "italic"],
+    ["LiberationSerif-BoldItalic.ttf", liberationSerifBoldItalic, "bolditalic"],
+  ] as const;
+  for (const [fileName, dataUrl, style] of fonts) {
+    const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+    doc.addFileToVFS(fileName, base64);
+    doc.addFont(fileName, "LiberationSerif", style);
+  }
 }
 
 function buildSynopsis(snapshot: ExportBookSnapshot, scope: BookExportScope): string {

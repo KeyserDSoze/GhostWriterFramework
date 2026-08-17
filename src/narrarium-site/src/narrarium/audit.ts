@@ -396,7 +396,12 @@ export function auditSourceHref(structure: BookStructure, target: AuditTarget): 
 export function findingSourceHref(structure: BookStructure, target: ResolvedAuditTarget, finding: AuditFinding): string {
   const sourcePath = finding.structuredSourceRef.path || finding.position.sourcePath;
   const bookRoot = `/app/books/${encodeURIComponent(target.bookId)}`;
+  if (!sourcePath) return target.sourceHref;
   if (sourcePath === "book.md") return bookRoot;
+  const canonMatch = /^(characters|locations|factions|items|secrets)\/([^/]+)\.md$/.exec(sourcePath);
+  if (canonMatch?.[1] && canonMatch[2]) return `${bookRoot}/canon/${canonMatch[1]}/${encodeURIComponent(canonMatch[2])}`;
+  const timelineMatch = /^timelines\/events\/([^/]+)\.md$/.exec(sourcePath);
+  if (timelineMatch?.[1]) return `${bookRoot}/canon/timelines/${encodeURIComponent(timelineMatch[1])}`;
   for (const chapter of structure.chapters) {
     const chapterRoot = `/app/books/${encodeURIComponent(target.bookId)}/chapters/${encodeURIComponent(chapter.slug)}`;
     const paragraph = chapter.paragraphs.find((entry) => entry.path === sourcePath);

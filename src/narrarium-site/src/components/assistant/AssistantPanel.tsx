@@ -46,7 +46,7 @@ import { loadWriterContext, parseAppRoute } from "@/assistant/context";
 import { bindReadAloudActionProvenance, readAloudReplaySource, resolveNavigateAction, resolveReadAloudAction, type ReadAloudAction } from "@/assistant/planner";
 import { deleteAssistantSession, hydrateAssistantSessionArchive, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
 import { refreshAssistantSessionIndex, resetAssistantSessionIndex } from "@/assistant/sessionIndex";
-import { assistantSessionSaveQueue, assistantSessionSaveFingerprint, assistantSessionSaveRetryPlan, attachAssistantSessionCloudHandle, clearFailedAssistantSessionSaveFingerprint, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
+import { assistantSessionSaveQueue, assistantSessionSaveFingerprint, assistantSessionSaveRetryPlan, attachAssistantSessionCloudHandle, clearFailedAssistantSessionSaveFingerprint, flushAssistantSessionSnapshot, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
 import { assistantSessionCompactionTarget, mergeAssistantSessionCompaction } from "@/assistant/sessionCompaction";
 import { isAssistantRequestOwned, isConfirmedMutationOwned, type AssistantRequestOwner } from "@/assistant/sessionOwnership";
 import { resolveChatNoteDestination, reusableChatNoteOperation, type ChatNoteDestination } from "@/assistant/chatNoteSave";
@@ -320,6 +320,8 @@ export function AssistantPanel() {
   }, [currentSession?.id, bookId, branch, location.pathname, activeSecretPath, settings, structures, workingBranches]);
 
   useEffect(() => {
+    const provider = user?.provider;
+    const token = accessToken;
     cloudAccountAbortRef.current.abort();
     cloudAccountAbortRef.current = new AbortController();
     sessionSaveQueueRef.current.reset();
@@ -330,6 +332,15 @@ export function AssistantPanel() {
     autosaveRetryTimerRef.current = null;
     setAutosaveStatus(null);
     return () => {
+      const session = useAssistantStore.getState().currentSession;
+      if (provider && token && session) {
+        void sessionSaveQueueRef.current.enqueue(
+          session,
+          (snapshot) => saveAssistantSession(provider, token, snapshot),
+          () => undefined,
+          () => undefined,
+        );
+      }
       cloudAccountAbortRef.current.abort();
       sessionSaveQueueRef.current.reset();
       savedSessionFingerprintsRef.current.clear();
@@ -664,8 +675,30 @@ export function AssistantPanel() {
     }
   }
 
-  function newChat() {
+  async function flushCurrentSessionBeforeSwitch(): Promise<boolean> {
+    const session = useAssistantStore.getState().currentSession;
+    if (!session || !user || !accessToken) return true;
+    const fingerprint = assistantSessionSaveFingerprint(session);
+    if (savedSessionFingerprintsRef.current.get(session.id) === fingerprint) return true;
+    try {
+      const handle = await flushAssistantSessionSnapshot(
+        sessionSaveQueueRef.current,
+        session,
+        (snapshot) => saveAssistantSession(user.provider, accessToken, snapshot, cloudAccountAbortRef.current.signal),
+      );
+      savedSessionFingerprintsRef.current.set(session.id, fingerprint);
+      const state = useAssistantStore.getState();
+      state.setSessions(upsertAssistantSessionMeta(state.sessions, session, handle));
+      return true;
+    } catch (error) {
+      toast({ title: t("assistant.toastSaveChatFailed"), description: String(error), variant: "destructive" });
+      return false;
+    }
+  }
+
+  async function newChat() {
     cancelSessionOperations();
+    if (!await flushCurrentSessionBeforeSwitch()) return;
     setCurrentSession(createEmptyAssistantSession(contextLabel, sessionContext));
     setActiveTab("chat");
     setOpen(true);
@@ -1832,6 +1865,7 @@ export function AssistantPanel() {
   async function openSession(fileId: string) {
     if (!user || !accessToken) return;
     cancelSessionOperations();
+    if (!await flushCurrentSessionBeforeSwitch()) return;
     const runId = ++openSessionRunRef.current;
     const controller = new AbortController();
     openSessionAbortRef.current = controller;
@@ -2588,7 +2622,7 @@ export function AssistantPanel() {
 
   const historyView = (
     <div className="space-y-2">
-      <Button variant="outline" size="sm" className="w-full justify-start" onClick={newChat}>
+      <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => void newChat()}>
         <MessageSquarePlus className="mr-2 h-4 w-4" />{t("assistant.newChat")}
       </Button>
       {loadingSessions && <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("assistant.loadingChats")}</div>}
@@ -2665,7 +2699,7 @@ export function AssistantPanel() {
                   })}
                 </DropdownMenuContent>
               </DropdownMenu>
-              <Button type="button" variant="outline" size="sm" className="h-8 gap-1" title={t("assistant.newChat")} onClick={newChat}>
+              <Button type="button" variant="outline" size="sm" className="h-8 gap-1" title={t("assistant.newChat")} onClick={() => void newChat()}>
                 <MessageSquarePlus className="h-4 w-4" /><span className="hidden sm:inline">{t("assistant.newChat")}</span>
               </Button>
               <Button type="button" variant="outline" size="sm" className="h-8 gap-1" onClick={speechController ? stopReading : () => void readLastAssistantReply()}>

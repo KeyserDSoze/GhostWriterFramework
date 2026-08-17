@@ -1,0 +1,15 @@
+Liberation Serif
+
+Digitized data copyright (c) 2010 Google Corporation with Reserved Font
+Arimo, Tinos and Cousine. Copyright (c) 2012 Red Hat, Inc. with Reserved
+Font Name Liberation.
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+The full license text is available at https://openfontlicense.org/open-font-license-official-text/.
+
+Permission is granted to use, study, copy, merge, embed, modify, redistribute,
+and sell modified and unmodified copies of the Font Software, provided the
+conditions of the SIL Open Font License Version 1.1 are met. The Font Software
+and its individual components may not be sold by themselves. Original or
+modified versions may be bundled and redistributed with software provided
+that each copy contains the copyright notice and license.

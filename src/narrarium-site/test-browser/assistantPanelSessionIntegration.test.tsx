@@ -108,8 +108,7 @@ describe("AssistantPanel shared session mutations", () => {
     expect(Date.parse(after.updatedAt)).toBeGreaterThan(Date.parse(before.updatedAt));
 
     fireEvent.click(screen.getByTitle("assistant.newChat"));
-    await act(async () => {});
-    expect(useAssistantStore.getState().currentSession?.id).not.toBe(after.id);
+    await waitFor(() => expect(useAssistantStore.getState().currentSession?.id).not.toBe(after.id));
   });
 
   it("captures account scope before asynchronous context preparation", async () => {

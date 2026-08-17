@@ -47,8 +47,9 @@ export async function preflightRepositoryOperation(input: {
   signal?: AbortSignal;
 }): Promise<RepositoryOperationPreflight> {
   input.signal?.throwIfAborted();
+  const scope = captureRepositoryOperationScope();
   const identity = currentAccountIdentity();
-  const meta = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, identity) : null;
+  const meta = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, scope) : null;
   input.signal?.throwIfAborted();
   if (!meta) {
     throw new Error("A local working copy for the selected branch is required.");
@@ -68,8 +69,9 @@ export async function preflightRepositoryOperation(input: {
 
 export async function resolveRepositoryHeadForMutation(input: { token: string; book: BookEntry; branch: string; signal?: AbortSignal }): Promise<string> {
   input.signal?.throwIfAborted();
+  const scope = captureRepositoryOperationScope();
   const identity = currentAccountIdentity();
-  const local = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, identity).catch(() => null) : null;
+  const local = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, scope).catch(() => null) : null;
   input.signal?.throwIfAborted();
   if (local) return (await preflightRepositoryOperation(input)).remoteHeadSha;
   const octokit = new Octokit({ auth: input.token });
@@ -156,7 +158,7 @@ export async function commitAndPushTextFileMutation(input: {
   const operationScope = captureRepositoryOperationScope();
   input.signal?.throwIfAborted();
   const identity = currentAccountIdentity();
-  const local = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, identity).catch(() => null) : null;
+  const local = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, operationScope).catch(() => null) : null;
   input.signal?.throwIfAborted();
   if (!local) {
     const commitSha = await mutateRemoteTextFiles(input);
@@ -164,7 +166,7 @@ export async function commitAndPushTextFileMutation(input: {
   }
   if (local.remoteHeadSha !== input.expectedRemoteHeadSha) throw new RepositoryConflictError("The local working copy is based on a different remote head.");
   const writes = input.mutations.filter((mutation) => mutation.content !== undefined);
-  const snapshots = await Promise.all(writes.map(async (mutation) => ({ path: mutation.path, file: await getLocalFile(local.id, mutation.path) ?? null })));
+  const snapshots = await Promise.all(writes.map(async (mutation) => ({ path: mutation.path, file: await getLocalFile(local.id, mutation.path, operationScope) ?? null })));
   input.signal?.throwIfAborted();
   if (!writes.length) {
     try {

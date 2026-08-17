@@ -58,7 +58,7 @@ test("a newer same-path edit remains dirty when it lands before successful push 
 
   const result = await pushLocalCommits({ bookId: "book", token: "token", repoId, owner: "owner", repo: "repo", branch: "main", accountIdentity: identity });
 
-  const current = await getLocalFile(repoId, "plot.md");
+  const current = await getLocalFile(repoId, "plot.md", captureRepositoryOperationScope());
   expect(result).toMatchObject({ commitSha: "pushed-head", recoveryPaths: ["plot.md"] });
   expect(current).toMatchObject({ text: "newer local edit", status: "modified", committed: false, baseSha: "pushed-blob", baseHash: commit.files[0].hash });
   expect((await listDirtyLocalFiles(repoId)).map((file) => file.path)).toEqual(["plot.md"]);
@@ -88,6 +88,33 @@ test("multiple commits to one path push and settle against the final committed r
 
   expect([first.order, second.order]).toEqual([1, 2]);
   expect(result.recoveryPaths).toBeUndefined();
-  expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "second", status: "clean", committed: false, baseSha: "pushed-blob" });
+  expect(await getLocalFile(repoId, "plot.md", captureRepositoryOperationScope())).toMatchObject({ text: "second", status: "clean", committed: false, baseSha: "pushed-blob" });
   expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
+});
+
+test("an ambiguous ref response settles when generated commit ancestry and exact tree are proven", async () => {
+  const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "main", defaultBranch: "main", remoteHeadSha: "source-head", clonedAt: new Date().toISOString(), cloneComplete: true }, captureRepositoryOperationScope());
+  repoId = repo.id;
+  const original = await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "old", baseSha: "old-blob", size: 3 });
+  await mutateLocalTextFilesAndCreateCommitAtomically(repoId, captureRepositoryOperationScope(), "Update plot", [
+    { path: "plot.md", content: "new", expectedCurrentHash: original.currentHash },
+  ]);
+  octokit.getRef
+    .mockResolvedValueOnce({ data: { object: { sha: "source-head" } } })
+    .mockResolvedValueOnce({ data: { object: { sha: "generated-head" } } });
+  octokit.getCommit
+    .mockResolvedValueOnce({ data: { tree: { sha: "source-tree" } } })
+    .mockResolvedValueOnce({ data: { parents: [{ sha: "source-head" }] } });
+  octokit.getTree
+    .mockResolvedValueOnce({ data: { truncated: false, tree: [{ type: "blob", path: "plot.md" }] } })
+    .mockResolvedValueOnce({ data: { truncated: false, tree: [{ type: "blob", path: "plot.md", sha: "new-blob" }] } });
+  octokit.createBlob.mockResolvedValue({ data: { sha: "new-blob" } });
+  octokit.createTree.mockResolvedValue({ data: { sha: "new-tree" } });
+  octokit.createCommit.mockResolvedValue({ data: { sha: "generated-head" } });
+  octokit.updateRef.mockRejectedValue(new TypeError("response lost"));
+
+  await expect(pushLocalCommits({ bookId: "book", token: "token", repoId, owner: "owner", repo: "repo", branch: "main", accountIdentity: identity }))
+    .resolves.toMatchObject({ commitSha: "generated-head", files: 1 });
+  expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
+  expect(await getLocalFile(repoId, "plot.md", captureRepositoryOperationScope())).toMatchObject({ status: "clean", committed: false, baseSha: "new-blob" });
 });

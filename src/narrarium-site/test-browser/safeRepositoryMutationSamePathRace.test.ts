@@ -52,7 +52,7 @@ test("a newer same-path edit survives an abort after the mutation commit", async
     mutations: [{ path: "plot.md", content: "mutation result", expectedCurrentHash: original.currentHash }],
   })).rejects.toMatchObject({ name: "AbortError" });
 
-  expect((await getLocalFile(repoId, "plot.md"))?.text).toBe("newer local edit");
+  expect((await getLocalFile(repoId, "plot.md", captureRepositoryOperationScope()))?.text).toBe("newer local edit");
   expect((await listDirtyLocalFiles(repoId)).map((file) => file.path)).toEqual(["plot.md"]);
   expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
 });

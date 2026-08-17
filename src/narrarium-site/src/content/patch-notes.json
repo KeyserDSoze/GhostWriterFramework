@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.76.41",
+    "date": "2026-08-17",
+    "en": {
+      "title": "Audit fixes for safer daily work",
+      "summary": "This release publishes the completed application audit across cloud persistence, repository synchronization, Copilot sessions, Reader navigation, research editing, and book exports.",
+      "changes": [
+        "Drained active cross-tab cloud writes before deletion, fenced stale account completions, and made Microsoft app folders accessible from another device only with immutable account proof.",
+        "Protected local reads from account-switch races, serialized reclone with repository mutations, reconciled ambiguous pushes, and made multi-file restore atomic.",
+        "Flushed Copilot chat snapshots before switching sessions, preserved read-only editing prompts, and cleared completed speech playback without requiring a second activation.",
+        "Applied secret reveal thresholds to Reader entity links, added keyboard fullscreen pagination, and routed audit findings to their actual canon sources.",
+        "Kept secondary export profiles selected, synchronized research title metadata, added EPUB modification metadata, and embedded local Unicode fonts for multilingual PDF exports.",
+        "Expanded regression coverage for cloud ownership, repository races, editor persistence, secret visibility, export validity, accessibility, and account-scoped settings conflicts."
+      ]
+    },
+    "it": {
+      "title": "Correzioni audit per un lavoro quotidiano piu sicuro",
+      "summary": "Questa release pubblica l'audit applicativo completato su persistenza cloud, sincronizzazione repository, sessioni Copilota, navigazione Reader, modifica ricerche ed export del libro.",
+      "changes": [
+        "Atteso il completamento delle scritture cloud attive tra tab prima della cancellazione, bloccati i completamenti di account stale e resi accessibili da altri dispositivi i folder Microsoft solo con prova account immutabile.",
+        "Protette le letture locali dalle race durante il cambio account, serializzato il reclone con le mutazioni repository, riconciliati i push ambigui e reso atomico il ripristino multi-file.",
+        "Persistiti gli snapshot chat Copilota prima del cambio sessione, preservati i prompt di editing read-only e liberato il playback vocale completato senza richiedere una seconda attivazione.",
+        "Applicate le soglie di reveal dei segreti ai link entita del Reader, aggiunta la paginazione fullscreen da tastiera e instradati i finding audit alle sorgenti canone effettive.",
+        "Mantenuti selezionati i profili export secondari, sincronizzati i metadata dei titoli ricerca, aggiunto il metadata di modifica EPUB e incorporati font Unicode locali negli export PDF multilingua.",
+        "Estesa la copertura di regressione per ownership cloud, race repository, persistenza editor, visibilita segreti, validita export, accessibilita e conflitti impostazioni account-scoped."
+      ]
+    }
+  },
+  {
     "version": "0.76.40",
     "date": "2026-08-17",
     "en": {

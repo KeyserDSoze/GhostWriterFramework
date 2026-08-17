@@ -18,7 +18,7 @@ interface Tombstone {
   generation: string;
   ownerNonce: string;
   fence: number;
-  state: "deleting" | "deleted" | "nothing-to-delete";
+  state: "requesting" | "deleting" | "deleted" | "nothing-to-delete";
   phase: string;
   heartbeatAt: number;
   expiresAt: number;
@@ -67,7 +67,7 @@ function readTombstoneMirror(id: string): Tombstone | null {
   if (typeof localStorage === "undefined") return memoryTombstones.get(id) ?? null;
   try {
     const value = JSON.parse(localStorage.getItem(tombstoneKey(id)) ?? "null") as Tombstone | null;
-    return value && typeof value.generation === "string" && typeof value.ownerNonce === "string" && typeof value.fence === "number" && (value.state === "deleting" || value.state === "deleted" || value.state === "nothing-to-delete") ? value : null;
+    return value && typeof value.generation === "string" && typeof value.ownerNonce === "string" && typeof value.fence === "number" && (value.state === "requesting" || value.state === "deleting" || value.state === "deleted" || value.state === "nothing-to-delete") ? value : null;
   } catch { return null; }
 }
 function sameTombstone(first: Tombstone | null, second: Tombstone | null): boolean {
@@ -151,7 +151,7 @@ async function refreshLease(id: string, owner: string, fence: number, deletion?:
     request.onsuccess = () => {
       const current = request.result as LeaseRecord | undefined;
       if (current?.owner !== owner || current.fence !== fence) { finish(false); return; }
-      if (current.deletion && (!deletion || current.deletion.ownerNonce !== deletion.owner || current.deletion.generation !== deletion.generation || current.deletion.fence !== deletion.fence)) { finish(false); return; }
+      if (current.deletion && current.deletion.state !== "requesting" && (!deletion || current.deletion.ownerNonce !== deletion.owner || current.deletion.generation !== deletion.generation || current.deletion.fence !== deletion.fence)) { finish(false); return; }
       store.put({ ...current, id, owner, fence, expiresAt: Date.now() + LEASE_MS } satisfies LeaseRecord);
       finish(true);
     };
@@ -181,11 +181,11 @@ async function claimDeletionIntent(id: string): Promise<Tombstone | null> {
     request.onsuccess = () => {
       const current = request.result as LeaseRecord | undefined;
       const deletion = current?.deletion;
-      if (deletion?.state === "deleted" || deletion?.state === "nothing-to-delete" || (deletion?.state === "deleting" && deletion.expiresAt > now)) { finish(null); return; }
+      if (deletion?.state === "deleted" || deletion?.state === "nothing-to-delete" || ((deletion?.state === "requesting" || deletion?.state === "deleting") && deletion.expiresAt > now)) { finish(null); return; }
       const operationId = deletion?.operationId ?? deletion?.generation ?? crypto.randomUUID();
       const generation = deletion ? crypto.randomUUID() : operationId;
       const targets = (deletion?.targets ?? []).map((target) => ({ ...target, operationId: target.operationId ?? operationId }));
-      const next: Tombstone = { accountId: id, operationId, ownerNonce: crypto.randomUUID(), generation, fence: (deletion?.fence ?? 0) + 1, state: "deleting", phase: deletion ? "reclaiming" : "starting", heartbeatAt: now, expiresAt: now + LEASE_MS, completedTargets: [...(deletion?.completedTargets ?? [])], targets, mutations: deletion?.mutations ?? 0, error: deletion?.error };
+      const next: Tombstone = { accountId: id, operationId, ownerNonce: crypto.randomUUID(), generation, fence: (deletion?.fence ?? 0) + 1, state: "requesting", phase: deletion ? "reclaiming" : "waiting-for-writes", heartbeatAt: now, expiresAt: now + LEASE_MS, completedTargets: [...(deletion?.completedTargets ?? [])], targets, mutations: deletion?.mutations ?? 0, error: deletion?.error };
       store.put({ id, owner: current?.owner ?? "", fence: current?.fence ?? 0, expiresAt: current?.expiresAt ?? 0, deletion: next } satisfies LeaseRecord);
       finish(next);
     };
@@ -317,15 +317,17 @@ export const beginCloudWrite = acquireCloudWriteLease;
 
 export async function assertCloudWriteAllowed(provider: AuthProvider, token: string): Promise<void> {
   const id = key(provider, token);
-  if (await loadAuthoritativeTombstone(id)) throw suspendedError();
   const active = activeLeases.get(id);
   if (!active || active.lost) throw new Error("The cloud write lease was lost.");
+  const deletion = await loadAuthoritativeTombstone(id);
+  if (deletion && deletion.state !== "requesting") throw suspendedError();
   const renewed = await refreshLease(id, active.owner, active.fence);
   if (!renewed) {
     loseLease(active, "The cloud write fence is stale.");
     throw new Error("The cloud write fence is stale.");
   }
-  if (await loadAuthoritativeTombstone(id)) throw suspendedError();
+  const afterRenewal = await loadAuthoritativeTombstone(id);
+  if (afterRenewal && afterRenewal.state !== "requesting") throw suspendedError();
 }
 
 export async function fencedCloudMutation(provider: AuthProvider, token: string, input: RequestInfo | URL, init: RequestInit): Promise<Response> {
@@ -358,6 +360,8 @@ export async function suspendCloudWrites(provider: AuthProvider, token: string):
   writeTombstone(id, deletion);
   await stateById(id).queue;
   const leaseFence = await acquireDeletionLease(id, owner, generation, deletion.fence);
+  const deleting = await transitionDeletionRequest(id, owner, generation, deletion.fence, leaseFence);
+  writeTombstone(id, deleting);
   const afterClaim = await loadAuthoritativeTombstone(id);
   if (!afterClaim || afterClaim.ownerNonce !== owner || afterClaim.generation !== generation || afterClaim.fence !== deletion.fence) {
     if (typeof indexedDB !== "undefined") await releaseLease(id, owner, leaseFence);
@@ -370,17 +374,51 @@ export async function suspendCloudWrites(provider: AuthProvider, token: string):
     }, HEARTBEAT_MS);
     deletionLeases.set(id, active);
   }
-  return { provider, token, id, operationId, owner, generation, fence: deletion.fence, leaseFence, mutations: deletion.mutations, completedTargets: [...deletion.completedTargets], phase: deletion.phase };
+  return { provider, token, id, operationId, owner, generation, fence: deletion.fence, leaseFence, mutations: deleting.mutations, completedTargets: [...deleting.completedTargets], phase: deleting.phase };
 }
 async function acquireDeletionLease(id: string, owner: string, generation: string, deletionFence: number): Promise<number> {
   let fence: number | null = null;
   while (fence == null) {
     const tombstone = await loadAuthoritativeTombstone(id);
     if (tombstone && (tombstone.ownerNonce !== owner || tombstone.generation !== generation || tombstone.fence !== deletionFence)) throw new Error("Another cloud deletion owns this account.");
+    await refreshDeletionRequest(id, owner, generation, deletionFence);
     fence = await claimLease(id, owner, { owner, generation, fence: deletionFence });
     if (fence == null) await wait(POLL_MS);
   }
   return fence;
+}
+async function refreshDeletionRequest(id: string, owner: string, generation: string, deletionFence: number): Promise<void> {
+  await mutateLease<void>((store, finish) => {
+    const request = store.get(id);
+    request.onsuccess = () => {
+      const record = request.result as LeaseRecord | undefined;
+      const deletion = record?.deletion;
+      if (!record || !deletion || deletion.state !== "requesting" || deletion.ownerNonce !== owner || deletion.generation !== generation || deletion.fence !== deletionFence) {
+        request.transaction?.abort();
+        return;
+      }
+      const now = Date.now();
+      store.put({ ...record, deletion: { ...deletion, heartbeatAt: now, expiresAt: now + LEASE_MS } });
+      finish();
+    };
+  }).catch(() => { throw new Error("Another cloud deletion owns this account."); });
+}
+async function transitionDeletionRequest(id: string, owner: string, generation: string, deletionFence: number, leaseFence: number): Promise<Tombstone> {
+  return mutateLease<Tombstone>((store, finish) => {
+    const request = store.get(id);
+    request.onsuccess = () => {
+      const record = request.result as LeaseRecord | undefined;
+      const deletion = record?.deletion;
+      if (!record || record.owner !== owner || record.fence !== leaseFence || !deletion || deletion.state !== "requesting"
+        || deletion.ownerNonce !== owner || deletion.generation !== generation || deletion.fence !== deletionFence) {
+        request.transaction?.abort();
+        return;
+      }
+      const next = { ...deletion, state: "deleting" as const, phase: deletion.targets.length ? "reclaiming" : "starting", heartbeatAt: Date.now(), expiresAt: Date.now() + LEASE_MS };
+      store.put({ ...record, deletion: next });
+      finish(next);
+    };
+  }).catch(() => { throw new Error("Cloud deletion request ownership was lost."); });
 }
 export async function completeCloudDeletion(handle: CloudDeletionHandle, deleted: boolean): Promise<void> {
   try {
@@ -694,7 +732,7 @@ export function writeCloudTombstoneMirrorForTests(handle: CloudDeletionHandle, s
     state,
     phase: handle.phase,
     heartbeatAt: Date.now(),
-    expiresAt: state === "deleting" ? Date.now() + LEASE_MS : 0,
+    expiresAt: state === "requesting" || state === "deleting" ? Date.now() + LEASE_MS : 0,
     completedTargets: [...handle.completedTargets],
     targets: handle.completedTargets.map((target) => ({ target, operationId: handle.operationId, state: "completed" })),
     mutations: handle.mutations,

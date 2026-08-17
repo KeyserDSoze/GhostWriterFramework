@@ -7,6 +7,7 @@ import { assertRepositoryOperationScopeCurrent, captureRepositoryOperationScope,
 import {
   addLocalRepoLog,
   adoptLegacyEmailScopedRepository,
+  applyLocalFileChangesAtomically,
   applyCloneRepairAtomically,
   claimLocalRepositoryRepair,
   claimLegacyLocalRepositoryMigration,
@@ -16,7 +17,6 @@ import {
   buildLocalBookStructure,
   createLocalCommit,
   createLocalRecoverySnapshot,
-  deleteLocalFileScoped,
   getLocalFileEntry,
   getLocalRecoverySnapshot,
   getLocalRepository,
@@ -41,14 +41,13 @@ import {
   sha256Bytes,
   settleLocalSourceOverwriteAtomically,
   updateLocalRepositoryHead,
-  writeLocalBinaryScoped,
-  writeLocalTextScoped,
   type LocalCommitFile,
   type LocalRepositoryMeta,
   type LocalRepositoryFile,
   type LocalRepositoryRecovery,
   type RemoteTreeFile,
 } from "@/repository/localRepository";
+import { reconcileRemoteMutation } from "@/repository/remoteMutationReconciliation";
 
 const TEXT_EXTENSIONS = new Set(["md", "markdown", "txt", "json", "yaml", "yml", "toml", "csv", "html", "css", "js", "ts", "tsx"]);
 
@@ -147,7 +146,7 @@ async function exactLocalRepository(target: ExactRepositoryTarget, scope = opera
   }
   const meta = target.repoId
     ? await getLocalRepositoryById(target.repoId, target.accountIdentity)
-    : await getLocalRepository(target.owner, target.repo, target.branch, target.accountIdentity);
+    : await getLocalRepository(target.owner, target.repo, target.branch, scope);
   if (!meta) throw new Error("Local repository is not ready.");
   if (meta.accountScope !== target.accountIdentity) throw new Error("Local repository account identity does not match.");
   if (meta.bookId !== target.bookId || meta.owner !== target.owner || meta.repo !== target.repo || meta.branch !== target.branch) {
@@ -217,7 +216,7 @@ async function ensureLocalBookStructureOnce(input: {
   if (branch) {
     input.onProgress?.({ done: 0, total: 0, phase: "migrating" });
     existing = await adoptLegacyEmailScopedRepository({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch, scope });
-    existing ??= await getLocalRepository(input.book.owner, input.book.repo, branch, input.accountIdentity);
+    existing ??= await getLocalRepository(input.book.owner, input.book.repo, branch, scope);
   }
   if (existing) {
     // A repo is only trustworthy once its clone was verified complete. Legacy repos
@@ -297,7 +296,7 @@ async function ensureLocalBookStructureOnce(input: {
   }
   await addLocalRepoLog(meta.id, "clone", `Cloned ${blobs.length} files from ${meta.branch}`);
 
-  const finalMeta = await getLocalRepository(input.book.owner, input.book.repo, resolvedBranch, input.accountIdentity) ?? meta;
+  const finalMeta = await getLocalRepository(input.book.owner, input.book.repo, resolvedBranch, scope) ?? meta;
   return { meta: finalMeta, structure: await buildLocalBookStructure(finalMeta), cloned: true };
 }
 
@@ -361,27 +360,23 @@ export async function restoreLocalFilesToBase(input: {
   const uniquePaths = [...new Set(input.paths)];
   if (!uniquePaths.length) return { restored: 0 };
 
+  const selected = (await Promise.all(uniquePaths.map((path) => getLocalFileEntry(input.repoId, path, scope))))
+    .filter((file): file is LocalRepositoryFile => Boolean(file && !file.committed && file.status !== "clean"));
   const remote = input.token ? new Octokit({ auth: input.token }) : null;
-  let restored = 0;
-
-  for (const path of uniquePaths) {
-    const file = await getLocalFileEntry(input.repoId, path);
-    if (!file || file.committed || file.status === "clean") continue;
-
-    if (file.status === "new") {
-      await deleteLocalFileScoped(input.repoId, path, scope);
-      restored += 1;
-      continue;
-    }
-
-    if (!file.baseSha) throw new Error(`Cannot restore ${path} because its clean base snapshot is unavailable.`);
-    if (!remote) throw new Error(`Cannot restore ${path} without a GitHub token for its clean base snapshot.`);
-
+  const deletes: string[] = [];
+  const writes: Array<{ path: string; kind: "text"; text: string } | { path: string; kind: "binary"; bytes: Uint8Array }> = [];
+  const expected = new Map(selected.map((file) => [file.path, file.currentHash]));
+  for (const file of selected) {
+    if (file.status === "new") { deletes.push(file.path); continue; }
+    if (!file.baseSha) throw new Error(`Cannot restore ${file.path} because its clean base snapshot is unavailable.`);
+    if (!remote) throw new Error(`Cannot restore ${file.path} without a GitHub token for its clean base snapshot.`);
     const bytes = await fetchBlobBytes(remote, input.owner, input.repo, file.baseSha);
-    if (file.kind === "binary") await writeLocalBinaryScoped(input.repoId, path, bytes, scope);
-    else await writeLocalTextScoped(input.repoId, path, new TextDecoder().decode(bytes), scope);
-    restored += 1;
+    writes.push(file.kind === "binary"
+      ? { path: file.path, kind: "binary", bytes }
+      : { path: file.path, kind: "text", text: new TextDecoder().decode(bytes) });
   }
+  if (selected.length) await applyLocalFileChangesAtomically(input.repoId, scope, deletes, writes, expected);
+  const restored = selected.length;
 
   if (restored) {
     await addLocalRepoLog(input.repoId, "reset", `Restored ${restored} local file${restored === 1 ? "" : "s"} to the clean base state`);
@@ -408,7 +403,7 @@ export async function verifyAndRepairLocalRepository(input: {
   return withRepositoryMutationLease(selected.id, async () => {
     const claimed = await claimLocalRepositoryRepair(selected.id, scope, repairOperationId);
     try {
-      return await withLifecycleHeartbeat(claimed.id, scope, repairOperationId, () => verifyAndRepairLocalRepositoryLeased(claimed, token, input.accountIdentity, scope, repairOperationId, input.onProgress));
+      return await withLifecycleHeartbeat(claimed.id, scope, repairOperationId, () => verifyAndRepairLocalRepositoryLeased(claimed, token, scope, repairOperationId, input.onProgress));
     } catch (error) {
       await releaseLocalRepositoryRepair(claimed.id, scope, repairOperationId).catch(() => undefined);
       throw error;
@@ -444,7 +439,6 @@ export async function recoverExpiredRepositoryLifecycle(input: {
 async function verifyAndRepairLocalRepositoryLeased(
   meta: LocalRepositoryMeta,
   token: string,
-  accountIdentity: string,
   scope: RepositoryOperationScope,
   repairOperationId: string,
   onProgress?: (progress: LocalCloneProgress) => void,
@@ -507,12 +501,13 @@ async function verifyAndRepairLocalRepositoryLeased(
   });
   if (missing.length || unexpectedClean.length) await addLocalRepoLog(meta.id, "pull", `Repaired ${missing.length} missing and ${unexpectedClean.length} unexpected clean file(s) on ${meta.branch}`);
 
-  const updated = await getLocalRepository(meta.owner, meta.repo, meta.branch, accountIdentity) ?? meta;
+  const updated = await getLocalRepository(meta.owner, meta.repo, meta.branch, scope) ?? meta;
   return { meta: updated, structure: await buildLocalBookStructure(updated), repaired: missing.length };
 }
 
 export async function getExistingLocalBookStructure(bookId: string, owner: string, repo: string, branch: string, accountIdentity: string): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure } | null> {
-  const meta = await getLocalRepository(owner, repo, branch, accountIdentity);
+  const scope = operationScope({ bookId, owner, repo, branch, accountIdentity });
+  const meta = await getLocalRepository(owner, repo, branch, scope);
   if (meta && meta.bookId !== bookId) return null;
   return meta ? { meta, structure: await buildLocalBookStructure(meta) } : null;
 }
@@ -753,6 +748,21 @@ async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLoca
   try {
     await octokit.rest.git.updateRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, sha: commit.data.sha, ...request });
   } catch (error) {
+    const reconciled = await reconcileRemoteMutation({
+      octokit,
+      owner: meta.owner,
+      repo: meta.repo,
+      branch: meta.branch,
+      generatedCommitSha: commit.data.sha,
+      revisions: Object.entries(pushedShas).map(([path, blobSha]) => ({ path, blobSha })),
+    });
+    if (reconciled.landed && reconciled.headSha) {
+      const settlement = await markLocalCommitsPushed(meta.id, scope, commits.map((entry) => entry.id), reconciled.headSha, reconciled.blobShas ?? pushedShas);
+      await addLocalRepoLog(meta.id, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
+        ? `Push reconciled with newer local edits preserved for recovery: ${settlement.skippedPaths.join(", ")}`
+        : `Push reconciled at ${reconciled.headSha.slice(0, 7)}`);
+      return { commitSha: reconciled.headSha, files: treeEntries.length, ...(settlement.skippedPaths.length ? { recoveryPaths: settlement.skippedPaths } : {}) };
+    }
     throw new AmbiguousLocalPushError("The local push ref update had an ambiguous outcome.", commit.data.sha, error);
   }
   const settlement = await markLocalCommitsPushed(meta.id, scope, commits.map((entry) => entry.id), commit.data.sha, pushedShas);
@@ -864,8 +874,9 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
 }
 
 export async function removeLocalWorkingCopy(target: ExactRepositoryTarget): Promise<void> {
-  const meta = await exactLocalRepository(target);
-  await removeLocalRepository(meta.id, operationScope(target));
+  const scope = operationScope(target);
+  const meta = await exactLocalRepository(target, scope);
+  await withRepositoryMutationLease(meta.id, async () => removeLocalRepository((await exactLocalRepository(target, scope)).id, scope));
 }
 
 export async function recloneLocalWorkingCopy(input: {
@@ -878,10 +889,16 @@ export async function recloneLocalWorkingCopy(input: {
 }): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
   if (!input.branch) throw new Error("An exact branch is required to re-clone a local working copy.");
   const scope = operationScope({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity });
-  const existing = await getLocalRepository(input.book.owner, input.book.repo, input.branch, input.accountIdentity);
+  const existing = await getLocalRepository(input.book.owner, input.book.repo, input.branch, scope);
   if (existing) {
     if (existing.bookId !== input.bookId) throw new Error("The selected local repository does not belong to this book.");
-    await removeLocalRepository(existing.id, scope);
+    return withRepositoryMutationLease(existing.id, async () => {
+      const target: ExactRepositoryTarget = { bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch!, accountIdentity: input.accountIdentity, repoId: existing.id };
+      await removeLocalRepository((await exactLocalRepository(target, scope)).id, scope);
+      const result = await ensureLocalBookStructure(input);
+      await addLocalRepoLog(result.meta.id, "reset", "Recloned local working copy");
+      return result;
+    });
   }
   const result = await ensureLocalBookStructure(input);
   await addLocalRepoLog(result.meta.id, "reset", "Recloned local working copy");

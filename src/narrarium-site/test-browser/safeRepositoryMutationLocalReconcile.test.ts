@@ -40,7 +40,7 @@ test("local push recovery accepts a descendant only with generated ancestry and 
   const file = await setup();
   await expect(commitAndPushTextFileMutation({ token: "token", book: { id: "book", owner: "owner", repo: "repo" } as any, branch: "main", expectedRemoteHeadSha: "source", message: "Update", mutations: [{ path: "plot.md", content: "new", expectedCurrentHash: file.currentHash }] })).resolves.toEqual({ commitSha: "descendant", mode: "local" });
   expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
-  expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "new", status: "clean" });
+  expect(await getLocalFile(repoId, "plot.md", captureRepositoryOperationScope())).toMatchObject({ text: "new", status: "clean" });
 });
 
 test("local push recovery rejects matching content without generated ancestry and restores local state", async () => {
@@ -48,6 +48,6 @@ test("local push recovery rejects matching content without generated ancestry an
   git.getCommit.mockResolvedValue({ data: { parents: [{ sha: "source" }] } });
   await expect(commitAndPushTextFileMutation({ token: "token", book: { id: "book", owner: "owner", repo: "repo" } as any, branch: "main", expectedRemoteHeadSha: "source", message: "Update", mutations: [{ path: "plot.md", content: "new", expectedCurrentHash: file.currentHash }] })).rejects.toBeInstanceOf(RepositoryConflictError);
   expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
-  expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "old", status: "clean" });
+  expect(await getLocalFile(repoId, "plot.md", captureRepositoryOperationScope())).toMatchObject({ text: "old", status: "clean" });
   expect(git.getTree).not.toHaveBeenCalled();
 });

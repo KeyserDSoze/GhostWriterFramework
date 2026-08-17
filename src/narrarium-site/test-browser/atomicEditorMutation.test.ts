@@ -20,7 +20,7 @@ it("rejects all related local writes when one expected hash is stale", async () 
     { path: "final.md", content: "next final", expectedCurrentHash: "stale" },
   ], "swap")).rejects.toThrow("File changed since");
 
-  expect((await getLocalFile(meta.id, "draft.md"))?.text).toBe("draft");
-  expect((await getLocalFile(meta.id, "final.md"))?.text).toBe("final");
+  expect((await getLocalFile(meta.id, "draft.md", captureRepositoryOperationScope()))?.text).toBe("draft");
+  expect((await getLocalFile(meta.id, "final.md", captureRepositoryOperationScope()))?.text).toBe("final");
   expect(second.currentHash).toBeTruthy();
 });

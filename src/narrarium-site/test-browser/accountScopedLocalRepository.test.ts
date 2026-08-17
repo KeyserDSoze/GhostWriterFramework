@@ -4,6 +4,7 @@ import { useAuthStore } from "@/store/authStore";
 import { getLocalRepository, getLocalRepositoryById, makeRepoId, putLocalRepository, putQuarantinedLocalRepository, removeLocalRepository, writeLocalText } from "@/repository/localRepository";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { commitLocalChanges } from "@/repository/repositoryService";
+import { loadFileContent } from "@/github/githubClient";
 
 describe("account-scoped local repositories", () => {
   beforeEach(() => {
@@ -24,7 +25,7 @@ describe("account-scoped local repositories", () => {
     await putLocalRepository({ bookId: crypto.randomUUID(), owner: "scope-owner", repo: repoName, branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString() }, captureRepositoryOperationScope());
     useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-b", name: "B", email: "b@example.com", picture: "" } });
     vi.spyOn(window, "confirm").mockReturnValue(false);
-    expect(await getLocalRepository("scope-owner", repoName, "main", "google:sub-b")).toBeNull();
+    expect(await getLocalRepository("scope-owner", repoName, "main", captureRepositoryOperationScope())).toBeNull();
   });
 
   it("keeps legacy Microsoft email scope quarantined after immutable login", async () => {
@@ -33,7 +34,7 @@ describe("account-scoped local repositories", () => {
     useAuthStore.setState({ user });
     const legacy = await putQuarantinedLocalRepository({ bookId: crypto.randomUUID(), owner: "scope-owner", repo: repoName, branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString(), accountScope: "microsoft:same@example.com" });
     useAuthStore.setState({ user: { ...user, providerAccountId: "home-a", homeAccountId: "home-a", localAccountId: "local-a" } });
-    const promoted = await getLocalRepository("scope-owner", repoName, "main", "microsoft:home-a");
+    const promoted = await getLocalRepository("scope-owner", repoName, "main", captureRepositoryOperationScope());
     expect(promoted).toBeNull();
     expect(legacy.accountScope).toBe("microsoft:same@example.com");
   });
@@ -44,7 +45,7 @@ describe("account-scoped local repositories", () => {
     const legacy = await putQuarantinedLocalRepository({ bookId: crypto.randomUUID(), owner: "scope-owner", repo: repoName, branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString() });
     useAuthStore.setState({ user: { provider: "microsoft", providerAccountId: "home-a", name: "A", email: "a@example.com", picture: "", homeAccountId: "home-a", localAccountId: "local-a" } });
     vi.spyOn(window, "confirm");
-    expect(await getLocalRepository("scope-owner", repoName, "main", "microsoft:home-a")).toBeNull();
+    expect(await getLocalRepository("scope-owner", repoName, "main", captureRepositoryOperationScope())).toBeNull();
     expect(window.confirm).not.toHaveBeenCalled();
     expect(legacy.accountScope).toBeUndefined();
   });
@@ -85,6 +86,30 @@ describe("account-scoped local repositories", () => {
 
     await expect(putLocalRepository({ bookId: "other", owner: "owner", repo: crypto.randomUUID(), branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString() }, stale)).rejects.toMatchObject({ code: "REPOSITORY_OWNERSHIP_CHANGED" });
     await expect(removeLocalRepository(repository.id, stale)).rejects.toMatchObject({ code: "REPOSITORY_OWNERSHIP_CHANGED" });
+  });
+
+  it("rejects loadFileContent without leaking local data when the account changes inside its readonly transaction", async () => {
+    useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-a", name: "A", email: "a@example.com", picture: "" } });
+    const scope = captureRepositoryOperationScope();
+    const repository = await putLocalRepository({ bookId: "book", owner: "owner", repo: crypto.randomUUID(), branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString() }, scope);
+    await writeLocalText(repository.id, "secret.md", "account A manuscript");
+    const originalGet = IDBObjectStore.prototype.get;
+    let switched = false;
+    const getSpy = vi.spyOn(IDBObjectStore.prototype, "get").mockImplementation(function (this: IDBObjectStore, key: IDBValidKey) {
+      const request = originalGet.call(this, key);
+      if (!switched && this.name === "repositories" && key === repository.id) {
+        switched = true;
+        request.addEventListener("success", () => {
+          useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-b", name: "B", email: "b@example.com", picture: "" } });
+        }, { once: true });
+      }
+      return request;
+    });
+
+    const fetchMock = vi.spyOn(window, "fetch");
+    await expect(loadFileContent("token", repository.owner, repository.repo, "secret.md", repository.branch)).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+    getSpy.mockRestore();
   });
 
   it("isolates recreated Google accounts and preserves same-sub email changes", async () => {

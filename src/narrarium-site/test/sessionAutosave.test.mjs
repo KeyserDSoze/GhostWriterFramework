@@ -6,6 +6,7 @@ import {
   assistantSessionSaveRetryPlan,
   attachAssistantSessionCloudHandle,
   clearFailedAssistantSessionSaveFingerprint,
+  flushAssistantSessionSnapshot,
   upsertAssistantSessionMeta,
 } from "../src/assistant/sessionAutosave.ts";
 
@@ -126,6 +127,30 @@ test("queued saves are serialized and reuse the first created file id", async ()
   assert.equal(calls[1].revision, "r1");
   assert.equal(calls[1].messages[0].text, "Reply");
   assert.equal(saved.length, 2);
+});
+
+test("switch flush waits behind debounce work and durably saves the latest snapshot", async () => {
+  const queue = new AssistantSessionSaveQueue();
+  const first = deferred();
+  const started = deferred();
+  const calls = [];
+  const save = async (snapshot) => {
+    calls.push(snapshot);
+    if (calls.length === 1) {
+      started.resolve();
+      return first.promise;
+    }
+    return { fileId: "drive-file", revision: "r2" };
+  };
+  void queue.enqueue(session(), save, () => undefined, () => undefined);
+  await started.promise;
+  const latest = session({ messages: [{ id: "latest", role: "user", text: "Do not lose me" }] });
+  const flushed = flushAssistantSessionSnapshot(queue, latest, save);
+  first.resolve({ fileId: "drive-file", revision: "r1" });
+
+  assert.deepEqual(await flushed, { fileId: "drive-file", revision: "r2" });
+  assert.equal(calls[1].messages[0].text, "Do not lose me");
+  assert.equal(calls[1].fileId, "drive-file");
 });
 
 test("a failed save does not block the next queued revision", async () => {

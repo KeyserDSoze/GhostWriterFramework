@@ -1,9 +1,11 @@
 import "fake-indexeddb/auto";
 import { afterEach, expect, test } from "vitest";
-import { getLocalFile, putCleanLocalFile, putLocalRepository, removeLocalRepository } from "@/repository/localRepository";
+import { getLocalFile as getLocalFileScoped, putCleanLocalFile, putLocalRepository, removeLocalRepository } from "@/repository/localRepository";
 import { renameParagraphWithCompanions, reorderChaptersInBook, reorderParagraphsInChapter } from "@/github/githubClient";
 import { buildParagraphScriptArtifact } from "@/narrarium/workspace";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
+
+const getLocalFile = (repoIdValue: string, path: string) => getLocalFileScoped(repoIdValue, path, captureRepositoryOperationScope());
 import { useAuthStore } from "@/store/authStore";
 
 useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });

@@ -66,6 +66,16 @@ function renderResearchMarkdown(frontmatterRaw: string, body: string): string {
   return frontmatterRaw.trim() ? `---\n${frontmatterRaw.trim()}\n---\n\n${body.replace(/^\n+/, "")}` : body;
 }
 
+export function researchSaveBaseline(markdown: string) {
+  const parts = splitResearchMarkdown(markdown);
+  return {
+    markdown,
+    frontmatterRaw: parts.frontmatterRaw,
+    body: parts.body.trim(),
+    frontmatter: parts.frontmatterRaw.trim() ? parseYaml(parts.frontmatterRaw) as ResearchFrontmatter : null,
+  };
+}
+
 function updateFrontmatterField(frontmatterRaw: string, field: string, value: string): string {
   if (!frontmatterRaw.trim()) return frontmatterRaw;
   const regex = new RegExp(`^${field}:.*$`, "m");
@@ -214,8 +224,11 @@ function ResearchDetail({
       const nextMarkdown = renderResearchMarkdown(nextFrontmatter, draftBody.trim() + "\n");
       const nextSha = await updateFile(token, book.owner, book.repo, branch, file.path, sha, nextMarkdown, `Update research ${file.slug}`);
       setSha(nextSha);
-      setFrontmatterRaw(nextFrontmatter);
-      setMarkdown(nextMarkdown);
+      const baseline = researchSaveBaseline(nextMarkdown);
+      setFrontmatterRaw(baseline.frontmatterRaw);
+      setDraftBody(baseline.body);
+      setMarkdown(baseline.markdown);
+      setFrontmatter(baseline.frontmatter);
       setEditMode(false);
       toast({ title: t("common.saved") });
       return true;

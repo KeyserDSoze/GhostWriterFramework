@@ -60,5 +60,5 @@ export function renderEpubMarkdownHtml(markdown: string, packagedResources: Read
     const href = (link.getAttribute("href") ?? "").trim();
     if (!(href.startsWith("#") || (isApprovedRepositoryAssetPath(href) && packagedResources.has(href)))) link.removeAttribute("href");
   }
-  return document.body.innerHTML;
+  return new XMLSerializer().serializeToString(document.body).replace(/^<body[^>]*>|<\/body>$/g, "");
 }

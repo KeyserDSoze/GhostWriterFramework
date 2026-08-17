@@ -269,6 +269,7 @@ export async function runAssistantPrompt(input: {
   }
   const match = chooseToolMatch({ prompt, lowered, settings, spokenMode, evaluateContract: (tool) => evaluateToolContract(tool, runtime) }, availableHandlerIds);
   if (match && !match.enabled) return disabledCopilotToolMessage(settings, match.toolId);
+  if (match?.toolId === "update-plot" && match.mutationIntent === "read-only") return executeTool("answer-from-context");
   if (match) return executeTool(match.toolId, match.mutationIntent);
 
   // Fallback while the registry coverage is still growing. Keep existing behavior for unmatched prompts.

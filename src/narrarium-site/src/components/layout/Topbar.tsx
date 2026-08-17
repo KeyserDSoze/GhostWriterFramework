@@ -52,6 +52,10 @@ function remoteChangedNoticeKey(bookId: string, remoteHeadSha: string): string {
   return `narrarium-remote-changed-${bookId}-${remoteHeadSha}`;
 }
 
+export function ownsCompletedSpeechController(current: SpeechController | null, completed: SpeechController, currentGeneration: number, completedGeneration: number): boolean {
+  return current === completed && currentGeneration === completedGeneration;
+}
+
 export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { t, i18n } = useTranslation();
   const { user, clearAuth } = useAuthStore();
@@ -77,6 +81,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const navigate = useNavigate();
   const location = useLocation();
   const speechRef = useRef<SpeechController | null>(null);
+  const speechGenerationRef = useRef(0);
   const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "behind" | "offline" | "none" }>({ label: "", tone: "none" });
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
   const [repoActionBusy, setRepoActionBusy] = useState<string | null>(null);
@@ -199,13 +204,24 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   async function handleReadPage() {
     try {
       if (speechRef.current) {
+        speechGenerationRef.current += 1;
         speechRef.current.stop();
         speechRef.current = null;
         return;
       }
       const main = document.querySelector("main");
       const text = main?.textContent?.trim() ?? document.body.textContent?.trim() ?? "";
-      speechRef.current = await speakText(text, settings, { accountScope: accountIdentity(user) });
+      const generation = ++speechGenerationRef.current;
+      const controller = await speakText(text, settings, { accountScope: accountIdentity(user) });
+      if (generation !== speechGenerationRef.current) {
+        controller.stop();
+        return;
+      }
+      speechRef.current = controller;
+      const clearCompleted = () => {
+        if (ownsCompletedSpeechController(speechRef.current, controller, speechGenerationRef.current, generation)) speechRef.current = null;
+      };
+      void controller.done.then(clearCompleted, clearCompleted);
     } catch (err) {
       toast({ title: t("shell.ttsFailed"), description: String(err), variant: "destructive" });
     }

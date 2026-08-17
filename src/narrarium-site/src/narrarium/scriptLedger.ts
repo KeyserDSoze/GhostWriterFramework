@@ -7,6 +7,7 @@ import { commitAndPushTextFileMutation, preflightRepositoryOperation, Repository
 import type { BookEntry } from "@/types/settings";
 import { accountIdentity } from "@/auth/accountIdentity";
 import { useAuthStore } from "@/store/authStore";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 import { CanonicalScriptConflictError, planCanonicalScriptMutation, type CanonicalScriptMutation, type CanonicalScriptMutationResult } from "@/narrarium/canonicalScriptMutationPlan";
 
@@ -20,7 +21,7 @@ async function collectSources(input: { token: string; book: BookEntry; branch: s
   const requested = new Set(extraPaths);
   input.signal?.throwIfAborted();
   const identity = accountIdentity(useAuthStore.getState().user);
-  const local = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, identity).catch(() => null) : null;
+  const local = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, captureRepositoryOperationScope()).catch(() => null) : null;
   input.signal?.throwIfAborted();
   if (local) {
     const preflight = await preflightRepositoryOperation(input);

@@ -12,6 +12,7 @@ import {
 } from "@/repository/localRepository";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { useAuthStore } from "@/store/authStore";
+import { collectReaderEntities, readerEntityBodyAllowed } from "@/pages/ReaderPreviewPage";
 
 useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
 
@@ -80,7 +81,7 @@ describe("local repository secret thresholds", () => {
     const book = { id: repo.bookId, owner: repo.owner, repo: repo.repo, activeBranch: "main", tokenIndex: null } as any;
     const settings = { books: [book], defaultGitHubToken: "token" } as any;
     const read = async (_token: string, _owner: string, _repo: string, path: string) => {
-      const file = await getLocalFile(repo.id, path);
+      const file = await getLocalFile(repo.id, path, captureRepositoryOperationScope());
       if (!file?.text) throw new RepositoryError(`Missing local fixture file: ${path}`, "not-found", "read", 404);
       return file.text;
     };
@@ -94,5 +95,16 @@ describe("local repository secret thresholds", () => {
     expect(secretContext.availableFiles.find((file) => file.path === "secrets/the-truth.md")?.secretAccess).toBe("author");
     expect(secretContext.loadedFilePaths).toContain("secrets/the-truth.md");
     expect(secretContext.relevantFiles.find((file) => file.path === "secrets/the-truth.md")?.content).toContain("counterfeit");
+  });
+
+  it("links and loads Reader secrets only after their reveal threshold", async () => {
+    const { structure } = await localSecretFixture();
+    const secret = { section: "secrets", name: "The Truth", path: "secrets/the-truth.md" };
+    expect(collectReaderEntities(structure, structure.chapters[0]).some((entry) => entry.path === secret.path)).toBe(false);
+    expect(collectReaderEntities(structure, structure.chapters[1]).some((entry) => entry.path === secret.path)).toBe(false);
+    expect(readerEntityBodyAllowed(structure, secret, structure.chapters[1].slug)).toBe(false);
+    expect(collectReaderEntities(structure, structure.chapters[2]).some((entry) => entry.path === secret.path)).toBe(true);
+    expect(readerEntityBodyAllowed(structure, secret, structure.chapters[2].slug)).toBe(true);
+    expect(readerEntityBodyAllowed(structure, secret)).toBe(false);
   });
 });

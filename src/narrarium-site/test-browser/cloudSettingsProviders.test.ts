@@ -34,10 +34,12 @@ function providerFetch(provider: AuthProvider, payload: unknown) {
       if (url.includes("/files/settings-id?alt=media")) return Response.json(payload);
       if (url.endsWith("/files/settings-id?fields=id,version,modifiedTime,md5Checksum")) return Response.json({ id: "settings-id", version: "123", modifiedTime: "2026-01-01T00:00:00Z", md5Checksum: "abc" });
     } else {
+      if (url.includes("graph.microsoft.com/v1.0/me?$select=id")) return Response.json({ id: "graph-user-test" });
       if (url.endsWith("/root:/Apps")) return Response.json({ id: "apps", folder: {} });
       if (url.endsWith("/root:/Apps/Narrarium")) return Response.json({ id: "folder", folder: {} });
+      if (url.includes("/root:/Apps/Narrarium") && url.includes("$select=id,folder,createdBy")) return Response.json({ id: "folder", folder: {}, createdBy: { user: { id: "graph-user-test" } } });
       if (url.includes("/items/folder/children")) return Response.json({ value: [{ id: "marker", name: ".narrarium-app-folder-v1.json", eTag: "m1", file: {} }, { id: "settings-id", name: "settings.json", eTag: "etag-1", file: {} }] });
-      if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", version: 2, secret: "test-secret" });
+      if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", version: 3, provider: "microsoft", providerAccountId: "home-test", graphUserId: "graph-user-test" });
       if (url.endsWith("/root:/Apps/Narrarium/settings.json")) return Response.json({ id: "settings-id", eTag: "etag-1" });
       if (url.endsWith("/items/settings-id/content")) return Response.json(payload);
     }
@@ -49,7 +51,6 @@ describe.each<AuthProvider>(["google", "microsoft"])("%s cloud settings historic
   beforeEach(() => {
     vi.unstubAllGlobals();
     registerCloudAccount("microsoft", "token", "home-test");
-    localStorage.setItem("narrarium.microsoftAppFolderMarker.v2.home-test", "test-secret");
   });
 
   it.each([

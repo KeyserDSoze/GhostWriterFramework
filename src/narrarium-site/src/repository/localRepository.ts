@@ -670,11 +670,32 @@ export async function putQuarantinedLocalRepository(meta: Omit<LocalRepositoryMe
   return full;
 }
 
-export async function getLocalRepository(owner: string, repo: string, branch: string, scope: string): Promise<LocalRepositoryMeta | null> {
-  if (!isCurrentAccountScope(scope)) return null;
-  const scopedId = repoId(owner, repo, branch, scope);
-  const scoped = await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(scopedId));
-  return scoped?.accountScope === scope ? scoped : null;
+export async function getLocalRepository(owner: string, repo: string, branch: string, scope: RepositoryOperationScope): Promise<LocalRepositoryMeta | null> {
+  const scopedId = repoId(owner, repo, branch, scope.accountIdentity);
+  const db = await openDb();
+  return new Promise<LocalRepositoryMeta | null>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readonly");
+    const request = tx.objectStore("repositories").get(scopedId);
+    let result: LocalRepositoryMeta | null = null;
+    let validationError: Error | null = null;
+    request.onsuccess = () => {
+      try {
+        assertRepositoryOperationScopeCurrent(scope);
+        const repository = request.result as LocalRepositoryMeta | undefined;
+        result = repository?.accountScope === scope.accountIdentity ? repository : null;
+      } catch (error) {
+        validationError = error as Error;
+        tx.abort();
+      }
+    };
+    request.onerror = () => reject(request.error);
+    tx.oncomplete = () => {
+      try { assertRepositoryOperationScopeCurrent(scope); resolve(result); }
+      catch (error) { reject(error); }
+    };
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local repository read was aborted."));
+  });
 }
 
 /** Re-key a proven pre-0.76.38 email-scoped working copy without copying or downloading content. */
@@ -939,12 +960,42 @@ export async function listDirtyLocalFiles(repoIdValue: string): Promise<LocalRep
   return (await listAllLocalFiles(repoIdValue)).filter((file) => file.status !== "clean" && !file.committed);
 }
 
-export async function getLocalFileEntry(repoIdValue: string, path: string): Promise<LocalRepositoryFile | null> {
-  return (await txStore<LocalRepositoryFile | undefined>("files", "readonly", (store) => store.get(fileKey(repoIdValue, path)))) ?? null;
+export async function getLocalFileEntry(repoIdValue: string, path: string, scope: RepositoryOperationScope): Promise<LocalRepositoryFile | null> {
+  const db = await openDb();
+  return new Promise<LocalRepositoryFile | null>((resolve, reject) => {
+    const tx = db.transaction(["repositories", "files"], "readonly");
+    const repositoryRequest = tx.objectStore("repositories").get(repoIdValue);
+    const fileRequest = tx.objectStore("files").get(fileKey(repoIdValue, path));
+    let repository: LocalRepositoryMeta | undefined;
+    let file: LocalRepositoryFile | undefined;
+    let loaded = 0;
+    let result: LocalRepositoryFile | null = null;
+    let validationError: Error | null = null;
+    const complete = () => {
+      loaded += 1;
+      if (loaded !== 2) return;
+      try {
+        validateRepositoryOperation(repository, scope);
+        result = file ?? null;
+      } catch (error) {
+        validationError = error as Error;
+        tx.abort();
+      }
+    };
+    repositoryRequest.onsuccess = () => { repository = repositoryRequest.result as LocalRepositoryMeta | undefined; complete(); };
+    fileRequest.onsuccess = () => { file = fileRequest.result as LocalRepositoryFile | undefined; complete(); };
+    repositoryRequest.onerror = fileRequest.onerror = () => tx.abort();
+    tx.oncomplete = () => {
+      try { assertRepositoryOperationScopeCurrent(scope); resolve(result); }
+      catch (error) { reject(error); }
+    };
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local file read was aborted."));
+  });
 }
 
-export async function getLocalFile(repoIdValue: string, path: string): Promise<LocalRepositoryFile | null> {
-  const file = await getLocalFileEntry(repoIdValue, path);
+export async function getLocalFile(repoIdValue: string, path: string, scope: RepositoryOperationScope): Promise<LocalRepositoryFile | null> {
+  const file = await getLocalFileEntry(repoIdValue, path, scope);
   return file && file.status !== "deleted" ? file : null;
 }
 
@@ -989,7 +1040,7 @@ async function prepareCleanLocalFile(input: Parameters<typeof putCleanLocalFile>
 }
 
 export async function writeLocalTextScoped(repoIdValue: string, path: string, text: string, scope: RepositoryOperationScope): Promise<LocalRepositoryFile> {
-  const existing = await getLocalFileEntry(repoIdValue, path);
+  const existing = await getLocalFileEntry(repoIdValue, path, scope);
   const currentHash = await sha256Text(text);
   const file: LocalRepositoryFile = { key: fileKey(repoIdValue, path), repoId: repoIdValue, path, kind: "text", text, baseSha: existing?.baseSha, baseHash: existing?.baseHash, currentHash, status: statusAfterWrite(existing ?? undefined, currentHash), committed: false, size: new TextEncoder().encode(text).byteLength, updatedAt: new Date().toISOString() };
   await putScopedLocalFile(repoIdValue, scope, file);
@@ -997,7 +1048,7 @@ export async function writeLocalTextScoped(repoIdValue: string, path: string, te
 }
 
 export async function writeLocalBinaryScoped(repoIdValue: string, path: string, bytes: Uint8Array, scope: RepositoryOperationScope): Promise<LocalRepositoryFile> {
-  const existing = await getLocalFileEntry(repoIdValue, path);
+  const existing = await getLocalFileEntry(repoIdValue, path, scope);
   const currentHash = await sha256Bytes(bytes);
   const file: LocalRepositoryFile = { key: fileKey(repoIdValue, path), repoId: repoIdValue, path, kind: "binary", blob: new Blob([bytesToArrayBuffer(bytes)]), baseSha: existing?.baseSha, baseHash: existing?.baseHash, currentHash, status: statusAfterWrite(existing ?? undefined, currentHash), committed: false, size: bytes.byteLength, updatedAt: new Date().toISOString() };
   await putScopedLocalFile(repoIdValue, scope, file);
@@ -1414,7 +1465,7 @@ export async function renameLocalTextFileAtomically(input: {
     { path: input.oldPath, content: null, expectedCurrentHash: input.expectedCurrentHash },
     { path: input.newPath, content: input.content, expectedCurrentHash: null },
   ]);
-  const file = await getLocalFile(input.repoId, input.newPath);
+  const file = await getLocalFile(input.repoId, input.newPath, input.scope);
   if (!file) throw new Error(`Renamed file is unavailable: ${input.newPath}`);
   return file;
 }

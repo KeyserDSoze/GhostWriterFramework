@@ -39,7 +39,7 @@ describe("local chat note append", () => {
       appendAssistantNote({ token: "unused", owner, repo, branch, path: "notes.md", noteBody: "Second concurrent note", idempotencyKey: "append-second" }),
     ]);
 
-    const saved = await getLocalFile(repository.id, "notes.md");
+    const saved = await getLocalFile(repository.id, "notes.md", captureRepositoryOperationScope());
     expect(saved?.text?.match(/narrarium-chat-note:append-first/g)).toHaveLength(1);
     expect(saved?.text?.match(/narrarium-chat-note:append-second/g)).toHaveLength(1);
     expect(saved?.text).toContain("First concurrent note");

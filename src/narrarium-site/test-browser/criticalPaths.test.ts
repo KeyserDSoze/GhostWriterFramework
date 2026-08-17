@@ -10,6 +10,7 @@ import { chooseToolMatch } from "@/assistant/orchestrator";
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
 import { copilotToolRegistry } from "@/assistant/tools/registry";
 import type { AppSettings } from "@/types/settings";
+import { runAssistantPrompt } from "@/assistant/service";
 
 describe("Copilot critical paths", () => {
   it("fails closed for missing nested story targets", () => {
@@ -97,5 +98,21 @@ describe("Copilot critical paths", () => {
     };
     expect(validateAssistantAction({ action, owner: "owner", repo: "repo", branch: "draft", expectedToolId: "multi-file-edit", toolEnabled: true, sourceRevision: sourceRevisionFromFiles(revisions) })).toBeNull();
     expect(validateAssistantAction({ action: { ...action, sourceRevisions: { "chapters/a.md": "sha-a" } }, owner: "owner", repo: "repo", branch: "draft", expectedToolId: "multi-file-edit", toolEnabled: true, sourceRevision: action.sourceRevision })).toBe("invalid-action");
+  });
+
+  it("routes read-only plot questions to contextual answering without weakening update intent", async () => {
+    const settings = {
+      ui: { language: "en" }, copilotTools: { toolOverrides: {} }, aiIntegrations: [],
+    } as unknown as AppSettings;
+    const context = {
+      route: { kind: "book", bookId: "book" }, book: null, structure: { defaultBranch: "main", chapters: [], readerEvaluationFiles: [], researchFiles: [] }, chapter: null, paragraph: null,
+      title: "Book", summary: "", availableFiles: [], relevantFiles: [], loadedFilePaths: ["plot.md"], noteTargetPath: "notes.md", branch: "main", branchReady: true,
+    } as never;
+    const readOnly = await runAssistantPrompt({ prompt: "What is the plot?", context, settings, book: null, branch: "main", token: "", history: [], compactSummary: "", compactedMessageCount: 0, attachments: [], accountScope: null });
+    expect(readOnly.text).not.toContain("explicit editing request");
+    expect(readOnly.action).toMatchObject({ kind: "navigate", to: "/app/settings/ai-router" });
+
+    ensureBuiltinCopilotToolsRegistered();
+    expect(chooseToolMatch({ prompt: "update the plot", lowered: "update the plot", settings }, new Set(["update-plot"]))).toMatchObject({ toolId: "update-plot", mutationIntent: "positive" });
   });
 });

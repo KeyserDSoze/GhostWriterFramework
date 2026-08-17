@@ -25,7 +25,7 @@ import {
   mutateLocalTextFilesAndCreateCommitAtomically,
   deleteLocalRecoverySnapshot,
   deleteLocalFile,
-  getLocalFile,
+  getLocalFile as getLocalFileScoped,
   getLocalRecoverySnapshot,
   getLocalRepositoryById,
   listLocalRecoverySnapshots,
@@ -47,13 +47,19 @@ import {
   listDirtyLocalFiles,
   writeLocalText,
 } from "@/repository/localRepository";
-import { ensureLocalBookStructure, migrateLegacyLocalRepository, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, restoreRepositoryRecovery, syncFullRepository, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
+import { ensureLocalBookStructure, migrateLegacyLocalRepository, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 let repoId = "";
 const identity = "google:sub-writer";
 const target = { bookId: "book", owner: "owner", repo: "repo", branch: "main", accountIdentity: identity };
+const getLocalFile = (repoIdValue: string, path: string) => {
+  if (useAuthStore.getState().user?.providerAccountId !== "sub-writer") {
+    useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
+  }
+  return getLocalFileScoped(repoIdValue, path, captureRepositoryOperationScope());
+};
 
 useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
 
@@ -810,4 +816,49 @@ test("local-source settlement preserves deletion of a locally new pushed path as
   expect(await listDirtyLocalFiles(repoId)).toEqual([
     expect.objectContaining({ path: "new.md", status: "deleted", committed: false, baseSha: "pushed-blob" }),
   ]);
+});
+
+test("selected file restore applies nothing when a later base blob download fails", async () => {
+  await setup();
+  await putCleanLocalFile({ repoId, path: "a.md", kind: "text", text: "base-a", baseSha: "a-base", size: 6 });
+  await putCleanLocalFile({ repoId, path: "b.md", kind: "text", text: "base-b", baseSha: "b-base", size: 6 });
+  await writeLocalText(repoId, "a.md", "local-a");
+  await writeLocalText(repoId, "b.md", "local-b");
+  octokit.getBlob.mockImplementation(async ({ file_sha }: { file_sha: string }) => {
+    if (file_sha === "b-base") throw new Error("second download failed");
+    return { data: { encoding: "base64", content: btoa("base-a") } };
+  });
+
+  await expect(restoreLocalFilesToBase({ ...target, repoId, paths: ["a.md", "b.md"], token: "token" })).rejects.toThrow("second download failed");
+  expect(await getLocalFile(repoId, "a.md")).toMatchObject({ text: "local-a", status: "modified" });
+  expect(await getLocalFile(repoId, "b.md")).toMatchObject({ text: "local-b", status: "modified" });
+});
+
+test("reclone waits for an in-flight push and clones the pushed remote head", async () => {
+  await setup();
+  await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "base", baseSha: "base-blob", size: 4 });
+  await writeLocalText(repoId, "plot.md", "pushed");
+  await createLocalCommit(repoId, captureRepositoryOperationScope(), "push first");
+  let remoteHead = "base-head";
+  const update = gate<void>();
+  octokit.getRepo.mockResolvedValue({ data: { default_branch: "main" } });
+  octokit.getRef.mockImplementation(async () => ({ data: { object: { sha: remoteHead } } }));
+  octokit.getCommit.mockResolvedValue({ data: { tree: { sha: "base-tree" } } });
+  octokit.getTree.mockImplementation(async ({ tree_sha }: { tree_sha: string }) => ({ data: { truncated: false, tree: [{ type: "blob", path: "plot.md", sha: tree_sha === "pushed-head" ? "pushed-blob" : "base-blob", size: 6 }] } }));
+  octokit.getBlob.mockResolvedValue({ data: { encoding: "base64", content: btoa("pushed") } });
+  octokit.createBlob.mockResolvedValue({ data: { sha: "pushed-blob" } });
+  octokit.createTree.mockResolvedValue({ data: { sha: "pushed-tree" } });
+  octokit.createCommit.mockResolvedValue({ data: { sha: "pushed-head" } });
+  octokit.updateRef.mockImplementation(async () => { await update.promise; remoteHead = "pushed-head"; return { data: {} }; });
+
+  const push = pushLocalCommits({ ...target, token: "token", repoId });
+  await vi.waitFor(() => expect(octokit.updateRef).toHaveBeenCalledOnce());
+  const reclone = recloneLocalWorkingCopy({ bookId: "book", book: { id: "book", owner: "owner", repo: "repo" } as any, token: "token", accountIdentity: identity, branch: "main" });
+  await Promise.resolve();
+  expect(octokit.getRepo).not.toHaveBeenCalled();
+  update.release();
+
+  await expect(push).resolves.toMatchObject({ commitSha: "pushed-head" });
+  await expect(reclone).resolves.toMatchObject({ meta: { remoteHeadSha: "pushed-head", cloneComplete: true } });
+  expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "pushed", baseSha: "pushed-blob", status: "clean" });
 });

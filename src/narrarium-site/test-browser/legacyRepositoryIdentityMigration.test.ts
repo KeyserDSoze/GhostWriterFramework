@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 const octokit = vi.hoisted(() => ({
   getRepo: vi.fn(),
@@ -130,7 +131,7 @@ describe.sequential("pre-0.76.38 repository identity migration", () => {
     expect(adopted.meta).toMatchObject({ id, accountScope: "google:sub-a", cloneComplete: true });
     expect(concurrent.meta.id).toBe(id);
     expect(adopted.structure.title).toBe("Existing Book");
-    expect(await getLocalFile(id, "book.md")).toMatchObject({ repoId: id, text: expect.stringContaining("Local prose") });
+    expect(await getLocalFile(id, "book.md", captureRepositoryOperationScope())).toMatchObject({ repoId: id, text: expect.stringContaining("Local prose") });
     expect(await listUnpushedLocalCommits(id)).toHaveLength(1);
     expect(await getLocalRepositoryById(`${legacyScope}::owner/legacy-repo#main`, "google:sub-a")).toBeNull();
     expect(octokit.getRepo).not.toHaveBeenCalled();
@@ -180,7 +181,7 @@ describe.sequential("pre-0.76.38 repository identity migration", () => {
     await freshStrandedProof(user);
     vi.spyOn(window, "confirm").mockReturnValue(true);
     await expect(ensureLocalBookStructure({ bookId: "replace-book", book: { id: "replace-book", owner: "owner", repo: "replace-repo" } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" })).resolves.toMatchObject({ structure: { title: "Existing Book" } });
-    expect(await getLocalFile(targetId, "book.md")).toMatchObject({ text: expect.stringContaining("Local prose") });
+    expect(await getLocalFile(targetId, "book.md", captureRepositoryOperationScope())).toMatchObject({ text: expect.stringContaining("Local prose") });
     expect(octokit.getBlob).not.toHaveBeenCalled();
   });
 
@@ -194,7 +195,7 @@ describe.sequential("pre-0.76.38 repository identity migration", () => {
     await freshStrandedProof(user);
     vi.spyOn(window, "confirm");
     await expect(ensureLocalBookStructure({ bookId: "blocked-book", book: { id: "blocked-book", owner: "owner", repo: "blocked-repo" } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" })).rejects.toThrow("preserved both");
-    expect(await getLocalFile(targetId, "book.md")).toMatchObject({ text: "user edit" });
+    expect(await getLocalFile(targetId, "book.md", captureRepositoryOperationScope())).toMatchObject({ text: "user edit" });
     const raw = await open();
     const legacy = await new Promise((resolve) => { const request = raw.transaction("repositories").objectStore("repositories").get(legacyId); request.onsuccess = () => resolve(request.result); });
     raw.close();

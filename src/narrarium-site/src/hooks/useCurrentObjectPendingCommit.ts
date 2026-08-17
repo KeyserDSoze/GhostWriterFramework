@@ -3,6 +3,7 @@ import { getLocalFileEntry, getLocalRepository } from "@/repository/localReposit
 import type { BookEntry } from "@/types/settings";
 import { accountIdentity } from "@/auth/accountIdentity";
 import { useAuthStore } from "@/store/authStore";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 export function useCurrentObjectPendingCommit(input: {
   book: BookEntry | undefined;
@@ -22,12 +23,14 @@ export function useCurrentObjectPendingCommit(input: {
 
     async function refresh() {
       const identity = accountIdentity(useAuthStore.getState().user);
-      const repo = identity ? await getLocalRepository(input.book!.owner, input.book!.repo, input.branch, identity).catch(() => null) : null;
+      if (!identity) return;
+      const scope = captureRepositoryOperationScope();
+      const repo = await getLocalRepository(input.book!.owner, input.book!.repo, input.branch, scope).catch(() => null);
       if (!repo) {
         if (active) setState({ pending: false, count: 0, paths: [] });
         return;
       }
-      const files = await Promise.all(normalizedPaths.map((path) => getLocalFileEntry(repo.id, path).catch(() => null)));
+      const files = await Promise.all(normalizedPaths.map((path) => getLocalFileEntry(repo.id, path, scope).catch(() => null)));
       const pendingPaths = normalizedPaths.filter((_path, index) => {
         const file = files[index];
         return Boolean(file && file.status !== "clean" && !file.committed);

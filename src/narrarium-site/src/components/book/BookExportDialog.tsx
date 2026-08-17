@@ -23,6 +23,17 @@ const FORMATS: Array<{ value: BookExportFormat; labelKey: string }> = [
   { value: "package", labelKey: "export.submissionPackage" },
 ];
 
+export function resolveExportProfileSelection(book: BookEntry, profileId: string) {
+  const settings = resolveBookExportSettings(book, profileId);
+  return {
+    settings,
+    scope: settings.defaultScope,
+    googleFolderId: settings.googleDriveFolderId,
+    googleFolderName: settings.googleDriveFolderName,
+    microsoftFolderPath: settings.microsoftDriveFolderPath ?? "Apps/Narrarium/Exports",
+  };
+}
+
 export function BookExportDialog(props: {
   book: BookEntry;
   structure: BookStructure;
@@ -34,7 +45,8 @@ export function BookExportDialog(props: {
   const { toast } = useToast();
   const { user, accessToken } = useAuthStore();
   const profiles = useMemo(() => resolveBookExportProfiles(book), [book]);
-  const [selectedProfileId, setSelectedProfileId] = useState(book.defaultExportProfileId ?? profiles[0]?.id ?? "default");
+  const defaultProfileId = book.defaultExportProfileId ?? profiles[0]?.id ?? "default";
+  const [selectedProfileId, setSelectedProfileId] = useState(defaultProfileId);
   const savedSettings = resolveBookExportSettings(book, selectedProfileId);
   const [open, setOpen] = useState(false);
   const [formats, setFormats] = useState<BookExportFormat[]>(["docx"]);
@@ -51,11 +63,20 @@ export function BookExportDialog(props: {
 
   useEffect(() => {
     if (!open) return;
-    setSelectedProfileId(book.defaultExportProfileId ?? profiles[0]?.id ?? "default");
-    setScope(savedSettings.defaultScope);
-    setGoogleFolder(savedSettings.googleDriveFolderId ? { id: savedSettings.googleDriveFolderId, name: savedSettings.googleDriveFolderName || t("export.savedFolder") } : null);
-    setMicrosoftFolderPath(savedSettings.microsoftDriveFolderPath ?? "Apps/Narrarium/Exports");
-  }, [book.defaultExportProfileId, open, profiles, savedSettings.defaultScope, savedSettings.googleDriveFolderId, savedSettings.googleDriveFolderName, savedSettings.microsoftDriveFolderPath, t]);
+    const defaults = resolveExportProfileSelection(book, defaultProfileId);
+    setSelectedProfileId(defaultProfileId);
+    setScope(defaults.scope);
+    setGoogleFolder(defaults.googleFolderId ? { id: defaults.googleFolderId, name: defaults.googleFolderName || t("export.savedFolder") } : null);
+    setMicrosoftFolderPath(defaults.microsoftFolderPath);
+  }, [book, defaultProfileId, open, t]);
+
+  function selectProfile(profileId: string) {
+    const next = resolveExportProfileSelection(book, profileId);
+    setSelectedProfileId(profileId);
+    setScope(next.scope);
+    setGoogleFolder(next.googleFolderId ? { id: next.googleFolderId, name: next.googleFolderName || t("export.savedFolder") } : null);
+    setMicrosoftFolderPath(next.microsoftFolderPath);
+  }
 
   function toggleFormat(format: BookExportFormat) {
     setFormats((current) => {
@@ -151,7 +172,7 @@ export function BookExportDialog(props: {
             {profiles.length > 1 && (
               <div className="grid gap-2">
                 <Label>{t("export.preset")}</Label>
-                <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
+                <Select value={selectedProfileId} onValueChange={selectProfile}>
                   <SelectTrigger aria-label={t("export.preset")}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {profiles.map((profile) => (

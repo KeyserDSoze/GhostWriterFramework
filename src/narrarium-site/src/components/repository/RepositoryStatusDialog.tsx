@@ -13,6 +13,7 @@ import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, overwr
 import { useBooksStore } from "@/store/booksStore";
 import { useAuthStore } from "@/store/authStore";
 import { accountIdentity } from "@/auth/accountIdentity";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0 B";
@@ -78,7 +79,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
 
   async function currentRepo() {
     if (!book || !branch || !currentAccountIdentity) return null;
-    return getLocalRepository(book.owner, book.repo, branch, currentAccountIdentity);
+    return getLocalRepository(book.owner, book.repo, branch, captureRepositoryOperationScope());
   }
 
   async function exactTarget() {

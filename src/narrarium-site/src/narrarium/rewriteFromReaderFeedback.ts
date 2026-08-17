@@ -270,7 +270,7 @@ async function readOptional(context: RewriteRepositoryContext, path: string): Pr
 
 async function requireLocalWorkingCopy(context: RewriteRepositoryContext): Promise<RewriteWorkspaceContext> {
   if (!context.accountScope) throw new Error("A current immutable account identity is required.");
-  const local = await getLocalRepository(context.book.owner, context.book.repo, context.branch, context.accountScope);
+  const local = await getLocalRepository(context.book.owner, context.book.repo, context.branch, captureRepositoryOperationScope());
   if (!local) throw new Error("A local working copy for the selected branch is required.");
   if (local.cloneComplete !== true) throw new Error("The local working copy has not been fully verified.");
   return { ...context, repoId: local.id };
@@ -286,7 +286,7 @@ async function mutateLocalDraftFiles(repoId: string, mutations: Array<{ path: st
 }
 
 async function readWorkingCopyText(context: RewriteWorkspaceContext, path: string): Promise<{ content: string | null; hash: string | null }> {
-  const local = await getLocalFileEntry(context.repoId, path);
+  const local = await getLocalFileEntry(context.repoId, path, captureRepositoryOperationScope());
   if (local) {
     if (local.status === "deleted") return { content: null, hash: null };
     if (local.kind === "text") return { content: local.text ?? "", hash: local.currentHash };

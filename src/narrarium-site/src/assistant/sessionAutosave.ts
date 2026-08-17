@@ -122,5 +122,15 @@ export class AssistantSessionSaveQueue {
   }
 }
 
+export function flushAssistantSessionSnapshot(
+  queue: AssistantSessionSaveQueue,
+  session: AssistantSession,
+  save: SaveSession,
+): Promise<AssistantSessionCloudHandle> {
+  return new Promise((resolve, reject) => {
+    void queue.enqueue(session, save, (_snapshot, handle) => resolve(handle), reject);
+  });
+}
+
 /** Shared by every chat UI so deletion can retire autosave before removing cloud data. */
 export const assistantSessionSaveQueue = new AssistantSessionSaveQueue();

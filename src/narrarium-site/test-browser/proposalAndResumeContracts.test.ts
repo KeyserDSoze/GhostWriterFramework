@@ -82,6 +82,7 @@ describe("proposal mutation contracts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resolveTaskCandidates.mockReturnValue([{ integration, model: "model" }]);
+    mocks.loadFileContent.mockResolvedValue("---\ntitle: Opening\n---\n\nSource body");
   });
 
   it("classifies paragraph rewrite proposals as mutating", () => {

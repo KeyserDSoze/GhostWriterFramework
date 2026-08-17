@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AccountInfo } from "@azure/msal-browser";
 import { findMicrosoftAccountIn } from "@/config/msal";
-import { graphPath, verifyMicrosoftAppFolder } from "@/drive/microsoftAppFolder";
+import { ensureMicrosoftAppMarker, graphPath, verifyMicrosoftAppFolder } from "@/drive/microsoftAppFolder";
 import { useCostsStore } from "@/costs/costsStore";
 import { useClipboardStore } from "@/clipboard/clipboardStore";
 import { acquireCloudWriteLease, acquireDurableCloudLeaseForTests, assertCloudWriteAllowed, cloudDeletionReconnectState, completeCloudDeletion, completeCloudDeletionNothingToDelete, completeCloudDeletionTargetForTests, completedCloudDeletionGeneration, crashNextCloudDeletionMutationAfterCompletedMarkForTests, crashNextCloudDeletionMutationAfterProviderSuccessForTests, crashNextCloudDeletionTransitionAfterCommitForTests, crashNextCloudResumeAfterCommitForTests, expireCloudDeletionLeaseForTests, failActiveCloudHeartbeatForTests, failCloudDeletion, failNextCloudResumeTransactionForTests, fencedCloudDeletionMutation, fencedCloudMutation, invalidateActiveCloudFenceForTests, journalCloudDeletionTargets, registerCloudAccount, reserveCloudDeletionForTests, resumeCloudWrites, suspendCloudWrites, writeCloudTombstoneMirrorForTests } from "@/drive/cloudWriteBarrier";
@@ -30,7 +30,8 @@ describe("non-Copilot auth and cloud hardening", () => {
     registerCloudAccount("microsoft", "token", "home-a");
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
       const url = String(input);
-      if (url.endsWith("/root:/Apps/Narrarium")) return Response.json({ id: "folder", folder: {} });
+      if (url.includes("/v1.0/me?$select=id")) return Response.json({ id: "graph-a" });
+      if (url.includes("/root:/Apps/Narrarium")) return Response.json({ id: "folder", folder: {}, createdBy: { user: { id: "graph-a" } } });
       if (url.includes("/items/folder/children")) return Response.json({ value: [{ id: "personal", name: "personal.docx", eTag: "p1", file: {} }] });
       throw new Error(`Unexpected request ${url}`);
     }));
@@ -42,7 +43,8 @@ describe("non-Copilot auth and cloud hardening", () => {
     registerCloudAccount("microsoft", "legacy-token", "home-legacy");
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
       const url = String(input);
-      if (url.endsWith("/root:/Apps/Narrarium")) return Response.json({ id: "folder", folder: {} });
+      if (url.includes("/v1.0/me?$select=id")) return Response.json({ id: "graph-legacy" });
+      if (url.includes("/root:/Apps/Narrarium")) return Response.json({ id: "folder", folder: {}, createdBy: { user: { id: "graph-legacy" } } });
       if (url.includes("/items/folder/children")) return Response.json({ value: [{ id: "marker", name: ".narrarium-app-folder-v1.json", eTag: "m1", file: {} }, { id: "settings", name: "settings.json", eTag: "s1", file: {} }] });
       if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", purpose: "app-cloud-data", version: 1 });
       throw new Error(`Unexpected request ${url}`);
@@ -51,11 +53,73 @@ describe("non-Copilot auth and cloud hardening", () => {
     vi.unstubAllGlobals();
   });
 
+  it("accepts the same immutable Microsoft account on a fresh device with ordinary app children", async () => {
+    registerCloudAccount("microsoft", "fresh-device-token", "home-fresh");
+    localStorage.clear();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/v1.0/me?$select=id")) return Response.json({ id: "graph-fresh" });
+      if (url.includes("/root:/Apps/Narrarium?") && url.includes("createdBy")) return Response.json({ id: "folder-fresh", folder: {}, createdBy: { user: { id: "graph-fresh" } } });
+      if (url.includes("/items/folder-fresh/children")) return Response.json({ value: [
+        { id: "marker-fresh", name: ".narrarium-app-folder-v1.json", eTag: "m1", file: {} },
+        { id: "settings-fresh", name: "settings.json", eTag: "s1", file: {} },
+        { id: "costs-fresh", name: "costs.json", eTag: "c1", file: {} },
+        { id: "chats-fresh", name: "chats", eTag: "h1", folder: {} },
+      ] });
+      if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", version: 3, provider: "microsoft", providerAccountId: "home-fresh", graphUserId: "graph-fresh" });
+      throw new Error(`Unexpected request ${url}`);
+    }));
+    await expect(verifyMicrosoftAppFolder("fresh-device-token")).resolves.toMatchObject({ id: "folder-fresh", children: expect.arrayContaining([expect.objectContaining({ name: "costs.json" }), expect.objectContaining({ name: "chats" })]) });
+    vi.unstubAllGlobals();
+  });
+
+  it("migrates a legacy secret marker only after same-account folder proof and preserves ordinary children", async () => {
+    registerCloudAccount("microsoft", "legacy-fresh-token", "home-legacy-fresh");
+    let migratedBody = "";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1.0/me?$select=id")) return Response.json({ id: "graph-legacy-fresh" });
+      if (url.includes("/root:/Apps/Narrarium?") && url.includes("createdBy")) return Response.json({ id: "folder-legacy-fresh", folder: {}, createdBy: { user: { id: "graph-legacy-fresh" } } });
+      if (url.includes("/items/folder-legacy-fresh/children")) return Response.json({ value: [
+        { id: "marker", name: ".narrarium-app-folder-v1.json", eTag: "m1", file: {} },
+        { id: "costs", name: "costs.json", eTag: "c1", file: {} },
+        { id: "exports", name: "Exports", eTag: "e1", folder: {} },
+      ] });
+      if (url.endsWith("/.narrarium-app-folder-v1.json:/content") && init?.method !== "PUT") return new Response(JSON.stringify({ application: "Narrarium", version: 2, secret: "old-device-secret" }), { headers: { etag: "m1" } });
+      if (url.endsWith("/.narrarium-app-folder-v1.json:/content") && init?.method === "PUT") {
+        migratedBody = String(init.body);
+        return Response.json({ id: "marker" });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    }));
+    await expect(withMicrosoftLease("legacy-fresh-token", () => ensureMicrosoftAppMarker("legacy-fresh-token"))).resolves.toBeUndefined();
+    expect(JSON.parse(migratedBody)).toEqual({ application: "Narrarium", version: 3, provider: "microsoft", providerAccountId: "home-legacy-fresh", graphUserId: "graph-legacy-fresh" });
+    expect(vi.mocked(fetch).mock.calls.some(([input, init]) => String(input).includes("/items/costs") && init?.method === "DELETE")).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects a foreign account marker even when the folder creator matches", async () => {
+    registerCloudAccount("microsoft", "foreign-marker-token", "home-current");
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/v1.0/me?$select=id")) return Response.json({ id: "graph-current" });
+      if (url.includes("/root:/Apps/Narrarium?") && url.includes("createdBy")) return Response.json({ id: "folder-current", folder: {}, createdBy: { user: { id: "graph-current" } } });
+      if (url.includes("/items/folder-current/children")) return Response.json({ value: [{ id: "marker", name: ".narrarium-app-folder-v1.json", eTag: "m1", file: {} }] });
+      if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", version: 3, provider: "microsoft", providerAccountId: "home-foreign", graphUserId: "graph-foreign" });
+      throw new Error(`Unexpected request ${url}`);
+    }));
+    await expect(verifyMicrosoftAppFolder("foreign-marker-token")).rejects.toThrow(/not owned/);
+    await expect(ensureMicrosoftAppMarker("foreign-marker-token")).rejects.toThrow(/another account/);
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
   it("rejects an unrelated OneDrive child found on a later page", async () => {
     registerCloudAccount("microsoft", "paged-token", "home-paged");
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
       const url = String(input);
-      if (url.endsWith("/root:/Apps/Narrarium")) return Response.json({ id: "folder", folder: {} });
+      if (url.includes("/v1.0/me?$select=id")) return Response.json({ id: "graph-paged" });
+      if (url.includes("/root:/Apps/Narrarium")) return Response.json({ id: "folder", folder: {}, createdBy: { user: { id: "graph-paged" } } });
       if (url.includes("/items/folder/children") && !url.includes("page=2")) return Response.json({ value: [{ id: "marker", name: ".narrarium-app-folder-v1.json", eTag: "m1", file: {} }], "@odata.nextLink": "https://graph.microsoft.com/page=2" });
       if (url.includes("page=2")) return Response.json({ value: [{ id: "personal", name: "personal.docx", eTag: "p1", file: {} }] });
       throw new Error(`Unexpected request ${url}`);
@@ -275,15 +339,15 @@ describe("non-Copilot auth and cloud hardening", () => {
     const token = `microsoft-target-${crypto.randomUUID()}`;
     const identity = `microsoft-target-${crypto.randomUUID()}`;
     registerCloudAccount("microsoft", token, identity);
-    localStorage.setItem(`narrarium.microsoftAppFolderMarker.v2.${encodeURIComponent(identity)}`, "secret-1");
     const deletion = await suspendCloudWrites("microsoft", token);
     const deletes: string[] = [];
     let discoveryCalls = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/root:/Apps/Narrarium")) { discoveryCalls += 1; return Response.json({ id: "root-1", eTag: "root-tag", folder: {} }); }
+      if (url.includes("/v1.0/me?$select=id")) return Response.json({ id: "graph-target" });
+      if (url.includes("/root:/Apps/Narrarium?") && url.includes("createdBy")) { discoveryCalls += 1; return Response.json({ id: "root-1", eTag: "root-tag", folder: {}, createdBy: { user: { id: "graph-target" } } }); }
       if (url.includes("/items/root-1/children")) return Response.json({ value: [{ id: "marker-1", name: ".narrarium-app-folder-v1.json", eTag: "marker-tag", file: {} }, { id: "settings-1", name: "settings.json", eTag: "settings-tag", file: {} }, { id: "costs-1", name: "costs.json", eTag: "costs-tag", file: {} }] });
-      if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", version: 2, secret: "secret-1" });
+      if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", version: 3, provider: "microsoft", providerAccountId: identity, graphUserId: "graph-target" });
       if (init?.method === "DELETE") {
         deletes.push(url);
         if (url.endsWith("/items/settings-1")) return new Response(null, { status: deletes.filter((value) => value.endsWith("/items/settings-1")).length > 1 ? 404 : 204 });
@@ -314,14 +378,14 @@ describe("non-Copilot auth and cloud hardening", () => {
     const token = `microsoft-marker-${crypto.randomUUID()}`;
     const identity = `microsoft-marker-${crypto.randomUUID()}`;
     registerCloudAccount("microsoft", token, identity);
-    localStorage.setItem(`narrarium.microsoftAppFolderMarker.v2.${encodeURIComponent(identity)}`, "secret-marker");
     const deletion = await suspendCloudWrites("microsoft", token);
     const deletes: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/root:/Apps/Narrarium")) return Response.json({ id: "root-marker", eTag: "root-tag", folder: {} });
+      if (url.includes("/v1.0/me?$select=id")) return Response.json({ id: "graph-marker" });
+      if (url.includes("/root:/Apps/Narrarium?") && url.includes("createdBy")) return Response.json({ id: "root-marker", eTag: "root-tag", folder: {}, createdBy: { user: { id: "graph-marker" } } });
       if (url.includes("/items/root-marker/children")) return Response.json({ value: [{ id: "marker-last", name: ".narrarium-app-folder-v1.json", eTag: "marker-tag", file: {} }, { id: "settings-first", name: "settings.json", eTag: "settings-tag", file: {} }] });
-      if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", version: 2, secret: "secret-marker" });
+      if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", version: 3, provider: "microsoft", providerAccountId: identity, graphUserId: "graph-marker" });
       if (init?.method === "DELETE") {
         deletes.push(url);
         if (url.endsWith("/items/marker-last") && deletes.filter((value) => value.endsWith("/items/marker-last")).length === 1) crashNextCloudDeletionMutationAfterProviderSuccessForTests();
@@ -344,18 +408,18 @@ describe("non-Copilot auth and cloud hardening", () => {
     const token = `microsoft-unjournaled-${crypto.randomUUID()}`;
     const identity = `microsoft-unjournaled-${crypto.randomUUID()}`;
     registerCloudAccount("microsoft", token, identity);
-    localStorage.setItem(`narrarium.microsoftAppFolderMarker.v2.${encodeURIComponent(identity)}`, "secret-safe");
     const deletion = await suspendCloudWrites("microsoft", token);
     const deletes: string[] = [];
     let childListings = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/root:/Apps/Narrarium")) return Response.json({ id: "root-safe", folder: {} });
+      if (url.includes("/v1.0/me?$select=id")) return Response.json({ id: "graph-safe" });
+      if (url.includes("/root:/Apps/Narrarium?") && url.includes("createdBy")) return Response.json({ id: "root-safe", folder: {}, createdBy: { user: { id: "graph-safe" } } });
       if (url.includes("/items/root-safe/children")) {
         childListings += 1;
         return Response.json({ value: [{ id: "marker-safe", name: ".narrarium-app-folder-v1.json", eTag: "marker-tag", file: {} }, { id: "settings-safe", name: "settings.json", eTag: "settings-tag", file: {} }] });
       }
-      if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", version: 2, secret: "secret-safe" });
+      if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", version: 3, provider: "microsoft", providerAccountId: identity, graphUserId: "graph-safe" });
       if (init?.method === "DELETE") { deletes.push(url); return new Response(null, { status: 204 }); }
       throw new Error(`Unexpected request ${url}`);
     }));
@@ -390,7 +454,9 @@ describe("non-Copilot auth and cloud hardening", () => {
     registerCloudAccount("microsoft", token, `microsoft-empty-${crypto.randomUUID()}`);
     const deletion = await suspendCloudWrites("microsoft", token);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/v1.0/me?$select=id")) return Response.json({ id: "graph-empty" });
       if (String(input).endsWith("/root:/Apps/Narrarium")) return new Response(null, { status: 404 });
+      if (String(input).includes("/root:/Apps/Narrarium?") && String(input).includes("createdBy")) return new Response(null, { status: 404 });
       throw new Error(`Unexpected request ${String(input)}`);
     }));
     await expect(deleteNarrariumCloudData("microsoft", token, deletion)).resolves.toEqual({ deleted: false, count: 0, folderIds: [] });
@@ -444,15 +510,15 @@ describe("non-Copilot auth and cloud hardening", () => {
     const token = `microsoft-completed-${crypto.randomUUID()}`;
     const identity = `microsoft-completed-${crypto.randomUUID()}`;
     registerCloudAccount("microsoft", token, identity);
-    localStorage.setItem(`narrarium.microsoftAppFolderMarker.v2.${encodeURIComponent(identity)}`, "secret-completed");
     const deletion = await suspendCloudWrites("microsoft", token);
     let fetches = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       fetches += 1;
       const url = String(input);
-      if (url.endsWith("/root:/Apps/Narrarium")) return Response.json({ id: "root-completed", folder: {} });
+      if (url.includes("/v1.0/me?$select=id")) return Response.json({ id: "graph-completed" });
+      if (url.includes("/root:/Apps/Narrarium?") && url.includes("createdBy")) return Response.json({ id: "root-completed", folder: {}, createdBy: { user: { id: "graph-completed" } } });
       if (url.includes("/items/root-completed/children")) return Response.json({ value: [{ id: "marker-completed", name: ".narrarium-app-folder-v1.json", eTag: "marker-tag", file: {} }] });
-      if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", version: 2, secret: "secret-completed" });
+      if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", version: 3, provider: "microsoft", providerAccountId: identity, graphUserId: "graph-completed" });
       if (url.endsWith("/items/marker-completed") && init?.method === "DELETE") return new Response(null, { status: 204 });
       throw new Error(`Unexpected request ${url}`);
     }));
@@ -507,3 +573,8 @@ describe("non-Copilot auth and cloud hardening", () => {
     expect(useClipboardStore.getState().dirty).toBe(true);
   });
 });
+
+async function withMicrosoftLease(token: string, run: () => Promise<void>): Promise<void> {
+  const release = await acquireCloudWriteLease("microsoft", token);
+  try { await run(); } finally { release(); }
+}

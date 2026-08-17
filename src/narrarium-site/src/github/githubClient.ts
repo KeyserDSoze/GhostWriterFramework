@@ -1,8 +1,6 @@
 import { Octokit } from "@octokit/rest";
 import { BookStructure, Chapter, Paragraph, BookFile, ResearchFile } from "@/types/book";
 import { applyLocalFileChangesAtomically, deleteLocalFileAtomically, getLocalFile, getLocalRepository, listLocalFiles, mutateLocalTextFilesAtomically, renameLocalTextFileAtomically, sha256Text, writeLocalBinaryScoped, type LocalFileAtomicWrite, type LocalTextFileMutation } from "@/repository/localRepository";
-import { accountIdentity } from "@/auth/accountIdentity";
-import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { buildInitialBookFiles } from "@/narrarium/bookScaffold";
 import {
@@ -123,12 +121,10 @@ async function fetchContentJson(
   }
 }
 
-async function localRepoId(owner: string, repo: string, branch: string | undefined): Promise<string | null> {
+async function localRepoId(owner: string, repo: string, branch: string | undefined, scope: ReturnType<typeof captureRepositoryOperationScope>): Promise<string | null> {
   if (!branch) return null;
-  const identity = accountIdentity(useAuthStore.getState().user);
-  if (!identity) return null;
   let local: Awaited<ReturnType<typeof getLocalRepository>>;
-  try { local = await getLocalRepository(owner, repo, branch, identity); } catch (error) { throw classifyRepositoryError(error, "read"); }
+  try { local = await getLocalRepository(owner, repo, branch, scope); } catch (error) { throw classifyRepositoryError(error, "read"); }
   return local?.id ?? null;
 }
 
@@ -598,9 +594,10 @@ export async function loadFileContent(
   signal?: AbortSignal,
 ): Promise<string> {
   signal?.throwIfAborted();
-  const id = await settleOnAbort(localRepoId(owner, repo, ref), signal);
+  const scope = captureRepositoryOperationScope();
+  const id = await settleOnAbort(localRepoId(owner, repo, ref, scope), signal);
   if (id) {
-    const file = await settleOnAbort(getLocalFile(id, path), signal);
+    const file = await settleOnAbort(getLocalFile(id, path, scope), signal);
     signal?.throwIfAborted();
     if (file?.kind === "text" && file.text !== undefined) return file.text;
     if (file?.kind === "binary" && file.blob) return new TextDecoder().decode(await settleOnAbort(file.blob.arrayBuffer(), signal));
@@ -646,9 +643,10 @@ export async function loadBinaryFileContent(
   path: string,
   ref?: string,
 ): Promise<Uint8Array> {
-  const id = await localRepoId(owner, repo, ref);
+  const scope = captureRepositoryOperationScope();
+  const id = await localRepoId(owner, repo, ref, scope);
   if (id) {
-    const file = await getLocalFile(id, path);
+    const file = await getLocalFile(id, path, scope);
     if (file?.kind === "binary" && file.blob) return new Uint8Array(await file.blob.arrayBuffer());
     if (file?.kind === "text" && file.text !== undefined) return new TextEncoder().encode(file.text);
   }
@@ -730,10 +728,11 @@ export async function readFileWithSha(
   signal?: AbortSignal,
 ): Promise<FileContent> {
   signal?.throwIfAborted();
-  const id = await localRepoId(owner, repo, branch);
+  const scope = captureRepositoryOperationScope();
+  const id = await localRepoId(owner, repo, branch, scope);
   signal?.throwIfAborted();
   if (id) {
-    const file = await getLocalFile(id, path);
+    const file = await getLocalFile(id, path, scope);
     signal?.throwIfAborted();
     if (file?.kind === "text" && file.text !== undefined) return { content: file.text, sha: file.currentHash };
     if (file?.kind === "binary" && file.blob) return { content: new TextDecoder().decode(await file.blob.arrayBuffer()), sha: file.currentHash };
@@ -758,10 +757,11 @@ export async function updateFile(
   signal?: AbortSignal,
 ): Promise<string> {
   signal?.throwIfAborted();
-  const id = await localRepoId(owner, repo, branch);
+  const scope = captureRepositoryOperationScope();
+  const id = await localRepoId(owner, repo, branch, scope);
   if (id) {
     try {
-      await mutateLocalTextFilesAtomically(id, captureRepositoryOperationScope(), [{ path, content, expectedCurrentHash: sha }]);
+      await mutateLocalTextFilesAtomically(id, scope, [{ path, content, expectedCurrentHash: sha }]);
       signal?.throwIfAborted();
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("File changed since")) throw new RepositoryError(error.message, "conflict", "update", 409, { cause: error });
@@ -787,7 +787,7 @@ export async function createOrUpdateBinaryFile(
   message: string,
 ): Promise<string> {
   const scope = captureRepositoryOperationScope();
-  const id = await localRepoId(owner, repo, branch);
+  const id = await localRepoId(owner, repo, branch, scope);
   if (id) return (await writeLocalBinaryScoped(id, path, bytes, scope)).currentHash;
   const octokit = createGitHubClient(token);
   const existing = await optionalRepositoryRead(() => readFileWithSha(token, owner, repo, branch, path));
@@ -821,10 +821,11 @@ export async function createOrUpdateTextAndBinaryFilesAtomically(input: {
   binary: { path: string; bytes: Uint8Array };
   message: string;
 }): Promise<void> {
-  const id = await localRepoId(input.owner, input.repo, input.branch);
+  const scope = captureRepositoryOperationScope();
+  const id = await localRepoId(input.owner, input.repo, input.branch, scope);
   if (id) {
-    const [textFile, binaryFile] = await Promise.all([getLocalFile(id, input.text.path), getLocalFile(id, input.binary.path)]);
-    await applyLocalFileChangesAtomically(id, captureRepositoryOperationScope(), [], [
+    const [textFile, binaryFile] = await Promise.all([getLocalFile(id, input.text.path, scope), getLocalFile(id, input.binary.path, scope)]);
+    await applyLocalFileChangesAtomically(id, scope, [], [
       { path: input.text.path, kind: "text", text: input.text.content },
       { path: input.binary.path, kind: "binary", bytes: input.binary.bytes },
     ], new Map([
@@ -874,10 +875,11 @@ export async function createFile(
   signal?: AbortSignal,
 ): Promise<string> {
   signal?.throwIfAborted();
-  const id = await localRepoId(owner, repo, branch);
+  const scope = captureRepositoryOperationScope();
+  const id = await localRepoId(owner, repo, branch, scope);
   if (id) {
     try {
-      await mutateLocalTextFilesAtomically(id, captureRepositoryOperationScope(), [{ path, content, expectedCurrentHash: null }]);
+      await mutateLocalTextFilesAtomically(id, scope, [{ path, content, expectedCurrentHash: null }]);
       signal?.throwIfAborted();
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("File changed since")) throw new RepositoryError(`File already exists: ${path}`, "conflict", "create", 409, { cause: error });
@@ -942,9 +944,10 @@ export async function mutateTextFilesAtomically(
   signal?: AbortSignal,
 ): Promise<void> {
   signal?.throwIfAborted();
-  const id = await localRepoId(owner, repo, branch);
+  const scope = captureRepositoryOperationScope();
+  const id = await localRepoId(owner, repo, branch, scope);
   if (id) {
-    await mutateLocalTextFilesAtomically(id, captureRepositoryOperationScope(), mutations);
+    await mutateLocalTextFilesAtomically(id, scope, mutations);
     signal?.throwIfAborted();
     return;
   }
@@ -1113,10 +1116,10 @@ export async function renameParagraphWithCompanions(
     };
   };
 
-  const localId = await localRepoId(owner, repo, branch);
+  const scope = captureRepositoryOperationScope();
+  const localId = await localRepoId(owner, repo, branch, scope);
   if (localId) {
-    const identity = accountIdentity(useAuthStore.getState().user);
-    const localMeta = identity ? await getLocalRepository(owner, repo, branch, identity) : null;
+    const localMeta = await getLocalRepository(owner, repo, branch, scope);
     if (options.expectedRemoteHeadSha && localMeta?.remoteHeadSha !== options.expectedRemoteHeadSha) throw new RepositoryError("The local repository is based on a different remote head.", "conflict", "update", 409);
     const files = await listLocalFiles(localId);
     const sourcePaths = preflight(files.map((file) => file.path));
@@ -1156,7 +1159,7 @@ export async function renameParagraphWithCompanions(
     const binarySources = [...deletes].filter((path) => files.find((file) => file.path === path)?.kind === "binary");
     const expected = new Map(canonical.mutations.flatMap((mutation) => mutation.expectedCurrentHash === undefined ? [] : [[mutation.path, mutation.expectedCurrentHash] as const]));
     for (const path of [...binarySources, ...binaryWrites.map((write) => write.path)]) expected.set(path, files.find((file) => file.path === path)?.currentHash ?? null);
-    await applyLocalFileChangesAtomically(localId, captureRepositoryOperationScope(), new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
+    await applyLocalFileChangesAtomically(localId, scope, new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
     return { paragraph: updatedParagraph(sourcePaths), canonical: canonical.result };
   }
 
@@ -1386,10 +1389,10 @@ export async function reorderParagraphsInChapter(
   };
 
   // ── Local working copy ──────────────────────────────────────────────────────
-  const id = await localRepoId(owner, repo, branch);
+  const scope = captureRepositoryOperationScope();
+  const id = await localRepoId(owner, repo, branch, scope);
   if (id) {
-    const identity = accountIdentity(useAuthStore.getState().user);
-    const localMeta = identity ? await getLocalRepository(owner, repo, branch, identity) : null;
+    const localMeta = await getLocalRepository(owner, repo, branch, scope);
     if (options.expectedRemoteHeadSha && localMeta?.remoteHeadSha !== options.expectedRemoteHeadSha) throw new RepositoryError("The local repository is based on a different remote head.", "conflict", "update", 409);
     const files = await listLocalFiles(id);
     for (const [path, expected] of Object.entries(options.expectedParagraphHashes ?? {})) {
@@ -1436,7 +1439,7 @@ export async function reorderParagraphsInChapter(
     const binarySources = [...toDelete].filter((path) => files.find((file) => file.path === path)?.kind === "binary");
     const expected = new Map(canonical.mutations.flatMap((mutation) => mutation.expectedCurrentHash === undefined ? [] : [[mutation.path, mutation.expectedCurrentHash] as const]));
     for (const path of [...binarySources, ...binaryWrites.map((write) => write.path)]) expected.set(path, files.find((file) => file.path === path)?.currentHash ?? null);
-    await applyLocalFileChangesAtomically(id, captureRepositoryOperationScope(), new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
+    await applyLocalFileChangesAtomically(id, scope, new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
     return { paragraphs: result, canonical: canonical.result };
   }
 
@@ -1628,10 +1631,10 @@ export async function reorderChaptersInBook(
   };
 
   // ── Local working copy ──────────────────────────────────────────────────────
-  const id = await localRepoId(owner, repo, branch);
+  const scope = captureRepositoryOperationScope();
+  const id = await localRepoId(owner, repo, branch, scope);
   if (id) {
-    const identity = accountIdentity(useAuthStore.getState().user);
-    const localMeta = identity ? await getLocalRepository(owner, repo, branch, identity) : null;
+    const localMeta = await getLocalRepository(owner, repo, branch, scope);
     if (options.expectedRemoteHeadSha && localMeta?.remoteHeadSha !== options.expectedRemoteHeadSha) throw new RepositoryError("The local repository is based on a different remote head.", "conflict", "update", 409);
     const files = await listLocalFiles(id);
     const textWrites: StructuralTextWrite[] = [];
@@ -1665,7 +1668,7 @@ export async function reorderChaptersInBook(
     const binarySources = [...toDelete].filter((path) => files.find((file) => file.path === path)?.kind === "binary");
     const expected = new Map(canonical.mutations.flatMap((mutation) => mutation.expectedCurrentHash === undefined ? [] : [[mutation.path, mutation.expectedCurrentHash] as const]));
     for (const path of [...binarySources, ...binaryWrites.map((write) => write.path)]) expected.set(path, files.find((file) => file.path === path)?.currentHash ?? null);
-    await applyLocalFileChangesAtomically(id, captureRepositoryOperationScope(), new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
+    await applyLocalFileChangesAtomically(id, scope, new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
     return { remap, canonical: canonical.result };
   }
 
@@ -1814,12 +1817,13 @@ export async function renameAndUpdateFile(
   message: string,
   expectedCurrentHash?: string,
 ): Promise<{ sha: string }> {
-  const id = await localRepoId(owner, repo, branch);
+  const scope = captureRepositoryOperationScope();
+  const id = await localRepoId(owner, repo, branch, scope);
   if (id) {
-    const current = await getLocalFile(id, oldPath);
+    const current = await getLocalFile(id, oldPath, scope);
     const expected = expectedCurrentHash ?? current?.currentHash;
     if (!expected) throw new RepositoryError(`File not found: ${oldPath}`, "not-found", "update", 404);
-    const file = await renameLocalTextFileAtomically({ repoId: id, scope: captureRepositoryOperationScope(), oldPath, newPath, content, expectedCurrentHash: expected });
+    const file = await renameLocalTextFileAtomically({ repoId: id, scope, oldPath, newPath, content, expectedCurrentHash: expected });
     return { sha: file.currentHash };
   }
   const octokit = createGitHubClient(token);
@@ -1911,9 +1915,10 @@ export async function deleteFile(
   signal?: AbortSignal,
 ): Promise<void> {
   signal?.throwIfAborted();
-  const id = await localRepoId(owner, repo, branch);
+  const scope = captureRepositoryOperationScope();
+  const id = await localRepoId(owner, repo, branch, scope);
   if (id) {
-    await deleteLocalFileAtomically(id, captureRepositoryOperationScope(), path, sha);
+    await deleteLocalFileAtomically(id, scope, path, sha);
     signal?.throwIfAborted();
     return;
   }

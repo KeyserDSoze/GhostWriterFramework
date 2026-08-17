@@ -18,8 +18,19 @@ import { resolveBookExportSettings, resolveBookToken, type BookEntry, type BookE
 import type { BookFile, BookStructure, Chapter, Paragraph } from "@/types/book";
 import { paragraphSeparator, presentMetadata, type PresentedMetadata } from "@/export/metadataPresentation";
 import { isApprovedRepositoryAssetPath, renderRepositoryMarkdownHtml } from "@/markdown/safeMarkdown";
+import { canDiscloseSecretBody, isSecretPath, secretAccessMapForRoute } from "@/assistant/secretPolicy";
 
 const PAGE_GAP = 32;
+
+export function readerPaginationDirection(event: Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey" | "target">): -1 | 0 | 1 {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return 0;
+  const target = event.target;
+  if (target instanceof HTMLElement) {
+    const editable = target.closest<HTMLElement>("[contenteditable]");
+    if (target.isContentEditable || editable?.getAttribute("contenteditable") !== "false" && Boolean(editable) || Boolean(target.closest("input, textarea, select"))) return 0;
+  }
+  return event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+}
 
 interface MarkdownParts {
   frontmatter: string;
@@ -105,11 +116,12 @@ export function ReaderPreviewPage() {
   const [entityError, setEntityError] = useState("");
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const flowRef = useRef<HTMLElement | null>(null);
+  const readingSurfaceRef = useRef<HTMLElement | null>(null);
   const pendingPositionRef = useRef<LogicalPosition | null>(null);
   const entityImageUrlsRef = useRef<string[]>([]);
   const entityRequestRef = useRef(0);
 
-  const entities = useMemo(() => collectEntities(structure), [structure]);
+  const entities = useMemo(() => collectReaderEntities(structure), [structure]);
   const bookBookmarks = useMemo(
     () => settings.reader.bookmarks.filter((entry) => entry.bookId === bookId),
     [bookId, settings.reader.bookmarks],
@@ -171,6 +183,10 @@ export function ReaderPreviewPage() {
       document.removeEventListener("fullscreenchange", onFullscreenChange);
     };
   }, [readerSettings.fullScreen]);
+
+  useEffect(() => {
+    if (readerSettings.fullScreen && readerBook) readingSurfaceRef.current?.focus();
+  }, [readerBook, readerSettings.fullScreen]);
 
   function recalculatePages() {
     const viewport = viewportRef.current;
@@ -261,6 +277,13 @@ export function ReaderPreviewPage() {
     setPageIndex((current) => Math.max(0, Math.min(pageCount - 1, current + delta)));
   }
 
+  function handleReaderKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    const direction = readerPaginationDirection(event.nativeEvent);
+    if (!readerSettings.fullScreen || !direction) return;
+    event.preventDefault();
+    go(direction);
+  }
+
   function handleReaderClick(event: React.MouseEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement;
     const entityButton = target.closest("[data-reader-entity-path]") as HTMLElement | null;
@@ -269,7 +292,8 @@ export function ReaderPreviewPage() {
       event.stopPropagation();
       const path = entityButton.dataset.readerEntityPath;
       const entity = entities.find((entry) => entry.path === path);
-      if (entity) void openEntity(entity);
+      const chapterSlug = entityButton.closest<HTMLElement>("[data-chapter-slug]")?.dataset.chapterSlug;
+      if (entity && readerEntityBodyAllowed(structure, entity, chapterSlug)) void openEntity(entity);
       return;
     }
     if (target.closest("button,a,input,select,textarea,label")) return;
@@ -395,7 +419,13 @@ export function ReaderPreviewPage() {
               )}
               <div ref={viewportRef} className="h-full overflow-hidden">
               <article
-                ref={flowRef}
+                ref={(element) => {
+                  flowRef.current = element;
+                  readingSurfaceRef.current = element;
+                }}
+                tabIndex={fullScreen ? 0 : undefined}
+                aria-label={fullScreen ? t("reader.title") : undefined}
+                onKeyDown={handleReaderKeyDown}
                 className="reader-page-flow h-full transition-transform duration-200 ease-out"
                 style={{
                   columnGap: `${PAGE_GAP}px`,
@@ -571,6 +601,7 @@ async function loadReaderBook(input: {
     ? await loadImageUrl(input, input.structure.bookCoverPath, input.structure.title).catch(() => undefined)
     : undefined;
   const chapters = await Promise.all(input.structure.chapters.map(async (chapter) => {
+    const chapterEntities = collectReaderEntities(input.structure, chapter);
     const chapterPath = `${chapter.path}/chapter.md`;
     const rawChapter = await loadFileContent(input.token, input.book.owner, input.book.repo, chapterPath, input.branch);
     const chapterDoc = splitMarkdown(rawChapter);
@@ -581,7 +612,7 @@ async function loadReaderBook(input: {
         rawBody: paragraphDoc.body,
         filePath: paragraph.path,
         fallbackAlt: paragraph.title,
-        input,
+        input: { ...input, entities: chapterEntities },
       });
       const structureImage = input.readerSettings.showImages && paragraph.imagePath ? await loadImageUrl(input, paragraph.imagePath, paragraph.title).catch(() => undefined) : undefined;
       return {
@@ -706,17 +737,27 @@ function extractMarkdownImages(body: string, filePath: string): { body: string; 
   return { body: cleaned, images };
 }
 
-function collectEntities(structure: BookStructure | undefined): ReaderEntity[] {
+export function collectReaderEntities(structure: BookStructure | undefined, chapter?: Chapter): ReaderEntity[] {
   if (!structure) return [];
+  const secretAccess = chapter ? secretAccessMapForRoute({ structure, route: { kind: "chapter", bookId: "reader", chapterId: chapter.slug }, chapter }) : null;
   const entities: ReaderEntity[] = [];
   for (const section of CANON_SECTION_ORDER) {
     const files = (structure as unknown as Record<string, BookFile[]>)[section] ?? [];
     for (const file of files) {
+      if (section === "secrets" && secretAccess && !canDiscloseSecretBody(secretAccess.get(file.path) ?? "hidden")) continue;
       const slug = (file.path.split("/").pop() ?? "").replace(/\.md$/i, "");
       entities.push({ section, name: file.name ?? slugToTitle(slug), path: file.path, imagePath: file.imagePath });
     }
   }
   return entities;
+}
+
+export function readerEntityBodyAllowed(structure: BookStructure | undefined, entity: ReaderEntity, chapterSlug?: string): boolean {
+  if (!isSecretPath(entity.path)) return true;
+  const chapter = structure?.chapters.find((entry) => entry.slug === chapterSlug);
+  if (!structure || !chapter) return false;
+  const access = secretAccessMapForRoute({ structure, route: { kind: "chapter", bookId: "reader", chapterId: chapter.slug }, chapter }).get(entity.path) ?? "hidden";
+  return canDiscloseSecretBody(access);
 }
 
 function linkEntityHtml(html: string, entities: ReaderEntity[]): string {

@@ -138,7 +138,10 @@ export function useSettings() {
     const identity = accountIdentity(user);
     if (!accessToken || !user || !identity || !conflict || navigator.onLine === false) return;
     const accountGeneration = state.accountGeneration;
+    const ownsResolution = () => isAccountIdentityCurrent(identity, useAuthStore.getState().user)
+      && useSettingsStore.getState().accountGeneration === accountGeneration;
     if (choice === "cloud") {
+      if (!ownsResolution()) return;
       replaceSettingsFromTrustedLoad(conflict.cloudSettings, { accountGeneration, accountIdentity: identity, source: { kind: "cloud", schemaVersion: CLOUD_SETTINGS_SOURCE_SCHEMA_VERSION } });
       setDriveFileId(conflict.fileId);
       setCloudRevision(conflict.cloudRevision);
@@ -150,6 +153,7 @@ export function useSettings() {
     try {
       const localSettings = state.settings;
       const saved = await saveCloudSettings(user.provider, accessToken, localSettings, { fileId: conflict.fileId, revision: conflict.cloudRevision });
+      if (!ownsResolution() || useAuthStore.getState().accessToken !== accessToken) return;
       setDriveFileId(saved.fileId);
       setCloudRevision(saved.revision);
       setOfflineConflict(null);
@@ -157,7 +161,7 @@ export function useSettings() {
       cacheSettings(identity, localSettings, saved.revision);
       setSyncStatus("idle");
     } catch (error) {
-      setSyncStatus("error");
+      if (ownsResolution() && useAuthStore.getState().accessToken === accessToken) setSyncStatus("error");
       throw error;
     }
   }, [replaceSettingsFromTrustedLoad, setCloudRevision, setDriveFileId, setLastSynced, setOfflineConflict, setSyncStatus]);
