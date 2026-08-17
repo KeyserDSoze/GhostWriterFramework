@@ -6,12 +6,16 @@ import { BookOpen, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useAuthStore, type GoogleUser } from "@/store/authStore";
+import { requireGoogleProviderAccountId } from "@/auth/accountIdentity";
 import { useSettings } from "@/drive/useSettings";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftSilentRequest } from "@/config/msal";
 import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
-import { registerCloudAccount, resumeCloudWrites } from "@/drive/cloudWriteBarrier";
+import { cloudDeletionReconnectState, registerCloudAccount, resumeCloudWrites } from "@/drive/cloudWriteBarrier";
+
+const LEGACY_MICROSOFT_EMAIL_KEY = "narrarium-legacy-microsoft-email";
+const LEGACY_GOOGLE_EMAIL_KEY = "narrarium-legacy-google-email";
 
 export function LoginScreen() {
   const { t } = useTranslation();
@@ -44,21 +48,28 @@ export function LoginScreen() {
           "https://www.googleapis.com/oauth2/v3/userinfo",
           { headers: { Authorization: `Bearer ${tokenResponse.access_token}` } },
         );
+        if (!profileRes.ok) throw new Error(`Google profile load failed (${profileRes.status})`);
         const profile = (await profileRes.json()) as {
+          sub?: string;
           name: string;
           email: string;
           picture: string;
         };
+        if (!profile.email?.trim()) throw new Error("Google profile did not provide an email address.");
+        const providerAccountId = requireGoogleProviderAccountId(profile);
+        const legacyEmail = sessionStorage.getItem(LEGACY_GOOGLE_EMAIL_KEY);
+        if (legacyEmail && profile.email.trim().toLowerCase() !== legacyEmail) throw new Error("Select the same Google account to replace the legacy session.");
 
         const user: GoogleUser = {
           provider: "google",
+          providerAccountId,
           name: profile.name,
           email: profile.email,
           picture: profile.picture,
         };
 
-        registerCloudAccount("google", tokenResponse.access_token, user.email);
-        resumeCloudWrites("google", tokenResponse.access_token);
+        registerCloudAccount("google", tokenResponse.access_token, providerAccountId);
+        await confirmAndResumeCloudWrites("google", tokenResponse.access_token);
         setAuth(
           tokenResponse.access_token,
           user,
@@ -67,6 +78,7 @@ export function LoginScreen() {
             : 3600,
         );
         await load();
+        sessionStorage.removeItem(LEGACY_GOOGLE_EMAIL_KEY);
         returnToApp();
       } catch (err) {
         setError(err instanceof Error ? err.message : t("login.failed"));
@@ -92,11 +104,12 @@ export function LoginScreen() {
         scopes: MICROSOFT_SCOPES,
         prompt: "select_account",
       });
-      if (result.account) instance.setActiveAccount(result.account);
+      if (!result.account?.homeAccountId?.trim() || !result.account.localAccountId?.trim()) {
+        throw new Error("Microsoft did not provide immutable account identifiers.");
+      }
+      instance.setActiveAccount(result.account);
 
-      const graphToken = result.account
-        ? (await instance.acquireTokenSilent(microsoftSilentRequest(result.account)).catch(() => result)).accessToken
-        : result.accessToken;
+      const graphToken = (await instance.acquireTokenSilent(microsoftSilentRequest(result.account)).catch(() => result)).accessToken;
 
       const profileRes = await fetch("https://graph.microsoft.com/v1.0/me", {
         headers: { Authorization: `Bearer ${graphToken}` },
@@ -108,22 +121,29 @@ export function LoginScreen() {
         userPrincipalName?: string;
       };
       const email = profile.mail ?? profile.userPrincipalName ?? "";
+      if (!email.trim()) throw new Error("Microsoft profile did not provide an email address.");
+      const legacyEmail = sessionStorage.getItem(LEGACY_MICROSOFT_EMAIL_KEY);
+      if (legacyEmail && email.trim().toLowerCase() !== legacyEmail) throw new Error("Select the same Microsoft account to upgrade the legacy session.");
       const name = profile.displayName ?? (email || t("login.microsoftUser"));
       const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
       const expiresIn = Math.max(120, Math.round((expiresAt - Date.now()) / 1000));
 
-      registerCloudAccount("microsoft", graphToken, email || name);
-      resumeCloudWrites("microsoft", graphToken);
+      registerCloudAccount("microsoft", graphToken, result.account.homeAccountId);
+      await confirmAndResumeCloudWrites("microsoft", graphToken);
       setAuth(
         graphToken,
         {
           provider: "microsoft",
+          providerAccountId: result.account.homeAccountId,
           name,
           email,
           picture: "",
+          homeAccountId: result.account.homeAccountId,
+          localAccountId: result.account.localAccountId,
         },
         expiresIn,
       );
+      sessionStorage.removeItem(LEGACY_MICROSOFT_EMAIL_KEY);
       await load();
       returnToApp();
     } catch (err) {
@@ -230,4 +250,13 @@ export function LoginScreen() {
       </div>
     </div>
   );
+}
+
+async function confirmAndResumeCloudWrites(provider: "google" | "microsoft", token: string): Promise<void> {
+  const reconnect = await cloudDeletionReconnectState(provider, token);
+  if (!reconnect) return;
+  if (reconnect.state === "nothing-to-delete" && !window.confirm(`No verified owned cloud folder was found, so no provider data was deleted. Resume cloud writes?\n\n${reconnect.reason ?? ""}`)) {
+    throw new Error("Cloud reconnect was cancelled.");
+  }
+  if (!await resumeCloudWrites(provider, token, reconnect.generation)) throw new Error("Cloud reconnect was superseded by a newer deletion.");
 }

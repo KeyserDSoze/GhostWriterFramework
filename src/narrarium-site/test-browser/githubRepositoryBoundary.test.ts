@@ -38,6 +38,7 @@ import {
   optionalRepositoryRead,
   RepositoryError,
 } from "@/repository/repositoryError";
+import { useAuthStore } from "@/store/authStore";
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
@@ -55,6 +56,7 @@ async function expectReadError(response: Response, kind: RepositoryError["kind"]
 }
 
 beforeEach(() => {
+  useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
   vi.unstubAllGlobals();
   octokitMocks.createOrUpdateFileContents.mockReset();
   octokitMocks.getBranch.mockReset();
@@ -131,6 +133,16 @@ describe("GitHub repository error classification", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
     await expect(loadBinaryFileContent("token", "owner", "repo", "asset.png", "main")).rejects.toMatchObject({ kind: "abort", operation: "read" });
   });
+
+  it("decodes a JSON contents envelope returned to a raw binary request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ content: btoa("binary-data"), encoding: "base64" })));
+    expect(Array.from(await loadBinaryFileContent("token", "owner", "repo", "asset.png", "main"))).toEqual(Array.from(new TextEncoder().encode("binary-data")));
+  });
+
+  it("rejects valid JSON that is not a binary contents envelope", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ message: "not raw content" })));
+    await expect(loadBinaryFileContent("token", "owner", "repo", "asset.png", "main")).rejects.toMatchObject({ kind: "malformed", operation: "read" });
+  });
 });
 
 describe("GitHub compound operation boundaries", () => {
@@ -158,6 +170,13 @@ describe("GitHub compound operation boundaries", () => {
     const paragraph = { number: "002", title: "Two", path: "chapters/001-start/002-two.md" } as any;
     await expect(reorderParagraphsInChapter("token", "owner", "repo", "main", "chapters/001-start", [paragraph], [paragraph], "reorder")).rejects.toMatchObject({ kind: "malformed", operation: "update" });
     expect(octokitMocks.createTree).not.toHaveBeenCalled();
+  });
+
+  it("rejects paragraph deletion when the branch head changed after confirmation", async () => {
+    octokitMocks.getBranch.mockResolvedValue({ data: { commit: { sha: "collaborator-head", commit: { tree: { sha: "tree" } } } } });
+    const paragraph = { number: "001", title: "One", path: "chapters/001-start/001-one.md", revision: "loaded-blob" } as any;
+    await expect(reorderParagraphsInChapter("token", "owner", "repo", "main", "chapters/001-start", [paragraph], [], "delete", { expectedRemoteHeadSha: "confirmed-head", expectedParagraphHashes: { [paragraph.path]: "loaded-blob" } })).rejects.toMatchObject({ kind: "conflict", operation: "update" });
+    expect(octokitMocks.getTree).not.toHaveBeenCalled();
   });
 });
 

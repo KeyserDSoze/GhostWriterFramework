@@ -10,12 +10,30 @@ import {
   type ParagraphArtifactMetadata,
   type ParagraphArtifactTarget,
 } from "@/narrarium/paragraphArtifacts";
+import { accountIdentity } from "@/auth/accountIdentity";
+import { useAuthStore } from "@/store/authStore";
+import { assertRepositoryOperationScopeCurrent, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 const DB_NAME = "narrarium-local-repositories";
-const DB_VERSION = 4;
+const DB_VERSION = 6;
 
 export type LocalFileStatus = "clean" | "modified" | "new" | "deleted";
 export type LocalFileKind = "text" | "binary";
+export type LocalCloneStatus = "cloning" | "migrating" | "repair-required" | "repairing" | "complete";
+export type RepositoryLifecycleOperationKind = "cloning" | "migrating" | "repairing";
+
+export interface RepositoryLifecycleLease {
+  operationId: string;
+  kind: RepositoryLifecycleOperationKind;
+  ownerInstanceNonce: string;
+  startedAt: string;
+  heartbeatAt: string;
+  expiresAt: string;
+  fence: number;
+}
+
+const REPOSITORY_LEASE_MS = 30_000;
+const repositoryInstanceNonce = crypto.randomUUID();
 
 export interface LocalRepositoryMeta {
   id: string;
@@ -35,10 +53,24 @@ export interface LocalRepositoryMeta {
    * A repo is considered fully in sync only when this is strictly `true`.
    */
   cloneComplete?: boolean;
+  cloneStatus?: LocalCloneStatus;
+  /** Present only while a clone or incomplete-clone repair owns this row. */
+  cloneOperationId?: string;
+  cloneOperationGeneration?: number;
+  lastCloneOperationId?: string;
+  repairOperationId?: string;
+  repairOperationGeneration?: number;
+  lastRepairOperationId?: string;
+  migrationOperationId?: string;
+  migrationOperationGeneration?: number;
+  lastMigrationOperationId?: string;
+  operationLease?: RepositoryLifecycleLease;
+  operationFence?: number;
   /** Number of blobs the remote tree had at clone/verify time. */
   expectedFileCount?: number;
   /** Last repository-scoped commit order allocated transactionally. */
   nextCommitOrder?: number;
+  accountScope?: string;
 }
 
 export interface LocalRepositoryFile {
@@ -101,8 +133,88 @@ export interface LocalRepoStatus {
   ahead: number;
 }
 
-function repoId(owner: string, repo: string, branch: string): string {
+export interface LocalRepositoryRecovery {
+  id: string;
+  repoId: string;
+  /** Missing only on legacy snapshots, which remain quarantined from operations. */
+  accountIdentity?: string;
+  reason: string;
+  createdAt: string;
+  repository: LocalRepositoryMeta;
+  files: LocalRepositoryFile[];
+  commits: LocalCommit[];
+}
+
+function activeAccountScope(): string | null {
+  return accountIdentity(useAuthStore.getState().user);
+}
+
+function isCurrentAccountScope(scope: string): boolean {
+  return Boolean(scope) && activeAccountScope() === scope;
+}
+
+function validateRepositoryOperation(repository: LocalRepositoryMeta | undefined, scope: RepositoryOperationScope): LocalRepositoryMeta {
+  assertRepositoryOperationScopeCurrent(scope);
+  if (!repository || repository.accountScope !== scope.accountIdentity) throw new RepositoryOwnershipChangedError();
+  return repository;
+}
+
+export class LocalCloneAlreadyInProgressError extends Error {
+  readonly code = "LOCAL_CLONE_ALREADY_IN_PROGRESS";
+
+  constructor() {
+    super("A local clone is already in progress for this repository.");
+    this.name = "LocalCloneAlreadyInProgressError";
+  }
+}
+
+function validateCloneOperation(repository: LocalRepositoryMeta | undefined, scope: RepositoryOperationScope, cloneOperationId: string): LocalRepositoryMeta {
+  const current = validateRepositoryOperation(repository, scope);
+  if (current.cloneComplete !== false || current.cloneStatus !== "cloning" || current.cloneOperationId !== cloneOperationId || current.cloneOperationGeneration !== scope.accountGeneration
+    || current.operationLease?.operationId !== cloneOperationId || current.operationLease.ownerInstanceNonce !== repositoryInstanceNonce || current.operationLease.fence !== current.operationFence) {
+    throw new RepositoryOwnershipChangedError("The local clone operation no longer owns this repository.");
+  }
+  return current;
+}
+
+function validateRepairOperation(repository: LocalRepositoryMeta | undefined, scope: RepositoryOperationScope, repairOperationId: string): LocalRepositoryMeta {
+  const current = validateRepositoryOperation(repository, scope);
+  if (current.cloneComplete !== false || current.cloneStatus !== "repairing" || current.repairOperationId !== repairOperationId || current.repairOperationGeneration !== scope.accountGeneration
+    || current.operationLease?.operationId !== repairOperationId || current.operationLease.ownerInstanceNonce !== repositoryInstanceNonce || current.operationLease.fence !== current.operationFence) {
+    throw new RepositoryOwnershipChangedError("The local repair operation no longer owns this repository.");
+  }
+  return current;
+}
+
+function validateMigrationOperation(repository: LocalRepositoryMeta | undefined, scope: RepositoryOperationScope, migrationOperationId: string): LocalRepositoryMeta {
+  const current = validateRepositoryOperation(repository, scope);
+  if (current.cloneStatus !== "migrating" || current.migrationOperationId !== migrationOperationId || current.migrationOperationGeneration !== scope.accountGeneration
+    || current.operationLease?.operationId !== migrationOperationId || current.operationLease.ownerInstanceNonce !== repositoryInstanceNonce || current.operationLease.fence !== current.operationFence) {
+    throw new RepositoryOwnershipChangedError("The legacy clone migration no longer owns this repository.");
+  }
+  return current;
+}
+
+function lifecycleLease(kind: RepositoryLifecycleOperationKind, operationId: string, fence: number): RepositoryLifecycleLease {
+  const now = Date.now();
+  return { operationId, kind, ownerInstanceNonce: repositoryInstanceNonce, startedAt: new Date(now).toISOString(), heartbeatAt: new Date(now).toISOString(), expiresAt: new Date(now + REPOSITORY_LEASE_MS).toISOString(), fence };
+}
+
+function leaseExpired(repository: LocalRepositoryMeta, now = Date.now()): boolean {
+  return Boolean(repository.operationLease && Date.parse(repository.operationLease.expiresAt) <= now);
+}
+
+export function repositoryLifecycleInstanceNonce(): string {
+  return repositoryInstanceNonce;
+}
+
+function legacyRepoId(owner: string, repo: string, branch: string): string {
   return `${owner}/${repo}#${branch}`.toLowerCase();
+}
+
+function repoId(owner: string, repo: string, branch: string, scope = activeAccountScope()): string {
+  const remote = legacyRepoId(owner, repo, branch);
+  return scope ? `${scope}::${remote}` : remote;
 }
 
 function fileKey(id: string, path: string): string {
@@ -119,10 +231,26 @@ function slugToTitle(slug: string): string {
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 function openDb(): Promise<IDBDatabase> {
-  dbPromise ??= new Promise((resolve, reject) => {
+  dbPromise ??= new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
+    let blocked = false;
     request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
+    request.onblocked = () => {
+      blocked = true;
+      reject(new Error("Local repository database upgrade is blocked by another tab. Close or reload other Narrarium tabs and retry."));
+    };
+    request.onsuccess = () => {
+      const db = request.result;
+      if (blocked) {
+        db.close();
+        return;
+      }
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+      resolve(db);
+    };
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains("repositories")) {
@@ -143,7 +271,14 @@ function openDb(): Promise<IDBDatabase> {
         const logs = db.createObjectStore("logs", { keyPath: "id" });
         logs.createIndex("repoId", "repoId", { unique: false });
       }
+      if (!db.objectStoreNames.contains("recoveries")) {
+        const recoveries = db.createObjectStore("recoveries", { keyPath: "id" });
+        recoveries.createIndex("repoId", "repoId", { unique: false });
+      }
     };
+  }).catch((error) => {
+    dbPromise = null;
+    throw error;
   });
   return dbPromise;
 }
@@ -153,9 +288,12 @@ function txStore<T>(storeName: string, mode: IDBTransactionMode, run: (store: ID
     const tx = db.transaction(storeName, mode);
     const store = tx.objectStore(storeName);
     const request = run(store);
-    request.onsuccess = () => resolve(request.result);
+    let result: T;
+    request.onsuccess = () => { result = request.result; };
     request.onerror = () => reject(request.error);
+    tx.oncomplete = () => resolve(result!);
     tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error(`Local ${storeName} transaction aborted.`));
   }));
 }
 
@@ -191,13 +329,15 @@ function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-export function makeRepoId(owner: string, repo: string, branch: string): string {
-  return repoId(owner, repo, branch);
+export function makeRepoId(owner: string, repo: string, branch: string, scope = activeAccountScope()): string {
+  return repoId(owner, repo, branch, scope);
 }
 
-export async function putLocalRepository(meta: Omit<LocalRepositoryMeta, "id" | "updatedAt">): Promise<LocalRepositoryMeta> {
+export async function putLocalRepository(meta: Omit<LocalRepositoryMeta, "id" | "updatedAt" | "accountScope">, scope: RepositoryOperationScope): Promise<LocalRepositoryMeta> {
+  assertRepositoryOperationScopeCurrent(scope);
   const now = new Date().toISOString();
-  const id = repoId(meta.owner, meta.repo, meta.branch);
+  const accountScope = scope.accountIdentity;
+  const id = repoId(meta.owner, meta.repo, meta.branch, accountScope ?? null);
   const db = await openDb();
   return new Promise<LocalRepositoryMeta>((resolve, reject) => {
     const tx = db.transaction("repositories", "readwrite");
@@ -205,29 +345,309 @@ export async function putLocalRepository(meta: Omit<LocalRepositoryMeta, "id" | 
     const request = store.get(id);
     let full: LocalRepositoryMeta;
     request.onsuccess = () => {
+      try { assertRepositoryOperationScopeCurrent(scope); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
       const existing = request.result as LocalRepositoryMeta | undefined;
+      if (existing && existing.accountScope !== scope.accountIdentity) { validationError = new RepositoryOwnershipChangedError(); tx.abort(); return; }
       const nextCommitOrder = Math.max(existing?.nextCommitOrder ?? 0, meta.nextCommitOrder ?? 0);
-      full = { ...meta, id, updatedAt: now, ...(nextCommitOrder ? { nextCommitOrder } : {}) };
+      full = { ...meta, accountScope, id, updatedAt: now, ...(meta.cloneComplete === false && !meta.cloneStatus ? { cloneStatus: "repair-required" as const } : {}), ...(nextCommitOrder ? { nextCommitOrder } : {}) };
       store.put(full);
     };
     request.onerror = () => tx.abort();
     tx.oncomplete = () => resolve(full!);
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error ?? new Error("Local repository transaction aborted."));
+    let validationError: Error | null = null;
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local repository transaction aborted."));
   });
 }
 
-export async function getLocalRepository(owner: string, repo: string, branch: string): Promise<LocalRepositoryMeta | null> {
-  return (await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(repoId(owner, repo, branch)))) ?? null;
+export async function putOperationalLocalRepository(meta: Omit<LocalRepositoryMeta, "id" | "updatedAt" | "accountScope">, scope: RepositoryOperationScope): Promise<LocalRepositoryMeta> {
+  return putLocalRepository(meta, scope);
 }
 
-export async function getLocalRepositoryById(repoIdValue: string): Promise<LocalRepositoryMeta | null> {
-  return (await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(repoIdValue))) ?? null;
+export async function createLocalRepositoryClone(
+  meta: Omit<LocalRepositoryMeta, "id" | "updatedAt" | "accountScope" | "cloneComplete" | "cloneOperationId" | "cloneOperationGeneration">,
+  scope: RepositoryOperationScope,
+  cloneOperationId: string,
+): Promise<LocalRepositoryMeta> {
+  assertRepositoryOperationScopeCurrent(scope);
+  const id = repoId(meta.owner, meta.repo, meta.branch, scope.accountIdentity);
+  const now = new Date().toISOString();
+  const db = await openDb();
+  return new Promise<LocalRepositoryMeta>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readwrite");
+    const store = tx.objectStore("repositories");
+    let created: LocalRepositoryMeta | undefined;
+    let validationError: Error | null = null;
+    const request = store.get(id);
+    request.onsuccess = () => {
+      try { assertRepositoryOperationScopeCurrent(scope); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
+      if (request.result) { validationError = new LocalCloneAlreadyInProgressError(); tx.abort(); return; }
+      const operationFence = 1;
+      created = { ...meta, id, accountScope: scope.accountIdentity, cloneComplete: false, cloneStatus: "cloning", cloneOperationId, cloneOperationGeneration: scope.accountGeneration, operationFence, operationLease: lifecycleLease("cloning", cloneOperationId, operationFence), updatedAt: now };
+      store.add(created);
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve(created!);
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local clone creation was aborted."));
+  });
 }
 
-export async function getLocalRepositoryByBook(bookId: string): Promise<LocalRepositoryMeta | null> {
+export async function claimLocalRepositoryRepair(repoIdValue: string, scope: RepositoryOperationScope, repairOperationId: string): Promise<LocalRepositoryMeta> {
+  const db = await openDb();
+  return new Promise<LocalRepositoryMeta>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readwrite");
+    const store = tx.objectStore("repositories");
+    let claimed: LocalRepositoryMeta | undefined;
+    let validationError: Error | null = null;
+    const request = store.get(repoIdValue);
+    request.onsuccess = () => {
+      let repository: LocalRepositoryMeta;
+      try { repository = validateRepositoryOperation(request.result as LocalRepositoryMeta | undefined, scope); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
+      if (repository.cloneStatus === "cloning" || repository.cloneOperationId || repository.cloneStatus === "repairing" || repository.repairOperationId || repository.operationLease) { validationError = new LocalCloneAlreadyInProgressError(); tx.abort(); return; }
+      if (repository.cloneComplete !== false || repository.cloneStatus !== "repair-required" || repository.cloneOperationId) { validationError = new Error("The local repository is not ready for repair."); tx.abort(); return; }
+      const operationFence = (repository.operationFence ?? 0) + 1;
+      claimed = { ...repository, cloneStatus: "repairing", repairOperationId, repairOperationGeneration: scope.accountGeneration, operationFence, operationLease: lifecycleLease("repairing", repairOperationId, operationFence), updatedAt: new Date().toISOString() };
+      store.put(claimed);
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve(claimed!);
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local clone repair claim was aborted."));
+  });
+}
+
+export async function claimLegacyLocalRepositoryMigration(repoIdValue: string, scope: RepositoryOperationScope, migrationOperationId: string): Promise<LocalRepositoryMeta> {
+  const db = await openDb();
+  return new Promise<LocalRepositoryMeta>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readwrite");
+    const store = tx.objectStore("repositories");
+    let claimed: LocalRepositoryMeta | undefined;
+    let validationError: Error | null = null;
+    const request = store.get(repoIdValue);
+    request.onsuccess = () => {
+      let repository: LocalRepositoryMeta;
+      try { repository = validateRepositoryOperation(request.result as LocalRepositoryMeta | undefined, scope); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
+      if (repository.cloneStatus === "migrating" || repository.migrationOperationId || repository.operationLease) { validationError = new LocalCloneAlreadyInProgressError(); tx.abort(); return; }
+      if (repository.cloneComplete !== undefined || repository.cloneStatus !== undefined || repository.cloneOperationId || repository.repairOperationId) {
+        validationError = new Error("The local repository is not eligible for legacy migration.");
+        tx.abort();
+        return;
+      }
+      const operationFence = (repository.operationFence ?? 0) + 1;
+      claimed = { ...repository, cloneStatus: "migrating", migrationOperationId, migrationOperationGeneration: scope.accountGeneration, operationFence, operationLease: lifecycleLease("migrating", migrationOperationId, operationFence), updatedAt: new Date().toISOString() };
+      store.put(claimed);
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve(claimed!);
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Legacy clone migration claim was aborted."));
+  });
+}
+
+export async function classifyLegacyLocalRepositoryMigration(input: {
+  repoId: string;
+  scope: RepositoryOperationScope;
+  migrationOperationId: string;
+  expectedRemoteHeadSha: string;
+  expectedFiles: LocalRepositoryFile[];
+  expectedFileCount: number;
+  complete: boolean;
+}): Promise<LocalRepositoryMeta> {
+  const db = await openDb();
+  return new Promise<LocalRepositoryMeta>((resolve, reject) => {
+    const tx = db.transaction(["repositories", "files"], "readwrite");
+    const repositories = tx.objectStore("repositories");
+    let repository: LocalRepositoryMeta | undefined;
+    let files: LocalRepositoryFile[] | undefined;
+    let updated: LocalRepositoryMeta | undefined;
+    let validationError: Error | null = null;
+    const apply = () => {
+      if (!repository || !files) return;
+      if (repository.remoteHeadSha !== input.expectedRemoteHeadSha || !sameLocalFiles(input.expectedFiles, files)) {
+        validationError = new Error("The legacy local repository changed during migration.");
+        tx.abort();
+        return;
+      }
+      updated = {
+        ...repository,
+        cloneComplete: input.complete,
+        cloneStatus: input.complete ? "complete" : "repair-required",
+        expectedFileCount: input.expectedFileCount,
+        migrationOperationId: undefined,
+        migrationOperationGeneration: undefined,
+        lastMigrationOperationId: input.migrationOperationId,
+        operationLease: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      repositories.put(updated);
+    };
+    const repositoryRequest = repositories.get(input.repoId);
+    repositoryRequest.onsuccess = () => {
+      try { repository = validateMigrationOperation(repositoryRequest.result as LocalRepositoryMeta | undefined, input.scope, input.migrationOperationId); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
+      apply();
+    };
+    repositoryRequest.onerror = () => tx.abort();
+    const filesRequest = tx.objectStore("files").index("repoId").getAll(input.repoId);
+    filesRequest.onsuccess = () => { files = filesRequest.result as LocalRepositoryFile[]; apply(); };
+    filesRequest.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve(updated!);
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Legacy clone migration classification was aborted."));
+  });
+}
+
+export async function releaseLegacyLocalRepositoryMigration(repoIdValue: string, scope: RepositoryOperationScope, migrationOperationId: string): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readwrite");
+    const store = tx.objectStore("repositories");
+    let validationError: Error | null = null;
+    const request = store.get(repoIdValue);
+    request.onsuccess = () => {
+      try {
+        const repository = validateMigrationOperation(request.result as LocalRepositoryMeta | undefined, scope, migrationOperationId);
+        store.put({ ...repository, cloneStatus: undefined, migrationOperationId: undefined, migrationOperationGeneration: undefined, lastMigrationOperationId: migrationOperationId, operationLease: undefined, updatedAt: new Date().toISOString() });
+      } catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Legacy clone migration release was aborted."));
+  });
+}
+
+export async function markLocalRepositoryRepairRequired(repoIdValue: string, scope: RepositoryOperationScope, cloneOperationId: string): Promise<LocalRepositoryMeta> {
+  const db = await openDb();
+  return new Promise<LocalRepositoryMeta>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readwrite");
+    const store = tx.objectStore("repositories");
+    let updated: LocalRepositoryMeta | undefined;
+    let validationError: Error | null = null;
+    const request = store.get(repoIdValue);
+    request.onsuccess = () => {
+      try {
+        const repository = validateCloneOperation(request.result as LocalRepositoryMeta | undefined, scope, cloneOperationId);
+        updated = { ...repository, cloneStatus: "repair-required", cloneOperationId: undefined, cloneOperationGeneration: undefined, lastCloneOperationId: cloneOperationId, operationLease: undefined, updatedAt: new Date().toISOString() };
+        store.put(updated);
+      } catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve(updated!);
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Clone repair-required transition was aborted."));
+  });
+}
+
+export async function releaseLocalRepositoryRepair(repoIdValue: string, scope: RepositoryOperationScope, repairOperationId: string): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readwrite");
+    const store = tx.objectStore("repositories");
+    let validationError: Error | null = null;
+    const request = store.get(repoIdValue);
+    request.onsuccess = () => {
+      try {
+        const repository = validateRepairOperation(request.result as LocalRepositoryMeta | undefined, scope, repairOperationId);
+        store.put({ ...repository, cloneStatus: "repair-required", repairOperationId: undefined, repairOperationGeneration: undefined, lastRepairOperationId: repairOperationId, operationLease: undefined, updatedAt: new Date().toISOString() });
+      } catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local repair release was aborted."));
+  });
+}
+
+export async function heartbeatRepositoryLifecycleLease(repoIdValue: string, scope: RepositoryOperationScope, operationId: string): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readwrite");
+    const store = tx.objectStore("repositories");
+    let validationError: Error | null = null;
+    const request = store.get(repoIdValue);
+    request.onsuccess = () => {
+      try {
+        const repository = validateRepositoryOperation(request.result as LocalRepositoryMeta | undefined, scope);
+        const lease = repository.operationLease;
+        if (!lease || lease.operationId !== operationId || lease.ownerInstanceNonce !== repositoryInstanceNonce || lease.fence !== repository.operationFence) throw new RepositoryOwnershipChangedError("The repository lifecycle lease is stale.");
+        const now = Date.now();
+        store.put({ ...repository, operationLease: { ...lease, heartbeatAt: new Date(now).toISOString(), expiresAt: new Date(now + REPOSITORY_LEASE_MS).toISOString() }, updatedAt: new Date(now).toISOString() });
+      } catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Repository lifecycle heartbeat was aborted."));
+  });
+}
+
+export async function reclaimExpiredRepositoryLifecycleLease(repoIdValue: string, scope: RepositoryOperationScope, operationId: string): Promise<LocalRepositoryMeta> {
+  const db = await openDb();
+  return new Promise<LocalRepositoryMeta>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readwrite");
+    const store = tx.objectStore("repositories");
+    let reclaimed: LocalRepositoryMeta | undefined;
+    let validationError: Error | null = null;
+    const request = store.get(repoIdValue);
+    request.onsuccess = () => {
+      try {
+        const repository = validateRepositoryOperation(request.result as LocalRepositoryMeta | undefined, scope);
+        if (!repository.operationLease || !leaseExpired(repository)) throw new LocalCloneAlreadyInProgressError();
+        const operationFence = (repository.operationFence ?? repository.operationLease.fence) + 1;
+        const kind = repository.operationLease.kind;
+        reclaimed = {
+          ...repository,
+          operationFence,
+          operationLease: lifecycleLease(kind, operationId, operationFence),
+          cloneOperationId: kind === "cloning" ? operationId : repository.cloneOperationId,
+          cloneOperationGeneration: kind === "cloning" ? scope.accountGeneration : repository.cloneOperationGeneration,
+          migrationOperationId: kind === "migrating" ? operationId : repository.migrationOperationId,
+          migrationOperationGeneration: kind === "migrating" ? scope.accountGeneration : repository.migrationOperationGeneration,
+          repairOperationId: kind === "repairing" ? operationId : repository.repairOperationId,
+          repairOperationGeneration: kind === "repairing" ? scope.accountGeneration : repository.repairOperationGeneration,
+          updatedAt: new Date().toISOString(),
+        };
+        store.put(reclaimed);
+      } catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve(reclaimed!);
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Repository lifecycle reclaim was aborted."));
+  });
+}
+
+export async function putQuarantinedLocalRepository(meta: Omit<LocalRepositoryMeta, "id" | "updatedAt">): Promise<LocalRepositoryMeta> {
+  const now = new Date().toISOString();
+  const id = repoId(meta.owner, meta.repo, meta.branch, meta.accountScope ?? null);
+  const full = { ...meta, id, updatedAt: now };
+  await txStore("repositories", "readwrite", (store) => store.put(full));
+  return full;
+}
+
+export async function getLocalRepository(owner: string, repo: string, branch: string, scope: string): Promise<LocalRepositoryMeta | null> {
+  if (!isCurrentAccountScope(scope)) return null;
+  const scopedId = repoId(owner, repo, branch, scope);
+  const scoped = await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(scopedId));
+  return scoped?.accountScope === scope ? scoped : null;
+}
+
+export async function getLocalRepositoryById(repoIdValue: string, scope: string): Promise<LocalRepositoryMeta | null> {
+  if (!isCurrentAccountScope(scope)) return null;
+  const repository = await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(repoIdValue));
+  return repository?.accountScope === scope ? repository : null;
+}
+
+export async function getLocalRepositoryByBook(bookId: string, scope: string): Promise<LocalRepositoryMeta | null> {
+  if (!isCurrentAccountScope(scope)) return null;
   const rows = await allFromIndex<LocalRepositoryMeta>("repositories", "bookId", bookId);
-  return rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;
+  return rows.filter((row) => row.accountScope === scope).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;
 }
 
 export async function listLocalFiles(repoIdValue: string): Promise<LocalRepositoryFile[]> {
@@ -240,12 +660,20 @@ export async function listAllLocalFiles(repoIdValue: string): Promise<LocalRepos
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-export async function removeLocalRepository(repoIdValue: string): Promise<void> {
+export async function removeLocalRepository(repoIdValue: string, scope: RepositoryOperationScope): Promise<void> {
   const db = await openDb();
+  // Recovery snapshots intentionally outlive the working copy they protect.
   const stores = ["repositories", "files", "commits", "logs"].filter((store) => db.objectStoreNames.contains(store));
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(stores, "readwrite");
-    tx.objectStore("repositories").delete(repoIdValue);
+    const repositories = tx.objectStore("repositories");
+    let validationError: Error | null = null;
+    const repositoryRequest = repositories.get(repoIdValue);
+    repositoryRequest.onsuccess = () => {
+      try { validateRepositoryOperation(repositoryRequest.result as LocalRepositoryMeta | undefined, scope); repositories.delete(repoIdValue); }
+      catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    repositoryRequest.onerror = () => tx.abort();
     for (const storeName of ["files", "commits", "logs"]) {
       if (!stores.includes(storeName)) continue;
       const store = tx.objectStore(storeName);
@@ -259,7 +687,49 @@ export async function removeLocalRepository(repoIdValue: string): Promise<void> 
       };
     }
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local repository removal was aborted."));
+  });
+}
+
+/** Cleanup only for a clone created by the supplied immutable operation scope. */
+export async function removeAbandonedLocalClone(expected: Pick<LocalRepositoryMeta, "id" | "bookId" | "owner" | "repo" | "branch">, scope: RepositoryOperationScope, cloneOperationId: string): Promise<void> {
+  const db = await openDb();
+  const stores = ["repositories", "files", "commits", "logs"].filter((store) => db.objectStoreNames.contains(store));
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(stores, "readwrite");
+    const repositories = tx.objectStore("repositories");
+    let validationError: Error | null = null;
+    const request = repositories.get(expected.id);
+    request.onsuccess = () => {
+      const repository = request.result as LocalRepositoryMeta | undefined;
+      try {
+        assertRepositoryOperationScopeCurrent(scope);
+      } catch (error) {
+        validationError = error as Error;
+        tx.abort();
+        return;
+      }
+      if (!repository || repository.id !== expected.id || repository.bookId !== expected.bookId
+        || repository.owner !== expected.owner || repository.repo !== expected.repo || repository.branch !== expected.branch
+        || repository.accountScope !== scope.accountIdentity || repository.cloneComplete !== false
+        || repository.cloneOperationId !== cloneOperationId || repository.cloneOperationGeneration !== scope.accountGeneration) {
+        validationError = new RepositoryOwnershipChangedError("Abandoned clone cleanup cannot remove this repository.");
+        tx.abort();
+        return;
+      }
+      repositories.delete(expected.id);
+      for (const storeName of ["files", "commits", "logs"]) {
+        if (!stores.includes(storeName)) continue;
+        const store = tx.objectStore(storeName);
+        const cursorRequest = store.index("repoId").openKeyCursor(IDBKeyRange.only(expected.id));
+        cursorRequest.onsuccess = () => { const cursor = cursorRequest.result; if (cursor) { store.delete(cursor.primaryKey); cursor.continue(); } };
+      }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Abandoned clone cleanup was aborted."));
   });
 }
 
@@ -303,6 +773,51 @@ export async function putCleanLocalFile(input: {
   };
   await txStore("files", "readwrite", (store) => store.put(file));
   return file;
+}
+
+export async function putCleanLocalFileScoped(input: Parameters<typeof putCleanLocalFile>[0], scope: RepositoryOperationScope, cloneOperationId: string): Promise<LocalRepositoryFile> {
+  const file = await prepareCleanLocalFile(input);
+  await putScopedLocalFile(input.repoId, scope, file, cloneOperationId);
+  return file;
+}
+
+async function prepareCleanLocalFile(input: Parameters<typeof putCleanLocalFile>[0]): Promise<LocalRepositoryFile> {
+  const currentHash = input.kind === "text" ? await sha256Text(input.text ?? "") : await hashBlob(input.blob ?? new Blob());
+  return { key: fileKey(input.repoId, input.path), repoId: input.repoId, path: input.path, kind: input.kind, text: input.text, blob: input.blob, baseSha: input.baseSha, baseHash: currentHash, currentHash, status: "clean", committed: false, size: input.size, updatedAt: new Date().toISOString() };
+}
+
+export async function writeLocalTextScoped(repoIdValue: string, path: string, text: string, scope: RepositoryOperationScope): Promise<LocalRepositoryFile> {
+  const existing = await getLocalFileEntry(repoIdValue, path);
+  const currentHash = await sha256Text(text);
+  const file: LocalRepositoryFile = { key: fileKey(repoIdValue, path), repoId: repoIdValue, path, kind: "text", text, baseSha: existing?.baseSha, baseHash: existing?.baseHash, currentHash, status: statusAfterWrite(existing ?? undefined, currentHash), committed: false, size: new TextEncoder().encode(text).byteLength, updatedAt: new Date().toISOString() };
+  await putScopedLocalFile(repoIdValue, scope, file);
+  return file;
+}
+
+export async function writeLocalBinaryScoped(repoIdValue: string, path: string, bytes: Uint8Array, scope: RepositoryOperationScope): Promise<LocalRepositoryFile> {
+  const existing = await getLocalFileEntry(repoIdValue, path);
+  const currentHash = await sha256Bytes(bytes);
+  const file: LocalRepositoryFile = { key: fileKey(repoIdValue, path), repoId: repoIdValue, path, kind: "binary", blob: new Blob([bytesToArrayBuffer(bytes)]), baseSha: existing?.baseSha, baseHash: existing?.baseHash, currentHash, status: statusAfterWrite(existing ?? undefined, currentHash), committed: false, size: bytes.byteLength, updatedAt: new Date().toISOString() };
+  await putScopedLocalFile(repoIdValue, scope, file);
+  return file;
+}
+
+async function putScopedLocalFile(repoIdValue: string, scope: RepositoryOperationScope, file: LocalRepositoryFile, cloneOperationId?: string): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(["repositories", "files"], "readwrite");
+    let validationError: Error | null = null;
+    const request = tx.objectStore("repositories").get(repoIdValue);
+    request.onsuccess = () => { try { cloneOperationId ? validateCloneOperation(request.result as LocalRepositoryMeta | undefined, scope, cloneOperationId) : validateRepositoryOperation(request.result as LocalRepositoryMeta | undefined, scope); tx.objectStore("files").put(file); } catch (error) { validationError = error as Error; tx.abort(); } };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local file write was aborted."));
+  });
+}
+
+export async function deleteLocalFileScoped(repoIdValue: string, path: string, scope: RepositoryOperationScope): Promise<void> {
+  await mutateLocalTextFilesAtomically(repoIdValue, scope, [{ path, content: null }]);
 }
 
 export async function writeLocalText(repoIdValue: string, path: string, text: string): Promise<LocalRepositoryFile> {
@@ -355,6 +870,7 @@ export type LocalFileAtomicWrite =
 /** Apply a prepared set of local file moves/updates in one IndexedDB transaction. */
 export async function applyLocalFileChangesAtomically(
   repoIdValue: string,
+  scope: RepositoryOperationScope,
   deletePaths: Iterable<string>,
   writes: LocalFileAtomicWrite[],
   expectedCurrentHashes: ReadonlyMap<string, string | null> = new Map(),
@@ -391,9 +907,9 @@ export async function applyLocalFileChangesAtomically(
 
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction("files", "readwrite");
+    const tx = db.transaction(["repositories", "files"], "readwrite");
     const store = tx.objectStore("files");
-    let pending = expectedCurrentHashes.size;
+    let pending = expectedCurrentHashes.size + 1;
     let validationError: Error | null = null;
     const apply = () => {
       for (const path of deletes) {
@@ -404,7 +920,14 @@ export async function applyLocalFileChangesAtomically(
       }
       for (const file of prepared) store.put(file);
     };
-    if (!pending) apply();
+    const repositoryRequest = tx.objectStore("repositories").get(repoIdValue);
+    repositoryRequest.onsuccess = () => {
+      try { validateRepositoryOperation(repositoryRequest.result as LocalRepositoryMeta | undefined, scope); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
+      pending -= 1;
+      if (!pending) apply();
+    };
+    repositoryRequest.onerror = () => tx.abort();
     for (const [path, expected] of expectedCurrentHashes) {
       const request = store.get(fileKey(repoIdValue, path));
       request.onsuccess = () => {
@@ -439,6 +962,7 @@ export interface LocalTextFileMutation {
 
 async function applyLocalTextFileMutations(
   repoIdValue: string,
+  scope: RepositoryOperationScope,
   mutations: LocalTextFileMutation[],
   commitMessage?: string,
 ): Promise<LocalCommit | null> {
@@ -454,12 +978,12 @@ async function applyLocalTextFileMutations(
 
   const db = await openDb();
   return new Promise<LocalCommit | null>((resolve, reject) => {
-    const tx = db.transaction(commitMessage === undefined ? "files" : ["repositories", "files", "commits"], "readwrite");
+    const tx = db.transaction(commitMessage === undefined ? ["repositories", "files"] : ["repositories", "files", "commits"], "readwrite");
     const store = tx.objectStore("files");
     const commitsStore = commitMessage === undefined ? null : tx.objectStore("commits");
-    const repositoriesStore = commitMessage === undefined ? null : tx.objectStore("repositories");
+    const repositoriesStore = tx.objectStore("repositories");
     const existing = new Map<string, LocalRepositoryFile | undefined>();
-    let pending = mutations.length + (commitMessage === undefined ? 0 : 1);
+    let pending = mutations.length + 1;
     let validationError: Error | null = null;
     let localCommit: LocalCommit | null = null;
     let commitOrder: number | undefined;
@@ -533,17 +1057,16 @@ async function applyLocalTextFileMutations(
       }
     };
 
-    if (repositoriesStore) {
+    {
       const request = repositoriesStore.get(repoIdValue);
       request.onsuccess = () => {
-        const repository = request.result as LocalRepositoryMeta | undefined;
-        if (!repository) {
-          validationError = new Error("Local repository is not ready.");
-          tx.abort();
-          return;
+        let repository: LocalRepositoryMeta;
+        try { repository = validateRepositoryOperation(request.result as LocalRepositoryMeta | undefined, scope); }
+        catch (error) { validationError = error as Error; tx.abort(); return; }
+        if (commitMessage !== undefined) {
+          commitOrder = (repository.nextCommitOrder ?? 0) + 1;
+          repositoriesStore.put({ ...repository, nextCommitOrder: commitOrder });
         }
-        commitOrder = (repository.nextCommitOrder ?? 0) + 1;
-        repositoriesStore.put({ ...repository, nextCommitOrder: commitOrder });
         pending -= 1;
         if (pending === 0) apply();
       };
@@ -572,34 +1095,37 @@ async function applyLocalTextFileMutations(
 }
 
 /** Validate and apply text mutations in the same IndexedDB transaction. */
-export async function mutateLocalTextFilesAtomically(repoIdValue: string, mutations: LocalTextFileMutation[]): Promise<void> {
-  await applyLocalTextFileMutations(repoIdValue, mutations);
+export async function mutateLocalTextFilesAtomically(repoIdValue: string, scope: RepositoryOperationScope, mutations: LocalTextFileMutation[]): Promise<void> {
+  await applyLocalTextFileMutations(repoIdValue, scope, mutations);
 }
 
 /** Validate, apply, and commit only the changed mutation paths in one IndexedDB transaction. */
 export async function mutateLocalTextFilesAndCreateCommitAtomically(
   repoIdValue: string,
+  scope: RepositoryOperationScope,
   message: string,
   mutations: LocalTextFileMutation[],
 ): Promise<LocalCommit> {
-  const commit = await applyLocalTextFileMutations(repoIdValue, mutations, message);
+  const commit = await applyLocalTextFileMutations(repoIdValue, scope, mutations, message);
   if (!commit) throw new Error("No local commit was created.");
   return commit;
 }
 
 export async function restoreLocalFilesAndDeleteCommit(
   repoIdValue: string,
+  scope: RepositoryOperationScope,
   commitId: string,
   snapshots: Array<{ path: string; file: LocalRepositoryFile | null }>,
 ): Promise<LocalCommitSettlementResult> {
   const db = await openDb();
   return new Promise<LocalCommitSettlementResult>((resolve, reject) => {
-    const tx = db.transaction(["files", "commits"], "readwrite");
+    const tx = db.transaction(["repositories", "files", "commits"], "readwrite");
     const files = tx.objectStore("files");
     const commits = tx.objectStore("commits");
     const current = new Map<string, LocalRepositoryFile | undefined>();
     let commit: LocalCommit | undefined;
-    let pending = snapshots.length + 1;
+    let pending = snapshots.length + 2;
+    let validationError: Error | null = null;
     let result: LocalCommitSettlementResult = { skippedPaths: [] };
 
     const apply = () => {
@@ -626,9 +1152,20 @@ export async function restoreLocalFilesAndDeleteCommit(
     const commitRequest = commits.get(commitId);
     commitRequest.onsuccess = () => {
       commit = commitRequest.result as LocalCommit | undefined;
+      if (!commit || commit.repoId !== repoIdValue) {
+        validationError = new RepositoryOwnershipChangedError("The local commit does not belong to the scoped repository.");
+        tx.abort();
+        return;
+      }
       loaded();
     };
     commitRequest.onerror = () => tx.abort();
+    const repositoryRequest = tx.objectStore("repositories").get(repoIdValue);
+    repositoryRequest.onsuccess = () => {
+      try { validateRepositoryOperation(repositoryRequest.result as LocalRepositoryMeta | undefined, scope); loaded(); }
+      catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    repositoryRequest.onerror = () => tx.abort();
     for (const snapshot of snapshots) {
       const request = files.get(fileKey(repoIdValue, snapshot.path));
       request.onsuccess = () => {
@@ -638,8 +1175,8 @@ export async function restoreLocalFilesAndDeleteCommit(
       request.onerror = () => tx.abort();
     }
     tx.oncomplete = () => resolve(result);
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error ?? new Error("Local rollback transaction aborted."));
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local rollback transaction aborted."));
   });
 }
 
@@ -656,6 +1193,28 @@ export async function deleteLocalFile(repoIdValue: string, path: string): Promis
     return;
   }
   await txStore("files", "readwrite", (store) => store.put({ ...existing, status: "deleted", committed: false, updatedAt: new Date().toISOString() }));
+}
+
+export async function deleteLocalFileAtomically(repoIdValue: string, scope: RepositoryOperationScope, path: string, expectedCurrentHash?: string): Promise<void> {
+  await mutateLocalTextFilesAtomically(repoIdValue, scope, [{ path, content: null, expectedCurrentHash }]);
+}
+
+export async function renameLocalTextFileAtomically(input: {
+  repoId: string;
+  scope: RepositoryOperationScope;
+  oldPath: string;
+  newPath: string;
+  content: string;
+  expectedCurrentHash: string;
+}): Promise<LocalRepositoryFile> {
+  if (input.oldPath === input.newPath) throw new Error("Rename source and destination are identical.");
+  await mutateLocalTextFilesAtomically(input.repoId, input.scope, [
+    { path: input.oldPath, content: null, expectedCurrentHash: input.expectedCurrentHash },
+    { path: input.newPath, content: input.content, expectedCurrentHash: null },
+  ]);
+  const file = await getLocalFile(input.repoId, input.newPath);
+  if (!file) throw new Error(`Renamed file is unavailable: ${input.newPath}`);
+  return file;
 }
 
 export async function removeLocalFileEntry(repoIdValue: string, path: string): Promise<void> {
@@ -683,33 +1242,50 @@ export async function listLocalRepoLogs(repoIdValue: string, limit = 30): Promis
   return entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
 }
 
-export async function createLocalCommit(repoIdValue: string, message: string, allowedPaths?: ReadonlySet<string>): Promise<LocalCommit> {
-  const dirty = (await listDirtyLocalFiles(repoIdValue)).filter((file) => !allowedPaths || allowedPaths.has(file.path));
-  if (!dirty.length) throw new Error("No local changes to commit.");
-  const commit: LocalCommit = {
-    id: crypto.randomUUID(),
-    repoId: repoIdValue,
-    message,
-    createdAt: new Date().toISOString(),
-    files: dirty.map((file) => ({ path: file.path, status: file.status as Exclude<LocalFileStatus, "clean">, kind: file.kind, hash: file.currentHash })),
-    pushed: false,
-  };
+export async function createLocalCommit(
+  repoIdValue: string,
+  scope: RepositoryOperationScope,
+  message: string,
+  allowedPaths?: ReadonlySet<string>,
+  expectedCurrentHashes?: ReadonlyMap<string, string>,
+): Promise<LocalCommit> {
   const db = await openDb();
   let validationError: Error | null = null;
+  let commit: LocalCommit | null = null;
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(["repositories", "files", "commits"], "readwrite");
     const repoStore = tx.objectStore("repositories");
     const filesStore = tx.objectStore("files");
     const commitsStore = tx.objectStore("commits");
     const repoRequest = repoStore.get(repoIdValue);
-    repoRequest.onsuccess = () => {
-      const repository = repoRequest.result as LocalRepositoryMeta | undefined;
-      if (!repository) {
-        validationError = new Error("Local repository is not ready.");
+    const dirtyRequest = filesStore.index("repoId").getAll(repoIdValue);
+    let repository: LocalRepositoryMeta | undefined;
+    let rows: LocalRepositoryFile[] | undefined;
+    const apply = () => {
+      if (!repository || !rows) return;
+      const dirty = rows.filter((file) => file.status !== "clean" && !file.committed && (!allowedPaths || allowedPaths.has(file.path)));
+      if (expectedCurrentHashes) {
+        const actual = new Map(dirty.map((file) => [file.path, file.currentHash]));
+        if (actual.size !== expectedCurrentHashes.size || [...expectedCurrentHashes].some(([path, hash]) => actual.get(path) !== hash)) {
+          validationError = new Error("Local changes changed before they could be committed.");
+          tx.abort();
+          return;
+        }
+      }
+      if (!dirty.length) {
+        validationError = new Error("No local changes to commit.");
         tx.abort();
         return;
       }
-      commit.order = (repository.nextCommitOrder ?? 0) + 1;
+      commit = {
+        id: crypto.randomUUID(),
+        repoId: repoIdValue,
+        message,
+        createdAt: new Date().toISOString(),
+        order: (repository.nextCommitOrder ?? 0) + 1,
+        files: dirty.map((file) => ({ path: file.path, status: file.status as Exclude<LocalFileStatus, "clean">, kind: file.kind, hash: file.currentHash })),
+        pushed: false,
+      };
       repoStore.put({ ...repository, nextCommitOrder: commit.order });
       commitsStore.put(commit);
       for (const file of dirty) {
@@ -719,15 +1295,28 @@ export async function createLocalCommit(repoIdValue: string, message: string, al
         filesStore.put(next);
       }
     };
+    repoRequest.onsuccess = () => {
+      try { repository = validateRepositoryOperation(repoRequest.result as LocalRepositoryMeta | undefined, scope); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
+      apply();
+    };
     repoRequest.onerror = () => {
       validationError = repoRequest.error ?? new Error("Failed to allocate local commit order.");
+      tx.abort();
+    };
+    dirtyRequest.onsuccess = () => {
+      rows = dirtyRequest.result as LocalRepositoryFile[];
+      apply();
+    };
+    dirtyRequest.onerror = () => {
+      validationError = dirtyRequest.error ?? new Error("Failed to read local changes.");
       tx.abort();
     };
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(validationError ?? tx.error);
     tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local commit transaction aborted."));
   });
-  return commit;
+  return commit!;
 }
 
 export async function listUnpushedLocalCommits(repoIdValue: string): Promise<LocalCommit[]> {
@@ -756,31 +1345,530 @@ export async function discardUnpushedLocalCommits(repoIdValue: string): Promise<
   });
 }
 
-export async function restoreUnpushedCommitsAsDirty(repoIdValue: string): Promise<LocalCommit[]> {
+export async function restoreUnpushedCommitsAsDirty(repoIdValue: string, scope: RepositoryOperationScope): Promise<LocalCommit[]> {
   const commits = await listUnpushedLocalCommits(repoIdValue);
   if (!commits.length) return [];
   const byPath = new Map<string, LocalCommitFile>();
   for (const commit of commits) for (const file of commit.files) byPath.set(file.path, file);
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(["files", "commits"], "readwrite");
+    const tx = db.transaction(["repositories", "files", "commits"], "readwrite");
     const filesStore = tx.objectStore("files");
     const commitsStore = tx.objectStore("commits");
+    let validationError: Error | null = null;
+    const repositoryRequest = tx.objectStore("repositories").get(repoIdValue);
+    repositoryRequest.onsuccess = () => {
+      try { validateRepositoryOperation(repositoryRequest.result as LocalRepositoryMeta | undefined, scope); }
+      catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    repositoryRequest.onerror = () => tx.abort();
     for (const file of byPath.values()) {
       const req = filesStore.get(fileKey(repoIdValue, file.path));
       req.onsuccess = () => {
         const row = req.result as LocalRepositoryFile | undefined;
-        if (row) filesStore.put({ ...row, status: file.status, committed: false });
+        if (localFileMatchesCommitResult(row, file)) filesStore.put({ ...row, status: file.status, committed: false });
       };
     }
     for (const commit of commits) commitsStore.delete(commit.id);
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local commit restoration was aborted."));
   });
   return commits;
 }
 
-export async function markLocalCommitsPushed(repoIdValue: string, commitIds: string[], remoteHeadSha: string, pushedShas: Record<string, string | null>): Promise<LocalCommitSettlementResult> {
+export async function createLocalRecoverySnapshot(repoIdValue: string, reason: string, scope: RepositoryOperationScope): Promise<LocalRepositoryRecovery> {
+  assertRepositoryOperationScopeCurrent(scope);
+  const db = await openDb();
+  return new Promise<LocalRepositoryRecovery>((resolve, reject) => {
+    const tx = db.transaction(["repositories", "files", "commits", "recoveries"], "readwrite");
+    const repositoryRequest = tx.objectStore("repositories").get(repoIdValue);
+    const filesRequest = tx.objectStore("files").index("repoId").getAll(repoIdValue);
+    const commitsRequest = tx.objectStore("commits").index("repoId").getAll(repoIdValue);
+    let repository: LocalRepositoryMeta | undefined;
+    let files: LocalRepositoryFile[] | undefined;
+    let commits: LocalCommit[] | undefined;
+    let recovery: LocalRepositoryRecovery | undefined;
+    let validationError: Error | null = null;
+    const apply = () => {
+      if (!repository || !files || !commits || recovery) return;
+      recovery = {
+        id: crypto.randomUUID(),
+        repoId: repoIdValue,
+        accountIdentity: scope.accountIdentity,
+        reason,
+        createdAt: new Date().toISOString(),
+        repository,
+        files,
+        commits: commits.filter((commit) => !commit.pushed).sort(compareLocalCommitOrder),
+      };
+      tx.objectStore("recoveries").put(recovery);
+    };
+    repositoryRequest.onsuccess = () => {
+      repository = repositoryRequest.result as LocalRepositoryMeta | undefined;
+      try { repository = validateRepositoryOperation(repository, scope); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
+      apply();
+    };
+    filesRequest.onsuccess = () => { files = filesRequest.result as LocalRepositoryFile[]; apply(); };
+    commitsRequest.onsuccess = () => { commits = commitsRequest.result as LocalCommit[]; apply(); };
+    repositoryRequest.onerror = filesRequest.onerror = commitsRequest.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve(recovery!);
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Recovery snapshot transaction was aborted."));
+  });
+}
+
+export async function listLocalRecoverySnapshots(repoIdValue: string, scope: string): Promise<LocalRepositoryRecovery[]> {
+  if (!isCurrentAccountScope(scope)) return [];
+  const recoveries = await allFromIndex<LocalRepositoryRecovery>("recoveries", "repoId", repoIdValue);
+  if (!isCurrentAccountScope(scope)) return [];
+  return recoveries
+    .filter((recovery) => recovery.accountIdentity === scope && recovery.repository?.accountScope === scope)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+export async function getLocalRecoverySnapshot(recoveryId: string, scope: string): Promise<LocalRepositoryRecovery | null> {
+  if (!isCurrentAccountScope(scope)) return null;
+  const recovery = await txStore<LocalRepositoryRecovery | undefined>("recoveries", "readonly", (store) => store.get(recoveryId));
+  if (!isCurrentAccountScope(scope)) return null;
+  return recovery?.accountIdentity === scope && recovery.repository?.accountScope === scope ? recovery : null;
+}
+
+export async function deleteLocalRecoverySnapshot(recoveryId: string, scope: string): Promise<void> {
+  if (!isCurrentAccountScope(scope)) throw new Error("Recovery snapshot account identity is not current.");
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("recoveries", "readwrite");
+    const store = tx.objectStore("recoveries");
+    let validationError: Error | null = null;
+    const request = store.get(recoveryId);
+    request.onsuccess = () => {
+      const recovery = request.result as LocalRepositoryRecovery | undefined;
+      if (!isCurrentAccountScope(scope) || recovery?.accountIdentity !== scope || recovery.repository?.accountScope !== scope) {
+        validationError = new Error("Recovery snapshot is unavailable.");
+        tx.abort();
+        return;
+      }
+      store.delete(recoveryId);
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Recovery snapshot deletion was aborted."));
+  });
+}
+
+export async function listLocalRecoverySnapshotsForTarget(owner: string, repo: string, branch: string, scope: string): Promise<LocalRepositoryRecovery[]> {
+  if (!isCurrentAccountScope(scope)) return [];
+  const rows = await txStore<LocalRepositoryRecovery[]>("recoveries", "readonly", (store) => store.getAll());
+  if (!isCurrentAccountScope(scope)) return [];
+  return rows
+    .filter((recovery) => recovery.repository?.owner === owner && recovery.repository.repo === repo && recovery.repository.branch === branch
+      && recovery.accountIdentity === scope && recovery.repository.accountScope === scope)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+export async function restoreLocalRecoverySnapshot(recoveryId: string, scope: RepositoryOperationScope, target: { repoId: string; bookId: string; owner: string; repo: string; branch: string }): Promise<LocalRepositoryRecovery> {
+  assertRepositoryOperationScopeCurrent(scope);
+  const db = await openDb();
+  return new Promise<LocalRepositoryRecovery>((resolve, reject) => {
+    const tx = db.transaction(["repositories", "files", "commits", "recoveries"], "readwrite");
+    const repositories = tx.objectStore("repositories");
+    const files = tx.objectStore("files");
+    const commits = tx.objectStore("commits");
+    const recoveries = tx.objectStore("recoveries");
+    let recovery: LocalRepositoryRecovery | undefined;
+    let validationError: Error | null = null;
+    const beginRestore = () => {
+      const repoIdValue = recovery!.repoId;
+      const clearByRepo = (store: IDBObjectStore, done: () => void) => {
+        const cursorRequest = store.index("repoId").openKeyCursor(IDBKeyRange.only(repoIdValue));
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (!cursor) { done(); return; }
+          store.delete(cursor.primaryKey);
+          cursor.continue();
+        };
+        cursorRequest.onerror = () => {
+          validationError = cursorRequest.error ?? new Error("Failed to clear the current working copy.");
+          tx.abort();
+        };
+      };
+      let cleared = 0;
+      const restore = () => {
+        cleared += 1;
+        if (cleared !== 2) return;
+        repositories.put({ ...recovery!.repository, updatedAt: new Date().toISOString() });
+        for (const file of recovery!.files) files.put(file);
+        for (const commit of recovery!.commits) commits.put(commit);
+      };
+      clearByRepo(files, restore);
+      clearByRepo(commits, restore);
+    };
+    const request = recoveries.get(recoveryId);
+    request.onsuccess = () => {
+      recovery = request.result as LocalRepositoryRecovery | undefined;
+      if (!recovery?.repository || recovery.accountIdentity !== scope.accountIdentity || recovery.repository.accountScope !== scope.accountIdentity) {
+        validationError = new Error("Recovery snapshot is unavailable or uses an unsupported legacy format.");
+        tx.abort();
+        return;
+      }
+      if (recovery.repoId !== target.repoId || recovery.repository.id !== target.repoId || recovery.repository.bookId !== target.bookId
+        || recovery.repository.owner !== target.owner || recovery.repository.repo !== target.repo || recovery.repository.branch !== target.branch) {
+        validationError = new Error("Recovery snapshot does not match the requested repository.");
+        tx.abort();
+        return;
+      }
+      const repositoryRequest = repositories.get(target.repoId);
+      repositoryRequest.onsuccess = () => {
+        const current = repositoryRequest.result as LocalRepositoryMeta | undefined;
+        try { validateRepositoryOperation(current, scope); } catch (error) { validationError = error as Error; tx.abort(); return; }
+        if (!current || current.id !== target.repoId || current.bookId !== target.bookId || current.owner !== target.owner || current.repo !== target.repo || current.branch !== target.branch) {
+          validationError = new Error("The target repository identity changed before recovery restoration.");
+          tx.abort();
+          return;
+        }
+        beginRestore();
+      };
+      repositoryRequest.onerror = () => tx.abort();
+    };
+    request.onerror = () => {
+      validationError = request.error ?? new Error("Failed to read recovery snapshot.");
+      tx.abort();
+    };
+    tx.oncomplete = () => resolve(recovery!);
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Recovery restoration was aborted."));
+  });
+}
+
+export interface RemoteTreeFile {
+  path: string;
+  kind: LocalFileKind;
+  text?: string;
+  blob?: Blob;
+  baseSha: string;
+  size: number;
+}
+
+function localFileVersion(file: LocalRepositoryFile): string {
+  return `${file.currentHash}:${file.status}:${Boolean(file.committed)}`;
+}
+
+function sameLocalFiles(expectedFiles: LocalRepositoryFile[], currentFiles: LocalRepositoryFile[]): boolean {
+  const expected = new Map(expectedFiles.map((file) => [file.path, localFileVersion(file)]));
+  const actual = new Map(currentFiles.map((file) => [file.path, localFileVersion(file)]));
+  return expected.size === actual.size && [...expected].every(([path, value]) => actual.get(path) === value);
+}
+
+/** Replace the complete working tree, pending commits, and repository head in one transaction. */
+export async function replaceLocalTreeAtomically(
+  repoIdValue: string,
+  scope: RepositoryOperationScope,
+  remoteHeadSha: string,
+  inputs: RemoteTreeFile[],
+  expectedFiles: LocalRepositoryFile[],
+  expectedCommitIds: string[],
+  recoveryReason?: string,
+  requireClean = false,
+): Promise<LocalRepositoryRecovery> {
+  assertRepositoryOperationScopeCurrent(scope);
+  const now = new Date().toISOString();
+  const prepared = await Promise.all(inputs.map(async (input): Promise<LocalRepositoryFile> => {
+    const currentHash = input.kind === "text" ? await sha256Text(input.text ?? "") : await hashBlob(input.blob ?? new Blob());
+    return {
+      key: fileKey(repoIdValue, input.path), repoId: repoIdValue, path: input.path, kind: input.kind,
+      text: input.text, blob: input.blob, baseSha: input.baseSha, baseHash: currentHash, currentHash,
+      status: "clean", committed: false, size: input.size, updatedAt: now,
+    };
+  }));
+  const db = await openDb();
+  return new Promise<LocalRepositoryRecovery>((resolve, reject) => {
+    const tx = db.transaction(["repositories", "files", "commits", "recoveries"], "readwrite");
+    const repositories = tx.objectStore("repositories");
+    const files = tx.objectStore("files");
+    const commits = tx.objectStore("commits");
+    const recoveries = tx.objectStore("recoveries");
+    let repository: LocalRepositoryMeta | undefined;
+    let recovery: LocalRepositoryRecovery | undefined;
+    let loaded = 0;
+    let validationError: Error | null = null;
+    const apply = () => {
+      loaded += 1;
+      if (loaded !== 3) return;
+      recovery = {
+        id: crypto.randomUUID(),
+        repoId: repoIdValue,
+        accountIdentity: scope.accountIdentity,
+        reason: recoveryReason ?? `Before remote tree replacement to ${remoteHeadSha}`,
+        createdAt: now,
+        repository: repository!,
+        files: expectedFiles,
+        commits: currentCommits,
+      };
+      recoveries.put(recovery);
+      repositories.put({ ...repository!, remoteHeadSha, remoteChanged: false, cloneComplete: true, expectedFileCount: prepared.length, updatedAt: now, lastFetchAt: now });
+      for (const file of prepared) files.put(file);
+    };
+    const repoRequest = repositories.get(repoIdValue);
+    repoRequest.onsuccess = () => {
+      repository = repoRequest.result as LocalRepositoryMeta | undefined;
+      try { repository = validateRepositoryOperation(repository, scope); } catch (error) {
+        validationError = error as Error;
+        tx.abort();
+        return;
+      }
+      if (!repository) {
+        validationError = new Error("Local repository is not ready.");
+        tx.abort();
+        return;
+      }
+      apply();
+    };
+    repoRequest.onerror = () => tx.abort();
+    const currentFilesRequest = files.index("repoId").getAll(repoIdValue);
+    currentFilesRequest.onsuccess = () => {
+      const current = currentFilesRequest.result as LocalRepositoryFile[];
+      if (!sameLocalFiles(expectedFiles, current)) {
+        validationError = new Error("The local working copy changed while the remote tree was downloading.");
+        tx.abort();
+        return;
+      }
+      if (requireClean && current.some((file) => file.status !== "clean" || file.committed)) {
+        validationError = new Error("Pull requires a clean working copy; a local edit appeared while the remote tree was downloading.");
+        tx.abort();
+        return;
+      }
+      for (const file of current) files.delete(file.key);
+      apply();
+    };
+    currentFilesRequest.onerror = () => tx.abort();
+    let currentCommits: LocalCommit[] = [];
+    const currentCommitsRequest = commits.index("repoId").getAll(repoIdValue);
+    currentCommitsRequest.onsuccess = () => {
+      const current = currentCommitsRequest.result as LocalCommit[];
+      currentCommits = current.filter((commit) => !commit.pushed);
+      const actualIds = current.filter((commit) => !commit.pushed).map((commit) => commit.id).sort();
+      const expectedIds = [...expectedCommitIds].sort();
+      if (actualIds.length !== expectedIds.length || actualIds.some((id, index) => id !== expectedIds[index])) {
+        validationError = new Error("Local commits changed while the remote tree was downloading.");
+        tx.abort();
+        return;
+      }
+      for (const commit of current) commits.delete(commit.id);
+      apply();
+    };
+    currentCommitsRequest.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve(recovery!);
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Remote tree replacement was aborted."));
+  });
+}
+
+export async function applyRemoteMergeAtomically(input: {
+  repoId: string;
+  scope: RepositoryOperationScope;
+  remoteHeadSha: string;
+  expectedFiles: LocalRepositoryFile[];
+  deletes: string[];
+  writes: RemoteTreeFile[];
+}): Promise<void> {
+  const now = new Date().toISOString();
+  const prepared = await Promise.all(input.writes.map(async (write): Promise<LocalRepositoryFile> => {
+    const currentHash = write.kind === "text" ? await sha256Text(write.text ?? "") : await hashBlob(write.blob ?? new Blob());
+    return {
+      key: fileKey(input.repoId, write.path), repoId: input.repoId, path: write.path, kind: write.kind,
+      text: write.text, blob: write.blob, baseSha: write.baseSha, baseHash: currentHash, currentHash,
+      status: "clean", committed: false, size: write.size, updatedAt: now,
+    };
+  }));
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(["repositories", "files"], "readwrite");
+    const repositories = tx.objectStore("repositories");
+    const files = tx.objectStore("files");
+    let validationError: Error | null = null;
+    let repository: LocalRepositoryMeta | undefined;
+    let currentFiles: LocalRepositoryFile[] | undefined;
+    const apply = () => {
+      if (!repository || !currentFiles) return;
+      if (!sameLocalFiles(input.expectedFiles, currentFiles)) {
+        validationError = new Error("The local working copy changed during repository sync.");
+        tx.abort();
+        return;
+      }
+      for (const path of input.deletes) files.delete(fileKey(input.repoId, path));
+      for (const file of prepared) files.put(file);
+      repositories.put({ ...repository, remoteHeadSha: input.remoteHeadSha, remoteChanged: false, updatedAt: now, lastFetchAt: now });
+    };
+    const repoRequest = repositories.get(input.repoId);
+    repoRequest.onsuccess = () => { try { repository = validateRepositoryOperation(repoRequest.result as LocalRepositoryMeta | undefined, input.scope); } catch (error) { validationError = error as Error; tx.abort(); return; } apply(); };
+    repoRequest.onerror = () => tx.abort();
+    const filesRequest = files.index("repoId").getAll(input.repoId);
+    filesRequest.onsuccess = () => { currentFiles = filesRequest.result as LocalRepositoryFile[]; apply(); };
+    filesRequest.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Repository merge transaction was aborted."));
+  });
+}
+
+export async function applyCloneRepairAtomically(input: {
+  repoId: string;
+  scope: RepositoryOperationScope;
+  repairOperationId: string;
+  expectedRemoteHeadSha: string;
+  expectedFiles: LocalRepositoryFile[];
+  writes: RemoteTreeFile[];
+  deletePaths: string[];
+  expectedFileCount: number;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  const prepared = await Promise.all(input.writes.map(async (write): Promise<LocalRepositoryFile> => {
+    const currentHash = write.kind === "text" ? await sha256Text(write.text ?? "") : await hashBlob(write.blob ?? new Blob());
+    return {
+      key: fileKey(input.repoId, write.path), repoId: input.repoId, path: write.path, kind: write.kind,
+      text: write.text, blob: write.blob, baseSha: write.baseSha, baseHash: currentHash, currentHash,
+      status: "clean", committed: false, size: write.size, updatedAt: now,
+    };
+  }));
+  const writePaths = new Set<string>();
+  for (const file of prepared) {
+    if (writePaths.has(file.path)) throw new Error(`Duplicate clone repair write: ${file.path}`);
+    writePaths.add(file.path);
+  }
+  if (input.deletePaths.some((path) => writePaths.has(path))) throw new Error("Clone repair cannot write and delete the same path.");
+
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(["repositories", "files"], "readwrite");
+    const repositories = tx.objectStore("repositories");
+    const files = tx.objectStore("files");
+    let repository: LocalRepositoryMeta | undefined;
+    let currentFiles: LocalRepositoryFile[] | undefined;
+    let validationError: Error | null = null;
+    const apply = () => {
+      if (!repository || !currentFiles) return;
+      if (repository.remoteHeadSha !== input.expectedRemoteHeadSha || repository.cloneComplete === true) {
+        validationError = new Error("The local repository state changed during clone repair.");
+        tx.abort();
+        return;
+      }
+      if (!sameLocalFiles(input.expectedFiles, currentFiles)) {
+        validationError = new Error("The local working copy changed during clone repair.");
+        tx.abort();
+        return;
+      }
+      for (const path of input.deletePaths) files.delete(fileKey(input.repoId, path));
+      for (const file of prepared) files.put(file);
+      repositories.put({ ...repository, cloneComplete: true, cloneStatus: "complete", expectedFileCount: input.expectedFileCount, repairOperationId: undefined, repairOperationGeneration: undefined, lastRepairOperationId: input.repairOperationId, operationLease: undefined, updatedAt: now });
+    };
+    const repoRequest = repositories.get(input.repoId);
+    repoRequest.onsuccess = () => {
+      try { repository = validateRepairOperation(repoRequest.result as LocalRepositoryMeta | undefined, input.scope, input.repairOperationId); } catch (error) { validationError = error as Error; tx.abort(); return; }
+      apply();
+    };
+    repoRequest.onerror = () => tx.abort();
+    const filesRequest = files.index("repoId").getAll(input.repoId);
+    filesRequest.onsuccess = () => { currentFiles = filesRequest.result as LocalRepositoryFile[]; apply(); };
+    filesRequest.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Clone repair transaction was aborted."));
+  });
+}
+
+export async function settleLocalSourceOverwriteAtomically(input: {
+  repoId: string;
+  scope: RepositoryOperationScope;
+  remoteHeadSha: string;
+  expectedFiles: LocalRepositoryFile[];
+  expectedCommitIds: string[];
+  pushedShas: Record<string, string>;
+}): Promise<LocalCommitSettlementResult> {
+  const db = await openDb();
+  return new Promise<LocalCommitSettlementResult>((resolve, reject) => {
+    const tx = db.transaction(["repositories", "files", "commits"], "readwrite");
+    const repositories = tx.objectStore("repositories");
+    const files = tx.objectStore("files");
+    const commits = tx.objectStore("commits");
+    const now = new Date().toISOString();
+    const skippedPaths: string[] = [];
+    let validationError: Error | null = null;
+    let repository: LocalRepositoryMeta | undefined;
+    let currentFiles: LocalRepositoryFile[] | undefined;
+    let loadedCommits = false;
+    const apply = () => {
+      if (!repository || !currentFiles || !loadedCommits) return;
+      const currentByPath = new Map(currentFiles.map((file) => [file.path, file]));
+      for (const expected of input.expectedFiles) {
+        const current = currentByPath.get(expected.path);
+        const unchanged = current && localFileVersion(current) === localFileVersion(expected);
+        const pushedSha = input.pushedShas[expected.path];
+        if (expected.status === "deleted") {
+          if (unchanged) files.delete(expected.key);
+          else if (current) {
+            skippedPaths.push(expected.path);
+            files.put({
+              ...current,
+              baseSha: undefined,
+              baseHash: undefined,
+              committed: current.committed,
+              status: current.committed ? current.status : current.status === "deleted" ? "deleted" : "new",
+              updatedAt: now,
+            });
+          }
+        } else if (pushedSha) {
+          if (unchanged) files.put({ ...current, baseSha: pushedSha, baseHash: expected.currentHash, committed: false, status: "clean", updatedAt: now });
+          else if (current) {
+            skippedPaths.push(expected.path);
+            files.put({
+              ...current,
+              baseSha: pushedSha,
+              baseHash: expected.currentHash,
+              committed: current.committed,
+              status: current.committed || current.currentHash === expected.currentHash ? "clean" : "modified",
+              updatedAt: now,
+            });
+          } else {
+            // The pushed path was deleted locally while the ref update was in flight.
+            // Keep that deletion relative to the newly pushed remote blob.
+            skippedPaths.push(expected.path);
+            files.put({
+              ...expected,
+              baseSha: pushedSha,
+              baseHash: expected.currentHash,
+              committed: false,
+              status: "deleted",
+              updatedAt: now,
+            });
+          }
+        }
+      }
+      repositories.put({ ...repository, remoteHeadSha: input.remoteHeadSha, remoteChanged: false, updatedAt: now, lastFetchAt: now });
+    };
+    const repoRequest = repositories.get(input.repoId);
+    repoRequest.onsuccess = () => { try { repository = validateRepositoryOperation(repoRequest.result as LocalRepositoryMeta | undefined, input.scope); } catch (error) { validationError = error as Error; tx.abort(); return; } apply(); };
+    repoRequest.onerror = () => tx.abort();
+    const filesRequest = files.index("repoId").getAll(input.repoId);
+    filesRequest.onsuccess = () => { currentFiles = filesRequest.result as LocalRepositoryFile[]; apply(); };
+    filesRequest.onerror = () => tx.abort();
+    const commitsRequest = commits.index("repoId").getAll(input.repoId);
+    commitsRequest.onsuccess = () => {
+      const expectedIds = new Set(input.expectedCommitIds);
+      for (const commit of commitsRequest.result as LocalCommit[]) if (expectedIds.has(commit.id)) commits.delete(commit.id);
+      loadedCommits = true;
+      apply();
+    };
+    commitsRequest.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve({ skippedPaths: [...new Set(skippedPaths)].sort() });
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local-source settlement was aborted."));
+  });
+}
+
+export async function markLocalCommitsPushed(repoIdValue: string, scope: RepositoryOperationScope, commitIds: string[], remoteHeadSha: string, pushedShas: Record<string, string | null>): Promise<LocalCommitSettlementResult> {
   const db = await openDb();
   return new Promise<LocalCommitSettlementResult>((resolve, reject) => {
     const tx = db.transaction(["repositories", "files", "commits"], "readwrite");
@@ -790,11 +1878,14 @@ export async function markLocalCommitsPushed(repoIdValue: string, commitIds: str
     const committedByPath = new Map<string, LocalCommitFile>();
     const commitsById = new Map<string, LocalCommit>();
     const skippedPaths: string[] = [];
+    let validationError: Error | null = null;
     let pendingCommits = commitIds.length;
     const repoReq = repoStore.get(repoIdValue);
     repoReq.onsuccess = () => {
-      const repo = repoReq.result as LocalRepositoryMeta | undefined;
-      if (repo) repoStore.put({ ...repo, remoteHeadSha, remoteChanged: false, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString() });
+      try {
+        const repo = validateRepositoryOperation(repoReq.result as LocalRepositoryMeta | undefined, scope);
+        repoStore.put({ ...repo, remoteHeadSha, remoteChanged: false, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString() });
+      } catch (error) { validationError = error as Error; tx.abort(); }
     };
 
     const settleFiles = () => {
@@ -828,43 +1919,68 @@ export async function markLocalCommitsPushed(repoIdValue: string, commitIds: str
       const req = commitStore.get(id);
       req.onsuccess = () => {
         const commit = req.result as LocalCommit | undefined;
-        if (commit) {
-          commitsById.set(id, commit);
-          commitStore.put({ ...commit, pushed: true, remoteCommitSha: remoteHeadSha });
+        if (!commit || commit.repoId !== repoIdValue) {
+          validationError = new RepositoryOwnershipChangedError("The local commit does not belong to the scoped repository.");
+          tx.abort();
+          return;
         }
+        commitsById.set(id, commit);
+        commitStore.put({ ...commit, pushed: true, remoteCommitSha: remoteHeadSha });
         pendingCommits -= 1;
         if (pendingCommits === 0) settleFiles();
       };
       req.onerror = () => tx.abort();
     }
     tx.oncomplete = () => resolve({ skippedPaths: [...new Set(skippedPaths)].sort() });
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error ?? new Error("Local push settlement transaction aborted."));
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local push settlement transaction aborted."));
   });
 }
 
-export async function updateLocalRepositoryHead(repoIdValue: string, remoteHeadSha: string): Promise<void> {
-  const repo = await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(repoIdValue));
-  if (!repo) return;
-  await txStore("repositories", "readwrite", (store) => store.put({ ...repo, remoteHeadSha, remoteChanged: false, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString() }));
+export async function updateLocalRepositoryHead(repoIdValue: string, scope: RepositoryOperationScope, remoteHeadSha: string): Promise<void> {
+  await updateLocalRepositoryMeta(repoIdValue, scope, (repo) => ({ ...repo, remoteHeadSha, remoteChanged: false, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString() }));
 }
 
-export async function markLocalRepositoryCloneComplete(repoIdValue: string, expectedFileCount: number, remoteHeadSha?: string): Promise<void> {
-  const repo = await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(repoIdValue));
-  if (!repo) return;
-  await txStore("repositories", "readwrite", (store) => store.put({
-    ...repo,
-    cloneComplete: true,
-    expectedFileCount,
-    ...(remoteHeadSha ? { remoteHeadSha } : {}),
-    updatedAt: new Date().toISOString(),
-  }));
+export async function markLocalRepositoryCloneComplete(repoIdValue: string, scope: RepositoryOperationScope, cloneOperationId: string, expectedFileCount: number, remoteHeadSha?: string): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readwrite");
+    const store = tx.objectStore("repositories");
+    let validationError: Error | null = null;
+    const request = store.get(repoIdValue);
+    request.onsuccess = () => {
+      try {
+        const repo = validateCloneOperation(request.result as LocalRepositoryMeta | undefined, scope, cloneOperationId);
+        store.put({ ...repo, cloneComplete: true, cloneStatus: "complete", cloneOperationId: undefined, cloneOperationGeneration: undefined, lastCloneOperationId: cloneOperationId, operationLease: undefined, expectedFileCount, ...(remoteHeadSha ? { remoteHeadSha } : {}), updatedAt: new Date().toISOString() });
+      } catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local clone completion was aborted."));
+  });
 }
 
-export async function markLocalRepositoryRemoteCheck(repoIdValue: string, remoteHeadSha: string, changed: boolean): Promise<void> {
-  const repo = await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(repoIdValue));
-  if (!repo) return;
-  await txStore("repositories", "readwrite", (store) => store.put({ ...repo, remoteChanged: changed, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString(), ...(changed ? {} : { remoteHeadSha }) }));
+export async function markLocalRepositoryRemoteCheck(repoIdValue: string, scope: RepositoryOperationScope, remoteHeadSha: string, changed: boolean): Promise<void> {
+  await updateLocalRepositoryMeta(repoIdValue, scope, (repo) => ({ ...repo, remoteChanged: changed, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString(), ...(changed ? {} : { remoteHeadSha }) }));
+}
+
+async function updateLocalRepositoryMeta(repoIdValue: string, scope: RepositoryOperationScope, update: (repository: LocalRepositoryMeta) => LocalRepositoryMeta): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readwrite");
+    const store = tx.objectStore("repositories");
+    let validationError: Error | null = null;
+    const request = store.get(repoIdValue);
+    request.onsuccess = () => {
+      try { store.put(update(validateRepositoryOperation(request.result as LocalRepositoryMeta | undefined, scope))); }
+      catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local repository metadata transaction aborted."));
+  });
 }
 
 function splitFrontmatter(raw: string): Record<string, unknown> {
@@ -975,6 +2091,7 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
         number: num,
         title: titleName(p, slugToTitle(filename.replace(/\.md$/, ""))),
         path: p,
+        revision: files.find((file) => file.path === p)?.currentHash,
         draftPath: draftPaths.get(p),
         scriptPath: scriptPaths.get(p),
         evaluationPath: allPaths.includes(evaluationPath) ? evaluationPath : undefined,

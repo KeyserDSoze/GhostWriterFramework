@@ -127,9 +127,9 @@ function NodeCard({
         <GripVertical className="h-4 w-4 text-muted-foreground/40" />
         <span className={container ? "rounded bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary" : "rounded bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"}>{t(`script.type.${node.kind}`)}</span>
         <div className="ml-auto flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="h-7 w-7" disabled={first} onClick={onUp}><ChevronUp className="h-4 w-4" /></Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" disabled={last} onClick={onDown}><ChevronDown className="h-4 w-4" /></Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onRemove}><Trash2 className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" disabled={first} onClick={onUp} aria-label={t("script.moveUp")}><ChevronUp className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" disabled={last} onClick={onDown} aria-label={t("script.moveDown")}><ChevronDown className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onRemove} aria-label={t("script.deleteBlock")}><Trash2 className="h-4 w-4" /></Button>
         </div>
       </div>
 

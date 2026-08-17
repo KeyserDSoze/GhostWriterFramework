@@ -71,6 +71,12 @@ describe("task routing settings", () => {
     expect(migrated.taskRouting?.image).toBeUndefined();
     expect(migrated.taskRouting?.tts?.primary).toEqual({ integrationId: BROWSER_ROUTING_ID, model: "browser" });
   });
+
+  it("rejects explicit chat routes without a matching task capability", () => {
+    const ai = integration("ai", [{ id: "chat", name: "chat", capabilities: ["review"] }]);
+    const configured = settings([ai], { taskRouting: { copilot: { primary: { integrationId: "ai", model: "chat" }, fallbacks: [] } } });
+    expect(resolveTaskCandidates(configured, "copilot")).toEqual([]);
+  });
 });
 
 describe("routed tool execution", () => {
@@ -97,6 +103,23 @@ describe("routed tool execution", () => {
     expect(result.metadata).toMatchObject({ integrationId: "fallback", requestId: "fallback", cost: 0.42, inputTokens: 12, routeCandidateIndex: 1, usedFallback: true });
     expect(run.mock.calls[0][6]).toMatchObject({ routeCandidateIndex: 0, usedFallback: false });
     expect(run.mock.calls[1][6]).toMatchObject({ routeCandidateIndex: 1, usedFallback: true });
+  });
+
+  it("falls back when candidate-level text validation rejects malformed structured output", async () => {
+    const primary = integration("primary", [{ id: "p", name: "primary", capabilities: ["default"] }]);
+    const fallback = integration("fallback", [{ id: "f", name: "fallback", capabilities: ["default"] }]);
+    vi.spyOn(llm, "completeText").mockResolvedValueOnce("not json").mockResolvedValueOnce('{"title":"Valid"}');
+    const configured = settings([primary, fallback], { taskRouting: { default: { primary: { integrationId: "primary", model: "primary" }, fallbacks: [{ integrationId: "fallback", model: "fallback" }] } } });
+    await expect(completeTextRouted(configured, [{ role: "user", content: "create" }], "default", { accountScope: null, validateText: (text) => { JSON.parse(text); } })).resolves.toBe('{"title":"Valid"}');
+  });
+
+  it("filters forced-tool-incompatible candidates and caps route length", async () => {
+    const integrations = Array.from({ length: 6 }, (_, index) => ({ ...integration(`ai-${index}`, [{ id: `m-${index}`, name: `model-${index}`, capabilities: ["review"] }]), chatModels: [{ id: `m-${index}`, name: `model-${index}`, capabilities: ["review" as const], supportsToolCalls: index !== 0 }] }));
+    const configured = settings(integrations, { routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxCandidates: 3 }, taskRouting: { review: { primary: { integrationId: "ai-0", model: "model-0" }, fallbacks: integrations.slice(1).map((entry, index) => ({ integrationId: entry.id, model: `model-${index + 1}` })) } } });
+    expect(resolveTaskCandidates(configured, "review")).toHaveLength(3);
+    const run = vi.spyOn(llm, "completeToolWith").mockResolvedValue({ output: { ok: true }, metadata: { requestId: "ok", task: "review", provider: "openai", integrationId: "ai-1", model: "model-1", inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 } });
+    await completeToolRouted(configured, [{ role: "user", content: "x" }], "review", { name: "x", description: "x", parameters: {} }, { accountScope: null });
+    expect(run.mock.calls[0][0].id).toBe("ai-1");
   });
 
   it("falls back on provider AbortError and distinguishes an entirely stale route", async () => {

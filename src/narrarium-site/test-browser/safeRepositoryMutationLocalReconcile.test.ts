@@ -1,4 +1,5 @@
 import "fake-indexeddb/auto";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { afterEach, expect, test, vi } from "vitest";
 
 const repository = vi.hoisted(() => ({ pushLocalCommits: vi.fn() }));
@@ -12,16 +13,19 @@ vi.mock("@/repository/repositoryService", async (importOriginal) => ({
 import { getLocalFile, listUnpushedLocalCommits, putCleanLocalFile, putLocalRepository, removeLocalRepository } from "@/repository/localRepository";
 import { AmbiguousLocalPushError } from "@/repository/repositoryService";
 import { commitAndPushTextFileMutation, RepositoryConflictError } from "@/repository/safeRepositoryMutation";
+import { useAuthStore } from "@/store/authStore";
+
+useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
 
 let repoId = "";
 afterEach(async () => {
   vi.clearAllMocks();
-  if (repoId) await removeLocalRepository(repoId);
+  if (repoId) await removeLocalRepository(repoId, captureRepositoryOperationScope());
   repoId = "";
 });
 
 async function setup() {
-  const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "main", defaultBranch: "main", remoteHeadSha: "source", clonedAt: new Date().toISOString(), cloneComplete: true });
+  const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "main", defaultBranch: "main", remoteHeadSha: "source", clonedAt: new Date().toISOString(), cloneComplete: true }, captureRepositoryOperationScope());
   repoId = repo.id;
   const file = await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "old", baseSha: "old-blob", size: 3 });
   repository.pushLocalCommits.mockRejectedValue(new AmbiguousLocalPushError("ambiguous", "generated", new Error("network")));

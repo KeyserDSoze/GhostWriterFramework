@@ -129,6 +129,13 @@ export function sameOperationIdentity(left: FeedbackRewriteOperationIdentity | n
     && left.ownerRequestId === right.ownerRequestId);
 }
 
+export function isFeedbackWorkflowRequestCurrent(input: { requestId: number; ownerSessionId: string; ownerRequestId: string }): boolean {
+  const state = useFeedbackRewriteWorkflowStore.getState();
+  return state.requestId === input.requestId
+    && state.intent?.ownerSessionId === input.ownerSessionId
+    && state.intent?.ownerRequestId === input.ownerRequestId;
+}
+
 export function openFeedbackRewriteWorkflow(intent: FeedbackRewriteIntent): void {
   useFeedbackRewriteWorkflowStore.getState().openWorkflow(intent);
 }

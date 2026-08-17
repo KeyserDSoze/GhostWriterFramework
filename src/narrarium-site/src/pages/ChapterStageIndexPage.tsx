@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, FileEdit, FileText, Network, Wand2 } from "lucide-react";
@@ -11,7 +11,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { resolveBookToken } from "@/types/settings";
-import { createOrUpdateTextFile, loadFileContent } from "@/github/githubClient";
+import { isGitHubFileNotFoundError, loadFileContent, mutateTextFilesAtomically, readFileWithSha } from "@/github/githubClient";
 import { stringify } from "yaml";
 import { GeneratePreviewDialog } from "@/components/book/GeneratePreviewDialog";
 import { proseToScript, refineProse, scriptToProse, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
@@ -39,6 +39,7 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
   const [genLoading, setGenLoading] = useState(false);
   const [genGw, setGenGw] = useState("");
   const [genPara, setGenPara] = useState<string>("");
+  const genTargetHashRef = useRef<string | null>(null);
 
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   if (loading && !structure) {
@@ -52,8 +53,18 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
 
   function paraSlugOf(path: string) { return (path.split("/").pop() ?? "").replace(/\.md$/i, ""); }
 
-  function startGen(kind: GenKind, _paraNumber: string, paraSlug: string) {
+  async function startGen(kind: GenKind, _paraNumber: string, paraSlug: string) {
     // Open the preview empty; generation only starts when the user clicks Generate.
+    const chapterRef = chapter!;
+    const bookRef = book!;
+    const targetPath = kind === "script" ? `scripts/${chapterRef.slug}/${paraSlug}.md` : kind === "draft" ? `drafts/${chapterRef.slug}/${paraSlug}.md` : `${chapterRef.path}/${paraSlug}.md`;
+    try {
+      const hash = await sha256Text((await readFileWithSha(token, bookRef.owner, bookRef.repo, branch, targetPath)).content);
+      genTargetHashRef.current = hash;
+    } catch (error) {
+      if (!isGitHubFileNotFoundError(error)) { toast({ title: t("workspace.loadFailed"), description: String(error), variant: "destructive" }); return; }
+      genTargetHashRef.current = null;
+    }
     setGenKind(kind); setGenPara(paraSlug); setGenGw(""); setGenText(""); setGenOpen(true); setGenLoading(false);
   }
 
@@ -102,11 +113,10 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
     const content = `---\n${stringify(fm).trim()}\n---\n\n${genText.trim()}\n`;
     try {
       if (genKind === "script") {
-        const previous = await loadFileContent(token, book!.owner, book!.repo, path, branch).catch(() => null);
-        const result = await commitCanonicalScriptMutation({ token, book: book!, branch, message: `Generate ${path}`, mutations: [{ path, content, expectedCurrentHash: previous === null ? null : await sha256Text(previous) }] });
+        const result = await commitCanonicalScriptMutation({ token, book: book!, branch, message: `Generate ${path}`, mutations: [{ path, content, expectedCurrentHash: genTargetHashRef.current }] });
         toast({ title: result.changed ? t("pipeline.created", { path }) : t("common.saved"), description: result.warningCount ? result.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") : undefined });
       } else {
-        await createOrUpdateTextFile(token, book!.owner, book!.repo, branch, path, content, `Generate ${path}`);
+        await mutateTextFilesAtomically(token, book!.owner, book!.repo, branch, [{ path, content, expectedCurrentHash: genTargetHashRef.current }], `Generate ${path}`);
         toast({ title: t("pipeline.created", { path }) });
       }
       setGenOpen(false);

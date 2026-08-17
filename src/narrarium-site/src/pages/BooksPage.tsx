@@ -34,11 +34,17 @@ export function BooksPage() {
 
   async function confirmDelete() {
     if (!toDelete) return;
+    const previousBooks = settings.books;
     setDeleting(true);
-    patchSettings({ books: settings.books.filter((b) => b.id !== toDelete.id) });
-    await save();
-    setDeleting(false);
-    setToDelete(null);
+    patchSettings({ books: previousBooks.filter((b) => b.id !== toDelete.id) });
+    try {
+      await save();
+      setToDelete(null);
+    } catch {
+      patchSettings({ books: previousBooks });
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (

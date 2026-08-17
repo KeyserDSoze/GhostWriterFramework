@@ -17,6 +17,7 @@ import { canonSectionMeta, CANON_SECTION_ORDER, type CanonSection } from "@/lib/
 import { resolveBookExportSettings, resolveBookToken, type BookEntry, type BookExportSettings, type ReaderBookmark, type ReaderSettings } from "@/types/settings";
 import type { BookFile, BookStructure, Chapter, Paragraph } from "@/types/book";
 import { paragraphSeparator, presentMetadata, type PresentedMetadata } from "@/export/metadataPresentation";
+import { isApprovedRepositoryAssetPath, renderRepositoryMarkdownHtml } from "@/markdown/safeMarkdown";
 
 const PAGE_GAP = 32;
 
@@ -92,6 +93,7 @@ export function ReaderPreviewPage() {
   const presentationSettings = useMemo(() => (book ? resolveBookExportSettings(book) : null), [book]);
   const token = book ? resolveBookToken(book, settings) : "";
   const [readerBook, setReaderBook] = useState<ReaderBook | null>(null);
+  const [readerLoadError, setReaderLoadError] = useState("");
   const [busy, setBusy] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCount, setPageCount] = useState(1);
@@ -105,6 +107,7 @@ export function ReaderPreviewPage() {
   const flowRef = useRef<HTMLElement | null>(null);
   const pendingPositionRef = useRef<LogicalPosition | null>(null);
   const entityImageUrlsRef = useRef<string[]>([]);
+  const entityRequestRef = useRef(0);
 
   const entities = useMemo(() => collectEntities(structure), [structure]);
   const bookBookmarks = useMemo(
@@ -116,6 +119,8 @@ export function ReaderPreviewPage() {
     if (!book || !structure || !token) return;
     let active = true;
     const objectUrls: string[] = [];
+    setReaderBook(null);
+    setReaderLoadError("");
     setBusy(true);
     void loadReaderBook({
       book,
@@ -134,7 +139,10 @@ export function ReaderPreviewPage() {
         }
       })
       .catch((err) => {
-        if (active) toast({ title: t("reader.loadFailed"), description: String(err), variant: "destructive" });
+        if (active) {
+          setReaderLoadError(String(err));
+          toast({ title: t("reader.loadFailed"), description: String(err), variant: "destructive" });
+        }
       })
       .finally(() => { if (active) setBusy(false); });
     return () => {
@@ -237,7 +245,7 @@ export function ReaderPreviewPage() {
   function patchReaderSettings(patch: Partial<ReaderSettings>) {
     pendingPositionRef.current = resolveCurrentPosition() ?? currentPosition;
     patchSettings({ reader: { ...settings.reader, ...patch } });
-    void save();
+    void save().catch(() => undefined);
   }
 
   function setReaderFullScreen(enabled: boolean) {
@@ -299,27 +307,31 @@ export function ReaderPreviewPage() {
       createdAt: new Date().toISOString(),
     };
     patchSettings({ reader: { ...settings.reader, bookmarks: [bookmark, ...settings.reader.bookmarks] } });
-    void save();
+    void save().catch(() => undefined);
     toast({ title: t("reader.bookmarkAdded") });
   }
 
   function deleteBookmark(id: string) {
+    if (!window.confirm(t("reader.deleteBookmarkConfirm"))) return;
     patchSettings({ reader: { ...settings.reader, bookmarks: settings.reader.bookmarks.filter((entry) => entry.id !== id) } });
-    void save();
+    void save().catch(() => undefined);
   }
 
   async function openEntity(entity: ReaderEntity) {
     if (!book || !token) return;
+    const request = ++entityRequestRef.current;
     setEntityDetails(null);
     setEntityError("");
     setEntityLoading(true);
     try {
       const details = await loadEntityDetails({ entity, book, token, branch, objectUrls: entityImageUrlsRef.current });
+      if (request !== entityRequestRef.current) return;
       setEntityDetails(details);
     } catch (err) {
+      if (request !== entityRequestRef.current) return;
       setEntityError(String(err));
     } finally {
-      setEntityLoading(false);
+      if (request === entityRequestRef.current) setEntityLoading(false);
     }
   }
 
@@ -345,20 +357,20 @@ export function ReaderPreviewPage() {
           <Button variant="outline" size="sm" onClick={addBookmark}><BookmarkPlus className="mr-1 h-4 w-4" />{t("reader.addBookmark")}</Button>
           <Button variant="outline" size="sm" onClick={() => setBookmarksOpen(true)}><Bookmark className="mr-1 h-4 w-4" />{bookBookmarks.length}</Button>
           <Button asChild variant="outline" size="sm"><Link to="/app/reader-settings" state={{ returnTo: `/app/books/${book.id}/reader` }}><Settings className="mr-1 h-4 w-4" />{t("reader.settingsTitle")}</Link></Button>
-          <Button variant="outline" size="icon" title={readerSettings.showImages ? t("reader.hideImages") : t("reader.showImages")} onClick={() => patchReaderSettings({ showImages: !readerSettings.showImages })}>
+          <Button variant="outline" size="icon" title={readerSettings.showImages ? t("reader.hideImages") : t("reader.showImages")} aria-label={readerSettings.showImages ? t("reader.hideImages") : t("reader.showImages")} onClick={() => patchReaderSettings({ showImages: !readerSettings.showImages })}>
             {readerSettings.showImages ? <ImageIcon className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
           </Button>
-          <Button variant="outline" size="icon" title={readerSettings.showRichEntityLinks ? t("reader.hideEntityLinks") : t("reader.showEntityLinks")} onClick={() => patchReaderSettings({ showRichEntityLinks: !readerSettings.showRichEntityLinks })}>
+          <Button variant="outline" size="icon" title={readerSettings.showRichEntityLinks ? t("reader.hideEntityLinks") : t("reader.showEntityLinks")} aria-label={readerSettings.showRichEntityLinks ? t("reader.hideEntityLinks") : t("reader.showEntityLinks")} onClick={() => patchReaderSettings({ showRichEntityLinks: !readerSettings.showRichEntityLinks })}>
             {readerSettings.showRichEntityLinks ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
           </Button>
-          <Button variant="outline" size="icon" title={t("reader.fullscreen")} onClick={() => setReaderFullScreen(true)}>
+          <Button variant="outline" size="icon" title={t("reader.fullscreen")} aria-label={t("reader.fullscreen")} onClick={() => setReaderFullScreen(true)}>
             <Maximize2 className="h-4 w-4" />
           </Button>
         </div>
       </div>}
 
       <div className={fullScreen ? "min-h-0 flex-1 bg-card text-card-foreground" : "min-h-0 flex-1 rounded-[2rem] border bg-card p-2 text-card-foreground shadow-sm sm:p-3"}>
-        {busy || !readerBook ? <ReaderSkeleton /> : (
+        {readerLoadError ? <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{readerLoadError}</AlertDescription></Alert> : busy || !readerBook ? <ReaderSkeleton /> : (
           <div className="flex h-full min-h-0 flex-col">
             <div
               className={fullScreen ? "relative min-h-0 flex-1 cursor-pointer overflow-hidden bg-background" : "relative min-h-0 flex-1 cursor-pointer overflow-hidden rounded-[2rem] border bg-background/70 shadow-inner"}
@@ -458,7 +470,7 @@ export function ReaderPreviewPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={entityLoading || Boolean(entityDetails) || Boolean(entityError)} onOpenChange={(open) => { if (!open) { setEntityDetails(null); setEntityError(""); setEntityLoading(false); } }}>
+      <Dialog open={entityLoading || Boolean(entityDetails) || Boolean(entityError)} onOpenChange={(open) => { if (!open) { entityRequestRef.current += 1; setEntityDetails(null); setEntityError(""); setEntityLoading(false); } }}>
         <DialogContent className="z-[120] max-h-[88dvh] overflow-auto sm:max-w-3xl">
           {entityLoading ? (
             <ReaderSkeleton />
@@ -553,25 +565,23 @@ async function loadReaderBook(input: {
   entities: ReaderEntity[];
   objectUrls: string[];
 }): Promise<ReaderBook> {
-  const { marked } = await import("marked");
-  const rawBook = await loadFileContent(input.token, input.book.owner, input.book.repo, "book.md", input.branch).catch(() => "");
+  const rawBook = await loadFileContent(input.token, input.book.owner, input.book.repo, "book.md", input.branch);
   const bookDoc = splitMarkdown(rawBook);
   const cover = input.structure.bookCoverPath
     ? await loadImageUrl(input, input.structure.bookCoverPath, input.structure.title).catch(() => undefined)
     : undefined;
   const chapters = await Promise.all(input.structure.chapters.map(async (chapter) => {
     const chapterPath = `${chapter.path}/chapter.md`;
-    const rawChapter = await loadFileContent(input.token, input.book.owner, input.book.repo, chapterPath, input.branch).catch(() => "");
+    const rawChapter = await loadFileContent(input.token, input.book.owner, input.book.repo, chapterPath, input.branch);
     const chapterDoc = splitMarkdown(rawChapter);
     const paragraphs = await Promise.all(chapter.paragraphs.map(async (paragraph) => {
-      const rawParagraph = await loadFileContent(input.token, input.book.owner, input.book.repo, paragraph.path, input.branch).catch(() => "");
+      const rawParagraph = await loadFileContent(input.token, input.book.owner, input.book.repo, paragraph.path, input.branch);
       const paragraphDoc = splitMarkdown(rawParagraph);
       const rendered = await renderReaderMarkdown({
         rawBody: paragraphDoc.body,
         filePath: paragraph.path,
         fallbackAlt: paragraph.title,
         input,
-        marked,
       });
       const structureImage = input.readerSettings.showImages && paragraph.imagePath ? await loadImageUrl(input, paragraph.imagePath, paragraph.title).catch(() => undefined) : undefined;
       return {
@@ -609,11 +619,10 @@ async function renderReaderMarkdown(input: {
     entities: ReaderEntity[];
     objectUrls: string[];
   };
-  marked: typeof import("marked")["marked"];
 }): Promise<{ html: string; text: string; images: ReaderImage[] }> {
   const extracted = extractMarkdownImages(input.rawBody, input.filePath);
   const readerBody = normalizeReaderLineBreaks(extracted.body, input.input.readerSettings.lineBreakMode);
-  const html = input.marked.parse(readerBody, { async: false }) as string;
+  const html = renderRepositoryMarkdownHtml(readerBody);
   const linkedHtml = input.input.readerSettings.showRichEntityLinks ? linkEntityHtml(html, input.input.entities) : html;
   const images = input.input.readerSettings.showImages
     ? (await Promise.all(extracted.images.map((image) => loadImageUrl(input.input, image.path, image.alt || input.fallbackAlt).catch(() => undefined)))).filter(Boolean) as ReaderImage[]
@@ -664,13 +673,12 @@ function isDialogueParagraph(text: string): boolean {
 }
 
 async function loadEntityDetails(input: { entity: ReaderEntity; book: BookEntry; token: string; branch: string; objectUrls: string[] }): Promise<EntityDetails> {
-  const { marked } = await import("marked");
   const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, input.entity.path, input.branch);
   const parts = splitMarkdown(raw);
   const imageUrl = input.entity.imagePath ? (await loadImageUrl(input, input.entity.imagePath, input.entity.name).catch(() => undefined))?.url : undefined;
   return {
     entity: input.entity,
-    html: marked.parse(parts.body, { async: false }) as string,
+    html: renderRepositoryMarkdownHtml(parts.body),
     frontmatterEntries: frontmatterEntries(parts.frontmatterRecord),
     imageUrl,
   };
@@ -692,7 +700,7 @@ function splitMarkdown(raw: string): MarkdownParts {
 function extractMarkdownImages(body: string, filePath: string): { body: string; images: Array<{ path: string; alt: string }> } {
   const images: Array<{ path: string; alt: string }> = [];
   const cleaned = body.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_full, alt: string, src: string) => {
-    images.push({ path: resolveMarkdownAssetPath(src, filePath), alt });
+    if (isApprovedRepositoryAssetPath(src)) images.push({ path: resolveMarkdownAssetPath(src, filePath), alt });
     return "";
   });
   return { body: cleaned, images };
@@ -766,7 +774,7 @@ function linkEntityHtml(html: string, entities: ReaderEntity[]): string {
 }
 
 async function loadImageUrl(input: { token: string; book?: BookEntry; owner?: string; repo?: string; branch: string; objectUrls: string[] }, path: string, alt: string): Promise<ReaderImage | undefined> {
-  if (/^(https?:|data:|blob:)/i.test(path)) return { url: path, alt, path };
+  if (!isApprovedRepositoryAssetPath(path)) return undefined;
   const owner = input.owner ?? input.book?.owner;
   const repo = input.repo ?? input.book?.repo;
   if (!owner || !repo) return undefined;
@@ -779,7 +787,6 @@ async function loadImageUrl(input: { token: string; book?: BookEntry; owner?: st
 
 function resolveMarkdownAssetPath(src: string, filePath: string): string {
   const clean = src.replace(/^['"]|['"]$/g, "");
-  if (/^(https?:|data:|blob:)/i.test(clean)) return clean;
   if (!clean.startsWith(".")) return clean.replace(/^\/+/, "");
   const parts = filePath.split("/").slice(0, -1);
   for (const part of clean.split("/")) {

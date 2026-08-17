@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import "fake-indexeddb/auto";
+import { describe, expect, it, vi } from "vitest";
 import { assistantSegmentSha256, verifyAssistantSegment } from "@/assistant/chatSegments";
 import { parseAssistantSessionJson, serializeAssistantSession } from "@/assistant/sessionSchema";
 import { createEmptyAssistantSession, type AssistantLosslessSegment } from "@/assistant/store";
+import { attachAssistantSessionCloudHandle } from "@/assistant/sessionAutosave";
 import { deleteAssistantSession, hydrateAssistantSessionArchive, maintainAssistantSessionSegments, saveAssistantSession } from "@/assistant/chatCloud";
 import { resetGoogleAppFolderCacheForTests } from "@/drive/googleAppFolder";
 
@@ -18,6 +20,13 @@ async function segmentedSession() {
 }
 
 describe("assistant cloud segment provider contract", () => {
+  it("clears only segments acknowledged by the saved snapshot", async () => {
+    const saved = await segmentedSession();
+    const newer = { ...saved.losslessSegments![0], id: "segment-2", messages: [{ id: "new-message", role: "assistant" as const, text: "new" }] };
+    const current = { ...saved, losslessSegments: [...saved.losslessSegments!, newer] };
+    expect(attachAssistantSessionCloudHandle(current, saved, { fileId: "file", revision: "r2" })?.losslessSegments?.map((segment) => segment.id)).toEqual(["segment-2"]);
+  });
+
   it("keeps the primary manifest bounded independently of segment payload growth", async () => {
     const session = await segmentedSession();
     session.losslessSegments![0].attachments[0].textContent = "x".repeat(900_000);
@@ -50,6 +59,29 @@ describe("assistant cloud segment provider contract", () => {
     globalThis.fetch = async () => { requests += 1; throw new Error("unexpected provider write"); };
     await expect(saveAssistantSession("google", "token", session, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
     expect(requests).toBe(0);
+    globalThis.fetch = original;
+  });
+
+  it("persists every retained OneDrive segment on an existing chat retry", async () => {
+    const session = await segmentedSession();
+    const first = session.losslessSegments![0];
+    const second = { ...first, id: "segment-2", previous: session.losslessArchive!.head, createdAt: "2026-08-16T10:01:00.000Z", messages: [{ id: "old-message-2", role: "assistant" as const, text: "second" }], attachments: [] };
+    const secondHead = { id: second.id, sha256: await assistantSegmentSha256(second) };
+    const existing = { ...session, fileId: "primary", revision: "r1", losslessSegments: [first, second], losslessArchive: { ...session.losslessArchive!, head: secondHead, segmentCount: 2, messageCount: 2, attachmentCount: 1, actionCount: 1 } };
+    const putSegments: string[] = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = async (url, init: RequestInit = {}) => {
+      const value = String(url);
+      if (!init.method && value.includes("graph.microsoft.com") && !value.includes("/content") && !value.includes("?$select=")) return new Response(JSON.stringify({ folder: {} }), { status: 200 });
+      if (init.method === "PUT" && value.includes("chat-segments")) { putSegments.push(value); return new Response(JSON.stringify({ id: value }), { status: 200 }); }
+      if (init.method === "PUT" && value.endsWith("/items/primary/content")) return new Response(JSON.stringify({ id: "primary", eTag: "r2" }), { status: 200, headers: { ETag: "r2" } });
+      if (init.method === "PATCH" && value.endsWith("/items/primary")) return new Response(JSON.stringify({ eTag: "r3" }), { status: 200, headers: { ETag: "r3" } });
+      if (!init.method && value.includes("chat-segments") && value.endsWith(":/content")) return new Response(value.includes("segment-2") ? JSON.stringify(second) : JSON.stringify(first), { status: 200 });
+      throw new Error(`Unexpected request: ${init.method ?? "GET"} ${value}`);
+    };
+    await saveAssistantSession("microsoft", "all-segments-token", existing);
+    expect(putSegments.some((url) => url.includes("segment-1"))).toBe(true);
+    expect(putSegments.some((url) => url.includes("segment-2"))).toBe(true);
     globalThis.fetch = original;
   });
 
@@ -198,7 +230,7 @@ describe("assistant cloud segment provider contract", () => {
       throw new Error("save provider request reached test sentinel");
     };
     const maintenance = maintainAssistantSessionSegments("microsoft", "lease-race-token");
-    while (!parentDeleteStarted) await Promise.resolve();
+    await vi.waitFor(() => expect(parentDeleteStarted).toBe(true));
     const save = saveAssistantSession("microsoft", "lease-race-token", await segmentedSession()).catch((error) => error);
     await Promise.resolve();
     await Promise.resolve();

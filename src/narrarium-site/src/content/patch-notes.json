@@ -1,5 +1,35 @@
 [
   {
+    "version": "0.76.38",
+    "date": "2026-08-17",
+    "en": {
+      "title": "Safer accounts, repositories, and editing",
+      "summary": "This release strengthens account isolation, recoverable cloud deletion, repository synchronization, editor persistence, offline settings, and safe rendering across Narrarium.",
+      "changes": [
+        "Bound Google and Microsoft data to immutable provider account identities, quarantined unverifiable legacy data, and prevented account switches from completing stale local or cloud operations.",
+        "Made cloud deletion resumable and idempotent across crashes and tabs with durable progress, fenced ownership, safe retries, explicit reconnect, and verified Google Drive and OneDrive targets.",
+        "Serialized clone, pull, push, repair, recovery, and rewrite operations with account-scoped leases, revision checks, atomic settlement, and recoverable interrupted clone lifecycles.",
+        "Protected chapter, paragraph, persona, audit, and workspace edits from stale revisions or accidental navigation, while making split, merge, reorder, generation, and multi-file changes atomic.",
+        "Added offline-safe settings replacement and non-secret caching, disabled credential and endpoint changes offline, and reconciled trusted cloud settings only for the active account generation.",
+        "Sanitized repository Markdown and EPUB output, blocked external reader resources, improved PDF pagination, and added clearer accessible confirmations, status messages, and voice controls.",
+        "Hardened Copilot dispatch, explicit targets, secret context, imported actions, pull-request reconciliation, fallback budgets, autosave retention, cancellation, speech deadlines, and confirmed mutation ownership."
+      ]
+    },
+    "it": {
+      "title": "Account, repository ed editing piu sicuri",
+      "summary": "Questa release rafforza isolamento degli account, cancellazione cloud recuperabile, sincronizzazione repository, persistenza dell'editor, impostazioni offline e rendering sicuro in Narrarium.",
+      "changes": [
+        "Associati i dati Google e Microsoft a identita account immutabili del provider, messi in quarantena i dati legacy non verificabili e impedito ai cambi account di completare operazioni locali o cloud obsolete.",
+        "Resa la cancellazione cloud ripristinabile e idempotente dopo crash e tra tab, con avanzamento durable, ownership protetta da fence, retry sicuri, riconnessione esplicita e target Google Drive e OneDrive verificati.",
+        "Serializzate le operazioni di clone, pull, push, repair, recovery e rewrite con lease account-scoped, controlli revisione, settlement atomico e lifecycle recuperabile per clone interrotti.",
+        "Protette le modifiche a capitoli, paragrafi, persona, audit e workspace da revisioni stale o navigazione accidentale, rendendo atomiche split, merge, reorder, generazione e modifiche multi-file.",
+        "Aggiunti replacement delle impostazioni sicuro offline e cache senza segreti, disabilitate offline le modifiche a credenziali ed endpoint e riconciliate le impostazioni cloud affidabili solo per la generazione account attiva.",
+        "Sanificati Markdown repository ed export EPUB, bloccate le risorse esterne nel reader, migliorata la paginazione PDF e aggiunte conferme, notifiche di stato e controlli vocali piu accessibili.",
+        "Rafforzati dispatch Copilota, target espliciti, contesto secret, action importate, riconciliazione pull request, budget fallback, retention autosave, cancellazione, deadline vocali e ownership delle mutazioni confermate."
+      ]
+    }
+  },
+  {
     "version": "0.76.37",
     "date": "2026-08-16",
     "en": {

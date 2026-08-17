@@ -94,6 +94,10 @@ export function integrationChatModels(integration: AIIntegration): ChatModel[] {
   return models;
 }
 
+export function modelSupportsCapability(model: ChatModel, capability: ChatCapability): boolean {
+  return model.capabilities?.includes(capability) || model.capabilities?.includes("default");
+}
+
 /** Pick the model inside one integration that serves a capability (or its default fallback). */
 function pickModelInIntegration(integration: AIIntegration, capability: ChatCapability): ChatModel | null {
   const models = integrationChatModels(integration);
@@ -101,7 +105,6 @@ function pickModelInIntegration(integration: AIIntegration, capability: ChatCapa
   return (
     models.find((m) => m.capabilities?.includes(capability)) ??
     models.find((m) => m.capabilities?.includes("default")) ??
-    models[0] ??
     null
   );
 }

@@ -1,6 +1,9 @@
 import { Octokit } from "@octokit/rest";
 import { BookStructure, Chapter, Paragraph, BookFile, ResearchFile } from "@/types/book";
-import { applyLocalFileChangesAtomically, deleteLocalFile, getLocalFile, getLocalRepository, listLocalFiles, mutateLocalTextFilesAtomically, sha256Text, writeLocalBinary, writeLocalText, type LocalFileAtomicWrite } from "@/repository/localRepository";
+import { applyLocalFileChangesAtomically, deleteLocalFileAtomically, getLocalFile, getLocalRepository, listLocalFiles, mutateLocalTextFilesAtomically, renameLocalTextFileAtomically, sha256Text, writeLocalBinaryScoped, type LocalFileAtomicWrite, type LocalTextFileMutation } from "@/repository/localRepository";
+import { accountIdentity } from "@/auth/accountIdentity";
+import { useAuthStore } from "@/store/authStore";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { buildInitialBookFiles } from "@/narrarium/bookScaffold";
 import {
   buildBookAuditPath,
@@ -30,9 +33,9 @@ async function canonicalizeStructuralTextChanges(
   for (const path of deletePaths) prospective.delete(path);
   for (const write of writes) prospective.set(write.path, write.text);
   const paths = new Set([...source.keys(), ...prospective.keys()]);
-  const mutations = [...paths]
+  const mutations = await Promise.all([...paths]
     .filter((path) => source.get(path) !== prospective.get(path))
-    .map((path) => ({ path, content: prospective.get(path) ?? null }));
+    .map(async (path) => ({ path, content: prospective.get(path) ?? null, expectedCurrentHash: source.has(path) ? await sha256Text(source.get(path)!) : null })));
   if (!mutations.some((mutation) => SCRIPT_PATH_PATTERN.test(mutation.path))) return { mutations, result: null };
   const planned = await planCanonicalScriptMutation([...source].map(([path, content]) => ({ path, content })), mutations);
   return { mutations: planned.mutations, result: planned.result };
@@ -122,8 +125,10 @@ async function fetchContentJson(
 
 async function localRepoId(owner: string, repo: string, branch: string | undefined): Promise<string | null> {
   if (!branch) return null;
+  const identity = accountIdentity(useAuthStore.getState().user);
+  if (!identity) return null;
   let local: Awaited<ReturnType<typeof getLocalRepository>>;
-  try { local = await getLocalRepository(owner, repo, branch); } catch (error) { throw classifyRepositoryError(error, "read"); }
+  try { local = await getLocalRepository(owner, repo, branch, identity); } catch (error) { throw classifyRepositoryError(error, "read"); }
   return local?.id ?? null;
 }
 
@@ -471,6 +476,7 @@ export async function loadBookStructure(
         number: num,
         title: metaMap[p]?.name ?? slugToTitle(filename.replace(/\.md$/, "")),
         path: p,
+        revision: treeData.tree.find((node) => node.path === p)?.sha,
         draftPath: draftPaths.get(p),
         scriptPath: scriptPaths.get(p),
         evaluationPath: allPaths.includes(evaluationPath) ? evaluationPath : undefined,
@@ -653,7 +659,15 @@ export async function loadBinaryFileContent(
     throw classifyRepositoryError(error, "read", path);
   }
   if (response.ok) {
-    try { return new Uint8Array(await response.arrayBuffer()); }
+    try {
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if ((response.headers.get("content-type") ?? "").includes("application/json")) {
+        const envelope = JSON.parse(new TextDecoder().decode(bytes)) as { content?: string; encoding?: string };
+        if (typeof envelope.content === "string" && envelope.encoding === "base64") return decodeBytes(envelope.content);
+        throw new RepositoryError(`GitHub returned JSON instead of binary content for ${path}.`, "malformed", "read", response.status);
+      }
+      return bytes;
+    }
     catch (error) { throw classifyRepositoryError(error, "read", path); }
   }
 
@@ -741,11 +755,14 @@ export async function updateFile(
   sha: string,
   content: string,
   message: string,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   const id = await localRepoId(owner, repo, branch);
   if (id) {
     try {
-      await mutateLocalTextFilesAtomically(id, [{ path, content, expectedCurrentHash: sha }]);
+      await mutateLocalTextFilesAtomically(id, captureRepositoryOperationScope(), [{ path, content, expectedCurrentHash: sha }]);
+      signal?.throwIfAborted();
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("File changed since")) throw new RepositoryError(error.message, "conflict", "update", 409, { cause: error });
       throw classifyRepositoryError(error, "update", path);
@@ -755,7 +772,7 @@ export async function updateFile(
   const octokit = createGitHubClient(token);
   let data: Awaited<ReturnType<typeof octokit.rest.repos.createOrUpdateFileContents>>["data"];
   try {
-    ({ data } = await octokit.rest.repos.createOrUpdateFileContents({ owner, repo, path, message, content: encodeContent(content), sha, branch }));
+    ({ data } = await octokit.rest.repos.createOrUpdateFileContents({ owner, repo, path, message, content: encodeContent(content), sha, branch, request: { signal } }));
   } catch (error) { throw classifyRepositoryError(error, "update", path); }
   return data.content?.sha ?? sha;
 }
@@ -769,8 +786,9 @@ export async function createOrUpdateBinaryFile(
   bytes: Uint8Array,
   message: string,
 ): Promise<string> {
+  const scope = captureRepositoryOperationScope();
   const id = await localRepoId(owner, repo, branch);
-  if (id) return (await writeLocalBinary(id, path, bytes)).currentHash;
+  if (id) return (await writeLocalBinaryScoped(id, path, bytes, scope)).currentHash;
   const octokit = createGitHubClient(token);
   const existing = await optionalRepositoryRead(() => readFileWithSha(token, owner, repo, branch, path));
   const body = {
@@ -794,6 +812,56 @@ export async function createOrUpdateBinaryFile(
   return data.content?.sha ?? existing?.sha ?? "";
 }
 
+export async function createOrUpdateTextAndBinaryFilesAtomically(input: {
+  token: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  text: { path: string; content: string };
+  binary: { path: string; bytes: Uint8Array };
+  message: string;
+}): Promise<void> {
+  const id = await localRepoId(input.owner, input.repo, input.branch);
+  if (id) {
+    const [textFile, binaryFile] = await Promise.all([getLocalFile(id, input.text.path), getLocalFile(id, input.binary.path)]);
+    await applyLocalFileChangesAtomically(id, captureRepositoryOperationScope(), [], [
+      { path: input.text.path, kind: "text", text: input.text.content },
+      { path: input.binary.path, kind: "binary", bytes: input.binary.bytes },
+    ], new Map([
+      [input.text.path, textFile?.currentHash ?? null],
+      [input.binary.path, binaryFile?.currentHash ?? null],
+    ]));
+    return;
+  }
+
+  const octokit = createGitHubClient(input.token);
+  const ref = await octokit.rest.git.getRef({ owner: input.owner, repo: input.repo, ref: `heads/${input.branch}` });
+  const headSha = ref.data.object.sha;
+  const commit = await octokit.rest.git.getCommit({ owner: input.owner, repo: input.repo, commit_sha: headSha });
+  const binaryBlob = await octokit.rest.git.createBlob({ owner: input.owner, repo: input.repo, content: encodeBytes(input.binary.bytes), encoding: "base64" });
+  const tree = await octokit.rest.git.createTree({
+    owner: input.owner,
+    repo: input.repo,
+    base_tree: commit.data.tree.sha,
+    tree: [
+      { path: input.text.path, mode: "100644", type: "blob", content: input.text.content },
+      { path: input.binary.path, mode: "100644", type: "blob", sha: binaryBlob.data.sha },
+    ],
+  });
+  const next = await octokit.rest.git.createCommit({ owner: input.owner, repo: input.repo, message: input.message, tree: tree.data.sha, parents: [headSha] });
+  await updateStructuralRef(octokit, {
+    owner: input.owner,
+    repo: input.repo,
+    branch: input.branch,
+    expectedHeadSha: headSha,
+    generatedCommitSha: next.data.sha,
+    revisions: [
+      { path: input.text.path, content: input.text.content },
+      { path: input.binary.path, blobSha: binaryBlob.data.sha },
+    ],
+  });
+}
+
 /** Create a new file. Returns the blob SHA. */
 export async function createFile(
   token: string,
@@ -803,11 +871,14 @@ export async function createFile(
   path: string,
   content: string,
   message: string,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   const id = await localRepoId(owner, repo, branch);
   if (id) {
     try {
-      await mutateLocalTextFilesAtomically(id, [{ path, content, expectedCurrentHash: null }]);
+      await mutateLocalTextFilesAtomically(id, captureRepositoryOperationScope(), [{ path, content, expectedCurrentHash: null }]);
+      signal?.throwIfAborted();
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("File changed since")) throw new RepositoryError(`File already exists: ${path}`, "conflict", "create", 409, { cause: error });
       throw classifyRepositoryError(error, "create", path);
@@ -817,7 +888,7 @@ export async function createFile(
   const octokit = createGitHubClient(token);
   let data: Awaited<ReturnType<typeof octokit.rest.repos.createOrUpdateFileContents>>["data"];
   try {
-    ({ data } = await octokit.rest.repos.createOrUpdateFileContents({ owner, repo, path, message, content: encodeContent(content), branch }));
+    ({ data } = await octokit.rest.repos.createOrUpdateFileContents({ owner, repo, path, message, content: encodeContent(content), branch, request: { signal } }));
   } catch (error) { throw classifyRepositoryError(error, "create", path); }
   return data.content?.sha ?? "";
 }
@@ -860,6 +931,55 @@ export async function createFileIfAbsent(
   return true;
 }
 
+/** Apply related text writes/deletes atomically without implicitly pushing a local working copy. */
+export async function mutateTextFilesAtomically(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  mutations: LocalTextFileMutation[],
+  message: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
+  const id = await localRepoId(owner, repo, branch);
+  if (id) {
+    await mutateLocalTextFilesAtomically(id, captureRepositoryOperationScope(), mutations);
+    signal?.throwIfAborted();
+    return;
+  }
+
+  const octokit = createGitHubClient(token);
+  const { data: branchData } = await octokit.rest.repos.getBranch({ owner, repo, branch, request: { signal } });
+  const head = branchData.commit.sha;
+  const treeSha = branchData.commit.commit.tree.sha;
+  for (const mutation of mutations) {
+    if (mutation.expectedCurrentHash === undefined) continue;
+    const current = await optionalRepositoryRead(() => loadRemoteFileContentAtRef(token, owner, repo, mutation.path, head, signal));
+    const actual = current ? await sha256Text(current.content) : null;
+    if (actual !== mutation.expectedCurrentHash) throw new RepositoryError(`File changed since it was read: ${mutation.path}`, "conflict", "update", 409);
+  }
+  const writes = mutations.filter((mutation) => mutation.content !== undefined);
+  if (!writes.length) return;
+  const { data: tree } = await octokit.rest.git.createTree({
+    owner,
+    repo,
+    base_tree: treeSha,
+    tree: writes.map((mutation) => ({ path: mutation.path, mode: "100644" as const, type: "blob" as const, ...(mutation.content === null ? { sha: null } : { content: mutation.content }) })),
+    request: { signal },
+  });
+  const { data: commit } = await octokit.rest.git.createCommit({ owner, repo, message, tree: tree.sha, parents: [head], request: { signal } });
+  await updateStructuralRef(octokit, {
+    owner,
+    repo,
+    branch,
+    expectedHeadSha: head,
+    generatedCommitSha: commit.sha,
+    revisions: writes.map((mutation) => ({ path: mutation.path, content: mutation.content })),
+    signal,
+  });
+}
+
 /** Rename a final paragraph and every artifact owned by its chapter/slug. */
 export async function renameParagraphWithCompanions(
   token: string,
@@ -871,7 +991,7 @@ export async function renameParagraphWithCompanions(
   newParagraphPath: string,
   updatedPrimaryContent: string,
   commitMessage: string,
-  options: { expectedRemoteHeadSha?: string; signal?: AbortSignal } = {},
+  options: { expectedRemoteHeadSha?: string; expectedCurrentHash?: string; signal?: AbortSignal } = {},
 ): Promise<{ paragraph: Paragraph; canonical: CanonicalScriptMutationResult | null }> {
   options.signal?.throwIfAborted();
   const normalizedChapterPath = chapterPath.replace(/\/+$/, "");
@@ -995,13 +1115,16 @@ export async function renameParagraphWithCompanions(
 
   const localId = await localRepoId(owner, repo, branch);
   if (localId) {
-    const localMeta = await getLocalRepository(owner, repo, branch);
+    const identity = accountIdentity(useAuthStore.getState().user);
+    const localMeta = identity ? await getLocalRepository(owner, repo, branch, identity) : null;
     if (options.expectedRemoteHeadSha && localMeta?.remoteHeadSha !== options.expectedRemoteHeadSha) throw new RepositoryError("The local repository is based on a different remote head.", "conflict", "update", 409);
     const files = await listLocalFiles(localId);
     const sourcePaths = preflight(files.map((file) => file.path));
-    if (files.find((file) => file.path === oldParagraph.path)?.kind !== "text") {
+    const primaryFile = files.find((file) => file.path === oldParagraph.path);
+    if (primaryFile?.kind !== "text") {
       throw new Error(`Paragraph file is not text: ${oldParagraph.path}`);
     }
+    if (options.expectedCurrentHash && primaryFile.currentHash !== options.expectedCurrentHash) throw new RepositoryError(`File changed since it was read: ${oldParagraph.path}`, "conflict", "update", 409);
     const textWrites: StructuralTextWrite[] = [];
     const binaryWrites: LocalFileAtomicWrite[] = [];
     const deletes = new Set<string>();
@@ -1031,9 +1154,9 @@ export async function renameParagraphWithCompanions(
     const plannedWrites: LocalFileAtomicWrite[] = canonical.mutations.flatMap((mutation) => typeof mutation.content === "string" ? [{ path: mutation.path, kind: "text" as const, text: mutation.content }] : []);
     const writePaths = new Set([...plannedWrites, ...binaryWrites].map((write) => write.path));
     const binarySources = [...deletes].filter((path) => files.find((file) => file.path === path)?.kind === "binary");
-    const expected = new Map(canonical.mutations.map((mutation) => [mutation.path, mutation.expectedCurrentHash ?? null]));
+    const expected = new Map(canonical.mutations.flatMap((mutation) => mutation.expectedCurrentHash === undefined ? [] : [[mutation.path, mutation.expectedCurrentHash] as const]));
     for (const path of [...binarySources, ...binaryWrites.map((write) => write.path)]) expected.set(path, files.find((file) => file.path === path)?.currentHash ?? null);
-    await applyLocalFileChangesAtomically(localId, new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
+    await applyLocalFileChangesAtomically(localId, captureRepositoryOperationScope(), new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
     return { paragraph: updatedParagraph(sourcePaths), canonical: canonical.result };
   }
 
@@ -1062,7 +1185,9 @@ export async function renameParagraphWithCompanions(
     const moved = destination !== null && destination !== path;
     if (moved) {
       if (path === oldParagraph.path) {
-        const original = (await loadRemoteFileContentAtRef(token, owner, repo, path, currentCommitSha, options.signal)).content;
+        const current = await loadRemoteFileContentAtRef(token, owner, repo, path, currentCommitSha, options.signal);
+        const original = current.content;
+        if (options.expectedCurrentHash && current.sha !== options.expectedCurrentHash) throw new RepositoryError(`File changed since it was read: ${oldParagraph.path}`, "conflict", "update", 409);
         sourceTextFiles.push({ path, kind: "text", text: original });
         textDeletes.add(path);
         textWrites.push({ path: destination, text: rewriteMovedText(updatedPrimaryContent) });
@@ -1120,7 +1245,7 @@ export async function reorderParagraphsInChapter(
   oldParagraphs: Paragraph[],
   newOrderedParagraphs: Paragraph[],
   commitMessage = "Reorder paragraphs",
-  options: { expectedRemoteHeadSha?: string; signal?: AbortSignal } = {},
+  options: { expectedRemoteHeadSha?: string; expectedParagraphHashes?: Readonly<Record<string, string>>; signal?: AbortSignal } = {},
 ): Promise<{ paragraphs: Paragraph[]; canonical: CanonicalScriptMutationResult | null }> {
   options.signal?.throwIfAborted();
   const chapterSlug = chapterPath.replace(/^chapters\//, "");
@@ -1263,9 +1388,19 @@ export async function reorderParagraphsInChapter(
   // ── Local working copy ──────────────────────────────────────────────────────
   const id = await localRepoId(owner, repo, branch);
   if (id) {
-    const localMeta = await getLocalRepository(owner, repo, branch);
+    const identity = accountIdentity(useAuthStore.getState().user);
+    const localMeta = identity ? await getLocalRepository(owner, repo, branch, identity) : null;
     if (options.expectedRemoteHeadSha && localMeta?.remoteHeadSha !== options.expectedRemoteHeadSha) throw new RepositoryError("The local repository is based on a different remote head.", "conflict", "update", 409);
     const files = await listLocalFiles(id);
+    for (const [path, expected] of Object.entries(options.expectedParagraphHashes ?? {})) {
+      const current = files.find((file) => file.path === path);
+      if (!current || current.currentHash !== expected) throw new RepositoryError(`File changed since it was read: ${path}`, "conflict", "update", 409);
+    }
+    if (options.expectedRemoteHeadSha) {
+      const remote = createGitHubClient(token);
+      const ref = await remote.rest.git.getRef({ owner, repo, ref: `heads/${branch}`, request: { signal: options.signal } });
+      if (ref.data.object.sha !== options.expectedRemoteHeadSha) throw new RepositoryError("The remote branch changed before the paragraph operation.", "conflict", "update", 409);
+    }
     const textWrites: StructuralTextWrite[] = [];
     const binaryWrites: LocalFileAtomicWrite[] = [];
     const toDelete = new Set<string>();
@@ -1299,9 +1434,9 @@ export async function reorderParagraphsInChapter(
     const writePaths = new Set([...plannedWrites, ...binaryWrites].map((write) => write.path));
     const plannedDeletes = canonical.mutations.filter((mutation) => mutation.content === null).map((mutation) => mutation.path);
     const binarySources = [...toDelete].filter((path) => files.find((file) => file.path === path)?.kind === "binary");
-    const expected = new Map(canonical.mutations.map((mutation) => [mutation.path, mutation.expectedCurrentHash ?? null]));
+    const expected = new Map(canonical.mutations.flatMap((mutation) => mutation.expectedCurrentHash === undefined ? [] : [[mutation.path, mutation.expectedCurrentHash] as const]));
     for (const path of [...binarySources, ...binaryWrites.map((write) => write.path)]) expected.set(path, files.find((file) => file.path === path)?.currentHash ?? null);
-    await applyLocalFileChangesAtomically(id, new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
+    await applyLocalFileChangesAtomically(id, captureRepositoryOperationScope(), new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
     return { paragraphs: result, canonical: canonical.result };
   }
 
@@ -1330,7 +1465,10 @@ export async function reorderParagraphsInChapter(
 
     if (isDeletedPath(path)) {
       if (isTextPath(path)) {
-        const raw = (await loadRemoteFileContentAtRef(token, owner, repo, path, currentCommitSha, options.signal)).content;
+        const current = await loadRemoteFileContentAtRef(token, owner, repo, path, currentCommitSha, options.signal);
+        const expected = options.expectedParagraphHashes?.[path];
+        if (expected && current.sha !== expected) throw new RepositoryError(`File changed since it was read: ${path}`, "conflict", "update", 409);
+        const raw = current.content;
         sourceTextFiles.push({ path, kind: "text", text: raw });
         textDeletes.add(path);
       } else binaryTreeUpdates.push({ path, mode: "100644", type: "blob", sha: null });
@@ -1492,7 +1630,8 @@ export async function reorderChaptersInBook(
   // ── Local working copy ──────────────────────────────────────────────────────
   const id = await localRepoId(owner, repo, branch);
   if (id) {
-    const localMeta = await getLocalRepository(owner, repo, branch);
+    const identity = accountIdentity(useAuthStore.getState().user);
+    const localMeta = identity ? await getLocalRepository(owner, repo, branch, identity) : null;
     if (options.expectedRemoteHeadSha && localMeta?.remoteHeadSha !== options.expectedRemoteHeadSha) throw new RepositoryError("The local repository is based on a different remote head.", "conflict", "update", 409);
     const files = await listLocalFiles(id);
     const textWrites: StructuralTextWrite[] = [];
@@ -1524,9 +1663,9 @@ export async function reorderChaptersInBook(
     const writePaths = new Set([...plannedWrites, ...binaryWrites].map((write) => write.path));
     const plannedDeletes = canonical.mutations.filter((mutation) => mutation.content === null).map((mutation) => mutation.path);
     const binarySources = [...toDelete].filter((path) => files.find((file) => file.path === path)?.kind === "binary");
-    const expected = new Map(canonical.mutations.map((mutation) => [mutation.path, mutation.expectedCurrentHash ?? null]));
+    const expected = new Map(canonical.mutations.flatMap((mutation) => mutation.expectedCurrentHash === undefined ? [] : [[mutation.path, mutation.expectedCurrentHash] as const]));
     for (const path of [...binarySources, ...binaryWrites.map((write) => write.path)]) expected.set(path, files.find((file) => file.path === path)?.currentHash ?? null);
-    await applyLocalFileChangesAtomically(id, new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
+    await applyLocalFileChangesAtomically(id, captureRepositoryOperationScope(), new Set([...plannedDeletes, ...binarySources].filter((path) => !writePaths.has(path))), [...plannedWrites, ...binaryWrites], expected);
     return { remap, canonical: canonical.result };
   }
 
@@ -1673,11 +1812,14 @@ export async function renameAndUpdateFile(
   newPath: string,
   content: string,
   message: string,
+  expectedCurrentHash?: string,
 ): Promise<{ sha: string }> {
   const id = await localRepoId(owner, repo, branch);
   if (id) {
-    await deleteLocalFile(id, oldPath);
-    const file = await writeLocalText(id, newPath, content);
+    const current = await getLocalFile(id, oldPath);
+    const expected = expectedCurrentHash ?? current?.currentHash;
+    if (!expected) throw new RepositoryError(`File not found: ${oldPath}`, "not-found", "update", 404);
+    const file = await renameLocalTextFileAtomically({ repoId: id, scope: captureRepositoryOperationScope(), oldPath, newPath, content, expectedCurrentHash: expected });
     return { sha: file.currentHash };
   }
   const octokit = createGitHubClient(token);
@@ -1736,6 +1878,7 @@ export async function compareBranches(
   repo: string,
   base: string,
   head: string,
+  signal?: AbortSignal,
 ): Promise<BranchDiffFile[]> {
   const octokit = createGitHubClient(token);
   try {
@@ -1743,6 +1886,7 @@ export async function compareBranches(
     owner,
     repo,
     basehead: `${base}...${head}`,
+    request: { signal },
   });
   return (data.files ?? []).map((file) => ({
     filename: file.filename,
@@ -1764,15 +1908,18 @@ export async function deleteFile(
   path: string,
   sha: string,
   message: string,
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   const id = await localRepoId(owner, repo, branch);
   if (id) {
-    await deleteLocalFile(id, path);
+    await deleteLocalFileAtomically(id, captureRepositoryOperationScope(), path, sha);
+    signal?.throwIfAborted();
     return;
   }
   const octokit = createGitHubClient(token);
   try {
-    await octokit.rest.repos.deleteFile({ owner, repo, path, message, sha, branch });
+    await octokit.rest.repos.deleteFile({ owner, repo, path, message, sha, branch, request: { signal } });
   } catch (error) { throw classifyRepositoryError(error, "delete", path); }
 }
 
@@ -1814,10 +1961,11 @@ export async function listBranches(
   token: string,
   owner: string,
   repo: string,
+  signal?: AbortSignal,
 ): Promise<BranchSummary[]> {
   const octokit = createGitHubClient(token);
   let branches: Array<{ name: string; protected: boolean }>;
-  try { branches = await octokit.paginate(octokit.rest.repos.listBranches, { owner, repo, per_page: 100 }); }
+  try { branches = await octokit.paginate(octokit.rest.repos.listBranches, { owner, repo, per_page: 100, request: { signal } }); }
   catch (error) { throw classifyRepositoryError(error, "list"); }
   return branches
     .map((branch) => ({ name: branch.name, protected: branch.protected }))
@@ -1830,14 +1978,18 @@ export async function createBranchFromBase(
   repo: string,
   baseBranch: string,
   newBranch: string,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   const octokit = createGitHubClient(token);
-  const { data: base } = await octokit.rest.repos.getBranch({ owner, repo, branch: baseBranch });
+  const { data: base } = await octokit.rest.repos.getBranch({ owner, repo, branch: baseBranch, request: { signal } });
+  signal?.throwIfAborted();
   await octokit.rest.git.createRef({
     owner,
     repo,
     ref: `refs/heads/${newBranch}`,
     sha: base.commit.sha,
+    request: { signal },
   });
   return newBranch;
 }
@@ -1849,6 +2001,7 @@ export interface PullRequestSummary {
   htmlUrl: string;
   head: string;
   base: string;
+  body?: string;
 }
 
 export async function listOpenPullRequests(
@@ -1856,6 +2009,7 @@ export async function listOpenPullRequests(
   owner: string,
   repo: string,
   head?: string,
+  signal?: AbortSignal,
 ): Promise<PullRequestSummary[]> {
   const octokit = createGitHubClient(token);
   const pulls = await octokit.paginate(octokit.rest.pulls.list, {
@@ -1864,6 +2018,7 @@ export async function listOpenPullRequests(
     state: "open",
     head: head ? `${owner}:${head}` : undefined,
     per_page: 100,
+    request: { signal },
   });
   return pulls.map((pull) => ({
     number: pull.number,
@@ -1872,6 +2027,7 @@ export async function listOpenPullRequests(
     htmlUrl: pull.html_url,
     head: pull.head.ref,
     base: pull.base.ref,
+    body: pull.body ?? undefined,
   }));
 }
 
@@ -1880,6 +2036,7 @@ export async function createPullRequest(
   owner: string,
   repo: string,
   input: { title: string; body?: string; head: string; base: string },
+  signal?: AbortSignal,
 ): Promise<PullRequestSummary> {
   const octokit = createGitHubClient(token);
   const { data } = await octokit.rest.pulls.create({
@@ -1889,6 +2046,7 @@ export async function createPullRequest(
     body: input.body,
     head: input.head,
     base: input.base,
+    request: { signal },
   });
   return {
     number: data.number,
@@ -1897,6 +2055,7 @@ export async function createPullRequest(
     htmlUrl: data.html_url,
     head: data.head.ref,
     base: data.base.ref,
+    body: data.body ?? undefined,
   };
 }
 
@@ -1904,9 +2063,10 @@ export async function getDefaultBranch(
   token: string,
   owner: string,
   repo: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const octokit = createGitHubClient(token);
-  const { data } = await octokit.rest.repos.get({ owner, repo });
+  const { data } = await octokit.rest.repos.get({ owner, repo, request: { signal } });
   return data.default_branch;
 }
 
@@ -1923,6 +2083,7 @@ export async function listBranchCommits(
   owner: string,
   repo: string,
   branch: string,
+  signal?: AbortSignal,
 ): Promise<BranchCommitSummary[]> {
   const octokit = createGitHubClient(token);
   const commits = await octokit.paginate(octokit.rest.repos.listCommits, {
@@ -1930,6 +2091,7 @@ export async function listBranchCommits(
     repo,
     sha: branch,
     per_page: 30,
+    request: { signal },
   });
   return commits.map((commit) => ({
     sha: commit.sha,

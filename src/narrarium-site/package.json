@@ -1,7 +1,7 @@
 {
   "name": "narrarium-site",
   "private": true,
-  "version": "0.76.37",
+  "version": "0.76.38",
   "type": "module",
   "description": "GitHub Pages site and web app for Narrarium Framework.",
   "scripts": {
@@ -37,6 +37,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "docx": "^9.5.1",
+    "dompurify": "^3.4.13",
     "fast-glob": "^3.3.3",
     "i18next": "^26.3.1",
     "i18next-browser-languagedetector": "^8.2.1",

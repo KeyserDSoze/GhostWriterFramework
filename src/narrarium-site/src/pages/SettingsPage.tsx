@@ -15,7 +15,7 @@ import { fetchGitHubModelsCatalog, type GitHubCatalogModel } from "@/github/gith
 import { fetchOpenAICompatibleModels, type OpenAICompatibleModel } from "@/ai/openaiModelsCatalog";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
-import { CHAT_CAPABILITIES, ROUTING_TASKS, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget, type RoutingTaskKind, type TaskRoute } from "@/types/settings";
+import { CHAT_CAPABILITIES, DEFAULT_SETTINGS, ROUTING_TASKS, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget, type RoutingTaskKind, type TaskRoute } from "@/types/settings";
 import { integrationChatModels } from "@/assistant/llm";
 import { BROWSER_ROUTING_ID, reconcileTaskRouting, resolveEffectiveTaskCandidates, routingIssues } from "@/assistant/router";
 import { DeepSearchSettingsBody } from "@/components/settings/DeepSearchSettingsBody";
@@ -79,8 +79,9 @@ export function SettingsPage() {
   const { toast } = useToast();
   const location = useLocation();
   const previousPath = useNavigationHistoryStore((s) => s.previous?.pathname);
-  const { settings, patchSettings } = useSettingsStore();
-  const { save, syncStatus, lastSynced, load } = useSettings();
+  const { settings, patchSettings, offlineConflict } = useSettingsStore();
+  const { save, syncStatus, lastSynced, load, resolveOfflineConflict } = useSettings();
+  const offline = typeof navigator !== "undefined" && !navigator.onLine;
 
   const section = currentSettingsSection(location.pathname);
   const didAutoLoad = useRef(false);
@@ -107,13 +108,20 @@ export function SettingsPage() {
   const brokenRoutes = routingIssues(settings.taskRouting, aiIntegrations);
 
   async function handleSave() {
+    if (offlineConflict) return;
     if (brokenRoutes.length) {
       toast({ title: t("routing.invalidSave"), variant: "destructive" });
       return;
     }
-    const azureOpenAI = integrationToAzureCompat(aiIntegrations) ?? settings.azureOpenAI;
-    patchSettings({ defaultGitHubToken: defaultToken, azureOpenAI });
-    await save();
+    if (!offline) {
+      const azureOpenAI = integrationToAzureCompat(aiIntegrations) ?? settings.azureOpenAI;
+      patchSettings({ defaultGitHubToken: defaultToken, azureOpenAI });
+    }
+    try {
+      await save();
+    } catch {
+      return;
+    }
   }
 
   function patchAi(patch: Partial<AppSettings>) { patchSettings(patch); }
@@ -123,7 +131,10 @@ export function SettingsPage() {
     setNewTokenLabel("");
     setNewToken("");
   }
-  function removeExtraToken(index: number) { patchSettings({ extraGitHubTokens: settings.extraGitHubTokens.filter((_, i) => i !== index) }); }
+  function removeExtraToken(index: number) {
+    if (!window.confirm(t("settings.confirmRemoveToken"))) return;
+    patchSettings({ extraGitHubTokens: settings.extraGitHubTokens.filter((_, i) => i !== index) });
+  }
   function addIntegration() {
     const candidate = normalizeIntegration(newIntegration);
     if (!candidate.name.trim()) return;
@@ -136,6 +147,7 @@ export function SettingsPage() {
     patchAi({ aiIntegrations: next, taskRouting: reconcileTaskRouting(settings.taskRouting, aiIntegrations, next), azureOpenAI: integrationToAzureCompat(next) ?? settings.azureOpenAI });
   }
   function removeIntegration(id: string) {
+    if (!window.confirm(t("settings.confirmRemoveIntegration"))) return;
     const next = aiIntegrations.filter((integration) => integration.id !== id);
     patchAi({
       aiIntegrations: next,
@@ -164,12 +176,12 @@ export function SettingsPage() {
           <p className="text-muted-foreground">{sectionMeta.description}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={isLoading}>
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={isLoading || offline}>
             {isLoading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Cloud className="mr-1 h-3 w-3" />}
             {t("settings.syncFromDrive")}
           </Button>
           {section !== "home" && (
-            <Button size="sm" onClick={() => void handleSave()} disabled={isSaving || brokenRoutes.length > 0}>
+            <Button size="sm" onClick={() => void handleSave()} disabled={isSaving || brokenRoutes.length > 0 || Boolean(offlineConflict)}>
               {isSaving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
               {t("settings.save")}
             </Button>
@@ -178,6 +190,8 @@ export function SettingsPage() {
       </div>
 
       {syncStatus === "error" && <Alert variant="destructive"><CloudOff className="h-4 w-4" /><AlertDescription>{t("settings.syncError")}</AlertDescription></Alert>}
+      {offline && <Alert><CloudOff className="h-4 w-4" /><AlertDescription id="offline-settings-explanation">{t("settings.offlineCredentialsDisabled")}</AlertDescription></Alert>}
+      {offlineConflict && <Alert variant="destructive"><CloudOff className="h-4 w-4" /><AlertDescription className="space-y-3"><p>{t("settings.offlineConflict", { fields: offlineConflict.changedKeys.join(", ") })}</p><div className="flex flex-wrap gap-2"><Button size="sm" variant="destructive" onClick={() => void resolveOfflineConflict("local")}>{t("settings.keepOfflineChanges")}</Button><Button size="sm" variant="outline" onClick={() => void resolveOfflineConflict("cloud")}>{t("settings.useCloudSettings")}</Button></div></AlertDescription></Alert>}
       {brokenRoutes.length > 0 && (
         <Alert variant="destructive">
           <Route className="h-4 w-4" />
@@ -199,7 +213,7 @@ export function SettingsPage() {
           <SettingsCard href="/app/settings/repository" title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-5 w-5" />} />
         </div>
       ) : section === "ai-router" ? (
-        <div className="space-y-3">
+        <fieldset className="space-y-3" disabled={offline} aria-describedby={offline ? "offline-settings-explanation" : undefined}>
           {aiIntegrations.length > 0 && <Section title={t("routing.title")} description={t("routing.description")} icon={<Route className="h-4 w-4 shrink-0" />} defaultOpen><TaskRoutingBody settings={settings} patchSettings={patchSettings} /></Section>}
           <Section title={t("settings.aiIntegrations")} description={t("settings.aiDescription")} icon={<Bot className="h-4 w-4 shrink-0" />} defaultOpen>
             <div className="space-y-5">
@@ -219,19 +233,19 @@ export function SettingsPage() {
                 <p className="text-xs text-muted-foreground">{t("settings.costCurrencyHint")}</p>
               </div>
               {aiIntegrations.length === 0 && <p className="text-sm text-muted-foreground">{t("settings.noIntegrations")}</p>}
-              <div className="grid gap-3">{aiIntegrations.map((integration) => <IntegrationAccordion key={integration.id} integration={integration}><IntegrationEditor integration={integration} onChange={(patch) => updateIntegration(integration.id, patch)} onRemove={() => removeIntegration(integration.id)} /></IntegrationAccordion>)}</div>
+              <div className="grid gap-3">{aiIntegrations.map((integration) => <IntegrationAccordion key={integration.id} integration={integration}><IntegrationEditor integration={integration} onChange={(patch) => updateIntegration(integration.id, patch)} onRemove={offline ? undefined : () => removeIntegration(integration.id)} credentialsDisabled={offline} /></IntegrationAccordion>)}</div>
               <Separator />
               <div className="rounded-2xl border border-dashed p-4">
                 <p className="mb-3 text-sm font-medium">{t("settings.addIntegration")}</p>
-                <IntegrationEditor integration={newIntegration} onChange={(patch) => setNewIntegration((current) => normalizeIntegration({ ...current, ...patch }))} />
-                <Button className="mt-3" variant="outline" onClick={addIntegration} disabled={!newIntegration.name.trim()}><Plus className="mr-2 h-4 w-4" />{t("settings.addIntegration")}</Button>
+                <IntegrationEditor integration={newIntegration} onChange={(patch) => setNewIntegration((current) => normalizeIntegration({ ...current, ...patch }))} credentialsDisabled={offline} />
+                <Button className="mt-3" variant="outline" onClick={addIntegration} disabled={offline || !newIntegration.name.trim()}><Plus className="mr-2 h-4 w-4" />{t("settings.addIntegration")}</Button>
               </div>
             </div>
           </Section>
-        </div>
+        </fieldset>
       ) : section === "deep-search" ? (
         <Section title={t("settingsSection.deepSearchTitle")} description={t("settingsSection.deepSearchDescription")} icon={<Search className="h-4 w-4 shrink-0" />} defaultOpen>
-          <DeepSearchSettingsBody settings={settings} patchSettings={patchSettings} />
+          <fieldset disabled={offline} aria-describedby={offline ? "offline-settings-explanation" : undefined}><DeepSearchSettingsBody settings={settings} patchSettings={patchSettings} credentialsDisabled={offline} /></fieldset>
         </Section>
       ) : section === "tools" ? (
         <Section title={t("settingsSection.copilotToolsTitle")} description={t("settingsSection.copilotToolsDescription")} icon={<Wand2 className="h-4 w-4 shrink-0" />} defaultOpen>
@@ -239,7 +253,7 @@ export function SettingsPage() {
         </Section>
       ) : section === "github" ? (
         <Section title={t("settings.github")} description={t("settings.githubDescription")} icon={<Github className="h-4 w-4 shrink-0" />} defaultOpen>
-          <div className="space-y-4">
+          <fieldset className="space-y-4" disabled={offline}>
             <div className="grid gap-2">
               <Label htmlFor="default-token">{t("settings.defaultGithubToken")}</Label>
               <Input id="default-token" type="password" placeholder="github_pat_..." value={defaultToken} onChange={(e) => setDefaultToken(e.target.value)} autoComplete="off" />
@@ -248,10 +262,10 @@ export function SettingsPage() {
             <Separator />
             <div className="space-y-3">
               <p className="text-sm font-medium">{t("settings.additionalTokens")}</p>
-              {settings.extraGitHubTokens.map((token, index) => <div key={`${token.label}-${index}`} className="flex items-center justify-between rounded-md border px-3 py-2"><div><p className="text-sm font-medium">{token.label}</p><p className="text-xs text-muted-foreground">...{token.token.slice(-4)}</p></div><Button variant="ghost" size="icon" onClick={() => removeExtraToken(index)}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>)}
+              {settings.extraGitHubTokens.map((token, index) => <div key={`${token.label}-${index}`} className="flex items-center justify-between rounded-md border px-3 py-2"><div><p className="text-sm font-medium">{token.label}</p><p className="text-xs text-muted-foreground">...{token.token.slice(-4)}</p></div><Button variant="ghost" size="icon" onClick={() => removeExtraToken(index)} aria-label={t("settings.removeToken", { name: token.label })}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>)}
               <div className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]"><Input placeholder={t("settingsExtra.label")} value={newTokenLabel} onChange={(e) => setNewTokenLabel(e.target.value)} /><Input type="password" placeholder="github_pat_..." value={newToken} onChange={(e) => setNewToken(e.target.value)} autoComplete="off" /><Button variant="outline" size="icon" onClick={addExtraToken} disabled={!newTokenLabel || !newToken}><Plus className="h-4 w-4" /></Button></div>
             </div>
-          </div>
+          </fieldset>
         </Section>
       ) : section === "speech" ? (
         <Section title={t("speech.title")} description={t("speech.browserOnlyDescription")} icon={<Volume2 className="h-4 w-4 shrink-0" />} defaultOpen><SpeechCardBody settings={settings} patchSettings={patchSettings} /></Section>
@@ -448,7 +462,7 @@ function IntegrationAccordion({ integration, children }: { integration: AIIntegr
   );
 }
 
-function IntegrationEditor({ integration, onChange, onRemove }: { integration: AIIntegration; onChange: (patch: Partial<AIIntegration>) => void; onRemove?: () => void }) {
+function IntegrationEditor({ integration, onChange, onRemove, credentialsDisabled = false }: { integration: AIIntegration; onChange: (patch: Partial<AIIntegration>) => void; onRemove?: () => void; credentialsDisabled?: boolean }) {
   const { t } = useTranslation();
   const isGithub = integration.provider === "github_models";
   const usesApiKey = integration.provider !== "m365_copilot";
@@ -472,7 +486,7 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
           </div>
         </div>
         {onRemove && (
-          <Button variant="ghost" size="icon" onClick={onRemove}>
+          <Button variant="ghost" size="icon" onClick={onRemove} aria-label={t("settings.removeIntegration", { name: integration.name })}>
             <Trash2 className="h-4 w-4 text-destructive" />
           </Button>
         )}
@@ -488,7 +502,7 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
         {usesApiKey && (
           <div className="grid gap-2">
             <Label>{isGithub ? t("settings.githubPat") : t("settings.apiKey")}</Label>
-            <Input type="password" value={integration.apiKey} onChange={(e) => onChange({ apiKey: e.target.value })} autoComplete="off" placeholder={isGithub ? "ghp_… (GitHub PAT)" : undefined} />
+            <Input type="password" value={integration.apiKey} onChange={(e) => onChange({ apiKey: e.target.value })} autoComplete="off" placeholder={isGithub ? "ghp_… (GitHub PAT)" : undefined} disabled={credentialsDisabled} />
             {isGithub && <p className="text-xs text-muted-foreground">{t("settings.githubModelsHint")}</p>}
           </div>
         )}
@@ -526,6 +540,7 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
           apiKey={integration.apiKey}
           models={integration.chatModels ?? []}
           onChange={(chatModels) => onChange({ chatModels })}
+          networkDisabled={credentialsDisabled}
         />
       )}
 
@@ -552,7 +567,7 @@ function IntegrationEditor({ integration, onChange, onRemove }: { integration: A
   );
 }
 
-function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange }: { provider: AIProviderType; endpoint: string; apiKey: string; models: ChatModel[]; onChange: (models: ChatModel[]) => void }) {
+function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networkDisabled = false }: { provider: AIProviderType; endpoint: string; apiKey: string; models: ChatModel[]; onChange: (models: ChatModel[]) => void; networkDisabled?: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [loadingCatalog, setLoadingCatalog] = useState(false);
@@ -581,6 +596,7 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange }: { pr
     onChange([...models, { id: crypto.randomUUID(), name: "", capabilities: models.length === 0 ? ["default", "copilot", "simple-tasks", "review"] : [] }]);
   }
   function removeModel(id: string) {
+    if (!window.confirm(t("settings.confirmRemoveModel"))) return;
     onChange(models.filter((m) => m.id !== id));
   }
 
@@ -648,13 +664,13 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange }: { pr
         </div>
         <div className="flex items-center gap-2">
           {provider === "github_models" && (
-            <Button type="button" variant="outline" size="sm" disabled={loadingCatalog} onClick={() => void loadCatalog()}>
+            <Button type="button" variant="outline" size="sm" disabled={networkDisabled || loadingCatalog} onClick={() => void loadCatalog()}>
               {loadingCatalog ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1 h-3.5 w-3.5" />}
               {t("settings.loadCatalogModels")}
             </Button>
           )}
           {provider === "openai" && (
-            <Button type="button" variant="outline" size="sm" disabled={loadingCatalog} onClick={() => void loadOpenAIModels()}>
+            <Button type="button" variant="outline" size="sm" disabled={networkDisabled || loadingCatalog} onClick={() => void loadOpenAIModels()}>
               {loadingCatalog ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1 h-3.5 w-3.5" />}
               {t("settings.loadApiModels")}
             </Button>
@@ -689,7 +705,7 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange }: { pr
                 <Label className="text-xs">{t("settings.chatModelName")}</Label>
                 <Input value={model.name} onChange={(e) => patchModel(model.id, { name: e.target.value })} placeholder="gpt-4o" className="h-8 text-sm" />
               </div>
-              <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => removeModel(model.id)}>
+              <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => removeModel(model.id)} aria-label={t("settings.removeModel", { name: model.name })}>
                 <Trash2 className="h-4 w-4 text-destructive" />
               </Button>
             </div>
@@ -708,6 +724,10 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange }: { pr
               )}
               <TokenLimitField label={t("settings.maxInputTokens")} value={model.maxInputTokens} onChange={(v) => patchModel(model.id, { maxInputTokens: v })} />
               <TokenLimitField label={t("settings.maxOutputTokens")} value={model.maxOutputTokens} onChange={(v) => patchModel(model.id, { maxOutputTokens: v })} />
+              <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                <Label className="text-xs">Forced tool calls</Label>
+                <Switch checked={model.supportsToolCalls !== false} onCheckedChange={(supportsToolCalls) => patchModel(model.id, { supportsToolCalls })} />
+              </div>
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
               {CHAT_CAPABILITIES.map((capability) => {
@@ -855,7 +875,7 @@ function modelChoicesFor(integrations: AIIntegration[], integrationId: string | 
   if (integrationId === BROWSER_ROUTING_ID) return ["browser"];
   const integration = integrations.find((i) => i.id === integrationId);
   if (!integration) return [];
-  if (!isMediaTask(task)) return integrationChatModels(integration).map((m) => m.name).filter(Boolean);
+  if (!isMediaTask(task)) return integrationChatModels(integration).filter((model) => model.capabilities.includes(task as ChatCapability) || model.capabilities.includes("default")).map((m) => m.name).filter(Boolean);
   const media = task === "tts" ? integration.modelTextToSpeech
     : task === "stt" ? integration.modelSpeechToText
     : integration.modelImageGeneration;
@@ -878,10 +898,11 @@ function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; p
   const { t } = useTranslation();
   const integrations = settings.aiIntegrations ?? [];
   const routing = settings.taskRouting ?? {};
+  const execution = settings.routingExecution ?? DEFAULT_SETTINGS.routingExecution;
 
   function setRoute(task: RoutingTaskKind, route: TaskRoute | undefined) {
     const next: NonNullable<AppSettings["taskRouting"]> = { ...routing };
-    if (route && (route.primary || route.fallbacks.length)) next[task] = route;
+    if (route && (route.primary || route.fallbacks.length)) next[task] = { ...route, fallbacks: route.fallbacks.slice(0, execution.maxCandidates - 1) };
     else delete next[task];
     patchSettings({ taskRouting: next });
   }
@@ -897,6 +918,12 @@ function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; p
           <div><Label>{t("routing.requireAcknowledgement")}</Label><p className="text-xs text-muted-foreground">{t("routing.requireAcknowledgementHint")}</p></div>
           <Switch checked={settings.fallbackDisclosure?.requireAcknowledgement ?? false} onCheckedChange={(requireAcknowledgement) => { clearFallbackAcknowledgements(); patchSettings({ fallbackDisclosure: { ...settings.fallbackDisclosure, requireAcknowledgement } }); }} />
         </div>
+      </div>
+      <div className="grid gap-3 rounded-lg border bg-muted/10 p-3 sm:grid-cols-2">
+        <TokenLimitField label="Maximum candidates" value={execution.maxCandidates} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxCandidates: Math.min(8, Math.max(1, value ?? 4)) } })} />
+        <TokenLimitField label="Total routing time (ms)" value={execution.maxTotalDurationMs} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxTotalDurationMs: Math.min(600_000, Math.max(1_000, value ?? 180_000)) } })} />
+        <TokenLimitField label="Maximum token attempts" value={execution.maxTokenAttempts} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxTokenAttempts: Math.min(2_000_000, Math.max(1_000, value ?? 200_000)) } })} />
+        <PriceField label="Maximum estimated route cost" value={execution.maxEstimatedCost} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxEstimatedCost: Math.min(1_000, Math.max(0.01, value ?? 5)) } })} />
       </div>
       {ROUTING_TASKS.map((task) => (
         <TaskRouteEditor
@@ -915,6 +942,7 @@ function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; p
 function TaskRouteEditor({ task, settings, integrations, route, onChange }: { task: RoutingTaskKind; settings: AppSettings; integrations: AIIntegration[]; route?: TaskRoute; onChange: (route: TaskRoute | undefined) => void }) {
   const { t } = useTranslation();
   const current: TaskRoute = route ?? { primary: undefined, fallbacks: [] };
+  const execution = settings.routingExecution ?? DEFAULT_SETTINGS.routingExecution;
   const firstChoice = taskIntegrationChoices(integrations, task, t)[0];
 
   function setPrimary(target: RoutingTarget | undefined) {
@@ -995,7 +1023,7 @@ function TaskRouteEditor({ task, settings, integrations, route, onChange }: { ta
             </div>
           </div>
         ))}
-        <Button type="button" variant="ghost" size="sm" className="w-fit" onClick={addFallback} disabled={!current.primary}>
+        <Button type="button" variant="ghost" size="sm" className="w-fit" onClick={addFallback} disabled={!current.primary || current.fallbacks.length >= execution.maxCandidates - 1}>
           <Plus className="mr-1 h-3.5 w-3.5" />{t("routing.addFallback")}
         </Button>
       </div>
@@ -1037,7 +1065,10 @@ function TargetRow({ task, integrations, target, onChange, clearable, onRemove }
         </Select>
       )}
       {clearable && target && (
-        <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => (onRemove ? onRemove() : onChange(undefined))}>
+        <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label={t("routing.removeTarget")} onClick={() => {
+          if (!window.confirm(t("routing.removeTargetConfirm"))) return;
+          if (onRemove) onRemove(); else onChange(undefined);
+        }}>
           <Trash2 className="h-4 w-4 text-muted-foreground" />
         </Button>
       )}

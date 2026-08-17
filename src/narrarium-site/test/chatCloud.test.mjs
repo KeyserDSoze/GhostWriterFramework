@@ -1,13 +1,35 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
+import "fake-indexeddb/auto";
 import {
   AssistantSessionConflictError,
   MAX_PERSISTED_CHAT_BYTES,
   listAssistantSessions,
   loadAssistantSession,
+  readResponseTextBounded,
   saveAssistantSession,
 } from "../src/assistant/chatCloud.ts";
 import { resetGoogleAppFolderCacheForTests } from "../src/drive/googleAppFolder.ts";
+
+const LEASE_DB = "narrarium-cloud-write-leases";
+const LEASE_STORE = "leases";
+
+beforeEach(async () => {
+  await new Promise((resolve, reject) => {
+    const request = indexedDB.open(LEASE_DB, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(LEASE_STORE, { keyPath: "id" });
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      const tx = db.transaction(LEASE_STORE, "readwrite");
+      tx.objectStore(LEASE_STORE).clear();
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+      tx.onabort = () => { db.close(); reject(tx.error); };
+    };
+  });
+  resetGoogleAppFolderCacheForTests();
+});
 
 function response(value, status = 200, headers = {}) {
   return new Response(value === null ? null : JSON.stringify(value), {
@@ -48,6 +70,19 @@ test("cloud saves reject oversized payloads before a provider write", async () =
   const messages = Array.from({ length: 8 }, (_, index) => ({ id: `huge-${index}`, role: "user", text: "x".repeat(950_000) }));
   await assert.rejects(() => saveAssistantSession("google", "token", session({ messages })), /cloud limit/);
   assert.equal(fetched, false);
+});
+
+test("streaming cloud reads stop at the byte limit without Content-Length", async () => {
+  let cancelled = false;
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array([1, 2, 3]));
+      controller.enqueue(new Uint8Array([4, 5, 6]));
+    },
+    cancel() { cancelled = true; },
+  });
+  await assert.rejects(() => readResponseTextBounded(new Response(body), 4), /size limit/);
+  assert.equal(cancelled, true);
 });
 
 /** @type {Array<"google" | "microsoft">} */

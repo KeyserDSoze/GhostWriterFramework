@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import {
   createEmptyAssistantSession,
+  invalidateAssistantSecretContext,
   useAssistantStore,
   type AssistantAttachment,
   type AssistantFileUpdate,
@@ -47,7 +48,7 @@ import { deleteAssistantSession, hydrateAssistantSessionArchive, loadAssistantSe
 import { refreshAssistantSessionIndex, resetAssistantSessionIndex } from "@/assistant/sessionIndex";
 import { assistantSessionSaveQueue, assistantSessionSaveFingerprint, assistantSessionSaveRetryPlan, attachAssistantSessionCloudHandle, clearFailedAssistantSessionSaveFingerprint, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
 import { assistantSessionCompactionTarget, mergeAssistantSessionCompaction } from "@/assistant/sessionCompaction";
-import { isAssistantRequestOwned } from "@/assistant/sessionOwnership";
+import { isAssistantRequestOwned, isConfirmedMutationOwned, type AssistantRequestOwner } from "@/assistant/sessionOwnership";
 import { resolveChatNoteDestination, reusableChatNoteOperation, type ChatNoteDestination } from "@/assistant/chatNoteSave";
 import { isMediaOperationOwned, stopMediaStreamTracks } from "@/assistant/mediaOwnership";
 import { assistantActionToolId, policyTargetEnabled, quickActionToolId } from "@/assistant/toolPolicy";
@@ -68,7 +69,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DropdownMenu,
@@ -92,7 +93,6 @@ import {
   loadFileContent,
   readFileWithSha,
   reorderParagraphsInChapter,
-  revertFileToRef,
   type BranchDiffFile,
 } from "@/github/githubClient";
 import { confirmPullRequestProposal } from "@/assistant/pullRequestProposal";
@@ -108,9 +108,11 @@ import { applyCanonicalRevisionResults, currentRevisionToken, fileRevisionMatche
 import { buildCanonEntityDocument } from "@/narrarium/canon";
 import { BrowserSpeechFallbackRequired } from "@/assistant/mediaFallback";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
+import { hasOpenFloatingLayer } from "@/lib/floatingLayer";
 import { refreshBookAfterMutation, runPromptWithMutationRefresh } from "@/assistant/mutationRefresh";
 import { captureLiveVoiceRewriteSnapshot, generateLiveVoiceRewrite, liveVoiceRewriteMatches, persistLiveVoiceRewrite, resolveLiveVoiceRewrite, type LiveVoiceRewriteContext, type LiveVoiceSource, type PendingLiveVoiceRewrite } from "@/assistant/liveVoiceRewrite";
 import { commitCanonicalScriptMutation } from "@/narrarium/scriptLedger";
+import { directSecretPath } from "@/assistant/secretPolicy";
 
 ensureBuiltinCopilotToolsRegistered();
 
@@ -137,6 +139,28 @@ type QuickAction = {
 };
 
 type MediaOperation = { generation: number; signal: AbortSignal };
+type ConfirmedMutationOperation = { id: string; controller: AbortController; account: string | null; sessionId: string; bookId: string; branch: string; pathname: string };
+type PendingDiffRevert = {
+  file: BranchDiffFile;
+  sourceBranch: string;
+  destinationBranch: string;
+  sourceHash: string | null;
+  destinationHash: string | null;
+};
+
+export function speechRecognitionResultDelta(results: ArrayLike<{ 0?: { transcript?: string }; isFinal?: boolean }>, resultIndex: number) {
+  const all = Array.from(results).map((result) => result[0]?.transcript ?? "").join(" ").trim();
+  let hasFinal = false;
+  const delta = Array.from(results).slice(resultIndex).map((result) => {
+    if (result.isFinal) hasFinal = true;
+    return result[0]?.transcript ?? "";
+  }).join(" ").trim();
+  return { all, delta, hasFinal };
+}
+
+export function diffRevertRevisionsMatch(pending: { sourceHash: string | null; destinationHash: string | null }, sourceHash: string | null, destinationHash: string | null) {
+  return pending.sourceHash === sourceHash && pending.destinationHash === destinationHash;
+}
 
 export function AssistantPanel() {
   const { t } = useTranslation();
@@ -182,6 +206,9 @@ export function AssistantPanel() {
   const activeBookIdRef = useRef(bookId);
   const activeBranchRef = useRef(branch);
   const activePathnameRef = useRef(location.pathname);
+  const activeSecretPath = directSecretPath(route);
+  const contextAccessGenerationRef = useRef(0);
+  const contextAccessSnapshotRef = useRef({ pathname: location.pathname, bookId, branch, secretPath: activeSecretPath, settings, structures, workingBranches });
   const settingsRef = useRef(settings);
   const sessionSaveQueueRef = useRef(assistantSessionSaveQueue);
   const savedSessionFingerprintsRef = useRef(new Map<string, string>());
@@ -189,9 +216,10 @@ export function AssistantPanel() {
   const autosaveAttemptsRef = useRef(new Map<string, { fingerprint: string; failedAttempts: number }>());
   const autosaveRetryTimerRef = useRef<number | null>(null);
   const [autosaveRetry, setAutosaveRetry] = useState(0);
-  const [autosaveStatus, setAutosaveStatus] = useState<{ sessionId: string; kind: "retrying" | "stopped"; attempt?: number; message: string } | null>(null);
+  const [autosaveStatus, setAutosaveStatus] = useState<{ sessionId: string; kind: "retrying" | "stopped"; attempt?: number; message: string; retryable?: boolean } | null>(null);
   const compactionRunRef = useRef(0);
-  const activePromptRef = useRef<{ requestId: string; sessionId: string; controller: AbortController } | null>(null);
+  const activePromptRef = useRef<(AssistantRequestOwner & { controller: AbortController }) | null>(null);
+  const confirmedMutationRef = useRef<ConfirmedMutationOperation | null>(null);
   const attachmentRunRef = useRef(0);
   const activeAttachmentRunRef = useRef<number | null>(null);
   const attachmentAbortRef = useRef<AbortController | null>(null);
@@ -242,6 +270,8 @@ export function AssistantPanel() {
   const [loadingDiffPath, setLoadingDiffPath] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"chat" | "history">("chat");
   const [isMobile, setIsMobile] = useState(false);
+  const [pendingDiffRevert, setPendingDiffRevert] = useState<PendingDiffRevert | null>(null);
+  const [requestStatus, setRequestStatus] = useState("");
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 1023px)");
@@ -272,9 +302,22 @@ export function AssistantPanel() {
     manualEndRef.current = manualEnd;
   }, [manualEnd]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const previous = contextAccessSnapshotRef.current;
+    if (previous.pathname !== location.pathname
+      || previous.bookId !== bookId
+      || previous.branch !== branch
+      || previous.secretPath !== activeSecretPath
+      || previous.settings !== settings
+      || previous.structures !== structures
+      || previous.workingBranches !== workingBranches) {
+      contextAccessSnapshotRef.current = { pathname: location.pathname, bookId, branch, secretPath: activeSecretPath, settings, structures, workingBranches };
+      contextAccessGenerationRef.current += 1;
+      activePromptRef.current?.controller.abort(new DOMException("The assistant context changed.", "AbortError"));
+    }
     pendingRewriteRef.current = resolveLiveVoiceRewrite(pendingRewriteRef.current, "source-switch").pending;
-  }, [currentSession?.id, bookId, branch, location.pathname]);
+    confirmedMutationRef.current?.controller.abort(new DOMException("The confirmed mutation context changed.", "AbortError"));
+  }, [currentSession?.id, bookId, branch, location.pathname, activeSecretPath, settings, structures, workingBranches]);
 
   useEffect(() => {
     cloudAccountAbortRef.current.abort();
@@ -324,6 +367,12 @@ export function AssistantPanel() {
   }, [branch, location.pathname, settings, structures, workingBranches]);
 
   useEffect(() => {
+    if (!currentSession) return;
+    const safe = invalidateAssistantSecretContext(currentSession, directSecretPath(route));
+    if (safe !== currentSession) setCurrentSession(safe);
+  }, [route, currentSession, setCurrentSession]);
+
+  useEffect(() => {
     if (!user || !accessToken) { resetAssistantSessionIndex(null); return; }
     if (!open) return;
     const expectedIdentity = accountIdentity(user);
@@ -360,7 +409,7 @@ export function AssistantPanel() {
           setAutosaveStatus(null);
           const state = useAssistantStore.getState();
           const latest = state.currentSession?.id === savedSnapshot.id ? state.currentSession : null;
-          const sessionWithFileId = attachAssistantSessionCloudHandle(state.currentSession, savedSnapshot.id, handle);
+          const sessionWithFileId = attachAssistantSessionCloudHandle(state.currentSession, savedSnapshot, handle);
           if (sessionWithFileId !== state.currentSession) state.setCurrentSession(sessionWithFileId);
           const metadataSource = latest ?? savedSnapshot;
           state.setSessions(upsertAssistantSessionMeta(state.sessions, metadataSource, handle));
@@ -380,7 +429,7 @@ export function AssistantPanel() {
                 setAutosaveRetry((value) => value + 1);
               }, plan.delayMs);
             } else {
-              setAutosaveStatus({ sessionId: currentSession.id, kind: "stopped", message: String(err) });
+              setAutosaveStatus({ sessionId: currentSession.id, kind: "stopped", message: String(err), retryable: plan.reason === "exhausted" });
             }
             toast({ title: t("assistant.toastSaveChatFailed"), description: String(err), variant: "destructive" });
           }
@@ -458,6 +507,11 @@ export function AssistantPanel() {
   function ensureSession() {
     const existing = useAssistantStore.getState().currentSession;
     if (existing) {
+      const safe = invalidateAssistantSecretContext(existing, directSecretPath(route));
+      if (safe !== existing) {
+        setCurrentSession(safe);
+        return safe;
+      }
       if (!existing.provenance && !existing.messages.length && sessionContext) {
         const bound = { ...existing, provenance: sessionContext };
         setCurrentSession(bound);
@@ -468,6 +522,15 @@ export function AssistantPanel() {
     const next = createEmptyAssistantSession(contextLabel, sessionContext);
     setCurrentSession(next);
     return next;
+  }
+
+  function retryStoppedAutosave() {
+    const sessionId = autosaveStatus?.sessionId;
+    if (!sessionId) return;
+    pendingSessionFingerprintsRef.current.delete(sessionId);
+    autosaveAttemptsRef.current.delete(sessionId);
+    setAutosaveStatus(null);
+    setAutosaveRetry((value) => value + 1);
   }
 
   function cancelSessionOperations() {
@@ -491,7 +554,40 @@ export function AssistantPanel() {
       activeOpenSessionRunRef.current = null;
       releasedBusy = true;
     }
+    if (confirmedMutationRef.current) {
+      confirmedMutationRef.current.controller.abort(new DOMException("The confirmed mutation was cancelled.", "AbortError"));
+      confirmedMutationRef.current = null;
+      releasedBusy = true;
+    }
     if (releasedBusy) setBusy(false);
+  }
+
+  function beginConfirmedMutation(targetBookId: string, expectedAccount: string | null): ConfirmedMutationOperation | null {
+    const sessionId = useAssistantStore.getState().currentSession?.id;
+    if (!sessionId || !isAccountIdentityCurrent(expectedAccount, useAuthStore.getState().user)) return null;
+    confirmedMutationRef.current?.controller.abort(new DOMException("A newer confirmed mutation started.", "AbortError"));
+    const operation = { id: crypto.randomUUID(), controller: new AbortController(), account: expectedAccount, sessionId, bookId: targetBookId, branch: activeBranchRef.current, pathname: activePathnameRef.current };
+    confirmedMutationRef.current = operation;
+    return operation;
+  }
+
+  function ownsConfirmedMutation(operation: ConfirmedMutationOperation): boolean {
+    const currentSessionId = useAssistantStore.getState().currentSession?.id;
+    const currentBookId = activeBookIdRef.current;
+    if (confirmedMutationRef.current?.id !== operation.id || !currentSessionId || !currentBookId) return false;
+    return isConfirmedMutationOwned(operation, {
+      account: accountIdentity(useAuthStore.getState().user),
+      sessionId: currentSessionId,
+      bookId: currentBookId,
+      branch: activeBranchRef.current,
+      pathname: activePathnameRef.current,
+    }, operation.controller.signal.aborted);
+  }
+
+  function finishConfirmedMutation(operation: ConfirmedMutationOperation): void {
+    if (confirmedMutationRef.current?.id !== operation.id) return;
+    confirmedMutationRef.current = null;
+    setBusy(false);
   }
 
   function beginMediaOperation(): { generation: number; signal: AbortSignal } {
@@ -771,13 +867,9 @@ export function AssistantPanel() {
     if (voiceModeRef.current) setVoiceStatus("listening");
     recognition.onresult = (event: any) => {
       if (!ownsMediaOperation(operation.generation, operation.signal)) return;
-      let hasFinal = false;
-      const transcript = Array.from(event.results).map((result: any) => {
-        if (result.isFinal) hasFinal = true;
-        return result[0]?.transcript ?? "";
-      }).join(" ").trim();
+      const { all: transcript, delta: newTranscript, hasFinal } = speechRecognitionResultDelta(event.results, event.resultIndex ?? 0);
       if (transcript) speechRecognitionTranscriptRef.current = transcript;
-      if (transcript) {
+      if (newTranscript) {
         // Manual mode: never auto-submit on a final result; wait for the Done button.
         if (voiceModeRef.current && hasFinal && !speechRecognitionSentRef.current && !manualEndRef.current) {
           speechRecognitionSentRef.current = true;
@@ -785,7 +877,7 @@ export function AssistantPanel() {
           void handleVoiceTranscript(transcript, operation.generation, operation.signal);
         }
         else if (autoSend && !manualEndRef.current) void sendPrompt(transcript, { signal: operation.signal });
-        else if (!voiceModeRef.current) appendDraftText(transcript);
+        else if (!voiceModeRef.current) appendDraftText(newTranscript);
       }
     };
     recognition.onerror = () => {
@@ -1014,6 +1106,8 @@ export function AssistantPanel() {
         : "The note is not a complete backup: it omits attachment contents, full action/proposal payloads, proposed file contents, undo snapshots, and cloud identity. Delete the chat anyway?";
       if (!window.confirm(lossyWarning)) return;
     }
+    const mutationOperation = beginConfirmedMutation(activeBookIdRef.current ?? destination.bookId, accountIdentity(user));
+    if (!mutationOperation) return;
     const latestReply = [...currentSession.messages].reverse().find((message) => message.role === "assistant" && message.text.trim());
     let noteBody = "";
     if (options.mode === "full") {
@@ -1040,7 +1134,8 @@ export function AssistantPanel() {
       // A prior ambiguous delete may already have removed the cloud file. Never save it again before retrying deletion.
       if (!(options.deleteAfter && (operation.status === "note-saved" || operation.status === "delete-failed"))) {
         const pending = { ...latest, noteSaveOperation: { ...operation, status: "pending" as const, updatedAt: new Date().toISOString() } };
-        const pendingHandle = await saveAssistantSession(user.provider, accessToken, pending, cloudAccountAbortRef.current.signal);
+        const pendingHandle = await saveAssistantSession(user.provider, accessToken, pending, mutationOperation.controller.signal);
+        if (!ownsConfirmedMutation(mutationOperation)) return;
         useAssistantStore.getState().setCurrentSession({ ...pending, ...pendingHandle, losslessSegments: [] });
         await appendAssistantNote({
           token,
@@ -1050,15 +1145,19 @@ export function AssistantPanel() {
           path: destination.noteTargetPath,
           noteBody,
           idempotencyKey: operation.id,
+          signal: mutationOperation.controller.signal,
         });
+        if (!ownsConfirmedMutation(mutationOperation)) return;
         const noteSaved = { ...useAssistantStore.getState().currentSession!, noteSaveOperation: { ...operation, status: options.deleteAfter ? "note-saved" as const : "complete" as const, updatedAt: new Date().toISOString() } };
-        const savedHandle = await saveAssistantSession(user.provider, accessToken, noteSaved, cloudAccountAbortRef.current.signal);
+        const savedHandle = await saveAssistantSession(user.provider, accessToken, noteSaved, mutationOperation.controller.signal);
+        if (!ownsConfirmedMutation(mutationOperation)) return;
         useAssistantStore.getState().setCurrentSession({ ...noteSaved, ...savedHandle, losslessSegments: [] });
       }
       await refreshBookAfterMutation({ book, token, branch: destination.branch });
+      if (!ownsConfirmedMutation(mutationOperation)) return;
       if (options.deleteAfter) {
         const saved = useAssistantStore.getState().currentSession;
-        if (saved?.fileId) await deleteAssistantSession(user.provider, accessToken, saved.fileId, cloudAccountAbortRef.current.signal, sourceSessionId);
+        if (saved?.fileId) await deleteAssistantSession(user.provider, accessToken, saved.fileId, mutationOperation.controller.signal, sourceSessionId);
         const state = useAssistantStore.getState();
         state.setSessions(state.sessions.filter((entry) => entry.id !== sourceSessionId && entry.fileId !== saved?.fileId));
         state.setCurrentSession(null);
@@ -1075,9 +1174,9 @@ export function AssistantPanel() {
       } else if (retired) {
         sessionSaveQueueRef.current.resume(sourceSessionId);
       }
-      toast({ title: t("assistant.toastChatNoteSaveFailed"), description: String(err), variant: "destructive" });
+      if (ownsConfirmedMutation(mutationOperation)) toast({ title: t("assistant.toastChatNoteSaveFailed"), description: String(err), variant: "destructive" });
     } finally {
-      setBusy(false);
+      finishConfirmedMutation(mutationOperation);
     }
   }
 
@@ -1093,7 +1192,7 @@ export function AssistantPanel() {
       const artifact = options.format === "json"
         ? (() => {
             if (!user) throw new Error(t("assistant.toastChatDriveUnavailable"));
-            return { fileName: `${baseName}.narrarium-chat.json`, mimeType: "application/json", archive: createAssistantChatArchive(exportSession, user.provider, user.email) };
+            return { fileName: `${baseName}.narrarium-chat.json`, mimeType: "application/json", archive: createAssistantChatArchive(exportSession, user.provider, user.providerAccountId ?? "") };
           })()
         : options.format === "markdown"
         ? { fileName: `${baseName}.md`, mimeType: "text/markdown", blob: new Blob([markdown], { type: "text/markdown;charset=utf-8" }) }
@@ -1231,22 +1330,38 @@ export function AssistantPanel() {
     const session = ensureSession();
     const requestId = crypto.randomUUID();
     const controller = new AbortController();
+    const requestOwner: AssistantRequestOwner = {
+      requestId,
+      sessionId: session.id,
+      contextGeneration: contextAccessGenerationRef.current,
+      pathname: location.pathname,
+      bookId: bookId ?? null,
+      branch,
+      secretPath: activeSecretPath,
+    };
     const abortFromCaller = () => controller.abort();
     if (options?.signal?.aborted) controller.abort();
     else options?.signal?.addEventListener("abort", abortFromCaller, { once: true });
     if (controller.signal.aborted) return null;
-    activePromptRef.current = { requestId, sessionId: session.id, controller };
+    activePromptRef.current = { ...requestOwner, controller };
     const ownsRequest = () => isAssistantRequestOwned(
       activePromptRef.current,
-      requestId,
-      session.id,
+      requestOwner,
       useAssistantStore.getState().currentSession?.id,
+      {
+        contextGeneration: contextAccessGenerationRef.current,
+        pathname: activePathnameRef.current,
+        bookId: activeBookIdRef.current ?? null,
+        branch: activeBranchRef.current,
+        secretPath: directSecretPath(parseAppRoute(activePathnameRef.current)),
+      },
       controller.signal.aborted,
     );
     const mediaOperation = options?.spokenMode && options.signal
       ? { generation: mediaGenerationRef.current, signal: options.signal }
       : undefined;
     setBusy(true);
+    setRequestStatus(t("assistant.thinking"));
     localAudioHandledRef.current = false;
     let streamedMessageId: string | null = null;
     const updateStreamedReply = (text: string) => {
@@ -1267,7 +1382,8 @@ export function AssistantPanel() {
       const book = routeContext.book;
       const token = book ? resolveBookToken(book, settings) : "";
       const userMessage = { id: crypto.randomUUID(), role: "user" as const, text: trimmed };
-      useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage] }));
+      const secretPath = routeContext.route ? directSecretPath(routeContext.route) : null;
+      useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage], sensitiveSecretPaths: secretPath ? [...new Set([...(current.sensitiveSecretPaths ?? []), secretPath])] : current.sensitiveSecretPaths }));
       setDraft("");
       const strofaReply = await tryHandleStrofaCommand(trimmed, mediaOperation);
       if (!ownsRequest()) return null;
@@ -1275,6 +1391,7 @@ export function AssistantPanel() {
         const ownedReply = { ...strofaReply, branch: routeContext.branch };
         useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, ownedReply] }));
         setOpen(true);
+        setRequestStatus("");
         return ownedReply;
       }
       const localReply = await tryHandleLocalVoiceTool(trimmed, { context: routeContext, book, token, spokenMode: options?.spokenMode, operation: mediaOperation });
@@ -1283,6 +1400,7 @@ export function AssistantPanel() {
         const ownedReply = { ...localReply, branch: routeContext.branch, action: localReply.action ? { ...localReply.action, branch: localReply.action.branch ?? routeContext.branch } : undefined };
         useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, ownedReply] }));
         setOpen(true);
+        setRequestStatus("");
         return ownedReply;
       }
       const latestSession = useAssistantStore.getState().currentSession;
@@ -1324,15 +1442,18 @@ export function AssistantPanel() {
         const spokenAction = await speakReadAloud(ownedReply.action as ReadAloudAction, book, token, readBranch, mediaOperation);
         if (spokenAction) useAssistantStore.getState().updateSessionMessage(session.id, finalReply.id, { action: spokenAction });
       }
+      setRequestStatus("");
       return finalReply;
     } catch (err) {
       if (!ownsRequest()) return null;
       const errorMessage = { id: streamedMessageId ?? crypto.randomUUID(), role: "assistant" as const, text: err instanceof Error ? err.message : t("assistant.requestFailed"), branch };
       if (streamedMessageId) useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: errorMessage.text, branch });
       else useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, errorMessage] }));
+      setRequestStatus(errorMessage.text);
       return errorMessage;
     } finally {
       options?.signal?.removeEventListener("abort", abortFromCaller);
+      if (controller.signal.aborted) setRequestStatus("");
       if (activePromptRef.current?.requestId === requestId) {
         activePromptRef.current = null;
         setBusy(false);
@@ -1717,8 +1838,9 @@ export function AssistantPanel() {
     activeOpenSessionRunRef.current = runId;
     setBusy(true);
     try {
-      const session = await loadAssistantSession(user.provider, accessToken, fileId, controller.signal);
+      const loaded = await loadAssistantSession(user.provider, accessToken, fileId, controller.signal);
       if (controller.signal.aborted || activeOpenSessionRunRef.current !== runId) return;
+      const session = invalidateAssistantSecretContext(loaded, directSecretPath(route));
       setCurrentSession(session);
       setOpen(true);
     } catch (err) {
@@ -1856,16 +1978,20 @@ export function AssistantPanel() {
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
     if (!await validatePersistedMutation(action, book, token)) return;
+    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    if (!operation) return;
     setBusy(true);
     try {
-      await applyParagraphRewrite({ action, book, branch, token });
+      await applyParagraphRewrite({ action, book, branch, token, signal: operation.controller.signal });
+      if (!ownsConfirmedMutation(operation)) return;
       await refreshBookAfterMutation({ book, token, branch });
+      if (!ownsConfirmedMutation(operation)) return;
       useAssistantStore.getState().updateMessage(message.id, { mutation: { changedPaths: [action.paragraphPath], refresh: "book-structure-and-context" } });
       toast({ title: t("assistant.toastParagraphUpdated") });
     } catch (err) {
-      toast({ title: t("assistant.toastRewriteFailed"), description: String(err), variant: "destructive" });
+      if (ownsConfirmedMutation(operation)) toast({ title: t("assistant.toastRewriteFailed"), description: String(err), variant: "destructive" });
     } finally {
-      setBusy(false);
+      finishConfirmedMutation(operation);
     }
   }
 
@@ -1879,9 +2005,13 @@ export function AssistantPanel() {
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token || updates.length === 0) return;
     if (!await validatePersistedMutation(action, book, token)) return;
+    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    if (!operation) return;
+    const signal = operation.controller.signal;
     setBusy(true);
     try {
-      const currentFiles = await Promise.all(updates.map((update) => optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, update.path))));
+      const currentFiles = await Promise.all(updates.map((update) => optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, update.path, signal))));
+      if (!ownsConfirmedMutation(operation)) return;
       let results: Record<string, AppliedFileUpdateResult> = {};
       const mutations = await Promise.all(updates.map(async (update, index) => {
         const current = currentFiles[index];
@@ -1890,14 +2020,17 @@ export function AssistantPanel() {
         results[update.path] = { previousContent: current?.content ?? null, appliedHash: await sha256Text(update.content) };
         return { path: update.path, content: update.content, expectedCurrentHash: currentHash };
       }));
-      const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch });
+      const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch, signal });
+      if (!ownsConfirmedMutation(operation)) return;
       const messageText = `Apply ${updates.length} Copilot file update${updates.length === 1 ? "" : "s"}`;
       const scriptResult = mutations.some((mutation) => /^scripts\/.*\.md$/.test(mutation.path))
-        ? await commitCanonicalScriptMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText })
+        ? await commitCanonicalScriptMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal })
         : null;
-      if (!scriptResult) await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText });
+      if (!scriptResult) await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal });
+      if (!ownsConfirmedMutation(operation)) return;
       if (scriptResult) results = applyCanonicalRevisionResults(updates, results, scriptResult);
       await refreshBookAfterMutation({ book, token, branch });
+      if (!ownsConfirmedMutation(operation)) return;
       const nextUpdates = markFileUpdatesApplied(action.updates, results);
       const nextRevisions = { ...action.sourceRevisions };
       for (const update of updates) nextRevisions[update.path] = results[update.path].appliedHash;
@@ -1921,6 +2054,7 @@ export function AssistantPanel() {
       });
       toast({ title: t("assistant.toastFileUpdatesApplied"), description: scriptResult?.warningCount ? scriptResult.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") : undefined });
     } catch (err) {
+      if (!ownsConfirmedMutation(operation)) return;
       const error = err instanceof Error ? err.message : String(err);
       const conflictPath = err instanceof RepositoryConflictError ? err.path : undefined;
       const failedPaths = conflictPath ? [conflictPath] : updates.map((update) => update.path);
@@ -1929,7 +2063,7 @@ export function AssistantPanel() {
       useAssistantStore.getState().updateMessage(message.id, { action: { ...action, updates: nextUpdates }, text: `${message.text}\n\nCompleted: ${counts.applied}; pending: ${counts.pending}; failed: ${counts.failed}.` });
       toast({ title: t("assistant.toastFileUpdatesFailed"), description: String(err), variant: "destructive" });
     } finally {
-      setBusy(false);
+      finishConfirmedMutation(operation);
     }
   }
 
@@ -1942,24 +2076,29 @@ export function AssistantPanel() {
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
     if (!await validatePersistedMutation(action, book, token)) return;
+    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    if (!operation) return;
+    const signal = operation.controller.signal;
     setBusy(true);
     try {
       if (action.createIfMissing) {
-        await createBranchFromBase(token, book.owner, book.repo, action.baseBranch ?? "main", action.branchName);
+        await createBranchFromBase(token, book.owner, book.repo, action.baseBranch ?? "main", action.branchName, signal);
       }
+      if (!ownsConfirmedMutation(operation)) return;
       patchSettings({
         books: settings.books.map((entry) =>
           entry.id === book.id ? { ...entry, activeBranch: action.branchName } : entry,
         ),
       });
       await save();
+      if (!ownsConfirmedMutation(operation)) return;
       clearBook(book.id);
       toast({ title: t("assistant.toastBranchSwitched", { branch: action.branchName }) });
       window.location.reload();
     } catch (err) {
-      toast({ title: t("assistant.toastBranchSwitchFailed"), description: String(err), variant: "destructive" });
+      if (ownsConfirmedMutation(operation)) toast({ title: t("assistant.toastBranchSwitchFailed"), description: String(err), variant: "destructive" });
     } finally {
-      setBusy(false);
+      finishConfirmedMutation(operation);
     }
   }
 
@@ -1972,6 +2111,9 @@ export function AssistantPanel() {
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
     if (!await validatePersistedMutation(action, book, token)) return;
+    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    if (!operation) return;
+    const signal = operation.controller.signal;
     setBusy(true);
     try {
       let changedPaths = [action.path];
@@ -1980,29 +2122,37 @@ export function AssistantPanel() {
         const structure = structures[action.bookId];
         const chapter = structure?.chapters.find((entry) => entry.slug === action.chapterSlug);
         if (!chapter) throw new Error("Chapter not found for paragraph deletion.");
+        const paragraph = chapter.paragraphs.find((entry) => entry.path === action.path);
+        if (!paragraph) throw new Error("Paragraph not found for deletion.");
+        const [loaded, expectedRemoteHeadSha] = await Promise.all([
+          paragraph.revision ? Promise.resolve({ sha: paragraph.revision }) : readFileWithSha(token, book.owner, book.repo, branch, action.path, signal),
+          resolveRepositoryHeadForMutation({ token, book, branch, signal }),
+        ]);
         const remaining = chapter.paragraphs.filter((paragraph) => paragraph.path !== action.path);
-        const outcome = await reorderParagraphsInChapter(token, book.owner, book.repo, branch, chapter.path, chapter.paragraphs, remaining, `Delete paragraph: ${action.title}`);
+        const outcome = await reorderParagraphsInChapter(token, book.owner, book.repo, branch, chapter.path, chapter.paragraphs, remaining, `Delete paragraph: ${action.title}`, { expectedRemoteHeadSha, expectedParagraphHashes: { [action.path]: loaded.sha }, signal });
         changedPaths = outcome.canonical?.changedPaths ?? [action.path];
         if (outcome.canonical?.warningCount) toast({ title: t("assistant.toastDeleted", { title: action.title }), description: outcome.canonical.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
       } else {
-        const existing = await optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, action.path));
+        const existing = await optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, action.path, signal));
         if (existing && /^scripts\/.*\.md$/.test(action.path)) {
-          const result = await commitCanonicalScriptMutation({ token, book, branch, message: `Delete ${action.target}: ${action.title}`, mutations: [{ path: action.path, content: null, expectedCurrentHash: await sha256Text(existing.content) }] });
+          const result = await commitCanonicalScriptMutation({ token, book, branch, message: `Delete ${action.target}: ${action.title}`, mutations: [{ path: action.path, content: null, expectedCurrentHash: await sha256Text(existing.content) }], signal });
           changedPaths = result.changedPaths;
           if (result.warningCount) toast({ title: t("assistant.toastDeleted", { title: action.title }), description: result.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
-        } else if (existing) await deleteFile(token, book.owner, book.repo, branch, action.path, existing.sha, `Delete ${action.target}: ${action.title}`);
+        } else if (existing) await deleteFile(token, book.owner, book.repo, branch, action.path, existing.sha, `Delete ${action.target}: ${action.title}`, signal);
         else {
           changedPaths = [];
           deleteWasNoOp = true;
         }
       }
+      if (!ownsConfirmedMutation(operation)) return;
       useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${deleteWasNoOp ? t("assistant.deleteAlreadyAbsent") : t("assistant.deleteApplied")}`, mutation: { changedPaths, refresh: "book-structure-and-context" } });
       toast({ title: deleteWasNoOp ? t("assistant.deleteAlreadyAbsent") : t("assistant.toastDeleted", { title: action.title }) });
       await refreshBookAfterMutation({ book, token, branch });
+      if (!ownsConfirmedMutation(operation)) return;
     } catch (err) {
-      toast({ title: t("assistant.toastDeleteFailed"), description: String(err), variant: "destructive" });
+      if (ownsConfirmedMutation(operation)) toast({ title: t("assistant.toastDeleteFailed"), description: String(err), variant: "destructive" });
     } finally {
-      setBusy(false);
+      finishConfirmedMutation(operation);
     }
   }
 
@@ -2035,19 +2185,25 @@ export function AssistantPanel() {
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token || !await validatePersistedMutation(action, book, token)) return;
+    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    if (!operation) return;
+    const signal = operation.controller.signal;
     setBusy(true);
     try {
       const document = buildCanonEntityDocument({ kind: action.entityKind, label: action.label, body: action.body, extraFrontmatter: action.extraFrontmatter });
       if (document.path !== action.destinationPath) throw new Error("The generated entity destination changed before confirmation.");
-      const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch });
-      await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations: [{ path: document.path, content: document.content, expectedCurrentHash: null }], message: `Add ${action.entityKind} ${action.label} from ${action.researchPath}` });
+      const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch, signal });
+      if (!ownsConfirmedMutation(operation)) return;
+      await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations: [{ path: document.path, content: document.content, expectedCurrentHash: null }], message: `Add ${action.entityKind} ${action.label} from ${action.researchPath}`, signal });
+      if (!ownsConfirmedMutation(operation)) return;
       useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("assistant.createFromResearchApplied")}`, mutation: { changedPaths: [document.path], refresh: "book-structure-and-context" } });
       await refreshBookAfterMutation({ book, token, branch });
+      if (!ownsConfirmedMutation(operation)) return;
       toast({ title: t("assistant.toastCreatedFromResearch", { title: action.label }) });
     } catch (err) {
-      toast({ title: t("assistant.toastCreateFromResearchFailed"), description: String(err), variant: "destructive" });
+      if (ownsConfirmedMutation(operation)) toast({ title: t("assistant.toastCreateFromResearchFailed"), description: String(err), variant: "destructive" });
     } finally {
-      setBusy(false);
+      finishConfirmedMutation(operation);
     }
   }
 
@@ -2059,15 +2215,18 @@ export function AssistantPanel() {
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token || !await validatePersistedMutation(action, book, token)) return;
+    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    if (!operation) return;
     setBusy(true);
     try {
-      const pull = await confirmPullRequestProposal({ token, action }, { getDefaultBranch, listBranches, listBranchCommits, compareBranches, listOpenPullRequests, createPullRequest });
+      const pull = await confirmPullRequestProposal({ token, action, signal: operation.controller.signal }, { getDefaultBranch, listBranches, listBranchCommits, compareBranches, listOpenPullRequests, createPullRequest });
+      if (!ownsConfirmedMutation(operation)) return;
       useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\nOpened pull request #${pull.number}: ${pull.htmlUrl}` });
       toast({ title: `Opened pull request #${pull.number}` });
     } catch (err) {
-      toast({ title: "Pull request was not created", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+      if (ownsConfirmedMutation(operation)) toast({ title: "Pull request was not created", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
     } finally {
-      setBusy(false);
+      finishConfirmedMutation(operation);
     }
   }
 
@@ -2080,34 +2239,40 @@ export function AssistantPanel() {
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
     if (!await validatePersistedMutation(action, book, token)) return;
+    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    if (!operation) return;
+    const signal = operation.controller.signal;
     setBusy(true);
     try {
       const applied = action.updates.filter((update) => update.status === "applied" || update.appliedHash);
       if (!applied.length) throw new Error("No applied file updates are available to undo.");
-      const currentFiles = await Promise.all(applied.map((update) => readFileWithSha(token, book.owner, book.repo, branch, update.path)));
+      const currentFiles = await Promise.all(applied.map((update) => readFileWithSha(token, book.owner, book.repo, branch, update.path, signal)));
+      if (!ownsConfirmedMutation(operation)) return;
       const mutations = await Promise.all(applied.map(async (update, index) => {
         const current = currentFiles[index];
         if (!update.appliedHash || !current || await sha256Text(current.content) !== update.appliedHash) throw new Error(`Source changed before undoing ${update.path}.`);
         return { path: update.path, content: update.previousContent ?? null, expectedCurrentHash: update.appliedHash };
       }));
-      const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch });
+      const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch, signal });
       const messageText = `Undo ${applied.length} Copilot file update${applied.length === 1 ? "" : "s"}`;
       const priorLedger = applied.find((update) => update.path === "state/script-ledger.md")?.previousContent;
       const ledgerGeneratedAt = priorLedger ? /^generated_at:\s*["']?([^"'\r\n]+)["']?\s*$/m.exec(priorLedger)?.[1].trim() : undefined;
       const scriptResult = mutations.some((mutation) => /^scripts\/.*\.md$/.test(mutation.path))
-        ? await commitCanonicalScriptMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, ledgerGeneratedAt })
+        ? await commitCanonicalScriptMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, ledgerGeneratedAt, signal })
         : null;
-      if (!scriptResult) await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText });
+      if (!scriptResult) await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal });
+      if (!ownsConfirmedMutation(operation)) return;
       await refreshBookAfterMutation({ book, token, branch });
+      if (!ownsConfirmedMutation(operation)) return;
       const nextUpdates = markFileUpdatesUndone(action.updates, applied.map((update) => update.path));
       const nextRevisions = { ...action.sourceRevisions };
       await Promise.all(applied.map(async (update) => { nextRevisions[update.path] = scriptResult?.revisions[update.path]?.hash ?? (update.previousContent == null ? null : await sha256Text(update.previousContent)); }));
       useAssistantStore.getState().updateMessage(message.id, { action: { ...action, kind: "apply-file-updates", updates: nextUpdates, sourceRevision: sourceRevisionFromFiles(nextRevisions), sourceRevisions: nextRevisions, generatedAt: new Date().toISOString() }, text: `${message.text}\n\n${t("assistant.undoApplied")}`, mutation: { changedPaths: (scriptResult?.changedPaths ?? applied.map((update) => update.path)).sort(), refresh: "book-structure-and-context" } });
       toast({ title: t("assistant.toastUndoApplied"), description: scriptResult?.warningCount ? scriptResult.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") : undefined });
     } catch (err) {
-      toast({ title: t("assistant.toastUndoFailed"), description: String(err), variant: "destructive" });
+      if (ownsConfirmedMutation(operation)) toast({ title: t("assistant.toastUndoFailed"), description: String(err), variant: "destructive" });
     } finally {
-      setBusy(false);
+      finishConfirmedMutation(operation);
     }
   }
 
@@ -2130,7 +2295,7 @@ export function AssistantPanel() {
     }
   }
 
-  async function revertDiffFile(file: BranchDiffFile) {
+  async function requestDiffFileRevert(file: BranchDiffFile) {
     if (!requireCopilotToolEnabled("show-branch-diff")) return;
     if (!bookId) return;
     const book = settings.books.find((entry) => entry.id === bookId);
@@ -2139,23 +2304,68 @@ export function AssistantPanel() {
     if (!book || !structure || !token) return;
     setBusy(true);
     try {
-      if (/^scripts\/.*\.md$/.test(file.filename)) {
-        const [current, base] = await Promise.all([
-          optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, file.filename)),
-          loadFileContent(token, book.owner, book.repo, file.filename, structure.defaultBranch).catch(() => null),
-        ]);
-        const result = await commitCanonicalScriptMutation({ token, book, branch, message: `Revert ${file.filename} to ${structure.defaultBranch}`, mutations: [{ path: file.filename, content: base, expectedCurrentHash: current ? await sha256Text(current.content) : null }] });
-        if (result.warningCount) toast({ title: t("assistant.toastReverted", { file: file.filename }), description: result.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
-      } else {
-        await revertFileToRef(token, book.owner, book.repo, branch, file.filename, structure.defaultBranch);
-      }
-      await refreshBookAfterMutation({ book, token, branch });
-      toast({ title: t("assistant.toastReverted", { file: file.filename }) });
-      await loadBranchDiff();
+      const [destination, source] = await Promise.all([
+        optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, file.filename)),
+        optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, structure.defaultBranch, file.filename)),
+      ]);
+      if (!destination && !source) throw new Error(t("assistant.revertFileMissing"));
+      setPendingDiffRevert({
+        file,
+        sourceBranch: structure.defaultBranch,
+        destinationBranch: branch,
+        sourceHash: source ? await sha256Text(source.content) : null,
+        destinationHash: destination ? await sha256Text(destination.content) : null,
+      });
     } catch (err) {
       toast({ title: t("assistant.toastRevertFailed"), description: String(err), variant: "destructive" });
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function confirmDiffFileRevert() {
+    const pending = pendingDiffRevert;
+    if (!pending || !bookId) return;
+    const book = settings.books.find((entry) => entry.id === bookId);
+    const token = book ? resolveBookToken(book, settings) : "";
+    if (!book || !token) return;
+    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    if (!operation) return;
+    const signal = operation.controller.signal;
+    setBusy(true);
+    try {
+      const [destination, source] = await Promise.all([
+        optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, pending.destinationBranch, pending.file.filename, signal)),
+        optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, pending.sourceBranch, pending.file.filename, signal)),
+      ]);
+      if (!ownsConfirmedMutation(operation)) return;
+      const [destinationHash, sourceHash] = await Promise.all([
+        destination ? sha256Text(destination.content) : Promise.resolve(null),
+        source ? sha256Text(source.content) : Promise.resolve(null),
+      ]);
+      if (!diffRevertRevisionsMatch(pending, sourceHash, destinationHash)) {
+        throw new RepositoryConflictError(t("assistant.revertRevisionChanged"), pending.file.filename);
+      }
+      if (!destination && !source) throw new Error(t("assistant.revertFileMissing"));
+      const mutation = { path: pending.file.filename, content: source?.content ?? null, expectedCurrentHash: destinationHash };
+      const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch: pending.destinationBranch, signal });
+      const mutationInput = { token, book, branch: pending.destinationBranch, expectedRemoteHeadSha, message: `Revert ${pending.file.filename} to ${pending.sourceBranch}`, mutations: [mutation], signal };
+      if (/^scripts\/.*\.md$/.test(pending.file.filename)) {
+        const result = await commitCanonicalScriptMutation(mutationInput);
+        if (result.warningCount) toast({ title: t("assistant.toastReverted", { file: pending.file.filename }), description: result.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
+      } else {
+        await commitAndPushTextFileMutation(mutationInput);
+      }
+      if (!ownsConfirmedMutation(operation)) return;
+      setPendingDiffRevert(null);
+      await refreshBookAfterMutation({ book, token, branch: pending.destinationBranch });
+      if (!ownsConfirmedMutation(operation)) return;
+      toast({ title: t("assistant.toastReverted", { file: pending.file.filename }) });
+      await loadBranchDiff();
+    } catch (err) {
+      if (ownsConfirmedMutation(operation)) toast({ title: t("assistant.toastRevertFailed"), description: String(err), variant: "destructive" });
+    } finally {
+      finishConfirmedMutation(operation);
     }
   }
 
@@ -2276,7 +2486,7 @@ export function AssistantPanel() {
                     <p className="font-mono text-xs">{file.filename}</p>
                     <p className="text-xs text-muted-foreground">{file.status} · +{file.additions} -{file.deletions}</p>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => void revertDiffFile(file)} disabled={busy}>{t("assistant.revertFile")}</Button>
+                  <Button variant="outline" size="sm" onClick={() => void requestDiffFileRevert(file)} disabled={busy}>{t("assistant.revertFile")}</Button>
                 </div>
                 {file.patch && <PatchDiff patch={file.patch} className="max-h-64" />}
               </div>
@@ -2288,7 +2498,8 @@ export function AssistantPanel() {
   );
 
   const messagesView = (
-    <div className="space-y-4">
+    <div className="space-y-4" role="log" aria-live="polite" aria-relevant="additions" aria-busy={busy} aria-label={t("assistant.chatLog")}>
+      {!busy && currentSession?.messages.length ? <span className="sr-only" key={`message-announcement-${currentSession.messages[currentSession.messages.length - 1]?.id}`}>{currentSession.messages[currentSession.messages.length - 1]?.text}</span> : null}
       {currentSession?.messages.length ? null : (
         <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">{t("assistant.empty")}</div>
       )}
@@ -2370,7 +2581,7 @@ export function AssistantPanel() {
           </div>
         </div>
       ))}
-      {busy && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("assistant.thinking")}</div>}
+      {busy && <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("assistant.thinking")}</div>}
       <div ref={messagesEndRef} />
     </div>
   );
@@ -2504,14 +2715,14 @@ export function AssistantPanel() {
                 {currentSession.attachments.map((attachment) => (
                   <Badge key={attachment.id} variant="secondary" className="gap-1 pr-1">
                     {attachment.name}{attachment.truncated ? " (truncated)" : ""}
-                    <button type="button" onClick={() => removeAttachment(attachment.id)} className="rounded p-0.5 hover:bg-black/10"><X className="h-3 w-3" /></button>
+                    <button type="button" onClick={() => removeAttachment(attachment.id)} aria-label={t("assistant.removeAttachment", { name: attachment.name })} className="rounded p-0.5 hover:bg-black/10"><X className="h-3 w-3" /></button>
                   </Badge>
                 ))}
               </div>
             ) : null}
 
             <ScrollArea className="min-h-0 flex-1 px-3 py-4">
-              {autosaveStatus && autosaveStatus.sessionId === currentSession?.id && <div role="status" className="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-100"><p className="font-medium">{autosaveStatus.kind === "retrying" ? t("assistant.autosaveRetrying", { attempt: autosaveStatus.attempt }) : t("assistant.autosaveStopped")}</p><p className="mt-1 break-words opacity-80">{autosaveStatus.message}</p></div>}
+              {autosaveStatus && autosaveStatus.sessionId === currentSession?.id && <div role="status" className="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-100"><p className="font-medium">{autosaveStatus.kind === "retrying" ? t("assistant.autosaveRetrying", { attempt: autosaveStatus.attempt }) : t("assistant.autosaveStopped")}</p><p className="mt-1 break-words opacity-80">{autosaveStatus.message}</p>{autosaveStatus.kind === "stopped" && autosaveStatus.retryable && <Button type="button" variant="outline" size="sm" className="mt-2" onClick={retryStoppedAutosave}>{t("assistant.autosaveRetry")}</Button>}</div>}
               {currentSession && hasAssistantSessionArchiveContent(currentSession) && <div className="mb-3 rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground whitespace-pre-wrap"><p className="mb-1 font-medium text-foreground">{t("assistant.compactionSummary", { count: currentSession.archive?.messageCount ?? currentSession.compactedMessageCount })}</p>{currentSession.compactSummary}<AssistantArchiveProvenance session={currentSession} />{currentSession.archive?.attachments.map((attachment) => <div key={attachment.id} className="mt-1 font-mono">{attachment.name}</div>)}</div>}
               {messagesView}
             </ScrollArea>
@@ -2582,15 +2793,16 @@ export function AssistantPanel() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 px-6 py-8 text-center">
+      <div data-testid="live-voice-scroll" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div className="flex min-h-full flex-col items-center justify-center gap-4 px-3 py-4 text-center sm:gap-8 sm:px-6 sm:py-8">
         <div className="relative">
           <div className={voiceStatus === "speaking" ? "absolute inset-0 animate-ping rounded-full bg-primary/20" : "absolute inset-0 rounded-full bg-primary/10"} />
-          <div className="relative flex h-44 w-44 items-center justify-center rounded-full border bg-background/80 shadow-2xl backdrop-blur sm:h-56 sm:w-56">
-            <Ghost className={voiceStatus === "listening" ? "h-24 w-24 animate-pulse text-primary sm:h-32 sm:w-32" : "h-24 w-24 text-primary sm:h-32 sm:w-32"} />
+          <div className="relative flex h-28 w-28 items-center justify-center rounded-full border bg-background/80 shadow-2xl backdrop-blur sm:h-56 sm:w-56">
+            <Ghost className={voiceStatus === "listening" ? "h-16 w-16 animate-pulse text-primary sm:h-32 sm:w-32" : "h-16 w-16 text-primary sm:h-32 sm:w-32"} />
           </div>
         </div>
 
-        <div className="max-w-lg space-y-2">
+        <div className="max-w-lg space-y-2" role="status" aria-live="polite" aria-atomic="true">
           <p className="text-2xl font-semibold tracking-tight">{voiceStatus === "idle" ? t("assistant.liveReady") : t(`assistant.voiceStatusTitle.${voiceStatus}`)}</p>
           <p className="text-sm leading-6 text-muted-foreground">{t(`assistant.voiceStatus.${voiceStatus}`)}</p>
           {liveStrofeCount > 0 && (
@@ -2617,7 +2829,7 @@ export function AssistantPanel() {
           <button
             type="button"
             onClick={() => void startVoiceTurn()}
-            className={voiceStatus === "idle" || voiceStatus === "not-heard" || voiceStatus === "paused" ? "flex h-36 w-36 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44" : "flex h-36 w-36 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44"}
+            className={voiceStatus === "idle" || voiceStatus === "not-heard" || voiceStatus === "paused" ? "flex h-24 w-24 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44" : "flex h-24 w-24 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-2xl transition hover:scale-105 active:scale-95 sm:h-44 sm:w-44"}
           >
             {voiceStatus === "idle" || voiceStatus === "not-heard" || voiceStatus === "paused" ? <Mic className="h-14 w-14" /> : <Square className="h-14 w-14" />}
             <span className="sr-only">{voiceStatus === "idle" || voiceStatus === "not-heard" || voiceStatus === "paused" ? t("assistant.talk") : t("assistant.interrupt")}</span>
@@ -2654,6 +2866,7 @@ export function AssistantPanel() {
           {t("assistant.manualEndLabel")}
         </label>
       </div>
+      </div>
     </div>
   );
 
@@ -2670,8 +2883,9 @@ export function AssistantPanel() {
           </button>
         </div>
       )}
-      <Dialog open={syncOpen} onOpenChange={setSyncOpen}><DialogContent hideCloseButton className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[920px]">{syncPanel}</DialogContent></Dialog>
-      <Dialog open={open} onOpenChange={(next) => { if (!next) closeAssistant(); else setOpen(true); }}><DialogContent hideCloseButton bare onPointerDownOutside={(event) => event.preventDefault()} onInteractOutside={(event) => event.preventDefault()} onEscapeKeyDown={(event) => event.preventDefault()} className={voiceMode || fullScreen || isMobile ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 overflow-hidden" : "bottom-6 right-6 h-[80dvh] max-h-[calc(100dvh-3rem)] w-[420px] max-w-[calc(100vw-3rem)] overflow-hidden"}>{voiceMode ? liveVoicePanel : panel}</DialogContent></Dialog>
+      <Dialog open={syncOpen} onOpenChange={setSyncOpen}><DialogContent hideCloseButton className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[920px]"><DialogTitle className="sr-only">{t("assistant.syncTitle")}</DialogTitle><DialogDescription className="sr-only">{t("assistant.syncSubtitle")}</DialogDescription>{syncPanel}</DialogContent></Dialog>
+      <Dialog open={Boolean(pendingDiffRevert)} onOpenChange={(next) => { if (!next && !busy) setPendingDiffRevert(null); }}><DialogContent><DialogTitle>{t("assistant.revertConfirmTitle")}</DialogTitle><DialogDescription>{t("assistant.revertConfirmDescription")}</DialogDescription>{pendingDiffRevert && <div className="space-y-2 text-sm"><p className="break-all font-mono font-medium">{pendingDiffRevert.file.filename}</p><p>{t("assistant.revertSource", { branch: pendingDiffRevert.sourceBranch })}</p><p>{t("assistant.revertDestination", { branch: pendingDiffRevert.destinationBranch })}</p><div className="flex justify-end gap-2 pt-3"><Button variant="outline" onClick={() => setPendingDiffRevert(null)} disabled={busy}>{t("assistant.cancel")}</Button><Button variant="destructive" onClick={() => void confirmDiffFileRevert()} disabled={busy}>{t("assistant.confirmRevert")}</Button></div></div>}</DialogContent></Dialog>
+      <Dialog open={open} onOpenChange={(next) => { if (!next) closeAssistant(); else setOpen(true); }}><DialogContent hideCloseButton bare onPointerDownOutside={(event) => event.preventDefault()} onInteractOutside={(event) => event.preventDefault()} onEscapeKeyDown={(event) => { event.preventDefault(); if (!hasOpenFloatingLayer()) closeAssistant(); }} className={voiceMode || fullScreen || isMobile ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 overflow-hidden" : "bottom-6 right-6 h-[80dvh] max-h-[calc(100dvh-3rem)] w-[420px] max-w-[calc(100vw-3rem)] overflow-hidden"}><DialogTitle className="sr-only">{voiceMode ? t("assistant.liveVoice") : t("assistant.title")}</DialogTitle><DialogDescription className="sr-only">{voiceMode ? t("assistant.voiceDialogDescription") : t("assistant.copilotDialogDescription")}</DialogDescription><div role="status" aria-live="polite" aria-atomic="true" className="sr-only">{requestStatus}</div>{voiceMode ? liveVoicePanel : panel}</DialogContent></Dialog>
     </>
   );
 }

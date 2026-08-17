@@ -143,7 +143,8 @@ export function BookPage() {
     if (loadedBookDocRef.current === key) return;
     loadedBookDocRef.current = key;
     setBookDocLoading(true);
-    readFileWithSha(token, book.owner, book.repo, branch, "book.md")
+    const controller = new AbortController();
+    readFileWithSha(token, book.owner, book.repo, branch, "book.md", controller.signal)
       .then(({ content, sha }) => {
         const { frontmatter, body } = splitMarkdownDoc(content);
         setBookFrontmatter(frontmatter);
@@ -153,6 +154,7 @@ export function BookPage() {
         setBookSha(sha);
       })
       .catch(() => {
+        if (controller.signal.aborted) return;
         const fallback = {
           type: "book",
           title: structure?.title ?? book.name,
@@ -165,7 +167,8 @@ export function BookPage() {
         setSavedBookBody(structure?.description ?? "");
         setBookSha("");
       })
-      .finally(() => setBookDocLoading(false));
+      .finally(() => { if (!controller.signal.aborted) setBookDocLoading(false); });
+    return () => controller.abort();
   }, [book, token, branch, structure?.title, structure?.description, structure?.language, structure?.ghostwriter, settings.ui.language]);
 
   function patchBookFrontmatter(key: string, value: string) {
@@ -177,8 +180,9 @@ export function BookPage() {
     });
   }
 
-  async function saveBookDoc() {
-    if (!book || !token || !bookDocDirty) return;
+  async function saveBookDoc(): Promise<boolean> {
+    if (!book || !token || !bookDocDirty) return true;
+    if (bookDocSaving) return false;
     setBookDocSaving(true);
     try {
       const nextFrontmatter = {
@@ -195,8 +199,10 @@ export function BookPage() {
       setSavedBookBody(bookBody);
       toast({ title: t("common.saved") });
       reload();
+      return true;
     } catch (err) {
       toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
+      return false;
     } finally {
       setBookDocSaving(false);
     }
@@ -363,7 +369,7 @@ export function BookPage() {
             <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted-foreground">{structure.chapters.length === 1 ? t("bookPage.chapterCountOne", { count: structure.chapters.length }) : t("bookPage.chapterCountMany", { count: structure.chapters.length })}</p>
               <CreateChapterDialog
-                nextNumber={structure.chapters.length + 1}
+                nextNumber={Math.max(0, ...structure.chapters.map((entry) => Number(entry.slug.match(/^(\d{3})/)?.[1]) || 0)) + 1}
                 onCreate={handleCreateChapter}
               />
             </div>

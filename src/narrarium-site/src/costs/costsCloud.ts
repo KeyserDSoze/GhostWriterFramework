@@ -2,13 +2,13 @@ import type { AuthProvider } from "@/store/authStore";
 import type { CostsFile } from "@/costs/model";
 import { emptyCostsFile } from "@/costs/model";
 import { ensureGoogleAppFolder } from "@/drive/googleAppFolder";
-import { beginCloudWrite } from "@/drive/cloudWriteBarrier";
+import { beginCloudWrite, fencedCloudMutation } from "@/drive/cloudWriteBarrier";
 import { assertCloudStatus } from "@/drive/migrationSafety";
+import { ensureMicrosoftAppMarker, graphPath, ONE_DRIVE_APP_FOLDER } from "@/drive/microsoftAppFolder";
 
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
-const ONE_DRIVE_APP_FOLDER = "Apps/Narrarium";
 const COSTS_FILE = "costs.json";
 const MIME_JSON = "application/json";
 
@@ -22,7 +22,9 @@ export interface CostsHandle {
 }
 
 export async function loadCosts(provider: AuthProvider, accessToken: string): Promise<CostsHandle> {
-  return provider === "microsoft" ? loadMicrosoftCosts(accessToken) : loadGoogleCosts(accessToken);
+  const release = await beginCloudWrite(provider, accessToken);
+  try { return await (provider === "microsoft" ? loadMicrosoftCosts(accessToken) : loadGoogleCosts(accessToken)); }
+  finally { release(); }
 }
 
 function assertOk(response: Response, context: string, allow404 = false): void {
@@ -40,7 +42,7 @@ function parseCostsFile(value: unknown): CostsFile {
 }
 
 export async function saveCosts(provider: AuthProvider, accessToken: string, handle: CostsHandle): Promise<CostsHandle> {
-  const endWrite = beginCloudWrite(provider, accessToken);
+  const endWrite = await beginCloudWrite(provider, accessToken);
   const file: CostsFile = { ...handle.file, updatedAt: new Date().toISOString() };
   try {
     if (provider === "microsoft") {
@@ -73,7 +75,7 @@ async function loadGoogleCosts(accessToken: string): Promise<CostsHandle> {
 async function saveGoogleCosts(accessToken: string, file: CostsFile, fileId?: string): Promise<string> {
   const body = JSON.stringify(file, null, 2);
   if (fileId) {
-    const response = await fetch(`${GOOGLE_UPLOAD_API}/files/${fileId}?uploadType=media`, {
+    const response = await fencedCloudMutation("google", accessToken, `${GOOGLE_UPLOAD_API}/files/${fileId}?uploadType=media`, {
       method: "PATCH",
       headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
       body,
@@ -85,7 +87,7 @@ async function saveGoogleCosts(accessToken: string, file: CostsFile, fileId?: st
   const form = new FormData();
   form.append("metadata", new Blob([JSON.stringify({ name: COSTS_FILE, parents: [root] })], { type: MIME_JSON }));
   form.append("file", new Blob([body], { type: MIME_JSON }));
-  const create = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=multipart&fields=id`, {
+  const create = await fencedCloudMutation("google", accessToken, `${GOOGLE_UPLOAD_API}/files?uploadType=multipart&fields=id`, {
     method: "POST",
     headers: authHeaders(accessToken),
     body: form,
@@ -101,11 +103,11 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
   let currentPath = "";
   for (const part of parts) {
     const nextPath = currentPath ? `${currentPath}/${part}` : part;
-    const exists = await fetch(`${GRAPH_DRIVE_API}/root:/${nextPath}`, { headers: authHeaders(accessToken) });
+    const exists = await fetch(`${GRAPH_DRIVE_API}/root:/${graphPath(nextPath)}`, { headers: authHeaders(accessToken) });
     if (exists.ok) { currentPath = nextPath; continue; }
     if (exists.status !== 404) throw new Error(`OneDrive costs folder lookup: ${exists.status}`);
-    const createUrl = currentPath ? `${GRAPH_DRIVE_API}/root:/${currentPath}:/children` : `${GRAPH_DRIVE_API}/root/children`;
-    const created = await fetch(createUrl, {
+    const createUrl = currentPath ? `${GRAPH_DRIVE_API}/root:/${graphPath(currentPath)}:/children` : `${GRAPH_DRIVE_API}/root/children`;
+    const created = await fencedCloudMutation("microsoft", accessToken, createUrl, {
       method: "POST",
       headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
       body: JSON.stringify({ name: part, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
@@ -113,11 +115,12 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
     if (!(created.ok || created.status === 409)) throw new Error(`OneDrive costs folder create: ${created.status}`);
     currentPath = nextPath;
   }
+  await ensureMicrosoftAppMarker(accessToken);
 }
 
 async function loadMicrosoftCosts(accessToken: string): Promise<CostsHandle> {
   await ensureMicrosoftFolderPath(accessToken, ONE_DRIVE_APP_FOLDER);
-  const response = await fetch(`${GRAPH_DRIVE_API}/root:/${ONE_DRIVE_APP_FOLDER}/${COSTS_FILE}:/content`, { headers: authHeaders(accessToken) });
+  const response = await fetch(`${GRAPH_DRIVE_API}/root:/${graphPath(ONE_DRIVE_APP_FOLDER)}/${encodeURIComponent(COSTS_FILE)}:/content`, { headers: authHeaders(accessToken) });
   if (response.status === 404) return { file: emptyCostsFile() };
   assertOk(response, "OneDrive costs download");
   const file = parseCostsFile(await response.json());
@@ -126,7 +129,7 @@ async function loadMicrosoftCosts(accessToken: string): Promise<CostsHandle> {
 
 async function saveMicrosoftCosts(accessToken: string, file: CostsFile): Promise<void> {
   await ensureMicrosoftFolderPath(accessToken, ONE_DRIVE_APP_FOLDER);
-  const response = await fetch(`${GRAPH_DRIVE_API}/root:/${ONE_DRIVE_APP_FOLDER}/${COSTS_FILE}:/content`, {
+  const response = await fencedCloudMutation("microsoft", accessToken, `${GRAPH_DRIVE_API}/root:/${graphPath(ONE_DRIVE_APP_FOLDER)}/${encodeURIComponent(COSTS_FILE)}:/content`, {
     method: "PUT",
     headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
     body: JSON.stringify(file, null, 2),

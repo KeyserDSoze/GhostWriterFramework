@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { FileText, GripVertical, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronUp, FileText, GripVertical, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -65,6 +65,15 @@ export function ChapterReorderList({
     setPending(next);
   }
 
+  function requestKeyboardMove(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= localChapters.length) return;
+    const next = [...localChapters];
+    [next[index], next[target]] = [next[target], next[index]];
+    setLocalChapters(next);
+    setPending(next);
+  }
+
   function cancelReorder() {
     setPending(null);
     setLocalChapters(chapters);
@@ -113,6 +122,10 @@ export function ChapterReorderList({
             ].filter(Boolean).join(" ")}
           >
             <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-muted-foreground" />
+            <div className="flex shrink-0 flex-col">
+              <Button type="button" variant="ghost" size="icon" className="h-5 w-5" disabled={i === 0} onClick={() => requestKeyboardMove(i, -1)} aria-label={t("bookPage.moveChapterUp", { title: ch.title })}><ChevronUp className="h-3 w-3" /></Button>
+              <Button type="button" variant="ghost" size="icon" className="h-5 w-5" disabled={i === localChapters.length - 1} onClick={() => requestKeyboardMove(i, 1)} aria-label={t("bookPage.moveChapterDown", { title: ch.title })}><ChevronDown className="h-3 w-3" /></Button>
+            </div>
             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
             <Link
               to={`/app/books/${bookId}/chapters/${ch.slug}`}

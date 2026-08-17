@@ -10,7 +10,7 @@ import { createEmptyAssistantSession, useAssistantStore, type AssistantSessionMe
 import { deleteAssistantSession, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
 import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
 import { refreshAssistantSessionIndex, resetAssistantSessionIndex } from "@/assistant/sessionIndex";
-import { migrateAssistantChatArchive, parseAssistantChatArchive } from "@/assistant/chatArchive";
+import { migrateAssistantChatArchive, readAssistantChatArchiveFile } from "@/assistant/chatArchive";
 import { assistantSessionSaveQueue, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
 
 export function AssistantChatsPage() {
@@ -96,13 +96,13 @@ export function AssistantChatsPage() {
     accountRequestsRef.current.add(controller);
     const isCurrent = () => !controller.signal.aborted && expectedToken === useAuthStore.getState().accessToken && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user);
     try {
-      const archive = await parseAssistantChatArchive(JSON.parse(await file.text()));
+      const archive = await readAssistantChatArchiveFile(file);
       if (!isCurrent()) return;
-      const currentAccount = user.email.trim().toLocaleLowerCase();
+      const currentAccount = user.providerAccountId?.trim() ?? "";
       if ((archive.provider.type !== user.provider || archive.provider.account.trim().toLocaleLowerCase() !== currentAccount)
         && !window.confirm(t("assistant.importChatAccountConfirm", { account: archive.provider.account }))) return;
       let knownIds = sessions.map((entry) => entry.id);
-      let imported = migrateAssistantChatArchive(archive, knownIds);
+      let imported = await migrateAssistantChatArchive(archive, knownIds);
       let handle;
       for (let attempt = 0; ; attempt += 1) {
         if (!isCurrent()) return;
@@ -112,7 +112,7 @@ export function AssistantChatsPage() {
           await refreshAssistantSessionIndex(user.provider, expectedToken, expectedIdentity!);
           if (!isCurrent()) return;
           knownIds = useAssistantStore.getState().sessions.map((entry) => entry.id);
-          imported = migrateAssistantChatArchive(archive, [...knownIds, imported.id]);
+          imported = await migrateAssistantChatArchive(archive, [...knownIds, imported.id]);
         }
       }
       if (!isCurrent()) return;

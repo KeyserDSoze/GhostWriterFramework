@@ -6,17 +6,20 @@ import { useMsal } from "@azure/msal-react";
 import { Loader2 } from "lucide-react";
 import { useAuthStore } from "@/store/authStore";
 import { useUiStore } from "@/store/uiStore";
-import { ensureMsalInitialized, findMicrosoftAccountByEmail, microsoftSilentRequest } from "@/config/msal";
+import { ensureMsalInitialized, findMicrosoftAccount, microsoftSilentRequest } from "@/config/msal";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 import { WanderingAuthGhost } from "@/components/auth/WanderingAuthGhost";
+import { accountIdentity, isAccountIdentityCurrent, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
 
 interface AuthGuardProps {
   children: React.ReactNode;
 }
 
-type Status = "checking" | "ok" | "unauthenticated";
+type Status = "checking" | "ok" | "offline" | "unauthenticated";
 const SILENT_AUTH_TIMEOUT_MS = 4000;
+const LEGACY_MICROSOFT_EMAIL_KEY = "narrarium-legacy-microsoft-email";
+const LEGACY_GOOGLE_EMAIL_KEY = "narrarium-legacy-google-email";
 
 export function AuthGuard({ children }: AuthGuardProps) {
   const { t } = useTranslation();
@@ -44,7 +47,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       // Offline: keep whatever we have; AuthGuard will retry when back online.
       useUiStore.getState().setAuthActivity("offline");
-      setStatus((s) => (s === "checking" ? "checking" : s));
+      setStatus("offline");
       return;
     }
     useUiStore.getState().setAuthActivity("idle");
@@ -65,11 +68,17 @@ export function AuthGuard({ children }: AuthGuardProps) {
     // prompt: "none" → no UI silent token refresh while the Google session cookie is alive.
     prompt: "none",
     hint: user?.email,
-    onSuccess: (tokenResponse) => {
-      if (!silentAttemptActiveRef.current || !user) return;
+    onSuccess: async (tokenResponse) => {
+      if (!silentAttemptActiveRef.current || !user || !isAccountIdentityCurrent(accountIdentity(user), useAuthStore.getState().user)) return;
+      const response = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: `Bearer ${tokenResponse.access_token}` } });
+      if (!response.ok) { giveUpSilent(); return; }
+      const profile = await response.json() as { sub?: string };
+      let providerAccountId: string;
+      try { providerAccountId = requireGoogleProviderAccountId(profile); } catch { giveUpSilent(); return; }
+      if (providerAccountId !== user.providerAccountId) { giveUpSilent(); return; }
       silentAttemptActiveRef.current = false;
       clearSilentAuthTimeout();
-      registerCloudAccount("google", tokenResponse.access_token, user.email);
+      registerCloudAccount("google", tokenResponse.access_token, user.providerAccountId);
       setAuth(
         tokenResponse.access_token,
         user,
@@ -91,8 +100,8 @@ export function AuthGuard({ children }: AuthGuardProps) {
     async function tryMicrosoftSilentLogin() {
       try {
         await ensureMsalInitialized();
-        const account = findMicrosoftAccountByEmail(user?.email);
-        if (!account) {
+        const account = user?.provider === "microsoft" ? findMicrosoftAccount(user) : null;
+        if (!account?.homeAccountId?.trim() || !account.localAccountId?.trim()) {
           silentAttemptActiveRef.current = false;
           clearSilentAuthTimeout();
           clearAuth();
@@ -100,14 +109,15 @@ export function AuthGuard({ children }: AuthGuardProps) {
           return;
         }
         const result = await instance.acquireTokenSilent({ ...microsoftSilentRequest(account), forceRefresh: true });
-        if (!silentAttemptActiveRef.current || !user) return;
+        if (!silentAttemptActiveRef.current || !user || !isAccountIdentityCurrent(accountIdentity(user), useAuthStore.getState().user)) return;
         if (result.account) instance.setActiveAccount(result.account);
         const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
         const expiresIn = Math.max(120, Math.round((expiresAt - Date.now()) / 1000));
         silentAttemptActiveRef.current = false;
         clearSilentAuthTimeout();
-        registerCloudAccount("microsoft", result.accessToken, user.email);
-        setAuth(result.accessToken, user, expiresIn);
+        const upgradedUser = { ...user, providerAccountId: account.homeAccountId, homeAccountId: account.homeAccountId, localAccountId: account.localAccountId };
+        registerCloudAccount("microsoft", result.accessToken, account.homeAccountId);
+        setAuth(result.accessToken, upgradedUser, expiresIn);
         setStatus("ok");
       } catch {
         if (silentAttemptActiveRef.current) giveUpSilent();
@@ -119,20 +129,36 @@ export function AuthGuard({ children }: AuthGuardProps) {
       !!accessTokenExpiry &&
       Date.now() < accessTokenExpiry;
 
-    if (tokenValid) {
+    const immutableIdentity = Boolean(user?.providerAccountId?.trim()) && (user?.provider !== "microsoft" || Boolean(user.homeAccountId?.trim() && user.localAccountId?.trim()));
+    if (user && !immutableIdentity) {
+      sessionStorage.setItem(user.provider === "google" ? LEGACY_GOOGLE_EMAIL_KEY : LEGACY_MICROSOFT_EMAIL_KEY, user.email.trim().toLowerCase());
+      clearSilentAuthTimeout();
+      clearAuth();
+      setStatus("unauthenticated");
+    } else if (tokenValid) {
       clearSilentAuthTimeout();
       useUiStore.getState().setAuthActivity("idle");
       setStatus("ok");
     } else if (user?.provider === "google") {
+      if (navigator.onLine === false) {
+        useUiStore.getState().setAuthActivity("offline");
+        setStatus("offline");
+        return;
+      }
       // Known user, but token missing/expired → try silent re-auth
-      const attemptKey = `google:${user.email}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
+      const attemptKey = `google:${user.providerAccountId}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
       if (lastAttemptKeyRef.current === attemptKey) return;
       lastAttemptKeyRef.current = attemptKey;
-      useUiStore.getState().setAuthActivity(navigator.onLine === false ? "offline" : "refreshing");
+      useUiStore.getState().setAuthActivity("refreshing");
       setStatus("checking");
       startSilentAuthTimeout();
       silentLogin();
     } else if (user?.provider === "microsoft") {
+      if (navigator.onLine === false) {
+        useUiStore.getState().setAuthActivity("offline");
+        setStatus("offline");
+        return;
+      }
       const attemptKey = `microsoft:${user.email}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
       if (lastAttemptKeyRef.current === attemptKey) return;
       lastAttemptKeyRef.current = attemptKey;
@@ -165,7 +191,11 @@ export function AuthGuard({ children }: AuthGuardProps) {
       }
     };
     const onVisible = () => { if (document.visibilityState === "visible") retry(); };
-    const onOffline = () => { if (user) useUiStore.getState().setAuthActivity("offline"); };
+    const onOffline = () => {
+      if (!user) return;
+      useUiStore.getState().setAuthActivity("offline");
+      if (!accessToken || !accessTokenExpiry || Date.now() >= accessTokenExpiry) setStatus("offline");
+    };
     const onOnline = () => {
       const valid = !!accessToken && !!accessTokenExpiry && Date.now() < accessTokenExpiry;
       if (user && valid) useUiStore.getState().setAuthActivity("idle");
@@ -194,6 +224,10 @@ export function AuthGuard({ children }: AuthGuardProps) {
         </div>
       </div>
     );
+  }
+
+  if (status === "offline") {
+    return <>{children}</>;
   }
 
   if (status === "unauthenticated" || !accessToken) {

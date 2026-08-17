@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { useToast } from "@/components/ui/use-toast";
-import { createOrUpdateTextFile, loadFileContent, readFileWithSha, updateFile } from "@/github/githubClient";
+import { createFile, isGitHubFileNotFoundError, loadFileContent, mutateTextFilesAtomically, readFileWithSha, updateFile } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
 import { resolveBookToken } from "@/types/settings";
@@ -328,7 +328,8 @@ export function WorkspaceDocPage() {
   const [entries, setEntries] = useState<MetaEntry[]>([]);
   const [body, setBody] = useState("");
   const [sha, setSha] = useState("");
-  const [sourceHash, setSourceHash] = useState("");
+  const [exists, setExists] = useState(false);
+  const [sourceHash, setSourceHash] = useState<string | null>(null);
   const [savedEntries, setSavedEntries] = useState<MetaEntry[]>([]);
   const [savedBody, setSavedBody] = useState("");
   const [loading, setLoading] = useState(false);
@@ -344,6 +345,7 @@ export function WorkspaceDocPage() {
   const [pipelineText, setPipelineText] = useState("");
   const [pipelineLoading, setPipelineLoading] = useState(false);
   const [pipelineGw, setPipelineGw] = useState("");
+  const pipelineTargetHashRef = useRef<string | null>(null);
   const [scriptDoc, setScriptDoc] = useState<ScriptDoc>({ nodes: [] });
   const [scriptGenLoading, setScriptGenLoading] = useState(false);
   const [paragraphEvaluations, setParagraphEvaluations] = useState<ParagraphEvaluationView[]>([]);
@@ -410,11 +412,11 @@ export function WorkspaceDocPage() {
 
   useRegisterPageSave({ dirty: isDirty, enabled: Boolean(book && token), onSave: () => handleSave() });
   useRegisterPageActions([
-    ...(paraSlug && workspaceKind === "script" ? [{ id: "script-to-draft", label: t("pipeline.scriptToDraft"), icon: <Wand2 className="h-4 w-4" />, run: () => startPipeline("toDraft") }] : []),
+    ...(paraSlug && workspaceKind === "script" ? [{ id: "script-to-draft", label: t("pipeline.scriptToDraft"), icon: <Wand2 className="h-4 w-4" />, run: () => void startPipeline("toDraft") }] : []),
     ...(paraSlug && workspaceKind === "draft" ? [
       { id: "merge-draft-final", label: t("merge.button"), icon: <Wand2 className="h-4 w-4" />, run: () => runMerge(), disabled: merge.busy },
       { id: "switch-to-final", label: t("paragraph.switchToFinal"), icon: switchingFinal ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowLeftRight className="h-4 w-4" />, run: () => handleSwitchToFinal(), disabled: switchingFinal || saving },
-      { id: "draft-to-final", label: t("pipeline.draftToFinal"), icon: <Wand2 className="h-4 w-4" />, run: () => startPipeline("toFinal") },
+      { id: "draft-to-final", label: t("pipeline.draftToFinal"), icon: <Wand2 className="h-4 w-4" />, run: () => void startPipeline("toFinal") },
     ] : []),
     ...((workspaceKind === "resume" || workspaceKind === "evaluation") ? [{ id: "regenerate", label: workspaceKind === "evaluation" ? t("evaluationView.regenerate") : t("pipeline.regenerate"), icon: <Wand2 className="h-4 w-4" />, run: () => regenerateDoc() }] : []),
   ], Boolean(book && token));
@@ -424,7 +426,8 @@ export function WorkspaceDocPage() {
     if (!book || !token || !path || !targetKey || loadedTargetRef.current === targetKey) return;
     loadedTargetRef.current = targetKey;
     setLoading(true);
-    readFileWithSha(token, book.owner, book.repo, branch, path)
+    const controller = new AbortController();
+    readFileWithSha(token, book.owner, book.repo, branch, path, controller.signal)
       .then(async ({ content, sha: fileSha }) => {
         const parsed = parseFrontmatter(content);
         setEntries(parsed.entries);
@@ -432,14 +435,21 @@ export function WorkspaceDocPage() {
         setBody(parsed.body);
         setSavedBody(parsed.body);
         setSha(fileSha);
+        setExists(true);
         setSourceHash(await sha256Text(content));
         if (workspaceKind === "script") setScriptDoc(parseScript(parsed.body));
       })
       .catch((err) => {
+        if (controller.signal.aborted) return;
+        if (isGitHubFileNotFoundError(err)) {
+          setEntries([]); setSavedEntries([]); setBody(""); setSavedBody(""); setSha(""); setSourceHash(null); setExists(false);
+          return;
+        }
         loadedTargetRef.current = null;
         toast({ title: t("workspace.loadFailed"), description: String(err), variant: "destructive" });
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
   }, [book, token, branch, path, t, toast]);
 
   useEffect(() => {
@@ -542,6 +552,7 @@ export function WorkspaceDocPage() {
       setBody(parsed.body);
       setSavedBody(parsed.body);
       setSha(fileSha);
+      setExists(true);
       setSourceHash(await sha256Text(content));
       if (workspaceKind === "script") setScriptDoc(parseScript(parsed.body));
     } catch (err) {
@@ -591,8 +602,9 @@ export function WorkspaceDocPage() {
     }
   }
 
-  async function handleSave() {
-    if (!isDirty || !path) return;
+  async function handleSave(): Promise<boolean> {
+    if (!isDirty || !path) return true;
+    if (saving) return false;
     setSaving(true);
     try {
       const nextContent = buildFrontmatter(entries, body);
@@ -608,15 +620,20 @@ export function WorkspaceDocPage() {
         newSha = result.changed ? (await readFileWithSha(token, book!.owner, book!.repo, branch, path)).sha : sha;
         if (result.warningCount) toast({ title: t("common.saved"), description: result.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
       } else {
-        newSha = await updateFile(token, book!.owner, book!.repo, branch, path, sha, nextContent, `Update ${title}`);
+        newSha = exists
+          ? await updateFile(token, book!.owner, book!.repo, branch, path, sha, nextContent, `Update ${title}`)
+          : await createFile(token, book!.owner, book!.repo, branch, path, nextContent, `Create ${title}`);
       }
       setSha(newSha);
       setSourceHash(await sha256Text(nextContent));
       setSavedEntries(entries);
       setSavedBody(body);
+      setExists(true);
       if (workspaceKind !== "script") toast({ title: t("common.saved") });
+      return true;
     } catch (err) {
       toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
+      return false;
     } finally {
       setSaving(false);
     }
@@ -656,12 +673,23 @@ export function WorkspaceDocPage() {
     }
   }
 
-  function startPipeline(mode: "toDraft" | "toFinal") {
+  async function startPipeline(mode: "toDraft" | "toFinal") {
     if (!book || !token || !structure || !chapter || !paraSlug) return;
     setPipelineMode(mode);
     setPipelineGw(currentGhostwriter);
     setPipelineText("");
     setPipelineLoading(false);
+    const targetPath = mode === "toDraft" ? `drafts/${chapter.slug}/${paraSlug}.md` : `${chapter.path}/${paraSlug}.md`;
+    try {
+      const hash = await sha256Text((await readFileWithSha(token, book.owner, book.repo, branch, targetPath)).content);
+      pipelineTargetHashRef.current = hash;
+    } catch (error) {
+      if (!isGitHubFileNotFoundError(error)) {
+        toast({ title: t("workspace.loadFailed"), description: String(error), variant: "destructive" });
+        return;
+      }
+      pipelineTargetHashRef.current = null;
+    }
     setPipelineOpen(true);
     // Generation starts only when the user clicks Generate inside the dialog.
   }
@@ -693,7 +721,7 @@ export function WorkspaceDocPage() {
     if (pipelineGw) fm.ghostwriter = pipelineGw;
     const content = `---\n${stringify(fm).trim()}\n---\n\n${pipelineText.trim()}\n`;
     try {
-      await createOrUpdateTextFile(token, book.owner, book.repo, branch, targetPath, content, `Generate ${targetPath}`);
+      await mutateTextFilesAtomically(token, book.owner, book.repo, branch, [{ path: targetPath, content, expectedCurrentHash: pipelineTargetHashRef.current }], `Generate ${targetPath}`);
       toast({ title: t("pipeline.created", { path: targetPath }) });
       setPipelineOpen(false);
       reload();
@@ -904,6 +932,7 @@ export function WorkspaceDocPage() {
               className="mt-4 min-h-[42vh] font-mono text-sm leading-7"
               placeholder={t("workspace.writeBodyPlaceholder")}
               spellCheck={false}
+              aria-label={title}
             />
           </details>
         </div>
@@ -915,6 +944,7 @@ export function WorkspaceDocPage() {
           className="min-h-[55vh] font-mono text-sm leading-7"
           placeholder={t("workspace.writeBodyPlaceholder")}
           spellCheck={false}
+          aria-label={title}
         />
       )}
       {workspaceKind !== "script" && proseAssist.dialogs}

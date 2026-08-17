@@ -1,7 +1,7 @@
 import OpenAI, { AzureOpenAI } from "openai";
 import { parseDocument, stringify } from "yaml";
 import type { AIIntegration, AppSettings } from "@/types/settings";
-import { createOrUpdateBinaryFile, createOrUpdateTextFile, loadBinaryFileContent, readFileWithSha } from "@/github/githubClient";
+import { createOrUpdateTextAndBinaryFilesAtomically, createOrUpdateTextFile, loadBinaryFileContent, readFileWithSha } from "@/github/githubClient";
 import { completeTextRouted, resolveTaskCandidates } from "@/assistant/router";
 import { CandidateTimeoutError } from "@/assistant/executionLimits";
 import { executeMediaFallback } from "@/assistant/mediaFallback";
@@ -11,6 +11,7 @@ import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/ass
 import { optionalRepositoryRead } from "@/repository/repositoryError";
 import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
+import { createRoutingExecutionBudget, estimateImageAttempt } from "@/assistant/routingExecutionBudget";
 
 export type AssetSubjectKind = "book" | "chapter" | "paragraph";
 export type AssetPromptSource = "custom" | "text" | "resume";
@@ -115,15 +116,25 @@ export async function saveAssetMarkdown(input: {
   await createOrUpdateTextFile(input.token, input.owner, input.repo, input.branch, input.path, input.content, `Update asset prompt ${input.path}`);
 }
 
-export async function saveAssetImage(input: {
+export async function saveAssetBundle(input: {
   token: string;
   owner: string;
   repo: string;
   branch: string;
-  path: string;
+  markdownPath: string;
+  markdown: string;
+  imagePath: string;
   bytes: Uint8Array;
 }): Promise<void> {
-  await createOrUpdateBinaryFile(input.token, input.owner, input.repo, input.branch, input.path, input.bytes, `Update asset image ${input.path}`);
+  await createOrUpdateTextAndBinaryFilesAtomically({
+    token: input.token,
+    owner: input.owner,
+    repo: input.repo,
+    branch: input.branch,
+    text: { path: input.markdownPath, content: input.markdown },
+    binary: { path: input.imagePath, bytes: input.bytes },
+    message: `Update asset ${input.imagePath}`,
+  });
 }
 
 export async function loadExistingAssetImage(input: {
@@ -180,11 +191,13 @@ export async function generateAssetImage(input: {
 }): Promise<{ bytes: Uint8Array; provider: string; model: string; cost?: number }> {
   const operation = beginAccountScopedAiOperation(input.signal, input.accountScope);
   operation.signal.throwIfAborted();
+  const budget = createRoutingExecutionBudget(input.settings, operation.signal);
   const providerPrompt = `${currentRequest("Generate an image matching the supplied visual brief.")}\n\n${untrustedData("user_content", input.prompt)}`;
   try {
   const candidates = applySameBoundaryPolicy(input.settings, resolveTaskCandidates(input.settings, "image").filter((c) => c.integration && c.model && c.integration.apiKey));
   if (!candidates.length) throw new Error("Image generation requires an OpenAI or Azure OpenAI integration.");
-  return await executeMediaFallback({ candidates, signal: operation.signal, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings: input.settings, kind: "image", from: candidates[index - 1], to: candidate, accountScope: operation.accountScope }); }, runAi: async (candidate, attemptSignal, candidateIndex) => {
+  return await executeMediaFallback({ candidates, signal: budget.signal, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings: input.settings, kind: "image", from: candidates[index - 1], to: candidate, accountScope: operation.accountScope }); }, runAi: async (candidate, attemptSignal, candidateIndex) => {
+    budget.reserve(estimateImageAttempt(providerPrompt, candidate));
     const integration = candidate.integration!;
     const model = candidate.model!;
     const client = createImageClient(integration);
@@ -226,6 +239,7 @@ export async function generateAssetImage(input: {
     }
   } });
   } finally {
+    budget.dispose();
     operation.dispose();
   }
 }

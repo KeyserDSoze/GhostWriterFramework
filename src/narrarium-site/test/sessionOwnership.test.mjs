@@ -41,11 +41,13 @@ test("session-scoped updates mutate only the expected chat and message", () => {
 });
 
 test("request ownership requires matching request, active session, and non-aborted signal", () => {
-  const active = { requestId: "request-1", sessionId: "session-a" };
-  assert.equal(isAssistantRequestOwned(active, "request-1", "session-a", "session-a", false), true);
-  assert.equal(isAssistantRequestOwned(active, "request-2", "session-a", "session-a", false), false);
-  assert.equal(isAssistantRequestOwned(active, "request-1", "session-b", "session-a", false), false);
-  assert.equal(isAssistantRequestOwned(active, "request-1", "session-a", "session-b", false), false);
-  assert.equal(isAssistantRequestOwned(active, "request-1", "session-a", "session-a", true), false);
-  assert.equal(isAssistantRequestOwned(null, "request-1", "session-a", "session-a", false), false);
+  const active = { requestId: "request-1", sessionId: "session-a", contextGeneration: 3, pathname: "/app/books/book/canon/secrets/truth", bookId: "book", branch: "main", secretPath: "secrets/truth.md" };
+  const current = { contextGeneration: 3, pathname: active.pathname, bookId: active.bookId, branch: active.branch, secretPath: active.secretPath };
+  assert.equal(isAssistantRequestOwned(active, active, "session-a", current, false), true);
+  assert.equal(isAssistantRequestOwned(active, { ...active, requestId: "request-2" }, "session-a", current, false), false);
+  assert.equal(isAssistantRequestOwned(active, active, "session-b", current, false), false);
+  assert.equal(isAssistantRequestOwned(active, active, "session-a", { ...current, contextGeneration: 4 }, false), false);
+  assert.equal(isAssistantRequestOwned(active, active, "session-a", { ...current, pathname: "/app/settings", bookId: null, secretPath: null }, false), false);
+  assert.equal(isAssistantRequestOwned(active, active, "session-a", current, true), false);
+  assert.equal(isAssistantRequestOwned(null, active, "session-a", current, false), false);
 });

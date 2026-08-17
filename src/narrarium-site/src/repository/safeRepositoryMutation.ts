@@ -16,6 +16,13 @@ import { AmbiguousLocalPushError, pushLocalCommits, RemoteHeadMismatchError } fr
 import { loadRemoteFileContentAtRef } from "@/github/githubClient";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
 import { reconcileRemoteMutation } from "@/repository/remoteMutationReconciliation";
+import { accountIdentity } from "@/auth/accountIdentity";
+import { useAuthStore } from "@/store/authStore";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
+
+function currentAccountIdentity(): string | null {
+  return accountIdentity(useAuthStore.getState().user);
+}
 
 export type RepositoryTextMutation = LocalTextFileMutation;
 
@@ -40,7 +47,8 @@ export async function preflightRepositoryOperation(input: {
   signal?: AbortSignal;
 }): Promise<RepositoryOperationPreflight> {
   input.signal?.throwIfAborted();
-  const meta = await getLocalRepository(input.book.owner, input.book.repo, input.branch);
+  const identity = currentAccountIdentity();
+  const meta = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, identity) : null;
   input.signal?.throwIfAborted();
   if (!meta) {
     throw new Error("A local working copy for the selected branch is required.");
@@ -60,7 +68,8 @@ export async function preflightRepositoryOperation(input: {
 
 export async function resolveRepositoryHeadForMutation(input: { token: string; book: BookEntry; branch: string; signal?: AbortSignal }): Promise<string> {
   input.signal?.throwIfAborted();
-  const local = await getLocalRepository(input.book.owner, input.book.repo, input.branch).catch(() => null);
+  const identity = currentAccountIdentity();
+  const local = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, identity).catch(() => null) : null;
   input.signal?.throwIfAborted();
   if (local) return (await preflightRepositoryOperation(input)).remoteHeadSha;
   const octokit = new Octokit({ auth: input.token });
@@ -144,8 +153,10 @@ export async function commitAndPushTextFileMutation(input: {
   mutations: RepositoryTextMutation[];
   signal?: AbortSignal;
 }): Promise<{ commitSha: string; mode: "local" | "remote" }> {
+  const operationScope = captureRepositoryOperationScope();
   input.signal?.throwIfAborted();
-  const local = await getLocalRepository(input.book.owner, input.book.repo, input.branch).catch(() => null);
+  const identity = currentAccountIdentity();
+  const local = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, identity).catch(() => null) : null;
   input.signal?.throwIfAborted();
   if (!local) {
     const commitSha = await mutateRemoteTextFiles(input);
@@ -157,7 +168,7 @@ export async function commitAndPushTextFileMutation(input: {
   input.signal?.throwIfAborted();
   if (!writes.length) {
     try {
-      await mutateLocalTextFilesAtomically(local.id, input.mutations);
+      await mutateLocalTextFilesAtomically(local.id, operationScope, input.mutations);
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("File changed since")) {
         const path = /^File changed since it was read:\s*(.+)$/.exec(error.message)?.[1];
@@ -170,7 +181,7 @@ export async function commitAndPushTextFileMutation(input: {
   let localCommit;
   try {
     input.signal?.throwIfAborted();
-    localCommit = await mutateLocalTextFilesAndCreateCommitAtomically(local.id, input.message, input.mutations);
+    localCommit = await mutateLocalTextFilesAndCreateCommitAtomically(local.id, operationScope, input.message, input.mutations);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("File changed since")) {
       const path = /^File changed since it was read:\s*(.+)$/.exec(error.message)?.[1];
@@ -191,25 +202,26 @@ export async function commitAndPushTextFileMutation(input: {
       owner: input.book.owner,
       repo: input.book.repo,
       branch: input.branch,
+      accountIdentity: identity!,
       signal: input.signal,
     });
   } catch (error) {
     if (!pushStarted) {
-      await restoreLocalFilesAndDeleteCommit(local.id, localCommit.id, snapshots);
+      await restoreLocalFilesAndDeleteCommit(local.id, operationScope, localCommit.id, snapshots);
       throw error;
     }
     if (error instanceof AmbiguousLocalPushError) {
       const octokit = new Octokit({ auth: input.token });
       const reconciled = await reconcileRemoteMutation({ octokit, owner: input.book.owner, repo: input.book.repo, branch: input.branch, generatedCommitSha: error.generatedCommitSha, revisions: input.mutations });
       if (reconciled.landed && reconciled.headSha) {
-        await markLocalCommitsPushed(local.id, [localCommit.id], reconciled.headSha, reconciled.blobShas ?? {}).catch(() => undefined);
+        await markLocalCommitsPushed(local.id, operationScope, [localCommit.id], reconciled.headSha, reconciled.blobShas ?? {}).catch(() => undefined);
         return { commitSha: reconciled.headSha, mode: "local" };
       }
-      await restoreLocalFilesAndDeleteCommit(local.id, localCommit.id, snapshots);
+      await restoreLocalFilesAndDeleteCommit(local.id, operationScope, localCommit.id, snapshots);
       if (error.cause instanceof DOMException && error.cause.name === "AbortError") throw error.cause;
       throw new RepositoryConflictError("The local push outcome could not be proven by generated-commit ancestry and revision parity.");
     }
-    await restoreLocalFilesAndDeleteCommit(local.id, localCommit.id, snapshots);
+    await restoreLocalFilesAndDeleteCommit(local.id, operationScope, localCommit.id, snapshots);
     if (error instanceof RemoteHeadMismatchError) throw new RepositoryConflictError(error.message);
     throw error;
   }

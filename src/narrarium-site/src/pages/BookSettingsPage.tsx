@@ -38,6 +38,7 @@ export function BookSettingsPage() {
   const { toast } = useToast();
   const { settings, patchSettings } = useSettingsStore();
   const { save, syncStatus } = useSettings();
+  const offline = typeof navigator !== "undefined" && !navigator.onLine;
   const { clearBook, structures, workingBranches } = useBooksStore();
 
   const book = settings.books.find((entry) => entry.id === bookId);
@@ -106,9 +107,9 @@ export function BookSettingsPage() {
     const updated: BookEntry = {
       ...currentBook,
       name: name.trim() || currentBook.repo,
-      tokenIndex: mode === "default" || usingCustom ? null : Number(mode),
-      bookToken: usingCustom ? customToken.trim() || undefined : undefined,
-      bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${currentBook.repo} PAT` : undefined,
+      tokenIndex: offline ? currentBook.tokenIndex : mode === "default" || usingCustom ? null : Number(mode),
+      bookToken: offline ? currentBook.bookToken : usingCustom ? customToken.trim() || undefined : undefined,
+      bookTokenLabel: offline ? currentBook.bookTokenLabel : usingCustom ? customTokenLabel.trim() || `${currentBook.repo} PAT` : undefined,
       activeBranch: activeBranch === "__auto__" ? undefined : activeBranch,
       exportSettings: {
         ...currentBook.exportSettings,
@@ -118,7 +119,11 @@ export function BookSettingsPage() {
     };
 
     patchSettings({ books: settings.books.map((entry) => (entry.id === currentBook.id ? updated : entry)) });
-    await save();
+    try {
+      await save();
+    } catch {
+      return;
+    }
     clearBook(currentBook.id);
     toast({ title: t("bookSettings.settingsSaved") });
     navigate(`/app/books/${currentBook.id}`);
@@ -312,7 +317,7 @@ export function BookSettingsPage() {
         <CardContent className="space-y-4">
           <div className="grid gap-2">
             <Label>{t("bookSettings.token")}</Label>
-            <Select value={mode} onValueChange={setMode}>
+            <Select value={mode} onValueChange={setMode} disabled={offline}>
               <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="default">{t("bookSettings.defaultTokenOption")}{settings.defaultGitHubToken ? ` (…${settings.defaultGitHubToken.slice(-4)})` : t("bookSettings.notSet")}</SelectItem>
@@ -326,8 +331,8 @@ export function BookSettingsPage() {
             <div className="grid gap-2 rounded-lg border border-dashed p-3">
               <p className="text-xs text-muted-foreground">{t("bookSettings.dedicatedHint")}</p>
               <div className="grid gap-2 sm:grid-cols-[1fr_2fr]">
-                <Input placeholder={t("bookSettings.labelOptional")} value={customTokenLabel} onChange={(e) => setCustomTokenLabel(e.target.value)} />
-                <Input type="password" placeholder="github_pat_…" value={customToken} onChange={(e) => setCustomToken(e.target.value)} autoComplete="off" />
+                <Input placeholder={t("bookSettings.labelOptional")} value={customTokenLabel} onChange={(e) => setCustomTokenLabel(e.target.value)} disabled={offline} />
+                <Input type="password" placeholder="github_pat_…" value={customToken} onChange={(e) => setCustomToken(e.target.value)} autoComplete="off" disabled={offline} />
               </div>
               <p className="text-[11px] text-muted-foreground">{t("bookSettings.createOneAt")} <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener noreferrer" className="underline">github.com/settings/tokens</a> {t("bookSettings.withPermissions")}</p>
             </div>

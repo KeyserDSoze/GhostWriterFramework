@@ -11,7 +11,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { resolveBookToken } from "@/types/settings";
-import { readFileWithSha, createOrUpdateTextFile } from "@/github/githubClient";
+import { createFile, isGitHubFileNotFoundError, readFileWithSha, updateFile } from "@/github/githubClient";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { useProseAssist } from "@/components/editor/useProseAssist";
@@ -113,20 +113,22 @@ export function ParagraphSplitPage() {
     loadedRef.current = key;
     setDraft({ ...EMPTY_PANE, loading: true });
     setFinal({ ...EMPTY_PANE, loading: true });
+    const controller = new AbortController();
 
-    readFileWithSha(token, book.owner, book.repo, branch, finalPath)
+    readFileWithSha(token, book.owner, book.repo, branch, finalPath, controller.signal)
       .then(({ content, sha }) => {
         const { frontmatter, body } = splitDoc(content);
         setFinal({ loading: false, exists: true, frontmatter, body, savedBody: body, sha, saving: false });
       })
-      .catch(() => setFinal({ ...EMPTY_PANE, loading: false }));
+      .catch((error) => { if (!controller.signal.aborted && isGitHubFileNotFoundError(error)) setFinal({ ...EMPTY_PANE, loading: false }); });
 
-    readFileWithSha(token, book.owner, book.repo, branch, draftPath)
+    readFileWithSha(token, book.owner, book.repo, branch, draftPath, controller.signal)
       .then(({ content, sha }) => {
         const { frontmatter, body } = splitDoc(content);
         setDraft({ loading: false, exists: true, frontmatter, body, savedBody: body, sha, saving: false });
       })
-      .catch(() => setDraft({ ...EMPTY_PANE, loading: false, exists: false }));
+      .catch((error) => { if (!controller.signal.aborted && isGitHubFileNotFoundError(error)) setDraft({ ...EMPTY_PANE, loading: false, exists: false }); });
+    return () => controller.abort();
   }, [book, token, branch, draftPath, finalPath]);
 
   const draftDirty = draft.body !== draft.savedBody;
@@ -163,7 +165,10 @@ export function ParagraphSplitPage() {
     const frontmatter = draft.frontmatter || defaultDraftFrontmatter();
     setDraft((s) => ({ ...s, saving: true }));
     try {
-      const newSha = await createOrUpdateTextFile(token, book.owner, book.repo, branch, draftPath, joinDoc(frontmatter, draft.body), `Update draft ${paragraphSlug(finalPath)}`);
+      const content = joinDoc(frontmatter, draft.body);
+      const newSha = draft.exists
+        ? await updateFile(token, book.owner, book.repo, branch, draftPath, draft.sha, content, `Update draft ${paragraphSlug(finalPath)}`)
+        : await createFile(token, book.owner, book.repo, branch, draftPath, content, `Create draft ${paragraphSlug(finalPath)}`);
       setDraft((s) => ({ ...s, frontmatter, savedBody: s.body, exists: true, sha: newSha, saving: false }));
       if (showToast) toast({ title: t("common.saved") });
       if (!draft.exists) void reload();
@@ -180,7 +185,10 @@ export function ParagraphSplitPage() {
     const frontmatter = final.frontmatter || defaultFinalFrontmatter();
     setFinal((s) => ({ ...s, saving: true }));
     try {
-      const newSha = await createOrUpdateTextFile(token, book.owner, book.repo, branch, finalPath, joinDoc(frontmatter, final.body), `Update paragraph ${paragraphSlug(finalPath)}`);
+      const content = joinDoc(frontmatter, final.body);
+      const newSha = final.exists
+        ? await updateFile(token, book.owner, book.repo, branch, finalPath, final.sha, content, `Update paragraph ${paragraphSlug(finalPath)}`)
+        : await createFile(token, book.owner, book.repo, branch, finalPath, content, `Create paragraph ${paragraphSlug(finalPath)}`);
       setFinal((s) => ({ ...s, frontmatter, savedBody: s.body, exists: true, sha: newSha, saving: false }));
       if (showToast) toast({ title: t("common.saved") });
       if (!final.exists) void reload();
@@ -192,11 +200,12 @@ export function ParagraphSplitPage() {
     }
   }
 
-  async function saveAll() {
-    if (!draftDirty && !finalDirty) return;
+  async function saveAll(): Promise<boolean> {
+    if (!draftDirty && !finalDirty) return true;
     const draftOk = await saveDraft(false);
     const finalOk = await saveFinal(false);
     if (draftOk && finalOk) toast({ title: t("common.saved") });
+    return draftOk && finalOk;
   }
 
   function swapDraftFinal() {
@@ -281,8 +290,10 @@ export function ParagraphSplitPage() {
         />
       </div>
 
-      <div className="lg:hidden">
-        <Alert><AlertDescription>{t("paragraph.splitDesktopOnly")}</AlertDescription></Alert>
+      <div className="grid gap-3 lg:hidden">
+        <Pane title={t("chapter.draft")} loading={draft.loading} body={draft.body} onChange={(v) => setDraft((s) => ({ ...s, body: v }))} dirty={draftDirty} saving={draft.saving} onSave={() => void saveDraft()} textareaRef={draftRef} placeholder={t("workspace.writeBodyPlaceholder")} createHint={!draft.exists ? t("paragraph.draftMissingHint") : undefined} />
+        <Button type="button" variant="outline" onClick={swapDraftFinal} disabled={draft.loading || final.loading || draft.saving || final.saving}><ArrowLeftRight className="mr-2 h-4 w-4" />{t("paragraph.swapDraftFinal")}</Button>
+        <Pane title={t("stageIndex.final")} loading={final.loading} body={final.body} onChange={(v) => setFinal((s) => ({ ...s, body: v }))} dirty={finalDirty} saving={final.saving} onSave={() => void saveFinal()} textareaRef={finalRef} placeholder={t("paragraph.writePlaceholder")} />
       </div>
 
       {draftAssist.dialogs}
@@ -327,6 +338,7 @@ function Pane(props: {
               className="resize-none border-0 p-0 font-mono text-sm leading-7 focus-visible:ring-0 focus-visible:ring-offset-0"
               placeholder={props.placeholder}
               spellCheck={false}
+              aria-label={props.title}
             />
           </>
         )}

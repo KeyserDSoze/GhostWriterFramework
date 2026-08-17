@@ -11,7 +11,7 @@ import { useToast } from "@/components/ui/use-toast";
 import type { AppSettings, ResearchProviderId, ResearchRoutableIntent } from "@/types/settings";
 import { allResearchProviders, providersForIntent } from "@/research/providers";
 
-export function DeepSearchSettingsBody({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
+export function DeepSearchSettingsBody({ settings, patchSettings, credentialsDisabled = false }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void; credentialsDisabled?: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [testing, setTesting] = useState<string | null>(null);
@@ -61,11 +61,11 @@ export function DeepSearchSettingsBody({ settings, patchSettings }: { settings: 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="grid gap-2">
           <Label>{t("deepSearch.braveApiKey")}</Label>
-          <Input type="password" value={settings.deepSearch.braveApiKey} onChange={(e) => patchDeepSearch({ braveApiKey: e.target.value })} placeholder="BSA..." autoComplete="off" />
+          <Input type="password" value={settings.deepSearch.braveApiKey} onChange={(e) => patchDeepSearch({ braveApiKey: e.target.value })} placeholder="BSA..." autoComplete="off" disabled={credentialsDisabled} />
         </div>
         <div className="grid gap-2">
           <Label>{t("deepSearch.tavilyApiKey")}</Label>
-          <Input type="password" value={settings.deepSearch.tavilyApiKey} onChange={(e) => patchDeepSearch({ tavilyApiKey: e.target.value })} placeholder="tvly-..." autoComplete="off" />
+          <Input type="password" value={settings.deepSearch.tavilyApiKey} onChange={(e) => patchDeepSearch({ tavilyApiKey: e.target.value })} placeholder="tvly-..." autoComplete="off" disabled={credentialsDisabled} />
         </div>
         <div className="grid gap-2 sm:col-span-2">
           <Label>{t("deepSearch.contentProxy")}</Label>
@@ -92,7 +92,7 @@ export function DeepSearchSettingsBody({ settings, patchSettings }: { settings: 
                   </div>
                   <p className="text-xs text-muted-foreground">{provider.id}{provider.requiresApiKey ? ` · ${t("deepSearch.requiresApiKey")}` : ` · ${t("deepSearch.noApiKey")}`}</p>
                 </div>
-                <Button variant="outline" size="sm" onClick={() => void testProvider(provider.id)} disabled={testing === provider.id || (provider.requiresApiKey && !configured)}>
+                <Button variant="outline" size="sm" onClick={() => void testProvider(provider.id)} disabled={credentialsDisabled || testing === provider.id || (provider.requiresApiKey && !configured)}>
                   {testing === provider.id ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <PlugZap className="mr-1 h-4 w-4" />}
                   {t("deepSearch.testConnection")}
                 </Button>

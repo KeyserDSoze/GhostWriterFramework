@@ -18,6 +18,8 @@ import { deleteReaderPersonaOverride, findOrphanReaderEvaluationPaths, loadReade
 import { emptyReaderPersona, type ReaderPersonaProfile } from "@/narrarium/readerPersona";
 import { slugify } from "@/narrarium/canon";
 import { findOrphanAuditPaths } from "@/narrarium/auditPaths";
+import { useRegisterPageSave } from "@/store/saveStore";
+import { resolveUnsavedChanges } from "@/hooks/resolveUnsavedChanges";
 
 export function ReaderPersonasPage() {
   const { bookId } = useParams<{ bookId: string }>();
@@ -30,6 +32,7 @@ export function ReaderPersonasPage() {
   const [profiles, setProfiles] = useState<ReaderPersonaProfile[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [draft, setDraft] = useState<ReaderPersonaProfile | null>(null);
+  const [savedDraft, setSavedDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<"all" | "standard" | "genre" | "custom">("all");
@@ -43,6 +46,7 @@ export function ReaderPersonasPage() {
       const selected = loaded.find((profile) => profile.id === selectedId) ?? loaded[0];
       setSelectedId(selected?.id ?? "");
       setDraft(selected ? { ...selected } : null);
+      setSavedDraft(selected ? JSON.stringify(selected) : "");
     } finally { setLoading(false); }
   }
 
@@ -51,25 +55,52 @@ export function ReaderPersonasPage() {
   const orphanPaths = structure ? findOrphanReaderEvaluationPaths(structure) : [];
   const orphanAuditPaths = structure ? findOrphanAuditPaths(structure) : [];
 
-  function select(profile: ReaderPersonaProfile) {
-    setSelectedId(profile.id);
-    setDraft({ ...profile });
+  const dirty = Boolean(draft && JSON.stringify(draft) !== savedDraft);
+
+  async function allowProfileChange(): Promise<boolean> {
+    return resolveUnsavedChanges({
+      dirty,
+      save: () => draft ? persist(draft) : true,
+      saveMessage: t("common.unsavedSaveConfirm"),
+      discardMessage: t("common.unsavedDiscardConfirm"),
+    });
   }
 
-  async function persist(profile: ReaderPersonaProfile) {
-    if (!book || !token) return;
+  async function select(profile: ReaderPersonaProfile, persisted = true): Promise<boolean> {
+    if (profile.id === selectedId) return true;
+    if (!await allowProfileChange()) return false;
+    setSelectedId(profile.id);
+    setDraft({ ...profile });
+    setSavedDraft(persisted ? JSON.stringify(profile) : "");
+    return true;
+  }
+
+  async function persist(profile: ReaderPersonaProfile): Promise<boolean> {
+    if (!book || !token) return false;
     setBusy(true);
     try {
       const slug = profile.slug || slugify(profile.name) || `reader-${crypto.randomUUID().slice(0, 8)}`;
-      await saveReaderPersona({ token, book, branch, profile: { ...profile, slug } });
+      const saved = { ...profile, slug };
+      await saveReaderPersona({ token, book, branch, profile: saved });
+      if (saved.id === selectedId) {
+        setDraft(saved);
+        setSavedDraft(JSON.stringify(saved));
+      }
+      setProfiles((current) => current.map((entry) => entry.id === saved.id ? saved : entry));
       await reload();
-      await load();
       toast({ title: t("readerPersonas.saved") });
-    } catch (err) { toast({ title: t("readerPersonas.saveFailed"), description: String(err), variant: "destructive" }); }
+      return true;
+    } catch (err) {
+      toast({ title: t("readerPersonas.saveFailed"), description: String(err), variant: "destructive" });
+      return false;
+    }
     finally { setBusy(false); }
   }
 
+  useRegisterPageSave({ dirty, enabled: Boolean(draft && book && token), onSave: () => draft ? persist(draft) : true });
+
   async function toggle(profile: ReaderPersonaProfile) {
+    if (dirty) return;
     const next = { ...profile, enabled: !profile.enabled };
     setProfiles((current) => current.map((entry) => entry.id === profile.id ? next : entry));
     if (draft?.id === profile.id) setDraft(next);
@@ -88,8 +119,9 @@ export function ReaderPersonasPage() {
 
   function duplicate(profile: ReaderPersonaProfile) {
     const next = { ...profile, id: `reader:custom:${crypto.randomUUID()}`, slug: `${profile.slug}-copy-${Date.now().toString(36)}`, name: `${profile.name} Copy`, builtin: false, readerType: "custom" as const, order: 1000 + profiles.length, path: undefined };
-    setProfiles((current) => [...current, next]);
-    select(next);
+    void select(next, false).then((changed) => {
+      if (changed) setProfiles((current) => [...current, next]);
+    });
   }
 
   async function remove(profile: ReaderPersonaProfile) {
@@ -124,15 +156,15 @@ export function ReaderPersonasPage() {
       {orphanAuditPaths.length > 0 && <Alert variant="destructive"><AlertDescription>{t("audit.orphans", { count: orphanAuditPaths.length })}</AlertDescription></Alert>}
       <div className="grid gap-5 lg:grid-cols-[340px_minmax(0,1fr)]">
         <div className="space-y-2">
-          <Button variant="outline" className="w-full justify-start" onClick={() => { const next = emptyReaderPersona(structure?.language, 1000 + profiles.length); setProfiles((current) => [...current, next]); select(next); }}><Plus className="mr-2 h-4 w-4" />{t("readerPersonas.new")}</Button>
+          <Button variant="outline" className="w-full justify-start" onClick={() => { const next = emptyReaderPersona(structure?.language, 1000 + profiles.length); void select(next, false).then((changed) => { if (changed) setProfiles((current) => [...current, next]); }); }}><Plus className="mr-2 h-4 w-4" />{t("readerPersonas.new")}</Button>
           {loading ? <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</div> : visible.map((profile) => (
             <div key={profile.id} className={selectedId === profile.id ? "rounded-xl border border-primary bg-primary/5 p-3" : "rounded-xl border p-3"}>
-              <button className="w-full text-left" onClick={() => select(profile)}><div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-sm font-medium">{profile.name}</span><Badge variant="outline">{t(`readerPersonas.types.${profile.readerType}`)}</Badge></div><p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{profile.description}</p></button>
-              <div className="mt-3 flex items-center gap-1"><Switch checked={profile.enabled} onCheckedChange={() => void toggle(profile)} /><span className="mr-auto text-xs text-muted-foreground">{profile.enabled ? t("common.enabled") : t("common.disabled")}</span><Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => void move(profile, -1)}><ArrowUp className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => void move(profile, 1)}><ArrowDown className="h-3.5 w-3.5" /></Button></div>
+              <button className="w-full text-left" onClick={() => void select(profile)}><div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-sm font-medium">{profile.name}</span><Badge variant="outline">{t(`readerPersonas.types.${profile.readerType}`)}</Badge></div><p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{profile.description}</p></button>
+              <div className="mt-3 flex items-center gap-1"><Switch checked={profile.enabled} disabled={busy || dirty} onCheckedChange={() => void toggle(profile)} aria-label={`${profile.name}: ${profile.enabled ? t("common.enabled") : t("common.disabled")}`} /><span className="mr-auto text-xs text-muted-foreground">{profile.enabled ? t("common.enabled") : t("common.disabled")}</span><Button size="icon" variant="ghost" className="h-7 w-7" disabled={busy || dirty} onClick={() => void move(profile, -1)} aria-label={`${t("common.moveUp")}: ${profile.name}`}><ArrowUp className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" className="h-7 w-7" disabled={busy || dirty} onClick={() => void move(profile, 1)} aria-label={`${t("common.moveDown")}: ${profile.name}`}><ArrowDown className="h-3.5 w-3.5" /></Button></div>
             </div>
           ))}
         </div>
-        {draft ? <ReaderPersonaEditor profile={draft} onChange={setDraft} onSave={() => void persist(draft)} onDuplicate={() => duplicate(draft)} onReset={() => void reset(draft)} onDelete={() => void remove(draft)} busy={busy} /> : <div className="rounded-2xl border border-dashed p-6 text-sm text-muted-foreground">{t("readerPersonas.select")}</div>}
+        {draft ? <ReaderPersonaEditor profile={draft} onChange={setDraft} onSave={() => void persist(draft)} onDuplicate={() => duplicate(draft)} onReset={() => void reset(draft)} onDelete={() => void remove(draft)} busy={busy} dirty={dirty} /> : <div className="rounded-2xl border border-dashed p-6 text-sm text-muted-foreground">{t("readerPersonas.select")}</div>}
       </div>
     </div>
   );
@@ -140,10 +172,10 @@ export function ReaderPersonasPage() {
 
 function csv(value: string): string[] { return value.split(",").map((entry) => entry.trim()).filter(Boolean); }
 
-function ReaderPersonaEditor({ profile, onChange, onSave, onDuplicate, onReset, onDelete, busy }: { profile: ReaderPersonaProfile; onChange: (profile: ReaderPersonaProfile) => void; onSave: () => void; onDuplicate: () => void; onReset: () => void; onDelete: () => void; busy: boolean }) {
+function ReaderPersonaEditor({ profile, onChange, onSave, onDuplicate, onReset, onDelete, busy, dirty }: { profile: ReaderPersonaProfile; onChange: (profile: ReaderPersonaProfile) => void; onSave: () => void; onDuplicate: () => void; onReset: () => void; onDelete: () => void; busy: boolean; dirty: boolean }) {
   const { t } = useTranslation();
   const patch = (next: Partial<ReaderPersonaProfile>) => onChange({ ...profile, ...next });
-  return <div className="space-y-4 rounded-2xl border bg-card p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-xl font-semibold">{profile.name || t("readerPersonas.untitled")}</h2><p className="font-mono text-xs text-muted-foreground">{profile.id}</p></div><div className="flex gap-1"><Button size="sm" variant="outline" onClick={onDuplicate}><Copy className="mr-1 h-4 w-4" />{t("readerPersonas.duplicate")}</Button>{profile.builtin ? <Button size="sm" variant="outline" onClick={onReset}><RotateCcw className="mr-1 h-4 w-4" />{t("readerPersonas.reset")}</Button> : <Button size="icon" variant="ghost" onClick={onDelete}><Trash2 className="h-4 w-4 text-destructive" /></Button>}</div></div>
+  return <div className="space-y-4 rounded-2xl border bg-card p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-xl font-semibold">{profile.name || t("readerPersonas.untitled")}</h2><p className="font-mono text-xs text-muted-foreground">{profile.id}</p></div><div className="flex gap-1"><Button size="sm" variant="outline" onClick={onDuplicate}><Copy className="mr-1 h-4 w-4" />{t("readerPersonas.duplicate")}</Button>{profile.builtin ? <Button size="sm" variant="outline" onClick={onReset}><RotateCcw className="mr-1 h-4 w-4" />{t("readerPersonas.reset")}</Button> : <Button size="icon" variant="ghost" onClick={onDelete} aria-label={`${t("common.delete")}: ${profile.name}`}><Trash2 className="h-4 w-4 text-destructive" /></Button>}</div></div>
     <Field label={t("readerPersonas.name")} value={profile.name} onChange={(value) => patch({ name: value, slug: profile.path ? profile.slug : slugify(value) })} />
     <Field label={t("readerPersonas.descriptionLabel")} value={profile.description} onChange={(value) => patch({ description: value })} multiline />
     <Field label={t("readerPersonas.profile")} value={profile.profile} onChange={(value) => patch({ profile: value })} multiline />
@@ -151,7 +183,7 @@ function ReaderPersonaEditor({ profile, onChange, onSave, onDuplicate, onReset, 
     <div><Label>{t("readerPersonas.severity")} ({profile.severity}/10)</Label><input type="range" min="1" max="10" value={profile.severity} onChange={(event) => patch({ severity: Number(event.target.value) })} className="mt-2 w-full" /></div>
     <ListField label={t("readerPersonas.aspects")} value={profile.aspects} onChange={(value) => patch({ aspects: value })} /><ListField label={t("readerPersonas.preferredGenres")} value={profile.preferredGenres} onChange={(value) => patch({ preferredGenres: value })} /><ListField label={t("readerPersonas.dislikedGenres")} value={profile.dislikedGenres} onChange={(value) => patch({ dislikedGenres: value })} /><ListField label={t("readerPersonas.interests")} value={profile.interests} onChange={(value) => patch({ interests: value })} /><ListField label={t("readerPersonas.appreciated")} value={profile.appreciatedElements} onChange={(value) => patch({ appreciatedElements: value })} /><ListField label={t("readerPersonas.criticisms")} value={profile.frequentCriticisms} onChange={(value) => patch({ frequentCriticisms: value })} />
     <Field label={t("readerPersonas.customPrompt")} value={profile.customPrompt} onChange={(value) => patch({ customPrompt: value })} multiline /><Field label={t("readerPersonas.notes")} value={profile.body} onChange={(value) => patch({ body: value })} multiline />
-    <Button onClick={onSave} disabled={busy || !profile.name.trim()}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}{t("common.save")}</Button>
+    <Button onClick={onSave} disabled={busy || !dirty || !profile.name.trim()}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}{t("common.save")}</Button>
   </div>;
 }
 

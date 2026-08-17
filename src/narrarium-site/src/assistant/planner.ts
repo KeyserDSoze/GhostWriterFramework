@@ -95,8 +95,9 @@ export function resolveNavigateAction(
   const routeMatchesExplicitParagraph = routeTarget?.paragraphNum && explicitParagraphMatchesRoute(lower, routeTarget.paragraphNum);
   if ((chapterResolution.explicit && !chapterResolution.value && !routeMatchesExplicitChapter) || (paragraphResolution.explicit && !paragraphResolution.value && !routeMatchesExplicitParagraph)) return null;
   if (isReaderEvaluationsNavigationPrompt(lower) && (chapterResolution.value || routeTarget)) {
+    const explicitTarget = chapterResolution.explicit || paragraphResolution.explicit;
     const chapterId = chapterResolution.value?.slug ?? routeTarget!.chapterId;
-    const paragraphNum = paragraphResolution.value?.paragraph.number ?? routeTarget?.paragraphNum;
+    const paragraphNum = paragraphResolution.value?.paragraph.number ?? (explicitTarget ? undefined : routeTarget?.paragraphNum);
     const to = paragraphNum
       ? `${base}/chapters/${chapterId}/paragraphs/${paragraphNum}/reader-evaluations`
       : `${base}/chapters/${chapterId}/reader-evaluations`;

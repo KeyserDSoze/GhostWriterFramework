@@ -8,9 +8,11 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
-import { addLocalRepoLog, buildLocalBookStructure, getLocalRepository, getLocalRepositoryByBook, listAllLocalFiles, listDirtyLocalFiles, listLocalRepoLogs, listUnpushedLocalCommits, localStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryFile, type LocalRepoStatus } from "@/repository/localRepository";
-import { commitLocalChanges, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, syncFullRepository } from "@/repository/repositoryService";
+import { addLocalRepoLog, buildLocalBookStructure, getLocalRepository, listAllLocalFiles, listDirtyLocalFiles, listLocalRecoverySnapshotsForTarget, listLocalRepoLogs, listUnpushedLocalCommits, localStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryFile, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
+import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
+import { useAuthStore } from "@/store/authStore";
+import { accountIdentity } from "@/auth/accountIdentity";
 
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0 B";
@@ -44,18 +46,21 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const clearBook = useBooksStore((s) => s.clearBook);
   const setCloneProgress = useBooksStore((s) => s.setCloneProgress);
   const cloneProgress = useBooksStore((s) => (book ? s.cloneProgress[book.id] : undefined));
+  const user = useAuthStore((s) => s.user);
+  const currentAccountIdentity = accountIdentity(user);
   const [status, setStatus] = useState<LocalRepoStatus | null>(null);
   const [dirtyFiles, setDirtyFiles] = useState<LocalRepositoryFile[]>([]);
   const [ahead, setAhead] = useState(0);
   const [storage, setStorage] = useState<{ usage?: number; quota?: number }>({});
   const [logs, setLogs] = useState<LocalRepoLogEntry[]>([]);
+  const [recoveries, setRecoveries] = useState<LocalRepositoryRecovery[]>([]);
   const [logFilter, setLogFilter] = useState<"all" | LocalRepoLogKind>("all");
   const [message, setMessage] = useState("");
   const [selectedDraftPaths, setSelectedDraftPaths] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const token = book ? resolveBookToken(book, settings) : "";
   const disabled = !book || !!busy;
-  const networkDisabled = !book || !token || !!busy;
+  const networkDisabled = !book || !token || !!busy || !navigator.onLine;
   const storageHigh = Boolean(storage.usage && storage.quota && storage.usage / storage.quota > 0.8);
   const draftDirtyFiles = useMemo(() => dirtyFiles.filter((file) => file.path.startsWith("drafts/")), [dirtyFiles]);
 
@@ -72,12 +77,21 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   }, [draftDirtyFiles]);
 
   async function currentRepo() {
-    if (!book) return null;
-    return branch ? getLocalRepository(book.owner, book.repo, branch) : getLocalRepositoryByBook(book.id);
+    if (!book || !branch || !currentAccountIdentity) return null;
+    return getLocalRepository(book.owner, book.repo, branch, currentAccountIdentity);
+  }
+
+  async function exactTarget() {
+    const repo = await currentRepo();
+    if (!book || !repo) throw new Error(t("repoStatus.notCloned"));
+    if (!currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
+    return { bookId: book.id, owner: repo.owner, repo: repo.repo, branch: repo.branch, repoId: repo.id, accountIdentity: currentAccountIdentity };
   }
 
   async function refresh() {
     if (!book) { setStatus(null); setDirtyFiles([]); setAhead(0); return; }
+    if (branch && currentAccountIdentity) setRecoveries(await listLocalRecoverySnapshotsForTarget(book.owner, book.repo, branch, currentAccountIdentity));
+    else setRecoveries([]);
     const repo = await currentRepo().catch(() => null);
     if (!repo) { setStatus(null); setDirtyFiles([]); setAhead(0); return; }
     const [nextStatus, dirty, commits, nextLogs] = await Promise.all([localStatus(repo.id), listDirtyLocalFiles(repo.id), listUnpushedLocalCommits(repo.id), listLocalRepoLogs(repo.id)]);
@@ -152,7 +166,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
     if (!window.confirm(t("repoStatus.removeLocalConfirm"))) return;
     setBusy("remove-local");
     try {
-      await removeLocalWorkingCopy(book.id);
+      await removeLocalWorkingCopy(await exactTarget());
       clearBook(book.id);
       toast({ title: t("repoStatus.removeLocalDone") });
       await refresh();
@@ -169,7 +183,8 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
     setBusy("reclone");
     try {
       const current = await currentRepo().catch(() => null);
-      const result = await recloneLocalWorkingCopy({ bookId: book.id, book, token, branch: current?.branch, onProgress: (p) => setCloneProgress(book.id, p) });
+      if (!currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
+      const result = await recloneLocalWorkingCopy({ bookId: book.id, book, token, accountIdentity: currentAccountIdentity, branch: current?.branch, onProgress: (p) => setCloneProgress(book.id, p) });
       setStructure(book.id, result.structure);
       toast({ title: t("repoStatus.recloneDone") });
       await refresh();
@@ -177,6 +192,23 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
       toast({ title: t("repoStatus.actionFailed"), description: String(err), variant: "destructive" });
     } finally {
       setCloneProgress(book.id, undefined);
+      setBusy(null);
+    }
+  }
+
+  async function restoreRecovery(recovery: LocalRepositoryRecovery) {
+    if (!book || !branch) return;
+    if (!window.confirm(`Restore recovery snapshot from ${new Date(recovery.createdAt).toLocaleString()}? Current local changes will be replaced.`)) return;
+    setBusy(`recovery-${recovery.id}`);
+    try {
+      if (!currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
+      const result = await restoreRepositoryRecovery({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentAccountIdentity, recoveryId: recovery.id });
+      setStructure(book.id, result.structure);
+      toast({ title: "Recovery snapshot restored" });
+      await refresh();
+    } catch (err) {
+      toast({ title: t("repoStatus.actionFailed"), description: String(err), variant: "destructive" });
+    } finally {
       setBusy(null);
     }
   }
@@ -205,32 +237,51 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
               )}
             </div>
             <div className="grid gap-2 sm:grid-cols-3">
+              <Button variant="outline" className="sm:col-span-3" disabled={networkDisabled} onClick={() => void run("recover-lifecycle", async () => {
+                if (!book || !branch || !currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
+                const result = await ensureLocalBookStructure({ bookId: book.id, book, token, accountIdentity: currentAccountIdentity, branch, onProgress: (p) => setCloneProgress(book.id, p) });
+                setStructure(book.id, result.structure);
+                return result.meta.cloneComplete ? t("repoStatus.remoteUpToDate") : t("repoStatus.incomplete");
+              })}>{busy === "recover-lifecycle" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}Retry / recover local clone</Button>
               <Button className="sm:col-span-3" disabled={networkDisabled} onClick={() => void run("sync", async () => {
-                const result = await syncFullRepository({ bookId: book.id, token });
+                 const result = await syncFullRepository({ ...await exactTarget(), token });
                 return t("repoStatus.syncDone", { pulled: result.pulled, kept: result.keptLocal, committed: result.committed, pushed: result.pushed });
               })}>{busy === "sync" ? <RefreshCcw className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-1 h-4 w-4" />}{t("repoStatus.sync")}</Button>
               <Button variant="outline" disabled={networkDisabled} onClick={() => void run("fetch", async () => {
-                const result = await fetchRemoteStatus({ bookId: book.id, token });
+                 const result = await fetchRemoteStatus({ ...await exactTarget(), token });
                 return result.changed ? t("repoStatus.remoteChanged") : t("repoStatus.remoteUpToDate");
               })}>{busy === "fetch" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-1 h-4 w-4" />}{t("repoStatus.fetch")}</Button>
               <Button variant="outline" disabled={networkDisabled} onClick={() => void run("pull", async () => {
                 if ((dirtyFiles.length || ahead) && !window.confirm(t("repoStatus.pullRemoteWinsConfirm"))) return t("repoStatus.cancelled");
-                const result = await pullRemoteChanges({ bookId: book.id, token });
+                 const target = await exactTarget();
+                 const destructive = dirtyFiles.length > 0 || ahead > 0;
+                 const result = await pullRemoteChanges({ ...target, token, ...(destructive ? { mode: "remote-wins" as const, confirmed: true } : {}) });
                 return t("repoStatus.pullDone", { count: result.updated });
               })}>{busy === "pull" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <GitPullRequest className="mr-1 h-4 w-4" />}{t("repoStatus.pull")}</Button>
               <Button variant="outline" disabled={networkDisabled || ahead === 0} onClick={() => void run("push", async () => {
                 if (!window.confirm(t("repoStatus.pushLocalWinsConfirm"))) return t("repoStatus.cancelled");
-                const result = await pushLocalCommits({ bookId: book.id, token });
+                 const result = await pushLocalCommits({ ...await exactTarget(), token });
                 return t("repoStatus.pushDone", { count: result.files });
               })}>{busy === "push" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-1 h-4 w-4" />}{t("repoStatus.push")}</Button>
             </div>
             <Button variant="outline" className="w-full" disabled={disabled} onClick={() => void exportBackup()}>{busy === "backup" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}{t("repoStatus.exportBackup")}</Button>
+            {recoveries.length > 0 && (
+              <div className="space-y-2 rounded-xl border p-3">
+                <p className="text-sm font-medium">Recovery snapshots</p>
+                {recoveries.map((recovery) => (
+                  <div key={recovery.id} className="flex flex-col gap-2 rounded border p-2 text-xs sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0"><p>{new Date(recovery.createdAt).toLocaleString()}</p><p className="break-words text-muted-foreground">{recovery.reason}</p></div>
+                    <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void restoreRecovery(recovery)}>{busy === `recovery-${recovery.id}` ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}Restore</Button>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3">
               <p className="text-sm font-medium">{t("repoStatus.repairTitle")}</p>
               <p className="text-xs text-muted-foreground">{t("repoStatus.repairDescription")}</p>
               <Button variant="outline" className="w-full" disabled={networkDisabled} onClick={() => void run("resync-local", async () => {
                 if (!window.confirm(t("repoStatus.resyncLocalConfirm"))) return t("repoStatus.cancelled");
-                const result = await overwriteRemoteWithLocal({ bookId: book.id, token });
+                 const result = await overwriteRemoteWithLocal({ ...await exactTarget(), token, confirmed: true });
                 return t("repoStatus.resyncLocalDone", { count: result.files });
               })}>{busy === "resync-local" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-1 h-4 w-4" />}{t("repoStatus.resyncLocal")}</Button>
             </div>
@@ -252,7 +303,8 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                         <Button type="button" size="sm" variant="outline" disabled={disabled || selectedDraftPaths.length === 0} onClick={() => void run("restore-drafts", async () => {
                           const repo = await currentRepo();
                           if (!repo) throw new Error(t("repoStatus.notCloned"));
-                          const result = await restoreLocalFilesToBase({ repoId: repo.id, owner: repo.owner, repo: repo.repo, paths: selectedDraftPaths, token: token || undefined });
+                          if (!currentAccountIdentity || !book) throw new Error(t("repoStatus.notCloned"));
+                          const result = await restoreLocalFilesToBase({ repoId: repo.id, bookId: book.id, owner: repo.owner, repo: repo.repo, branch: repo.branch, accountIdentity: currentAccountIdentity, paths: selectedDraftPaths, token: token || undefined });
                           setSelectedDraftPaths([]);
                           return t("repoStatus.restoreSelectedDraftsDone", { count: result.restored });
                         })}><RotateCcw className="mr-1 h-4 w-4" />{t("repoStatus.restoreSelectedDrafts")}</Button>
@@ -281,7 +333,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Input value={message || defaultMessage} onChange={(event) => setMessage(event.target.value)} placeholder={t("repoStatus.commitMessage")} disabled={disabled || dirtyFiles.length === 0} />
                 <Button disabled={disabled || dirtyFiles.length === 0} onClick={() => void run("commit", async () => {
-                  await commitLocalChanges(book.id, message || defaultMessage);
+                   await commitLocalChanges(await exactTarget(), message || defaultMessage);
                   setMessage("");
                   return t("repoStatus.commitDone");
                 })}>{busy === "commit" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <GitCommit className="mr-1 h-4 w-4" />}{t("repoStatus.commit")}</Button>

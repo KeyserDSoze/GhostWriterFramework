@@ -106,7 +106,7 @@ export function BookExportSettingsDialog({ bookId, open, onOpenChange }: BookExp
       defaultExportProfileId: selectedExportProfileId,
     };
     patchSettings({ books: settings.books.map((entry) => (entry.id === book.id ? updated : entry)) });
-    await save();
+    try { await save(); } catch { return; }
     toast({ title: t("export.settingsSaved") });
     onOpenChange(false);
   }

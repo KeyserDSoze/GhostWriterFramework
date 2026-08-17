@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useAssistantStore, type AssistantSessionMeta } from "@/assistant/store";
 
-const cloud = vi.hoisted(() => ({ list: vi.fn() }));
-vi.mock("@/assistant/chatCloud", () => ({ listAssistantSessions: cloud.list }));
+const cloud = vi.hoisted(() => ({ list: vi.fn(), maintain: vi.fn() }));
+vi.mock("@/assistant/chatCloud", () => ({ listAssistantSessions: cloud.list, maintainAssistantSessionSegments: cloud.maintain }));
 
-import { refreshAssistantSessionIndex, resetAssistantSessionIndex } from "@/assistant/sessionIndex";
+import { refreshAssistantSessionIndex, resetAssistantSessionIndex, resetAssistantSessionMaintenanceForTests } from "@/assistant/sessionIndex";
 import { resetAccountScopedState } from "@/auth/accountScope";
 
 function deferred<T>() {
@@ -20,8 +20,10 @@ function meta(id: string): AssistantSessionMeta {
 describe("authoritative assistant session index", () => {
   beforeEach(() => {
     resetAssistantSessionIndex(null);
+    resetAssistantSessionMaintenanceForTests();
     useAssistantStore.setState({ sessions: [], sessionAccountIdentity: null, sessionsLoading: false });
     cloud.list.mockReset();
+    cloud.maintain.mockReset().mockResolvedValue(undefined);
   });
 
   it("aborts and suppresses an out-of-order list from a previous account", async () => {

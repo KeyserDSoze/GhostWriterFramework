@@ -1,8 +1,9 @@
 import {
   readFileWithSha,
-  createOrUpdateTextFile,
+  mutateTextFilesAtomically,
 } from "@/github/githubClient";
 import { parseDocument, stringify } from "yaml";
+import { sha256Text } from "@/repository/safeRepositoryMutation";
 
 export interface DraftFinalContext {
   token: string;
@@ -30,6 +31,7 @@ interface DocParts {
   frontmatter: Record<string, unknown>;
   body: string;
   exists: boolean;
+  hash: string | null;
 }
 
 function paragraphSlug(finalPath: string): string {
@@ -53,10 +55,10 @@ async function readDoc(ctx: DraftFinalContext, path: string): Promise<DocParts> 
   try {
     const { content } = await readFileWithSha(ctx.token, ctx.owner, ctx.repo, ctx.branch, path);
     const { fm, body } = splitDoc(content);
-    return { frontmatter: fm, body, exists: true };
+    return { frontmatter: fm, body, exists: true, hash: await sha256Text(content) };
   } catch (err) {
     if (err && typeof err === "object" && "status" in err && (err as { status?: number }).status === 404) {
-      return { frontmatter: {}, body: "", exists: false };
+      return { frontmatter: {}, body: "", exists: false, hash: null };
     }
     throw err;
   }
@@ -131,33 +133,17 @@ export async function switchDraftAndFinal(
   // Destination empty → promote (copy source prose, leave source intact).
   if (isEmpty(dest)) {
     if (direction === "toFinal") {
-      await createOrUpdateTextFile(
-        ctx.token, ctx.owner, ctx.repo, ctx.branch, finalPath,
-        buildDoc(finalFrontmatter(ctx, slug, source.frontmatter), source.body),
-        `Promote draft to final: ${finalPath}`,
-      );
+      await mutateTextFilesAtomically(ctx.token, ctx.owner, ctx.repo, ctx.branch, [{ path: finalPath, content: buildDoc(finalFrontmatter(ctx, slug, source.frontmatter), source.body), expectedCurrentHash: final.hash }], `Promote draft to final: ${finalPath}`);
       return { action: "promoted-to-final" };
     }
-    await createOrUpdateTextFile(
-      ctx.token, ctx.owner, ctx.repo, ctx.branch, draftPath,
-      buildDoc(draftFrontmatter(ctx, slug, source.frontmatter), source.body),
-      `Copy final to draft: ${draftPath}`,
-    );
+    await mutateTextFilesAtomically(ctx.token, ctx.owner, ctx.repo, ctx.branch, [{ path: draftPath, content: buildDoc(draftFrontmatter(ctx, slug, source.frontmatter), source.body), expectedCurrentHash: draft.hash }], `Copy final to draft: ${draftPath}`);
     return { action: "promoted-to-draft" };
   }
 
   // Both non-empty → swap bodies, keeping each file's canonical header.
-  await Promise.all([
-    createOrUpdateTextFile(
-      ctx.token, ctx.owner, ctx.repo, ctx.branch, finalPath,
-      buildDoc(finalFrontmatter(ctx, slug, draft.frontmatter), draft.body),
-      `Swap draft/final: ${finalPath}`,
-    ),
-    createOrUpdateTextFile(
-      ctx.token, ctx.owner, ctx.repo, ctx.branch, draftPath,
-      buildDoc(draftFrontmatter(ctx, slug, final.frontmatter), final.body),
-      `Swap draft/final: ${draftPath}`,
-    ),
-  ]);
+  await mutateTextFilesAtomically(ctx.token, ctx.owner, ctx.repo, ctx.branch, [
+    { path: finalPath, content: buildDoc(finalFrontmatter(ctx, slug, draft.frontmatter), draft.body), expectedCurrentHash: final.hash },
+    { path: draftPath, content: buildDoc(draftFrontmatter(ctx, slug, final.frontmatter), final.body), expectedCurrentHash: draft.hash },
+  ], `Swap draft/final: ${finalPath}`);
   return { action: "swapped" };
 }

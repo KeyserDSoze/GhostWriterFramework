@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -18,6 +17,7 @@ import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { PublicLanguageToggle } from "@/components/layout/PublicLanguageToggle";
 import { getDocBySlug, getDocGroups, getMcpTools, localizedDoc, normalizeDocLang } from "@/lib/docs";
 import { APP_VERSION } from "@/config/version";
+import { renderRepositoryMarkdownHtml } from "@/markdown/safeMarkdown";
 
 function PublicShell({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
@@ -381,18 +381,5 @@ function LegalArticle({ title, children }: { title: string; children: React.Reac
 }
 
 function useMarkdownHtml(markdown: string): string {
-  const [html, setHtml] = useState("");
-
-  useEffect(() => {
-    let active = true;
-    void import("marked").then(({ marked }) => {
-      if (!active) return;
-      setHtml(marked.parse(markdown, { async: false }) as string);
-    });
-    return () => {
-      active = false;
-    };
-  }, [markdown]);
-
-  return html;
+  return renderRepositoryMarkdownHtml(markdown);
 }

@@ -20,6 +20,7 @@ import {
   mutateLocalTextFilesAtomically,
   sha256Text,
 } from "@/repository/localRepository";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import {
   loadLocalRewriteOperation,
   listLocalRewriteOperations,
@@ -268,7 +269,8 @@ async function readOptional(context: RewriteRepositoryContext, path: string): Pr
 }
 
 async function requireLocalWorkingCopy(context: RewriteRepositoryContext): Promise<RewriteWorkspaceContext> {
-  const local = await getLocalRepository(context.book.owner, context.book.repo, context.branch);
+  if (!context.accountScope) throw new Error("A current immutable account identity is required.");
+  const local = await getLocalRepository(context.book.owner, context.book.repo, context.branch, context.accountScope);
   if (!local) throw new Error("A local working copy for the selected branch is required.");
   if (local.cloneComplete !== true) throw new Error("The local working copy has not been fully verified.");
   return { ...context, repoId: local.id };
@@ -276,7 +278,7 @@ async function requireLocalWorkingCopy(context: RewriteRepositoryContext): Promi
 
 async function mutateLocalDraftFiles(repoId: string, mutations: Array<{ path: string; content?: string | null; expectedCurrentHash?: string | null }>): Promise<void> {
   try {
-    await mutateLocalTextFilesAtomically(repoId, mutations);
+    await mutateLocalTextFilesAtomically(repoId, captureRepositoryOperationScope(), mutations);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("File changed since")) throw new RepositoryConflictError(error.message);
     throw error;
@@ -692,7 +694,7 @@ async function finalizeSuccessfulManifest(input: {
   terminalManifest.completedAt = completedAt;
   terminalManifest.updatedAt = completedAt;
   try {
-    await saveLocalRewriteOperation(terminalManifest);
+    await saveLocalRewriteOperation(terminalManifest, captureRepositoryOperationScope());
     Object.assign(input.manifest, terminalManifest);
   } catch (error) {
     input.manifest.error = `Finalization failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -704,7 +706,9 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
   proposal: ParagraphFeedbackProposal;
   feedbackSource?: FeedbackSourceSelection;
   confirmStaleFeedback?: boolean;
+  signal?: AbortSignal;
 }): Promise<RewriteOperationManifest> {
+  input.signal?.throwIfAborted();
   const context = await requireLocalWorkingCopy(input);
   const proposal = input.proposal;
   if (input.feedbackSource) {
@@ -750,7 +754,9 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
     modifiedFiles: [modifiedFile],
   });
   try {
-    await saveLocalRewriteOperation(manifest);
+    input.signal?.throwIfAborted();
+    await saveLocalRewriteOperation(manifest, captureRepositoryOperationScope());
+    input.signal?.throwIfAborted();
     await mutateLocalDraftFiles(context.repoId, [
       { path: proposal.draftPath, content: proposal.generatedDraftContent, expectedCurrentHash: proposal.beforeDraftHash },
       { path: proposal.feedbackPath, expectedCurrentHash: proposal.feedbackFileHash },
@@ -766,14 +772,15 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
     modifiedFile.status = "completed";
     manifest.generationRuns.push({ paragraphSlug: proposal.paragraphSlug, feedbackApplied: proposal.feedbackApplied, metadata: proposal.generation });
     aggregateRuns(manifest);
-    await saveLocalRewriteOperation(manifest);
+    await saveLocalRewriteOperation(manifest, captureRepositoryOperationScope());
+    input.signal?.throwIfAborted();
   } catch (error) {
     manifest.status = error instanceof RepositoryConflictError ? "conflict" : "failed";
     manifest.error = error instanceof Error ? error.message : String(error);
     manifest.updatedAt = new Date().toISOString();
     modifiedFile.status = manifest.status === "conflict" ? "conflict" : "failed";
     try {
-      await saveLocalRewriteOperation(manifest);
+      await saveLocalRewriteOperation(manifest, captureRepositoryOperationScope());
     } catch (saveError) {
       manifest.error += `\n\nAdditionally, recording this failure failed: ${saveError instanceof Error ? saveError.message : String(saveError)}`;
     }
@@ -837,7 +844,7 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
   });
   manifest.status = "rewriting";
   manifest.updatedAt = new Date().toISOString();
-  await saveLocalRewriteOperation(manifest);
+  await saveLocalRewriteOperation(manifest, captureRepositoryOperationScope());
   const rewritten: string[] = [];
 
   try {
@@ -903,7 +910,7 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
       manifest.modifiedFiles[index].status = "completed";
       manifest.generationRuns.push({ paragraphSlug: slug, feedbackApplied: generated.output.feedbackApplied, metadata: generated.metadata });
       aggregateRuns(manifest);
-      await saveLocalRewriteOperation(manifest);
+      await saveLocalRewriteOperation(manifest, captureRepositoryOperationScope());
       input.onProgress?.({ ...manifest.progress }, manifest);
     }
   } catch (error) {
@@ -913,7 +920,7 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
     const current = manifest.modifiedFiles[manifest.progress.completed];
     if (current && current.status === "pending") current.status = manifest.status === "conflict" ? "conflict" : "failed";
     try {
-      await saveLocalRewriteOperation(manifest);
+      await saveLocalRewriteOperation(manifest, captureRepositoryOperationScope());
     } catch (saveError) {
       manifest.error += `\n\nAdditionally, recording this failure failed: ${saveError instanceof Error ? saveError.message : String(saveError)}`;
     }
@@ -933,7 +940,7 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
 }): Promise<RewriteOperationManifest> {
   if (!input.confirmed) throw new Error("Explicit confirmation is required before resuming a chapter rewrite.");
   const context = await requireLocalWorkingCopy(input);
-  const manifest = await loadLocalRewriteOperation(input.operationId);
+  const manifest = await loadLocalRewriteOperation(input.operationId, context.repoId, captureRepositoryOperationScope());
   if (!manifest) throw new Error(`Rewrite operation not found: ${input.operationId}`);
   if (manifest.bookId !== input.book.id || manifest.owner !== input.book.owner || manifest.repo !== input.book.repo || manifest.branch !== input.branch) {
     throw new RepositoryConflictError("The saved rewrite operation belongs to a different local working copy.");
@@ -1063,7 +1070,7 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
       manifest.error = undefined;
       manifest.generationRuns.push({ paragraphSlug: slug, feedbackApplied: generated.output.feedbackApplied, metadata: generated.metadata });
       aggregateRuns(manifest);
-      await saveLocalRewriteOperation(manifest);
+      await saveLocalRewriteOperation(manifest, captureRepositoryOperationScope());
       rewritten[index] = generated.output.body;
       input.onProgress?.({ ...manifest.progress }, manifest);
     }
@@ -1074,7 +1081,7 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
     const current = manifest.modifiedFiles.find((file) => file.paragraphSlug === manifest.progress.currentParagraphSlug);
     if (current && current.status !== "completed") current.status = manifest.status === "conflict" ? "conflict" : "failed";
     try {
-      await saveLocalRewriteOperation(manifest);
+      await saveLocalRewriteOperation(manifest, captureRepositoryOperationScope());
     } catch (saveError) {
       manifest.error += `\n\nAdditionally, recording this failure failed: ${saveError instanceof Error ? saveError.message : String(saveError)}`;
     }
@@ -1085,7 +1092,8 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
 }
 
 export async function loadRewriteOperation(context: RewriteRepositoryContext, operationId: string): Promise<RewriteOperationManifest> {
-  const manifest = await loadLocalRewriteOperation(operationId);
+  const workspace = await requireLocalWorkingCopy(context);
+  const manifest = await loadLocalRewriteOperation(operationId, workspace.repoId, captureRepositoryOperationScope());
   if (!manifest || manifest.bookId !== context.book.id || manifest.owner !== context.book.owner || manifest.repo !== context.book.repo || manifest.branch !== context.branch) {
     throw new Error(`Rewrite operation not found: ${operationId}`);
   }
@@ -1093,7 +1101,9 @@ export async function loadRewriteOperation(context: RewriteRepositoryContext, op
 }
 
 export async function listRewriteOperations(context: RewriteRepositoryContext, target: { scope: RewriteOperationScope; chapterSlug: string; paragraphSlug?: string }): Promise<RewriteOperationManifest[]> {
+  const workspace = await requireLocalWorkingCopy(context);
   return listLocalRewriteOperations({
+    repoId: workspace.repoId,
     bookId: context.book.id,
     owner: context.book.owner,
     repo: context.book.repo,
@@ -1101,7 +1111,7 @@ export async function listRewriteOperations(context: RewriteRepositoryContext, t
     scope: target.scope,
     chapterSlug: target.chapterSlug,
     paragraphSlug: target.scope === "paragraph" ? target.paragraphSlug : undefined,
-  });
+  }, captureRepositoryOperationScope());
 }
 
 export async function loadLatestRewriteOperation(context: RewriteRepositoryContext, target: { scope: RewriteOperationScope; chapterSlug: string; paragraphSlug?: string }): Promise<RewriteOperationManifest | null> {
@@ -1128,13 +1138,16 @@ export async function restorePreviousDrafts(input: RewriteRepositoryContext & {
   operationId: string;
   policies?: Record<string, RewriteRollbackPolicy>;
   defaultPolicy?: RewriteRollbackPolicy;
+  signal?: AbortSignal;
 }): Promise<{ manifest: RewriteOperationManifest; conflicts: RewriteConflict[] }> {
+  input.signal?.throwIfAborted();
   const context = await requireLocalWorkingCopy(input);
   const manifest = await loadRewriteOperation(input, input.operationId);
   const conflicts: RewriteConflict[] = [];
   const currentByPath = new Map<string, { content: string | null; hash: string | null }>();
   const restorableFiles = manifest.modifiedFiles.filter((entry) => entry.status === "completed" || entry.status === "kept-current");
   for (const file of restorableFiles) {
+    input.signal?.throwIfAborted();
     const current = await readWorkingCopyText(context, file.path);
     currentByPath.set(file.path, current);
     if (current.hash !== (file.appliedHash ?? null)) conflicts.push({ path: file.path, expectedHash: file.appliedHash ?? null, currentHash: current.hash, reason: "Draft changed after this operation." });
@@ -1145,13 +1158,13 @@ export async function restorePreviousDrafts(input: RewriteRepositoryContext & {
   manifest.updatedAt = new Date().toISOString();
   if (cancelled) {
     manifest.status = "conflict";
-    await saveLocalRewriteOperation(manifest);
+    await saveLocalRewriteOperation(manifest, captureRepositoryOperationScope());
     return { manifest, conflicts };
   }
 
   manifest.status = "rollingBack";
-  await saveLocalRewriteOperation(manifest);
-  const mutations = [] as Parameters<typeof mutateLocalTextFilesAtomically>[1];
+  await saveLocalRewriteOperation(manifest, captureRepositoryOperationScope());
+  const mutations = [] as Parameters<typeof mutateLocalTextFilesAtomically>[2];
   const restoredFiles: RewriteModifiedFile[] = [];
   try {
     for (const file of restorableFiles) {
@@ -1165,13 +1178,14 @@ export async function restorePreviousDrafts(input: RewriteRepositoryContext & {
       mutations.push({ path: file.path, content: file.existedBefore ? file.beforeContent : null, expectedCurrentHash: policy === "force-restore" ? undefined : current.hash });
       restoredFiles.push(file);
     }
+    input.signal?.throwIfAborted();
     await mutateLocalDraftFiles(context.repoId, mutations);
     for (const file of restoredFiles) file.status = "restored";
   } catch (error) {
     manifest.status = error instanceof RepositoryConflictError ? "conflict" : "failed";
     manifest.error = error instanceof Error ? error.message : String(error);
     manifest.updatedAt = new Date().toISOString();
-    await saveLocalRewriteOperation(manifest);
+    await saveLocalRewriteOperation(manifest, captureRepositoryOperationScope());
     return { manifest, conflicts };
   }
   await finalizeSuccessfulManifest({ manifest, status: "rolledBack" });

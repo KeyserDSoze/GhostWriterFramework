@@ -23,7 +23,8 @@ describe("Copilot critical paths", () => {
   it("guards routing and request ownership", () => {
     expect(isExplicitNavigationPrompt("go to chapter 2")).toBe(true);
     expect(matchesToolKeyword("show pull requests", "pr")).toBe(false);
-    expect(isAssistantRequestOwned({ requestId: "r", sessionId: "s" }, "r", "s", "s", false)).toBe(true);
+    const owner = { requestId: "r", sessionId: "s", contextGeneration: 1, pathname: "/app/settings", bookId: null, branch: "main", secretPath: null };
+    expect(isAssistantRequestOwned(owner, owner, "s", { contextGeneration: 1, pathname: "/app/settings", bookId: null, branch: "main", secretPath: null }, false)).toBe(true);
     expect(isMediaOperationOwned(2, 1, false)).toBe(false);
   });
 
@@ -67,6 +68,17 @@ describe("Copilot critical paths", () => {
     expect(enabled).toMatchObject({ toolId: "multi-file-edit", handlerId: "multi-file-edit", enabled: true, mutationIntent: "positive" });
     const settings = { copilotTools: { toolOverrides: { "multi-file-edit": { enabled: false } } } } as unknown as AppSettings;
     expect(chooseToolMatch({ prompt: "aggiorna più file", lowered: "aggiorna più file", settings }, new Set(["multi-file-edit"]))).toMatchObject({ enabled: false, mutationIntent: "positive" });
+  });
+
+  it.each([
+    ["create a pull request", "create-pull-request"],
+    ["please create a simulated reader", "create-simulated-reader"],
+    ["summarize the latest reader evaluations", "summarize-reader-evaluations"],
+    ["evaluate chapter 2 with the readers", "evaluate-with-readers"],
+    ["review every paragraph in chapter 2", "evaluate-chapter-paragraphs"],
+  ])("prefers explicit specific intent for %s", (prompt, toolId) => {
+    ensureBuiltinCopilotToolsRegistered();
+    expect(chooseToolMatch({ prompt, lowered: prompt.toLowerCase(), settings: {} as AppSettings }, new Set(copilotToolRegistry.list().map((tool) => tool.handlerId!)))).toMatchObject({ toolId });
   });
 
   it("requires exact per-target provenance before multi-file apply", () => {

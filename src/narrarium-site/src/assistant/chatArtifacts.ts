@@ -1,58 +1,9 @@
-import { marked } from "marked";
 import type { AssistantArchivedAction, AssistantArchivedAttachment, AssistantAttachment, AssistantMessage, AssistantSession } from "@/assistant/store";
 import { markdownToSpeechText } from "@/assistant/speech";
-
-const ALLOWED_TAGS = new Set([
-  "a", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "li", "ol", "p", "pre", "strong",
-  "table", "tbody", "td", "th", "thead", "tr", "ul",
-]);
-const DROP_WITH_CONTENT = new Set(["audio", "canvas", "embed", "form", "iframe", "img", "math", "object", "script", "style", "svg", "video"]);
-
-function sanitizeHtml(html: string): string {
-  if (typeof DOMParser === "undefined") return escapeHtml(html);
-  const parser = new DOMParser();
-  const document = parser.parseFromString(html, "text/html");
-  sanitizeChildren(document.body);
-  return document.body.innerHTML;
-}
-
-function sanitizeChildren(parent: Element): void {
-  for (const child of [...parent.children]) {
-    const tag = child.tagName.toLowerCase();
-    if (DROP_WITH_CONTENT.has(tag)) {
-      child.remove();
-      continue;
-    }
-    sanitizeChildren(child);
-    if (!ALLOWED_TAGS.has(tag)) {
-      child.replaceWith(...child.childNodes);
-      continue;
-    }
-    const href = tag === "a" ? child.getAttribute("href") : null;
-    for (const attribute of [...child.attributes]) child.removeAttribute(attribute.name);
-    if (tag === "a") sanitizeLink(child, href);
-  }
-}
-
-function sanitizeLink(element: Element, rawHref: string | null): void {
-  if (!rawHref) return;
-  const href = rawHref.replace(/[\u0000-\u0020\u007f]+/g, "").trim();
-  if (!isSafeLink(href)) return;
-  element.setAttribute("href", href);
-  element.setAttribute("rel", "noopener noreferrer nofollow");
-  if (/^https?:/i.test(href)) element.setAttribute("target", "_blank");
-}
-
-function isSafeLink(href: string): boolean {
-  return /^(?:https?:|mailto:|#|\/|\.\.?(?:\/|$))/i.test(href);
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
+import { renderRepositoryMarkdownHtml } from "@/markdown/safeMarkdown";
 
 export function renderAssistantMarkdownHtml(markdown: string): string {
-  return sanitizeHtml(marked.parse(markdown, { async: false }) as string);
+  return renderRepositoryMarkdownHtml(markdown);
 }
 
 export function assistantMarkdownToRichPlainText(markdown: string): string {

@@ -38,6 +38,7 @@ export function AddBookPage() {
   const { settings } = useSettingsStore();
   const { save } = useSettings();
   const { patchSettings } = useSettingsStore();
+  const offline = typeof navigator !== "undefined" && !navigator.onLine;
 
   // Token selection: "default", "custom" (inline per-book PAT), or index of extraGitHubTokens
   const [selectedToken, setSelectedToken] = useState("default");
@@ -97,8 +98,12 @@ export function AddBookPage() {
     };
     const next = [...settings.books, entry];
     patchSettings({ books: next });
-    await save();
-    navigate(`/app/books/${entry.id}`);
+    try {
+      await save();
+      navigate(`/app/books/${entry.id}`);
+    } finally {
+      setAdding(null);
+    }
   }
 
   async function handleCreateNewBook() {
@@ -179,7 +184,7 @@ export function AddBookPage() {
       {/* Token picker */}
       <div className="grid gap-2">
         <Label>{t("addBook.tokenToUse")}</Label>
-        <Select value={selectedToken} onValueChange={setSelectedToken}>
+        <Select value={selectedToken} onValueChange={setSelectedToken} disabled={offline}>
           <SelectTrigger className="w-full sm:max-w-xs">
             <SelectValue placeholder={t("addBook.selectToken")} />
           </SelectTrigger>
@@ -209,6 +214,7 @@ export function AddBookPage() {
                 placeholder={t("addBook.labelOptional")}
                 value={customTokenLabel}
                 onChange={(e) => setCustomTokenLabel(e.target.value)}
+                disabled={offline}
               />
               <Input
                 type="password"
@@ -216,6 +222,7 @@ export function AddBookPage() {
                 value={customToken}
                 onChange={(e) => setCustomToken(e.target.value)}
                 autoComplete="off"
+                disabled={offline}
               />
             </div>
           </div>

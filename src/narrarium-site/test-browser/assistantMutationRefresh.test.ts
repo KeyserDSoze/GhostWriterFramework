@@ -4,6 +4,7 @@ import { refreshBookAfterMutation, runPromptWithMutationRefresh } from "@/assist
 import { useBooksStore } from "@/store/booksStore";
 import { chapterCreationPaths } from "@/narrarium/canon";
 import { chapterDraftArtifactPaths } from "@/narrarium/workspace";
+import { useAuthStore } from "@/store/authStore";
 
 const repository = vi.hoisted(() => ({ getExistingLocalBookStructure: vi.fn() }));
 const github = vi.hoisted(() => ({
@@ -26,6 +27,7 @@ const book = { id: "book", owner: "owner", repo: "repo" } as any;
 const structure = (title: string) => ({ title, loadedBranch: "main", chapters: [] }) as any;
 
 beforeEach(() => {
+  useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
   repository.getExistingLocalBookStructure.mockReset();
   github.loadBookStructure.mockReset();
   github.createFile.mockReset().mockResolvedValue(undefined);

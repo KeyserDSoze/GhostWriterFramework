@@ -1,5 +1,5 @@
 import { stringify } from "yaml";
-import { createFileIfAbsent, createOrUpdateTextFile } from "@/github/githubClient";
+import { createFileIfAbsent, createOrUpdateTextFile, mutateTextFilesAtomically } from "@/github/githubClient";
 import { chapterSlug, formatOrdinal, slugify } from "@/narrarium/canon";
 import { commitCanonicalScriptMutation, type CanonicalScriptMutationResult } from "@/narrarium/scriptLedger";
 import type { BookEntry } from "@/types/settings";
@@ -54,6 +54,11 @@ export async function createChapterDraftArtifacts(
   const slug = input.chapterSlug ?? chapterSlug(input.number, input.title);
   const chapterId = `chapter:${slug}`;
   const [path, ...bucketPaths] = chapterDraftArtifactPaths(slug);
+  if (!input.replace) {
+    const generated = buildChapterDraftArtifactDocuments({ number: input.number, title: input.title, chapterSlug: input.chapterSlug, body: input.body });
+    await mutateTextFilesAtomically(token, owner, repo, branch, generated.documents.map((document) => ({ path: document.path, content: document.content, expectedCurrentHash: null })), `Add chapter draft ${slug}`);
+    return { path: generated.path, changedPaths: generated.documents.map((document) => document.path) };
+  }
   const changedPaths: string[] = [];
   const primaryChanged = await writeWorkspaceFile(
     token,

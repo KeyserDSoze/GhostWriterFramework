@@ -44,7 +44,7 @@ export function resetAccountScopedState(): void {
   useFeedbackRewriteWorkflowStore.getState().abortController?.abort();
   resetAssistantSessionIndex(null);
   useAssistantStore.setState({ open: false, busy: false, sessions: [], currentSession: null });
-  useSettingsStore.setState({ settings: DEFAULT_SETTINGS, syncStatus: "idle", driveFileId: null, lastSynced: null, cloudLoaded: false });
+  useSettingsStore.setState((state) => ({ settings: DEFAULT_SETTINGS, syncStatus: "idle", driveFileId: null, cloudRevision: null, lastSynced: null, cloudLoaded: false, offlineConflict: null, accountGeneration: state.accountGeneration + 1, accountIdentity: accountIdentity(useAuthStore.getState().user) }));
   useBooksStore.setState({ structures: {}, loadingIds: new Set(), errors: {}, workingBranches: {}, cloneProgress: {} });
   useCostsStore.getState().setFile(emptyCostsFile(), undefined);
   useClipboardStore.getState().setItems([]);
@@ -66,6 +66,7 @@ export function resetAccountScopedState(): void {
     rollbackPolicies: {},
     abortController: null,
     abortable: false,
+    operationIdentity: null,
   }));
   useGenerateDiffStore.setState({ open: false, loading: false, title: "", oldText: "", newText: "", error: null, make: null, proposal: null, onApplied: null });
   useNavigationHistoryStore.setState({ current: null, previous: null });
@@ -84,6 +85,7 @@ export function installAccountScopeIsolation(): void {
   const storedIdentity = loadAccountScope();
   const accountChanged = shouldResetAccountScope(storedIdentity, activeIdentity);
   if (accountChanged) resetAccountScopedState();
+  else useSettingsStore.setState({ accountIdentity: activeIdentity });
   useLlmDebugStore.getState().setAccount(activeIdentity, storedIdentity, accountChanged);
   storeAccountScope(activeIdentity);
 

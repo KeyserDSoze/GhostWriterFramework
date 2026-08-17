@@ -249,6 +249,8 @@ export interface AssistantSession extends AssistantSessionMeta {
   provenance?: AssistantSessionProvenance;
   noteSaveOperation?: AssistantNoteSaveOperation;
   quarantinedActions?: AssistantQuarantinedAction[];
+  /** Secret bodies were disclosed on these explicit author routes. Leaving them invalidates this context. */
+  sensitiveSecretPaths?: string[];
 }
 
 interface AssistantState {
@@ -405,7 +407,25 @@ export function normalizeAssistantSession(session: AssistantSession): AssistantS
     compactSummary: typeof archive.summary === "string" ? archive.summary : "",
     compactedMessageCount: Number.isSafeInteger(archive.messageCount) ? archive.messageCount : 0,
     quarantinedActions: Array.isArray(session.quarantinedActions) ? session.quarantinedActions : [],
+    sensitiveSecretPaths: Array.isArray(session.sensitiveSecretPaths) ? [...new Set(session.sensitiveSecretPaths)] : [],
   };
+}
+
+export function invalidateAssistantSecretContext(session: AssistantSession, allowedSecretPath: string | null): AssistantSession {
+  const sensitive = session.sensitiveSecretPaths ?? [];
+  if (!sensitive.length || (allowedSecretPath && sensitive.every((path) => path === allowedSecretPath))) return session;
+  return touchAssistantSession(session, {
+    ...session,
+    messages: [{ id: crypto.randomUUID(), role: "system", text: "Secret-author conversation context was cleared after leaving its explicit secret route." }],
+    attachments: [],
+    archive: emptyAssistantSessionArchive(),
+    losslessSegments: [],
+    losslessArchive: { version: 1, segmentCount: 0, messageCount: 0, attachmentCount: 0, actionCount: 0, complete: true, missingRanges: [] },
+    compactSummary: "",
+    compactedMessageCount: 0,
+    quarantinedActions: [],
+    sensitiveSecretPaths: [],
+  });
 }
 
 export function touchAssistantSession(previous: AssistantSession, next: AssistantSession): AssistantSession {

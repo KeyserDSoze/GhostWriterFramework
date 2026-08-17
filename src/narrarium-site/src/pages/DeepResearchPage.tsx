@@ -32,6 +32,7 @@ import { useAuthStore } from "@/store/authStore";
 import { accountIdentity } from "@/auth/accountIdentity";
 import type { ResearchFile } from "@/types/book";
 import { integrationChatModels } from "@/assistant/llm";
+import { renderRepositoryMarkdownHtml } from "@/markdown/safeMarkdown";
 
 const ENTITY_KINDS: EntityKind[] = ["character", "location", "faction", "item", "secret", "timeline-event"];
 const ENTITY_ROUTE_SECTION: Record<EntityKind, string> = {
@@ -89,18 +90,7 @@ function updateFrontmatterTimestamp(frontmatterRaw: string): string {
 }
 
 function useMarkdownHtml(markdown: string): string {
-  const [html, setHtml] = useState("");
-
-  useEffect(() => {
-    let active = true;
-    void import("marked").then(({ marked }) => {
-      if (!active) return;
-      setHtml(marked.parse(markdown, { async: false }) as string);
-    });
-    return () => { active = false; };
-  }, [markdown]);
-
-  return html;
+  return useMemo(() => renderRepositoryMarkdownHtml(markdown), [markdown]);
 }
 
 /** Selector for an LLM integration + model override. Returns "" when no override. */
@@ -116,7 +106,7 @@ function LlmOverrideSelector({
   const { t } = useTranslation();
   const { settings } = useSettingsStore();
 
-  const options: Array<{ value: string; label: string }> = [{ value: "", label: t("research.llmRouter") }];
+  const options: Array<{ value: string; label: string }> = [{ value: "__router__", label: t("research.llmRouter") }];
   for (const integration of settings.aiIntegrations ?? []) {
     for (const model of integrationChatModels(integration)) {
       options.push({ value: `${integration.id}::${model.name}`, label: `${integration.name} / ${model.name}` });
@@ -126,7 +116,7 @@ function LlmOverrideSelector({
   return (
     <div className="grid gap-2">
       <Label className="flex items-center gap-1"><Cpu className="h-3.5 w-3.5" />{t("research.llmLabel")}</Label>
-      <Select value={value} onValueChange={onChange} disabled={disabled}>
+      <Select value={value || "__router__"} onValueChange={(next) => onChange(next === "__router__" ? "" : next)} disabled={disabled}>
         <SelectTrigger><SelectValue /></SelectTrigger>
         <SelectContent>
           {options.map((opt) => (
@@ -183,9 +173,11 @@ function ResearchDetail({
   const currency = settings.costCurrency || "USD";
 
   useEffect(() => {
+    let active = true;
     setLoadBusy(true);
     readFileWithSha(token, book.owner, book.repo, branch, file.path)
       .then(({ content, sha: s }) => {
+        if (!active) return;
         setSha(s);
         setMarkdown(content);
         const parts = splitResearchMarkdown(content);
@@ -202,8 +194,9 @@ function ResearchDetail({
           setDraftTitle(file.title || file.slug);
         }
       })
-      .catch((err) => toast({ title: t("research.loadFailed"), description: String(err), variant: "destructive" }))
-      .finally(() => setLoadBusy(false));
+      .catch((err) => { if (active) toast({ title: t("research.loadFailed"), description: String(err), variant: "destructive" }); })
+      .finally(() => { if (active) setLoadBusy(false); });
+    return () => { active = false; abortRef.current?.abort(); };
   }, [file.path, book.owner, book.repo, branch, token, t, toast, file.title, file.slug]);
 
   const bodyDirty = draftBody.trim() !== splitResearchMarkdown(markdown).body.trim();
@@ -211,8 +204,9 @@ function ResearchDetail({
   const dirty = bodyDirty || titleDirty;
   const previewHtml = useMarkdownHtml(splitResearchMarkdown(markdown).body.trim());
 
-  async function handleSave() {
-    if (!dirty || !sha) return;
+  async function handleSave(): Promise<boolean> {
+    if (!dirty) return true;
+    if (!sha) return false;
     setSaveBusy(true);
     try {
       let nextFrontmatter = updateFrontmatterTimestamp(frontmatterRaw);
@@ -224,15 +218,17 @@ function ResearchDetail({
       setMarkdown(nextMarkdown);
       setEditMode(false);
       toast({ title: t("common.saved") });
+      return true;
     } catch (err) {
       toast({ title: t("research.saveFailed"), description: String(err), variant: "destructive" });
+      return false;
     } finally { setSaveBusy(false); }
   }
 
   useRegisterPageSave({ dirty, enabled: Boolean(markdown && !loadBusy), onSave: () => handleSave() });
   useRegisterPageActions([
     editMode
-      ? { id: "save-research", label: t("common.save"), icon: <Save className="h-4 w-4" />, shortcut: "Ctrl+S", disabled: !dirty || saveBusy, run: () => handleSave() }
+      ? { id: "save-research", label: t("common.save"), icon: <Save className="h-4 w-4" />, shortcut: "Ctrl+S", disabled: !dirty || saveBusy, run: async () => { await handleSave(); } }
       : { id: "edit-research", label: t("research.edit"), icon: <FileEdit className="h-4 w-4" />, run: () => setEditMode(true) },
   ], Boolean(markdown && !loadBusy));
 
@@ -442,6 +438,7 @@ function NewResearchForm({
   const [depth, setDepth] = useState<ResearchDepth>(initialDepth ?? "medium");
   const [selectedIntents, setSelectedIntents] = useState<ResearchIntent[]>(["auto"]);
   const [relatedEntityId, setRelatedEntityId] = useState("");
+  const [relatedEntityKey, setRelatedEntityKey] = useState("");
   const [relatedEntityType, setRelatedEntityType] = useState("");
   const [llmOverride, setLlmOverride] = useState("");
   const [busy, setBusy] = useState(false);
@@ -458,8 +455,8 @@ function NewResearchForm({
 
   const allEntities = useMemo(() => {
     if (!structure) return [];
-    const out: Array<{ id: string; label: string; kind: string }> = [];
-    const add = (kind: string, files: import("@/types/book").BookFile[]) => files.forEach((f) => out.push({ id: f.name ?? f.path, label: f.name ?? f.path, kind }));
+    const out: Array<{ key: string; id: string; label: string; kind: string }> = [];
+    const add = (kind: string, files: import("@/types/book").BookFile[]) => files.forEach((f) => out.push({ key: `${kind}:${f.path}`, id: f.name ?? f.path, label: f.name ?? f.path, kind }));
     add("characters", structure.characters);
     add("locations", structure.locations);
     add("factions", structure.factions);
@@ -596,16 +593,17 @@ function NewResearchForm({
         </div>
         <div className="grid gap-2">
           <Label>{t("research.relatedEntityLabel")}</Label>
-          <Select value={relatedEntityId || "__none__"} onValueChange={(v) => {
-            if (v === "__none__") { setRelatedEntityId(""); setRelatedEntityType(""); return; }
-            const found = allEntities.find((e) => e.id === v);
+          <Select value={relatedEntityKey || "__none__"} onValueChange={(v) => {
+            if (v === "__none__") { setRelatedEntityKey(""); setRelatedEntityId(""); setRelatedEntityType(""); return; }
+            const found = allEntities.find((e) => e.key === v);
+            setRelatedEntityKey(found?.key ?? "");
             setRelatedEntityId(found?.id ?? "");
             setRelatedEntityType(found?.kind ?? "");
           }} disabled={busy}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__">{t("research.relatedEntityNone")}</SelectItem>
-              {allEntities.map((e) => <SelectItem key={e.id} value={e.id}>{e.label}</SelectItem>)}
+              {allEntities.map((e) => <SelectItem key={e.key} value={e.key}>{e.label}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>

@@ -54,6 +54,7 @@ function mergeMax(a: CostsFile, b: CostsFile): CostsFile {
 export function useCostsSync() {
   const { user, accessToken } = useAuthStore();
   const dirty = useCostsStore((s) => s.dirty);
+  const revision = useCostsStore((s) => s.revision);
   const loadedIdentityRef = useRef<string | null>(null);
   const savingRef = useRef(false);
 
@@ -82,16 +83,20 @@ export function useCostsSync() {
     const timer = setTimeout(() => {
       if (savingRef.current) return;
       savingRef.current = true;
-      const { file, driveFileId } = useCostsStore.getState();
+      const { file, driveFileId, revision: savedRevision } = useCostsStore.getState();
       void saveCosts(user.provider, accessToken, { file, driveFileId })
         .then((handle) => {
           if (isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
-            useCostsStore.getState().markSynced(handle.driveFileId);
+            useCostsStore.getState().markSynced(savedRevision, handle.driveFileId);
           }
         })
         .catch(() => undefined)
-        .finally(() => { savingRef.current = false; });
+        .finally(() => {
+          savingRef.current = false;
+          const latest = useCostsStore.getState();
+          if (latest.dirty && latest.revision !== savedRevision) useCostsStore.setState({ revision: latest.revision + 1 });
+        });
     }, 4000);
     return () => clearTimeout(timer);
-  }, [dirty, user, accessToken]);
+  }, [dirty, revision, user, accessToken]);
 }

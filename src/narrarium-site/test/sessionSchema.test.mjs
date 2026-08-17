@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MAX_ASSISTANT_SESSION_BYTES, parseAssistantLosslessSegment, parseAssistantSession, parseAssistantSessionJson, serializeAssistantLosslessSegment, serializeAssistantSession } from "../src/assistant/sessionSchema.ts";
+import { MAX_ASSISTANT_LOSSLESS_SEGMENTS, MAX_ASSISTANT_QUARANTINED_ACTION_BYTES, MAX_ASSISTANT_SESSION_BYTES, parseAssistantLosslessSegment, parseAssistantSession, parseAssistantSessionJson, serializeAssistantLosslessSegment, serializeAssistantSession } from "../src/assistant/sessionSchema.ts";
 
 function legacy(overrides = {}) {
   return { id: "session-1", title: "Legacy", contextTitle: "Book", updatedAt: "2026-08-15T10:00:00.000Z", messages: [], ...overrides };
@@ -25,6 +25,12 @@ test("unsafe persisted actions are quarantined and cannot remain executable", ()
   const roundTrip = parseAssistantSessionJson(serializeAssistantSession(migrated));
   assert.equal(roundTrip.messages[0].action, undefined);
   assert.equal(roundTrip.quarantinedActions.length, 1);
+});
+
+test("quarantine payloads are bounded and segment counts fail closed", () => {
+  const migrated = parseAssistantSession(legacy({ attachments: [], messages: [{ id: "message-1", role: "assistant", text: "bad", action: { kind: "unknown", payload: "x".repeat(MAX_ASSISTANT_QUARANTINED_ACTION_BYTES * 2) } }] }));
+  assert.deepEqual(migrated.quarantinedActions[0].action, { kind: "unknown", omitted: true, reason: "action payload exceeded quarantine limit" });
+  assert.throws(() => parseAssistantSession(legacy({ attachments: [], losslessSegments: Array.from({ length: MAX_ASSISTANT_LOSSLESS_SEGMENTS + 1 }, (_, index) => ({ id: `s-${index}` })) })), /losslessSegments is invalid/);
 });
 
 test("versioned and malformed sessions fail closed", () => {

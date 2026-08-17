@@ -73,8 +73,8 @@ export function PunctuationStylePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [book, token, branch, path, language]);
 
-  async function save() {
-    if (!book || !token) return;
+  async function save(): Promise<boolean> {
+    if (!book || !token) return false;
     setSaving(true);
     try {
       await createOrUpdateTextFile(token, book.owner, book.repo, branch, path, buildMarkdownDoc(frontmatter, body), `Update ${path}`);
@@ -82,8 +82,10 @@ export function PunctuationStylePage() {
       setSaved(body);
       toast({ title: t("common.saved") });
       reload();
+      return true;
     } catch (err) {
       toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
+      return false;
     } finally { setSaving(false); }
   }
 

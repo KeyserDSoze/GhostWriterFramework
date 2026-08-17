@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthProvider } from "@/store/authStore";
+import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 
 vi.mock("@/drive/googleAppFolder", () => ({ ensureGoogleAppFolder: vi.fn(async () => "folder-id") }));
 
-import { loadCloudSettings, loadCloudSettingsForMigration } from "@/drive/cloudSettingsClient";
+import { loadCloudSettings, loadCloudSettingsForMigration, saveCloudSettings } from "@/drive/cloudSettingsClient";
+import { DEFAULT_SETTINGS } from "@/types/settings";
+import "fake-indexeddb/auto";
 
 const historicalV1 = {
   version: 1,
@@ -27,11 +30,15 @@ function providerFetch(provider: AuthProvider, payload: unknown) {
   return vi.fn(async (input: string | URL) => {
     const url = String(input);
     if (provider === "google") {
-      if (url.includes("/files?") && url.includes("fields=files%28id%29")) return Response.json({ files: [{ id: "settings-id" }] });
-      if (url.includes("/files/settings-id?alt=media")) return Response.json(payload);
+      if (url.includes("/files?") && url.includes("createdTime")) return Response.json({ files: [{ id: "settings-id", createdTime: "2026-01-01T00:00:00Z" }] });
+      if (url.includes("/files/settings-id?alt=media")) return new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json", etag: "etag-1" } });
+      if (url.endsWith("/files/settings-id?fields=id")) return new Response(JSON.stringify({ id: "settings-id" }), { headers: { "Content-Type": "application/json", etag: "etag-1" } });
     } else {
-      if (url.endsWith("/root:/Apps") || url.endsWith("/root:/Apps/Narrarium")) return Response.json({ id: "folder" });
-      if (url.endsWith("/root:/Apps/Narrarium/settings.json")) return Response.json({ id: "settings-id" });
+      if (url.endsWith("/root:/Apps")) return Response.json({ id: "apps", folder: {} });
+      if (url.endsWith("/root:/Apps/Narrarium")) return Response.json({ id: "folder", folder: {} });
+      if (url.includes("/items/folder/children")) return Response.json({ value: [{ id: "marker", name: ".narrarium-app-folder-v1.json", eTag: "m1", file: {} }, { id: "settings-id", name: "settings.json", eTag: "etag-1", file: {} }] });
+      if (url.endsWith("/.narrarium-app-folder-v1.json:/content")) return Response.json({ application: "Narrarium", version: 2, secret: "test-secret" });
+      if (url.endsWith("/root:/Apps/Narrarium/settings.json")) return Response.json({ id: "settings-id", eTag: "etag-1" });
       if (url.endsWith("/items/settings-id/content")) return Response.json(payload);
     }
     throw new Error(`Unexpected ${provider} request: ${url}`);
@@ -39,7 +46,11 @@ function providerFetch(provider: AuthProvider, payload: unknown) {
 }
 
 describe.each<AuthProvider>(["google", "microsoft"])("%s cloud settings historical fixtures", (provider) => {
-  beforeEach(() => vi.unstubAllGlobals());
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    registerCloudAccount("microsoft", "token", "home-test");
+    localStorage.setItem("narrarium.microsoftAppFolderMarker.v2.home-test", "test-secret");
+  });
 
   it.each([
     ["v1", historicalV1, 0, 1],
@@ -56,6 +67,23 @@ describe.each<AuthProvider>(["google", "microsoft"])("%s cloud settings historic
       expect(result.settings.customActions).toHaveLength(actionCount);
       expect(result.diagnostics).toHaveLength(diagnosticCount);
     }
+  });
+
+  it("rejects an update without the revision retained by load", async () => {
+    vi.stubGlobal("fetch", providerFetch(provider, historicalV1));
+    await expect(saveCloudSettings(provider, "token", DEFAULT_SETTINGS)).rejects.toThrow(/not loaded|changed/i);
+  });
+
+  if (provider === "google") it("rejects content when the metadata revision changes during download", async () => {
+    let revisionRead = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/files?") && url.includes("createdTime")) return Response.json({ files: [{ id: "settings-id", createdTime: "2026-01-01T00:00:00Z" }] });
+      if (url.endsWith("/files/settings-id?fields=id")) return new Response("{}", { headers: { etag: `etag-${++revisionRead}` } });
+      if (url.includes("/files/settings-id?alt=media")) return Response.json(historicalV1);
+      throw new Error(`Unexpected request ${url}`);
+    }));
+    await expect(loadCloudSettings("google", "token")).rejects.toThrow(/changed while/);
   });
 
   it.each([

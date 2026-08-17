@@ -4,6 +4,7 @@ import type { BookEntry, BookExportScope, BookExportSettings } from "@/types/set
 import { loadBinaryFileContent, loadFileContent } from "@/github/githubClient";
 import { slugify } from "@/narrarium/canon";
 import { paragraphSeparator, presentMetadata } from "@/export/metadataPresentation";
+import { renderEpubMarkdownHtml } from "@/markdown/safeMarkdown";
 
 const PARAGRAPH_BREAK_NEWLINES = 3;
 
@@ -148,6 +149,34 @@ function markdownToPlainParagraphs(markdown: string, mode: BookExportSettings["l
   }
   const separator = new RegExp(`\n{${Math.max(PARAGRAPH_BREAK_NEWLINES, 2)},}`, "g");
   return splitPlainBlocks(text, separator);
+}
+
+export function normalizeMarkdownLineBreaks(markdown: string, mode: BookExportSettings["lineBreakMode"]): string {
+  if (mode === "source") return markdown.trim();
+  const blocks = markdown.replace(/\r\n/g, "\n").split(/\n\s*\n+/);
+  const output: string[] = [];
+  const prose: string[] = [];
+  const flush = () => {
+    const text = prose.join(" ").replace(/\s+/g, " ").trim();
+    if (text) output.push(text);
+    prose.length = 0;
+  };
+  for (const block of blocks) {
+    const trimmed = block.trim();
+    if (!trimmed) continue;
+    if (/^(#{1,6}\s+|```|~~~|>\s+|[-*+]\s+|\d+\.\s+)/m.test(trimmed)) {
+      flush();
+      output.push(trimmed);
+      continue;
+    }
+    const compact = trimmed.split("\n").map((line) => line.trim()).filter(Boolean).join(" ");
+    if (mode === "dialogue" && isDialogueParagraph(compact)) {
+      flush();
+      output.push(compact);
+    } else prose.push(compact);
+  }
+  flush();
+  return output.join("\n\n");
 }
 
 function splitPlainBlocks(text: string, separator: RegExp): string[] {
@@ -482,15 +511,16 @@ async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportS
   function writeBlock(text: string, options?: { align?: "left" | "center"; italic?: boolean; bold?: boolean; firstLineIndent?: number }) {
     const indent = options?.firstLineIndent ?? 0;
     const lines = doc.splitTextToSize(text, contentWidth - indent);
-    ensureSpace(lines.length + 1);
     doc.setFont(baseFont, options?.bold ? "bold" : options?.italic ? "italic" : "normal");
     if (options?.align === "center") {
       lines.forEach((line: string) => {
+        ensureSpace();
         doc.text(line, width / 2, y, { align: "center" });
         y += lineHeight;
       });
     } else {
       lines.forEach((line: string, index: number) => {
+        ensureSpace();
         doc.text(line, margin + (index === 0 ? indent : 0), y);
         y += lineHeight;
       });
@@ -574,7 +604,7 @@ async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportS
 }
 
 async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExportScope, settings: BookExportSettings): Promise<BookExportArtifact> {
-  const [{ marked }, { default: JSZip }] = await Promise.all([import("marked"), import("jszip")]);
+  const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
   zip.folder("META-INF")?.file("container.xml", `<?xml version="1.0" encoding="UTF-8"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n  <rootfiles>\n    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>\n  </rootfiles>\n</container>`);
@@ -599,17 +629,18 @@ async function buildEpubArtifact(snapshot: ExportBookSnapshot, scope: BookExport
   const chapterFiles = snapshot.chapters.map((chapter, index) => {
     const fileName = `chapter-${index + 1}.xhtml`;
     const chapterImagePath = chapter.asset ? addImage(`chapter-${index + 1}-image`, `chapter-${index + 1}`, chapter.asset) : undefined;
-    const sceneIndex = chapter.paragraphs.length > 0
+    const sceneIndex = settings.showParagraphTitles && chapter.paragraphs.length > 0
       ? `<nav><h2>Scenes</h2><ol>${chapter.paragraphs.map((paragraph, sceneIndex) => `<li><a href="#scene-${sceneIndex + 1}">${escapeHtml(paragraph.title)}</a></li>`).join("")}</ol></nav>`
       : "";
     const paragraphsHtml = chapter.paragraphs.map((paragraph, sceneIndex) => {
       const paragraphImagePath = paragraph.asset ? addImage(`chapter-${index + 1}-scene-${sceneIndex + 1}-image`, `chapter-${index + 1}-scene-${sceneIndex + 1}`, paragraph.asset) : undefined;
       const summary = paragraph.summary ? `<p><em>${escapeHtml(paragraph.summary)}</em></p>` : "";
       const separator = sceneIndex > 0 ? paragraphSeparator(settings) : "";
-      return `<section id="scene-${sceneIndex + 1}">${separator ? `<p class="scene-break">${escapeHtml(separator)}</p>` : ""}<h2>${escapeHtml(paragraph.title)}</h2>${summary}${renderMetadataHtml(paragraph.frontmatterRecord, metadataKeys(settings, "paragraph", true))}${renderFrontmatterPre(paragraph.frontmatterText, settings)}${marked.parse(paragraph.body, { async: false })}${paragraphImagePath ? renderEpubFigure(paragraphImagePath, paragraph.asset, `${paragraph.title} illustration`) : ""}</section>`;
+      const heading = settings.showParagraphTitles ? `<h2>${escapeHtml(paragraph.title)}</h2>` : "";
+      return `<section id="scene-${sceneIndex + 1}">${separator ? `<p class="scene-break">${escapeHtml(separator)}</p>` : ""}${heading}${summary}${renderMetadataHtml(paragraph.frontmatterRecord, metadataKeys(settings, "paragraph", settings.showParagraphTitles))}${renderFrontmatterPre(paragraph.frontmatterText, settings)}${renderEpubMarkdownHtml(normalizeMarkdownLineBreaks(paragraph.body, settings.lineBreakMode))}${paragraphImagePath ? renderEpubFigure(paragraphImagePath, paragraph.asset, `${paragraph.title} illustration`) : ""}</section>`;
     }).join("\n");
     const summary = chapter.summary ? `<p><em>${escapeHtml(chapter.summary)}</em></p>` : "";
-    const body = chapter.body ? marked.parse(chapter.body, { async: false }) : "";
+    const body = chapter.body ? renderEpubMarkdownHtml(chapter.body) : "";
      const xhtml = wrapXhtml(chapter.title, `<article><h1>${escapeHtml(chapter.title)}</h1>${summary}${renderMetadataHtml(chapter.frontmatterRecord, metadataKeys(settings, "chapter", true))}${renderFrontmatterPre(chapter.frontmatterText, settings)}${body}${chapterImagePath ? renderEpubFigure(chapterImagePath, chapter.asset, `${chapter.title} illustration`) : ""}${sceneIndex}${paragraphsHtml}</article>`);
     oebps.file(fileName, xhtml);
     return { fileName, title: chapter.title };

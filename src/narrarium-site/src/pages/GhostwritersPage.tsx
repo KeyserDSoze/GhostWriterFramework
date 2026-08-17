@@ -16,6 +16,7 @@ import { resolveBookToken } from "@/types/settings";
 import { createFile, deleteFile, readFileWithSha, updateFile } from "@/github/githubClient";
 import { emptyGhostwriter, parseGhostwriter, serializeGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
 import { slugify } from "@/narrarium/canon";
+import { resolveUnsavedChanges } from "@/hooks/resolveUnsavedChanges";
 
 export function GhostwritersPage() {
   const { bookId } = useParams<{ bookId: string }>();
@@ -28,6 +29,7 @@ export function GhostwritersPage() {
 
   const [selected, setSelected] = useState<string | null>(null);
   const [profile, setProfile] = useState<GhostwriterProfile | null>(null);
+  const [savedProfile, setSavedProfile] = useState("");
   const [sha, setSha] = useState("");
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -41,14 +43,19 @@ export function GhostwritersPage() {
     if (!entry) return;
     setBusy(true);
     readFileWithSha(token, book.owner, book.repo, branch, entry.path)
-      .then(({ content, sha: fileSha }) => { setProfile(parseGhostwriter(selected, content)); setSha(fileSha); })
+      .then(({ content, sha: fileSha }) => {
+        const loaded = parseGhostwriter(selected, content);
+        setProfile(loaded);
+        setSavedProfile(serializeGhostwriter(loaded));
+        setSha(fileSha);
+      })
       .catch((err) => toast({ title: t("ghostwriters.loadFailed"), description: String(err), variant: "destructive" }))
       .finally(() => setBusy(false));
   }, [book, token, branch, selected, list, t, toast]);
 
   async function createGhostwriter() {
     const name = newName.trim();
-    if (!name || !book || !token) return;
+    if (!name || !book || !token || !await allowProfileChange()) return;
     const slug = slugify(name);
     setBusy(true);
     try {
@@ -62,26 +69,46 @@ export function GhostwritersPage() {
     } finally { setBusy(false); }
   }
 
-  async function save() {
-    if (!profile || !book || !token) return;
+  async function save(): Promise<boolean> {
+    if (!profile || !book || !token) return false;
     setBusy(true);
     try {
-      await updateFile(token, book.owner, book.repo, branch, `ghostwriters/${profile.slug}.md`, sha, serializeGhostwriter(profile), `Update ghostwriter ${profile.slug}`);
+      const content = serializeGhostwriter(profile);
+      const nextSha = await updateFile(token, book.owner, book.repo, branch, `ghostwriters/${profile.slug}.md`, sha, content, `Update ghostwriter ${profile.slug}`);
+      setSha(nextSha);
+      setSavedProfile(content);
       toast({ title: t("common.saved") });
       await reload();
+      return true;
     } catch (err) {
       toast({ title: t("ghostwriters.saveFailed"), description: String(err), variant: "destructive" });
+      return false;
     } finally { setBusy(false); }
   }
 
-  useRegisterPageSave({ dirty: Boolean(profile), enabled: Boolean(profile && book && token), onSave: () => save() });
+  const dirty = Boolean(profile && serializeGhostwriter(profile) !== savedProfile);
+  useRegisterPageSave({ dirty, enabled: Boolean(profile && book && token), onSave: () => save() });
+
+  async function allowProfileChange(): Promise<boolean> {
+    return resolveUnsavedChanges({
+      dirty,
+      save,
+      saveMessage: t("common.unsavedSaveConfirm"),
+      discardMessage: t("common.unsavedDiscardConfirm"),
+    });
+  }
+
+  async function selectProfile(slug: string) {
+    if (slug === selected || !await allowProfileChange()) return;
+    setSelected(slug);
+  }
 
   async function remove() {
     if (!profile || !book || !token) return;
     setBusy(true);
     try {
       await deleteFile(token, book.owner, book.repo, branch, `ghostwriters/${profile.slug}.md`, sha, `Remove ghostwriter ${profile.slug}`);
-      setSelected(null); setProfile(null);
+      setSelected(null); setProfile(null); setSavedProfile("");
       await reload();
     } catch (err) {
       toast({ title: t("ghostwriters.saveFailed"), description: String(err), variant: "destructive" });
@@ -112,7 +139,7 @@ export function GhostwritersPage() {
         {list.length === 0 && <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">{t("ghostwriters.empty")}</p>}
         <div className="space-y-1">
           {list.map((g) => (
-            <button key={g.slug} type="button" onClick={() => setSelected(g.slug)} className={selected === g.slug ? "flex w-full items-center gap-2 rounded-lg border bg-primary/5 px-3 py-2 text-left text-sm" : "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm hover:bg-muted/40"}>
+            <button key={g.slug} type="button" onClick={() => void selectProfile(g.slug)} className={selected === g.slug ? "flex w-full items-center gap-2 rounded-lg border bg-primary/5 px-3 py-2 text-left text-sm" : "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm hover:bg-muted/40"}>
               <PenLine className="h-4 w-4 text-muted-foreground" />{g.name}
             </button>
           ))}
@@ -128,7 +155,7 @@ export function GhostwritersPage() {
               <h2 className="font-serif text-xl font-semibold">{profile.name}</h2>
               <div className="flex gap-2">
                 <Button size="sm" variant="ghost" onClick={() => void remove()} disabled={busy}><Trash2 className="mr-1 h-4 w-4" />{t("common.delete")}</Button>
-                <Button size="sm" onClick={() => void save()} disabled={busy}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}{t("common.save")}</Button>
+                <Button size="sm" onClick={() => void save()} disabled={busy || !dirty}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}{t("common.save")}</Button>
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">

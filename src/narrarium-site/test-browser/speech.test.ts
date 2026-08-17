@@ -11,6 +11,7 @@ const fallbackSpeechCandidate = vi.hoisted(() => ({
   integration: { id: "tts-fallback", name: "TTS fallback", provider: "openai" as const, apiKey: "key", modelTextToSpeech: "tts-2", requestTimeoutMs: undefined as number | undefined },
   model: "tts-2",
 }));
+const browserSpeechCandidate = vi.hoisted(() => ({ browser: true }));
 const speechCandidates = vi.hoisted(() => [speechCandidate]);
 const debugBegin = vi.hoisted(() => vi.fn());
 const debugFinish = vi.hoisted(() => vi.fn());
@@ -174,5 +175,56 @@ describe("AI speech playback", () => {
 
     await expect(transcribeAudio(new Blob(["audio"]), settings, undefined, 0, null)).rejects.toMatchObject({ name: "CandidateTimeoutError" });
     expect(debugFinish.mock.calls[0][1]).toMatchObject({ failureKind: "timeout", timeoutMs: 5 });
+  });
+
+  it("keeps the operation-wide TTS deadline active for later chunks", async () => {
+    vi.useFakeTimers();
+    speechCreate.mockResolvedValueOnce(response()).mockImplementationOnce((_input, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    }));
+    const limited = { ...settings, routingExecution: { maxCandidates: 4, maxTotalDurationMs: 50, maxTokenAttempts: 200_000, maxEstimatedCost: 5 } } as AppSettings;
+
+    const controller = await speakText("First. Second.", limited, { accountScope: null, segments: ["First.", "Second."] });
+    const assertion = expect(controller.done).rejects.toMatchObject({ name: "RoutingExecutionBudgetError" });
+    await vi.advanceTimersByTimeAsync(50);
+    await assertion;
+    expect(speechCreate).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("does not start or wait for a browser fallback after the total TTS deadline", async () => {
+    vi.useFakeTimers();
+    speechCandidates.push(browserSpeechCandidate as unknown as typeof speechCandidate);
+    speechCreate.mockImplementation((_input, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    }));
+    const getVoices = vi.mocked(window.speechSynthesis.getVoices);
+    const limited = { ...settings, routingExecution: { maxCandidates: 4, maxTotalDurationMs: 5, maxTokenAttempts: 200_000, maxEstimatedCost: 5 } } as AppSettings;
+
+    const pending = speakText("First.", limited, { accountScope: null, segments: ["First."] });
+    const assertion = expect(pending).rejects.toMatchObject({ name: "RoutingExecutionBudgetError" });
+    await vi.advanceTimersByTimeAsync(5);
+    await assertion;
+
+    expect(speechCreate).toHaveBeenCalledTimes(1);
+    expect(getVoices).not.toHaveBeenCalled();
+    expect(window.speechSynthesis.speak).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it("applies one operation-wide deadline to STT fallbacks", async () => {
+    vi.useFakeTimers();
+    speechCandidates.push(fallbackSpeechCandidate);
+    transcriptionCreate.mockImplementation((_input, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    }));
+    const limited = { ...settings, routingExecution: { maxCandidates: 4, maxTotalDurationMs: 5, maxTokenAttempts: 200_000, maxEstimatedCost: 5 } } as AppSettings;
+    const pending = transcribeAudio(new Blob(["audio"]), limited, undefined, 0, null);
+    const assertion = expect(pending).rejects.toMatchObject({ name: "RoutingExecutionBudgetError" });
+    await vi.advanceTimersByTimeAsync(5);
+    await assertion;
+    expect(transcriptionCreate).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 });

@@ -152,7 +152,7 @@ export function BookExportDialog(props: {
               <div className="grid gap-2">
                 <Label>{t("export.preset")}</Label>
                 <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger aria-label={t("export.preset")}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {profiles.map((profile) => (
                       <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>
@@ -167,7 +167,7 @@ export function BookExportDialog(props: {
                 {FORMATS.map((format) => {
                   const active = formats.includes(format.value);
                   return (
-                    <Button key={format.value} type="button" variant={active ? "default" : "outline"} size="sm" onClick={() => toggleFormat(format.value)}>
+                    <Button key={format.value} type="button" variant={active ? "default" : "outline"} size="sm" onClick={() => toggleFormat(format.value)} aria-pressed={active}>
                       {t(format.labelKey)}
                     </Button>
                   );
@@ -178,7 +178,7 @@ export function BookExportDialog(props: {
             <div className="grid gap-2">
               <Label>{t("export.scope")}</Label>
               <Select value={scope} onValueChange={(value) => setScope(value as BookExportScope)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger aria-label={t("export.scope")}><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="draft">{t("export.publisherDraft", { count: savedSettings.sampleChapters })}</SelectItem>
                   <SelectItem value="full">{t("export.fullBook")}</SelectItem>
@@ -192,14 +192,14 @@ export function BookExportDialog(props: {
                   <p className="font-medium">{t("export.downloadToDevice")}</p>
                   <p className="text-xs text-muted-foreground">{t("export.downloadHint")}</p>
                 </div>
-                <Switch checked={downloadToDevice} onCheckedChange={setDownloadToDevice} />
+                <Switch checked={downloadToDevice} onCheckedChange={setDownloadToDevice} aria-label={t("export.downloadToDevice")} />
               </div>
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="font-medium">{t("export.uploadToDrive")}</p>
                   <p className="text-xs text-muted-foreground">{t("export.uploadHint")}</p>
                 </div>
-                <Switch checked={uploadToDrive} onCheckedChange={setUploadToDrive} />
+                <Switch checked={uploadToDrive} onCheckedChange={setUploadToDrive} aria-label={t("export.uploadToDrive")} />
               </div>
               {uploadToDrive && user?.provider === "google" && (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">

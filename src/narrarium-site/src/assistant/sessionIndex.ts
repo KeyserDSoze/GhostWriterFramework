@@ -1,9 +1,11 @@
 import type { AuthProvider } from "../store/authStore.ts";
-import { listAssistantSessions } from "./chatCloud.ts";
+import { listAssistantSessions, maintainAssistantSessionSegments } from "./chatCloud.ts";
 import { useAssistantStore } from "./store.ts";
 
 let generation = 0;
 let active: { key: string; controller: AbortController; promise: Promise<void>; settled: boolean } | null = null;
+const lastMaintenance = new Map<string, number>();
+const MAINTENANCE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /** Refreshes the single account-scoped chat index and rejects stale/out-of-order results. */
 export function refreshAssistantSessionIndex(provider: AuthProvider, accessToken: string, identity: string): Promise<void> {
@@ -18,7 +20,18 @@ export function refreshAssistantSessionIndex(provider: AuthProvider, accessToken
     && !controller.signal.aborted
     && useAssistantStore.getState().sessionAccountIdentity === identity;
   const promise = listAssistantSessions(provider, accessToken, { signal: controller.signal, isCurrent })
-    .then((sessions) => { if (isCurrent()) useAssistantStore.getState().setSessions(sessions); })
+    .then(async (sessions) => {
+      if (!isCurrent()) return;
+      useAssistantStore.getState().setSessions(sessions);
+      const previous = lastMaintenance.get(identity) ?? 0;
+      if (Date.now() - previous < MAINTENANCE_INTERVAL_MS) return;
+      try {
+        await maintainAssistantSessionSegments(provider, accessToken, { signal: controller.signal, isCurrent });
+        if (isCurrent()) lastMaintenance.set(identity, Date.now());
+      } catch {
+        // Session listing remains usable; maintenance retries on the next refresh.
+      }
+    })
     .finally(() => {
       if (isCurrent()) useAssistantStore.getState().setSessionsLoading(false);
       if (active?.promise === promise) active.settled = true;
@@ -33,4 +46,8 @@ export function resetAssistantSessionIndex(identity: string | null): void {
   active = null;
   useAssistantStore.getState().setSessionAccountIdentity(identity);
   if (!identity) useAssistantStore.getState().setSessionsLoading(false);
+}
+
+export function resetAssistantSessionMaintenanceForTests(): void {
+  lastMaintenance.clear();
 }

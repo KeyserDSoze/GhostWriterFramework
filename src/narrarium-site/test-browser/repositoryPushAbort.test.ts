@@ -25,10 +25,14 @@ vi.mock("@/repository/localRepository", async (importOriginal) => ({
 }));
 
 import { pushLocalCommits } from "@/repository/repositoryService";
+import { useAuthStore } from "@/store/authStore";
+
+const identity = "google:sub-writer";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  local.getLocalRepositoryById.mockResolvedValue({ id: "repo-id", bookId: "book", owner: "owner", repo: "repo", branch: "main" });
+  useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
+  local.getLocalRepositoryById.mockResolvedValue({ id: "repo-id", bookId: "book", owner: "owner", repo: "repo", branch: "main", accountScope: identity });
   local.listDirtyLocalFiles.mockResolvedValue([]);
   local.listUnpushedLocalCommits.mockResolvedValue([{ id: "local-commit", message: "Update", files: [{ path: "plot.md", status: "modified", kind: "text", hash: "new-hash" }] }]);
   local.listAllLocalFiles.mockResolvedValue([{ path: "plot.md", kind: "text", text: "new", currentHash: "new-hash", status: "clean", committed: true }]);
@@ -51,6 +55,7 @@ test("an in-flight push forwards abort to GitHub and never updates the branch", 
     owner: "owner",
     repo: "repo",
     branch: "main",
+    accountIdentity: identity,
     expectedRemoteHeadSha: "source-head",
     signal: controller.signal,
   });

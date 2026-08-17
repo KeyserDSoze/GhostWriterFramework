@@ -17,8 +17,10 @@ vi.mock("@/repository/localRepository", async (importOriginal) => ({
 }));
 
 import { commitAndPushTextFileMutation, RepositoryConflictError } from "@/repository/safeRepositoryMutation";
+import { useAuthStore } from "@/store/authStore";
 
 beforeEach(() => {
+  useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
   vi.clearAllMocks();
   octokit.getRef
     .mockResolvedValueOnce({ data: { object: { sha: "source-head" } } })

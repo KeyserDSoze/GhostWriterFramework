@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useLocation, useNavigate, useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { renderRepositoryMarkdownHtml } from "@/markdown/safeMarkdown";
 import { parseDocument, stringify } from "yaml";
 import { ArrowLeft, ArrowLeftRight, BookOpen, FileEdit, Save, Loader2, MoreHorizontal, Plus, ShieldAlert, X, Lock, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -166,7 +167,7 @@ export function ParagraphPage() {
   const token = book ? resolveBookToken(book, settings) : "";
   const presentationSettings = useMemo(() => (book ? resolveBookExportSettings(book) : null), [book]);
   const auditHref = `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/audit`;
-  const auditActionHref = paragraph?.auditPath ? auditHref : `${auditHref}?action=run`;
+  const auditActionHref = auditHref;
 
   // ── Content state ─────────────────────────────────────────────────────────
   const [entries, setEntries] = useState<MetaEntry[]>([]);
@@ -257,7 +258,7 @@ export function ParagraphPage() {
     body !== savedBody ||
     JSON.stringify(entries) !== JSON.stringify(savedEntries);
 
-  useRegisterPageSave({ dirty: isDirty, enabled: Boolean(paragraph && book), onSave: async () => { await handleSave(); } });
+  useRegisterPageSave({ dirty: isDirty, enabled: Boolean(paragraph && book), onSave: () => handleSave() });
   useRegisterPageActions([
     { id: "improve-paragraph", label: t("paragraph.improveAll"), icon: <Wand2 className="h-4 w-4" />, run: () => void startImprove() },
     { id: "merge-draft-final", label: t("merge.button"), icon: <Wand2 className="h-4 w-4" />, run: () => void runMerge(), disabled: merge.busy },
@@ -266,16 +267,10 @@ export function ParagraphPage() {
 
   useEffect(() => {
     if (viewMode !== "reader") return;
-    let active = true;
     setReaderLoading(true);
-    void import("marked")
-      .then(({ marked }) => {
-        if (!active) return;
-        const normalized = normalizeReaderLineBreaks(body, settings.reader.lineBreakMode);
-        setReaderHtml(marked.parse(normalized, { async: false }) as string);
-      })
-      .finally(() => { if (active) setReaderLoading(false); });
-    return () => { active = false; };
+    const normalized = normalizeReaderLineBreaks(body, settings.reader.lineBreakMode);
+    setReaderHtml(renderRepositoryMarkdownHtml(normalized));
+    setReaderLoading(false);
   }, [body, settings.reader.lineBreakMode, viewMode]);
 
   // ── Load ──────────────────────────────────────────────────────────────────
@@ -285,7 +280,8 @@ export function ParagraphPage() {
     loadedTargetRef.current = targetKey;
     setLoading(true);
 
-    readFileWithSha(token, book.owner, book.repo, branch, paragraph.path)
+    const controller = new AbortController();
+    readFileWithSha(token, book.owner, book.repo, branch, paragraph.path, controller.signal)
       .then(({ content: text, sha: fileSha }) => {
         const { entries: e, body: b } = parseFrontmatter(text);
         setEntries(e);
@@ -295,10 +291,12 @@ export function ParagraphPage() {
         setSha(fileSha);
       })
       .catch((err) => {
+        if (controller.signal.aborted) return;
         loadedTargetRef.current = null;
         toast({ title: t("paragraph.loadFailed"), description: String(err), variant: "destructive" });
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
   }, [paragraph, book, token, branch, toast, t]);
 
   useEffect(() => {
@@ -424,6 +422,7 @@ export function ParagraphPage() {
   // ── Save ──────────────────────────────────────────────────────────────────
   async function handleSave(): Promise<boolean> {
     if (!paragraph || !book || !isDirty) return true;
+    if (saving) return false;
     setSaving(true);
     try {
       const currentTitle = titleValue;
@@ -463,6 +462,7 @@ export function ParagraphPage() {
           newPath,
           rawContent,
           `Rename paragraph ${slotNum}: ${currentTitle}`,
+          { expectedCurrentHash: sha },
         );
         const updatedParagraph = renamed.paragraph;
         if (renamed.canonical?.warningCount) toast({ title: t("common.saved"), description: renamed.canonical.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
@@ -902,6 +902,7 @@ export function ParagraphPage() {
           className="min-h-[55vh] font-mono text-sm leading-7"
           placeholder={t("paragraph.writePlaceholder")}
           spellCheck={false}
+          aria-label={t("paragraph.writePlaceholder")}
         />
       )}
 

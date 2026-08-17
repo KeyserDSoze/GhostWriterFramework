@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isValidGitBranchName, parseBranchName } from "../src/github/branchNameParser.ts";
+import { isValidGitBranchName, parseBranchName, parseBranchOperation } from "../src/github/branchNameParser.ts";
 
 test("parses English and Italian create branch requests with connectors and slashes", () => {
   assert.deepEqual(parseBranchName("create a branch called feature/new-ending"), { status: "ok", branchName: "feature/new-ending" });
@@ -34,4 +34,10 @@ test("asks for clarification for missing and ambiguous names", () => {
 test("validates complete Git branch ref rules", () => {
   for (const name of ["feature/x", "release-1.2", "user/topic_name"]) assert.equal(isValidGitBranchName(name), true, name);
   for (const name of ["", "HEAD", "@", "-bad", ".hidden", "a/.hidden", "a..b", "a//b", "a@{b", "a.lock", "a/b.lock", "a~b", "a b", "a/", "/a", "a."]) assert.equal(isValidGitBranchName(name), false, name);
+});
+
+test("derives create intent from command syntax, not branch-name words", () => {
+  assert.equal(parseBranchOperation("switch to branch feature/new-ending"), "switch");
+  assert.equal(parseBranchOperation("create branch feature/ending"), "create");
+  assert.equal(parseBranchOperation("crea il branch feature/nuovo-finale"), "create");
 });

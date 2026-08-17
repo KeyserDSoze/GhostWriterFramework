@@ -1,11 +1,14 @@
 import type { AIIntegration, AIPricing, AppSettings, ChatCapability, RoutingTarget, RoutingTaskKind, TaskRoute } from "@/types/settings";
-import { integrationChatModels, resolveReviewIntegration, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmMessage, type LlmResult } from "@/assistant/llm";
+import { integrationChatModels, modelSupportsCapability, resolveReviewIntegration, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmMessage, type LlmResult } from "@/assistant/llm";
 import { executeCompletionFallback } from "@/assistant/completionFallback";
 import { runWithCandidateTimeout } from "@/assistant/executionLimits";
 import { budgetLlmMessages, resolveModelTokenBudgets, textTokenUpperBound } from "@/assistant/promptBudget";
 import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/assistant/fallbackDisclosure";
 import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
 import { currentRequest } from "@/assistant/promptTrust";
+import { createRoutingExecutionBudget, RoutingExecutionBudgetError } from "@/assistant/routingExecutionBudget";
+
+export { RoutingExecutionBudgetError } from "@/assistant/routingExecutionBudget";
 
 export type RoutedLlmRunMetadata = LlmResult<unknown>["metadata"] & { routeCandidateIndex: number; usedFallback: boolean };
 
@@ -20,6 +23,7 @@ export interface TaskCandidate {
   maxInputTokens?: number;
   maxOutputTokens?: number;
   underlyingModel?: string;
+  supportsToolCalls?: boolean;
   /** True for the browser TTS/STT engine (no integration). */
   browser?: boolean;
 }
@@ -82,7 +86,7 @@ export function routingTargetIssue(integrations: AIIntegration[], task: RoutingT
   if (!target.model?.trim()) return "The selected model is empty.";
   if (isChatTask(task)) {
     if (integration.provider === "m365_copilot") return "This integration cannot run browser chat tasks.";
-    return integrationChatModels(integration).some((model) => model.name === target.model.trim())
+    return integrationChatModels(integration).some((model) => model.name === target.model.trim() && modelSupportsCapability(model, task))
       ? null
       : "The selected chat model no longer exists in this integration.";
   }
@@ -145,14 +149,14 @@ export function reconcileTaskRouting(
 }
 
 /** Chat: pricing = model's own price, else integration price. */
-function chatCandidateFromTarget(settings: AppSettings, target: RoutingTarget): TaskCandidate | null {
+function chatCandidateFromTarget(settings: AppSettings, target: RoutingTarget, task: ChatCapability): TaskCandidate | null {
   const integration = findIntegration(settings, target.integrationId);
   if (!integration || integration.provider === "m365_copilot") return null;
   const model = target.model?.trim();
   if (!model) return null;
   const modelEntry = integrationChatModels(integration).find((m) => m.name === model);
-  if (!modelEntry) return null;
-  return { integration, model, pricing: modelEntry.pricing ?? integration.pricing, maxInputTokens: modelEntry.maxInputTokens, maxOutputTokens: modelEntry.maxOutputTokens, underlyingModel: modelEntry.underlyingModel };
+  if (!modelEntry || !modelSupportsCapability(modelEntry, task)) return null;
+  return { integration, model, pricing: modelEntry.pricing ?? integration.pricing, maxInputTokens: modelEntry.maxInputTokens, maxOutputTokens: modelEntry.maxOutputTokens, underlyingModel: modelEntry.underlyingModel, supportsToolCalls: modelEntry.supportsToolCalls };
 }
 
 /** Media (tts/stt/image): the browser engine, or an OpenAI/Azure integration. */
@@ -188,7 +192,7 @@ function routerCandidates(settings: AppSettings, task: RoutingTaskKind): TaskCan
   if (!route) return [];
   const targets: RoutingTarget[] = [...(route.primary ? [route.primary] : []), ...(route.fallbacks ?? [])];
   const mapped = targets.map((target) => isChatTask(task)
-    ? chatCandidateFromTarget(settings, target)
+    ? chatCandidateFromTarget(settings, target, task)
     : mediaCandidateFromTarget(settings, target, task));
   return mapped.filter((c): c is TaskCandidate => Boolean(c));
 }
@@ -205,7 +209,7 @@ function legacyChatCandidates(settings: AppSettings, capability: ChatCapability)
   const push = (integration: AIIntegration, model?: string, pricing?: AIPricing) => {
     if (!model || integration.provider === "m365_copilot") return;
     const entry = integrationChatModels(integration).find((candidate) => candidate.name === model);
-    out.push({ integration, model, pricing, maxInputTokens: entry?.maxInputTokens, maxOutputTokens: entry?.maxOutputTokens, underlyingModel: entry?.underlyingModel });
+    out.push({ integration, model, pricing, maxInputTokens: entry?.maxInputTokens, maxOutputTokens: entry?.maxOutputTokens, underlyingModel: entry?.underlyingModel, supportsToolCalls: entry?.supportsToolCalls });
   };
   // Review precedence: explicit route (handled by the caller) → default review integration
   // → capability tags → default writing integration → any remaining integration.
@@ -213,7 +217,7 @@ function legacyChatCandidates(settings: AppSettings, capability: ChatCapability)
     const review = resolveReviewIntegration(settings);
     if (review) {
       const models = integrationChatModels(review);
-      const picked = models.find((m) => m.capabilities?.includes("review")) ?? models.find((m) => m.capabilities?.includes("default")) ?? models[0];
+      const picked = models.find((m) => m.capabilities?.includes("review")) ?? models.find((m) => m.capabilities?.includes("default"));
       if (picked) push(review, picked.name, picked.pricing ?? review.pricing);
     }
   }
@@ -226,13 +230,13 @@ function legacyChatCandidates(settings: AppSettings, capability: ChatCapability)
   const preferred = resolveWritingIntegration(settings);
   if (preferred) {
     const models = integrationChatModels(preferred);
-    const picked = models.find((m) => m.capabilities?.includes(capability)) ?? models.find((m) => m.capabilities?.includes("default")) ?? models[0];
+    const picked = models.find((m) => m.capabilities?.includes(capability)) ?? models.find((m) => m.capabilities?.includes("default"));
     if (picked) push(preferred, picked.name, picked.pricing ?? preferred.pricing);
   }
   // 3) any default model anywhere
   for (const integration of integrations) {
     const models = integrationChatModels(integration);
-    const picked = models.find((m) => m.capabilities?.includes(capability)) ?? models.find((m) => m.capabilities?.includes("default")) ?? models[0];
+    const picked = models.find((m) => m.capabilities?.includes(capability)) ?? models.find((m) => m.capabilities?.includes("default"));
     if (picked) push(integration, picked.name, picked.pricing ?? integration.pricing);
   }
   return out;
@@ -259,16 +263,45 @@ export function resolveTaskCandidates(settings: AppSettings, task: RoutingTaskKi
   // If the user explicitly configured a route for this task, use only that
   // route and its explicit fallbacks. Falling through to legacy integrations
   // would make the router feel ignored and can spend tokens on the wrong model.
-  if (hasConfiguredRoute(settings, task)) return dedupe(router);
+  if (hasConfiguredRoute(settings, task)) return dedupe(router).slice(0, settings.routingExecution?.maxCandidates ?? 4);
   const legacy = isChatTask(task)
     ? legacyChatCandidates(settings, task)
     : legacyMediaCandidates(settings, task as "tts" | "stt" | "image");
-  return dedupe([...router, ...legacy]);
+  return dedupe([...router, ...legacy]).slice(0, settings.routingExecution?.maxCandidates ?? 4);
 }
 
 /** The candidates execution can actually use after disclosure policy is applied. */
 export function resolveEffectiveTaskCandidates(settings: AppSettings, task: RoutingTaskKind): TaskCandidate[] {
   return applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, task));
+}
+
+function estimatedCandidateTokens(candidate: TaskCandidate): number {
+  const budget = resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens);
+  return budget.inputTokens + budget.outputTokens;
+}
+
+function estimatedCandidateCost(candidate: TaskCandidate): number {
+  if (!candidate.pricing) return 0;
+  const budget = resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens);
+  return budget.inputTokens / 1_000_000 * (candidate.pricing.inputPerMTok ?? 0) + budget.outputTokens / 1_000_000 * (candidate.pricing.outputPerMTok ?? 0);
+}
+
+function boundedCandidates(settings: AppSettings, candidates: TaskCandidate[], requireTools = false): TaskCandidate[] {
+  const limits = settings.routingExecution ?? { maxCandidates: 4, maxTotalDurationMs: 180_000, maxTokenAttempts: 200_000, maxEstimatedCost: 5 };
+  const out: TaskCandidate[] = [];
+  let tokens = 0;
+  let cost = 0;
+  for (const candidate of candidates.slice(0, limits.maxCandidates)) {
+    if (requireTools && candidate.supportsToolCalls === false) continue;
+    const nextTokens = estimatedCandidateTokens(candidate);
+    const nextCost = estimatedCandidateCost(candidate);
+    if (out.length && (tokens + nextTokens > limits.maxTokenAttempts || cost + nextCost > limits.maxEstimatedCost)) break;
+    if (!out.length && (nextTokens > limits.maxTokenAttempts || nextCost > limits.maxEstimatedCost)) throw new RoutingExecutionBudgetError("The first routing candidate exceeds the configured token-attempt or estimated-cost budget.");
+    out.push(candidate);
+    tokens += nextTokens;
+    cost += nextCost;
+  }
+  return out;
 }
 
 /**
@@ -279,12 +312,12 @@ export async function completeTextRouted(
   settings: AppSettings,
   messages: LlmMessage[],
   capability: ChatCapability,
-  options: { accountScope: string | null; signal?: AbortSignal; label?: string; onText?: (text: string) => void; preferred?: RoutingTarget },
+  options: { accountScope: string | null; signal?: AbortSignal; label?: string; onText?: (text: string) => void; preferred?: RoutingTarget; validateText?: (text: string) => void },
 ): Promise<string> {
   const operation = beginAccountScopedAiOperation(options?.signal, options?.accountScope);
   try {
-  const preferred = options?.preferred ? chatCandidateFromTarget(settings, options.preferred) : null;
-  const candidates = applySameBoundaryPolicy(settings, dedupe([...(preferred ? [preferred] : []), ...resolveTaskCandidates(settings, capability)]));
+  const preferred = options?.preferred ? chatCandidateFromTarget(settings, options.preferred, capability) : null;
+  const candidates = boundedCandidates(settings, applySameBoundaryPolicy(settings, dedupe([...(preferred ? [preferred] : []), ...resolveTaskCandidates(settings, capability)])));
   if (!candidates.length) {
     if (hasConfiguredRoute(settings, capability)) throw new StaleRoutingConfigurationError(capability);
     throw new NoCompletionCandidatesError();
@@ -292,7 +325,9 @@ export async function completeTextRouted(
   const purpose = capability === "review" ? "review" : "writing";
   const executable = candidates.map((candidate, routeCandidateIndex) => ({ ...candidate, routeCandidateIndex })).filter((candidate) => candidate.integration && candidate.model).map((candidate) => ({ ...candidate, integration: candidate.integration!, model: candidate.model!, label: `${candidate.integration!.provider}/${candidate.model!}` }));
   if (!executable.length) throw new NoCompletionCandidatesError();
-  return await executeCompletionFallback({ candidates: executable, signal: operation.signal, timeoutMs: (candidate) => candidate.integration.requestTimeoutMs, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: executable[index - 1], to: candidate, accountScope: operation.accountScope }); }, resetPartial: () => options?.onText?.(""), run: (candidate, signal) => completeText(candidate.integration, budgetLlmMessages(messages, candidate.maxInputTokens, candidate.maxOutputTokens), purpose, {
+  const total = createRoutingExecutionBudget(settings, operation.signal);
+  try { return await executeCompletionFallback({ candidates: executable, signal: total.signal, timeoutMs: (candidate) => candidate.integration.requestTimeoutMs, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: executable[index - 1], to: candidate, accountScope: operation.accountScope }); }, resetPartial: () => options?.onText?.(""), run: async (candidate, signal) => {
+      const text = await completeText(candidate.integration, budgetLlmMessages(messages, candidate.maxInputTokens, candidate.maxOutputTokens), purpose, {
         modelName: candidate.model,
         capability,
         signal,
@@ -303,7 +338,10 @@ export async function completeTextRouted(
         maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens,
         underlyingModel: candidate.underlyingModel,
         accountScope: operation.accountScope,
-      }) });
+      });
+      options.validateText?.(text);
+      return text;
+    } }); } finally { total.dispose(); }
   } finally {
     operation.dispose();
   }
@@ -318,19 +356,21 @@ export async function completeToolRouted<T>(
 ): Promise<LlmResult<T> & { metadata: RoutedLlmRunMetadata }> {
   const operation = beginAccountScopedAiOperation(options?.signal, options?.accountScope);
   try {
-  const candidates = applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, capability));
+  const candidates = boundedCandidates(settings, applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, capability)), true);
   if (!candidates.length) {
     if (hasConfiguredRoute(settings, capability)) throw new StaleRoutingConfigurationError(capability);
     throw new NoCompletionCandidatesError();
   }
   let lastError: unknown = null;
+  const total = createRoutingExecutionBudget(settings, operation.signal);
+  try {
   for (const [candidateIndex, candidate] of candidates.entries()) {
-    operation.signal.throwIfAborted();
+    total.signal.throwIfAborted();
     if (!candidate.integration || !candidate.model) continue;
     if (candidateIndex > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: candidates[candidateIndex - 1], to: candidate, accountScope: operation.accountScope });
     try {
       const budgetedMessages = budgetForcedToolMessages(messages, candidate, tool);
-      const result = await runWithCandidateTimeout((signal) => completeToolWith<T>(candidate.integration!, candidate.model!, candidate.pricing, budgetedMessages, capability, tool, { accountScope: operation.accountScope, signal, label: options.label, currency: settings.costCurrency, validate: options.validate, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens, underlyingModel: candidate.underlyingModel }), operation.signal, candidate.integration.requestTimeoutMs);
+      const result = await runWithCandidateTimeout((signal) => completeToolWith<T>(candidate.integration!, candidate.model!, candidate.pricing, budgetedMessages, capability, tool, { accountScope: operation.accountScope, signal, label: options.label, currency: settings.costCurrency, validate: options.validate, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens, underlyingModel: candidate.underlyingModel }), total.signal, candidate.integration.requestTimeoutMs);
       return {
         ...result,
         output: options?.validate ? options.validate(result.output) : result.output as T,
@@ -342,6 +382,7 @@ export async function completeToolRouted<T>(
     }
   }
   throw lastError ?? new Error("All AI candidates failed for this task.");
+  } finally { total.dispose(); }
   } finally {
     operation.dispose();
   }
@@ -374,9 +415,11 @@ export function sttMode(settings: AppSettings, candidateIndex = 0): "browser" | 
 export async function classifyConfirmationRouted(settings: AppSettings, utterance: string, operationSignal: AbortSignal | undefined, accountScope: string | null): Promise<"yes" | "no" | "unclear"> {
   const operation = beginAccountScopedAiOperation(operationSignal, accountScope);
   try {
-  const candidates = applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, "simple-tasks"));
+  const candidates = boundedCandidates(settings, applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, "simple-tasks")), true);
+  const total = createRoutingExecutionBudget(settings, operation.signal);
+  try {
   for (const [candidateIndex, candidate] of candidates.entries()) {
-    operation.signal.throwIfAborted();
+    total.signal.throwIfAborted();
     if (!candidate.integration || !candidate.model) continue;
     if (candidateIndex > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: candidates[candidateIndex - 1], to: candidate, accountScope: operation.accountScope });
     try {
@@ -385,7 +428,7 @@ export async function classifyConfirmationRouted(settings: AppSettings, utteranc
       if (typeof budgetedUtterance !== "string") throw new CandidateInputBudgetError();
       return await runWithCandidateTimeout(
         (signal) => classifyConfirmationWith(candidate.integration!, candidate.model!, candidate.pricing, budgetedUtterance, { accountScope: operation.accountScope, signal, maxOutputTokens: Math.min(32, resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens), routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, underlyingModel: candidate.underlyingModel }),
-        operation.signal,
+        total.signal,
         candidate.integration.requestTimeoutMs,
       );
     } catch (error) {
@@ -394,6 +437,7 @@ export async function classifyConfirmationRouted(settings: AppSettings, utteranc
     }
   }
   return "unclear";
+  } finally { total.dispose(); }
   } finally {
     operation.dispose();
   }

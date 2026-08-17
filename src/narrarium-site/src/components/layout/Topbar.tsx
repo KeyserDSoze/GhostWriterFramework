@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuthStore } from "@/store/authStore";
+import { ensureMsalInitialized, findMicrosoftAccount, msalInstance } from "@/config/msal";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -55,7 +56,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { t, i18n } = useTranslation();
   const { user, clearAuth } = useAuthStore();
   const { settings, patchSettings } = useSettingsStore();
-  const { save } = useSettings();
+  const { save, clearOfflineCache } = useSettings();
   const { theme, toggle: toggleTheme } = useTheme();
   const cloneProgress = useBooksStore((s) => s.cloneProgress);
   const setCloneProgress = useBooksStore((s) => s.setCloneProgress);
@@ -88,6 +89,8 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     ?? (currentBookId ? workingBranches[currentBookId] : undefined)
     ?? (user?.email ? emailToBranchName(user.email) : undefined);
   const currentToken = currentBook ? resolveBookToken(currentBook, settings) : "";
+  const currentAccountIdentity = accountIdentity(user);
+  const repositoryTarget = currentBook && currentBranch && currentAccountIdentity ? { bookId: currentBook.id, owner: currentBook.owner, repo: currentBook.repo, branch: currentBranch, accountIdentity: currentAccountIdentity } : null;
   const currentStructure = currentBookId ? structures[currentBookId] : undefined;
   const currentObjectNavigation = resolveContextualNavigation(currentStructure, location.pathname, currentBookId);
   const pendingCurrentObject = useCurrentObjectPendingCommit({
@@ -112,7 +115,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         if (!cancelled) setRepoStatus({ label: t("repoStatus.cloning", { percent }), tone: "offline" });
         return;
       }
-      const repo = currentBook && currentBranch ? await getLocalRepository(currentBook.owner, currentBook.repo, currentBranch).catch(() => null) : null;
+      const repo = currentBook && currentBranch && currentAccountIdentity ? await getLocalRepository(currentBook.owner, currentBook.repo, currentBranch, currentAccountIdentity).catch(() => null) : null;
       if (!repo) { if (!cancelled) setRepoStatus({ label: t("repoStatus.notCloned"), tone: "offline" }); return; }
       const status = await localStatus(repo.id);
       if (cancelled) return;
@@ -142,7 +145,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [cloneProgress, currentBook, currentBookId, currentBranch, setCloneProgress, t, toast]);
+  }, [cloneProgress, currentAccountIdentity, currentBook, currentBookId, currentBranch, setCloneProgress, t, toast]);
 
   useEffect(() => {
     if (!currentBook || !settings.repository.autoFetchIntervalMinutes || settings.repository.autoFetchIntervalMinutes <= 0) return;
@@ -152,8 +155,9 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     const tick = async () => {
       if (!navigator.onLine) return;
       try {
-        const result = await fetchRemoteStatus({ bookId: currentBook.id, token });
-        if (result.changed && settings.repository.autoPullWhenClean) await pullRemoteChanges({ bookId: currentBook.id, token }).catch(() => undefined);
+        if (!repositoryTarget) return;
+        const result = await fetchRemoteStatus({ ...repositoryTarget, token });
+        if (result.changed && settings.repository.autoPullWhenClean) await pullRemoteChanges({ ...repositoryTarget, token }).catch(() => undefined);
         else if (result.changed) {
           const key = remoteChangedNoticeKey(currentBook.id, result.remoteHeadSha);
           if (!sessionStorage.getItem(key)) {
@@ -175,15 +179,25 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     return () => window.clearInterval(timer);
   }, [currentBook, settings]);
 
-  function handleSignOut() {
+  async function handleSignOut() {
+    const signedOutUser = user;
+    clearOfflineCache();
     clearAuth();
     navigate("/login");
+    if (signedOutUser?.provider !== "microsoft") return;
+    try {
+      await ensureMsalInitialized();
+      const account = findMicrosoftAccount(signedOutUser);
+      if (account) await msalInstance.logoutPopup({ account, postLogoutRedirectUri: window.location.href });
+    } catch (error) {
+      console.warn("Microsoft provider sign-out failed", error);
+    }
   }
 
   async function changeLanguage(code: "en" | "it") {
     await i18n.changeLanguage(code);
     patchSettings({ ui: { ...settings.ui, language: code } });
-    await save();
+    try { await save(); } catch { return; }
   }
 
   async function handleReadPage() {
@@ -215,10 +229,10 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   }
 
   useRegisterRepositorySync({
-    enabled: Boolean(currentBook && currentToken),
+    enabled: Boolean(currentBook && currentToken && navigator.onLine),
     busy: repoActionBusy === "sync",
     onSync: () => runRepoAction("sync", async () => {
-      const result = await syncFullRepository({ bookId: currentBook!.id, token: currentToken });
+      const result = await syncFullRepository({ ...repositoryTarget!, token: currentToken });
       return t("repoStatus.syncDone", { pulled: result.pulled, kept: result.keptLocal, committed: result.committed, pushed: result.pushed });
     }),
   });
@@ -289,25 +303,22 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
             <DropdownMenuContent align="end" className="w-64">
               <DropdownMenuLabel>{t("repoStatus.quickActions")}</DropdownMenuLabel>
               <div className="p-2">
-                <Button className="w-full" size="sm" disabled={!currentBook || !currentToken || !!repoActionBusy} onClick={() => void runRepoAction("sync", async () => {
-                  const result = await syncFullRepository({ bookId: currentBook!.id, token: currentToken });
-                  return t("repoStatus.syncDone", { pulled: result.pulled, kept: result.keptLocal, committed: result.committed, pushed: result.pushed });
-                })}>{repoActionBusy === "sync" ? <RefreshCcw className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-1 h-4 w-4" />}{t("repoStatus.sync")}</Button>
+                <Button className="w-full" size="sm" disabled={!currentBook || !currentToken || !!repoActionBusy} onClick={() => void triggerCurrentRepositorySync()}>{repoActionBusy === "sync" ? <RefreshCcw className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-1 h-4 w-4" />}{t("repoStatus.sync")}</Button>
               </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => setRepoDialogOpen(true)}><Activity className="mr-2 h-4 w-4" />{t("repoStatus.viewStatus")}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setRepoDialogOpen(true)}><Eye className="mr-2 h-4 w-4" />{t("repoStatus.viewChangedFiles")}</DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem disabled={!currentBook || !currentToken || !!repoActionBusy} onSelect={() => void runRepoAction("fetch", async () => {
-                const result = await fetchRemoteStatus({ bookId: currentBook!.id, token: currentToken });
+                const result = await fetchRemoteStatus({ ...repositoryTarget!, token: currentToken });
                 return result.changed ? t("repoStatus.remoteChanged") : t("repoStatus.remoteUpToDate");
               })}><RefreshCcw className="mr-2 h-4 w-4" />{t("repoStatus.fetch")}</DropdownMenuItem>
               <DropdownMenuItem disabled={!currentBook || !currentToken || !!repoActionBusy} onSelect={() => void runRepoAction("pull", async () => {
-                const result = await pullRemoteChanges({ bookId: currentBook!.id, token: currentToken });
+                const result = await pullRemoteChanges({ ...repositoryTarget!, token: currentToken });
                 return t("repoStatus.pullDone", { count: result.updated });
               })}><GitPullRequest className="mr-2 h-4 w-4" />{t("repoStatus.pull")}</DropdownMenuItem>
-              <DropdownMenuItem disabled={!currentBook || !!repoActionBusy} onSelect={() => void runRepoAction("commit", async () => { await commitLocalChanges(currentBook!.id, ""); return t("repoStatus.commitDone"); })}><GitCommit className="mr-2 h-4 w-4" />{t("repoStatus.commit")}</DropdownMenuItem>
-              <DropdownMenuItem disabled={!currentBook || !currentToken || !!repoActionBusy} onSelect={() => void runRepoAction("push", async () => { const result = await pushLocalCommits({ bookId: currentBook!.id, token: currentToken }); return t("repoStatus.pushDone", { count: result.files }); })}><UploadCloud className="mr-2 h-4 w-4" />{t("repoStatus.push")}</DropdownMenuItem>
+              <DropdownMenuItem disabled={!repositoryTarget || !!repoActionBusy} onSelect={() => void runRepoAction("commit", async () => { await commitLocalChanges(repositoryTarget!, ""); return t("repoStatus.commitDone"); })}><GitCommit className="mr-2 h-4 w-4" />{t("repoStatus.commit")}</DropdownMenuItem>
+              <DropdownMenuItem disabled={!repositoryTarget || !currentToken || !!repoActionBusy} onSelect={() => void runRepoAction("push", async () => { const result = await pushLocalCommits({ ...repositoryTarget!, token: currentToken }); return t("repoStatus.pushDone", { count: result.files }); })}><UploadCloud className="mr-2 h-4 w-4" />{t("repoStatus.push")}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -420,7 +431,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleSignOut}>
+            <DropdownMenuItem onClick={() => void handleSignOut()}>
               <LogOut className="mr-2 h-4 w-4" />
               {t("shell.signOut")}
             </DropdownMenuItem>

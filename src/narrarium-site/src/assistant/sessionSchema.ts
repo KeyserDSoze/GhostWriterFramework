@@ -4,6 +4,11 @@ import { hasAssistantActionProvenance } from "./actionValidation.ts";
 
 export const ASSISTANT_SESSION_SCHEMA_VERSION = 1 as const;
 export const MAX_ASSISTANT_SESSION_BYTES = 8 * 1024 * 1024;
+export const MAX_ASSISTANT_LOSSLESS_SEGMENTS = 256;
+export const MAX_ASSISTANT_LOSSLESS_SEGMENT_BYTES = 2 * 1024 * 1024;
+export const MAX_ASSISTANT_LOSSLESS_ARCHIVE_BYTES = 24 * 1024 * 1024;
+export const MAX_ASSISTANT_QUARANTINED_ACTIONS = 256;
+export const MAX_ASSISTANT_QUARANTINED_ACTION_BYTES = 4 * 1024;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const BRANCH = /^(?![./])(?!.*(?:\.\.|\/\/|[~^:?*[\\\x00-\x20\x7f]))(?!.*(?:\.|\/|\.lock)$).{1,255}$/;
 
@@ -127,7 +132,7 @@ function message(value: unknown, index: number, quarantine: AssistantQuarantined
     }
     catch (error) {
       safeAction = undefined;
-      quarantine.push({ messageId, reason: error instanceof Error ? error.message : "Invalid action", action: raw.action });
+      appendQuarantinedAction(quarantine, { messageId, reason: error instanceof Error ? error.message : "Invalid action", action: raw.action });
     }
   }
   let mutation: AssistantMessage["mutation"];
@@ -187,7 +192,7 @@ function losslessManifest(value: unknown, legacyCount: number): AssistantLossles
   if (value === undefined) return { version: 1, segmentCount: 0, messageCount: 0, attachmentCount: 0, actionCount: 0, complete: legacyCount === 0, missingRanges: legacyCount ? [{ from: 0, to: legacyCount - 1, reason: "Legacy compaction did not preserve original records." }] : [] };
   const raw = object(value, "losslessArchive");
   const actionCount = raw.actionCount ?? 0;
-  if (raw.version !== 1 || !Number.isSafeInteger(raw.segmentCount) || (raw.segmentCount as number) < 0 || !Number.isSafeInteger(raw.messageCount) || (raw.messageCount as number) < 0 || !Number.isSafeInteger(raw.attachmentCount) || (raw.attachmentCount as number) < 0 || !Number.isSafeInteger(actionCount) || (actionCount as number) < 0 || typeof raw.complete !== "boolean" || !Array.isArray(raw.missingRanges) || raw.missingRanges.length > 100) throw new AssistantSessionValidationError("losslessArchive is invalid.");
+  if (raw.version !== 1 || !Number.isSafeInteger(raw.segmentCount) || (raw.segmentCount as number) < 0 || (raw.segmentCount as number) > MAX_ASSISTANT_LOSSLESS_SEGMENTS || !Number.isSafeInteger(raw.messageCount) || (raw.messageCount as number) < 0 || !Number.isSafeInteger(raw.attachmentCount) || (raw.attachmentCount as number) < 0 || !Number.isSafeInteger(actionCount) || (actionCount as number) < 0 || typeof raw.complete !== "boolean" || !Array.isArray(raw.missingRanges) || raw.missingRanges.length > 100) throw new AssistantSessionValidationError("losslessArchive is invalid.");
   const missingRanges = raw.missingRanges.map((item, index) => { const range = object(item, `losslessArchive.missingRanges[${index}]`); if (!Number.isSafeInteger(range.from) || !Number.isSafeInteger(range.to) || (range.from as number) < 0 || (range.to as number) < (range.from as number)) throw new AssistantSessionValidationError("losslessArchive missing range is invalid."); return { from: range.from as number, to: range.to as number, reason: text(range.reason, `losslessArchive.missingRanges[${index}].reason`, 1000) }; });
   let origin: AssistantLosslessArchiveManifest["origin"];
   if (raw.origin !== undefined) { const entry = object(raw.origin, "losslessArchive.origin"); if ((entry.provider !== "google" && entry.provider !== "microsoft") || typeof entry.account !== "string" || !entry.account.trim() || (entry.fileId !== undefined && typeof entry.fileId !== "string")) throw new AssistantSessionValidationError("losslessArchive.origin is invalid."); origin = { provider: entry.provider, account: entry.account, ...(typeof entry.fileId === "string" && entry.fileId ? { fileId: entry.fileId } : {}) }; }
@@ -232,10 +237,10 @@ export function parseAssistantSession(value: unknown, byteLength?: number): Assi
   const messages = raw.messages ?? [];
   const attachments = raw.attachments ?? [];
   if (!Array.isArray(messages) || messages.length > 10_000 || !Array.isArray(attachments) || attachments.length > 20) throw new AssistantSessionValidationError("Session arrays are invalid or too large.");
-  const quarantinedActions: AssistantQuarantinedAction[] = Array.isArray(raw.quarantinedActions) ? raw.quarantinedActions.map((item, index) => {
+  const quarantinedActions: AssistantQuarantinedAction[] = Array.isArray(raw.quarantinedActions) && raw.quarantinedActions.length <= MAX_ASSISTANT_QUARANTINED_ACTIONS ? raw.quarantinedActions.map((item, index) => {
     const entry = object(item, `quarantinedActions[${index}]`);
-    return { messageId: identifier(entry.messageId, `quarantinedActions[${index}].messageId`), reason: text(entry.reason, `quarantinedActions[${index}].reason`, 10_000), action: entry.action };
-  }) : [];
+    return { messageId: identifier(entry.messageId, `quarantinedActions[${index}].messageId`), reason: text(entry.reason, `quarantinedActions[${index}].reason`, 10_000), action: boundedQuarantinedAction(entry.action) };
+  }) : raw.quarantinedActions === undefined ? [] : (() => { throw new AssistantSessionValidationError("quarantinedActions is invalid."); })();
   const parsedArchive = archive(raw.archive);
   const legacyCount = raw.compactedMessageCount === undefined ? parsedArchive.messageCount : raw.compactedMessageCount;
   const contentRevision = raw.contentRevision ?? 0;
@@ -243,14 +248,42 @@ export function parseAssistantSession(value: unknown, byteLength?: number): Assi
   if (!Number.isSafeInteger(legacyCount) || (legacyCount as number) < 0) throw new AssistantSessionValidationError("compactedMessageCount is invalid.");
   const parsedMessages = messages.map((item, index) => message(item, index, quarantinedActions));
   const parsedAttachments = attachments.map((item, index) => attachment(item, `attachments[${index}]`));
-  const segments = raw.losslessSegments === undefined ? [] : Array.isArray(raw.losslessSegments) && raw.losslessSegments.length <= 10_000
-    ? raw.losslessSegments.map((item, index) => losslessSegment(item, index, quarantinedActions))
+  const segments = raw.losslessSegments === undefined ? [] : Array.isArray(raw.losslessSegments) && raw.losslessSegments.length <= MAX_ASSISTANT_LOSSLESS_SEGMENTS
+    ? parseLosslessSegments(raw.losslessSegments, quarantinedActions)
     : (() => { throw new AssistantSessionValidationError("losslessSegments is invalid."); })();
   const allMessageIds = [...segments.flatMap((segment) => segment.messages), ...parsedMessages].map((item) => item.id);
   const allAttachmentIds = [...segments.flatMap((segment) => segment.attachments), ...parsedAttachments].map((item) => item.id);
   if (new Set(allMessageIds).size !== allMessageIds.length || new Set(allAttachmentIds).size !== allAttachmentIds.length || new Set(segments.map((segment) => segment.id)).size !== segments.length) throw new AssistantSessionValidationError("Session IDs must be unique.");
   const manifest = losslessManifest(raw.losslessArchive, legacyCount as number);
-  return normalizeAssistantSession({ schemaVersion: 1, id: identifier(raw.id, "session.id"), title: text(raw.title, "session.title", 500), contextTitle: text(raw.contextTitle, "session.contextTitle", 500), updatedAt: timestamp(raw.updatedAt, "session.updatedAt"), contentRevision: contentRevision as number, messages: parsedMessages, attachments: parsedAttachments, losslessSegments: segments, losslessArchive: manifest, ...(raw.archive === undefined ? {} : { archive: parsedArchive }), compactSummary: raw.compactSummary === undefined ? parsedArchive.summary : text(raw.compactSummary, "session.compactSummary"), compactedMessageCount: legacyCount as number, ...(raw.provenance === undefined ? {} : { provenance: provenance(raw.provenance, "provenance") }), ...(raw.noteSaveOperation === undefined ? {} : { noteSaveOperation: operation(raw.noteSaveOperation) }), quarantinedActions });
+  const sensitiveSecretPaths = raw.sensitiveSecretPaths === undefined ? [] : Array.isArray(raw.sensitiveSecretPaths) && raw.sensitiveSecretPaths.length <= 32
+    ? raw.sensitiveSecretPaths.map((item, index) => repositoryPath(item, `sensitiveSecretPaths[${index}]`)).filter((path) => path.startsWith("secrets/"))
+    : (() => { throw new AssistantSessionValidationError("sensitiveSecretPaths is invalid."); })();
+  return normalizeAssistantSession({ schemaVersion: 1, id: identifier(raw.id, "session.id"), title: text(raw.title, "session.title", 500), contextTitle: text(raw.contextTitle, "session.contextTitle", 500), updatedAt: timestamp(raw.updatedAt, "session.updatedAt"), contentRevision: contentRevision as number, messages: parsedMessages, attachments: parsedAttachments, losslessSegments: segments, losslessArchive: manifest, ...(raw.archive === undefined ? {} : { archive: parsedArchive }), compactSummary: raw.compactSummary === undefined ? parsedArchive.summary : text(raw.compactSummary, "session.compactSummary"), compactedMessageCount: legacyCount as number, ...(raw.provenance === undefined ? {} : { provenance: provenance(raw.provenance, "provenance") }), ...(raw.noteSaveOperation === undefined ? {} : { noteSaveOperation: operation(raw.noteSaveOperation) }), quarantinedActions, sensitiveSecretPaths });
+}
+
+function parseLosslessSegments(values: unknown[], quarantine: AssistantQuarantinedAction[]): AssistantLosslessSegment[] {
+  let aggregateBytes = 0;
+  return values.map((item, index) => {
+    let serialized: string;
+    try { serialized = JSON.stringify(item); } catch { throw new AssistantSessionValidationError("losslessSegments contain unserializable data."); }
+    const bytes = new TextEncoder().encode(serialized).length;
+    if (bytes > MAX_ASSISTANT_LOSSLESS_SEGMENT_BYTES || aggregateBytes + bytes > MAX_ASSISTANT_LOSSLESS_ARCHIVE_BYTES) throw new AssistantSessionValidationError("losslessSegments exceed the archive size limit.");
+    aggregateBytes += bytes;
+    return losslessSegment(item, index, quarantine);
+  });
+}
+
+function appendQuarantinedAction(quarantine: AssistantQuarantinedAction[], entry: AssistantQuarantinedAction): void {
+  if (quarantine.length >= MAX_ASSISTANT_QUARANTINED_ACTIONS) return;
+  quarantine.push({ ...entry, action: boundedQuarantinedAction(entry.action) });
+}
+
+function boundedQuarantinedAction(value: unknown): unknown {
+  let serialized: string;
+  try { serialized = JSON.stringify(value); } catch { return { omitted: true, reason: "unserializable action payload" }; }
+  if (new TextEncoder().encode(serialized ?? "").length <= MAX_ASSISTANT_QUARANTINED_ACTION_BYTES) return value;
+  const kind = value && typeof value === "object" && !Array.isArray(value) && typeof (value as Record<string, unknown>).kind === "string" ? (value as Record<string, unknown>).kind : "unknown";
+  return { kind, omitted: true, reason: "action payload exceeded quarantine limit" };
 }
 
 export function parseAssistantSessionJson(json: string): AssistantSession {

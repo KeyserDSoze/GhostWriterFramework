@@ -10,11 +10,15 @@ import {
   putLocalRepository,
   removeLocalRepository,
 } from "@/repository/localRepository";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
+import { useAuthStore } from "@/store/authStore";
+
+useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
 
 let repoId = "";
 
 afterEach(async () => {
-  if (repoId) await removeLocalRepository(repoId);
+  if (repoId) await removeLocalRepository(repoId, captureRepositoryOperationScope());
   repoId = "";
 });
 
@@ -29,7 +33,7 @@ async function localSecretFixture() {
     remoteHeadSha: "remote",
     clonedAt: new Date().toISOString(),
     cloneComplete: true,
-  });
+  }, captureRepositoryOperationScope());
   repoId = repo.id;
   const files: Record<string, string> = {
     "book.md": "---\ntitle: Local Secrets\n---\n",

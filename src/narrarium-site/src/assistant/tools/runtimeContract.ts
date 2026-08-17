@@ -53,12 +53,16 @@ export function evaluateToolContract(tool: CopilotToolDescriptor, runtime: Copil
   const missing: string[] = tool.prerequisites.filter((requirement) => !hasPrerequisite(requirement, runtime));
   if (tool.requiresLlm) {
     const task = llmTaskForTool(tool.id);
-    if (!task || !resolveTaskCandidates(runtime.settings, task).some((candidate) => candidate.integration && candidate.model)) {
+    if (!task || !resolveTaskCandidates(runtime.settings, task).some((candidate) => candidate.integration && candidate.model && (!toolRequiresForcedTool(tool.id) || candidate.supportsToolCalls !== false))) {
       missing.push("configured compatible AI model");
     }
   }
   if (tool.id === "import-attachments" && !runtime.attachmentTarget) missing.push("attachment import target");
   return { available: missing.length === 0, missing };
+}
+
+function toolRequiresForcedTool(toolId: string): boolean {
+  return toolId === "evaluate-with-readers" || toolId === "summarize-reader-evaluations" || toolId === "write-evaluation" || toolId === "evaluate-chapter-paragraphs" || toolId === "run-audit" || toolId === "update-audit";
 }
 
 export function assertToolExecutionResult(tool: CopilotToolDescriptor, message: AssistantMessage): void {

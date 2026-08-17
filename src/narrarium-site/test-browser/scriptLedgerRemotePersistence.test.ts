@@ -10,6 +10,7 @@ vi.mock("@/repository/localRepository", async (importOriginal) => ({
 
 import { commitCanonicalScriptMutation } from "@/narrarium/scriptLedger";
 import { sha256Text } from "@/repository/safeRepositoryMutation";
+import { useAuthStore } from "@/store/authStore";
 
 const chapterPath = "chapters/001-one/chapter.md";
 const chapter = "---\ntype: chapter\nid: chapter:001-one\nnumber: 1\ntitle: One\n---\n";
@@ -18,6 +19,7 @@ let current = new Map<string, string>();
 let createdTree: Array<{ path: string; content?: string; sha?: string | null }> = [];
 
 beforeEach(() => {
+  useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
   vi.clearAllMocks();
   current = new Map([[chapterPath, chapter]]);
   createdTree = [];

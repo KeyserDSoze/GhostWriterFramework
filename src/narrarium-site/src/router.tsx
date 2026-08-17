@@ -120,6 +120,7 @@ export const router = createBrowserRouter([
       { path: "costs", element: <CostsPage /> },
       { path: "docs", element: <AppDocsIndexPage /> },
       { path: "docs/*", element: <AppDocPage /> },
+      { path: "*", element: <NotFoundPage /> },
     ],
   },
   { path: "*", element: <NotFoundPage /> },

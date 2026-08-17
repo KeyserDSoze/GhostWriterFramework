@@ -73,6 +73,8 @@ export interface Paragraph {
   /** Human-readable title derived from filename, e.g. "At the Gate" */
   title: string;
   path: string;
+  /** Blob/content revision observed when this paragraph was loaded. */
+  revision?: string;
   draftPath?: string;
   scriptPath?: string;
   evaluationPath?: string;

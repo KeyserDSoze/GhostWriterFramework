@@ -76,3 +76,9 @@ test("a positive instruction in a separate contrast clause remains actionable", 
   assert.equal(classifyMutationIntent("do not explain it, but update the plot", "update-plot"), "positive");
   assert.equal(classifyMutationIntent("non spiegarmelo, ma aggiorna il plot", "update-plot"), "positive");
 });
+
+test("constraints on generated content do not negate the requested mutation", () => {
+  assert.equal(classifyMutationIntent("create a chapter without revealing the secret", "create-chapter"), "positive");
+  assert.equal(classifyMutationIntent("crea un capitolo senza rivelare il segreto", "create-chapter"), "positive");
+  assert.equal(classifyMutationIntent("create everything except a chapter", "create-chapter"), "negated");
+});

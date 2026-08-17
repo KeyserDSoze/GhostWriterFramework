@@ -1,5 +1,5 @@
 import { stringify } from "yaml";
-import { createFile } from "@/github/githubClient";
+import { createFile, mutateTextFilesAtomically } from "@/github/githubClient";
 import { validateCanonExtraFrontmatter } from "@/narrarium/canonFrontmatter";
 
 export function slugify(value: string): string {
@@ -174,12 +174,8 @@ export async function createChapter(
   input: CreateChapterInput,
 ): Promise<CreatedChapter> {
   const generated = buildChapterDocuments(input);
-  const changedPaths = [generated.chapterFilePath];
-  await createFile(token, owner, repo, branch, generated.documents[0].path, generated.documents[0].content, `Add chapter ${formatOrdinal(input.number)}: ${input.title}`);
-  for (const document of generated.documents.slice(1)) {
-    await createFile(token, owner, repo, branch, document.path, document.content, `Add chapter artifact ${generated.slug}`).then(() => changedPaths.push(document.path)).catch(() => undefined);
-  }
-  return { slug: generated.slug, id: generated.id, chapterFilePath: generated.chapterFilePath, changedPaths };
+  await mutateTextFilesAtomically(token, owner, repo, branch, generated.documents.map((document) => ({ path: document.path, content: document.content, expectedCurrentHash: null })), `Add chapter ${formatOrdinal(input.number)}: ${input.title}`);
+  return { slug: generated.slug, id: generated.id, chapterFilePath: generated.chapterFilePath, changedPaths: generated.changedPaths };
 }
 
 export interface CreateParagraphInput {

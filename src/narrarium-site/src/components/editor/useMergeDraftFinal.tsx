@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, FileEdit, Loader2, Sparkles, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -6,8 +6,9 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { FileDiff } from "@/components/diff/DiffView";
 import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
-import { createOrUpdateTextFile } from "@/github/githubClient";
+import { isGitHubFileNotFoundError, mutateTextFilesAtomically, readFileWithSha } from "@/github/githubClient";
 import { mergeDraftAndFinal, type PipelineSource } from "@/narrarium/pipeline";
+import { sha256Text } from "@/repository/safeRepositoryMutation";
 
 export type MergeSide = "draft" | "final";
 
@@ -52,6 +53,16 @@ export function useMergeDraftFinal(ctx: MergeContext) {
   const [draftSnapshot, setDraftSnapshot] = useState("");
   const [finalSnapshot, setFinalSnapshot] = useState("");
   const [compareSide, setCompareSide] = useState<MergeSide>("final");
+  const targetHashesRef = useRef<Record<MergeSide, string | null>>({ draft: null, final: null });
+
+  async function targetHash(src: PipelineSource, path: string): Promise<string | null> {
+    try {
+      return await sha256Text((await readFileWithSha(src.token, src.owner, src.repo, src.branch, path)).content);
+    } catch (error) {
+      if (isGitHubFileNotFoundError(error)) return null;
+      throw error;
+    }
+  }
 
   async function run() {
     const src = ctx.buildSource();
@@ -69,6 +80,8 @@ export function useMergeDraftFinal(ctx: MergeContext) {
     setOpen(true);
     setLoading(true);
     try {
+      const [draftHash, finalHash] = await Promise.all([targetHash(src, ctx.draftPath), targetHash(src, ctx.finalPath)]);
+      targetHashesRef.current = { draft: draftHash, final: finalHash };
       const result = await mergeDraftAndFinal(src, draftBody, finalBody, ctx.ghostwriterSlug);
       setMerged(result.text);
       setExplanation(result.explanation);
@@ -90,7 +103,7 @@ export function useMergeDraftFinal(ctx: MergeContext) {
     const frontmatter = existingFm || fallbackFm || "";
     setApplying(true);
     try {
-      await createOrUpdateTextFile(src.token, src.owner, src.repo, src.branch, path, joinDoc(frontmatter, merged), `Merge draft and final into ${side} ${path}`);
+      await mutateTextFilesAtomically(src.token, src.owner, src.repo, src.branch, [{ path, content: joinDoc(frontmatter, merged), expectedCurrentHash: targetHashesRef.current[side] }], `Merge draft and final into ${side} ${path}`);
       toast({ title: side === "draft" ? t("merge.appliedToDraft") : t("merge.appliedToFinal") });
       ctx.onApplied?.(side, merged);
       setOpen(false);

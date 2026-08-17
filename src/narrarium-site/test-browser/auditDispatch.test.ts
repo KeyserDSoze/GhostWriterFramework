@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { runAssistantPrompt } from "@/assistant/service";
-import { auditRunBlocker, claimAuditQueryOperation } from "@/narrarium/auditAvailability";
+import { auditRunBlocker } from "@/narrarium/auditAvailability";
 import type { LoadedWriterContext } from "@/assistant/context";
 import type { AppSettings, BookEntry } from "@/types/settings";
 
@@ -95,7 +97,7 @@ describe("audit Copilot dispatch", () => {
     const message = await prompt(request);
     expect(message.action).toMatchObject({
       kind: "navigate",
-      to: "/app/books/book-id/audit?action=run",
+      to: "/app/books/book-id/audit",
       toolId,
     });
     expect(listBranchCommits).toHaveBeenCalledTimes(1);
@@ -103,8 +105,9 @@ describe("audit Copilot dispatch", () => {
 
   it("opens an existing audit without requiring a model or starting execution", async () => {
     const message = await prompt("open audit", book, { ...settings, aiIntegrations: [] } as unknown as AppSettings);
-    expect(message.action).toMatchObject({ kind: "navigate", to: "/app/books/book-id/audit", toolId: "open-audit" });
+    expect(message.action).toMatchObject({ kind: "navigate", to: "/app/books/book-id/audit" });
     expect(message.text).toContain("Opening the audit");
+    expect(listBranchCommits).not.toHaveBeenCalled();
   });
 
   it("explains disabled audit and links to the book setting", async () => {
@@ -123,6 +126,17 @@ describe("audit Copilot dispatch", () => {
     expect(auditRunBlocker(book, noModel)).toBe("missing-model");
   });
 
+  it("rejects an Audit model explicitly marked as unable to call tools", () => {
+    const incompatible = {
+      ...settings,
+      aiIntegrations: settings.aiIntegrations.map((integration) => ({
+        ...integration,
+        chatModels: integration.chatModels?.map((model) => ({ ...model, supportsToolCalls: false })),
+      })),
+    } as AppSettings;
+    expect(auditRunBlocker(book, incompatible)).toBe("missing-model");
+  });
+
   it("reports dispatch preparation failures without promising execution", async () => {
     listBranchCommits.mockRejectedValueOnce(new Error("head unavailable"));
     const message = await prompt("run audit");
@@ -131,11 +145,19 @@ describe("audit Copilot dispatch", () => {
     expect(message.action).toBeUndefined();
   });
 
-  it("claims each query-triggered audit operation exactly once", () => {
-    const handled = new Set<string>();
-    expect(claimAuditQueryOperation(handled, "nav-1", "audit/book.md", "?action=run")).toBe(true);
-    expect(claimAuditQueryOperation(handled, "nav-1", "audit/book.md", "?action=run")).toBe(false);
-    expect(claimAuditQueryOperation(handled, "nav-2", "audit/book.md", "?action=run")).toBe(true);
+  it("never encodes executable audit operations in a replayable URL", async () => {
+    for (const request of ["run audit", "update audit"]) {
+      const message = await prompt(request);
+      expect(message.action).toMatchObject({ kind: "navigate", to: "/app/books/book-id/audit" });
+      expect(message.action && "to" in message.action ? message.action.to : "").not.toContain("action=");
+    }
+  });
+
+  it("ignores crafted audit action query parameters at the destination page", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/pages/AuditPage.tsx"), "utf8");
+    expect(source).not.toContain('params.get("action")');
+    expect(source).not.toContain("claimAuditQueryOperation");
+    expect(source).not.toMatch(/location\.search[\s\S]{0,500}executeAudit\(\)/);
   });
 
   it("passes a pre-mutation head through the audit finding handler", async () => {

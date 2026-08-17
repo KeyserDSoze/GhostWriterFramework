@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { getLocalFileEntry, getLocalRepository } from "@/repository/localRepository";
 import type { BookEntry } from "@/types/settings";
+import { accountIdentity } from "@/auth/accountIdentity";
+import { useAuthStore } from "@/store/authStore";
 
 export function useCurrentObjectPendingCommit(input: {
   book: BookEntry | undefined;
@@ -19,7 +21,8 @@ export function useCurrentObjectPendingCommit(input: {
     }
 
     async function refresh() {
-      const repo = await getLocalRepository(input.book!.owner, input.book!.repo, input.branch).catch(() => null);
+      const identity = accountIdentity(useAuthStore.getState().user);
+      const repo = identity ? await getLocalRepository(input.book!.owner, input.book!.repo, input.branch, identity).catch(() => null) : null;
       if (!repo) {
         if (active) setState({ pending: false, count: 0, paths: [] });
         return;

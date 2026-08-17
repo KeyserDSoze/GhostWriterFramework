@@ -11,9 +11,10 @@ import {
 import type { AssistantSession } from "@/assistant/store";
 import { assertMigrationChatCompatible, indexUniqueMigrationIdentities, resumableMigrationSteps } from "@/drive/migrationSafety";
 import { deleteVerifiedGoogleAppFolders } from "@/drive/googleAppFolder";
+import { listMicrosoftFolderChildren, MICROSOFT_APP_MARKER, verifyMicrosoftAppFolder, type MicrosoftChild } from "@/drive/microsoftAppFolder";
+import { cloudDeletionTargetJournal, completeCloudDeletion, completeCloudDeletionNothingToDelete, fencedCloudDeletionMutation, journalCloudDeletionTargets, updateCloudDeletionPhase, type CloudDeletionHandle, type CloudDeletionTargetIntent } from "@/drive/cloudWriteBarrier";
 
 const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
-const ONE_DRIVE_APP_FOLDER = "Apps/Narrarium";
 const CLIPBOARD_FILE = "clipboard.json";
 
 export interface MigrationEndpoint {
@@ -65,27 +66,63 @@ function assertOk(response: Response, context: string): void {
 }
 
 /** Delete the app-owned Narrarium cloud folder for the chosen provider. */
-export async function deleteNarrariumCloudData(provider: AuthProvider, accessToken: string): Promise<CloudDeleteResult> {
-  if (provider === "microsoft") return deleteMicrosoftData(accessToken);
-  return deleteGoogleData(accessToken);
+export async function deleteNarrariumCloudData(provider: AuthProvider, accessToken: string, deletion?: CloudDeletionHandle): Promise<CloudDeleteResult> {
+  if (!deletion) throw new Error("Cloud deletion requires an exclusive deletion fence.");
+  if (provider === "microsoft") return deleteMicrosoftData(accessToken, deletion);
+  return deleteGoogleData(accessToken, deletion);
 }
 
-async function deleteGoogleData(accessToken: string): Promise<CloudDeleteResult> {
-  const folderIds = await deleteVerifiedGoogleAppFolders(accessToken);
+async function deleteGoogleData(accessToken: string, deletion: CloudDeletionHandle): Promise<CloudDeleteResult> {
+  await updateCloudDeletionPhase(deletion, "google-folders");
+  const folderIds = await deleteVerifiedGoogleAppFolders(accessToken, deletion);
   return { deleted: folderIds.length > 0, count: folderIds.length, folderIds };
 }
 
-async function deleteMicrosoftData(accessToken: string): Promise<CloudDeleteResult> {
-  const meta = await fetch(`${GRAPH_DRIVE_API}/root:/${ONE_DRIVE_APP_FOLDER}`, { headers: authHeaders(accessToken) });
-  if (meta.status === 404) return { deleted: false, count: 0, folderIds: [] };
-  assertOk(meta, "OneDrive folder lookup");
-  const data = (await meta.json()) as { id: string };
-  const response = await fetch(`${GRAPH_DRIVE_API}/items/${data.id}`, {
-    method: "DELETE",
-    headers: authHeaders(accessToken),
-  });
-  assertOk(response, "OneDrive folder delete");
-  return { deleted: true, count: 1, folderIds: [data.id] };
+async function deleteMicrosoftData(accessToken: string, deletion: CloudDeletionHandle): Promise<CloudDeleteResult> {
+  await updateCloudDeletionPhase(deletion, "microsoft-children");
+  let journal = await cloudDeletionTargetJournal(deletion);
+  if (journal.length && journal.every((target) => target.state === "completed")) {
+    await completeCloudDeletion(deletion, true);
+    const folderIds = journal.map((target) => target.itemId!).filter(Boolean);
+    return { deleted: true, count: folderIds.length, folderIds };
+  }
+  if (!journal.length) {
+    const verified = await verifyMicrosoftAppFolder(accessToken);
+    if (!verified) {
+      await completeCloudDeletionNothingToDelete(deletion, "No verified owned Microsoft OneDrive app folder exists.");
+      return { deleted: false, count: 0, folderIds: [] };
+    }
+    const marker = verified.children.find((child) => child.name === MICROSOFT_APP_MARKER);
+    if (!marker?.eTag) throw new Error("OneDrive ownership marker cannot be deleted conditionally and was retained.");
+    const ordinary: CloudDeletionTargetIntent[] = [];
+    for (const child of verified.children) {
+      if (child.id === marker.id) continue;
+      await enumerateMicrosoftDeletionTargets(accessToken, child, ordinary);
+    }
+    const intents = [...ordinary, microsoftTarget(marker, "ownership-marker")];
+    await journalCloudDeletionTargets(deletion, intents);
+    journal = await cloudDeletionTargetJournal(deletion);
+  }
+  for (const target of journal) {
+    if (target.state === "completed") continue;
+    if (!target.itemId || !target.name || !target.eTag) throw new Error("OneDrive deletion journal contains an invalid target.");
+    const removed = await fencedCloudDeletionMutation(deletion, target.target, { method: "DELETE", headers: { ...authHeaders(accessToken), "If-Match": target.eTag } });
+    assertOk(removed, `OneDrive journaled item delete ${target.name}`);
+  }
+  const folderIds = journal.map((target) => target.itemId!).filter(Boolean);
+  return { deleted: folderIds.length > 0, count: folderIds.length, folderIds };
+}
+
+async function enumerateMicrosoftDeletionTargets(accessToken: string, item: MicrosoftChild, targets: CloudDeletionTargetIntent[]): Promise<void> {
+  if (item.folder) {
+    for (const child of await listMicrosoftFolderChildren(accessToken, item.id)) await enumerateMicrosoftDeletionTargets(accessToken, child, targets);
+  }
+  if (!item.eTag) throw new Error(`OneDrive item ${item.name} cannot be deleted conditionally and was retained.`);
+  targets.push(microsoftTarget(item, "ordinary"));
+}
+
+function microsoftTarget(item: MicrosoftChild, role: "ordinary" | "ownership-marker"): CloudDeletionTargetIntent {
+  return { target: `${GRAPH_DRIVE_API}/items/${encodeURIComponent(item.id)}`, itemId: item.id, name: item.name, eTag: item.eTag, role };
 }
 
 /**
@@ -118,7 +155,14 @@ export async function migrateCloudData(
   if (!shouldSkip("settings")) onProgress?.({ step: "settings", status: "start" });
   try {
     if (!completed.has("settings")) {
-      await saveCloudSettings(target.provider, target.accessToken, preflight.settings);
+      let targetSettings: Awaited<ReturnType<typeof loadCloudSettingsForMigration>> | null = null;
+      try { targetSettings = await loadCloudSettingsForMigration(target.provider, target.accessToken); } catch (error) {
+        if (!(error instanceof Error) || !error.message.includes("missing")) throw error;
+      }
+      await saveCloudSettings(target.provider, target.accessToken, preflight.settings, {
+        fileId: targetSettings?.fileId ?? null,
+        revision: targetSettings?.revision ?? null,
+      });
       const verified = await loadCloudSettingsForMigration(target.provider, target.accessToken);
       if (!sameJson(verified.settings, preflight.settings)) throw new Error("Target settings verification failed.");
       const bookCount = preflight.counts.settings;

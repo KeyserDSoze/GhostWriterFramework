@@ -16,7 +16,7 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { useHasLocalRewriteOperation } from "@/hooks/useHasLocalRewriteOperation";
 import { resolveBookToken } from "@/types/settings";
 import { deleteFile, loadFileContent, readFileWithSha } from "@/github/githubClient";
-import { generateReaderEvaluationSummary, hashReaderSource, loadReaderPersonas, parseReaderEvaluation, runReaderEvaluations, type ReaderEvaluationProgress, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
+import { generateReaderEvaluationSummary, hashReaderSource, latestNonStaleCompletedReaderEvaluations, loadReaderPersonas, parseReaderEvaluation, runReaderEvaluations, type ReaderEvaluationProgress, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
 import type { ReaderEvaluationDepth, ReaderPersonaProfile } from "@/narrarium/readerPersona";
 import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
 import { useRegisterPageActions } from "@/store/pageActionsStore";
@@ -38,6 +38,7 @@ export function ReaderEvaluationsPage() {
   const paragraph = chapter?.paragraphs.find((entry) => entry.number === paragraphNum);
   const selection = (location.state as { readerEvaluationSelection?: string } | null)?.readerEvaluationSelection?.trim() ?? "";
   const [target, setTarget] = useState<ReaderEvaluationTarget | null>(null);
+  const [loadedTargetKey, setLoadedTargetKey] = useState("");
   const [personas, setPersonas] = useState<ReaderPersonaProfile[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [depth, setDepth] = useState<ReaderEvaluationDepth>("normal");
@@ -50,6 +51,8 @@ export function ReaderEvaluationsPage() {
   const [setupOpen, setSetupOpen] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
   const paragraphSlugValue = paragraph ? paragraphSlug(paragraph.path) : undefined;
+  const targetKey = `${bookId ?? ""}:${branch}:${chapterId ?? ""}:${paragraphNum ?? "chapter"}:${selection}`;
+  const targetReady = Boolean(target && loadedTargetKey === targetKey);
   const rewriteScope = paragraph ? "paragraph" as const : "chapter" as const;
   const hasRewriteOperation = useHasLocalRewriteOperation({ book, branch, scope: rewriteScope, chapterSlug: chapterId, paragraphSlug: paragraphSlugValue });
 
@@ -92,6 +95,11 @@ export function ReaderEvaluationsPage() {
   useEffect(() => {
     if (!book || !structure || !token || !chapter) return;
     let active = true;
+    abortRef.current?.abort();
+    setTarget(null);
+    setLoadedTargetKey("");
+    setHistory([]);
+    setProgress({});
     const build = async () => {
       let text = "";
       let sourcePath = `${chapter.path}/chapter.md`;
@@ -110,15 +118,16 @@ export function ReaderEvaluationsPage() {
         version = file.sha;
         sourceRevisions = { [paragraph.path]: file.sha };
       } else {
-        const files = await Promise.all(chapter.paragraphs.map((entry) => readFileWithSha(token, book.owner, book.repo, branch, entry.path).catch(() => null)));
-        text = files.map((file, index) => file ? `## ${chapter.paragraphs[index].title}\n\n${stripFrontmatter(file.content)}` : "").filter(Boolean).join("\n\n");
-        version = files.map((file) => file?.sha ?? "").join(":");
-        sourceRevisions = Object.fromEntries(chapter.paragraphs.flatMap((entry, index) => files[index] ? [[entry.path, files[index]!.sha]] : []));
+        const files = await Promise.all(chapter.paragraphs.map((entry) => readFileWithSha(token, book.owner, book.repo, branch, entry.path)));
+        text = files.map((file, index) => `## ${chapter.paragraphs[index].title}\n\n${stripFrontmatter(file.content)}`).join("\n\n");
+        version = files.map((file) => file.sha).join(":");
+        sourceRevisions = Object.fromEntries(chapter.paragraphs.map((entry, index) => [entry.path, files[index].sha]));
       }
       const nextTarget: ReaderEvaluationTarget = { type: selection ? "selection" : paragraph ? "paragraph" : "chapter", bookId: book.id, chapterId: chapter.slug, paragraphId: paragraph ? paragraphSlug(paragraph.path) : undefined, title: selection ? t("readerEvaluations.selectionTitle") : paragraph?.title ?? chapter.title, text, sourcePath, sourceVersion: version, sourceRevisions };
       const [loadedPersonas, currentHash] = await Promise.all([loadReaderPersonas({ token, book, branch, structure }), hashReaderSource(text)]);
       if (!active) return;
       setTarget(nextTarget);
+      setLoadedTargetKey(targetKey);
       setPersonas(loadedPersonas);
       setSelected(new Set(loadedPersonas.filter((profile) => profile.enabled).map((profile) => profile.id)));
       const prefixes = targetPrefixes(nextTarget);
@@ -137,7 +146,7 @@ export function ReaderEvaluationsPage() {
   }, [book?.id, structure?.loadedBranch, chapter?.slug, paragraph?.path, selection, token, branch]);
 
   async function run(readersOverride?: ReaderPersonaProfile[]) {
-    if (!book || !structure || !target) return;
+    if (!book || !structure || !target || !targetReady) return;
     const readers = readersOverride ?? personas.filter((profile) => selected.has(profile.id) && profile.enabled);
     if (!readers.length) return;
     setRunning(true);
@@ -171,7 +180,8 @@ export function ReaderEvaluationsPage() {
 
   async function summarize() {
     if (!book || !target) return;
-    const evaluations = latestCompletedByReader(history);
+    if (!targetReady) return;
+    const evaluations = latestNonStaleCompletedReaderEvaluations(history);
     if (evaluations.length < 2) return;
     setSummaryBusy(true);
     try {
@@ -183,17 +193,18 @@ export function ReaderEvaluationsPage() {
   }
 
   const latestSummary = useMemo(() => history.filter((record) => record.readerId === "summary" && record.status === "completed").sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null, [history]);
+  const currentSummary = latestSummary?.stale ? null : latestSummary;
 
   useRegisterPageActions([
-    { id: "run-readers", label: t("readerEvaluations.runSelected"), icon: <Users className="h-4 w-4" />, run: () => run(), disabled: running || !target },
-    { id: "summary-readers", label: t("readerEvaluations.generateSummary"), icon: <Sparkles className="h-4 w-4" />, run: () => summarize(), disabled: running || summaryBusy || latestCompletedByReader(history).length < 2 },
-    { id: "generate-draft-from-feedback", label: t("feedbackRewrite.generate"), icon: <Sparkles className="h-4 w-4" />, run: () => openRewrite("generate"), disabled: Boolean(selection) || !latestSummary },
+    { id: "run-readers", label: t("readerEvaluations.runSelected"), icon: <Users className="h-4 w-4" />, run: () => run(), disabled: running || !targetReady },
+    { id: "summary-readers", label: t("readerEvaluations.generateSummary"), icon: <Sparkles className="h-4 w-4" />, run: () => summarize(), disabled: running || summaryBusy || latestNonStaleCompletedReaderEvaluations(history).length < 2 || !targetReady },
+    { id: "generate-draft-from-feedback", label: t("feedbackRewrite.generate"), icon: <Sparkles className="h-4 w-4" />, run: () => openRewrite("generate"), disabled: Boolean(selection) || !currentSummary || !targetReady },
     { id: "restore-previous-drafts", label: t("feedbackRewrite.restore"), icon: <RotateCcw className="h-4 w-4" />, run: () => openRewrite("restore"), disabled: Boolean(selection) || !hasRewriteOperation },
-  ], Boolean(book && target));
+  ], Boolean(book && targetReady));
 
   const groups = useMemo(() => ({ standard: personas.filter((profile) => profile.readerType === "standard"), genre: personas.filter((profile) => profile.readerType === "genre"), custom: personas.filter((profile) => profile.readerType === "custom") }), [personas]);
   const readerHistory = useMemo(() => history.filter((record) => record.readerId !== "summary"), [history]);
-  const latestByReader = useMemo(() => latestCompletedByReader(history), [history]);
+  const latestByReader = useMemo(() => latestNonStaleCompletedReaderEvaluations(history), [history]);
   const averageScore = useMemo(() => {
     const scores = latestByReader.map((record) => record.score).filter((score): score is number => typeof score === "number");
     if (!scores.length) return null;
@@ -244,10 +255,10 @@ export function ReaderEvaluationsPage() {
                   {summaryBusy ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Sparkles className="mr-1.5 h-4 w-4" />}
                   {latestSummary ? t("readerEvaluations.regenerateSummary") : t("readerEvaluations.generateSummary")}
                 </Button>
-                <Button className="!h-auto min-h-8 w-full !whitespace-normal sm:w-auto" size="sm" onClick={() => openRewrite("generate")} disabled={Boolean(selection) || !latestSummary || running || summaryBusy}><Sparkles className="mr-1.5 h-4 w-4 shrink-0" />{t("feedbackRewrite.generate")}</Button>
+                <Button className="!h-auto min-h-8 w-full !whitespace-normal sm:w-auto" size="sm" onClick={() => openRewrite("generate")} disabled={Boolean(selection) || !currentSummary || running || summaryBusy || !targetReady}><Sparkles className="mr-1.5 h-4 w-4 shrink-0" />{t("feedbackRewrite.generate")}</Button>
                 {hasRewriteOperation && <Button className="!h-auto min-h-8 w-full !whitespace-normal sm:w-auto" variant="outline" size="sm" onClick={() => openRewrite("restore")} disabled={Boolean(selection) || running || summaryBusy}><RotateCcw className="mr-1.5 h-4 w-4 shrink-0" />{t("feedbackRewrite.restore")}</Button>}
                 {latestSummary && (
-                  <Button className="self-end sm:self-auto" size="icon" variant="ghost" onClick={() => void removeEvaluation(latestSummary)} disabled={running || summaryBusy}>
+                  <Button className="self-end sm:self-auto" size="icon" variant="ghost" onClick={() => void removeEvaluation(latestSummary)} disabled={running || summaryBusy || !targetReady} aria-label={t("readerEvaluations.deleteConfirm", { reader: latestSummary.readerName })}>
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
                 )}
@@ -263,7 +274,7 @@ export function ReaderEvaluationsPage() {
       <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{t("readerEvaluations.readerOpinions")}</h2>{latestByReader.length > 0 && <Badge variant="outline">{t("readerEvaluations.completedReaders", { count: latestByReader.length })}</Badge>}</div>
       <div className="space-y-4">{readerHistory.length ? readerHistory.map((record) => {
         const isOpen = Boolean(openCards[record.path]);
-        return <article key={record.path} className="overflow-hidden rounded-2xl border bg-card shadow-sm"><button type="button" onClick={() => toggleCard(record.path)} className="flex w-full items-start justify-between gap-3 px-5 py-4 text-left"><div className="min-w-0"><p className="font-semibold">{record.readerName}</p><p className="text-xs text-muted-foreground">{new Date(record.createdAt).toLocaleString()}</p></div><div className="flex items-center gap-2">{record.stale && <Badge variant="destructive">{t("readerEvaluations.stale")}</Badge>}<Badge variant="outline">{record.score !== undefined ? `${record.score}/10` : record.status}</Badge><ChevronDown className={isOpen ? "h-4 w-4 shrink-0 rotate-180 transition-transform" : "h-4 w-4 shrink-0 transition-transform"} /></div></button>{isOpen && <div className="min-w-0 space-y-4 border-t px-5 py-4"><div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end"><Button className="!h-auto min-h-8 w-full !whitespace-normal sm:w-auto" size="sm" onClick={() => openRewrite("generate", record)} disabled={Boolean(selection) || running || record.status !== "completed"}><Sparkles className="mr-1.5 h-4 w-4 shrink-0" />{t("feedbackRewrite.generateFromOpinion")}</Button><div className="flex items-center justify-end gap-2">{record.readerId !== "summary" && <Button size="sm" variant="outline" onClick={() => void rerun(record)} disabled={running}><RefreshCcw className="mr-1.5 h-4 w-4" />{t("readerEvaluations.rerun")}</Button>}<Button size="icon" variant="ghost" onClick={() => void removeEvaluation(record)} disabled={running}><Trash2 className="h-4 w-4 text-destructive" /></Button></div></div><div className="doc-prose max-w-none" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(record.body) }} /></div>}</article>;
+        return <article key={record.path} className="overflow-hidden rounded-2xl border bg-card shadow-sm"><button type="button" onClick={() => toggleCard(record.path)} aria-expanded={isOpen} className="flex w-full items-start justify-between gap-3 px-5 py-4 text-left"><div className="min-w-0"><p className="font-semibold">{record.readerName}</p><p className="text-xs text-muted-foreground">{new Date(record.createdAt).toLocaleString()}</p></div><div className="flex items-center gap-2">{record.stale && <Badge variant="destructive">{t("readerEvaluations.stale")}</Badge>}<Badge variant="outline">{record.score !== undefined ? `${record.score}/10` : record.status}</Badge><ChevronDown className={isOpen ? "h-4 w-4 shrink-0 rotate-180 transition-transform" : "h-4 w-4 shrink-0 transition-transform"} /></div></button>{isOpen && <div className="min-w-0 space-y-4 border-t px-5 py-4"><div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end"><Button className="!h-auto min-h-8 w-full !whitespace-normal sm:w-auto" size="sm" onClick={() => openRewrite("generate", record)} disabled={Boolean(selection) || running || record.status !== "completed" || record.stale || !targetReady}><Sparkles className="mr-1.5 h-4 w-4 shrink-0" />{t("feedbackRewrite.generateFromOpinion")}</Button><div className="flex items-center justify-end gap-2">{record.readerId !== "summary" && <Button size="sm" variant="outline" onClick={() => void rerun(record)} disabled={running || !targetReady}><RefreshCcw className="mr-1.5 h-4 w-4" />{t("readerEvaluations.rerun")}</Button>}<Button size="icon" variant="ghost" onClick={() => void removeEvaluation(record)} disabled={running || !targetReady} aria-label={t("readerEvaluations.deleteConfirm", { reader: record.readerName })}><Trash2 className="h-4 w-4 text-destructive" /></Button></div></div><div className="doc-prose max-w-none" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(record.body) }} /></div>}</article>;
       }) : <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">{t("readerEvaluations.empty")}</div>}</div>
     </div>
   </div>;
@@ -276,4 +287,3 @@ function targetPrefixes(target: ReaderEvaluationTarget): string[] {
   if (target.type === "paragraph") return [`evaluations/readers/paragraphs/${target.chapterId}/${target.paragraphId}/`, `evaluations/readers/summaries/paragraphs/${target.chapterId}/${target.paragraphId}.md`];
   return [`evaluations/readers/selections/${target.chapterId}/${target.paragraphId ?? "chapter"}/`, `evaluations/readers/summaries/selections/${target.chapterId}/${target.paragraphId ?? "chapter"}.md`];
 }
-function latestCompletedByReader(records: ReaderEvaluationRecord[]): ReaderEvaluationRecord[] { const seen = new Set<string>(); return records.filter((record) => { if (record.status !== "completed" || record.readerId === "summary" || seen.has(record.readerId)) return false; seen.add(record.readerId); return true; }); }

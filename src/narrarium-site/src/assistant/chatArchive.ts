@@ -1,7 +1,8 @@
 import type { AuthProvider } from "../store/authStore.ts";
-import type { AssistantSession } from "./store.ts";
+import type { AssistantAction, AssistantArchivedAction, AssistantSession } from "./store.ts";
 import { parseAssistantSession } from "./sessionSchema.ts";
 import { assistantSegmentSha256 } from "./chatSegments.ts";
+import { MAX_ASSISTANT_LOSSLESS_ARCHIVE_BYTES, MAX_ASSISTANT_SESSION_BYTES } from "./sessionSchema.ts";
 
 export const ASSISTANT_CHAT_ARCHIVE_VERSION = 1 as const;
 
@@ -25,12 +26,54 @@ export function assistantArchiveAttachments(archive: AssistantChatArchive): Assi
 }
 
 /** Produces a new cloud identity while preserving every archived record for account migration. */
-export function migrateAssistantChatArchive(archive: AssistantChatArchive, existingIds: Iterable<string>): AssistantSession {
+export async function migrateAssistantChatArchive(archive: AssistantChatArchive, existingIds: Iterable<string>): Promise<AssistantSession> {
   const ids = new Set(existingIds);
   const source = archive.session;
   const id = ids.has(source.id) ? crypto.randomUUID() : source.id;
   const { fileId: _fileId, revision: _revision, ...session } = source;
-  return parseAssistantSession({ ...session, id, losslessArchive: { ...source.losslessArchive, origin: archive.origin }, updatedAt: new Date().toISOString(), contentRevision: (source.contentRevision ?? 0) + 1 });
+  const imported = parseAssistantSession({ ...session, id, losslessArchive: { ...source.losslessArchive, origin: archive.origin }, updatedAt: new Date().toISOString(), contentRevision: (source.contentRevision ?? 0) + 1 });
+  return quarantineImportedActions(imported);
+}
+
+async function quarantineImportedActions(session: AssistantSession): Promise<AssistantSession> {
+  const archived = [...(session.archive?.actions ?? [])];
+  const quarantined = [...(session.quarantinedActions ?? [])];
+  const strip = (messages: AssistantSession["messages"]): AssistantSession["messages"] => messages.map((message) => {
+    if (!message.action) return message;
+    archived.push(importedActionRecord(message.id, message.action));
+    quarantined.push({ messageId: message.id, reason: "External archive actions are inert because the archive is not cryptographically authenticated.", action: { kind: message.action.kind, omitted: true } });
+    const detail = `\n\n> Imported inert action: ${message.action.kind}. It was preserved in audit history but cannot be executed.`;
+    return { ...message, text: `${message.text}${detail}`, action: undefined };
+  });
+  const losslessSegments = [];
+  let previous: { id: string; sha256: string } | undefined;
+  for (const source of session.losslessSegments ?? []) {
+    const segment = { ...source, ...(previous ? { previous } : { previous: undefined }), messages: strip(source.messages) };
+    losslessSegments.push(segment);
+    previous = { id: segment.id, sha256: await assistantSegmentSha256(segment) };
+  }
+  return {
+    ...session,
+    messages: strip(session.messages),
+    losslessSegments,
+    losslessArchive: { ...session.losslessArchive!, ...(previous ? { head: previous } : { head: undefined }), actionCount: 0 },
+    archive: { ...(session.archive ?? { summary: "", messageCount: 0, attachments: [] }), actions: archived },
+    quarantinedActions: quarantined,
+  };
+}
+
+export async function readAssistantChatArchiveFile(file: Pick<File, "size" | "text">): Promise<AssistantChatArchive> {
+  if (file.size > MAX_ASSISTANT_SESSION_BYTES + MAX_ASSISTANT_LOSSLESS_ARCHIVE_BYTES) throw new Error("Chat archive exceeds the import size limit.");
+  return parseAssistantChatArchive(JSON.parse(await file.text()));
+}
+
+function importedActionRecord(messageId: string, action: AssistantAction): AssistantArchivedAction {
+  const paths = "updates" in action ? action.updates.map((update) => update.path)
+    : "path" in action ? [action.path]
+    : "paragraphPath" in action ? [action.paragraphPath]
+    : "researchPath" in action ? [action.researchPath, action.destinationPath]
+    : "paths" in action ? action.paths : [];
+  return { messageId, kind: action.kind, ...(action.toolId ? { toolId: action.toolId } : {}), ...(action.owner ? { owner: action.owner } : {}), ...(action.repo ? { repo: action.repo } : {}), ...(action.branch ? { branch: action.branch } : {}), ...(action.sourceRevision ? { sourceRevision: action.sourceRevision } : {}), ...(action.sourceRevisions ? { sourceRevisions: action.sourceRevisions } : {}), ...(action.generatedAt ? { generatedAt: action.generatedAt } : {}), ...("bookId" in action ? { bookId: action.bookId } : {}), paths };
 }
 
 export function createAssistantChatArchive(session: AssistantSession, provider: AuthProvider, account: string): AssistantChatArchive {

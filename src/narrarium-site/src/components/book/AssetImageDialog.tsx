@@ -3,7 +3,7 @@ import { Image, Loader2, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { BookEntry } from "@/types/settings";
 import type { AssetOrientation, AssetPromptSource, AssetSubjectKind } from "@/assets/assetImages";
-import { buildAssetTarget, composeAssetPromptWithAI, generateAssetImage, loadExistingAssetImage, renderAssetMarkdown, saveAssetImage, saveAssetMarkdown } from "@/assets/assetImages";
+import { buildAssetTarget, composeAssetPromptWithAI, generateAssetImage, loadExistingAssetImage, renderAssetMarkdown, saveAssetBundle, saveAssetMarkdown } from "@/assets/assetImages";
 import { loadFileContent } from "@/github/githubClient";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -163,13 +163,15 @@ export function AssetImageDialog(props: {
     try {
       clearPendingGenerated();
       const extension = file.name.split(".").pop()?.toLowerCase() || "png";
-      const target = await savePrompt(undefined, undefined, extension);
-      await saveAssetImage({
+      const target = buildAssetTarget({ kind, chapterSlug, paragraphSlug, extension });
+      await saveAssetBundle({
         token,
         owner: book.owner,
         repo: book.repo,
         branch,
-        path: target.imagePath,
+        markdownPath: target.markdownPath,
+        markdown: renderAssetMarkdown({ target, prompt, orientation, aspectRatio, altText, caption }),
+        imagePath: target.imagePath,
         bytes: new Uint8Array(await file.arrayBuffer()),
       });
       setExistingImagePath(target.imagePath);
@@ -208,8 +210,8 @@ export function AssetImageDialog(props: {
   }
 
   async function saveGeneratedImage(generated: { bytes: Uint8Array; url: string; provider: string; model: string; cost?: number }) {
-    const target = await savePrompt(generated.provider, generated.model, "png");
-    await saveAssetImage({ token, owner: book.owner, repo: book.repo, branch, path: target.imagePath, bytes: generated.bytes });
+    const target = buildAssetTarget({ kind, chapterSlug, paragraphSlug, extension: "png" });
+    await saveAssetBundle({ token, owner: book.owner, repo: book.repo, branch, markdownPath: target.markdownPath, markdown: renderAssetMarkdown({ target, prompt, orientation, aspectRatio, altText, caption, provider: generated.provider, model: generated.model }), imagePath: target.imagePath, bytes: generated.bytes });
     setExistingImagePath(target.imagePath);
     setPreviewUrl((current) => {
       if (current && current.startsWith("blob:")) URL.revokeObjectURL(current);

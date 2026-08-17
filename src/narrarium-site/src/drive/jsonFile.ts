@@ -1,12 +1,12 @@
 import type { AuthProvider } from "@/store/authStore";
 import { ensureGoogleAppFolder } from "@/drive/googleAppFolder";
-import { beginCloudWrite } from "@/drive/cloudWriteBarrier";
+import { beginCloudWrite, fencedCloudMutation } from "@/drive/cloudWriteBarrier";
 import { assertCloudStatus } from "@/drive/migrationSafety";
+import { ensureMicrosoftAppMarker, graphPath, ONE_DRIVE_APP_FOLDER } from "@/drive/microsoftAppFolder";
 
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
-const ONE_DRIVE_APP_FOLDER = "Apps/Narrarium";
 const MIME_JSON = "application/json";
 
 function headers(token: string) {
@@ -19,7 +19,9 @@ export interface JsonHandle<T> {
 }
 
 export async function loadAppJson<T>(provider: AuthProvider, token: string, fileName: string): Promise<JsonHandle<T>> {
-  return provider === "microsoft" ? loadMs<T>(token, fileName) : loadGoogle<T>(token, fileName);
+  const release = await beginCloudWrite(provider, token);
+  try { return await (provider === "microsoft" ? loadMs<T>(token, fileName) : loadGoogle<T>(token, fileName)); }
+  finally { release(); }
 }
 
 function assertOk(response: Response, context: string): void {
@@ -27,7 +29,7 @@ function assertOk(response: Response, context: string): void {
 }
 
 export async function saveAppJson<T>(provider: AuthProvider, token: string, fileName: string, data: T, driveFileId?: string): Promise<JsonHandle<T>> {
-  const endWrite = beginCloudWrite(provider, token);
+  const endWrite = await beginCloudWrite(provider, token);
   try {
     if (provider === "microsoft") {
       await saveMs(token, fileName, data);
@@ -56,7 +58,7 @@ async function loadGoogle<T>(token: string, fileName: string): Promise<JsonHandl
 async function saveGoogle<T>(token: string, fileName: string, data: T, id?: string): Promise<string> {
   const body = JSON.stringify(data, null, 2);
   if (id) {
-    const response = await fetch(`${GOOGLE_UPLOAD_API}/files/${id}?uploadType=media`, { method: "PATCH", headers: { ...headers(token), "Content-Type": MIME_JSON }, body });
+    const response = await fencedCloudMutation("google", token, `${GOOGLE_UPLOAD_API}/files/${id}?uploadType=media`, { method: "PATCH", headers: { ...headers(token), "Content-Type": MIME_JSON }, body });
     assertOk(response, `Google ${fileName} update`);
     return id;
   }
@@ -64,7 +66,7 @@ async function saveGoogle<T>(token: string, fileName: string, data: T, id?: stri
   const form = new FormData();
   form.append("metadata", new Blob([JSON.stringify({ name: fileName, parents: [root] })], { type: MIME_JSON }));
   form.append("file", new Blob([body], { type: MIME_JSON }));
-  const create = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=multipart&fields=id`, { method: "POST", headers: headers(token), body: form });
+  const create = await fencedCloudMutation("google", token, `${GOOGLE_UPLOAD_API}/files?uploadType=multipart&fields=id`, { method: "POST", headers: headers(token), body: form });
   assertOk(create, `Google ${fileName} create`);
   return ((await create.json()) as { id: string }).id;
 }
@@ -74,19 +76,20 @@ async function ensureMsFolder(token: string): Promise<void> {
   let current = "";
   for (const part of parts) {
     const next = current ? `${current}/${part}` : part;
-    const exists = await fetch(`${GRAPH_DRIVE_API}/root:/${next}`, { headers: headers(token) });
+    const exists = await fetch(`${GRAPH_DRIVE_API}/root:/${graphPath(next)}`, { headers: headers(token) });
     if (exists.ok) { current = next; continue; }
     if (exists.status !== 404) throw new Error(`OneDrive folder lookup: ${exists.status}`);
-    const url = current ? `${GRAPH_DRIVE_API}/root:/${current}:/children` : `${GRAPH_DRIVE_API}/root/children`;
-    const created = await fetch(url, { method: "POST", headers: { ...headers(token), "Content-Type": MIME_JSON }, body: JSON.stringify({ name: part, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }) });
+    const url = current ? `${GRAPH_DRIVE_API}/root:/${graphPath(current)}:/children` : `${GRAPH_DRIVE_API}/root/children`;
+    const created = await fencedCloudMutation("microsoft", token, url, { method: "POST", headers: { ...headers(token), "Content-Type": MIME_JSON }, body: JSON.stringify({ name: part, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }) });
     if (!(created.ok || created.status === 409)) throw new Error(`OneDrive folder create: ${created.status}`);
     current = next;
   }
+  await ensureMicrosoftAppMarker(token);
 }
 
 async function loadMs<T>(token: string, fileName: string): Promise<JsonHandle<T>> {
   await ensureMsFolder(token);
-  const response = await fetch(`${GRAPH_DRIVE_API}/root:/${ONE_DRIVE_APP_FOLDER}/${fileName}:/content`, { headers: headers(token) });
+  const response = await fetch(`${GRAPH_DRIVE_API}/root:/${graphPath(ONE_DRIVE_APP_FOLDER)}/${encodeURIComponent(fileName)}:/content`, { headers: headers(token) });
   if (response.status === 404) return { data: null };
   assertOk(response, `OneDrive ${fileName} download`);
   return { data: (await response.json()) as T };
@@ -94,7 +97,7 @@ async function loadMs<T>(token: string, fileName: string): Promise<JsonHandle<T>
 
 async function saveMs<T>(token: string, fileName: string, data: T): Promise<void> {
   await ensureMsFolder(token);
-  const response = await fetch(`${GRAPH_DRIVE_API}/root:/${ONE_DRIVE_APP_FOLDER}/${fileName}:/content`, {
+  const response = await fencedCloudMutation("microsoft", token, `${GRAPH_DRIVE_API}/root:/${graphPath(ONE_DRIVE_APP_FOLDER)}/${encodeURIComponent(fileName)}:/content`, {
     method: "PUT",
     headers: { ...headers(token), "Content-Type": MIME_JSON },
     body: JSON.stringify(data, null, 2),

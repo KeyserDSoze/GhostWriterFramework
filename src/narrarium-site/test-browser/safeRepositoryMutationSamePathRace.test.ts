@@ -1,4 +1,5 @@
 import "fake-indexeddb/auto";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { afterEach, expect, test, vi } from "vitest";
 
 const repository = vi.hoisted(() => ({ pushLocalCommits: vi.fn() }));
@@ -20,17 +21,20 @@ import {
   writeLocalText,
 } from "@/repository/localRepository";
 import { commitAndPushTextFileMutation } from "@/repository/safeRepositoryMutation";
+import { useAuthStore } from "@/store/authStore";
+
+useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
 
 let repoId = "";
 
 afterEach(async () => {
   vi.clearAllMocks();
-  if (repoId) await removeLocalRepository(repoId);
+  if (repoId) await removeLocalRepository(repoId, captureRepositoryOperationScope());
   repoId = "";
 });
 
 test("a newer same-path edit survives an abort after the mutation commit", async () => {
-  const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "main", defaultBranch: "main", remoteHeadSha: "source-head", clonedAt: new Date().toISOString(), cloneComplete: true });
+  const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "main", defaultBranch: "main", remoteHeadSha: "source-head", clonedAt: new Date().toISOString(), cloneComplete: true }, captureRepositoryOperationScope());
   repoId = repo.id;
   const original = await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "old", size: 3 });
   repository.pushLocalCommits.mockImplementation(async () => {

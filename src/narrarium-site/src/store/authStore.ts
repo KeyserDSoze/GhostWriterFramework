@@ -1,13 +1,27 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+
+const AUTH_STORAGE_KEY = "narrarium-bms-auth";
+
+function sessionAuthStorage(): Storage {
+  const legacy = localStorage.getItem(AUTH_STORAGE_KEY);
+  if (!sessionStorage.getItem(AUTH_STORAGE_KEY) && legacy) sessionStorage.setItem(AUTH_STORAGE_KEY, legacy);
+  if (legacy) localStorage.removeItem(AUTH_STORAGE_KEY);
+  return sessionStorage;
+}
 
 export type AuthProvider = "google" | "microsoft";
 
 export interface AppUser {
   provider: AuthProvider;
+  /** Immutable provider subject: Google OIDC sub or Microsoft homeAccountId. */
+  providerAccountId?: string;
   name: string;
   email: string;
   picture: string;
+  /** Immutable MSAL identifiers. Required after a legacy Microsoft session is refreshed. */
+  homeAccountId?: string;
+  localAccountId?: string;
 }
 
 export type GoogleUser = AppUser;
@@ -49,8 +63,9 @@ export const useAuthStore = create<AuthState>()(
       },
     }),
     {
-      name: "narrarium-bms-auth",
-      // Persist token + expiry so F5 doesn't log the user out
+      name: AUTH_STORAGE_KEY,
+      storage: createJSONStorage(sessionAuthStorage),
+      // Keep reload continuity without leaving bearer tokens on a shared device after the tab session.
       partialize: (state) => ({
         user: state.user,
         accessToken: state.accessToken,

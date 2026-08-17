@@ -26,11 +26,12 @@ interface CostsState {
   file: CostsFile;
   driveFileId?: string;
   dirty: boolean;
+  revision: number;
   currentBookId?: string;
   currentBookName?: string;
   setCurrentBook: (bookId: string | undefined, bookName: string | undefined) => void;
   setFile: (file: CostsFile, driveFileId?: string) => void;
-  markSynced: (driveFileId?: string) => void;
+  markSynced: (revision: number, driveFileId?: string) => void;
   record: (bookId: string | undefined, bookName: string | undefined, delta: Partial<UsageBucket>, model?: string) => void;
   recordCurrent: (delta: Partial<UsageBucket>, model?: string) => void;
 }
@@ -39,11 +40,12 @@ export const useCostsStore = create<CostsState>()((set, get) => ({
   file: loadLocal(),
   driveFileId: undefined,
   dirty: false,
+  revision: 0,
   currentBookId: undefined,
   currentBookName: undefined,
   setCurrentBook: (currentBookId, currentBookName) => set({ currentBookId, currentBookName }),
-  setFile: (file, driveFileId) => { persistLocal(file); set({ file, driveFileId, dirty: false }); },
-  markSynced: (driveFileId) => set((s) => ({ driveFileId: driveFileId ?? s.driveFileId, dirty: false })),
+  setFile: (file, driveFileId) => { persistLocal(file); set((s) => ({ file, driveFileId, dirty: false, revision: s.revision + 1 })); },
+  markSynced: (revision, driveFileId) => set((s) => s.revision === revision ? { driveFileId: driveFileId ?? s.driveFileId, dirty: false } : s),
   record: (bookId, bookName, delta, model) => {
     if (!bookId) return;
     const hasValue = Object.values(delta).some((v) => (v ?? 0) !== 0);
@@ -62,7 +64,7 @@ export const useCostsStore = create<CostsState>()((set, get) => ({
       }
       const file: CostsFile = { ...s.file, updatedAt: new Date().toISOString(), books: { ...s.file.books, [bookId]: merged } };
       persistLocal(file);
-      return { file, dirty: true };
+      return { file, dirty: true, revision: s.revision + 1 };
     });
   },
   recordCurrent: (delta, model) => {

@@ -3,6 +3,8 @@ import { getExistingLocalBookStructure } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 import type { BookEntry } from "@/types/settings";
 import type { AssistantMessage } from "@/assistant/store";
+import { accountIdentity } from "@/auth/accountIdentity";
+import { useAuthStore } from "@/store/authStore";
 
 export async function runPromptWithMutationRefresh<T extends Pick<AssistantMessage, "mutation">>(
   operation: () => Promise<T>,
@@ -27,7 +29,8 @@ export async function refreshBookAfterMutation(input: {
   branch: string;
 }): Promise<void> {
   const generation = useBooksStore.getState().invalidateStructure(input.book.id);
-  const local = await getExistingLocalBookStructure(input.book.id);
+  const identity = accountIdentity(useAuthStore.getState().user);
+  const local = identity ? await getExistingLocalBookStructure(input.book.id, input.book.owner, input.book.repo, input.branch, identity) : null;
   const structure = local?.structure.loadedBranch === input.branch
     ? local.structure
     : await loadBookStructure(input.token, input.book.owner, input.book.repo, input.branch);

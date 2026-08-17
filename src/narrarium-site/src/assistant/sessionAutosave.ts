@@ -58,12 +58,14 @@ export interface AssistantSessionCloudHandle {
 
 export function attachAssistantSessionCloudHandle(
   currentSession: AssistantSession | null,
-  sessionId: string,
+  savedSnapshot: AssistantSession,
   handle: AssistantSessionCloudHandle,
 ): AssistantSession | null {
-  if (!currentSession || currentSession.id !== sessionId) return currentSession;
-  if (currentSession.fileId === handle.fileId && currentSession.revision === handle.revision) return currentSession;
-  return { ...currentSession, ...handle, losslessSegments: [] };
+  if (!currentSession || currentSession.id !== savedSnapshot.id) return currentSession;
+  const persistedIds = new Set((savedSnapshot.losslessSegments ?? []).map((segment) => segment.id));
+  const losslessSegments = (currentSession.losslessSegments ?? []).filter((segment) => !persistedIds.has(segment.id));
+  if (currentSession.fileId === handle.fileId && currentSession.revision === handle.revision && losslessSegments.length === (currentSession.losslessSegments ?? []).length) return currentSession;
+  return { ...currentSession, ...handle, losslessSegments };
 }
 
 type SaveSession = (session: AssistantSession) => Promise<AssistantSessionCloudHandle>;

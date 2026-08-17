@@ -14,8 +14,9 @@ const chapter = {
   path: "chapters/001-start",
   paragraphs: [{ number: "001", title: "Opening", path: "chapters/001-start/001-opening.md" }],
 };
+const secondChapter = { ...chapter, slug: "002-next", title: "Next", path: "chapters/002-next", paragraphs: [{ number: "001", title: "Next opening", path: "chapters/002-next/001-next.md" }] };
 const context = {
-  structure: { chapters: [chapter] },
+  structure: { chapters: [chapter, secondChapter] },
   chapter,
   paragraph: chapter.paragraphs[0],
 } as unknown as LoadedWriterContext;
@@ -36,6 +37,12 @@ describe("reader-evaluation navigation intent", () => {
     expect(chooseToolMatch({ prompt, lowered: prompt.toLowerCase(), settings }, handlers)).toMatchObject({
       toolId: "open-reader-evaluations",
       handlerId: "open-reader-evaluations",
+    });
+  });
+
+  it("honors an explicit chapter instead of the ambient paragraph route", () => {
+    expect(resolveNavigateAction("open reader evaluations for chapter 2", context, "book")).toMatchObject({
+      to: "/app/books/book/chapters/002-next/reader-evaluations",
     });
   });
 

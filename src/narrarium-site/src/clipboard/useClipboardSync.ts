@@ -21,6 +21,7 @@ function mergeItems(a: ClipboardEntry[], b: ClipboardEntry[]): ClipboardEntry[] 
 export function useClipboardSync() {
   const { user, accessToken } = useAuthStore();
   const dirty = useClipboardStore((s) => s.dirty);
+  const revision = useClipboardStore((s) => s.revision);
   const loadedIdentityRef = useRef<string | null>(null);
   const driveIdRef = useRef<string | undefined>(undefined);
 
@@ -48,14 +49,15 @@ export function useClipboardSync() {
     const expectedIdentity = accountIdentity(user);
     if (loadedIdentityRef.current !== expectedIdentity) return;
     const timer = setTimeout(() => {
-      void saveAppJson(user.provider, accessToken, FILE, useClipboardStore.getState().items, driveIdRef.current)
+      const snapshot = useClipboardStore.getState();
+      void saveAppJson(user.provider, accessToken, FILE, snapshot.items, driveIdRef.current)
         .then((handle) => {
           if (!isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
           driveIdRef.current = handle.driveFileId;
-          useClipboardStore.getState().markSynced();
+          useClipboardStore.getState().markSynced(snapshot.revision);
         })
         .catch(() => undefined);
     }, 5000);
     return () => clearTimeout(timer);
-  }, [dirty, user, accessToken]);
+  }, [dirty, revision, user, accessToken]);
 }

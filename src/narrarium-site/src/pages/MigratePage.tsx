@@ -16,13 +16,17 @@ import {
   type MigrationStepKind,
   type MigrationStepResult,
 } from "@/drive/migration";
-import { registerCloudAccount, resumeCloudWrites, suspendCloudWrites } from "@/drive/cloudWriteBarrier";
+import { cloudDeletionReconnectState, completeCloudDeletion, failCloudDeletion, registerCloudAccount, resumeCloudWrites, suspendCloudWrites } from "@/drive/cloudWriteBarrier";
+import { requireGoogleProviderAccountId } from "@/auth/accountIdentity";
 
 interface TargetAccount {
   provider: AuthProvider;
   accessToken: string;
   name: string;
   email: string;
+  providerAccountId?: string;
+  homeAccountId?: string;
+  localAccountId?: string;
 }
 
 function providerLabel(provider: AuthProvider, t: (k: string) => string): string {
@@ -62,15 +66,19 @@ export function MigratePage() {
           headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
         });
         if (!res.ok) throw new Error(`Google profile load failed (${res.status})`);
-        const profile = (await res.json()) as { name?: string; email?: string };
-        setTarget({
+        const profile = (await res.json()) as { sub?: string; name?: string; email?: string };
+        if (!profile.email?.trim()) throw new Error("Google profile did not provide an email address.");
+        const providerAccountId = requireGoogleProviderAccountId(profile);
+        const nextTarget: TargetAccount = {
           provider: "google",
+          providerAccountId,
           accessToken: tokenResponse.access_token,
           name: profile.name ?? profile.email ?? "Google",
           email: profile.email ?? "",
-        });
-        registerCloudAccount("google", tokenResponse.access_token, profile.email ?? "google-target");
-        resumeCloudWrites("google", tokenResponse.access_token);
+        };
+        registerCloudAccount("google", tokenResponse.access_token, providerAccountId);
+        await confirmAndResumeCloudWrites("google", tokenResponse.access_token);
+        setTarget(nextTarget);
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -94,24 +102,28 @@ export function MigratePage() {
     try {
       await ensureMsalInitialized();
       const result = await msalInstance.loginPopup({ scopes: MICROSOFT_SCOPES, prompt: "select_account" });
-      const account = result.account ?? undefined;
-      const graphToken = account
-        ? (await msalInstance.acquireTokenSilent(microsoftSilentRequest(account)).catch(() => result)).accessToken
-        : result.accessToken;
+      const account = result.account;
+      if (!account?.homeAccountId?.trim() || !account.localAccountId?.trim()) throw new Error("Microsoft did not provide immutable account identifiers.");
+      const graphToken = (await msalInstance.acquireTokenSilent(microsoftSilentRequest(account)).catch(() => result)).accessToken;
       const res = await fetch("https://graph.microsoft.com/v1.0/me", {
         headers: { Authorization: `Bearer ${graphToken}` },
       });
       if (!res.ok) throw new Error(`Microsoft profile load failed (${res.status})`);
       const profile = (await res.json()) as { displayName?: string; mail?: string; userPrincipalName?: string };
       const email = profile.mail ?? profile.userPrincipalName ?? "";
-      setTarget({
+      if (!email.trim()) throw new Error("Microsoft profile did not provide an email address.");
+      const nextTarget: TargetAccount = {
         provider: "microsoft",
+        providerAccountId: account.homeAccountId,
         accessToken: graphToken,
         name: profile.displayName ?? email ?? "Microsoft",
         email,
-      });
-      registerCloudAccount("microsoft", graphToken, email || "microsoft-target");
-      resumeCloudWrites("microsoft", graphToken);
+        homeAccountId: account.homeAccountId,
+        localAccountId: account.localAccountId,
+      };
+      registerCloudAccount("microsoft", graphToken, account.homeAccountId);
+      await confirmAndResumeCloudWrites("microsoft", graphToken);
+      setTarget(nextTarget);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -166,17 +178,20 @@ export function MigratePage() {
     setError(null);
     setDeleteNotice(null);
     let deleted = false;
+    let deletionHandle: Awaited<ReturnType<typeof suspendCloudWrites>> | null = null;
     try {
-      registerCloudAccount(account.provider, account.accessToken, account.email || account.name);
-      await suspendCloudWrites(account.provider, account.accessToken);
-      const result = await deleteNarrariumCloudData(account.provider, account.accessToken);
+      const identity = account.providerAccountId;
+      if (!identity || (account.provider === "microsoft" && !account.localAccountId)) throw new Error("Immutable account identity is unavailable.");
+      registerCloudAccount(account.provider, account.accessToken, identity);
+      deletionHandle = await suspendCloudWrites(account.provider, account.accessToken);
+      const result = await deleteNarrariumCloudData(account.provider, account.accessToken, deletionHandle);
       deleted = result.deleted;
+      await completeCloudDeletion(deletionHandle, deleted);
       setDeleteNotice(result.deleted
         ? `${t("migration.deleteDone", { provider, count: result.count })} IDs: ${result.folderIds.join(", ")}`
         : t("migration.deleteNothing", { provider }));
-      if (!result.deleted) resumeCloudWrites(account.provider, account.accessToken);
     } catch (err) {
-      if (!deleted) resumeCloudWrites(account.provider, account.accessToken);
+      if (deletionHandle && !deleted) await failCloudDeletion(deletionHandle, err).catch(() => undefined);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setDeleting(null);
@@ -192,7 +207,7 @@ export function MigratePage() {
   }
 
   const steps: MigrationStepKind[] = ["settings", "costs", "clipboard", "chats"];
-  const sourceAccount: TargetAccount = { provider: sourceProvider, accessToken, name: user.name, email: user.email };
+  const sourceAccount: TargetAccount = { provider: sourceProvider, accessToken, name: user.name, email: user.email, providerAccountId: user.providerAccountId, homeAccountId: user.homeAccountId, localAccountId: user.localAccountId };
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -334,4 +349,13 @@ export function MigratePage() {
       )}
     </div>
   );
+}
+
+async function confirmAndResumeCloudWrites(provider: AuthProvider, token: string): Promise<void> {
+  const reconnect = await cloudDeletionReconnectState(provider, token);
+  if (!reconnect) return;
+  if (reconnect.state === "nothing-to-delete" && !window.confirm(`No verified owned cloud folder was found, so no provider data was deleted. Resume cloud writes?\n\n${reconnect.reason ?? ""}`)) {
+    throw new Error("Cloud reconnect was cancelled.");
+  }
+  if (!await resumeCloudWrites(provider, token, reconnect.generation)) throw new Error("Cloud reconnect was superseded by a newer deletion.");
 }

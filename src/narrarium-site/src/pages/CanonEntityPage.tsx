@@ -223,8 +223,9 @@ export function CanonEntityPage() {
     setShowAddMeta(false);
   }
 
-  async function handleSave() {
-    if (!isDirty || !path) return;
+  async function handleSave(): Promise<boolean> {
+    if (!isDirty) return true;
+    if (!path) return false;
     setSaving(true);
     try {
       const nextContent = buildFrontmatter(entries, body);
@@ -242,8 +243,10 @@ export function CanonEntityPage() {
       setSavedEntries(entries);
       setSavedBody(body);
       toast({ title: t("common.saved") });
+      return true;
     } catch (err) {
       toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
+      return false;
     } finally {
       setSaving(false);
     }

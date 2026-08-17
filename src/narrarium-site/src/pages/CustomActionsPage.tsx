@@ -51,6 +51,7 @@ export function CustomActionsPage() {
   }
 
   function removeAction(id: string) {
+    if (!window.confirm(t("customActions.deleteConfirm"))) return;
     patchActions(actions.filter((action) => action.id !== id));
   }
 
@@ -62,10 +63,11 @@ export function CustomActionsPage() {
     patchActions(next);
   }
 
-  async function handleSave() {
-    await save();
+  async function handleSave(): Promise<boolean> {
+    try { if (!await save()) return false; } catch { return false; }
     setSavedSnapshot(JSON.stringify(useSettingsStore.getState().settings.customActions ?? []));
     toast({ title: t("customActions.saved") });
+    return true;
   }
 
   return (

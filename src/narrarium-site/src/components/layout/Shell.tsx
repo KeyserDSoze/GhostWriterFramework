@@ -29,15 +29,16 @@ import { Input } from "@/components/ui/input";
 import { useNavigationHistoryStore, type NavigationHistoryEntry } from "@/store/navigationHistoryStore";
 import { FeedbackRewriteWorkflowDialog } from "@/components/book/FeedbackRewriteWorkflowDialog";
 import { OPEN_PATCH_NOTES_AFTER_UPDATE_KEY } from "@/pwa";
+import { useDirtyNavigationGuard } from "@/hooks/useDirtyNavigationGuard";
 
 const AssistantPanel = lazy(() =>
   import("@/components/assistant/AssistantPanel").then((module) => ({ default: module.AssistantPanel })),
 );
 
 export function Shell() {
-  const { load } = useSettings();
+  const { load, resolveOfflineConflict } = useSettings();
   const { t, i18n } = useTranslation();
-  const { cloudLoaded, syncStatus, settings } = useSettingsStore();
+  const { cloudLoaded, syncStatus, settings, offlineConflict } = useSettingsStore();
   const { structures } = useBooksStore();
   const location = useLocation();
   const navigate = useNavigate();
@@ -50,6 +51,7 @@ export function Shell() {
   useCostsSync();
   useClipboardSync();
   useGlobalShortcuts();
+  useDirtyNavigationGuard(t("common.unsavedNavigationConfirm"));
 
   useEffect(() => {
     if (sessionStorage.getItem(OPEN_PATCH_NOTES_AFTER_UPDATE_KEY) !== "1") return;
@@ -142,6 +144,7 @@ export function Shell() {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Topbar onOpenMobileNav={() => setMobileNavOpen(true)} />
+        {offlineConflict && <div className="border-b border-destructive/40 bg-destructive/10 px-4 py-3 text-sm"><div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2"><span className="mr-auto">{t("settings.offlineConflict", { fields: offlineConflict.changedKeys.join(", ") })}</span><Button size="sm" variant="destructive" onClick={() => void resolveOfflineConflict("local")}>{t("settings.keepOfflineChanges")}</Button><Button size="sm" variant="outline" onClick={() => void resolveOfflineConflict("cloud")}>{t("settings.useCloudSettings")}</Button></div></div>}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6">
           <Outlet />
         </main>

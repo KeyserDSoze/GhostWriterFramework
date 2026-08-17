@@ -47,6 +47,13 @@ export interface FallbackDisclosurePolicy {
   requireAcknowledgement: boolean;
 }
 
+export interface RoutingExecutionLimits {
+  maxCandidates: number;
+  maxTotalDurationMs: number;
+  maxTokenAttempts: number;
+  maxEstimatedCost: number;
+}
+
 /** A single chat model entry inside an integration, with its own price and roles. */
 export interface ChatModel {
   id: string;
@@ -56,6 +63,8 @@ export interface ChatModel {
   underlyingModel?: string;
   /** Roles this model is allowed to serve. */
   capabilities: ChatCapability[];
+  /** False when this model cannot execute OpenAI-compatible forced function calls. */
+  supportsToolCalls?: boolean;
   /** Provider-specific tier label. Currently populated from GitHub Models rate_limit_tier. */
   tier?: string;
   /** Total model context window; prompt budgeting reserves output and a safety margin within it. */
@@ -475,6 +484,7 @@ export interface AppSettings {
   /** Optional configurable router: per task, a primary integration+model and ordered fallbacks. */
   taskRouting?: Partial<Record<RoutingTaskKind, TaskRoute>>;
   fallbackDisclosure: FallbackDisclosurePolicy;
+  routingExecution: RoutingExecutionLimits;
   /** Currency symbol/code used for cost display (e.g. "USD", "EUR", "GBP"). Default: "USD". */
   costCurrency: string;
   ui: {
@@ -509,6 +519,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fallbackDisclosure: {
     sameBoundaryOnly: false,
     requireAcknowledgement: false,
+  },
+  routingExecution: {
+    maxCandidates: 4,
+    maxTotalDurationMs: 180_000,
+    maxTokenAttempts: 200_000,
+    maxEstimatedCost: 5,
   },
   costCurrency: "USD",
   ui: {

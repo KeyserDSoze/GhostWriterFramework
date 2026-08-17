@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import "fake-indexeddb/auto";
 import {
   ensureGoogleAppFolder,
   deleteVerifiedGoogleAppFolders,
@@ -8,6 +9,7 @@ import {
   selectCanonicalGoogleAppFolder,
   resetGoogleAppFolderCacheForTests,
 } from "../src/drive/googleAppFolder.ts";
+import { acquireCloudWriteLease, completeCloudDeletion, completedCloudDeletionGeneration, registerCloudAccount, resumeCloudWrites, suspendCloudWrites } from "../src/drive/cloudWriteBarrier.ts";
 
 function installBrowserStorage() {
   const values = new Map();
@@ -79,7 +81,9 @@ test("migrates only the same-name legacy folder with valid app settings", async 
     throw new Error(`Unexpected request: ${decoded}`);
   };
 
+  const release = await acquireCloudWriteLease("google", "legacy-token");
   assert.equal(await ensureGoogleAppFolder("legacy-token"), "legacy-app");
+  release();
   assert.equal(markerWrites, 1);
   assert.equal(creates, 0);
 });
@@ -104,7 +108,9 @@ test("concurrent recreation shares one marked-folder creation", async () => {
     throw new Error(`Unexpected request: ${decoded}`);
   };
 
+  const release = await acquireCloudWriteLease("google", "new-token");
   const [first, second] = await Promise.all([ensureGoogleAppFolder("new-token"), ensureGoogleAppFolder("new-token")]);
+  release();
   assert.equal(first, "created");
   assert.equal(second, "created");
   assert.equal(creates, 1);
@@ -138,9 +144,18 @@ test("deletion removes only verified IDs and a later reconnect recreates one mar
     throw new Error(`Unexpected request: ${decoded}`);
   };
 
-  assert.deepEqual(await deleteVerifiedGoogleAppFolders("delete-token"), ["owned"]);
+  registerCloudAccount("google", "delete-token", "delete-account");
+  const deletion = await suspendCloudWrites("google", "delete-token");
+  assert.deepEqual(await deleteVerifiedGoogleAppFolders("delete-token", deletion), ["owned"]);
+  await completeCloudDeletion(deletion, true);
   assert.deepEqual(deleted, ["owned"]);
   phase = "recreate";
+  await resumeCloudWrites("google", "delete-token", await completedCloudDeletionGeneration("google", "delete-token"));
   resetGoogleAppFolderCacheForTests();
-  assert.equal(await ensureGoogleAppFolder("delete-token"), "recreated");
+  const release = await acquireCloudWriteLease("google", "delete-token");
+  try {
+    assert.equal(await ensureGoogleAppFolder("delete-token"), "recreated");
+  } finally {
+    release();
+  }
 });

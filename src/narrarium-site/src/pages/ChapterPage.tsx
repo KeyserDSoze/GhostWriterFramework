@@ -11,6 +11,8 @@ import {
   Save,
   ShieldAlert,
   MoreHorizontal,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +47,7 @@ import { type Paragraph } from "@/types/book";
 import { resolveBookToken } from "@/types/settings";
 import { slugify } from "@/narrarium/canon";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { resolveRepositoryHeadForMutation } from "@/repository/safeRepositoryMutation";
 import {
   createParagraphDraftArtifact,
   createParagraphEvaluationArtifact,
@@ -245,14 +248,27 @@ export function ChapterPage() {
   }
 
   // ── Delete paragraph ──────────────────────────────────────────────────────
-  const [toDelete, setToDelete] = useState<Paragraph | null>(null);
+  const [toDelete, setToDelete] = useState<{ paragraph: Paragraph; expectedCurrentHash: string; expectedRemoteHeadSha: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  async function requestDelete(paragraph: Paragraph) {
+    if (!book) return;
+    try {
+      const [loaded, expectedRemoteHeadSha] = await Promise.all([
+        paragraph.revision ? Promise.resolve({ sha: paragraph.revision }) : readFileWithSha(token, book.owner, book.repo, branch, paragraph.path),
+        resolveRepositoryHeadForMutation({ token, book, branch }),
+      ]);
+      setToDelete({ paragraph, expectedCurrentHash: loaded.sha, expectedRemoteHeadSha });
+    } catch (err) {
+      toast({ title: t("chapter.deleteFailed"), description: String(err), variant: "destructive" });
+    }
+  }
 
   async function confirmDelete() {
     if (!toDelete || !book || !structure || !chapter) return;
     setDeleting(true);
     try {
-      const remaining = localParagraphs.filter((p) => p.path !== toDelete.path);
+      const remaining = localParagraphs.filter((p) => p.path !== toDelete.paragraph.path);
       const outcome = await reorderParagraphsInChapter(
         token,
         book.owner,
@@ -261,7 +277,8 @@ export function ChapterPage() {
         chapter.path,
         chapter.paragraphs,
         remaining,
-        `Delete paragraph ${toDelete.number}: ${toDelete.title}`,
+        `Delete paragraph ${toDelete.paragraph.number}: ${toDelete.paragraph.title}`,
+        { expectedRemoteHeadSha: toDelete.expectedRemoteHeadSha, expectedParagraphHashes: { [toDelete.paragraph.path]: toDelete.expectedCurrentHash } },
       );
       const updated = outcome.paragraphs;
       if (outcome.canonical?.warningCount) toast({ title: t("common.saved"), description: outcome.canonical.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
@@ -288,15 +305,17 @@ export function ChapterPage() {
     if (!newTitle.trim() || !book || !structure || !chapter) return;
     setAdding(true);
     try {
-      const nextNum = String(localParagraphs.length + 1).padStart(3, "0");
+      const nextNumber = Math.max(0, ...localParagraphs.map((entry) => Number(entry.number) || 0)) + 1;
+      const nextNum = String(nextNumber).padStart(3, "0");
       const slug = slugify(newTitle) || "paragraph";
       const filename = `${nextNum}-${slug}.md`;
       const path = `${chapter.path}/${filename}`;
+      if (localParagraphs.some((entry) => entry.path === path || entry.number === nextNum)) throw new Error(t("chapter.paragraphAlreadyExists"));
       const frontmatter = {
         type: "paragraph",
         id: `paragraph:${chapter.slug}:${nextNum}-${slug}`,
         chapter: `chapter:${chapter.slug}`,
-        number: localParagraphs.length + 1,
+        number: nextNumber,
         title: newTitle.trim(),
         canon: "draft",
       };
@@ -333,6 +352,15 @@ export function ChapterPage() {
     } finally {
       setAdding(false);
     }
+  }
+
+  function requestKeyboardMove(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= localParagraphs.length) return;
+    const next = [...localParagraphs];
+    [next[index], next[target]] = [next[target], next[index]];
+    setLocalParagraphs(next);
+    setPendingReorder(next);
   }
 
   async function handleCreateParagraphWorkspace(
@@ -502,6 +530,10 @@ export function ChapterPage() {
           >
             {/* Drag handle */}
             <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-muted-foreground" />
+            <div className="flex shrink-0 flex-col">
+              <Button type="button" variant="ghost" size="icon" className="h-5 w-5" disabled={i === 0} onClick={() => requestKeyboardMove(i, -1)} aria-label={t("chapter.moveParagraphUp", { title: p.title })}><ChevronUp className="h-3 w-3" /></Button>
+              <Button type="button" variant="ghost" size="icon" className="h-5 w-5" disabled={i === localParagraphs.length - 1} onClick={() => requestKeyboardMove(i, 1)} aria-label={t("chapter.moveParagraphDown", { title: p.title })}><ChevronDown className="h-3 w-3" /></Button>
+            </div>
 
             {/* Number badge */}
             <Badge variant="outline" className="shrink-0 font-mono text-xs">
@@ -544,7 +576,7 @@ export function ChapterPage() {
               />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-7 w-7">
+                  <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={t("assistant.quickActions")}>
                     <MoreHorizontal className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -579,7 +611,7 @@ export function ChapterPage() {
 
             {/* Delete */}
             <button
-              onClick={() => setToDelete(p)}
+              onClick={() => void requestDelete(p)}
               className="ml-1 shrink-0 rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
               aria-label={t("chapter.deleteParagraphAria", { number: p.number })}
             >
@@ -650,7 +682,7 @@ export function ChapterPage() {
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             {t("chapter.deleteParagraphDescription", {
-              title: `${toDelete?.number} — ${toDelete?.title}`,
+              title: toDelete ? `${toDelete.paragraph.number} — ${toDelete.paragraph.title}` : "",
             })}
           </p>
           <DialogFooter>

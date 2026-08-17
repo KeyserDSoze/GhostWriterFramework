@@ -4,6 +4,11 @@ export type BranchNameParseResult =
   | { status: "ambiguous"; candidates: string[] }
   | { status: "invalid"; branchName: string };
 
+export function parseBranchOperation(prompt: string): "create" | "switch" {
+  const command = prompt.match(/^\s*(?:please\s+|per favore\s+)?([^"“'‘`]*?)(?:branch|ramo)\b/i)?.[1] ?? prompt;
+  return /\b(create|crea|new branch|nuovo ramo|nuovo branch)\b/i.test(command) ? "create" : "switch";
+}
+
 export function isValidGitBranchName(value: string): boolean {
   if (!value || value.length > 255 || value === "@" || value === "HEAD" || value.startsWith("-")) return false;
   if (value.startsWith("/") || value.endsWith("/") || value.endsWith(".") || value.includes("//")) return false;

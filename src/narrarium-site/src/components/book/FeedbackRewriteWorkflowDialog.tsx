@@ -27,7 +27,7 @@ import {
   type RewriteRollbackPolicy,
 } from "@/narrarium/rewriteFromReaderFeedback";
 import { useSettingsStore } from "@/store/settingsStore";
-import { useFeedbackRewriteWorkflowStore, type FeedbackRewriteIntent } from "@/store/feedbackRewriteWorkflowStore";
+import { isFeedbackWorkflowRequestCurrent, useFeedbackRewriteWorkflowStore, type FeedbackRewriteIntent } from "@/store/feedbackRewriteWorkflowStore";
 import { resolveBookToken } from "@/types/settings";
 import { useAuthStore } from "@/store/authStore";
 import { accountIdentity } from "@/auth/accountIdentity";
@@ -114,6 +114,18 @@ export function FeedbackRewriteWorkflowDialog() {
     };
   }
 
+  function captureWorkflowRequest() {
+    return { requestId: state.requestId, ownerSessionId: intent.ownerSessionId!, ownerRequestId: intent.ownerRequestId!, account: accountIdentity(useAuthStore.getState().user) };
+  }
+
+  function ownsWorkflowRequest(request: ReturnType<typeof captureWorkflowRequest>): boolean {
+    return isFeedbackWorkflowRequestCurrent(request) && accountIdentity(useAuthStore.getState().user) === request.account;
+  }
+
+  function patchWorkflowRequest(request: ReturnType<typeof captureWorkflowRequest>, patch: Parameters<typeof state.patch>[0]): void {
+    if (ownsWorkflowRequest(request)) useFeedbackRewriteWorkflowStore.getState().patch(patch);
+  }
+
   function cancelCurrentOperation() {
     const identity = state.operationIdentity;
     return identity ? state.cancelActive(identity) : false;
@@ -149,12 +161,13 @@ export function FeedbackRewriteWorkflowDialog() {
     if (!context) return;
     const controller = new AbortController();
     const operationId = crypto.randomUUID();
+    const request = captureWorkflowRequest();
     setController(controller, true);
     state.patch({ error: null, operationId, operationIdentity: operationIdentity(operationId), phase: intent.scope === "paragraph" ? "preparing" : "chapter-progress", progress: intent.scope === "chapter" ? { completed: 0, total: chapter?.paragraphs.length ?? 0 } : null });
     try {
       if (intent.scope === "paragraph" && intent.paragraphSlug) {
         const proposal = await prepareParagraphFeedbackProposal({ ...context, operationId, chapterSlug: intent.chapterSlug, paragraphSlug: intent.paragraphSlug, feedbackSource, signal: controller.signal });
-        state.patch({ proposal, staleFeedback: proposal.staleFeedback, phase: "paragraph-preview" });
+        patchWorkflowRequest(request, { proposal, staleFeedback: proposal.staleFeedback, phase: "paragraph-preview" });
       } else {
         const manifest = await runChapterFeedbackRewrite({
           ...context,
@@ -164,15 +177,16 @@ export function FeedbackRewriteWorkflowDialog() {
           confirmed: true,
           confirmStaleFeedback: state.staleFeedback,
           signal: controller.signal,
-          onProgress: (progress, current) => state.patch({ progress, manifest: structuredClone(current) }),
+          onProgress: (progress, current) => patchWorkflowRequest(request, { progress, manifest: structuredClone(current) }),
         });
-        state.patch({ manifest, operationId: manifest.operationId, progress: manifest.progress, phase: resultPhase(manifest) });
+        patchWorkflowRequest(request, { manifest, operationId: manifest.operationId, progress: manifest.progress, phase: resultPhase(manifest) });
+        if (!ownsWorkflowRequest(request)) return;
         await reload();
       }
     } catch (error) {
-      patchOperationError(error, controller.signal.aborted ? "cancelled" : "failed");
+      if (ownsWorkflowRequest(request)) patchOperationError(error, controller.signal.aborted ? "cancelled" : "failed");
     } finally {
-      setController(null);
+      if (ownsWorkflowRequest(request) && useFeedbackRewriteWorkflowStore.getState().abortController === controller) setController(null);
     }
   }
 
@@ -180,21 +194,24 @@ export function FeedbackRewriteWorkflowDialog() {
     if (!context || !state.proposal) return;
     state.patch({ phase: "generating", error: null });
     const controller = new AbortController();
+    const request = captureWorkflowRequest();
     setController(controller);
     try {
-      const manifest = await applyParagraphFeedbackProposal({ ...context, proposal: state.proposal, feedbackSource, confirmStaleFeedback: state.staleFeedback });
-      state.patch({ manifest, operationId: manifest.operationId, progress: manifest.progress, phase: resultPhase(manifest) });
+      const manifest = await applyParagraphFeedbackProposal({ ...context, proposal: state.proposal, feedbackSource, confirmStaleFeedback: state.staleFeedback, signal: controller.signal });
+      patchWorkflowRequest(request, { manifest, operationId: manifest.operationId, progress: manifest.progress, phase: resultPhase(manifest) });
+      if (!ownsWorkflowRequest(request)) return;
       await reload();
     } catch (error) {
-      patchOperationError(error, "failed");
+      if (ownsWorkflowRequest(request)) patchOperationError(error, controller.signal.aborted ? "cancelled" : "failed");
     } finally {
-      setController(null);
+      if (ownsWorkflowRequest(request) && useFeedbackRewriteWorkflowStore.getState().abortController === controller) setController(null);
     }
   }
 
   async function resumeChapter() {
     if (!context || !state.operationId) return;
     const controller = new AbortController();
+    const request = captureWorkflowRequest();
     setController(controller, true);
     state.patch({ phase: "chapter-progress", error: null });
     try {
@@ -205,14 +222,15 @@ export function FeedbackRewriteWorkflowDialog() {
         confirmed: true,
         confirmStaleFeedback: state.staleFeedback || state.manifest?.staleFeedback,
         signal: controller.signal,
-        onProgress: (progress, current) => state.patch({ progress, manifest: structuredClone(current) }),
+        onProgress: (progress, current) => patchWorkflowRequest(request, { progress, manifest: structuredClone(current) }),
       });
-      state.patch({ manifest, progress: manifest.progress, phase: resultPhase(manifest) });
+      patchWorkflowRequest(request, { manifest, progress: manifest.progress, phase: resultPhase(manifest) });
+      if (!ownsWorkflowRequest(request)) return;
       await reload();
     } catch (error) {
-      patchOperationError(error, controller.signal.aborted ? "cancelled" : "failed");
+      if (ownsWorkflowRequest(request)) patchOperationError(error, controller.signal.aborted ? "cancelled" : "failed");
     } finally {
-      setController(null);
+      if (ownsWorkflowRequest(request) && useFeedbackRewriteWorkflowStore.getState().abortController === controller) setController(null);
     }
   }
 
@@ -221,6 +239,7 @@ export function FeedbackRewriteWorkflowDialog() {
     setRestoreScopePaths(selectedPaths);
     setRollbackReturnPhase(state.phase === "completed" || state.phase === "failed" || state.phase === "cancelled" ? state.phase : resultPhase(state.manifest));
     const controller = new AbortController();
+    const request = captureWorkflowRequest();
     setController(controller);
     state.patch({ error: null, phase: "rolling-back" });
     try {
@@ -230,12 +249,13 @@ export function FeedbackRewriteWorkflowDialog() {
         operationId: state.operationId,
         policies: buildRestorePolicies(selectedPaths),
         defaultPolicy: selectedPaths?.length ? "keep-current" : "cancel",
+        signal: controller.signal,
       });
       const relevantConflicts = selected ? result.conflicts.filter((conflict) => selected.has(conflict.path)) : result.conflicts;
       if (!relevantConflicts.length) {
-        state.patch(restoreResultPatch(result.manifest));
+        patchWorkflowRequest(request, restoreResultPatch(result.manifest));
         setRestoreScopePaths(null);
-        await reload();
+        if (ownsWorkflowRequest(request)) await reload();
         return;
       }
       const files = new Map(result.manifest.modifiedFiles.map((file) => [file.path, file]));
@@ -247,11 +267,11 @@ export function FeedbackRewriteWorkflowDialog() {
         ]);
         return { ...conflict, currentContent, beforeContent };
       }));
-      state.patch({ manifest: result.manifest, conflicts, rollbackPolicies: Object.fromEntries(conflicts.map((entry) => [entry.path, "cancel"])), phase: "rollback-conflicts" });
+      patchWorkflowRequest(request, { manifest: result.manifest, conflicts, rollbackPolicies: Object.fromEntries(conflicts.map((entry) => [entry.path, "cancel"])), phase: "rollback-conflicts" });
     } catch (error) {
-      patchOperationError(error, "failed");
+      if (ownsWorkflowRequest(request)) patchOperationError(error, controller.signal.aborted ? "cancelled" : "failed");
     } finally {
-      setController(null);
+      if (ownsWorkflowRequest(request) && useFeedbackRewriteWorkflowStore.getState().abortController === controller) setController(null);
     }
   }
 
@@ -260,6 +280,7 @@ export function FeedbackRewriteWorkflowDialog() {
     const policies = state.rollbackPolicies;
     if (state.conflicts.some((conflict) => policies[conflict.path] === "cancel")) return;
     const controller = new AbortController();
+    const request = captureWorkflowRequest();
     setController(controller);
     state.patch({ phase: "rolling-back" });
     try {
@@ -268,14 +289,15 @@ export function FeedbackRewriteWorkflowDialog() {
         operationId: state.operationId,
         policies: buildRestorePolicies(restoreScopePaths, policies),
         defaultPolicy: restoreScopePaths?.length ? "keep-current" : "cancel",
+        signal: controller.signal,
       });
-      state.patch({ ...restoreResultPatch(result.manifest), conflicts: [] });
+      patchWorkflowRequest(request, { ...restoreResultPatch(result.manifest), conflicts: [] });
       setRestoreScopePaths(null);
-      await reload();
+      if (ownsWorkflowRequest(request)) await reload();
     } catch (error) {
-      patchOperationError(error, "failed");
+      if (ownsWorkflowRequest(request)) patchOperationError(error, controller.signal.aborted ? "cancelled" : "failed");
     } finally {
-      setController(null);
+      if (ownsWorkflowRequest(request) && useFeedbackRewriteWorkflowStore.getState().abortController === controller) setController(null);
     }
   }
 

@@ -3,6 +3,9 @@ import type { BookEntry } from "@/types/settings";
 import type { RewriteOperationScope } from "@/narrarium/rewriteOperationPaths";
 import { loadLatestLocalRewriteOperation, LOCAL_REWRITE_OPERATIONS_CHANGED_EVENT } from "@/repository/localRewriteOperationStore";
 import { getLocalRepository } from "@/repository/localRepository";
+import { accountIdentity } from "@/auth/accountIdentity";
+import { useAuthStore } from "@/store/authStore";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 export function useHasLocalRewriteOperation(input: {
   book: BookEntry | undefined;
@@ -28,9 +31,15 @@ export function useHasLocalRewriteOperation(input: {
     }
     const book = input.book;
     const scope = input.scope;
-    void getLocalRepository(book.owner, book.repo, input.branch).then((local) => {
+    const identity = accountIdentity(useAuthStore.getState().user);
+    if (!identity) {
+      setHasOperation(false);
+      return () => { active = false; };
+    }
+    void getLocalRepository(book.owner, book.repo, input.branch, identity).then((local) => {
       if (!local || local.cloneComplete !== true) return null;
       return loadLatestLocalRewriteOperation({
+        repoId: local.id,
         bookId: book.id,
         owner: book.owner,
         repo: book.repo,
@@ -38,7 +47,7 @@ export function useHasLocalRewriteOperation(input: {
         scope,
         chapterSlug: input.chapterSlug,
         paragraphSlug: scope === "paragraph" ? input.paragraphSlug : undefined,
-      });
+      }, captureRepositoryOperationScope());
     }).then((operation) => {
       if (active) setHasOperation(Boolean(operation));
     }).catch(() => {

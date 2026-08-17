@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { runAssistantPrompt } from "@/assistant/service";
 import type { LoadedWriterContext } from "@/assistant/context";
 import type { AppSettings } from "@/types/settings";
-import { useFeedbackRewriteWorkflowStore, type FeedbackRewriteOperationIdentity } from "@/store/feedbackRewriteWorkflowStore";
+import { isFeedbackWorkflowRequestCurrent, useFeedbackRewriteWorkflowStore, type FeedbackRewriteOperationIdentity } from "@/store/feedbackRewriteWorkflowStore";
 import { isValidAssistantActionShape } from "@/assistant/actionValidation";
 import { feedbackRewriteResultSummary, restoreResultPatch } from "@/components/book/FeedbackRewriteWorkflowDialog";
 import type { RewriteOperationManifest } from "@/narrarium/rewriteFromReaderFeedback";
@@ -81,6 +81,12 @@ describe("feedback rewrite cancellation ownership", () => {
     useFeedbackRewriteWorkflowStore.setState({ abortController: controller, abortable: true, operationIdentity: identity });
     expect(useFeedbackRewriteWorkflowStore.getState().cancelActive(identity)).toBe(true);
     expect(controller.signal.aborted).toBe(true);
+  });
+
+  it("rejects callbacks from an older workflow request", () => {
+    useFeedbackRewriteWorkflowStore.setState({ requestId: 8, intent: { mode: "generate", scope: "chapter", bookId: "book-id", chapterSlug: "chapter-1", ownerSessionId: "session-1", ownerRequestId: "request-2" } });
+    expect(isFeedbackWorkflowRequestCurrent({ requestId: 7, ownerSessionId: "session-1", ownerRequestId: "request-1" })).toBe(false);
+    expect(isFeedbackWorkflowRequestCurrent({ requestId: 8, ownerSessionId: "session-1", ownerRequestId: "request-2" })).toBe(true);
   });
 
   it("does not replace an active workflow with a concurrent target", () => {

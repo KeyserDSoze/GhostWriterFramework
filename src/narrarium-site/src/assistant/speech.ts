@@ -8,6 +8,7 @@ import { BrowserSpeechFallbackRequired, executeMediaFallback } from "@/assistant
 import { CandidateTimeoutError } from "@/assistant/executionLimits";
 import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/assistant/fallbackDisclosure";
 import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
+import { createRoutingExecutionBudget, estimateSttAttempt, estimateTtsAttempt, type RoutingExecutionBudget } from "@/assistant/routingExecutionBudget";
 
 const MAX_TTS_CHARS = 1200;
 const BROWSER_TTS_FALLBACK = "narrarium:browser-tts-fallback";
@@ -130,12 +131,14 @@ export function getSpeechIntegration(settings: AppSettings): AIIntegration | nul
 export async function transcribeAudio(blob: Blob, settings: AppSettings, signal: AbortSignal | undefined, startCandidateIndex: number, accountScope: string | null): Promise<string> {
   const operation = beginAccountScopedAiOperation(signal, accountScope);
   operation.signal.throwIfAborted();
+  const budget = createRoutingExecutionBudget(settings, operation.signal);
   try {
   const routeCandidates = applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, "stt"));
   const candidates = routeCandidates.slice(startCandidateIndex);
   if (!candidates.length) throw new Error("No AI speech-to-text model is configured.");
   const sizeKb = Math.round(blob.size / 1024);
-  return await executeMediaFallback<string, TaskCandidate>({ candidates, signal: operation.signal, beforeCandidate: (candidate, index) => { const previous = routeCandidates[startCandidateIndex + index - 1]; if (previous) acknowledgeCrossBoundaryFallback({ settings, kind: "audio", from: previous, to: candidate, accountScope: operation.accountScope }); }, runBrowser: async (index) => { throw new BrowserSpeechFallbackRequired(startCandidateIndex + index + 1); }, runAi: async (candidate, attemptSignal, candidateIndex) => {
+  return await executeMediaFallback<string, TaskCandidate>({ candidates, signal: budget.signal, beforeCandidate: (candidate, index) => { const previous = routeCandidates[startCandidateIndex + index - 1]; if (previous) acknowledgeCrossBoundaryFallback({ settings, kind: "audio", from: previous, to: candidate, accountScope: operation.accountScope }); }, runBrowser: async (index) => { throw new BrowserSpeechFallbackRequired(startCandidateIndex + index + 1); }, runAi: async (candidate, attemptSignal, candidateIndex) => {
+    budget.reserve(estimateSttAttempt(blob, candidate));
     const integration = candidate.integration as AIIntegration;
     const model = candidate.model!;
     const pricing = candidates.find((entry) => entry.integration === integration && entry.model === model)?.pricing;
@@ -157,6 +160,7 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings, signal:
     }
   } });
   } finally {
+    budget.dispose();
     operation.dispose();
   }
 }
@@ -164,17 +168,20 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings, signal:
 export async function speakText(text: string, settings: AppSettings, options: SpeakOptions): Promise<SpeechController> {
   const operation = beginAccountScopedAiOperation(options.signal, options.accountScope);
   operation.signal.throwIfAborted();
+  const budget = createRoutingExecutionBudget(settings, operation.signal);
   const voice = settings.speech.ttsVoice || "nova";
   const candidates = applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, "tts"));
   if (!candidates.length) throw new Error("No text-to-speech route is configured.");
   try {
-    const scopedOptions = { ...options, signal: operation.signal, accountScope: operation.accountScope };
-    const controller = await executeMediaFallback<SpeechController, TaskCandidate>({ candidates, signal: operation.signal, timeoutAi: false, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: candidates[index - 1], to: candidate, accountScope: operation.accountScope }); }, runBrowser: () => speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, scopedOptions), runAi: async (_candidate, _attemptSignal, candidateIndex) => {
-        return speakWithOpenAICompatible(text, settings, candidates, candidateIndex, voice, scopedOptions, (startIndex) => speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, { ...scopedOptions, startIndex }));
+    const scopedOptions = { ...options, signal: budget.signal, accountScope: operation.accountScope };
+    const controller = await executeMediaFallback<SpeechController, TaskCandidate>({ candidates, signal: budget.signal, timeoutAi: false, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: candidates[index - 1], to: candidate, accountScope: operation.accountScope }); }, runBrowser: () => speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, scopedOptions), runAi: async (_candidate, _attemptSignal, candidateIndex) => {
+        return speakWithOpenAICompatible(text, settings, candidates, candidateIndex, voice, scopedOptions, budget, (startIndex) => speakWithBrowser(text, settings.speech.ttsVoice, settings.speech.ttsRate, settings.ui.language, { ...scopedOptions, startIndex }));
     } });
-    void controller.done.then(operation.dispose, operation.dispose);
+    const dispose = () => { budget.dispose(); operation.dispose(); };
+    void controller.done.then(dispose, dispose);
     return controller;
   } catch (error) {
+    budget.dispose();
     operation.dispose();
     throw error;
   }
@@ -197,18 +204,33 @@ function detectSpeechLang(text: string, uiLanguage: string): string {
   return uiLanguage === "it" ? "it-IT" : "en-US";
 }
 
-async function loadVoices(): Promise<SpeechSynthesisVoice[]> {
+async function loadVoices(signal?: AbortSignal): Promise<SpeechSynthesisVoice[]> {
+  signal?.throwIfAborted();
   const existing = window.speechSynthesis.getVoices();
   if (existing.length) return existing;
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let settled = false;
+    let timer: number | undefined;
+    const cleanup = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      if (window.speechSynthesis.onvoiceschanged === finish) window.speechSynthesis.onvoiceschanged = null;
+      signal?.removeEventListener("abort", abort);
+    };
     const finish = () => {
       if (settled) return;
       settled = true;
+      cleanup();
       resolve(window.speechSynthesis.getVoices());
     };
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(signal?.reason ?? new DOMException("Speech voice loading was cancelled.", "AbortError"));
+    };
     window.speechSynthesis.onvoiceschanged = finish;
-    window.setTimeout(finish, 500);
+    signal?.addEventListener("abort", abort, { once: true });
+    timer = window.setTimeout(finish, 500);
   });
 }
 
@@ -234,7 +256,7 @@ function resolveSegments(text: string, options: SpeakOptions): string[] {
 async function speakWithBrowser(text: string, voiceName: string, rate: number, uiLanguage: string, options: SpeakOptions): Promise<SpeechController> {
   const segments = resolveSegments(text, options);
   const lang = detectSpeechLang(text, uiLanguage);
-  const voices = await loadVoices();
+  const voices = await loadVoices(options.signal);
   options.signal?.throwIfAborted();
   const voice = pickVoice(voices, voiceName, lang);
   let stopped = false;
@@ -275,7 +297,6 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number, u
     };
     window.speechSynthesis.speak(utterance);
   };
-  play(currentIndex);
   const controller: SpeechController = {
     stop: () => {
       stopped = true;
@@ -297,14 +318,19 @@ async function speakWithBrowser(text: string, voiceName: string, rate: number, u
     getCurrentIndex: () => currentIndex,
     done,
   };
-  const abort = () => controller.stop();
+  const abort = () => {
+    stopped = true;
+    window.speechSynthesis.cancel();
+    finish(options.signal?.reason ?? new DOMException("Speech playback was cancelled.", "AbortError"));
+  };
   options.signal?.addEventListener("abort", abort, { once: true });
   const cleanupAbort = () => options.signal?.removeEventListener("abort", abort);
   void done.then(cleanupAbort, cleanupAbort);
+  play(currentIndex);
   return controller;
 }
 
-async function speakWithOpenAICompatible(text: string, settings: AppSettings, candidates: TaskCandidate[], candidateIndex: number, voice: string, options: SpeakOptions, browserFallback: (startIndex: number) => Promise<SpeechController>): Promise<SpeechController> {
+async function speakWithOpenAICompatible(text: string, settings: AppSettings, candidates: TaskCandidate[], candidateIndex: number, voice: string, options: SpeakOptions, budget: RoutingExecutionBudget, browserFallback: (startIndex: number) => Promise<SpeechController>): Promise<SpeechController> {
   const segments = resolveSegments(text, options);
   const startIndex = Math.max(0, options.startIndex ?? 0);
   let stopped = false;
@@ -323,6 +349,7 @@ async function speakWithOpenAICompatible(text: string, settings: AppSettings, ca
   const synthesize = async (segment: string, allowFallback = true): Promise<string> => {
     const attempts = allowFallback ? candidates.slice(candidateIndex) : [candidates[candidateIndex]];
     return executeMediaFallback<string, TaskCandidate>({ candidates: attempts, signal: synthesisController.signal, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: attempts[index - 1], to: candidate, accountScope: options.accountScope }); }, runBrowser: async () => BROWSER_TTS_FALLBACK, runAi: async (candidate, attemptSignal, relativeIndex) => {
+      budget.reserve(estimateTtsAttempt(segment, candidate));
       const integration = candidate.integration as AIIntegration;
       const model = candidate.model!;
       const absoluteIndex = allowFallback ? candidateIndex + relativeIndex : candidateIndex;
@@ -372,6 +399,7 @@ async function speakWithOpenAICompatible(text: string, settings: AppSettings, ca
   let rejectDone: (error: unknown) => void = () => undefined;
   const done = new Promise<void>((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
   let settled = false;
+  let abortPlayback: () => void;
   const finish = (error?: unknown) => {
     if (settled) return;
     settled = true;
@@ -379,6 +407,7 @@ async function speakWithOpenAICompatible(text: string, settings: AppSettings, ca
     heldPlay = null;
     synthesisController.abort();
     options.signal?.removeEventListener("abort", abortSynthesis);
+    options.signal?.removeEventListener("abort", abortPlayback);
     if (audio) {
       audio.pause();
       audio.removeAttribute("src");
@@ -396,6 +425,8 @@ async function speakWithOpenAICompatible(text: string, settings: AppSettings, ca
       resolveDone();
     }
   };
+  abortPlayback = () => finish(options.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+  options.signal?.addEventListener("abort", abortPlayback, { once: true });
 
   const playNext = async (index: number): Promise<void> => {
     currentIndex = index;

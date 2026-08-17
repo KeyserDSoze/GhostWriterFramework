@@ -15,19 +15,13 @@ export function microsoftSilentRequest(account: AccountInfo): SilentRequest {
   };
 }
 
-export function findMicrosoftAccountByEmail(email: string | undefined): AccountInfo | null {
-  const accounts = msalInstance.getAllAccounts();
-  if (email) {
-    const normalized = email.trim().toLowerCase();
-    const match = accounts.find((account) => {
-      const candidates = [account.username, account.upn, account.loginHint].filter(
-        (value): value is string => typeof value === "string" && value.length > 0,
-      );
-      return candidates.some((value) => value.trim().toLowerCase() === normalized);
-    });
-    if (match) return match;
-  }
-  return msalInstance.getActiveAccount() ?? (accounts.length === 1 ? accounts[0] : null);
+export function findMicrosoftAccount(input: { homeAccountId?: string; localAccountId?: string; email?: string }): AccountInfo | null {
+  return findMicrosoftAccountIn(input, msalInstance.getAllAccounts());
+}
+
+export function findMicrosoftAccountIn(input: { homeAccountId?: string; localAccountId?: string; email?: string }, accounts: AccountInfo[]): AccountInfo | null {
+  if (!input.homeAccountId?.trim() || !input.localAccountId?.trim()) return null;
+  return accounts.find((account) => account.homeAccountId === input.homeAccountId && account.localAccountId === input.localAccountId) ?? null;
 }
 
 const msalConfig: Configuration = {
@@ -37,7 +31,7 @@ const msalConfig: Configuration = {
     redirectUri: redirectUri(),
   },
   cache: {
-    cacheLocation: "localStorage",
+    cacheLocation: "sessionStorage",
   },
 };
 

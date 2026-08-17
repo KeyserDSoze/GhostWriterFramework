@@ -67,6 +67,19 @@ export function chooseToolMatch(context: OrchestratorToolContext, availableHandl
     const tool = copilotToolRegistry.get("open-reader-evaluations");
     if (tool?.handlerId) return { toolId: tool.id, handlerId: tool.handlerId, enabled: isCopilotToolEnabled(context.settings, tool), missingRequirements: context.evaluateContract?.(tool).missing ?? [] };
   }
+  const explicitToolId = explicitIntentToolId(prompt);
+  if (explicitToolId) {
+    const tool = copilotToolRegistry.get(explicitToolId);
+    if (tool?.handlerId && availableHandlerIds.has(tool.handlerId)) {
+      return {
+        toolId: tool.id,
+        handlerId: tool.handlerId,
+        enabled: isCopilotToolEnabled(context.settings, tool),
+        missingRequirements: context.evaluateContract?.(tool).missing ?? [],
+        mutationIntent: tool.mutatesData ? classifyMutationIntent(prompt, tool.id) : undefined,
+      };
+    }
+  }
   let best: { tool: ReturnType<typeof copilotToolRegistry.list>[number]; score: number } | null = null;
   for (const tool of copilotToolRegistry.list()) {
     if (!tool.handlerId || !availableHandlerIds.has(tool.handlerId)) continue;
@@ -92,6 +105,19 @@ export function chooseToolMatch(context: OrchestratorToolContext, availableHandl
     missingRequirements: context.evaluateContract?.(best.tool).missing ?? [],
     mutationIntent: best.tool.mutatesData ? classifyMutationIntent(prompt, best.tool.id) : undefined,
   };
+}
+
+function explicitIntentToolId(prompt: string): string | null {
+  if (/\b(?:create|add|write|draft|crea|aggiungi|scrivi|genera)(?:\s+(?:a|an|the|uno?|il))?\s+(?:paragraph|scene|paragrafo|scena)\b/i.test(prompt)) return "create-paragraph";
+  if (/\b(?:create|add|write|crea|aggiungi|scrivi|genera)(?:\s+(?:a|an|the|uno?|il))?\s+(?:script|scene script|scaletta)\b/i.test(prompt)) return "create-script";
+  if (!/\b(?:feedback|reader|readers|lettore|lettori)\b/i.test(prompt) && /\b(?:create|add|write|generate|crea|aggiungi|scrivi|genera)(?:\s+(?:a|an|the|una?|la))?\s+(?:draft|bozza)\b/i.test(prompt)) return "create-draft";
+  if (/\b(?:write|create|refresh|update|save|scrivi|crea|aggiorna|salva)\b[\s\S]*\b(?:chapter resume|resume|riassunto del capitolo|riassunto)\b/i.test(prompt)) return "write-resume";
+  if (/\b(?:create|open|make|submit|crea|apri|invia)(?:\s+(?:a|an|the|una?|la))?\s+(?:pull request|pr)\b/i.test(prompt)) return "create-pull-request";
+  if (/\b(?:create|add|define|crea|aggiungi|definisci)(?:\s+(?:a|an|the|uno?|il))?\s+(?:(?:custom|simulated|personalizzato|simulato)\s+)?(?:reader|lettore)\b/i.test(prompt)) return "create-simulated-reader";
+  if (/\b(?:summarize|compare|write|save|riassumi|sintetizza|confronta|scrivi|salva)\b[\s\S]*\b(?:reader evaluations?|reader reviews?|valutazioni (?:dei |del )?lettori|valutazioni (?:del )?lettore)\b/i.test(prompt)) return "summarize-reader-evaluations";
+  if (/\b(?:evaluate|review|run|valuta|recensisci|esegui|fai valutare)\b[\s\S]*\b(?:with|using|con|usando)\s+(?:(?:the|i|dei)\s+)?(?:readers?|lettori)\b/i.test(prompt)) return "evaluate-with-readers";
+  if (/\b(?:evaluate|review|valuta|recensisci)\b[\s\S]*\b(?:all|every|tutti|ogni)\b[\s\S]*\b(?:paragraphs?|scenes?|paragrafi|scene)\b/i.test(prompt)) return "evaluate-chapter-paragraphs";
+  return null;
 }
 
 function isBetterTie(

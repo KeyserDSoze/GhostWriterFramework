@@ -15,7 +15,7 @@ export function LanguageToggle() {
   async function changeLanguage(code: "en" | "it") {
     await i18n.changeLanguage(code);
     patchSettings({ ui: { ...settings.ui, language: code } });
-    await save();
+    try { await save(); } catch { return; }
   }
 
   return (

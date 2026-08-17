@@ -24,21 +24,25 @@ import {
   writeLocalText,
 } from "@/repository/localRepository";
 import { pushLocalCommits } from "@/repository/repositoryService";
+import { useAuthStore } from "@/store/authStore";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 let repoId = "";
+const identity = "google:sub-writer";
+useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
 
 afterEach(async () => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
-  if (repoId) await removeLocalRepository(repoId);
+  if (repoId) await removeLocalRepository(repoId, captureRepositoryOperationScope());
   repoId = "";
 });
 
 test("a newer same-path edit remains dirty when it lands before successful push settlement", async () => {
-  const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "main", defaultBranch: "main", remoteHeadSha: "source-head", clonedAt: new Date().toISOString(), cloneComplete: true });
+  const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "main", defaultBranch: "main", remoteHeadSha: "source-head", clonedAt: new Date().toISOString(), cloneComplete: true }, captureRepositoryOperationScope());
   repoId = repo.id;
   const original = await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "old", baseSha: "old-blob", size: 3 });
-  const commit = await mutateLocalTextFilesAndCreateCommitAtomically(repoId, "Update plot", [
+  const commit = await mutateLocalTextFilesAndCreateCommitAtomically(repoId, captureRepositoryOperationScope(), "Update plot", [
     { path: "plot.md", content: "pushed mutation", expectedCurrentHash: original.currentHash },
   ]);
   octokit.getRef.mockResolvedValue({ data: { object: { sha: "source-head" } } });
@@ -52,7 +56,7 @@ test("a newer same-path edit remains dirty when it lands before successful push 
     return { data: {} };
   });
 
-  const result = await pushLocalCommits({ bookId: "book", token: "token", repoId });
+  const result = await pushLocalCommits({ bookId: "book", token: "token", repoId, owner: "owner", repo: "repo", branch: "main", accountIdentity: identity });
 
   const current = await getLocalFile(repoId, "plot.md");
   expect(result).toMatchObject({ commitSha: "pushed-head", recoveryPaths: ["plot.md"] });
@@ -63,13 +67,13 @@ test("a newer same-path edit remains dirty when it lands before successful push 
 
 test("multiple commits to one path push and settle against the final committed revision", async () => {
   vi.spyOn(Date.prototype, "toISOString").mockReturnValue("2026-08-16T00:00:00.000Z");
-  const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "main", defaultBranch: "main", remoteHeadSha: "source-head", clonedAt: new Date().toISOString(), cloneComplete: true });
+  const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "main", defaultBranch: "main", remoteHeadSha: "source-head", clonedAt: new Date().toISOString(), cloneComplete: true }, captureRepositoryOperationScope());
   repoId = repo.id;
   const original = await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "old", baseSha: "old-blob", size: 3 });
-  const first = await mutateLocalTextFilesAndCreateCommitAtomically(repoId, "First update", [
+  const first = await mutateLocalTextFilesAndCreateCommitAtomically(repoId, captureRepositoryOperationScope(), "First update", [
     { path: "plot.md", content: "first", expectedCurrentHash: original.currentHash },
   ]);
-  const second = await mutateLocalTextFilesAndCreateCommitAtomically(repoId, "Second update", [
+  const second = await mutateLocalTextFilesAndCreateCommitAtomically(repoId, captureRepositoryOperationScope(), "Second update", [
     { path: "plot.md", content: "second", expectedCurrentHash: first.files[0].hash },
   ]);
   octokit.getRef.mockResolvedValue({ data: { object: { sha: "source-head" } } });
@@ -80,7 +84,7 @@ test("multiple commits to one path push and settle against the final committed r
   octokit.createCommit.mockResolvedValue({ data: { sha: "pushed-head" } });
   octokit.updateRef.mockResolvedValue({ data: {} });
 
-  const result = await pushLocalCommits({ bookId: "book", token: "token", repoId });
+  const result = await pushLocalCommits({ bookId: "book", token: "token", repoId, owner: "owner", repo: "repo", branch: "main", accountIdentity: identity });
 
   expect([first.order, second.order]).toEqual([1, 2]);
   expect(result.recoveryPaths).toBeUndefined();

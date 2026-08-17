@@ -3,16 +3,20 @@ import { afterEach, expect, test } from "vitest";
 import { getLocalFile, putCleanLocalFile, putLocalRepository, removeLocalRepository } from "@/repository/localRepository";
 import { renameParagraphWithCompanions, reorderChaptersInBook, reorderParagraphsInChapter } from "@/github/githubClient";
 import { buildParagraphScriptArtifact } from "@/narrarium/workspace";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
+import { useAuthStore } from "@/store/authStore";
+
+useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
 
 let repoId = "";
 
 afterEach(async () => {
-  if (repoId) await removeLocalRepository(repoId);
+  if (repoId) await removeLocalRepository(repoId, captureRepositoryOperationScope());
   repoId = "";
 });
 
 async function repository(files: Array<{ path: string; content: string }>) {
-  const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString(), cloneComplete: true });
+  const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "repo", branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString(), cloneComplete: true }, captureRepositoryOperationScope());
   repoId = repo.id;
   for (const file of files) await putCleanLocalFile({ repoId, path: file.path, kind: "text", text: file.content, size: file.content.length });
   return repo;
@@ -66,6 +70,27 @@ test("chapter reorder moves chapter scripts and regenerates their chapter positi
   expect(ledger).not.toContain("scripts/001-one/001-first.md");
 });
 
+test("paragraph reorder works in a local repository without scripts", async () => {
+  await repository([
+    paragraph("001-one", "001-first", 1),
+    paragraph("001-one", "002-second", 2),
+  ]);
+
+  const outcome = await reorderParagraphsInChapter("token", "owner", "repo", "main", "chapters/001-one", [
+    { number: "001", title: "First", path: "chapters/001-one/001-first.md" },
+    { number: "002", title: "Second", path: "chapters/001-one/002-second.md" },
+  ], [
+    { number: "002", title: "Second", path: "chapters/001-one/002-second.md" },
+    { number: "001", title: "First", path: "chapters/001-one/001-first.md" },
+  ]);
+
+  expect(outcome.paragraphs.map((entry) => entry.path)).toEqual([
+    "chapters/001-one/001-second.md",
+    "chapters/001-one/002-first.md",
+  ]);
+  expect(await getLocalFile(repoId, "chapters/001-one/001-second.md")).not.toBeNull();
+});
+
 test("a malformed moved script aborts the complete structural transaction", async () => {
   const oldSlug = "001-opening";
   const malformed = { path: `scripts/001-one/${oldSlug}.md`, content: "---\ntype: script\ntitle: Missing required identity\n---\n\n@scene_goal{Open}" };
@@ -76,4 +101,17 @@ test("a malformed moved script aborts the complete structural transaction", asyn
   expect((await getLocalFile(repoId, malformed.path))?.text).toBe(malformed.content);
   expect(await getLocalFile(repoId, "scripts/001-one/001-renamed.md")).toBeNull();
   expect(await getLocalFile(repoId, "state/script-ledger.md")).toBeNull();
+});
+
+test("paragraph deletion rejects a stale user-loaded revision without changing companions", async () => {
+  const target = paragraph("001-one", "001-first", 1);
+  const script = buildParagraphScriptArtifact({ chapterSlug: "001-one", number: 1, title: "First", paragraphSlug: "001-first" });
+  await repository([chapter("001-one", 1), target, script]);
+
+  await expect(reorderParagraphsInChapter("token", "owner", "repo", "main", "chapters/001-one", [
+    { number: "001", title: "First", path: target.path, scriptPath: script.path },
+  ], [], "Delete paragraph", { expectedRemoteHeadSha: "head", expectedParagraphHashes: { [target.path]: "stale" } })).rejects.toMatchObject({ kind: "conflict" });
+
+  expect((await getLocalFile(repoId, target.path))?.text).toBe(target.content);
+  expect(await getLocalFile(repoId, script.path)).not.toBeNull();
 });

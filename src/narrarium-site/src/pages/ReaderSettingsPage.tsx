@@ -41,13 +41,19 @@ export function ReaderSettingsPage() {
   }
 
   function deleteBookmark(id: string) {
+    if (!window.confirm(t("reader.deleteBookmarkConfirm"))) return;
     patchReader({ bookmarks: reader.bookmarks.filter((entry) => entry.id !== id) });
   }
 
-  async function handleSave() {
-    await save();
+  async function handleSave(): Promise<boolean> {
+    try {
+      if (!await save()) return false;
+    } catch {
+      return false;
+    }
     setSavedSnapshot(JSON.stringify(useSettingsStore.getState().settings.reader));
     toast({ title: t("reader.settingsSaved") });
+    return true;
   }
 
   return (

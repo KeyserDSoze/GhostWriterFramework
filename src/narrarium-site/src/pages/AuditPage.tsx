@@ -48,9 +48,11 @@ import {
 import { useRegisterPageActions } from "@/store/pageActionsStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { resolveBookAuditSettings, resolveBookToken, type AuditDepth } from "@/types/settings";
-import { auditRunBlocker, claimAuditQueryOperation } from "@/narrarium/auditAvailability";
+import { auditRunBlocker } from "@/narrarium/auditAvailability";
 import { useAuthStore } from "@/store/authStore";
 import { accountIdentity } from "@/auth/accountIdentity";
+import { useRegisterPageSave } from "@/store/saveStore";
+import { resolveUnsavedChanges } from "@/hooks/resolveUnsavedChanges";
 
 const SEVERITIES: AuditSeverity[] = ["critical", "high", "medium", "low", "informational"];
 const CERTAINTIES: AuditCertainty[] = ["confirmed", "probable", "possible", "needs-context"];
@@ -95,7 +97,6 @@ export function AuditPage() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const abortRef = useRef<AbortController | null>(null);
-  const handledOperationsRef = useRef(new Set<string>());
   const runBlocker = book ? auditRunBlocker(book, settings) : null;
 
   useEffect(() => {
@@ -105,13 +106,17 @@ export function AuditPage() {
   useEffect(() => {
     if (!book || !structure || !target || !token) return;
     let active = true;
+    setReport(null);
+    setNotes({});
     setLoadedReportPath("");
+    setDeleteOpen(false);
     setLoadingReport(true);
     setError("");
     void loadAuditReport({ token, book, branch, structure, target: targetInput })
       .then((loaded) => {
         if (!active) return;
         setReport(loaded);
+        setLoadedReportPath(target.reportPath);
         setNotes(Object.fromEntries((loaded?.findings ?? []).map((finding) => [finding.id, finding.authorNote])));
       })
       .catch((loadError) => {
@@ -121,17 +126,40 @@ export function AuditPage() {
       .finally(() => {
         if (!active) return;
         setLoadingReport(false);
-        setLoadedReportPath(target.reportPath);
       });
     return () => { active = false; };
   }, [book?.id, branch, structure?.loadedBranch, target?.reportPath, token]);
 
   const running = runState === "preparingContext" || runState === "running" || runState === "synthesizing";
+  const reportReady = Boolean(report && target && loadedReportPath === target.reportPath);
+  const dirtyNotes = report?.findings.some((finding) => (notes[finding.id] ?? "") !== finding.authorNote) ?? false;
 
+  async function saveNotes(): Promise<boolean> {
+    if (!report) return true;
+    for (const finding of report.findings) {
+      const note = notes[finding.id] ?? "";
+      if (note !== finding.authorNote && !await updateFinding(finding, { authorNote: note })) return false;
+    }
+    return true;
+  }
+
+  useRegisterPageSave({
+    dirty: dirtyNotes,
+    enabled: Boolean(reportReady && book && token),
+    onSave: saveNotes,
+  });
   useEffect(() => () => abortRef.current?.abort(), []);
 
   async function executeAudit() {
     if (!book || !structure || !target || !token || running || runBlocker) return;
+    const mayReplaceNotes = await resolveUnsavedChanges({
+      dirty: dirtyNotes,
+      save: saveNotes,
+      saveMessage: t("common.unsavedSaveConfirm"),
+      discardMessage: t("common.unsavedDiscardConfirm"),
+    });
+    if (!mayReplaceNotes) return;
+    if (!window.confirm(t("audit.runConfirm"))) return;
     const controller = new AbortController();
     abortRef.current = controller;
     setError("");
@@ -151,6 +179,7 @@ export function AuditPage() {
         onProgress: (next) => { setProgress(next); setRunState(next.state); },
       });
       setReport(completed);
+      setLoadedReportPath(target.reportPath);
       setNotes(Object.fromEntries(completed.findings.map((finding) => [finding.id, finding.authorNote])));
       setRunState("completed");
       toast({ title: t("audit.messages.runComplete") });
@@ -181,25 +210,13 @@ export function AuditPage() {
     setStatusFilter(status && STATUSES.includes(status as AuditFindingStatus) ? status : "all");
   }, [location.search, report]);
 
-  useEffect(() => {
-    if (!target || loadedReportPath !== target.reportPath) return;
-    const params = new URLSearchParams(location.search);
-    const action = params.get("action");
-    if (action !== "run" && action !== "delete") return;
-    if (!claimAuditQueryOperation(handledOperationsRef.current, location.key, target.reportPath, location.search)) return;
-    params.delete("action");
-    const search = params.toString();
-    navigate(`${location.pathname}${search ? `?${search}` : ""}${location.hash}`, { replace: true });
-    if (action === "delete") setDeleteOpen(true);
-    else void executeAudit();
-  }, [loadedReportPath, location.hash, location.key, location.pathname, location.search, target?.reportPath, runBlocker]);
-
   async function removeReport() {
-    if (!book || !structure || !target || !token) return;
+    if (!book || !structure || !target || !token || !reportReady || dirtyNotes) return;
     setDeleting(true);
     try {
       await deleteAudit({ token, book, branch, structure, target: targetInput });
       setReport(null);
+      setLoadedReportPath("");
       setNotes({});
       setDeleteOpen(false);
       setRunState("pending");
@@ -213,37 +230,39 @@ export function AuditPage() {
     }
   }
 
-  async function updateFinding(finding: AuditFinding, patch: { status?: AuditFindingStatus; authorNote?: string }) {
-    if (!book || !structure || !target || !token) return;
+  async function updateFinding(finding: AuditFinding, patch: { status?: AuditFindingStatus; authorNote?: string }): Promise<boolean> {
+    if (!book || !structure || !target || !token || !reportReady) return false;
     setUpdatingFinding(finding.id);
     try {
       const updated = await updateAuditFinding({ token, book, branch, structure, target: targetInput, findingId: finding.id, ...patch });
       setReport((current) => ({ ...updated, stale: current?.stale, currentSourceHash: current?.currentSourceHash }));
       setNotes((current) => patch.authorNote === undefined ? current : ({ ...current, [finding.id]: updated.findings.find((entry) => entry.id === finding.id)?.authorNote ?? "" }));
       toast({ title: t("audit.messages.findingSaved") });
+      return true;
     } catch (updateError) {
       toast({ title: t("audit.errors.updateFailed"), description: String(updateError), variant: "destructive" });
+      return false;
     } finally {
       setUpdatingFinding(null);
     }
   }
 
   function openSource(finding?: AuditFinding) {
-    if (!structure || !target) return;
+    if (!structure || !target || dirtyNotes) return;
     const href = finding ? findingSourceHref(structure, target, finding) : target.sourceHref;
     navigate(href, finding ? { state: { auditTextOffset: finding.position.textOffset, auditExcerpt: finding.position.excerpt } } : undefined);
   }
 
   useRegisterPageActions([
     {
-      id: report ? "update-audit" : "run-audit",
-      label: report ? t("audit.actions.update") : t("audit.actions.run"),
-      icon: report ? <RefreshCcw className="h-4 w-4" /> : <Play className="h-4 w-4" />,
-      run: () => executeAudit(),
-      disabled: running || !target || Boolean(runBlocker),
+      id: reportReady ? "update-audit" : "run-audit",
+      label: reportReady ? t("audit.actions.update") : t("audit.actions.run"),
+      icon: reportReady ? <RefreshCcw className="h-4 w-4" /> : <Play className="h-4 w-4" />,
+      run: () => void executeAudit(),
+      disabled: running || !target || Boolean(runBlocker) || dirtyNotes,
     },
-    { id: "open-audit-source", label: t("audit.actions.openSource"), icon: <ExternalLink className="h-4 w-4" />, run: () => openSource(), disabled: !target },
-    { id: "delete-audit", label: t("audit.actions.delete"), icon: <Trash2 className="h-4 w-4" />, run: () => setDeleteOpen(true), disabled: running || !report },
+    { id: "open-audit-source", label: t("audit.actions.openSource"), icon: <ExternalLink className="h-4 w-4" />, run: () => openSource(), disabled: !target || dirtyNotes },
+    { id: "delete-audit", label: t("audit.actions.delete"), icon: <Trash2 className="h-4 w-4" />, run: () => setDeleteOpen(true), disabled: running || !reportReady || dirtyNotes },
   ], Boolean(book && target));
 
   const categories = useMemo(() => [...new Set([...AUDIT_CATEGORIES, ...(report?.findings.map((finding) => finding.category) ?? [])])], [report]);
@@ -276,7 +295,7 @@ export function AuditPage() {
             <div className="min-w-40">
               <Label>{t("audit.depth.label")}</Label>
               <Select value={depth} onValueChange={(value) => setDepth(value as AuditDepth)} disabled={running}>
-                <SelectTrigger className="mt-1.5 bg-background"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="mt-1.5 bg-background" aria-label={t("audit.depth.label")}><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="quick">{t("audit.depth.quick")}</SelectItem>
                   <SelectItem value="standard">{t("audit.depth.standard")}</SelectItem>
@@ -289,8 +308,8 @@ export function AuditPage() {
             ) : (
               <Button onClick={() => void executeAudit()} disabled={Boolean(runBlocker)}>{report ? <RefreshCcw className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}{report ? t(report.stale ? "audit.actions.update" : "audit.actions.rerun") : t("audit.actions.run")}</Button>
             )}
-            <Button variant="outline" onClick={() => openSource()}><BookOpen className="mr-2 h-4 w-4" />{t("audit.actions.openSource")}</Button>
-            {report && <Button variant="outline" onClick={() => setDeleteOpen(true)} disabled={running}><Trash2 className="h-4 w-4 text-destructive sm:mr-2" /><span className="hidden sm:inline">{t("audit.actions.delete")}</span></Button>}
+            <Button variant="outline" onClick={() => openSource()} disabled={dirtyNotes}><BookOpen className="mr-2 h-4 w-4" />{t("audit.actions.openSource")}</Button>
+            {reportReady && <Button variant="outline" onClick={() => setDeleteOpen(true)} disabled={running || dirtyNotes} aria-label={t("audit.actions.delete")}><Trash2 className="h-4 w-4 text-destructive sm:mr-2" /><span className="hidden sm:inline">{t("audit.actions.delete")}</span></Button>}
           </div>
         </div>
       </section>
@@ -360,6 +379,7 @@ export function AuditPage() {
                 finding={finding}
                 note={notes[finding.id] ?? ""}
                 busy={updatingFinding === finding.id}
+                sourceBlocked={dirtyNotes}
                 onNoteChange={(value) => setNotes((current) => ({ ...current, [finding.id]: value }))}
                 onSaveNote={() => updateFinding(finding, { authorNote: notes[finding.id] ?? "" })}
                 onStatusChange={(status) => updateFinding(finding, { status })}
@@ -385,13 +405,14 @@ function MetricCard({ label, value, icon }: { label: string; value: string; icon
 }
 
 function FilterSelect({ label, value, onChange, allLabel, values }: { label: string; value: string; onChange: (value: string) => void; allLabel: string; values: Array<{ value: string; label: string }> }) {
-  return <div><Label>{label}</Label><Select value={value} onValueChange={onChange}><SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{allLabel}</SelectItem>{values.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></div>;
+  return <div><Label>{label}</Label><Select value={value} onValueChange={onChange}><SelectTrigger className="mt-1.5" aria-label={label}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{allLabel}</SelectItem>{values.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></div>;
 }
 
-function FindingCard({ finding, note, busy, onNoteChange, onSaveNote, onStatusChange, onOpenSource }: {
+function FindingCard({ finding, note, busy, sourceBlocked, onNoteChange, onSaveNote, onStatusChange, onOpenSource }: {
   finding: AuditFinding;
   note: string;
   busy: boolean;
+  sourceBlocked: boolean;
   onNoteChange: (value: string) => void;
   onSaveNote: () => void;
   onStatusChange: (status: AuditFindingStatus) => void;
@@ -408,7 +429,7 @@ function FindingCard({ finding, note, busy, onNoteChange, onSaveNote, onStatusCh
             <Badge variant="outline">{t(`audit.categories.${finding.category}`, { defaultValue: finding.category })}</Badge>
             <Badge variant="outline">{t(`audit.statuses.${finding.status}`)}</Badge>
           </div>
-          <Button size="sm" variant="outline" onClick={onOpenSource}><ExternalLink className="mr-1.5 h-4 w-4" />{t("audit.findings.source")}</Button>
+          <Button size="sm" variant="outline" onClick={onOpenSource} disabled={sourceBlocked}><ExternalLink className="mr-1.5 h-4 w-4" />{t("audit.findings.source")}</Button>
         </div>
         <h3 className="mt-4 text-base font-semibold leading-6 sm:text-lg">{finding.description}</h3>
       </div>
@@ -420,7 +441,7 @@ function FindingCard({ finding, note, busy, onNoteChange, onSaveNote, onStatusCh
           <FindingSection title={t("audit.findings.fix")} value={finding.correctionSuggestion} />
         </div>
         <div className="space-y-4 rounded-xl border bg-muted/20 p-4">
-          <div><Label>{t("audit.findings.status")}</Label><Select value={finding.status} onValueChange={(value) => onStatusChange(value as AuditFindingStatus)} disabled={busy}><SelectTrigger className="mt-1.5 bg-background"><SelectValue /></SelectTrigger><SelectContent>{STATUSES.map((status) => <SelectItem key={status} value={status}>{t(`audit.statuses.${status}`)}</SelectItem>)}</SelectContent></Select></div>
+          <div><Label>{t("audit.findings.status")}</Label><Select value={finding.status} onValueChange={(value) => onStatusChange(value as AuditFindingStatus)} disabled={busy}><SelectTrigger className="mt-1.5 bg-background" aria-label={t("audit.findings.status")}><SelectValue /></SelectTrigger><SelectContent>{STATUSES.map((status) => <SelectItem key={status} value={status}>{t(`audit.statuses.${status}`)}</SelectItem>)}</SelectContent></Select></div>
           <div><Label htmlFor={`note-${finding.id}`}>{t("audit.findings.authorNote")}</Label><Textarea id={`note-${finding.id}`} className="mt-1.5 min-h-28 bg-background" value={note} onChange={(event) => onNoteChange(event.target.value)} placeholder={t("audit.findings.authorNotePlaceholder")} disabled={busy} /></div>
           <Button className="w-full" variant="outline" onClick={onSaveNote} disabled={busy || note === finding.authorNote}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}{t("audit.actions.saveNote")}</Button>
         </div>

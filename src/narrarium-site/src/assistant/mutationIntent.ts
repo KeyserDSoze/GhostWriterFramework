@@ -33,6 +33,14 @@ const MUTATION_VERBS: Record<string, RegExp> = {
 };
 
 const NEGATION = /\b(no|not|never|don't|dont|do not|without|avoid|except|excluding|non|mai|senza|evita|tranne|eccetto|escludendo|non voglio)\b/i;
+const EXCLUSION = /\b(except|excluding|tranne|eccetto|escludendo)\b/i;
+const MUTATION_OBJECTS: Record<string, RegExp> = {
+  "create-chapter": /\b(chapter|capitolo)\b/i, "create-paragraph": /\b(paragraph|scene|paragrafo|scena)\b/i,
+  "create-entity": /\b(character|location|faction|item|secret|event|personaggio|luogo|fazione|oggetto|segreto|evento)\b/i,
+  "update-plot": /\bplot|trama\b/i, "rewrite-current-paragraph": /\b(paragraph|scene|paragrafo|scena)\b/i,
+  "create-note": /\b(note|memo|appunto)\b/i, "delete-current-note": /\b(note|memo|appunto|nota)\b/i,
+  "delete-current-paragraph": /\b(paragraph|scene|paragrafo|scena)\b/i,
+};
 const READ_ONLY = /\b(what|which|who|where|when|how|tell me|explain|describe|show|list|read|get|contents?|qual[ei]?|chi|dove|quando|come|dimmi|parlami|spiega|descrivi|mostra|elenca|leggi|cosa contiene|cos'è|cos e|vorrei sapere)\b/i;
 const DIRECT_REQUEST = /\b(can you|could you|would you|will you|please|puoi|potresti|vorresti|per favore|ti prego)\b/i;
 const DELIBERATIVE = /\b(should i|should we|do i|do we|is it possible|would it make sense|what if|dovrei|dovremmo|posso|possiamo|e possibile|è possibile|avrebbe senso|cosa succede se)\b/i;
@@ -48,6 +56,7 @@ export function classifyMutationIntent(prompt: string, toolId: string): Mutation
 
   const normalizedPrompt = prompt.replace(/[’‘]/g, "'");
   const isQuestion = /\?\s*$/.test(normalizedPrompt.trim());
+  if (!CLAUSE_BOUNDARY.test(normalizedPrompt) && /^\s*(?:do\s+not|don't|dont|never|non|mai)\b/i.test(normalizedPrompt) && mutationVerb.test(normalizedPrompt)) return "negated";
 
   let foundNegatedMutation = false;
   let foundPositiveMutation = false;
@@ -56,7 +65,11 @@ export function classifyMutationIntent(prompt: string, toolId: string): Mutation
     const verbMatch = mutationVerb.exec(clause);
     if (!verbMatch) continue;
     const beforeVerb = clause.slice(0, verbMatch.index);
-    if (NEGATION.test(clause)) foundNegatedMutation = true;
+    const afterVerb = clause.slice(verbMatch.index + verbMatch[0].length);
+    const object = MUTATION_OBJECTS[toolId];
+    const excludedObject = EXCLUSION.test(afterVerb) && (!object || object.test(afterVerb.slice(afterVerb.search(EXCLUSION))));
+    const leadingNegation = /^\s*(?:do\s+not|don't|dont|never|non|mai)\b/i.test(clause);
+    if (leadingNegation || NEGATION.test(beforeVerb) || excludedObject) foundNegatedMutation = true;
     else if (READ_ONLY.test(beforeVerb)) foundReadOnlyMutation = true;
     else if (DIRECT_REQUEST.test(beforeVerb) || verbMatch.index === 0) foundPositiveMutation = true;
     else if (DELIBERATIVE.test(beforeVerb) || (isQuestion && READ_ONLY.test(normalizedPrompt))) foundReadOnlyMutation = true;

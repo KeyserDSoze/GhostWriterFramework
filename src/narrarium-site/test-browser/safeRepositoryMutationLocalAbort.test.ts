@@ -19,8 +19,10 @@ vi.mock("@/repository/repositoryService", async (importOriginal) => ({
 }));
 
 import { commitAndPushTextFileMutation } from "@/repository/safeRepositoryMutation";
+import { useAuthStore } from "@/store/authStore";
 
 beforeEach(() => {
+  useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
   vi.clearAllMocks();
   local.getLocalRepository.mockResolvedValue({ id: "repo-id", remoteHeadSha: "source-head" });
   local.getLocalFile.mockResolvedValue({ path: "plot.md", text: "old" });
@@ -47,6 +49,7 @@ test("an abort after the local commit rolls it back before remote push starts", 
   expect(repository.pushLocalCommits).not.toHaveBeenCalled();
   expect(local.restoreLocalFilesAndDeleteCommit).toHaveBeenCalledWith(
     "repo-id",
+    { accountIdentity: "google:sub-writer", accountGeneration: 0 },
     "local-commit",
     [{ path: "plot.md", file: { path: "plot.md", text: "old" } }],
   );

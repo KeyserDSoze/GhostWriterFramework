@@ -1,5 +1,3 @@
-import { beginCloudWrite } from "./cloudWriteBarrier.ts";
-
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const APP_FOLDER_NAME = "Narrarium";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
@@ -110,7 +108,7 @@ async function findLegacyFolder(token: string): Promise<VerifiedGoogleAppFolder 
     const content = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(settingsId)}?alt=media`, { headers: headers(token) });
     if (!content.ok) continue;
     if (!isLegacyNarrariumSettings(await content.json().catch(() => null))) continue;
-    const marked = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(folder.id)}?fields=id`, {
+    const marked = await fencedCloudMutation("google", token, `${GOOGLE_DRIVE_API}/files/${encodeURIComponent(folder.id)}?fields=id`, {
       method: "PATCH",
       headers: { ...headers(token), "Content-Type": "application/json" },
       body: JSON.stringify({ appProperties: { [MARKER_KEY]: MARKER_VALUE } }),
@@ -122,7 +120,7 @@ async function findLegacyFolder(token: string): Promise<VerifiedGoogleAppFolder 
 }
 
 async function createMarkedFolder(token: string): Promise<VerifiedGoogleAppFolder> {
-  const response = await fetch(`${GOOGLE_DRIVE_API}/files?fields=id,name,createdTime,appProperties`, {
+  const response = await fencedCloudMutation("google", token, `${GOOGLE_DRIVE_API}/files?fields=id,name,createdTime,appProperties`, {
     method: "POST",
     headers: { ...headers(token), "Content-Type": "application/json" },
     body: JSON.stringify({ name: APP_FOLDER_NAME, mimeType: FOLDER_MIME, appProperties: { [MARKER_KEY]: MARKER_VALUE } }),
@@ -155,19 +153,39 @@ async function ensureGoogleAppFolderInternal(token: string): Promise<string> {
 
 export function ensureGoogleAppFolder(token: string): Promise<string> {
   if (activeEnsure?.token === token) return activeEnsure.promise;
-  const endWrite = beginCloudWrite("google", token);
   const promise = ensureGoogleAppFolderInternal(token).finally(() => {
-    endWrite();
     if (activeEnsure?.promise === promise) activeEnsure = null;
   });
   activeEnsure = { token, promise };
   return promise;
 }
 
-export async function deleteVerifiedGoogleAppFolders(token: string): Promise<string[]> {
+export async function deleteVerifiedGoogleAppFolders(token: string, deletion: CloudDeletionHandle): Promise<string[]> {
+  const targetPrefix = `${GOOGLE_DRIVE_API}/files/`;
+  let journal = await cloudDeletionTargetJournal(deletion);
+  if (journal.length) {
+    const ids = journal.map((entry) => decodeURIComponent(entry.target.slice(targetPrefix.length)));
+    if (journal.every((entry) => entry.state === "completed")) {
+      await completeCloudDeletion(deletion, true);
+      return ids;
+    }
+    for (const entry of journal) {
+      if (entry.state === "completed") continue;
+      const response = await fencedCloudDeletionMutation(deletion, entry.target, { method: "DELETE", headers: headers(token) });
+      if (!(response.ok || response.status === 404)) throw new Error(`Google verified app folder delete retry: ${response.status}`);
+    }
+    await clearPersistedGoogleAppFolder(token, ids);
+    return ids;
+  }
   const folders = await listVerifiedGoogleAppFolders(token);
-  for (const folder of folders) {
-    const response = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(folder.id)}`, { method: "DELETE", headers: headers(token) });
+  if (!folders.length) {
+    await completeCloudDeletionNothingToDelete(deletion, "No verified owned Google Drive app folder exists.");
+    return [];
+  }
+  await journalCloudDeletionTargets(deletion, folders.map((folder) => ({ target: `${targetPrefix}${encodeURIComponent(folder.id)}`, itemId: folder.id, name: folder.name, role: "ordinary" })));
+  journal = await cloudDeletionTargetJournal(deletion);
+  for (const entry of journal) {
+    const response = await fencedCloudDeletionMutation(deletion, entry.target, { method: "DELETE", headers: headers(token) });
     if (!(response.ok || response.status === 404)) throw new Error(`Google verified app folder delete: ${response.status}`);
   }
   const ids = folders.map((folder) => folder.id);
@@ -186,3 +204,4 @@ export function resetGoogleAppFolderCacheForTests(): void {
   activeEnsure = null;
   activeAccount = null;
 }
+import { cloudDeletionTargetJournal, completeCloudDeletion, completeCloudDeletionNothingToDelete, fencedCloudDeletionMutation, fencedCloudMutation, journalCloudDeletionTargets, type CloudDeletionHandle } from "./cloudWriteBarrier.ts";

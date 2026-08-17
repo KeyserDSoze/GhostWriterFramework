@@ -26,7 +26,7 @@ function deferred<T>() {
 }
 
 function user(email: string): AppUser {
-  return { provider: "google", email, name: email, picture: "" };
+  return { provider: "google", providerAccountId: email, email, name: email, picture: "" };
 }
 
 function meta(title: string): AssistantSessionMeta {

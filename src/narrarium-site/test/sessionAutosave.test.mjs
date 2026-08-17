@@ -83,12 +83,12 @@ test("session metadata upsert removes id and file duplicates", () => {
 
 test("attaching a file id preserves newer content and ignores another current session", () => {
   const latest = session({ messages: [{ id: "m1", role: "assistant", text: "Latest reply" }] });
-  const attached = attachAssistantSessionCloudHandle(latest, "session-1", { fileId: "drive-file", revision: "r1" });
+  const attached = attachAssistantSessionCloudHandle(latest, latest, { fileId: "drive-file", revision: "r1" });
   assert.equal(attached.fileId, "drive-file");
   assert.equal(attached.messages[0].text, "Latest reply");
 
   const other = session({ id: "session-2" });
-  assert.equal(attachAssistantSessionCloudHandle(other, "session-1", { fileId: "drive-file" }), other);
+  assert.equal(attachAssistantSessionCloudHandle(other, latest, { fileId: "drive-file" }), other);
 });
 
 test("queued saves are serialized and reuse the first created file id", async () => {

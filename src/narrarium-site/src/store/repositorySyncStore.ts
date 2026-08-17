@@ -23,7 +23,7 @@ export const useRepositorySyncStore = create<RepositorySyncState>()((set) => ({
 export async function triggerCurrentRepositorySync(): Promise<boolean> {
   const current = useRepositorySyncStore.getState().current;
   if (!current || current.busy) return false;
-  await triggerCurrentSave();
+  if (!await triggerCurrentSave()) return false;
   await current.sync();
   return true;
 }

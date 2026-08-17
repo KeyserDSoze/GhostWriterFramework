@@ -1,5 +1,7 @@
 import type { AuthProvider } from "@/store/authStore";
 import { useAuthStore } from "@/store/authStore";
+import { graphPath } from "@/drive/microsoftAppFolder";
+import { acquireCloudWriteLease, fencedCloudMutation } from "@/drive/cloudWriteBarrier";
 
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -51,7 +53,7 @@ async function listAllGoogleExportEntries(accessToken: string, folderId: string)
   do {
     const query = new URLSearchParams({ q: `'${folderId.replace(/'/g, "\\'")}' in parents and trashed=false`, spaces: "drive", fields: "files(id,name,appProperties),nextPageToken", pageSize: "1000", ...(pageToken ? { pageToken } : {}) });
     const response = await fetch(`${GOOGLE_DRIVE_API}/files?${query}`, { headers: authHeaders(accessToken) });
-    assertOk(response, "Google Drive export reconciliation");
+    assertOk(response, "Google Drive export reconciliation", "google", accessToken);
     const page = await response.json() as { files?: GoogleExportEntry[]; nextPageToken?: string };
     entries.push(...(page.files ?? []));
     pageToken = page.nextPageToken;
@@ -63,9 +65,10 @@ function authHeaders(accessToken: string) {
   return { Authorization: `Bearer ${accessToken}` };
 }
 
-function assertOk(response: Response, context: string): void {
+function assertOk(response: Response, context: string, provider?: AuthProvider, token?: string): void {
   if (response.status === 401) {
-    useAuthStore.getState().invalidateToken();
+    const current = useAuthStore.getState();
+    if (provider && token && current.user?.provider === provider && current.accessToken === token) current.invalidateToken();
     throw new Error("Cloud access token expired");
   }
   if (!response.ok) throw new Error(`${context}: ${response.status}`);
@@ -82,18 +85,18 @@ export async function listGoogleDriveFolders(accessToken: string, parentId = "ro
   const response = await fetch(`${GOOGLE_DRIVE_API}/files?${query}`, {
     headers: authHeaders(accessToken),
   });
-  assertOk(response, "Google Drive folder list");
+  assertOk(response, "Google Drive folder list", "google", accessToken);
   const data = (await response.json()) as { files?: Array<{ id: string; name: string }> };
   return (data.files ?? []).map((entry) => ({ id: entry.id, name: entry.name }));
 }
 
 export async function listMicrosoftDriveFolders(accessToken: string, folderPath = ""): Promise<DriveFolderEntry[]> {
   const normalized = folderPath.split("/").filter(Boolean).join("/");
-  const endpoint = normalized ? `${GRAPH_DRIVE_API}/root:/${normalized}:/children` : `${GRAPH_DRIVE_API}/root/children`;
+  const endpoint = normalized ? `${GRAPH_DRIVE_API}/root:/${graphPath(normalized)}:/children` : `${GRAPH_DRIVE_API}/root/children`;
   const response = await fetch(endpoint, {
     headers: authHeaders(accessToken),
   });
-  assertOk(response, "OneDrive folder list");
+  assertOk(response, "OneDrive folder list", "microsoft", accessToken);
   const data = (await response.json()) as { value?: Array<{ id: string; name: string; folder?: Record<string, unknown> }> };
   return (data.value ?? [])
     .filter((entry) => Boolean(entry.folder))
@@ -102,7 +105,9 @@ export async function listMicrosoftDriveFolders(accessToken: string, folderPath 
 
 /** Create a new subfolder inside a Google Drive folder. Returns the created folder. */
 export async function createGoogleDriveFolder(accessToken: string, parentId: string, name: string): Promise<DriveFolderEntry> {
-  const response = await fetch(`${GOOGLE_DRIVE_API}/files?fields=id,name`, {
+  const release = await acquireCloudWriteLease("google", accessToken);
+  try {
+  const response = await fencedCloudMutation("google", accessToken, `${GOOGLE_DRIVE_API}/files?fields=id,name`, {
     method: "POST",
     headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
     body: JSON.stringify({
@@ -111,23 +116,27 @@ export async function createGoogleDriveFolder(accessToken: string, parentId: str
       parents: [parentId || "root"],
     }),
   });
-  assertOk(response, "Google Drive folder create");
+  assertOk(response, "Google Drive folder create", "google", accessToken);
   const data = (await response.json()) as { id: string; name: string };
   return { id: data.id, name: data.name };
+  } finally { release(); }
 }
 
 /** Create a new subfolder inside a OneDrive folder path. Returns the new folder path. */
 export async function createMicrosoftDriveFolder(accessToken: string, parentPath: string, name: string): Promise<string> {
+  const release = await acquireCloudWriteLease("microsoft", accessToken);
+  try {
   const normalized = parentPath.split("/").filter(Boolean).join("/");
-  const endpoint = normalized ? `${GRAPH_DRIVE_API}/root:/${normalized}:/children` : `${GRAPH_DRIVE_API}/root/children`;
-  const response = await fetch(endpoint, {
+  const endpoint = normalized ? `${GRAPH_DRIVE_API}/root:/${graphPath(normalized)}:/children` : `${GRAPH_DRIVE_API}/root/children`;
+  const response = await fencedCloudMutation("microsoft", accessToken, endpoint, {
     method: "POST",
     headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
     body: JSON.stringify({ name: name.trim(), folder: {}, "@microsoft.graph.conflictBehavior": "rename" }),
   });
-  assertOk(response, "OneDrive folder create");
+  assertOk(response, "OneDrive folder create", "microsoft", accessToken);
   const data = (await response.json()) as { name: string };
   return normalized ? `${normalized}/${data.name}` : data.name;
+  } finally { release(); }
 }
 
 export async function uploadGoogleDriveFile(
@@ -137,6 +146,8 @@ export async function uploadGoogleDriveFile(
   _mimeType: string,
   blob: Blob,
 ): Promise<UploadedDriveFile> {
+  const release = await acquireCloudWriteLease("google", accessToken);
+  try {
   // Listing is paginated for diagnostics/logical-name discovery only. Provider filenames remain immutable and unique.
   await listAllGoogleExportEntries(accessToken, folderId);
   const allocationId = crypto.randomUUID();
@@ -149,22 +160,23 @@ export async function uploadGoogleDriveFile(
   );
   form.append("file", blob, temporaryName);
 
-  const response = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=multipart&fields=id,name,webViewLink`, {
+  const response = await fencedCloudMutation("google", accessToken, `${GOOGLE_UPLOAD_API}/files?uploadType=multipart&fields=id,name,webViewLink`, {
     method: "POST",
     headers: authHeaders(accessToken),
     body: form,
   });
-  assertOk(response, "Google Drive export upload");
+  assertOk(response, "Google Drive export upload", "google", accessToken);
   const created = (await response.json()) as UploadedDriveFile;
   const resolvedName = uniqueGoogleExportName(fileName, created.id);
-  const renamed = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(created.id)}?fields=id,name,webViewLink`, {
+  const renamed = await fencedCloudMutation("google", accessToken, `${GOOGLE_DRIVE_API}/files/${encodeURIComponent(created.id)}?fields=id,name,webViewLink`, {
     method: "PATCH",
     headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
     body: JSON.stringify({ name: resolvedName, appProperties: { narrariumExportName: fileName, narrariumExportAllocation: allocationId, narrariumExportCreatedAt: createdAt, narrariumExportFinal: "v1" } }),
   });
-  assertOk(renamed, "Google Drive export allocation rename");
+  assertOk(renamed, "Google Drive export allocation rename", "google", accessToken);
   const result = (await renamed.json()) as UploadedDriveFile;
   return result;
+  } finally { release(); }
 }
 
 async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string): Promise<void> {
@@ -172,11 +184,12 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
   let currentPath = "";
   for (const part of parts) {
     const nextPath = currentPath ? `${currentPath}/${part}` : part;
-    const exists = await fetch(`${GRAPH_DRIVE_API}/root:/${nextPath}`, {
+    const exists = await fetch(`${GRAPH_DRIVE_API}/root:/${graphPath(nextPath)}`, {
       headers: authHeaders(accessToken),
     });
     if (exists.status === 401) {
-      useAuthStore.getState().invalidateToken();
+      const current = useAuthStore.getState();
+      if (current.user?.provider === "microsoft" && current.accessToken === accessToken) current.invalidateToken();
       throw new Error("Cloud access token expired");
     }
     if (exists.ok) {
@@ -184,13 +197,13 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
       continue;
     }
     if (exists.status !== 404) throw new Error(`OneDrive folder lookup: ${exists.status}`);
-    const createUrl = currentPath ? `${GRAPH_DRIVE_API}/root:/${currentPath}:/children` : `${GRAPH_DRIVE_API}/root/children`;
-    const created = await fetch(createUrl, {
+    const createUrl = currentPath ? `${GRAPH_DRIVE_API}/root:/${graphPath(currentPath)}:/children` : `${GRAPH_DRIVE_API}/root/children`;
+    const created = await fencedCloudMutation("microsoft", accessToken, createUrl, {
       method: "POST",
       headers: { ...authHeaders(accessToken), "Content-Type": MIME_JSON },
       body: JSON.stringify({ name: part, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
     });
-    if (created.status !== 409) assertOk(created, "OneDrive folder create");
+    if (created.status !== 409) assertOk(created, "OneDrive folder create", "microsoft", accessToken);
     currentPath = nextPath;
   }
 }
@@ -202,16 +215,19 @@ export async function uploadMicrosoftDriveFile(
   mimeType: string,
   blob: Blob,
 ): Promise<UploadedDriveFile> {
+  const release = await acquireCloudWriteLease("microsoft", accessToken);
+  try {
   await ensureMicrosoftFolderPath(accessToken, folderPath);
   const arrayBuffer = await blob.arrayBuffer();
-  const response = await fetch(`${GRAPH_DRIVE_API}/root:/${folderPath}/${fileName}:/content?@microsoft.graph.conflictBehavior=rename`, {
+  const response = await fencedCloudMutation("microsoft", accessToken, `${GRAPH_DRIVE_API}/root:/${graphPath(folderPath)}/${encodeURIComponent(fileName)}:/content?@microsoft.graph.conflictBehavior=rename`, {
     method: "PUT",
     headers: { ...authHeaders(accessToken), "Content-Type": mimeType },
     body: arrayBuffer,
   });
-  assertOk(response, "OneDrive export upload");
+  assertOk(response, "OneDrive export upload", "microsoft", accessToken);
   const data = (await response.json()) as { id: string; name: string; webUrl?: string };
   return { id: data.id, name: data.name, webViewLink: data.webUrl };
+  } finally { release(); }
 }
 
 export async function uploadDriveFile(

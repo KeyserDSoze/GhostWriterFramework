@@ -2,9 +2,10 @@ import { useEffect } from "react";
 import { useGoogleLogin } from "@react-oauth/google";
 import { useMsal } from "@azure/msal-react";
 import { useAuthStore } from "@/store/authStore";
-import { findMicrosoftAccountByEmail, microsoftSilentRequest } from "@/config/msal";
+import { findMicrosoftAccount, microsoftSilentRequest } from "@/config/msal";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
+import { accountIdentity, isAccountIdentityCurrent, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
 
 const REFRESH_BEFORE_MS = 5 * 60 * 1000;
 const RETRY_AFTER_MS = 60 * 1000;
@@ -19,9 +20,16 @@ export function useTokenRefresh() {
     scope: GOOGLE_DRIVE_SCOPES,
     prompt: "none",
     hint: user?.email,
-    onSuccess: (tokenResponse) => {
+    onSuccess: async (tokenResponse) => {
       if (!user) return;
-      registerCloudAccount("google", tokenResponse.access_token, user.email);
+      if (!isAccountIdentityCurrent(accountIdentity(user), useAuthStore.getState().user)) return;
+      const response = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: `Bearer ${tokenResponse.access_token}` } });
+      if (!response.ok) return;
+      const profile = await response.json() as { sub?: string };
+      let providerAccountId: string;
+      try { providerAccountId = requireGoogleProviderAccountId(profile); } catch { return; }
+      if (providerAccountId !== user.providerAccountId) return;
+      registerCloudAccount("google", tokenResponse.access_token, user.providerAccountId);
       setAuth(tokenResponse.access_token, user, "expires_in" in tokenResponse ? tokenResponse.expires_in : 3600);
     },
     // Background refresh must never log the user out. A failed silent refresh
@@ -39,15 +47,17 @@ export function useTokenRefresh() {
         try { refreshGoogle(); } catch { /* ignore, will retry */ }
         return;
       }
-      const account = findMicrosoftAccountByEmail(user.email);
-      if (!account) return; // keep current session; AuthGuard will prompt if truly needed
+      const account = findMicrosoftAccount(user);
+      if (!account?.homeAccountId?.trim() || !account.localAccountId?.trim()) return; // keep current session; AuthGuard will prompt if truly needed
       instance.acquireTokenSilent({ ...microsoftSilentRequest(account), forceRefresh: true })
         .then((result) => {
           if (cancelled) return;
+          if (!isAccountIdentityCurrent(accountIdentity(user), useAuthStore.getState().user)) return;
           if (result.account) instance.setActiveAccount(result.account);
           const expiresAt = result.expiresOn?.getTime() ?? Date.now() + 3600_000;
-          registerCloudAccount("microsoft", result.accessToken, user.email);
-          setAuth(result.accessToken, user, Math.max(120, Math.round((expiresAt - Date.now()) / 1000)));
+          const upgradedUser = { ...user, providerAccountId: account.homeAccountId, homeAccountId: account.homeAccountId, localAccountId: account.localAccountId };
+          registerCloudAccount("microsoft", result.accessToken, account.homeAccountId);
+          setAuth(result.accessToken, upgradedUser, Math.max(120, Math.round((expiresAt - Date.now()) / 1000)));
         })
         .catch((err) => {
           // Never clear auth in the background. Retry later instead.

@@ -164,16 +164,18 @@ export function EvaluationStylePage() {
   const dirty = current !== saved;
   useRegisterPageSave({ dirty, enabled: Boolean(book && token), onSave: () => save() });
 
-  async function save() {
-    if (!book || !token) return;
+  async function save(): Promise<boolean> {
+    if (!book || !token) return false;
     setSaving(true);
     try {
       await createOrUpdateTextFile(token, book.owner, book.repo, branch, EVALUATION_GUIDELINES_PATH, current, `Update ${EVALUATION_GUIDELINES_PATH}`);
       setSaved(current);
       toast({ title: t("common.saved") });
       reload();
+      return true;
     } catch (err) {
       toast({ title: t("common.saveFailed"), description: String(err), variant: "destructive" });
+      return false;
     } finally {
       setSaving(false);
     }

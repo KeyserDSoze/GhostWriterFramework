@@ -72,4 +72,18 @@ describe("image provider timeouts", () => {
     await expect(generateAssetImage({ settings: settings(), prompt: "prompt", orientation: "portrait", signal: controller.signal, accountScope: null })).rejects.toMatchObject({ name: "AbortError" });
     expect(imageGenerate).toHaveBeenCalledTimes(1);
   });
+
+  it("applies one operation-wide deadline to image fallbacks", async () => {
+    vi.useFakeTimers();
+    imageGenerate.mockImplementation((_request, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    }));
+    const limited = { ...settings(), routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxTotalDurationMs: 5 } };
+    const pending = generateAssetImage({ settings: limited, prompt: "prompt", orientation: "portrait", accountScope: null });
+    const assertion = expect(pending).rejects.toMatchObject({ name: "RoutingExecutionBudgetError" });
+    await vi.advanceTimersByTimeAsync(5);
+    await assertion;
+    expect(imageGenerate).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
 });
