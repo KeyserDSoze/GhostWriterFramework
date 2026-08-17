@@ -1,9 +1,22 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { patchNotes, localizedPatchNote } from "@/content/patchNotes";
+import { APP_VERSION } from "@/config/version";
+import { consumeUpdateDestinationIntent, readUpdateDestinationIntent } from "@/pwaUpdateIntent";
+import { useAuthStore } from "@/store/authStore";
 
 export function PatchNotesPage() {
   const { t, i18n } = useTranslation();
+  const accessToken = useAuthStore((state) => state.accessToken);
+  const accessTokenExpiry = useAuthStore((state) => state.accessTokenExpiry);
+  const user = useAuthStore((state) => state.user);
+  const [updateIntentNonce] = useState(() => readUpdateDestinationIntent()?.nonce ?? null);
+
+  useEffect(() => {
+    if (updateIntentNonce) consumeUpdateDestinationIntent(updateIntentNonce, APP_VERSION, { accessToken, accessTokenExpiry, user });
+  }, [accessToken, accessTokenExpiry, updateIntentNonce, user]);
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="overflow-hidden rounded-3xl border bg-gradient-to-br from-primary/15 via-card to-card p-6 shadow-sm sm:p-8">

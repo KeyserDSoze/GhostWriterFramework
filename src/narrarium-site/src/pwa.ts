@@ -1,8 +1,15 @@
 import { APP_VERSION } from "@/config/version";
 import { useAppUpdateStore } from "@/store/appUpdateStore";
 import { isNewerAppVersion } from "@/lib/appVersion";
+import {
+  beginUpdateDestinationNavigation,
+  clearUpdateDestinationIntentThrough,
+  createUpdateDestinationIntent,
+  markControllerReloadHandled,
+  migrateLegacyUpdateDestinationIntent,
+  patchNotesPhysicalUrl,
+} from "@/pwaUpdateIntent";
 
-export const OPEN_PATCH_NOTES_AFTER_UPDATE_KEY = "narrarium-open-patch-notes-after-update";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
 function workerVersion(worker: ServiceWorker, fallback: string): string {
@@ -18,25 +25,42 @@ function reportWaitingWorker(worker: ServiceWorker, fallbackVersion: string) {
 }
 
 export function activateAvailableUpdate(openPatchNotes: boolean) {
-  const worker = useAppUpdateStore.getState().worker;
+  const { worker, version } = useAppUpdateStore.getState();
   if (!worker) return;
-  if (openPatchNotes) sessionStorage.setItem(OPEN_PATCH_NOTES_AFTER_UPDATE_KEY, "1");
-  else sessionStorage.removeItem(OPEN_PATCH_NOTES_AFTER_UPDATE_KEY);
+  const targetVersion = version ?? workerVersion(worker, APP_VERSION);
+  if (openPatchNotes) createUpdateDestinationIntent(targetVersion);
+  else clearUpdateDestinationIntentThrough(targetVersion);
   worker.postMessage({ type: "SKIP_WAITING" });
 }
 
+interface BrowserLocation {
+  replace(url: string): void;
+  reload(): void;
+}
+
+export function handleServiceWorkerControllerChange(
+  baseUrl: string,
+  browserLocation: BrowserLocation = window.location,
+  targetVersion = useAppUpdateStore.getState().version ?? APP_VERSION,
+  tabStorage: Storage = sessionStorage,
+): "patch-notes" | "reload" | "ignored" {
+  const intent = migrateLegacyUpdateDestinationIntent(targetVersion, Date.now(), tabStorage);
+  if (intent) {
+    if (!beginUpdateDestinationNavigation(tabStorage)) return "ignored";
+    browserLocation.replace(patchNotesPhysicalUrl(baseUrl));
+    return "patch-notes";
+  }
+  if (!markControllerReloadHandled(targetVersion, tabStorage)) return "ignored";
+  browserLocation.reload();
+  return "reload";
+}
+
 export function registerServiceWorker() {
+  migrateLegacyUpdateDestinationIntent(APP_VERSION);
   if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return;
 
-  let refreshing = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (refreshing) return;
-    refreshing = true;
-    if (sessionStorage.getItem(OPEN_PATCH_NOTES_AFTER_UPDATE_KEY) === "1") {
-      window.location.replace(import.meta.env.BASE_URL || "/");
-      return;
-    }
-    window.location.reload();
+    handleServiceWorkerControllerChange(import.meta.env.BASE_URL || "/");
   });
 
   window.addEventListener("load", () => {

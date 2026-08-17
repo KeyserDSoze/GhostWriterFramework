@@ -11,6 +11,7 @@ import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 import { WanderingAuthGhost } from "@/components/auth/WanderingAuthGhost";
 import { accountIdentity, beginLegacyAccountUpgrade, isAccountIdentityCurrent, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
+import { markUpdateDestinationAuthRequired } from "@/pwaUpdateIntent";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -229,11 +230,13 @@ export function AuthGuard({ children }: AuthGuardProps) {
   }
 
   if (status === "unauthenticated" || !accessToken) {
-    sessionStorage.setItem("narrarium-return-to", `${location.pathname}${location.search}${location.hash}`);
+    const requestedReturnTo = `${location.pathname}${location.search}${location.hash}`;
+    const returnTo = markUpdateDestinationAuthRequired(location.pathname) ?? requestedReturnTo;
+    sessionStorage.setItem("narrarium-return-to", returnTo);
     return (
       <Navigate
         to="/login"
-        state={{ returnTo: `${location.pathname}${location.search}${location.hash}` }}
+        state={{ returnTo }}
         replace
       />
     );

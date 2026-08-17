@@ -28,7 +28,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useNavigationHistoryStore, type NavigationHistoryEntry } from "@/store/navigationHistoryStore";
 import { FeedbackRewriteWorkflowDialog } from "@/components/book/FeedbackRewriteWorkflowDialog";
-import { OPEN_PATCH_NOTES_AFTER_UPDATE_KEY } from "@/pwa";
 import { useDirtyNavigationGuard } from "@/hooks/useDirtyNavigationGuard";
 
 const AssistantPanel = lazy(() =>
@@ -52,12 +51,6 @@ export function Shell() {
   useClipboardSync();
   useGlobalShortcuts();
   useDirtyNavigationGuard(t("common.unsavedNavigationConfirm"));
-
-  useEffect(() => {
-    if (sessionStorage.getItem(OPEN_PATCH_NOTES_AFTER_UPDATE_KEY) !== "1") return;
-    sessionStorage.removeItem(OPEN_PATCH_NOTES_AFTER_UPDATE_KEY);
-    navigate("/app/patch-notes", { replace: true });
-  }, [navigate]);
 
   useEffect(() => {
     const route = parseAppRoute(location.pathname);

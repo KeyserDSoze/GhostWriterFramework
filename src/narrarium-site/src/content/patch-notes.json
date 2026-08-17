@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.47",
+    "date": "2026-08-17",
+    "en": {
+      "title": "Updates now return to patch notes",
+      "summary": "This release preserves the patch-notes destination across service-worker activation, session recreation, and provider login instead of leaving users on the public home page.",
+      "changes": [
+        "Navigated update requests directly to the physical HTTP 200 patch-notes route rather than reloading the public site root.",
+        "Stored a short-lived, non-sensitive update destination that survives PWA session recreation and migrates requests created by the previous release.",
+        "Preserved patch notes through Google or Microsoft login while giving newer explicit protected-route navigation precedence over an older update request.",
+        "Handled update navigation once per tab, prevented reload loops, and consumed the request only with a valid immutable authenticated session on the target version."
+      ]
+    },
+    "it": {
+      "title": "Gli aggiornamenti tornano alle note di versione",
+      "summary": "Questa release conserva la destinazione delle note di versione durante attivazione del service worker, ricreazione della sessione e login provider, invece di lasciare l'utente sulla home pubblica.",
+      "changes": [
+        "Instradate le richieste di aggiornamento direttamente alla route fisica HTTP 200 delle note, senza ricaricare la root pubblica del sito.",
+        "Salvata una destinazione di aggiornamento breve e non sensibile che sopravvive alla ricreazione della sessione PWA e migra le richieste create dalla release precedente.",
+        "Conservate le note attraverso la login Google o Microsoft, dando precedenza a una navigazione protetta esplicita piu recente rispetto a una vecchia richiesta di aggiornamento.",
+        "Gestita la navigazione una sola volta per scheda, evitati loop di reload e consumata la richiesta solo con sessione autenticata immutabile valida sulla versione target."
+      ]
+    }
+  },
+  {
     "version": "0.76.46",
     "date": "2026-08-17",
     "en": {

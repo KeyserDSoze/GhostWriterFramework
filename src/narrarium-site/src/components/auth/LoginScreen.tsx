@@ -15,6 +15,7 @@ import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { cloudDeletionReconnectState, registerCloudAccount, resumeCloudWrites } from "@/drive/cloudWriteBarrier";
 import { clearLegacyRecoveryLoginRequest, consumeLegacyRecoveryLoginRequest, matchesLegacyRecoveryLoginRequest, normalizeAppReturnTo, readLegacyRecoveryLoginRequest } from "@/auth/legacyRecoveryLogin";
 import { retryBookStructureLoad } from "@/hooks/useBookStructure";
+import { resolveUpdateAwareLoginReturnTo } from "@/pwaUpdateIntent";
 
 export function LoginScreen() {
   const { t } = useTranslation();
@@ -38,11 +39,12 @@ export function LoginScreen() {
   }, [clearInteractiveRecoveryAuth, recoveryExpired]);
 
   function returnToApp() {
+    const explicitReturnTo =
+      normalizeAppReturnTo((location.state as { returnTo?: string } | null)?.returnTo)
+      ?? normalizeAppReturnTo(sessionStorage.getItem("narrarium-return-to"));
     const returnTo =
       recoveryRequest?.returnTo
-      ?? normalizeAppReturnTo((location.state as { returnTo?: string } | null)?.returnTo)
-      ?? normalizeAppReturnTo(sessionStorage.getItem("narrarium-return-to"))
-      ?? "/app/books";
+      ?? resolveUpdateAwareLoginReturnTo(explicitReturnTo);
     sessionStorage.removeItem("narrarium-return-to");
     navigate(returnTo, { replace: true });
   }

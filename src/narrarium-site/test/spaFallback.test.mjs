@@ -34,3 +34,10 @@ test("SPA fallback emits physical 200 entry points for update and patch-note rou
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("service-worker updates wire patch-note requests to the physical route instead of public home", async () => {
+  const source = await readFile(new URL("../src/pwa.ts", import.meta.url), "utf8");
+  assert.match(source, /controllerchange[\s\S]*handleServiceWorkerControllerChange/);
+  assert.match(source, /browserLocation\.replace\(patchNotesPhysicalUrl\(baseUrl\)\)/);
+  assert.doesNotMatch(source, /OPEN_PATCH_NOTES[\s\S]*location\.(?:replace|assign)\(import\.meta\.env\.BASE_URL\s*\|\|\s*["']\/["']\)/);
+});
