@@ -19,8 +19,8 @@ describe("writer context repository errors", () => {
     expect(context.loadedFilePaths).not.toContain("writing-style.md");
   });
 
-  it.each(["auth", "rate-limit", "network", "abort", "conflict", "malformed"] as const)("propagates optional %s failures", async (kind) => {
-    const read = async () => { throw new RepositoryError(kind, kind, "read", kind === "auth" ? 401 : undefined); };
+  it.each(["credential-invalid", "rate-limit", "network", "abort", "conflict", "malformed"] as const)("propagates optional %s failures", async (kind) => {
+    const read = async () => { throw new RepositoryError(kind, kind, "read", kind === "credential-invalid" ? 401 : undefined); };
     await expect(loadWriterContext("/app/books/book/chapters/001-start", settings, [book], { book: structure }, { book: "main" }, "main", read)).rejects.toMatchObject({ kind });
   });
 

@@ -1,4 +1,3 @@
-import { Octokit } from "@octokit/rest";
 import type { BookEntry } from "@/types/settings";
 import {
   getLocalRepository,
@@ -19,6 +18,8 @@ import { reconcileRemoteMutation } from "@/repository/remoteMutationReconciliati
 import { accountIdentity } from "@/auth/accountIdentity";
 import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
+import { createTrackedGitHubClient } from "@/repository/githubRequest";
+import { recordRepositoryWriteValidated } from "@/repository/tokenHealth";
 
 function currentAccountIdentity(): string | null {
   return accountIdentity(useAuthStore.getState().user);
@@ -59,7 +60,7 @@ export async function preflightRepositoryOperation(input: {
   input.signal?.throwIfAborted();
   if (dirty.length) throw new Error("The local working copy must be clean before starting this operation.");
   if (ahead.length) throw new Error("Push or discard existing local commits before starting this operation.");
-  const octokit = new Octokit({ auth: input.token });
+  const octokit = createTrackedGitHubClient(input.token, identity ? { accountIdentity: identity, owner: input.book.owner, repo: input.book.repo, branch: input.branch } : undefined);
   const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}`, request: { signal: input.signal } });
   input.signal?.throwIfAborted();
   const remoteHeadSha = ref.data.object.sha;
@@ -74,7 +75,7 @@ export async function resolveRepositoryHeadForMutation(input: { token: string; b
   const local = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, scope).catch(() => null) : null;
   input.signal?.throwIfAborted();
   if (local) return (await preflightRepositoryOperation(input)).remoteHeadSha;
-  const octokit = new Octokit({ auth: input.token });
+  const octokit = createTrackedGitHubClient(input.token, identity ? { accountIdentity: identity, owner: input.book.owner, repo: input.book.repo, branch: input.branch } : undefined);
   const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}`, request: { signal: input.signal } });
   input.signal?.throwIfAborted();
   return ref.data.object.sha;
@@ -90,7 +91,8 @@ async function mutateRemoteTextFiles(input: {
   signal?: AbortSignal;
 }): Promise<string> {
   input.signal?.throwIfAborted();
-  const octokit = new Octokit({ auth: input.token });
+  const identity = currentAccountIdentity();
+  const octokit = createTrackedGitHubClient(input.token, identity ? { accountIdentity: identity, owner: input.book.owner, repo: input.book.repo, branch: input.branch } : undefined);
   const request = { request: { signal: input.signal } };
   const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}`, ...request });
   input.signal?.throwIfAborted();
@@ -134,10 +136,14 @@ async function mutateRemoteTextFiles(input: {
     await octokit.rest.git.updateRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}`, sha: nextCommit.data.sha, force: false, ...request });
   } catch (error) {
     const reconciled = await reconcileRemoteMutation({ octokit, owner: input.book.owner, repo: input.book.repo, branch: input.branch, generatedCommitSha: nextCommit.data.sha, revisions: input.mutations });
-    if (reconciled.landed && reconciled.headSha) return reconciled.headSha;
+    if (reconciled.landed && reconciled.headSha) {
+      if (identity) await recordRepositoryWriteValidated({ accountIdentity: identity, token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch });
+      return reconciled.headSha;
+    }
     if (!reconciled.headSha || reconciled.headSha === input.expectedRemoteHeadSha) throw error;
     throw new RepositoryConflictError("The generated commit is not an ancestor of the remote head, or its intended revisions no longer match.");
   }
+  if (identity) await recordRepositoryWriteValidated({ accountIdentity: identity, token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch });
   return nextCommit.data.sha;
 }
 
@@ -213,10 +219,11 @@ export async function commitAndPushTextFileMutation(input: {
       throw error;
     }
     if (error instanceof AmbiguousLocalPushError) {
-      const octokit = new Octokit({ auth: input.token });
+      const octokit = createTrackedGitHubClient(input.token, { accountIdentity: identity!, owner: input.book.owner, repo: input.book.repo, branch: input.branch });
       const reconciled = await reconcileRemoteMutation({ octokit, owner: input.book.owner, repo: input.book.repo, branch: input.branch, generatedCommitSha: error.generatedCommitSha, revisions: input.mutations });
       if (reconciled.landed && reconciled.headSha) {
         await markLocalCommitsPushed(local.id, operationScope, [localCommit.id], reconciled.headSha, reconciled.blobShas ?? {}).catch(() => undefined);
+        await recordRepositoryWriteValidated({ accountIdentity: identity!, token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch });
         return { commitSha: reconciled.headSha, mode: "local" };
       }
       await restoreLocalFilesAndDeleteCommit(local.id, operationScope, localCommit.id, snapshots);

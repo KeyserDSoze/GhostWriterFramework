@@ -8,12 +8,15 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
-import { addLocalRepoLog, buildLocalBookStructure, getLocalRepository, listAllLocalFiles, listDirtyLocalFiles, listLocalRecoverySnapshotsForTarget, listLocalRepoLogs, listUnpushedLocalCommits, localStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryFile, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
+import { addLocalRepoLog, buildLocalBookStructure, effectiveRemoteStatus, getLocalRepository, listAllLocalFiles, listDirtyLocalFiles, listLocalRecoverySnapshotsForTarget, listLocalRepoLogs, listUnpushedLocalCommits, localStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryFile, type LocalRepositoryMeta, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
 import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 import { useAuthStore } from "@/store/authStore";
 import { accountIdentity } from "@/auth/accountIdentity";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
+import { checkRepositoryTokenHealth } from "@/repository/repositoryService";
+import { repositoryErrorDescription } from "@/repository/repositoryError";
+import { readTokenHealth, tokenExpirationWarning, type TokenHealth } from "@/repository/tokenHealth";
 
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0 B";
@@ -50,6 +53,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const user = useAuthStore((s) => s.user);
   const currentAccountIdentity = accountIdentity(user);
   const [status, setStatus] = useState<LocalRepoStatus | null>(null);
+  const [repoMeta, setRepoMeta] = useState<LocalRepositoryMeta | null>(null);
   const [dirtyFiles, setDirtyFiles] = useState<LocalRepositoryFile[]>([]);
   const [ahead, setAhead] = useState(0);
   const [storage, setStorage] = useState<{ usage?: number; quota?: number }>({});
@@ -59,9 +63,11 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const [message, setMessage] = useState("");
   const [selectedDraftPaths, setSelectedDraftPaths] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [tokenHealth, setTokenHealth] = useState<TokenHealth | null>(null);
   const token = book ? resolveBookToken(book, settings) : "";
   const disabled = !book || !!busy;
   const networkDisabled = !book || !token || !!busy || !navigator.onLine;
+  const remoteStatus = repoMeta ? effectiveRemoteStatus(repoMeta) : null;
   const storageHigh = Boolean(storage.usage && storage.quota && storage.usage / storage.quota > 0.8);
   const draftDirtyFiles = useMemo(() => dirtyFiles.filter((file) => file.path.startsWith("drafts/")), [dirtyFiles]);
 
@@ -90,11 +96,12 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   }
 
   async function refresh() {
-    if (!book) { setStatus(null); setDirtyFiles([]); setAhead(0); return; }
+    if (!book) { setStatus(null); setRepoMeta(null); setDirtyFiles([]); setAhead(0); return; }
     if (branch && currentAccountIdentity) setRecoveries(await listLocalRecoverySnapshotsForTarget(book.owner, book.repo, branch, currentAccountIdentity));
     else setRecoveries([]);
     const repo = await currentRepo().catch(() => null);
-    if (!repo) { setStatus(null); setDirtyFiles([]); setAhead(0); return; }
+    if (!repo) { setStatus(null); setRepoMeta(null); setDirtyFiles([]); setAhead(0); return; }
+    setRepoMeta(repo);
     const [nextStatus, dirty, commits, nextLogs] = await Promise.all([localStatus(repo.id), listDirtyLocalFiles(repo.id), listUnpushedLocalCommits(repo.id), listLocalRepoLogs(repo.id)]);
     setStatus(nextStatus);
     setDirtyFiles(dirty);
@@ -112,6 +119,12 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   }
 
   useEffect(() => { if (open) void refresh(); }, [open, book?.id, branch]);
+  useEffect(() => {
+    let cancelled = false;
+    setTokenHealth(null);
+    if (open && token && currentAccountIdentity && book && branch) void readTokenHealth({ accountIdentity: currentAccountIdentity, token, owner: book.owner, repo: book.repo, branch }).then((health) => { if (!cancelled) setTokenHealth(health); });
+    return () => { cancelled = true; };
+  }, [open, token, currentAccountIdentity, book?.owner, book?.repo, branch]);
 
   async function run(label: string, fn: () => Promise<string>) {
     setBusy(label);
@@ -123,9 +136,9 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
     } catch (err) {
       if (book) {
         const repo = await currentRepo().catch(() => null);
-        if (repo) await addLocalRepoLog(repo.id, "error", `${label}: ${err instanceof Error ? err.message : String(err)}`).catch(() => undefined);
+        if (repo) await addLocalRepoLog(repo.id, "error", `${label}: ${repositoryErrorDescription(err, t)}`).catch(() => undefined);
       }
-      toast({ title: t("repoStatus.actionFailed"), description: String(err), variant: "destructive" });
+      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -156,7 +169,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
       await addLocalRepoLog(repo.id, "backup", `Exported backup ZIP (${files.length} files)`);
       toast({ title: t("repoStatus.backupDone") });
     } catch (err) {
-      toast({ title: t("repoStatus.actionFailed"), description: String(err), variant: "destructive" });
+      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -172,7 +185,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
       toast({ title: t("repoStatus.removeLocalDone") });
       await refresh();
     } catch (err) {
-      toast({ title: t("repoStatus.actionFailed"), description: String(err), variant: "destructive" });
+      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -190,7 +203,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
       toast({ title: t("repoStatus.recloneDone") });
       await refresh();
     } catch (err) {
-      toast({ title: t("repoStatus.actionFailed"), description: String(err), variant: "destructive" });
+      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
     } finally {
       setCloneProgress(book.id, undefined);
       setBusy(null);
@@ -208,7 +221,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
       toast({ title: "Recovery snapshot restored" });
       await refresh();
     } catch (err) {
-      toast({ title: t("repoStatus.actionFailed"), description: String(err), variant: "destructive" });
+      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -225,6 +238,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
             <div className="rounded-xl border bg-muted/20 p-3 text-sm">
               <p className="break-all font-medium">{book.owner}/{book.repo}</p>
               <p className="text-xs text-muted-foreground">{status ? t("repoStatus.summary", { dirty: status.dirty, ahead }) : t("repoStatus.notCloned")}</p>
+              {repoMeta && <p className="mt-1 text-xs text-muted-foreground">{t(remoteStatus === "changed" ? "repoStatus.behind" : remoteStatus === "checking" ? "repoStatus.checking" : remoteStatus === "unverified" || remoteStatus === "unavailable" ? (repoMeta.lastKnownChanged ? "repoStatus.staleChanged" : "repoStatus.unverified") : "repoStatus.clean")}</p>}
               {cloneProgress && (
                 <div className="mt-3 space-y-1">
                   <div className="h-2 overflow-hidden rounded-full bg-muted">
@@ -236,6 +250,17 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
               {storage.usage && (
                 <p className={storageHigh ? "mt-2 text-xs font-medium text-amber-600 dark:text-amber-300" : "mt-2 text-xs text-muted-foreground"}>{t("repoStatus.storage", { usage: formatBytes(storage.usage), quota: storage.quota ? formatBytes(storage.quota) : "n/d" })}{storageHigh ? ` · ${t("repoStatus.storageHigh")}` : ""}</p>
               )}
+            </div>
+            <div className="rounded-xl border p-3 text-sm">
+              <p className="font-medium">{t("repoStatus.tokenHealth")}</p>
+              {tokenHealth && <p className="text-xs text-muted-foreground">{t(`repoStatus.tokenPermission.${tokenHealth.permissionStatus}`)}</p>}
+              <p className="text-xs text-muted-foreground">{tokenHealth?.expiresAt ? t(`repoStatus.expiration.${tokenExpirationWarning(tokenHealth.expiresAt)}`, { date: new Date(tokenHealth.expiresAt).toLocaleDateString() }) : t("repoStatus.expiration.unknown")}</p>
+              <Button className="mt-2" size="sm" variant="outline" disabled={networkDisabled} onClick={() => void run("token-health", async () => {
+                if (!book || !branch || !currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
+                const health = await checkRepositoryTokenHealth({ owner: book.owner, repo: book.repo, branch, accountIdentity: currentAccountIdentity, token });
+                setTokenHealth(health);
+                return t("repoStatus.tokenHealthy");
+              })}>{busy === "token-health" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-1 h-4 w-4" />}{t("repoStatus.checkToken")}</Button>
             </div>
             <div className="grid gap-2 sm:grid-cols-3">
               <Button variant="outline" className="sm:col-span-3" disabled={networkDisabled} onClick={() => void run("recover-lifecycle", async () => {
@@ -277,7 +302,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                 ))}
               </div>
             )}
-            <div className="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3">
+            {remoteStatus === "changed" && <div className="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3">
               <p className="text-sm font-medium">{t("repoStatus.repairTitle")}</p>
               <p className="text-xs text-muted-foreground">{t("repoStatus.repairDescription")}</p>
               <Button variant="outline" className="w-full" disabled={networkDisabled} onClick={() => void run("resync-local", async () => {
@@ -285,7 +310,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                  const result = await overwriteRemoteWithLocal({ ...await exactTarget(), token, confirmed: true });
                 return t("repoStatus.resyncLocalDone", { count: result.files });
               })}>{busy === "resync-local" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-1 h-4 w-4" />}{t("repoStatus.resyncLocal")}</Button>
-            </div>
+            </div>}
             <div className="grid gap-2 sm:grid-cols-2">
               <Button variant="outline" disabled={networkDisabled} onClick={() => void recloneLocal()}>{busy === "reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.reclone")}</Button>
               <Button variant="destructive" disabled={disabled} onClick={() => void removeLocal()}>{busy === "remove-local" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}{t("repoStatus.removeLocal")}</Button>

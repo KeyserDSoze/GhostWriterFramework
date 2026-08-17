@@ -22,6 +22,11 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { DEFAULT_AUDIT_SETTINGS, DEFAULT_BOOK_EXPORT_SETTINGS, resolveBookAuditSettings, resolveBookExportSettings, resolveBookToken, type AuditSettings, type BookEntry, type BookExportSettings, type ParagraphSeparator } from "@/types/settings";
 import { createBranchFromBase, getDefaultBranch, listBranches } from "@/github/githubClient";
+import { checkRepositoryTokenHealth } from "@/repository/repositoryService";
+import { repositoryErrorDescription } from "@/repository/repositoryError";
+import { readTokenHealth, tokenExpirationWarning, type TokenHealth } from "@/repository/tokenHealth";
+import { accountIdentity } from "@/auth/accountIdentity";
+import { useAuthStore } from "@/store/authStore";
 
 type TokenMode = "default" | "custom" | string;
 
@@ -40,6 +45,7 @@ export function BookSettingsPage() {
   const { save, syncStatus } = useSettings();
   const offline = typeof navigator !== "undefined" && !navigator.onLine;
   const { clearBook, structures, workingBranches } = useBooksStore();
+  const user = useAuthStore((state) => state.user);
 
   const book = settings.books.find((entry) => entry.id === bookId);
   const structure = bookId ? structures[bookId] : undefined;
@@ -56,6 +62,8 @@ export function BookSettingsPage() {
   const [creatingBranch, setCreatingBranch] = useState(false);
   const [presentation, setPresentation] = useState<BookExportSettings>(() => book ? resolveBookExportSettings(book) : DEFAULT_BOOK_EXPORT_SETTINGS);
   const [auditSettings, setAuditSettings] = useState<AuditSettings>(() => book ? resolveBookAuditSettings(book) : DEFAULT_AUDIT_SETTINGS);
+  const [tokenHealth, setTokenHealth] = useState<TokenHealth | null>(null);
+  const [checkingToken, setCheckingToken] = useState(false);
 
   useEffect(() => {
     if (book) {
@@ -63,6 +71,16 @@ export function BookSettingsPage() {
       setAuditSettings(resolveBookAuditSettings(book));
     }
   }, [book?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const identity = accountIdentity(user);
+    const token = book ? resolveBookToken(book, settings) : "";
+    const branch = activeBranch === "__auto__" ? workingBranches[book?.id ?? ""] ?? structure?.defaultBranch ?? "main" : activeBranch;
+    setTokenHealth(null);
+    if (identity && token && book) void readTokenHealth({ accountIdentity: identity, token, owner: book.owner, repo: book.repo, branch }).then((health) => { if (!cancelled) setTokenHealth(health); });
+    return () => { cancelled = true; };
+  }, [book, settings, user, activeBranch, workingBranches, structure?.defaultBranch]);
 
   useEffect(() => {
     if (!book) return;
@@ -96,6 +114,7 @@ export function BookSettingsPage() {
   const currentBook = book;
   const isSaving = syncStatus === "saving";
   const currentToken = resolveBookToken(currentBook, settings);
+  const currentAccountIdentity = accountIdentity(user);
   const currentAutoBranch = workingBranches[currentBook.id] ?? (structure?.defaultBranch ?? "main");
 
   function patchAuditSettings(patch: Partial<AuditSettings>) {
@@ -151,12 +170,36 @@ export function BookSettingsPage() {
     }
   }
 
+  async function handleTokenHealth() {
+    if (!currentToken || !currentAccountIdentity) return;
+    setCheckingToken(true);
+    try {
+      const health = await checkRepositoryTokenHealth({ owner: currentBook.owner, repo: currentBook.repo, branch: activeBranch === "__auto__" ? currentAutoBranch : activeBranch, accountIdentity: currentAccountIdentity, token: currentToken });
+      setTokenHealth(health);
+      toast({ title: t("repoStatus.tokenHealthy") });
+    } catch (error) {
+      setTokenHealth(await readTokenHealth({ accountIdentity: currentAccountIdentity, token: currentToken, owner: currentBook.owner, repo: currentBook.repo, branch: activeBranch === "__auto__" ? currentAutoBranch : activeBranch }));
+      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(error, t), variant: "destructive" });
+    } finally { setCheckingToken(false); }
+  }
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
         <h1 className="font-serif text-3xl font-semibold tracking-tight">{t("bookSettings.title")}</h1>
         <p className="text-muted-foreground">{currentBook.owner}/{currentBook.repo}</p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><KeyRound className="h-4 w-4" />{t("repoStatus.tokenHealth")}</CardTitle>
+          <CardDescription>{tokenHealth?.expiresAt ? t(`repoStatus.expiration.${tokenExpirationWarning(tokenHealth.expiresAt)}`, { date: new Date(tokenHealth.expiresAt).toLocaleDateString() }) : t("repoStatus.expiration.unknown")}</CardDescription>
+          {tokenHealth && <CardDescription>{t(`repoStatus.tokenPermission.${tokenHealth.permissionStatus}`)}</CardDescription>}
+        </CardHeader>
+        <CardContent>
+          <Button type="button" variant="outline" disabled={!currentToken || !currentAccountIdentity || offline || checkingToken} onClick={() => void handleTokenHealth()}>{checkingToken ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <KeyRound className="mr-1 h-4 w-4" />}{t("repoStatus.checkToken")}</Button>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

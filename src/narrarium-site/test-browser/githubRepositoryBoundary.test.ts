@@ -71,12 +71,12 @@ beforeEach(() => {
 describe("GitHub repository error classification", () => {
   it.each([
     [404, {}, "not-found"],
-    [401, {}, "auth"],
-    [403, {}, "auth"],
+    [401, {}, "credential-invalid"],
+    [403, {}, "permission-unverified"],
     [403, { "x-ratelimit-remaining": "0" }, "rate-limit"],
     [429, {}, "rate-limit"],
     [409, {}, "conflict"],
-    [500, {}, "network"],
+    [500, {}, "service-unavailable"],
   ] as const)("classifies HTTP %s as %s", async (status, headers, kind) => {
     await expectReadError(new Response("", { status, headers }), kind, status);
   });
@@ -108,15 +108,15 @@ describe("GitHub repository error classification", () => {
   });
 
   it.each([
-    [{ status: 401 }, "read", "auth"],
+    [{ status: 401 }, "read", "credential-invalid"],
     [{ status: 429 }, "list", "rate-limit"],
     [{ status: 409 }, "update", "conflict"],
     [{ status: 412 }, "delete", "conflict"],
     [{ status: 422 }, "create", "conflict"],
-    [{ status: 503 }, "list", "network"],
+    [{ status: 503 }, "list", "service-unavailable"],
     [new TypeError("offline"), "create", "network"],
     [new DOMException("Aborted", "AbortError"), "delete", "abort"],
-    [{ status: 500 }, "compare", "network"],
+    [{ status: 500 }, "compare", "service-unavailable"],
     [{ status: 404 }, "revert", "conflict"],
   ] as const)("classifies repository operation errors", (error, operation, kind) => {
     expect(classifyRepositoryError(error, operation, "book.md")).toMatchObject({ kind, operation });
@@ -148,18 +148,18 @@ describe("GitHub repository error classification", () => {
 describe("GitHub compound operation boundaries", () => {
   it("types rename failures before creating a tree", async () => {
     octokitMocks.getBranch.mockRejectedValue({ status: 401 });
-    await expect(renameAndUpdateFile("token", "owner", "repo", "main", "old.md", "new.md", "body", "rename")).rejects.toMatchObject({ kind: "auth", operation: "update" });
+    await expect(renameAndUpdateFile("token", "owner", "repo", "main", "old.md", "new.md", "body", "rename")).rejects.toMatchObject({ kind: "credential-invalid", operation: "update" });
     expect(octokitMocks.createTree).not.toHaveBeenCalled();
   });
 
   it("types compare failures", async () => {
     octokitMocks.compareCommitsWithBasehead.mockRejectedValue({ status: 503 });
-    await expect(compareBranches("token", "owner", "repo", "main", "draft")).rejects.toMatchObject({ kind: "network", operation: "compare" });
+    await expect(compareBranches("token", "owner", "repo", "main", "draft")).rejects.toMatchObject({ kind: "service-unavailable", operation: "compare" });
   });
 
   it("does not mutate a revert after an unconfirmed read failure", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 403 })));
-    await expect(revertFileToRef("token", "owner", "repo", "main", "book.md", "base")).rejects.toMatchObject({ kind: "auth", operation: "read" });
+    await expect(revertFileToRef("token", "owner", "repo", "main", "book.md", "base")).rejects.toMatchObject({ kind: "permission-unverified", operation: "read" });
     expect(octokitMocks.createOrUpdateFileContents).not.toHaveBeenCalled();
     expect(octokitMocks.deleteFile).not.toHaveBeenCalled();
   });
@@ -188,7 +188,7 @@ describe("GitHub upsert read safety", () => {
   ])("does not write when the %s read fails without a 404", async (_name, operation) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 401 })));
 
-    await expect(operation()).rejects.toMatchObject({ kind: "auth", operation: "read" });
+    await expect(operation()).rejects.toMatchObject({ kind: "credential-invalid", operation: "read" });
     expect(octokitMocks.createOrUpdateFileContents).not.toHaveBeenCalled();
   });
 

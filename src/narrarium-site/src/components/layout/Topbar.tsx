@@ -24,8 +24,9 @@ import { useToast } from "@/components/ui/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { useSettings } from "@/drive/useSettings";
 import { parseAppRoute } from "@/assistant/context";
-import { getLocalRepositoryStatusSnapshot, listUnpushedLocalCommits } from "@/repository/localRepository";
+import { effectiveRemoteStatus, getLocalRepositoryStatusSnapshot, listUnpushedLocalCommits } from "@/repository/localRepository";
 import { RepositoryStatusDialog } from "@/components/repository/RepositoryStatusDialog";
+import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits, syncFullRepository } from "@/repository/repositoryService";
 import { resolveBookToken } from "@/types/settings";
 import { emailToBranchName } from "@/github/githubClient";
@@ -138,15 +139,20 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           }
         }
       }
+      const remoteStatus = effectiveRemoteStatus(repo);
       setRepoStatus(status.dirty > 0
         ? { label: t("repoStatus.dirty", { count: status.dirty }), tone: "dirty" }
         : status.ahead > 0
           ? { label: t("repoStatus.ahead", { count: status.ahead }), tone: "ahead" }
           : repo.cloneComplete !== true
             ? { label: t("repoStatus.incomplete"), tone: "behind" }
-          : repo.remoteChanged
+          : remoteStatus === "changed"
             ? { label: t("repoStatus.behind"), tone: "behind" }
-        : { label: t("repoStatus.clean"), tone: "clean" });
+            : remoteStatus === "checking"
+              ? { label: t("repoStatus.checking"), tone: "offline" }
+              : remoteStatus === "unverified" || remoteStatus === "unavailable"
+                ? { label: t(repo.lastKnownChanged ? "repoStatus.staleChanged" : "repoStatus.unverified"), tone: "offline" }
+                : { label: t("repoStatus.clean"), tone: "clean" });
     }
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
@@ -239,7 +245,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       const result = await action();
       toast({ title: result });
     } catch (err) {
-      toast({ title: t("repoStatus.actionFailed"), description: String(err), variant: "destructive" });
+      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
     } finally {
       setRepoActionBusy(null);
     }

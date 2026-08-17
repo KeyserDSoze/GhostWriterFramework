@@ -1,4 +1,4 @@
-import { Octokit } from "@octokit/rest";
+import type { Octokit } from "@octokit/rest";
 import type { BookEntry } from "@/types/settings";
 import type { BookStructure } from "@/types/book";
 import { isAccountIdentityCurrent } from "@/auth/accountIdentity";
@@ -25,6 +25,8 @@ import {
   listDirtyLocalFiles,
   listUnpushedLocalCommits,
   markLocalRepositoryRemoteCheck,
+  markLocalRepositoryRemoteChecking,
+  markLocalRepositoryRemoteFailure,
   markLocalRepositoryCloneComplete,
   markLocalRepositoryRepairRequired,
   heartbeatRepositoryLifecycleLease,
@@ -48,8 +50,19 @@ import {
   type RemoteTreeFile,
 } from "@/repository/localRepository";
 import { reconcileRemoteMutation } from "@/repository/remoteMutationReconciliation";
+import { classifyRepositoryError } from "@/repository/repositoryError";
+import { recordRepositoryReadValidated, recordRepositoryWriteValidated, tokenExpirationFromHeaders, writeTokenHealth, type TokenHealth, type TokenHealthTarget } from "@/repository/tokenHealth";
+import { createTrackedGitHubClient } from "@/repository/githubRequest";
 
 const TEXT_EXTENSIONS = new Set(["md", "markdown", "txt", "json", "yaml", "yml", "toml", "csv", "html", "css", "js", "ts", "tsx"]);
+
+function tokenHealthTarget(input: Pick<ExactRepositoryTarget, "accountIdentity" | "owner" | "repo" | "branch"> & { token: string }): TokenHealthTarget {
+  return { accountIdentity: input.accountIdentity, token: input.token, owner: input.owner, repo: input.repo, branch: input.branch };
+}
+
+function trackedOctokit(token: string, target?: Pick<ExactRepositoryTarget, "accountIdentity" | "owner" | "repo" | "branch">): Octokit {
+  return createTrackedGitHubClient(token, target);
+}
 
 export interface LocalCloneProgress {
   done: number;
@@ -264,7 +277,7 @@ async function ensureLocalBookStructureOnce(input: {
     return { meta: repaired.meta, structure: repaired.structure, cloned: false };
   }
 
-  const octokit = new Octokit({ auth: input.token });
+  const octokit = createTrackedGitHubClient(input.token);
   const repoData = await octokit.rest.repos.get({ owner: input.book.owner, repo: input.book.repo, request: { signal } });
   const defaultBranch = repoData.data.default_branch;
   const resolvedBranch = branch || defaultBranch;
@@ -337,7 +350,7 @@ export async function migrateLegacyLocalRepository(input: { meta: LocalRepositor
     const claimed = await claimLegacyLocalRepositoryMigration(selected.id, scope, migrationOperationId);
     try {
       return await withLifecycleHeartbeat(claimed.id, scope, migrationOperationId, async () => {
-      const octokit = new Octokit({ auth: input.token });
+      const octokit = trackedOctokit(input.token, { accountIdentity: input.accountIdentity, owner: input.meta.owner, repo: input.meta.repo, branch: input.meta.branch });
       const tree = await octokit.rest.git.getTree({ owner: claimed.owner, repo: claimed.repo, tree_sha: claimed.remoteHeadSha, recursive: "1" });
       if (tree.data.truncated) throw new Error("Remote tree is truncated; legacy local repository migration remains retryable.");
       const remoteBlobs = tree.data.tree.filter((entry) => entry.type === "blob" && entry.path && entry.sha).map((entry) => ({ path: entry.path!, sha: entry.sha! }));
@@ -390,7 +403,7 @@ export async function restoreLocalFilesToBase(input: {
 
   const selected = (await Promise.all(uniquePaths.map((path) => getLocalFileEntry(input.repoId, path, scope))))
     .filter((file): file is LocalRepositoryFile => Boolean(file && !file.committed && file.status !== "clean"));
-  const remote = input.token ? new Octokit({ auth: input.token }) : null;
+  const remote = input.token ? trackedOctokit(input.token, input) : null;
   const deletes: string[] = [];
   const writes: Array<{ path: string; kind: "text"; text: string } | { path: string; kind: "binary"; bytes: Uint8Array }> = [];
   const expected = new Map(selected.map((file) => [file.path, file.currentHash]));
@@ -475,7 +488,7 @@ async function verifyAndRepairLocalRepositoryLeased(
   repairOperationId: string,
   onProgress?: (progress: LocalCloneProgress) => void,
 ): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; repaired: number }> {
-  const octokit = new Octokit({ auth: token });
+  const octokit = trackedOctokit(token, { accountIdentity: scope.accountIdentity, owner: meta.owner, repo: meta.repo, branch: meta.branch });
   // Verify against the head the local repo claims to be at, so we restore exactly that
   // tree; the normal fetch/pull flow advances to any newer remote head afterwards.
   const treeSha = meta.remoteHeadSha;
@@ -568,12 +581,19 @@ export function autoCommitMessage(paths: string[]): string {
 export async function fetchRemoteStatus(input: ExactRepositoryTarget & { token: string; signal?: AbortSignal }): Promise<RemoteStatusResult> {
   const scope = operationScope(input);
   const meta = await exactLocalRepository(input, scope);
-  const octokit = new Octokit({ auth: input.token });
-  const { remoteHeadSha, changed } = await resolveRemoteChangeState(octokit, meta, input.signal);
-  input.signal?.throwIfAborted();
-  await markLocalRepositoryRemoteCheck(meta.id, scope, remoteHeadSha, changed);
-  await addLocalRepoLog(meta.id, "fetch", changed ? `Remote changed: ${remoteHeadSha.slice(0, 7)}` : "Remote up to date");
-  return { remoteHeadSha, changed };
+  const previous = await markLocalRepositoryRemoteChecking(meta.id, scope);
+  const octokit = trackedOctokit(input.token, input);
+  try {
+    const { remoteHeadSha, changed } = await resolveRemoteChangeState(octokit, meta, input.signal);
+    input.signal?.throwIfAborted();
+    await markLocalRepositoryRemoteCheck(meta.id, scope, remoteHeadSha, changed);
+    await addLocalRepoLog(meta.id, "fetch", changed ? `Remote changed: ${remoteHeadSha.slice(0, 7)}` : "Remote up to date");
+    return { remoteHeadSha, changed };
+  } catch (error) {
+    const classified = classifyRepositoryError(error, "read");
+    await markLocalRepositoryRemoteFailure(meta.id, scope, classified.kind, previous).catch(() => undefined);
+    throw classified;
+  }
 }
 
 async function resolveRemoteChangeState(octokit: Octokit, meta: LocalRepositoryMeta, signal?: AbortSignal): Promise<RemoteChangeState> {
@@ -587,9 +607,30 @@ async function resolveRemoteChangeState(octokit: Octokit, meta: LocalRepositoryM
       octokit.rest.git.getCommit({ owner: meta.owner, repo: meta.repo, commit_sha: remoteHeadSha, request: { signal } }),
     ]);
     return { remoteHeadSha, changed: currentCommit.data.tree.sha !== remoteCommit.data.tree.sha };
-  } catch {
+  } catch (error) {
     signal?.throwIfAborted();
-    return { remoteHeadSha, changed: true };
+    throw classifyRepositoryError(error, "compare");
+  }
+}
+
+export interface RepositoryTokenHealthResult extends TokenHealth {
+  repository: string;
+}
+
+export async function checkRepositoryTokenHealth(input: Pick<ExactRepositoryTarget, "owner" | "repo" | "branch" | "accountIdentity"> & { token: string }): Promise<RepositoryTokenHealthResult> {
+  const target = tokenHealthTarget(input);
+  const octokit = trackedOctokit(input.token, input);
+  try {
+    const repository = await octokit.rest.repos.get({ owner: input.owner, repo: input.repo });
+    const ref = await octokit.rest.git.getRef({ owner: input.owner, repo: input.repo, ref: `heads/${input.branch}` });
+    const expiresAt = tokenExpirationFromHeaders(repository.headers as Record<string, unknown>) ?? tokenExpirationFromHeaders(ref.headers as Record<string, unknown>);
+    const health = await recordRepositoryReadValidated(target, expiresAt);
+    return { ...health, repository: `${input.owner}/${input.repo}` };
+  } catch (error) {
+    const classified = classifyRepositoryError(error, "read");
+    const denied = classified.kind === "credential-invalid" || classified.kind === "permission" || classified.kind === "permission-unverified" || classified.kind === "sso-required";
+    await writeTokenHealth(target, { lastValidated: new Date().toISOString(), permissionStatus: denied ? "denied" : "unknown", errorKind: classified.kind });
+    throw classified;
   }
 }
 
@@ -618,10 +659,15 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
   }
   if (destructive && !input.confirmed) throw new Error("Remote-wins pull requires explicit confirmation.");
 
-  const octokit = new Octokit({ auth: input.token });
+  const previous = await markLocalRepositoryRemoteChecking(meta.id, scope);
+  try {
+  const octokit = trackedOctokit(input.token, input);
   const { remoteHeadSha, changed } = await resolveRemoteChangeState(octokit, meta, input.signal);
   input.signal?.throwIfAborted();
-  if (remoteHeadSha === meta.remoteHeadSha && !dirty.length && !ahead.length) return { updated: 0, remoteHeadSha };
+  if (remoteHeadSha === meta.remoteHeadSha && !dirty.length && !ahead.length) {
+    await markLocalRepositoryRemoteCheck(meta.id, scope, remoteHeadSha, false);
+    return { updated: 0, remoteHeadSha };
+  }
   if (!changed && !dirty.length && !ahead.length) {
     await updateLocalRepositoryHead(meta.id, scope, remoteHeadSha);
     await addLocalRepoLog(meta.id, "pull", `Remote head changed to ${remoteHeadSha.slice(0, 7)} with no file-content differences`);
@@ -661,6 +707,11 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
   const recoveryId = recovery.id;
   await addLocalRepoLog(meta.id, "pull", `Pulled ${updated} files from remote${recoveryId ? ` after recovery snapshot ${recoveryId}` : ""}`);
   return { updated, remoteHeadSha, ...(recoveryId ? { recoveryId } : {}) };
+  } catch (error) {
+    const classified = classifyRepositoryError(error, "compare");
+    await markLocalRepositoryRemoteFailure(meta.id, scope, classified.kind, previous).catch(() => undefined);
+    throw classified.kind === "unknown" ? error : classified;
+  }
 }
 
 export async function restoreRepositoryRecovery(input: ExactRepositoryTarget & { recoveryId: string }): Promise<{ recovery: LocalRepositoryRecovery; structure: BookStructure }> {
@@ -710,7 +761,7 @@ async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLoca
   input.signal?.throwIfAborted();
   if (!commits.length) throw new Error("No local commits to push.");
 
-  const octokit = new Octokit({ auth: input.token });
+  const octokit = trackedOctokit(input.token, input);
   const request = { request: { signal: input.signal } };
   const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, ...request });
   input.signal?.throwIfAborted();
@@ -797,14 +848,18 @@ async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLoca
       revisions: Object.entries(pushedShas).map(([path, blobSha]) => ({ path, blobSha })),
     });
     if (reconciled.landed && reconciled.headSha) {
+      await recordRepositoryWriteValidated(tokenHealthTarget(input));
       const settlement = await markLocalCommitsPushed(meta.id, scope, commits.map((entry) => entry.id), reconciled.headSha, reconciled.blobShas ?? pushedShas);
       await addLocalRepoLog(meta.id, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
         ? `Push reconciled with newer local edits preserved for recovery: ${settlement.skippedPaths.join(", ")}`
         : `Push reconciled at ${reconciled.headSha.slice(0, 7)}`);
       return { commitSha: reconciled.headSha, files: treeEntries.length, ...(settlement.skippedPaths.length ? { recoveryPaths: settlement.skippedPaths } : {}) };
     }
+    const classified = classifyRepositoryError(error, "update");
+    if (classified.kind === "branch-protected") throw classified;
     throw new AmbiguousLocalPushError("The local push ref update had an ambiguous outcome.", commit.data.sha, error);
   }
+  await recordRepositoryWriteValidated(tokenHealthTarget(input));
   const settlement = await markLocalCommitsPushed(meta.id, scope, commits.map((entry) => entry.id), commit.data.sha, pushedShas);
   await addLocalRepoLog(meta.id, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
     ? `Push completed with newer local edits preserved for recovery: ${settlement.skippedPaths.join(", ")}`
@@ -822,7 +877,9 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
   const pendingBeforeSync = await listUnpushedLocalCommits(meta.id);
   if (pendingBeforeSync.length) await createLocalRecoverySnapshot(meta.id, `Before full sync from ${meta.remoteHeadSha}`, scope);
   await restoreUnpushedCommitsAsDirty(meta.id, scope);
-  const octokit = new Octokit({ auth: input.token });
+  const previous = await markLocalRepositoryRemoteChecking(meta.id, scope);
+  try {
+  const octokit = trackedOctokit(input.token, input);
   const { remoteHeadSha, changed: remoteChanged } = await resolveRemoteChangeState(octokit, meta);
   let pulled = 0;
   let keptLocal = 0;
@@ -911,6 +968,11 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
   }
   await addLocalRepoLog(meta.id, "push", `Full sync complete: pulled ${pulled}, kept local ${keptLocal}, committed ${committed}, pushed ${pushed}`);
   return { pulled, keptLocal, committed, pushed };
+  } catch (error) {
+    const classified = classifyRepositoryError(error, "compare");
+    await markLocalRepositoryRemoteFailure(meta.id, scope, classified.kind, previous).catch(() => undefined);
+    throw classified.kind === "unknown" ? error : classified;
+  }
 }
 
 export async function removeLocalWorkingCopy(target: ExactRepositoryTarget): Promise<void> {
@@ -974,7 +1036,7 @@ async function overwriteRemoteWithLocalLeased(meta: LocalRepositoryMeta, input: 
     throw new Error("Local working copy is not fully synced yet. Reload the book (or re-clone) so all files are present before using it as the source of truth.");
   }
 
-  const octokit = new Octokit({ auth: input.token });
+  const octokit = trackedOctokit(input.token, input);
   const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
   const remoteHeadSha = ref.data.object.sha;
 
@@ -1027,6 +1089,7 @@ async function overwriteRemoteWithLocalLeased(meta: LocalRepositoryMeta, input: 
     parents: [remoteHeadSha],
   });
   await octokit.rest.git.updateRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, sha: commit.data.sha });
+  await recordRepositoryWriteValidated(tokenHealthTarget(input));
 
   const settlement = await settleLocalSourceOverwriteAtomically({
     repoId: meta.id,

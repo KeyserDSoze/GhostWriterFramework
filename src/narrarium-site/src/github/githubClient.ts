@@ -1,4 +1,4 @@
-import { Octokit } from "@octokit/rest";
+import type { Octokit } from "@octokit/rest";
 import { BookStructure, Chapter, Paragraph, BookFile, ResearchFile } from "@/types/book";
 import { applyLocalFileChangesAtomically, deleteLocalFileAtomically, getLocalFile, getLocalRepository, listLocalFiles, mutateLocalTextFilesAtomically, renameLocalTextFileAtomically, sha256Text, writeLocalBinaryScoped, type LocalFileAtomicWrite, type LocalTextFileMutation } from "@/repository/localRepository";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
@@ -18,6 +18,9 @@ import {
 } from "@/narrarium/paragraphArtifacts";
 import { planCanonicalScriptMutation, SCRIPT_PATH_PATTERN, type CanonicalScriptMutationResult } from "@/narrarium/canonicalScriptMutationPlan";
 import { reconcileRemoteMutation, type IntendedRemoteRevision } from "@/repository/remoteMutationReconciliation";
+import { createTrackedGitHubClient } from "@/repository/githubRequest";
+import { accountIdentity } from "@/auth/accountIdentity";
+import { useAuthStore } from "@/store/authStore";
 
 type StructuralTextWrite = { path: string; text: string };
 
@@ -53,8 +56,9 @@ async function updateStructuralRef(
   }
 }
 
-export function createGitHubClient(token: string): Octokit {
-  return new Octokit({ auth: token });
+export function createGitHubClient(token: string, target?: { owner: string; repo: string; branch: string }): Octokit {
+  const identity = accountIdentity(useAuthStore.getState().user);
+  return createTrackedGitHubClient(token, identity && target ? { accountIdentity: identity, ...target } : undefined);
 }
 
 function githubContentUrl(owner: string, repo: string, path: string, ref?: string, cacheBust = false): string {
@@ -93,15 +97,12 @@ async function fetchContentJson(
     throw new RepositoryError(`GitHub content read failed for ${path}.`, kind, "read", undefined, { cause: error });
   }
   if (!response.ok) {
-    const rateLimited = response.status === 429
-      || (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0");
-    const kind = response.status === 404
-      ? "not-found"
-      : rateLimited ? "rate-limit"
-        : response.status === 401 || response.status === 403 ? "auth"
-          : response.status === 409 || response.status === 412 || response.status === 422 ? "conflict"
-            : response.status >= 500 ? "network" : "unknown";
-    throw new RepositoryError(`GitHub content read failed for ${path}: ${response.status}.`, kind, "read", response.status);
+    let message = "";
+    try {
+      const body = await response.clone().json() as { message?: unknown };
+      if (typeof body.message === "string") message = body.message.slice(0, 500);
+    } catch { /* Classification remains status/header based. */ }
+    throw classifyRepositoryError({ status: response.status, message, response: { status: response.status, headers: Object.fromEntries(response.headers), data: { message } } }, "read", path);
   }
   try {
     const data: unknown = await response.json();
@@ -769,7 +770,7 @@ export async function updateFile(
     }
     return sha256Text(content);
   }
-  const octokit = createGitHubClient(token);
+  const octokit = createGitHubClient(token, { owner, repo, branch });
   let data: Awaited<ReturnType<typeof octokit.rest.repos.createOrUpdateFileContents>>["data"];
   try {
     ({ data } = await octokit.rest.repos.createOrUpdateFileContents({ owner, repo, path, message, content: encodeContent(content), sha, branch, request: { signal } }));
@@ -789,7 +790,7 @@ export async function createOrUpdateBinaryFile(
   const scope = captureRepositoryOperationScope();
   const id = await localRepoId(owner, repo, branch, scope);
   if (id) return (await writeLocalBinaryScoped(id, path, bytes, scope)).currentHash;
-  const octokit = createGitHubClient(token);
+  const octokit = createGitHubClient(token, { owner, repo, branch });
   const existing = await optionalRepositoryRead(() => readFileWithSha(token, owner, repo, branch, path));
   const body = {
     owner,
@@ -835,7 +836,7 @@ export async function createOrUpdateTextAndBinaryFilesAtomically(input: {
     return;
   }
 
-  const octokit = createGitHubClient(input.token);
+  const octokit = createGitHubClient(input.token, { owner: input.owner, repo: input.repo, branch: input.branch });
   const ref = await octokit.rest.git.getRef({ owner: input.owner, repo: input.repo, ref: `heads/${input.branch}` });
   const headSha = ref.data.object.sha;
   const commit = await octokit.rest.git.getCommit({ owner: input.owner, repo: input.repo, commit_sha: headSha });
@@ -887,7 +888,7 @@ export async function createFile(
     }
     return sha256Text(content);
   }
-  const octokit = createGitHubClient(token);
+  const octokit = createGitHubClient(token, { owner, repo, branch });
   let data: Awaited<ReturnType<typeof octokit.rest.repos.createOrUpdateFileContents>>["data"];
   try {
     ({ data } = await octokit.rest.repos.createOrUpdateFileContents({ owner, repo, path, message, content: encodeContent(content), branch, request: { signal } }));
@@ -952,7 +953,7 @@ export async function mutateTextFilesAtomically(
     return;
   }
 
-  const octokit = createGitHubClient(token);
+  const octokit = createGitHubClient(token, { owner, repo, branch });
   const { data: branchData } = await octokit.rest.repos.getBranch({ owner, repo, branch, request: { signal } });
   const head = branchData.commit.sha;
   const treeSha = branchData.commit.commit.tree.sha;
@@ -1163,7 +1164,7 @@ export async function renameParagraphWithCompanions(
     return { paragraph: updatedParagraph(sourcePaths), canonical: canonical.result };
   }
 
-  const octokit = createGitHubClient(token);
+  const octokit = createGitHubClient(token, { owner, repo, branch });
   try {
   const { data: branchData } = await octokit.rest.repos.getBranch({ owner, repo, branch });
   const currentCommitSha = branchData.commit.sha;
@@ -1400,7 +1401,7 @@ export async function reorderParagraphsInChapter(
       if (!current || current.currentHash !== expected) throw new RepositoryError(`File changed since it was read: ${path}`, "conflict", "update", 409);
     }
     if (options.expectedRemoteHeadSha) {
-      const remote = createGitHubClient(token);
+      const remote = createGitHubClient(token, { owner, repo, branch });
       const ref = await remote.rest.git.getRef({ owner, repo, ref: `heads/${branch}`, request: { signal: options.signal } });
       if (ref.data.object.sha !== options.expectedRemoteHeadSha) throw new RepositoryError("The remote branch changed before the paragraph operation.", "conflict", "update", 409);
     }
@@ -1444,7 +1445,7 @@ export async function reorderParagraphsInChapter(
   }
 
   // ── Remote: single atomic commit via the Git Trees API ──────────────────────
-  const octokit = createGitHubClient(token);
+  const octokit = createGitHubClient(token, { owner, repo, branch });
   try {
   const { data: branchData } = await octokit.rest.repos.getBranch({ owner, repo, branch });
   const currentCommitSha = branchData.commit.sha;
@@ -1673,7 +1674,7 @@ export async function reorderChaptersInBook(
   }
 
   // ── Remote: single atomic commit via the Git Trees API ──────────────────────
-  const octokit = createGitHubClient(token);
+  const octokit = createGitHubClient(token, { owner, repo, branch });
   try {
   const { data: branchData } = await octokit.rest.repos.getBranch({ owner, repo, branch });
   const currentCommitSha = branchData.commit.sha;
@@ -1777,8 +1778,8 @@ export async function ensureDevBranch(
   baseBranch: string,
   email: string,
 ): Promise<string> {
-  const octokit = createGitHubClient(token);
   const branchName = emailToBranchName(email);
+  const octokit = createGitHubClient(token, { owner, repo, branch: branchName });
 
   try {
     await octokit.rest.repos.getBranch({ owner, repo, branch: branchName });
@@ -1826,7 +1827,7 @@ export async function renameAndUpdateFile(
     const file = await renameLocalTextFileAtomically({ repoId: id, scope, oldPath, newPath, content, expectedCurrentHash: expected });
     return { sha: file.currentHash };
   }
-  const octokit = createGitHubClient(token);
+  const octokit = createGitHubClient(token, { owner, repo, branch });
   try {
   const { data: branchData } = await octokit.rest.repos.getBranch({
     owner,

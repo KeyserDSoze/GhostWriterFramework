@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { accountIdentity, clearLegacyAccountUpgrade, finalizeInteractiveLegacyAccountUpgrade } from "../auth/accountIdentity.ts";
+import { clearTokenHealth } from "../repository/tokenHealth.ts";
 
 const AUTH_STORAGE_KEY = "narrarium-bms-auth";
 
@@ -67,6 +68,7 @@ export const useAuthStore = create<AuthState>()(
       },
       clearAuth: () => {
         clearLegacyAccountUpgrade();
+        clearTokenHealth();
         set({ accessToken: null, user: null, accessTokenExpiry: null, interactiveRecoveryIdentity: null });
       },
       clearAuthForLegacyUpgrade: () => set({ accessToken: null, user: null, accessTokenExpiry: null }),

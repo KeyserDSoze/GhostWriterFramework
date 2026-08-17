@@ -40,6 +40,7 @@ import {
   reclaimExpiredRepositoryLifecycleLease,
   heartbeatRepositoryLifecycleLease,
   markLocalRepositoryCloneComplete,
+  markLocalRepositoryRemoteCheck,
   classifyLegacyLocalRepositoryMigration,
   applyCloneRepairAtomically,
   restoreUnpushedCommitsAsDirty,
@@ -47,10 +48,11 @@ import {
   listDirtyLocalFiles,
   writeLocalText,
 } from "@/repository/localRepository";
-import { ensureLocalBookStructure, invalidateRepositoryEnsureOperations, migrateLegacyLocalRepository, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
+import { checkRepositoryTokenHealth, ensureLocalBookStructure, fetchRemoteStatus, invalidateRepositoryEnsureOperations, migrateLegacyLocalRepository, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { useSettingsStore } from "@/store/settingsStore";
+import { readTokenHealth } from "@/repository/tokenHealth";
 
 let repoId = "";
 const identity = "google:sub-writer";
@@ -88,6 +90,56 @@ function gate<T>() {
   const promise = new Promise<T>((resolve, rejectPromise) => { release = resolve; reject = rejectPromise; });
   return { promise, release, reject };
 }
+
+test("remote status preserves last-known changed through an outage and recovers to clean", async () => {
+  await setup();
+  await markLocalRepositoryRemoteCheck(repoId, captureRepositoryOperationScope(), "known-remote", true);
+  octokit.getRef.mockRejectedValueOnce({ status: 503 });
+
+  await expect(fetchRemoteStatus({ ...target, token: "token" })).rejects.toMatchObject({ kind: "service-unavailable" });
+  expect(await getLocalRepositoryById(repoId, identity)).toMatchObject({
+    remoteHeadSha: "base-head",
+    lastRemoteHead: "known-remote",
+    lastKnownChanged: true,
+    remoteStatus: "unavailable",
+    remoteErrorKind: "service-unavailable",
+  });
+
+  octokit.getRef.mockResolvedValue({ data: { object: { sha: "base-head" } } });
+  octokit.getCommit.mockResolvedValue({ data: { tree: { sha: "same-tree" } } });
+  await expect(fetchRemoteStatus({ ...target, token: "token" })).resolves.toEqual({ remoteHeadSha: "base-head", changed: false });
+  expect(await getLocalRepositoryById(repoId, identity)).toMatchObject({ remoteStatus: "clean", lastRemoteHead: "base-head", lastKnownChanged: false });
+});
+
+test("token health validates exact repository permissions and stores expiration", async () => {
+  await setup();
+  octokit.getRepo.mockResolvedValue({ data: {}, headers: { "github-authentication-token-expiration": "2026-09-01 00:00:00 UTC" } });
+  octokit.getRef.mockResolvedValue({ data: { object: { sha: "base-head" } }, headers: {} });
+
+  await expect(checkRepositoryTokenHealth({ ...target, token: "health-token" })).resolves.toMatchObject({ permissionStatus: "read-validated", expiresAt: "2026-09-01T00:00:00.000Z" });
+  expect(await readTokenHealth({ ...target, token: "health-token" })).toMatchObject({ permissionStatus: "read-validated", expiresAt: "2026-09-01T00:00:00.000Z" });
+
+  octokit.getRepo.mockRejectedValue({ status: 403, response: { status: 403, data: { message: "Resource not accessible by personal access token" }, headers: {} } });
+  await expect(checkRepositoryTokenHealth({ ...target, token: "limited-token" })).rejects.toMatchObject({ kind: "permission" });
+  expect(await readTokenHealth({ ...target, token: "limited-token" })).toMatchObject({ permissionStatus: "denied", errorKind: "permission" });
+});
+
+test("aborted fetch restores the previously verified remote status", async () => {
+  await setup();
+  await markLocalRepositoryRemoteCheck(repoId, captureRepositoryOperationScope(), "base-head", false);
+  octokit.getRef.mockRejectedValue(new DOMException("Aborted", "AbortError"));
+
+  await expect(fetchRemoteStatus({ ...target, token: "token" })).rejects.toMatchObject({ kind: "abort" });
+  expect(await getLocalRepositoryById(repoId, identity)).toMatchObject({ remoteStatus: "clean", lastKnownChanged: false, remoteErrorKind: undefined });
+});
+
+test("unknown full-sync failure leaves remote unverified rather than checking", async () => {
+  await setup();
+  octokit.getRef.mockRejectedValue(new Error("unexpected local adapter failure"));
+
+  await expect(syncFullRepository({ ...target, token: "token" })).rejects.toThrow("unexpected local adapter failure");
+  expect(await getLocalRepositoryById(repoId, identity)).toMatchObject({ remoteStatus: "unverified", remoteErrorKind: "unknown" });
+});
 
 test("pull applies nothing when the account switches during download", async () => {
   await setup();
@@ -512,6 +564,26 @@ test("push rejects a changed remote head by default", async () => {
   await expect(pushLocalCommits({ ...target, token: "token", repoId })).rejects.toMatchObject({ code: "REMOTE_HEAD_MISMATCH" });
 });
 
+test("protected branch failure does not mislabel previously validated read permission", async () => {
+  await setup();
+  await checkRepositoryTokenHealth({ ...target, token: "protected-token" }).catch(() => undefined);
+  await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "base", baseSha: "base-blob", size: 4 });
+  await writeLocalText(repoId, "plot.md", "local");
+  await createLocalCommit(repoId, captureRepositoryOperationScope(), "local commit");
+  octokit.getRepo.mockResolvedValue({ data: {}, headers: {} });
+  octokit.getRef.mockResolvedValue({ data: { object: { sha: "base-head" } }, headers: {} });
+  await checkRepositoryTokenHealth({ ...target, token: "protected-token" });
+  octokit.getCommit.mockResolvedValue({ data: { tree: { sha: "base-tree" } } });
+  octokit.getTree.mockResolvedValue({ data: { truncated: false, tree: [{ type: "blob", path: "plot.md" }] } });
+  octokit.createBlob.mockResolvedValue({ data: { sha: "blob" } });
+  octokit.createTree.mockResolvedValue({ data: { sha: "tree" } });
+  octokit.createCommit.mockResolvedValue({ data: { sha: "commit" } });
+  octokit.updateRef.mockRejectedValue({ status: 422, response: { status: 422, headers: {}, data: { message: "Protected branch update failed: required status check" } } });
+
+  await expect(pushLocalCommits({ ...target, token: "protected-token", repoId })).rejects.toMatchObject({ kind: "branch-protected" });
+  expect(await readTokenHealth({ ...target, token: "protected-token" })).toMatchObject({ permissionStatus: "read-validated" });
+});
+
 test("push rejects a truncated base tree before creating blobs or commits", async () => {
   await setup();
   await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "base", baseSha: "base-blob", size: 4 });
@@ -562,6 +634,7 @@ test("remote-wins waits for a paused push and then observes the pushed head", as
   await expect(pull).resolves.toMatchObject({ remoteHeadSha: "pushed-head" });
   expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "pushed", status: "clean", baseSha: "pushed-blob" });
   expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
+  expect(await readTokenHealth({ ...target, token: "token" })).toMatchObject({ permissionStatus: "write-validated" });
 });
 
 test("push waits for a paused remote-wins pull and then fails coherently with no commits", async () => {

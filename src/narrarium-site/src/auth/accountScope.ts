@@ -21,6 +21,7 @@ import { setFallbackAcknowledgementAccountScope } from "@/assistant/fallbackDisc
 import { resetAssistantSessionIndex } from "@/assistant/sessionIndex";
 import { resumeCurrentAccountRepositoryMigrations } from "@/repository/localRepository";
 import { resetBookStructureLoadCoordinator } from "@/hooks/useBookStructure";
+import { clearTokenHealth } from "@/repository/tokenHealth";
 
 const ACCOUNT_SCOPE_KEY = "narrarium-account-scope-v1";
 let installed = false;
@@ -43,6 +44,7 @@ function loadAccountScope(): string | null {
 }
 
 export function resetAccountScopedState(): void {
+  clearTokenHealth();
   const structureLoadEpoch = resetBookStructureLoadCoordinator();
   useFeedbackRewriteWorkflowStore.getState().abortController?.abort();
   resetAssistantSessionIndex(null);

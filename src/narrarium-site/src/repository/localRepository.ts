@@ -15,6 +15,7 @@ import { consumeLegacyAdoptionConsent, type LegacyAdoptionTarget } from "@/auth/
 import { finalizeLegacyRewriteOperationMigration, inspectLegacyRewriteOperationMigration, prepareLegacyRewriteOperationMigration } from "@/repository/localRewriteOperationStore";
 import { useAuthStore } from "@/store/authStore";
 import { assertRepositoryOperationScopeCurrent, captureRepositoryOperationScope, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
+import type { RepositoryErrorKind } from "@/repository/repositoryError";
 
 const DB_NAME = "narrarium-local-repositories";
 const DB_VERSION = 7;
@@ -23,6 +24,13 @@ export type LocalFileStatus = "clean" | "modified" | "new" | "deleted";
 export type LocalFileKind = "text" | "binary";
 export type LocalCloneStatus = "cloning" | "migrating" | "repair-required" | "repairing" | "complete";
 export type RepositoryLifecycleOperationKind = "cloning" | "migrating" | "repairing";
+export type RemoteVerificationStatus = "clean" | "changed" | "checking" | "unverified" | "unavailable";
+
+export interface RemoteVerificationSnapshot {
+  status: Exclude<RemoteVerificationStatus, "checking">;
+  checkedAt?: string;
+  errorKind?: RepositoryErrorKind;
+}
 
 export interface RepositoryLifecycleLease {
   operationId: string;
@@ -46,6 +54,11 @@ export interface LocalRepositoryMeta {
   defaultBranch: string;
   remoteHeadSha: string;
   remoteChanged?: boolean;
+  remoteStatus?: RemoteVerificationStatus;
+  remoteCheckedAt?: string;
+  remoteErrorKind?: RepositoryErrorKind;
+  lastRemoteHead?: string;
+  lastKnownChanged?: boolean;
   clonedAt: string;
   updatedAt: string;
   lastFetchAt?: string;
@@ -1895,7 +1908,7 @@ export async function replaceLocalTreeAtomically(
         commits: currentCommits,
       };
       recoveries.put(recovery);
-      repositories.put({ ...repository!, remoteHeadSha, remoteChanged: false, cloneComplete: true, expectedFileCount: prepared.length, updatedAt: now, lastFetchAt: now });
+      repositories.put({ ...repository!, remoteHeadSha, remoteChanged: false, remoteStatus: "clean", remoteCheckedAt: now, remoteErrorKind: undefined, lastRemoteHead: remoteHeadSha, lastKnownChanged: false, cloneComplete: true, expectedFileCount: prepared.length, updatedAt: now, lastFetchAt: now });
       for (const file of prepared) files.put(file);
     };
     const repoRequest = repositories.get(repoIdValue);
@@ -1987,7 +2000,7 @@ export async function applyRemoteMergeAtomically(input: {
       }
       for (const path of input.deletes) files.delete(fileKey(input.repoId, path));
       for (const file of prepared) files.put(file);
-      repositories.put({ ...repository, remoteHeadSha: input.remoteHeadSha, remoteChanged: false, updatedAt: now, lastFetchAt: now });
+      repositories.put({ ...repository, remoteHeadSha: input.remoteHeadSha, remoteChanged: false, remoteStatus: "clean", remoteCheckedAt: now, remoteErrorKind: undefined, lastRemoteHead: input.remoteHeadSha, lastKnownChanged: false, updatedAt: now, lastFetchAt: now });
     };
     const repoRequest = repositories.get(input.repoId);
     repoRequest.onsuccess = () => { try { repository = validateRepositoryOperation(repoRequest.result as LocalRepositoryMeta | undefined, input.scope); } catch (error) { validationError = error as Error; tx.abort(); return; } apply(); };
@@ -2049,7 +2062,7 @@ export async function applyCloneRepairAtomically(input: {
       }
       for (const path of input.deletePaths) files.delete(fileKey(input.repoId, path));
       for (const file of prepared) files.put(file);
-      repositories.put({ ...repository, cloneComplete: true, cloneStatus: "complete", expectedFileCount: input.expectedFileCount, repairOperationId: undefined, repairOperationGeneration: undefined, lastRepairOperationId: input.repairOperationId, operationLease: undefined, updatedAt: now });
+      repositories.put({ ...repository, remoteStatus: "clean", remoteCheckedAt: now, remoteErrorKind: undefined, lastRemoteHead: repository.remoteHeadSha, lastKnownChanged: false, remoteChanged: false, cloneComplete: true, cloneStatus: "complete", expectedFileCount: input.expectedFileCount, repairOperationId: undefined, repairOperationGeneration: undefined, lastRepairOperationId: input.repairOperationId, operationLease: undefined, updatedAt: now, lastFetchAt: now });
     };
     const repoRequest = repositories.get(input.repoId);
     repoRequest.onsuccess = () => {
@@ -2133,7 +2146,7 @@ export async function settleLocalSourceOverwriteAtomically(input: {
           }
         }
       }
-      repositories.put({ ...repository, remoteHeadSha: input.remoteHeadSha, remoteChanged: false, updatedAt: now, lastFetchAt: now });
+      repositories.put({ ...repository, remoteHeadSha: input.remoteHeadSha, remoteChanged: false, remoteStatus: "clean", remoteCheckedAt: now, remoteErrorKind: undefined, lastRemoteHead: input.remoteHeadSha, lastKnownChanged: false, updatedAt: now, lastFetchAt: now });
     };
     const repoRequest = repositories.get(input.repoId);
     repoRequest.onsuccess = () => { try { repository = validateRepositoryOperation(repoRequest.result as LocalRepositoryMeta | undefined, input.scope); } catch (error) { validationError = error as Error; tx.abort(); return; } apply(); };
@@ -2171,7 +2184,8 @@ export async function markLocalCommitsPushed(repoIdValue: string, scope: Reposit
     repoReq.onsuccess = () => {
       try {
         const repo = validateRepositoryOperation(repoReq.result as LocalRepositoryMeta | undefined, scope);
-        repoStore.put({ ...repo, remoteHeadSha, remoteChanged: false, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString() });
+        const now = new Date().toISOString();
+        repoStore.put({ ...repo, remoteHeadSha, remoteChanged: false, remoteStatus: "clean", remoteCheckedAt: now, remoteErrorKind: undefined, lastRemoteHead: remoteHeadSha, lastKnownChanged: false, updatedAt: now, lastFetchAt: now });
       } catch (error) { validationError = error as Error; tx.abort(); }
     };
 
@@ -2225,7 +2239,7 @@ export async function markLocalCommitsPushed(repoIdValue: string, scope: Reposit
 }
 
 export async function updateLocalRepositoryHead(repoIdValue: string, scope: RepositoryOperationScope, remoteHeadSha: string): Promise<void> {
-  await updateLocalRepositoryMeta(repoIdValue, scope, (repo) => ({ ...repo, remoteHeadSha, remoteChanged: false, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString() }));
+  await updateLocalRepositoryMeta(repoIdValue, scope, (repo) => ({ ...repo, remoteHeadSha, remoteChanged: false, remoteStatus: "clean", remoteCheckedAt: new Date().toISOString(), remoteErrorKind: undefined, lastRemoteHead: remoteHeadSha, lastKnownChanged: false, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString() }));
 }
 
 export async function markLocalRepositoryCloneComplete(repoIdValue: string, scope: RepositoryOperationScope, cloneOperationId: string, expectedFileCount: number, remoteHeadSha?: string): Promise<void> {
@@ -2238,7 +2252,8 @@ export async function markLocalRepositoryCloneComplete(repoIdValue: string, scop
     request.onsuccess = () => {
       try {
         const repo = validateCloneOperation(request.result as LocalRepositoryMeta | undefined, scope, cloneOperationId);
-        store.put({ ...repo, cloneComplete: true, cloneStatus: "complete", cloneOperationId: undefined, cloneOperationGeneration: undefined, lastCloneOperationId: cloneOperationId, operationLease: undefined, expectedFileCount, ...(remoteHeadSha ? { remoteHeadSha } : {}), updatedAt: new Date().toISOString() });
+        const now = new Date().toISOString();
+        store.put({ ...repo, cloneComplete: true, cloneStatus: "complete", cloneOperationId: undefined, cloneOperationGeneration: undefined, lastCloneOperationId: cloneOperationId, operationLease: undefined, expectedFileCount, ...(remoteHeadSha ? { remoteHeadSha, remoteChanged: false, remoteStatus: "clean", remoteCheckedAt: now, remoteErrorKind: undefined, lastRemoteHead: remoteHeadSha, lastKnownChanged: false, lastFetchAt: now } : {}), updatedAt: now });
       } catch (error) { validationError = error as Error; tx.abort(); }
     };
     request.onerror = () => tx.abort();
@@ -2249,7 +2264,32 @@ export async function markLocalRepositoryCloneComplete(repoIdValue: string, scop
 }
 
 export async function markLocalRepositoryRemoteCheck(repoIdValue: string, scope: RepositoryOperationScope, remoteHeadSha: string, changed: boolean): Promise<void> {
-  await updateLocalRepositoryMeta(repoIdValue, scope, (repo) => ({ ...repo, remoteChanged: changed, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString(), ...(changed ? {} : { remoteHeadSha }) }));
+  await updateLocalRepositoryMeta(repoIdValue, scope, (repo) => ({ ...repo, remoteChanged: changed, remoteStatus: changed ? "changed" : "clean", remoteCheckedAt: new Date().toISOString(), remoteErrorKind: undefined, lastRemoteHead: remoteHeadSha, lastKnownChanged: changed, updatedAt: new Date().toISOString(), lastFetchAt: new Date().toISOString(), ...(changed ? {} : { remoteHeadSha }) }));
+}
+
+export async function markLocalRepositoryRemoteChecking(repoIdValue: string, scope: RepositoryOperationScope): Promise<RemoteVerificationSnapshot> {
+  let previous: RemoteVerificationSnapshot | undefined;
+  await updateLocalRepositoryMeta(repoIdValue, scope, (repo) => {
+    const status = effectiveRemoteStatus(repo);
+    previous = {
+      status: status === "checking" ? "unverified" : status,
+      checkedAt: repo.remoteCheckedAt,
+      errorKind: repo.remoteErrorKind,
+    };
+    return { ...repo, remoteStatus: "checking", remoteErrorKind: undefined, updatedAt: new Date().toISOString(), ...(repo.remoteStatus ? {} : { lastKnownChanged: repo.remoteChanged ?? false }) };
+  });
+  return previous!;
+}
+
+export async function markLocalRepositoryRemoteFailure(repoIdValue: string, scope: RepositoryOperationScope, errorKind: RepositoryErrorKind, previous?: RemoteVerificationSnapshot): Promise<void> {
+  const unavailable = errorKind === "service-unavailable" || errorKind === "network" || errorKind === "rate-limit" || errorKind === "abuse-limit";
+  await updateLocalRepositoryMeta(repoIdValue, scope, (repo) => errorKind === "abort" && previous
+    ? { ...repo, remoteStatus: previous.status, remoteCheckedAt: previous.checkedAt, remoteErrorKind: previous.errorKind, updatedAt: new Date().toISOString(), ...(repo.lastKnownChanged === undefined ? { lastKnownChanged: repo.remoteChanged ?? false } : {}) }
+    : { ...repo, remoteStatus: unavailable ? "unavailable" : "unverified", remoteCheckedAt: new Date().toISOString(), remoteErrorKind: errorKind, updatedAt: new Date().toISOString(), ...(repo.lastKnownChanged === undefined ? { lastKnownChanged: repo.remoteChanged ?? false } : {}) });
+}
+
+export function effectiveRemoteStatus(repo: LocalRepositoryMeta): RemoteVerificationStatus {
+  return repo.remoteStatus ?? (repo.remoteChanged ? "changed" : repo.lastFetchAt ? "clean" : "unverified");
 }
 
 async function updateLocalRepositoryMeta(repoIdValue: string, scope: RepositoryOperationScope, update: (repository: LocalRepositoryMeta) => LocalRepositoryMeta): Promise<void> {

@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.46",
+    "date": "2026-08-17",
+    "en": {
+      "title": "Truthful GitHub availability and PAT status",
+      "summary": "This release distinguishes GitHub outages and unverified remote state from expired credentials, while adding repository-scoped PAT health and expiration information.",
+      "changes": [
+        "Classified invalid credentials, insufficient permissions, SSO requirements, rate limits, secondary limits, network failures, and GitHub service outages separately without displaying raw API errors.",
+        "Tracked remote status as verified clean, verified changed, checking, unverified, or unavailable, preserving last-known information without presenting stale results as current divergence.",
+        "Added exact repository- and branch-scoped PAT health checks that report read validation separately from write validation and never guess token expiration from a generic 403 response.",
+        "Captured GitHub-provided token expiration metadata when available and surfaced localized expiration warnings without exposing tokens or fingerprints.",
+        "Ensured successful pull, push, sync, overwrite, and clone parity clears stale remote errors, while every failed remote phase exits the checking state safely."
+      ]
+    },
+    "it": {
+      "title": "Disponibilita GitHub e stato PAT corretti",
+      "summary": "Questa release distingue outage GitHub e stato remoto non verificato dalle credenziali scadute, aggiungendo salute e scadenza PAT limitate a repository e branch.",
+      "changes": [
+        "Classificati separatamente credenziali non valide, permessi insufficienti, requisiti SSO, rate limit, limiti secondari, errori di rete e indisponibilita GitHub, senza mostrare errori API grezzi.",
+        "Tracciato lo stato remoto come pulito verificato, cambiato verificato, controllo in corso, non verificato o non disponibile, conservando l'ultima informazione senza presentarla come divergenza corrente.",
+        "Aggiunti controlli salute PAT per repository e branch esatti, distinguendo la lettura verificata dalla scrittura verificata e senza dedurre la scadenza da una risposta 403 generica.",
+        "Acquisiti i metadata di scadenza token forniti da GitHub quando disponibili e mostrate notifiche localizzate senza esporre token o fingerprint.",
+        "Garantito che pull, push, sync, overwrite e clone riusciti cancellino errori remoti stale, mentre ogni fase remota fallita esce correttamente dallo stato di controllo."
+      ]
+    }
+  },
+  {
     "version": "0.76.45",
     "date": "2026-08-17",
     "en": {
