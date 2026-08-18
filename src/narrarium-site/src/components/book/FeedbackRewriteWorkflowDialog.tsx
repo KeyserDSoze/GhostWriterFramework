@@ -26,6 +26,7 @@ import {
   type RewriteRepositoryContext,
   type RewriteRollbackPolicy,
 } from "@/narrarium/rewriteFromReaderFeedback";
+import { RewriteOperationRecoveryRequiredError } from "@/repository/localRewriteOperationStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { isFeedbackWorkflowRequestCurrent, useFeedbackRewriteWorkflowStore, type FeedbackRewriteIntent } from "@/store/feedbackRewriteWorkflowStore";
 import { resolveBookToken } from "@/types/settings";
@@ -80,6 +81,7 @@ export function FeedbackRewriteWorkflowDialog() {
       } catch (error) {
         if (!active) return;
         if (error instanceof MissingReaderFeedbackSummaryError || error instanceof MissingReaderFeedbackOpinionError) state.patch({ missingSummary: true, phase: "configure" });
+        else if (error instanceof RewriteOperationRecoveryRequiredError) state.patch({ error: t("feedbackRewrite.recoveryNeeded"), recoveryNeeded: true, phase: "recovery-needed" });
         else state.patch({ error: errorMessage(error), phase: "failed" });
       }
     })();
@@ -327,6 +329,14 @@ export function FeedbackRewriteWorkflowDialog() {
               <p>{state.missingSummary ? t(displayedMode === "reader-opinion" ? "feedbackRewrite.missingOpinion" : "feedbackRewrite.missingSummary", { reader: displayedReaderName }) : state.error}</p>
               {state.missingSummary && <Button variant="outline" onClick={() => { state.closeWorkflow(); navigate(evaluationsHref); }}>{t("feedbackRewrite.openEvaluations")}</Button>}
             </AlertDescription>
+          </Alert>
+        )}
+
+        {state.phase === "recovery-needed" && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>{t("feedbackRewrite.recoveryNeededTitle")}</AlertTitle>
+            <AlertDescription>{t("feedbackRewrite.recoveryNeeded")}</AlertDescription>
           </Alert>
         )}
 

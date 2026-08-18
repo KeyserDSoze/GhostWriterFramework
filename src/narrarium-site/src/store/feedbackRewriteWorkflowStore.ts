@@ -6,6 +6,7 @@ export type FeedbackRewriteScope = "chapter" | "paragraph";
 export type FeedbackRewritePhase =
   | "loading"
   | "configure"
+  | "recovery-needed"
   | "mandatory-warning"
   | "preparing"
   | "generating"
@@ -56,6 +57,7 @@ interface FeedbackRewriteWorkflowState {
   phase: FeedbackRewritePhase;
   staleFeedback: boolean;
   missingSummary: boolean;
+  recoveryNeeded: boolean;
   proposal: ParagraphFeedbackProposal | null;
   manifest: RewriteOperationManifest | null;
   operationId: string | null;
@@ -76,6 +78,7 @@ const initialRuntime = {
   phase: "loading" as FeedbackRewritePhase,
   staleFeedback: false,
   missingSummary: false,
+  recoveryNeeded: false,
   proposal: null,
   manifest: null,
   operationId: null,

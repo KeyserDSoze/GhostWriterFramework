@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.49",
+    "date": "2026-08-18",
+    "en": {
+      "title": "Safe maintenance for incomplete local books",
+      "summary": "This release gives incomplete or interrupted local repositories a safe maintenance exit without deleting unbacked work or losing recovery data.",
+      "changes": [
+        "Added account-scoped maintenance inspection for cloning, migrating, repairing, recovery-required, failed-journal, and other incomplete local states.",
+        "Made local removal require a versioned recovery-complete backup, fresh one-time receipt, exact repository incarnation, and explicit confirmation before deleting files or rewrite operations.",
+        "Added crash-safe removal and rewrite migration journals with monotonic completion evidence, stale-writer fences, replay validation, and preserved recovery snapshots.",
+        "Made re-clone refuse unsafe replacement instead of deleting the existing copy first; atomic replacement remains reserved for the dedicated re-clone consolidation flow.",
+        "Restored localized remote status, token-health and GitHub outage guidance alongside maintenance actions, including repository-scoped PAT validation and expiration information."
+      ]
+    },
+    "it": {
+      "title": "Manutenzione sicura per libri locali incompleti",
+      "summary": "Questa release offre una via di manutenzione sicura ai repository locali incompleti o interrotti senza cancellare lavoro non salvato o perdere dati di recovery.",
+      "changes": [
+        "Aggiunta l'ispezione maintenance account-scoped per stati locali di clone, migrazione, repair, recovery richiesto, journal fallito e altre operazioni incomplete.",
+        "Resa la rimozione locale subordinata a backup recovery-complete versionato, receipt monouso fresco, incarnazione repository esatta e conferma esplicita prima di cancellare file o rewrite operation.",
+        "Aggiunti journal crash-safe per rimozione e migrazione rewrite con prove monotone di completamento, fence per writer stale, replay validato e snapshot recovery preservati.",
+        "Reso il reclone un rifiuto sicuro quando la sostituzione non è atomica, invece di eliminare prima la copia esistente; la sostituzione atomica resta nel flusso dedicato di consolidamento reclone.",
+        "Ripristinati stato remoto localizzato, salute token e guida agli outage GitHub accanto alle azioni maintenance, con validazione PAT limitata a repository e informazioni di scadenza."
+      ]
+    }
+  },
+  {
     "version": "0.76.48",
     "date": "2026-08-17",
     "en": {

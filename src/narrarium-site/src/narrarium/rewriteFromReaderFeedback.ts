@@ -94,6 +94,7 @@ export interface RewriteOperationManifest {
   createdAt: string;
   updatedAt: string;
   repoId: string;
+  localInstanceId: string;
   owner: string;
   repo: string;
   branch: string;
@@ -157,6 +158,7 @@ export class RewriteFinalizationError extends Error {
 
 interface RewriteWorkspaceContext extends RewriteRepositoryContext {
   repoId: string;
+  localInstanceId: string;
 }
 
 export interface RewriteRepositoryContext {
@@ -273,7 +275,7 @@ async function requireLocalWorkingCopy(context: RewriteRepositoryContext): Promi
   const local = await getLocalRepository(context.book.owner, context.book.repo, context.branch, captureRepositoryOperationScope());
   if (!local) throw new Error("A local working copy for the selected branch is required.");
   if (local.cloneComplete !== true) throw new Error("The local working copy has not been fully verified.");
-  return { ...context, repoId: local.id };
+  return { ...context, repoId: local.id, localInstanceId: local.localInstanceId };
 }
 
 async function mutateLocalDraftFiles(repoId: string, mutations: Array<{ path: string; content?: string | null; expectedCurrentHash?: string | null }>): Promise<void> {
@@ -629,6 +631,7 @@ function newManifest(input: {
   scope: RewriteOperationScope;
   bookId: string;
   repoId: string;
+  localInstanceId: string;
   owner: string;
   repo: string;
   branch: string;
@@ -659,6 +662,7 @@ function newManifest(input: {
     createdAt: now,
     updatedAt: now,
     repoId: input.repoId,
+    localInstanceId: input.localInstanceId,
     owner: input.owner,
     repo: input.repo,
     branch: input.branch,
@@ -738,6 +742,7 @@ export async function applyParagraphFeedbackProposal(input: RewriteRepositoryCon
     scope: "paragraph",
     bookId: input.book.id,
     repoId: context.repoId,
+    localInstanceId: context.localInstanceId,
     owner: input.book.owner,
     repo: input.book.repo,
     branch: input.branch,
@@ -828,6 +833,7 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
     scope: "chapter",
     bookId: input.book.id,
     repoId: context.repoId,
+    localInstanceId: context.localInstanceId,
     owner: input.book.owner,
     repo: input.book.repo,
     branch: input.branch,

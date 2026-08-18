@@ -56,7 +56,7 @@ async function seedImmutableTarget(db: IDBDatabase, bookId: string, repo: string
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(["repositories", "files"], "readwrite");
     const now = new Date().toISOString();
-    tx.objectStore("repositories").put({ id, bookId, owner: "owner", repo, branch: "main", defaultBranch: "main", remoteHeadSha: "new-head", clonedAt: now, updatedAt: now, cloneComplete: !dirty, accountScope: "google:sub-a" });
+    tx.objectStore("repositories").put({ id, localInstanceId: crypto.randomUUID(), bookId, owner: "owner", repo, branch: "main", defaultBranch: "main", remoteHeadSha: "new-head", clonedAt: now, updatedAt: now, cloneComplete: !dirty, accountScope: "google:sub-a" });
     tx.objectStore("files").put({ key: `${id}::book.md`, repoId: id, path: "book.md", kind: "text", text: dirty ? "user edit" : "remote", baseSha: "new-blob", baseHash: dirty ? "base" : "mirror", currentHash: dirty ? "changed" : "mirror", status: dirty ? "modified" : "clean", committed: false, size: 8, updatedAt: now });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -271,9 +271,35 @@ describe.sequential("pre-0.76.38 repository identity migration", () => {
     const input = { bookId, book: { id: bookId, owner: "owner", repo } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" };
     await expect(ensureLocalBookStructure(input)).rejects.toThrow("Simulated repository migration crash");
     const newRepoId = `google:sub-a::owner/${repo}#main`;
-    await expect(loadLocalRewriteOperation(operationId, newRepoId, captureRepositoryOperationScope())).rejects.toThrow("migration is incomplete");
+    await expect(loadLocalRewriteOperation(operationId, newRepoId, captureRepositoryOperationScope())).rejects.toThrow("migration or removal is incomplete");
     await ensureLocalBookStructure(input);
     await expect(loadLocalRewriteOperation(operationId, newRepoId, captureRepositoryOperationScope())).resolves.toMatchObject({ operationId, repoId: newRepoId });
+  });
+
+  it("deletes the migration journal when rewrite finalization was the last completed phase", async () => {
+    const bookId = "rewrite-finalized-journal";
+    const repo = "rewrite-finalized-journal";
+    const db = await open();
+    await seedLegacy(db, bookId, repo);
+    db.close();
+    const legacyUser = { provider: "google" as const, name: "Writer", email, picture: "" };
+    const { beginLegacyAccountUpgrade } = await import("@/auth/accountIdentity");
+    const { crashNextRepositoryMigrationForTests } = await import("@/repository/localRepository");
+    beginLegacyAccountUpgrade(legacyUser);
+    useAuthStore.getState().setInteractiveAuth("token", { ...legacyUser, providerAccountId: "sub-a" });
+    await grantAdoptionConsent({ ...legacyUser, providerAccountId: "sub-a" }, bookId, repo);
+    crashNextRepositoryMigrationForTests("rewrite-finalized");
+    const input = { bookId, book: { id: bookId, owner: "owner", repo } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" };
+    await expect(ensureLocalBookStructure(input)).rejects.toThrow("Simulated repository migration crash");
+    const interrupted = await open();
+    const journalCount = await new Promise<number>((resolve, reject) => { const tx = interrupted.transaction("migrationJournals", "readonly"); const request = tx.objectStore("migrationJournals").getAll(); request.onsuccess = () => resolve(request.result.length); request.onerror = () => reject(request.error); });
+    interrupted.close();
+    expect(journalCount).toBe(1);
+    await expect(ensureLocalBookStructure(input)).resolves.toMatchObject({ meta: { id: `google:sub-a::owner/${repo}#main` } });
+    const resumed = await open();
+    const remaining = await new Promise<number>((resolve, reject) => { const tx = resumed.transaction("migrationJournals", "readonly"); const request = tx.objectStore("migrationJournals").getAll(); request.onsuccess = () => resolve(request.result.length); request.onerror = () => reject(request.error); });
+    resumed.close();
+    expect(remaining).toBe(0);
   });
 
   it("fails closed on rewrite operation ID collision and preserves both records", async () => {
@@ -290,7 +316,10 @@ describe.sequential("pre-0.76.38 repository identity migration", () => {
     const user = { provider: "google" as const, providerAccountId: "sub-a", name: "Writer", email, picture: "" };
     useAuthStore.setState({ user });
     const now = new Date().toISOString();
-    await saveLocalRewriteOperation({ operationId, operation: "rewriteFromReaderFeedback", scope: "chapter", bookId, chapterId: "chapter", paragraphIds: [], startedAt: now, completedAt: null, status: "preparing", createdAt: now, updatedAt: now, repoId: newRepoId, owner: "owner", repo, branch: "main", chapterSlug: "chapter", targetIds: [], feedbackMode: "summary", feedbackPath: "feedback.md", feedbackSummaryPath: "feedback.md", feedbackSourceHash: "hash", staleFeedback: false, progress: { completed: 0, total: 0 }, modifiedFiles: [], generationRuns: [], aggregateInputTokens: 0, aggregateCachedInputTokens: 0, aggregateOutputTokens: 0, aggregateCost: 0, conflicts: [] } as never, captureRepositoryOperationScope());
+    const currentDb = await open();
+    const current = await new Promise<{ localInstanceId: string }>((resolve, reject) => { const tx = currentDb.transaction("repositories", "readonly"); const request = tx.objectStore("repositories").get(newRepoId); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+    currentDb.close();
+    await saveLocalRewriteOperation({ operationId, operation: "rewriteFromReaderFeedback", scope: "chapter", bookId, chapterId: "chapter", paragraphIds: [], startedAt: now, completedAt: null, status: "preparing", createdAt: now, updatedAt: now, repoId: newRepoId, localInstanceId: current.localInstanceId, owner: "owner", repo, branch: "main", chapterSlug: "chapter", targetIds: [], feedbackMode: "panel-summary", feedbackPath: "feedback.md", feedbackSummaryPath: "feedback.md", feedbackSourceHash: "hash", staleFeedback: false, progress: { completed: 0, total: 0 }, modifiedFiles: [], generationRuns: [], aggregateInputTokens: 0, aggregateCachedInputTokens: 0, aggregateOutputTokens: 0, aggregateCost: 0, conflicts: [] } as never, captureRepositoryOperationScope());
     await freshStrandedProof(user);
     await expect(ensureLocalBookStructure({ bookId, book: { id: bookId, owner: "owner", repo } as never, token: "token", accountIdentity: "google:sub-a", branch: "main" })).rejects.toMatchObject({ code: "LEGACY_REPOSITORY_COPY_CONFLICT" });
     await expect(loadLocalRewriteOperation(operationId, newRepoId, captureRepositoryOperationScope())).resolves.toMatchObject({ operationId, repoId: newRepoId });

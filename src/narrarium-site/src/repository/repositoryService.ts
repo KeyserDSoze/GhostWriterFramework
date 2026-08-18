@@ -1,4 +1,4 @@
-import type { Octokit } from "@octokit/rest";
+import { Octokit } from "@octokit/rest";
 import type { BookEntry } from "@/types/settings";
 import type { BookStructure } from "@/types/book";
 import { isAccountIdentityCurrent } from "@/auth/accountIdentity";
@@ -32,7 +32,6 @@ import {
   heartbeatRepositoryLifecycleLease,
   markLocalCommitsPushed,
   putCleanLocalFileScoped,
-  removeLocalRepository,
   removeAbandonedLocalClone,
   releaseLocalRepositoryRepair,
   releaseLegacyLocalRepositoryMigration,
@@ -49,10 +48,11 @@ import {
   type LocalRepositoryRecovery,
   type RemoteTreeFile,
 } from "@/repository/localRepository";
+import { lookupRepositoryMaintenanceTarget, removeRepositoryWithBackupReceipt, RepositoryMaintenanceError } from "@/repository/repositoryMaintenance";
 import { reconcileRemoteMutation } from "@/repository/remoteMutationReconciliation";
-import { classifyRepositoryError } from "@/repository/repositoryError";
-import { recordRepositoryReadValidated, recordRepositoryWriteValidated, tokenExpirationFromHeaders, writeTokenHealth, type TokenHealth, type TokenHealthTarget } from "@/repository/tokenHealth";
+import { classifyRepositoryError, RepositoryError } from "@/repository/repositoryError";
 import { createTrackedGitHubClient } from "@/repository/githubRequest";
+import { recordRepositoryReadValidated, recordRepositoryWriteValidated, tokenExpirationFromHeaders, writeTokenHealth, type TokenHealth, type TokenHealthTarget } from "@/repository/tokenHealth";
 
 const TEXT_EXTENSIONS = new Set(["md", "markdown", "txt", "json", "yaml", "yml", "toml", "csv", "html", "css", "js", "ts", "tsx"]);
 
@@ -710,7 +710,7 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
   } catch (error) {
     const classified = classifyRepositoryError(error, "compare");
     await markLocalRepositoryRemoteFailure(meta.id, scope, classified.kind, previous).catch(() => undefined);
-    throw classified.kind === "unknown" ? error : classified;
+    throw error instanceof RepositoryOwnershipChangedError || classified.kind === "unknown" ? error : classified;
   }
 }
 
@@ -746,10 +746,18 @@ export async function pushLocalCommits(input: PushLocalCommitsInput): Promise<Pu
   input.signal?.throwIfAborted();
   const scope = operationScope(input);
   const selected = await exactLocalRepository(input, scope);
-  return withRepositoryMutationLease(selected.id, async () => {
-    const meta = await exactLocalRepository(input, scope);
-    return pushLocalCommitsLocked(meta, input, scope);
-  });
+  try {
+    return await withRepositoryMutationLease(selected.id, async () => {
+      const meta = await exactLocalRepository(input, scope);
+      return pushLocalCommitsLocked(meta, input, scope);
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    if (error instanceof RepositoryOwnershipChangedError || error instanceof RemoteHeadMismatchError || error instanceof AmbiguousLocalPushError) throw error;
+    const record = error && typeof error === "object" ? error as { status?: unknown; response?: unknown; name?: unknown } : undefined;
+    if (error instanceof RepositoryError || typeof record?.status === "number" || record?.response || record?.name === "TypeError" || record?.name === "AbortError") throw classifyRepositoryError(error, "update");
+    throw error;
+  }
 }
 
 async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLocalCommitsInput, scope: RepositoryOperationScope): Promise<PushResult> {
@@ -839,6 +847,8 @@ async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLoca
   try {
     await octokit.rest.git.updateRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, sha: commit.data.sha, ...request });
   } catch (error) {
+    const classified = classifyRepositoryError(error, "update");
+    if (["branch-protected", "credential-invalid", "permission", "permission-unverified", "sso-required"].includes(classified.kind)) throw classified;
     const reconciled = await reconcileRemoteMutation({
       octokit,
       owner: meta.owner,
@@ -855,8 +865,6 @@ async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLoca
         : `Push reconciled at ${reconciled.headSha.slice(0, 7)}`);
       return { commitSha: reconciled.headSha, files: treeEntries.length, ...(settlement.skippedPaths.length ? { recoveryPaths: settlement.skippedPaths } : {}) };
     }
-    const classified = classifyRepositoryError(error, "update");
-    if (classified.kind === "branch-protected") throw classified;
     throw new AmbiguousLocalPushError("The local push ref update had an ambiguous outcome.", commit.data.sha, error);
   }
   await recordRepositoryWriteValidated(tokenHealthTarget(input));
@@ -874,11 +882,11 @@ export async function syncFullRepository(input: ExactRepositoryTarget & { token:
 }
 
 async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactRepositoryTarget & { token: string }, scope: RepositoryOperationScope): Promise<SyncResult> {
+  const previous = await markLocalRepositoryRemoteChecking(meta.id, scope);
+  try {
   const pendingBeforeSync = await listUnpushedLocalCommits(meta.id);
   if (pendingBeforeSync.length) await createLocalRecoverySnapshot(meta.id, `Before full sync from ${meta.remoteHeadSha}`, scope);
   await restoreUnpushedCommitsAsDirty(meta.id, scope);
-  const previous = await markLocalRepositoryRemoteChecking(meta.id, scope);
-  try {
   const octokit = trackedOctokit(input.token, input);
   const { remoteHeadSha, changed: remoteChanged } = await resolveRemoteChangeState(octokit, meta);
   let pulled = 0;
@@ -971,14 +979,15 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
   } catch (error) {
     const classified = classifyRepositoryError(error, "compare");
     await markLocalRepositoryRemoteFailure(meta.id, scope, classified.kind, previous).catch(() => undefined);
-    throw classified.kind === "unknown" ? error : classified;
+    throw error instanceof RepositoryOwnershipChangedError || classified.kind === "unknown" ? error : classified;
   }
 }
 
-export async function removeLocalWorkingCopy(target: ExactRepositoryTarget): Promise<void> {
-  const scope = operationScope(target);
-  const meta = await exactLocalRepository(target, scope);
-  await withRepositoryMutationLease(meta.id, async () => removeLocalRepository((await exactLocalRepository(target, scope)).id, scope));
+export async function removeLocalWorkingCopy(target: ExactRepositoryTarget & { backupReceiptId: string; confirmation: string }): Promise<{ recoveriesPreserved: number; rewriteOperationsRemoved: number }> {
+  operationScope(target);
+  if (target.confirmation !== `REMOVE ${target.owner}/${target.repo}`) throw new RepositoryMaintenanceError("CONFIRMATION_REQUIRED");
+  invalidateRepositoryEnsureOperations(repositoryEnsureEpoch + 1, target.accountIdentity);
+  return withRepositoryMutationLease(target.repoId ?? `${target.accountIdentity}::${target.owner}/${target.repo}#${target.branch}`.toLowerCase(), () => removeRepositoryWithBackupReceipt(target, target.backupReceiptId));
 }
 
 export async function recloneLocalWorkingCopy(input: {
@@ -990,18 +999,10 @@ export async function recloneLocalWorkingCopy(input: {
   onProgress?: (progress: LocalCloneProgress) => void;
 }): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
   if (!input.branch) throw new Error("An exact branch is required to re-clone a local working copy.");
-  const scope = operationScope({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity });
-  const existing = await getLocalRepository(input.book.owner, input.book.repo, input.branch, scope);
-  if (existing) {
-    if (existing.bookId !== input.bookId) throw new Error("The selected local repository does not belong to this book.");
-    return withRepositoryMutationLease(existing.id, async () => {
-      const target: ExactRepositoryTarget = { bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch!, accountIdentity: input.accountIdentity, repoId: existing.id };
-      await removeLocalRepository((await exactLocalRepository(target, scope)).id, scope);
-      const result = await ensureLocalBookStructure(input);
-      await addLocalRepoLog(result.meta.id, "reset", "Recloned local working copy");
-      return result;
-    });
-  }
+  operationScope({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity });
+  const existing = await lookupRepositoryMaintenanceTarget({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity });
+  if (existing.removalPending) throw new RepositoryMaintenanceError("REMOVAL_PENDING");
+  if (existing.repository) throw new RepositoryMaintenanceError("RECLONE_REQUIRES_REMOVAL");
   const result = await ensureLocalBookStructure(input);
   await addLocalRepoLog(result.meta.id, "reset", "Recloned local working copy");
   return result;

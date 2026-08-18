@@ -1,20 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { GitCommit, GitPullRequest, Loader2, RefreshCcw, RotateCcw, Trash2, UploadCloud, ShieldCheck } from "lucide-react";
-import JSZip from "jszip";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
-import { addLocalRepoLog, buildLocalBookStructure, effectiveRemoteStatus, getLocalRepository, listAllLocalFiles, listDirtyLocalFiles, listLocalRecoverySnapshotsForTarget, listLocalRepoLogs, listUnpushedLocalCommits, localStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryFile, type LocalRepositoryMeta, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
-import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository } from "@/repository/repositoryService";
+import { addLocalRepoLog, buildLocalBookStructure, effectiveRemoteStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryFile, type LocalRepositoryMeta, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
+import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository, checkRepositoryTokenHealth } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 import { useAuthStore } from "@/store/authStore";
 import { accountIdentity } from "@/auth/accountIdentity";
-import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
-import { checkRepositoryTokenHealth } from "@/repository/repositoryService";
+import { createMaintenanceBackupBundle, lookupRepositoryMaintenanceTarget, RepositoryMaintenanceError, type BackupReceipt, type RepositoryMaintenanceSnapshot } from "@/repository/repositoryMaintenance";
 import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { readTokenHealth, tokenExpirationWarning, type TokenHealth } from "@/repository/tokenHealth";
 
@@ -59,6 +57,10 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const [storage, setStorage] = useState<{ usage?: number; quota?: number }>({});
   const [logs, setLogs] = useState<LocalRepoLogEntry[]>([]);
   const [recoveries, setRecoveries] = useState<LocalRepositoryRecovery[]>([]);
+  const [maintenance, setMaintenance] = useState<RepositoryMaintenanceSnapshot | null>(null);
+  const [maintenanceError, setMaintenanceError] = useState<string | null>(null);
+  const [backupReceipt, setBackupReceipt] = useState<BackupReceipt | null>(null);
+  const [removeConfirmation, setRemoveConfirmation] = useState("");
   const [logFilter, setLogFilter] = useState<"all" | LocalRepoLogKind>("all");
   const [message, setMessage] = useState("");
   const [selectedDraftPaths, setSelectedDraftPaths] = useState<string[]>([]);
@@ -66,10 +68,12 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const [tokenHealth, setTokenHealth] = useState<TokenHealth | null>(null);
   const token = book ? resolveBookToken(book, settings) : "";
   const disabled = !book || !!busy;
-  const networkDisabled = !book || !token || !!busy || !navigator.onLine;
-  const remoteStatus = repoMeta ? effectiveRemoteStatus(repoMeta) : null;
+  const operationalReady = maintenance?.lifecycle === "complete";
+  const networkDisabled = !book || !token || !!busy || !navigator.onLine || !operationalReady;
+  const maintenanceNetworkDisabled = !book || !token || !!busy || !navigator.onLine;
   const storageHigh = Boolean(storage.usage && storage.quota && storage.usage / storage.quota > 0.8);
   const draftDirtyFiles = useMemo(() => dirtyFiles.filter((file) => file.path.startsWith("drafts/")), [dirtyFiles]);
+  const remoteStatus = repoMeta ? effectiveRemoteStatus(repoMeta) : null;
 
   const defaultMessage = useMemo(() => {
     if (dirtyFiles.length === 1) return t("repoStatus.defaultCommitSingle", { path: dirtyFiles[0].path });
@@ -85,7 +89,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
 
   async function currentRepo() {
     if (!book || !branch || !currentAccountIdentity) return null;
-    return getLocalRepository(book.owner, book.repo, branch, captureRepositoryOperationScope());
+    return (await lookupRepositoryMaintenanceTarget({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentAccountIdentity })).repository;
   }
 
   async function exactTarget() {
@@ -96,19 +100,31 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   }
 
   async function refresh() {
-    if (!book) { setStatus(null); setRepoMeta(null); setDirtyFiles([]); setAhead(0); return; }
-    if (branch && currentAccountIdentity) setRecoveries(await listLocalRecoverySnapshotsForTarget(book.owner, book.repo, branch, currentAccountIdentity));
-    else setRecoveries([]);
-    const repo = await currentRepo().catch(() => null);
-    if (!repo) { setStatus(null); setRepoMeta(null); setDirtyFiles([]); setAhead(0); return; }
-    setRepoMeta(repo);
-    const [nextStatus, dirty, commits, nextLogs] = await Promise.all([localStatus(repo.id), listDirtyLocalFiles(repo.id), listUnpushedLocalCommits(repo.id), listLocalRepoLogs(repo.id)]);
-    setStatus(nextStatus);
-    setDirtyFiles(dirty);
-    setAhead(commits.length);
-    setLogs(nextLogs);
+    if (!book || !branch || !currentAccountIdentity) { setMaintenance(null); setRepoMeta(null); setStatus(null); setDirtyFiles([]); setAhead(0); setRecoveries([]); return; }
+    try {
+      const snapshot = await lookupRepositoryMaintenanceTarget({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentAccountIdentity });
+       setMaintenance(snapshot);
+      setMaintenanceError(null);
+       setStatus(snapshot.repository ? snapshot.status : null);
+       setRepoMeta(snapshot.repository);
+      setDirtyFiles(snapshot.dirtyFiles);
+      setAhead(snapshot.unpushedCommits.length);
+      setLogs(snapshot.logs);
+      setRecoveries(snapshot.recoveries);
+      const dirty = snapshot.dirtyFiles;
+      if (!message && dirty.length) setMessage(dirty.length === 1 ? t("repoStatus.defaultCommitSingle", { path: dirty[0].path }) : t("repoStatus.defaultCommitMany", { count: dirty.length }));
+    } catch (error) {
+      setMaintenance(null);
+      setRepoMeta(null);
+      setMaintenanceError(maintenanceErrorText(error));
+    }
     setStorage(await navigator.storage?.estimate?.().catch(() => ({})) ?? {});
-    if (!message && dirty.length) setMessage(dirty.length === 1 ? t("repoStatus.defaultCommitSingle", { path: dirty[0].path }) : t("repoStatus.defaultCommitMany", { count: dirty.length }));
+  }
+
+  function maintenanceErrorText(error: unknown): string {
+    return error instanceof RepositoryMaintenanceError
+      ? t(`repoStatus.maintenanceErrors.${error.code}`)
+      : t("repoStatus.maintenanceErrors.UNKNOWN");
   }
 
   async function refreshBookStructure() {
@@ -122,7 +138,9 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   useEffect(() => {
     let cancelled = false;
     setTokenHealth(null);
-    if (open && token && currentAccountIdentity && book && branch) void readTokenHealth({ accountIdentity: currentAccountIdentity, token, owner: book.owner, repo: book.repo, branch }).then((health) => { if (!cancelled) setTokenHealth(health); });
+    if (open && token && currentAccountIdentity && book && branch) {
+      void readTokenHealth({ accountIdentity: currentAccountIdentity, token, owner: book.owner, repo: book.repo, branch }).then((health) => { if (!cancelled) setTokenHealth(health); });
+    }
     return () => { cancelled = true; };
   }, [open, token, currentAccountIdentity, book?.owner, book?.repo, branch]);
 
@@ -136,9 +154,9 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
     } catch (err) {
       if (book) {
         const repo = await currentRepo().catch(() => null);
-        if (repo) await addLocalRepoLog(repo.id, "error", `${label}: ${repositoryErrorDescription(err, t)}`).catch(() => undefined);
+        if (repo) await addLocalRepoLog(repo.id, "error", `${label}: ${err instanceof Error ? err.message : String(err)}`).catch(() => undefined);
       }
-      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
+        toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -148,16 +166,9 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
     if (!book) return;
     setBusy("backup");
     try {
-      const repo = await currentRepo();
-      if (!repo) throw new Error(t("repoStatus.notCloned"));
-      const zip = new JSZip();
-      const files = await listAllLocalFiles(repo.id);
-      for (const file of files) {
-        if (file.status === "deleted") continue;
-        if (file.kind === "text") zip.file(file.path, file.text ?? "");
-        else if (file.blob) zip.file(file.path, file.blob);
-      }
-      const blob = await zip.generateAsync({ type: "blob" });
+      const snapshot = maintenance ?? (book && branch && currentAccountIdentity ? await lookupRepositoryMaintenanceTarget({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentAccountIdentity }) : null);
+      if (!snapshot) throw new RepositoryMaintenanceError("NOT_FOUND");
+      const { blob, receipt } = await createMaintenanceBackupBundle(snapshot.target);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -166,26 +177,26 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      await addLocalRepoLog(repo.id, "backup", `Exported backup ZIP (${files.length} files)`);
+      setBackupReceipt(receipt);
       toast({ title: t("repoStatus.backupDone") });
     } catch (err) {
-      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
+      toast({ title: t("repoStatus.actionFailed"), description: maintenanceErrorText(err), variant: "destructive" });
     } finally {
       setBusy(null);
     }
   }
 
   async function removeLocal() {
-    if (!book) return;
-    if (!window.confirm(t("repoStatus.removeLocalConfirm"))) return;
+    if (!book || !branch || !maintenance || !currentAccountIdentity) return;
     setBusy("remove-local");
     try {
-      await removeLocalWorkingCopy(await exactTarget());
+      const result = await removeLocalWorkingCopy({ bookId: book.id, owner: book.owner, repo: book.repo, branch, repoId: maintenance.target.repoId, accountIdentity: currentAccountIdentity, backupReceiptId: backupReceipt?.receiptId ?? "", confirmation: removeConfirmation });
       clearBook(book.id);
-      toast({ title: t("repoStatus.removeLocalDone") });
+      toast({ title: t("repoStatus.removeLocalDone"), description: t("repoStatus.removeLocalResult", result) });
+      setRemoveConfirmation("");
       await refresh();
     } catch (err) {
-      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
+      toast({ title: t("repoStatus.actionFailed"), description: maintenanceErrorText(err), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -193,7 +204,6 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
 
   async function recloneLocal() {
     if (!book || !token) return;
-    if (!window.confirm(t("repoStatus.recloneConfirm"))) return;
     setBusy("reclone");
     try {
       const current = await currentRepo().catch(() => null);
@@ -203,7 +213,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
       toast({ title: t("repoStatus.recloneDone") });
       await refresh();
     } catch (err) {
-      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
+      toast({ title: t("repoStatus.actionFailed"), description: maintenanceErrorText(err), variant: "destructive" });
     } finally {
       setCloneProgress(book.id, undefined);
       setBusy(null);
@@ -212,16 +222,16 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
 
   async function restoreRecovery(recovery: LocalRepositoryRecovery) {
     if (!book || !branch) return;
-    if (!window.confirm(`Restore recovery snapshot from ${new Date(recovery.createdAt).toLocaleString()}? Current local changes will be replaced.`)) return;
+    if (!window.confirm(t("repoStatus.restoreRecoveryConfirm", { date: new Date(recovery.createdAt).toLocaleString() }))) return;
     setBusy(`recovery-${recovery.id}`);
     try {
       if (!currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
       const result = await restoreRepositoryRecovery({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentAccountIdentity, recoveryId: recovery.id });
       setStructure(book.id, result.structure);
-      toast({ title: "Recovery snapshot restored" });
+      toast({ title: t("repoStatus.restoreRecoveryDone") });
       await refresh();
     } catch (err) {
-      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
+      toast({ title: t("repoStatus.actionFailed"), description: maintenanceErrorText(err), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -237,8 +247,12 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
           <div className="min-w-0 space-y-4">
             <div className="rounded-xl border bg-muted/20 p-3 text-sm">
               <p className="break-all font-medium">{book.owner}/{book.repo}</p>
-              <p className="text-xs text-muted-foreground">{status ? t("repoStatus.summary", { dirty: status.dirty, ahead }) : t("repoStatus.notCloned")}</p>
-              {repoMeta && <p className="mt-1 text-xs text-muted-foreground">{t(remoteStatus === "changed" ? "repoStatus.behind" : remoteStatus === "checking" ? "repoStatus.checking" : remoteStatus === "unverified" || remoteStatus === "unavailable" ? (repoMeta.lastKnownChanged ? "repoStatus.staleChanged" : "repoStatus.unverified") : "repoStatus.clean")}</p>}
+               <p className="text-xs text-muted-foreground">{status ? t("repoStatus.summary", { dirty: status.dirty, ahead }) : t("repoStatus.notCloned")}</p>
+               {repoMeta && <p className="mt-1 text-xs text-muted-foreground">{t(remoteStatus === "changed" ? "repoStatus.behind" : remoteStatus === "checking" ? "repoStatus.checking" : remoteStatus === "unavailable" || remoteStatus === "unverified" ? (repoMeta.lastKnownChanged ? "repoStatus.staleChanged" : "repoStatus.unverified") : "repoStatus.clean")}</p>}
+              {maintenance?.lifecycle && <p className="mt-1 text-xs font-medium">{t("repoStatus.lifecycle", { status: t(`repoStatus.lifecycleStates.${maintenance.lifecycle}`) })}</p>}
+              {maintenance && <p className="mt-1 text-xs text-muted-foreground">{t("repoStatus.maintenanceCounts", { modified: maintenance.status.modified, new: maintenance.status.new, deleted: maintenance.status.deleted, commits: maintenance.unpushedCommits.length, recoveries: maintenance.recoveries.length, rewrites: maintenance.rewriteOperationCount })}</p>}
+              {maintenance?.legacyCopies.length ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">{t("repoStatus.legacyCopies", { count: maintenance.legacyCopies.length })}</p> : null}
+              {maintenanceError && <p className="mt-2 rounded border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive" role="alert">{maintenanceError}</p>}
               {cloneProgress && (
                 <div className="mt-3 space-y-1">
                   <div className="h-2 overflow-hidden rounded-full bg-muted">
@@ -255,7 +269,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
               <p className="font-medium">{t("repoStatus.tokenHealth")}</p>
               {tokenHealth && <p className="text-xs text-muted-foreground">{t(`repoStatus.tokenPermission.${tokenHealth.permissionStatus}`)}</p>}
               <p className="text-xs text-muted-foreground">{tokenHealth?.expiresAt ? t(`repoStatus.expiration.${tokenExpirationWarning(tokenHealth.expiresAt)}`, { date: new Date(tokenHealth.expiresAt).toLocaleDateString() }) : t("repoStatus.expiration.unknown")}</p>
-              <Button className="mt-2" size="sm" variant="outline" disabled={networkDisabled} onClick={() => void run("token-health", async () => {
+              <Button className="mt-2" size="sm" variant="outline" disabled={maintenanceNetworkDisabled || !token || !branch} onClick={() => void run("token-health", async () => {
                 if (!book || !branch || !currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
                 const health = await checkRepositoryTokenHealth({ owner: book.owner, repo: book.repo, branch, accountIdentity: currentAccountIdentity, token });
                 setTokenHealth(health);
@@ -263,12 +277,12 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
               })}>{busy === "token-health" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-1 h-4 w-4" />}{t("repoStatus.checkToken")}</Button>
             </div>
             <div className="grid gap-2 sm:grid-cols-3">
-              <Button variant="outline" className="sm:col-span-3" disabled={networkDisabled} onClick={() => void run("recover-lifecycle", async () => {
+              <Button variant="outline" className="sm:col-span-3" disabled={maintenanceNetworkDisabled} onClick={() => void run("recover-lifecycle", async () => {
                 if (!book || !branch || !currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
                 const result = await ensureLocalBookStructure({ bookId: book.id, book, token, accountIdentity: currentAccountIdentity, branch, onProgress: (p) => setCloneProgress(book.id, p) });
                 setStructure(book.id, result.structure);
                 return result.meta.cloneComplete ? t("repoStatus.remoteUpToDate") : t("repoStatus.incomplete");
-              })}>{busy === "recover-lifecycle" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}Retry / recover local clone</Button>
+              })}>{busy === "recover-lifecycle" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.retryRecovery")}</Button>
               <Button className="sm:col-span-3" disabled={networkDisabled} onClick={() => void run("sync", async () => {
                  const result = await syncFullRepository({ ...await exactTarget(), token });
                 return t("repoStatus.syncDone", { pulled: result.pulled, kept: result.keptLocal, committed: result.committed, pushed: result.pushed });
@@ -293,16 +307,16 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
             <Button variant="outline" className="w-full" disabled={disabled} onClick={() => void exportBackup()}>{busy === "backup" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}{t("repoStatus.exportBackup")}</Button>
             {recoveries.length > 0 && (
               <div className="space-y-2 rounded-xl border p-3">
-                <p className="text-sm font-medium">Recovery snapshots</p>
+                <p className="text-sm font-medium">{t("repoStatus.recoverySnapshots")}</p>
                 {recoveries.map((recovery) => (
                   <div key={recovery.id} className="flex flex-col gap-2 rounded border p-2 text-xs sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0"><p>{new Date(recovery.createdAt).toLocaleString()}</p><p className="break-words text-muted-foreground">{recovery.reason}</p></div>
-                    <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void restoreRecovery(recovery)}>{busy === `recovery-${recovery.id}` ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}Restore</Button>
+                    <Button size="sm" variant="outline" disabled={!!busy || !operationalReady} onClick={() => void restoreRecovery(recovery)}>{busy === `recovery-${recovery.id}` ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.restoreRecovery")}</Button>
                   </div>
                 ))}
               </div>
             )}
-            {remoteStatus === "changed" && <div className="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3">
+             {remoteStatus === "changed" && <div className="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3">
               <p className="text-sm font-medium">{t("repoStatus.repairTitle")}</p>
               <p className="text-xs text-muted-foreground">{t("repoStatus.repairDescription")}</p>
               <Button variant="outline" className="w-full" disabled={networkDisabled} onClick={() => void run("resync-local", async () => {
@@ -310,11 +324,18 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                  const result = await overwriteRemoteWithLocal({ ...await exactTarget(), token, confirmed: true });
                 return t("repoStatus.resyncLocalDone", { count: result.files });
               })}>{busy === "resync-local" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-1 h-4 w-4" />}{t("repoStatus.resyncLocal")}</Button>
-            </div>}
+             </div>}
             <div className="grid gap-2 sm:grid-cols-2">
-              <Button variant="outline" disabled={networkDisabled} onClick={() => void recloneLocal()}>{busy === "reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.reclone")}</Button>
-              <Button variant="destructive" disabled={disabled} onClick={() => void removeLocal()}>{busy === "remove-local" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}{t("repoStatus.removeLocal")}</Button>
+              <Button variant="outline" disabled={maintenanceNetworkDisabled} onClick={() => void recloneLocal()}>{busy === "reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.reclone")}</Button>
+              <Button variant="destructive" disabled={disabled || !maintenance || (!maintenance.removalPending && !backupReceipt) || removeConfirmation !== `REMOVE ${book.owner}/${book.repo}`} onClick={() => void removeLocal()}>{busy === "remove-local" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}{maintenance?.removalPending ? t("repoStatus.resumeRemoval") : t("repoStatus.removePermanently")}</Button>
             </div>
+            {maintenance && (maintenance.repository || maintenance.removalPending) && <div className="space-y-2 rounded-xl border border-destructive/30 p-3 text-xs">
+              <p className="font-medium">{t("repoStatus.removeSummary", { modified: maintenance.status.modified, new: maintenance.status.new, deleted: maintenance.status.deleted, commits: maintenance.unpushedCommits.length, recoveries: maintenance.recoveries.length, rewrites: maintenance.rewriteOperationCount, lifecycle: t(`repoStatus.lifecycleStates.${maintenance.lifecycle}`) })}</p>
+              <p className="text-muted-foreground">{t("repoStatus.recoveryPreserved")}</p>
+              {!backupReceipt && !maintenance.removalPending && <p className="font-medium text-amber-700 dark:text-amber-300">{t("repoStatus.backupRequired")}</p>}
+              {maintenance.removalPending && <p className="font-medium text-amber-700 dark:text-amber-300">{t("repoStatus.removalPending")}</p>}
+              <Input value={removeConfirmation} onChange={(event) => setRemoveConfirmation(event.target.value)} placeholder={t("repoStatus.removeConfirmation", { value: `REMOVE ${book.owner}/${book.repo}` })} disabled={disabled} />
+            </div>}
             <div className="space-y-2 rounded-xl border p-3">
               <p className="text-sm font-medium">{t("repoStatus.localChanges")}</p>
               {dirtyFiles.length ? (
