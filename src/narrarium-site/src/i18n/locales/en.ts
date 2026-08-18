@@ -245,6 +245,9 @@ const en = {
     recoveryExpiredHeading: "Recovery authorization expired",
     recoveryExpiredDescription: "Start recovery again from the book. The local repository was preserved and regular sign-in remains available.",
     recoveryExpiredBack: "Back to books",
+    continuityHeading: "Welcome back, {{email}}",
+    continuityDescription: "Your account is remembered on this device. Sign in to restore cloud access; your local books are safe while you do.",
+    accountMismatch: "The provider returned a different account. Sign in with the selected account to continue.",
   },
   bookStructureError: {
     LEGACY_REPOSITORY_AUTH_REQUIRED: { title: "This local book needs account verification", description: "Narrarium found an existing local copy created before account identities were strengthened. Re-authenticate with the same provider account to recover it safely." },

@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.50",
+    "date": "2026-08-18",
+    "en": {
+      "title": "Localized account and repository recovery",
+      "summary": "This follow-up completes the maintenance release with translated continuity and repository error messages across recovery and login screens.",
+      "changes": [
+        "Added English and Italian messages for remembered-account continuity and provider account mismatch during reauthentication.",
+        "Added complete localized repository error messages for invalid credentials, permissions, SSO, rate limits, outages, network failures, conflicts and malformed responses.",
+        "Added regression coverage that verifies recovery and continuity keys exist in both supported locales."
+      ]
+    },
+    "it": {
+      "title": "Recovery account e repository localizzato",
+      "summary": "Questo follow-up completa la release maintenance con messaggi tradotti per continuita account ed errori repository nelle schermate di recovery e login.",
+      "changes": [
+        "Aggiunti i messaggi italiano e inglese per la continuita dell'account ricordato e per l'account provider non corrispondente durante la riautenticazione.",
+        "Aggiunti messaggi repository completamente localizzati per credenziali non valide, permessi, SSO, rate limit, outage, rete, conflitti e risposte malformate.",
+        "Aggiunta copertura di regressione che verifica la presenza delle chiavi recovery e continuita in entrambe le lingue supportate."
+      ]
+    }
+  },
+  {
     "version": "0.76.49",
     "date": "2026-08-18",
     "en": {

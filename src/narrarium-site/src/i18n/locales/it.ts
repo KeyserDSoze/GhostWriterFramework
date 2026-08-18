@@ -245,6 +245,9 @@ const it = {
     recoveryExpiredHeading: "Autorizzazione di recupero scaduta",
     recoveryExpiredDescription: "Avvia di nuovo il recupero dal libro. Il repository locale è stato conservato e l'accesso normale resta disponibile.",
     recoveryExpiredBack: "Torna ai libri",
+    continuityHeading: "Bentornato, {{email}}",
+    continuityDescription: "Il tuo account è ricordato su questo dispositivo. Accedi per ripristinare l'accesso cloud; i tuoi libri locali restano al sicuro.",
+    accountMismatch: "Il provider ha restituito un account diverso. Accedi con l'account selezionato per continuare.",
   },
   bookStructureError: {
     LEGACY_REPOSITORY_AUTH_REQUIRED: { title: "Questo libro locale richiede la verifica dell'account", description: "Narrarium ha trovato una copia locale creata prima del rafforzamento delle identità account. Autenticati di nuovo con lo stesso account provider per recuperarla in sicurezza." },
