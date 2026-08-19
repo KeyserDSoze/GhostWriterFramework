@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.52",
+    "date": "2026-08-19",
+    "en": {
+      "title": "E2E gate runs only browser scenarios",
+      "summary": "This follow-up fixes the CI E2E gate so Playwright runs only the real Chromium scenarios instead of discovering the Vitest browser-contract files.",
+      "changes": [
+        "Scoped Playwright discovery to `e2e/**/*.spec.ts` and explicitly excluded Vitest test-browser files.",
+        "Kept the production and E2E builds separate, including GitHub Pages base-path behavior and the compile-time test-auth guard.",
+        "Added CI-simulated verification that exactly the two Chromium E2E scenarios are discovered and pass."
+      ]
+    },
+    "it": {
+      "title": "Il gate E2E esegue solo gli scenari browser",
+      "summary": "Questo follow-up corregge il gate E2E CI affinche Playwright esegua solo gli scenari Chromium reali invece di scoprire i file di contratto Vitest.",
+      "changes": [
+        "Limitata la discovery Playwright a `e2e/**/*.spec.ts` ed esclusi esplicitamente i file Vitest test-browser.",
+        "Mantenuti separati build production ed E2E, inclusi base path GitHub Pages e guardia auth di test compile-time.",
+        "Aggiunta la verifica simulata CI che scopre ed esegue correttamente esattamente i due scenari E2E Chromium."
+      ]
+    }
+  },
+  {
     "version": "0.76.51",
     "date": "2026-08-18",
     "en": {
