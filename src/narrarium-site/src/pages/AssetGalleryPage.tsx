@@ -11,10 +11,11 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
-import { loadBinaryFileContent } from "@/github/githubClient";
+import { optionalBinaryFileContent } from "@/github/githubClient";
 import { resolveBookToken } from "@/types/settings";
 import { AssetImageDialog } from "@/components/book/AssetImageDialog";
 import type { AssetSubjectKind } from "@/assets/assetImages";
+import { repositoryErrorDescription } from "@/repository/repositoryError";
 
 type AssetFilter = "all" | "missing" | "book" | "chapter" | "paragraph";
 
@@ -38,6 +39,7 @@ export function AssetGalleryPage() {
   const { branch } = useWorkingBranch(bookId);
   const [filter, setFilter] = useState<AssetFilter>("all");
   const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const token = book ? resolveBookToken(book, settings) : "";
   const cards = useMemo<AssetCardItem[]>(() => {
@@ -84,20 +86,21 @@ export function AssetGalleryPage() {
     const urls: string[] = [];
     let active = true;
     void Promise.all(cards.filter((card) => card.imagePath).map(async (card) => {
-      const bytes = await loadBinaryFileContent(token, book.owner, book.repo, card.imagePath!, branch).catch(() => null);
+      const bytes = await optionalBinaryFileContent(token, book.owner, book.repo, card.imagePath!, branch);
       if (!bytes || !active) return null;
       const url = URL.createObjectURL(new Blob([bytesToArrayBuffer(bytes)], { type: imageMimeType(card.imagePath!) }));
       urls.push(url);
       return [card.key, url] as const;
     })).then((entries) => {
       if (!active) return;
+      setPreviewError(null);
       setPreviews(Object.fromEntries(entries.filter(Boolean) as Array<readonly [string, string]>));
-    });
+    }).catch((loadError) => { if (active) setPreviewError(repositoryErrorDescription(loadError, t)); });
     return () => {
       active = false;
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [book, branch, cards, token]);
+  }, [book, branch, cards, token, t]);
 
   if (!book) return <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   if (loading && !structure) return <GallerySkeleton />;
@@ -124,6 +127,7 @@ export function AssetGalleryPage() {
           </SelectContent>
         </Select>
       </div>
+      {previewError && <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{previewError}</AlertDescription></Alert>}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {filtered.map((card) => (

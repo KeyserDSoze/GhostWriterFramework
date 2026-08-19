@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.76.55",
+    "date": "2026-08-19",
+    "en": {
+      "title": "Safe repository size limits",
+      "summary": "Narrarium now measures and bounds manuscript files, binary assets, Git mutations, and repository transfers before browser memory, IndexedDB, or GitHub can fail late.",
+      "changes": [
+        "Defined documented limits of 2 MiB per text file, 25 MiB per binary asset, 50 MiB per save/push mutation, and 250 MiB per clone/pull/repair transfer, reduced when browser quota is lower.",
+        "Added raw streaming Git blob and Contents-envelope readers that count actual chunks, treat Content-Length only as an early hint, and cancel immediately at the limit.",
+        "Validated local text and binary writes before hashing or IndexedDB, and validated every committed push payload before the first Git blob is created.",
+        "Kept dirty edits and unpushed commits intact when clone, repair, pull, or full sync rejects an oversized remote file; recovery snapshot storage is included in quota preflight.",
+        "Added localized errors with measured and allowed sizes plus remediation for splitting manuscripts, compressing assets, freeing browser storage, or using Git LFS.",
+        "Propagated size failures through Reader, asset gallery, dossier, and export instead of silently hiding unsupported assets."
+      ]
+    },
+    "it": {
+      "title": "Limiti sicuri per le dimensioni repository",
+      "summary": "Narrarium ora misura e limita file del manoscritto, asset binari, mutazioni Git e trasferimenti repository prima che memoria browser, IndexedDB o GitHub falliscano tardivamente.",
+      "changes": [
+        "Definiti e documentati limiti di 2 MiB per file di testo, 25 MiB per asset binario, 50 MiB per singola mutazione save/push e 250 MiB per trasferimento clone/pull/repair, ridotti quando la quota browser è inferiore.",
+        "Aggiunti reader streaming raw per blob Git ed envelope Contents che contano i chunk reali, usano Content-Length solo come indicazione anticipata e cancellano subito al limite.",
+        "Le scritture locali testo e binarie vengono validate prima di hash o IndexedDB e ogni payload committed viene validato prima della creazione del primo blob Git.",
+        "Modifiche dirty e commit non pushati restano intatti quando clone, repair, pull o full sync rifiutano un file remoto troppo grande; il preflight quota include anche lo spazio dei recovery snapshot.",
+        "Aggiunti errori localizzati con dimensione misurata, limite consentito e rimedi per dividere manoscritti, comprimere asset, liberare spazio browser o usare Git LFS.",
+        "Gli errori di dimensione vengono propagati in Reader, galleria asset, dossier ed export invece di nascondere silenziosamente gli asset non supportati."
+      ]
+    }
+  },
+  {
     "version": "0.76.54",
     "date": "2026-08-19",
     "en": {

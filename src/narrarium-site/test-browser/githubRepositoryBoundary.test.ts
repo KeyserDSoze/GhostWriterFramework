@@ -128,8 +128,7 @@ describe("GitHub repository error classification", () => {
   });
 
   it("types binary body read failures", async () => {
-    const response = new Response("body", { status: 200 });
-    vi.spyOn(response, "arrayBuffer").mockRejectedValue(new DOMException("Aborted", "AbortError"));
+    const response = new Response(new ReadableStream({ pull() { throw new DOMException("Aborted", "AbortError"); } }), { status: 200 });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
     await expect(loadBinaryFileContent("token", "owner", "repo", "asset.png", "main")).rejects.toMatchObject({ kind: "abort", operation: "read" });
   });
@@ -208,5 +207,12 @@ describe("GitHub upsert read safety", () => {
     await expect(createOrUpdateTextFile("token", "owner", "repo", "main", "book.md", "new", "save")).rejects.toMatchObject({ kind: "unknown", operation: "update" });
     expect(octokitMocks.createOrUpdateFileContents).toHaveBeenCalledOnce();
     expect(octokitMocks.createOrUpdateFileContents.mock.calls[0][0]).toMatchObject({ sha: "old-sha" });
+  });
+
+  it("updates an existing binary without decoding its Contents payload as text", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ content: btoa("x".repeat(300 * 1024)), sha: "binary-sha" })));
+    octokitMocks.createOrUpdateFileContents.mockResolvedValue({ data: { content: { sha: "updated-sha" } } });
+    await expect(createOrUpdateBinaryFile("token", "owner", "repo", "main", "cover.png", new Uint8Array([1, 2]), "save")).resolves.toBe("updated-sha");
+    expect(octokitMocks.createOrUpdateFileContents.mock.calls[0][0]).toMatchObject({ sha: "binary-sha" });
   });
 });

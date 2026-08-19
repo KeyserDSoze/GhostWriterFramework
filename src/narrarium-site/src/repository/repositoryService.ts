@@ -55,6 +55,8 @@ import { reconcileRemoteMutation } from "@/repository/remoteMutationReconciliati
 import { classifyRepositoryError, RepositoryError } from "@/repository/repositoryError";
 import { createTrackedGitHubClient } from "@/repository/githubRequest";
 import { recordRepositoryReadValidated, recordRepositoryWriteValidated, tokenExpirationFromHeaders, writeTokenHealth, type TokenHealth, type TokenHealthTarget } from "@/repository/tokenHealth";
+import { RepositoryByteMeter, RepositoryLimitExceededError, REPOSITORY_TRANSFER_LIMIT_BYTES, assertRepositoryAggregateBytes, assertRepositoryFileBytes, bytesToBase64, utf8Bytes } from "@/repository/repositoryLimits";
+import { fetchRepositoryBlobBytes } from "@/repository/repositoryBlobTransport";
 
 const TEXT_EXTENSIONS = new Set(["md", "markdown", "txt", "json", "yaml", "yml", "toml", "csv", "html", "css", "js", "ts", "tsx"]);
 
@@ -218,6 +220,12 @@ function isTextPath(path: string): boolean {
   return TEXT_EXTENSIONS.has(extension(path));
 }
 
+async function repositoryTransferAllowance(): Promise<number> {
+  const storage: StorageEstimate = await navigator.storage?.estimate?.().catch(() => ({} as StorageEstimate)) ?? {};
+  if (storage.quota === undefined) return REPOSITORY_TRANSFER_LIMIT_BYTES;
+  return Math.min(REPOSITORY_TRANSFER_LIMIT_BYTES, Math.max(0, storage.quota - (storage.usage ?? 0)));
+}
+
 function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
@@ -313,6 +321,10 @@ async function ensureLocalBookStructureOnce(input: {
   const blobs = tree.data.tree
     .filter((item) => item.type === "blob" && item.path)
     .map((item) => ({ path: item.path!, sha: item.sha, size: item.size ?? 0 }));
+  const advertisedBytes = blobs.reduce((sum, blob) => sum + Math.max(0, blob.size), 0);
+  assertRepositoryAggregateBytes(advertisedBytes, "transfer");
+  const transferAllowance = await repositoryTransferAllowance();
+  if (advertisedBytes > transferAllowance) throw new RepositoryLimitExceededError("transfer", "aggregate", advertisedBytes, transferAllowance);
   const cloneOperationId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
   const meta = await createLocalRepositoryClone({
@@ -331,12 +343,14 @@ async function ensureLocalBookStructureOnce(input: {
   if (persistent === false) await addLocalRepoLog(meta.id, "error", "Browser storage persistence was not granted; export backups regularly because the working copy may be evicted");
 
   let done = 0;
+  const transferMeter = new RepositoryByteMeter("transfer", transferAllowance);
   input.onProgress?.({ done, total: blobs.length, phase: "cloning" });
   try {
     await withLifecycleHeartbeat(meta.id, scope, cloneOperationId, async () => {
     await mapLimit(blobs, 5, async (blob) => {
       if (!blob.sha) throw new Error(`Remote tree entry has no immutable blob SHA: ${blob.path}`);
-      const bytes = await fetchBlobBytes(octokit, input.book.owner, input.book.repo, blob.sha, signal);
+      const bytes = await fetchBlobBytesForRepository(input.token, input.book.owner, input.book.repo, blob.path, blob.sha, transferMeter, signal);
+      assertRepositoryAggregateBytes(bytes.byteLength, "transfer", await repositoryTransferAllowance());
       if (isTextPath(blob.path)) {
         await putCleanLocalFileScoped({ repoId: meta.id, path: blob.path, kind: "text", text: new TextDecoder().decode(bytes), baseSha: blob.sha, size: bytes.byteLength }, scope, cloneOperationId);
       } else {
@@ -386,11 +400,12 @@ export async function migrateLegacyLocalRepository(input: { meta: LocalRepositor
       const remoteBlobs = tree.data.tree.filter((entry) => entry.type === "blob" && entry.path && entry.sha).map((entry) => ({ path: entry.path!, sha: entry.sha! }));
       const localFiles = await listAllLocalFiles(claimed.id);
       const localByPath = new Map(localFiles.map((file) => [file.path, file]));
+      const transferMeter = new RepositoryByteMeter("transfer", await repositoryTransferAllowance());
       let complete = localFiles.length === remoteBlobs.length && localFiles.every((file) => file.status === "clean" && !file.committed);
       for (const remote of remoteBlobs) {
         const local = localByPath.get(remote.path);
         if (!local || local.status !== "clean" || local.committed || local.baseSha !== remote.sha) { complete = false; continue; }
-        const bytes = await fetchBlobBytes(octokit, claimed.owner, claimed.repo, remote.sha);
+        const bytes = await fetchBlobBytesForRepository(input.token, claimed.owner, claimed.repo, remote.path, remote.sha, transferMeter);
         if (await sha256Bytes(bytes) !== local.currentHash) complete = false;
       }
       return await classifyLegacyLocalRepositoryMigration({ repoId: claimed.id, scope, migrationOperationId, expectedRemoteHeadSha: claimed.remoteHeadSha, expectedFiles: localFiles, expectedFileCount: remoteBlobs.length, complete });
@@ -405,15 +420,8 @@ export async function migrateLegacyLocalRepository(input: { meta: LocalRepositor
 /**
  * Fetch a single blob by its git object sha (exact content, independent of branch tip).
  */
-async function fetchBlobBytes(octokit: Octokit, owner: string, repo: string, fileSha: string, signal?: AbortSignal): Promise<Uint8Array> {
-  const blob = await octokit.rest.git.getBlob({ owner, repo, file_sha: fileSha, request: { signal } });
-  if (blob.data.encoding === "base64") {
-    const binary = atob(blob.data.content.replace(/\n/g, ""));
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-  }
-  return new TextEncoder().encode(blob.data.content);
+export async function fetchBlobBytesForRepository(token: string, owner: string, repo: string, path: string, fileSha: string, meter: RepositoryByteMeter, signal?: AbortSignal): Promise<Uint8Array> {
+  return fetchRepositoryBlobBytes({ token, owner, repo, path, sha: fileSha, kind: isTextPath(path) ? "text" : "binary", meter, signal });
 }
 
 export async function restoreLocalFilesToBase(input: {
@@ -436,12 +444,13 @@ export async function restoreLocalFilesToBase(input: {
   const remote = input.token ? trackedOctokit(input.token, input) : null;
   const deletes: string[] = [];
   const writes: Array<{ path: string; kind: "text"; text: string } | { path: string; kind: "binary"; bytes: Uint8Array }> = [];
+  const transferMeter = new RepositoryByteMeter("mutation");
   const expected = new Map(selected.map((file) => [file.path, file.currentHash]));
   for (const file of selected) {
     if (file.status === "new") { deletes.push(file.path); continue; }
     if (!file.baseSha) throw new Error(`Cannot restore ${file.path} because its clean base snapshot is unavailable.`);
     if (!remote) throw new Error(`Cannot restore ${file.path} without a GitHub token for its clean base snapshot.`);
-    const bytes = await fetchBlobBytes(remote, input.owner, input.repo, file.baseSha);
+    const bytes = await fetchBlobBytesForRepository(input.token!, input.owner, input.repo, file.path, file.baseSha, transferMeter);
     writes.push(file.kind === "binary"
       ? { path: file.path, kind: "binary", bytes }
       : { path: file.path, kind: "text", text: new TextDecoder().decode(bytes) });
@@ -542,13 +551,14 @@ async function verifyAndRepairLocalRepositoryLeased(
   const remotePaths = new Set(remoteBlobs.map((blob) => blob.path));
   const missing: typeof remoteBlobs = [];
   const verifiedRemoteBytes = new Map<string, Uint8Array>();
+  const transferMeter = new RepositoryByteMeter("transfer", await repositoryTransferAllowance());
   for (const blob of remoteBlobs) {
     const local = localByPath.get(blob.path);
     if (!local) { missing.push(blob); continue; }
     if (local.status !== "clean" || local.committed) continue;
     const actualBytes = local.kind === "text" ? new TextEncoder().encode(local.text ?? "") : new Uint8Array(await (local.blob ?? new Blob()).arrayBuffer());
     const actualHash = await sha256Bytes(actualBytes);
-    const remoteBytes = await fetchBlobBytes(octokit, meta.owner, meta.repo, blob.sha);
+    const remoteBytes = await fetchBlobBytesForRepository(token, meta.owner, meta.repo, blob.path, blob.sha, transferMeter);
     verifiedRemoteBytes.set(blob.path, remoteBytes);
     const remoteHash = await sha256Bytes(remoteBytes);
     if (local.baseSha !== blob.sha || local.currentHash !== actualHash || actualHash !== remoteHash) missing.push(blob);
@@ -558,7 +568,7 @@ async function verifyAndRepairLocalRepositoryLeased(
   onProgress?.({ done, total: missing.length });
   const prepared = new Map<string, RemoteTreeFile>();
   await mapLimit(missing, 5, async (blob) => {
-    const bytes = verifiedRemoteBytes.get(blob.path) ?? await fetchBlobBytes(octokit, meta.owner, meta.repo, blob.sha);
+    const bytes = verifiedRemoteBytes.get(blob.path) ?? await fetchBlobBytesForRepository(token, meta.owner, meta.repo, blob.path, blob.sha, transferMeter);
     const kind = isTextPath(blob.path) ? "text" as const : "binary" as const;
     prepared.set(blob.path, { path: blob.path, kind, text: kind === "text" ? new TextDecoder().decode(bytes) : undefined, blob: kind === "binary" ? new Blob([bytesToArrayBuffer(bytes)]) : undefined, baseSha: blob.sha, size: bytes.byteLength });
     done += 1;
@@ -570,6 +580,7 @@ async function verifyAndRepairLocalRepositoryLeased(
   for (const path of prepared.keys()) represented.add(path);
   const complete = remoteBlobs.every((blob) => represented.has(blob.path));
   if (!complete) throw new Error("Local repository verification did not store every remote file.");
+  assertRepositoryAggregateBytes(transferMeter.measuredBytes, "transfer", await repositoryTransferAllowance());
   await applyCloneRepairAtomically({
     repoId: meta.id,
     scope,
@@ -731,6 +742,7 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
   const remoteByPath = new Map(remoteBlobEntries.map((entry) => [entry.path!, entry.sha!]));
   const localFiles = await listAllLocalFiles(meta.id);
   const prepared: RemoteTreeFile[] = [];
+  const transferMeter = new RepositoryByteMeter("transfer", await repositoryTransferAllowance());
   let updated = localFiles.filter((file) => !remoteByPath.has(file.path)).length;
   for (const [path, blobSha] of remoteByPath) {
     input.signal?.throwIfAborted();
@@ -739,13 +751,15 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
     if (local?.baseSha === blobSha && local.status === "clean" && !local.committed) {
       bytes = local.kind === "text" ? new TextEncoder().encode(local.text ?? "") : new Uint8Array(await (local.blob ?? new Blob()).arrayBuffer());
     } else {
-      bytes = await fetchBlobBytes(octokit, meta.owner, meta.repo, blobSha, input.signal);
+      bytes = await fetchBlobBytesForRepository(input.token, meta.owner, meta.repo, path, blobSha, transferMeter, input.signal);
       updated += 1;
     }
     const kind = isTextPath(path) ? "text" as const : "binary" as const;
     prepared.push({ path, kind, text: kind === "text" ? new TextDecoder().decode(bytes) : undefined, blob: kind === "binary" ? new Blob([bytesToArrayBuffer(bytes)]) : undefined, baseSha: blobSha, size: bytes.byteLength });
   }
   input.signal?.throwIfAborted();
+  const pullRecoveryBytes = localFiles.reduce((sum, file) => sum + file.size, 0);
+  assertRepositoryAggregateBytes(transferMeter.measuredBytes + pullRecoveryBytes, "transfer", await repositoryTransferAllowance());
   const recovery = await replaceLocalTreeAtomically(
     meta.id,
     scope,
@@ -866,6 +880,13 @@ async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLoca
     changedPaths.set(file.path, file.status === "deleted" ? null : current);
   }
 
+  const pushMeter = new RepositoryByteMeter("mutation");
+  for (const file of changedPaths.values()) {
+    if (!file) continue;
+    const size = file.kind === "text" ? utf8Bytes(file.text ?? "") : file.blob?.size ?? 0;
+    pushMeter.add(file.kind, size);
+  }
+
   // A deletion entry whose path is a directory (or missing) on the remote tree
   // triggers GitRPC::BadObjectState. Only keep deletions that target an actual blob.
   const remoteBlobPaths = new Set<string>();
@@ -966,12 +987,11 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
   const previous = await markLocalRepositoryRemoteChecking(meta.id, scope);
   try {
   const pendingBeforeSync = await listUnpushedLocalCommits(meta.id);
-  if (pendingBeforeSync.length) await createLocalRecoverySnapshot(meta.id, `Before full sync from ${meta.remoteHeadSha}`, scope);
-  await restoreUnpushedCommitsAsDirty(meta.id, scope);
   const octokit = trackedOctokit(input.token, input);
   const { remoteHeadSha, changed: remoteChanged } = await resolveRemoteChangeState(octokit, meta);
   let pulled = 0;
   let keptLocal = 0;
+  let syncPreflightIncludesRecovery = false;
   if (remoteChanged) {
     const remoteTree = await octokit.rest.git.getTree({ owner: meta.owner, repo: meta.repo, tree_sha: remoteHeadSha, recursive: "1" });
     if (remoteTree.data.truncated) throw new Error("Remote tree is truncated; sync stopped without advancing the local head.");
@@ -981,6 +1001,7 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
     const localByPath = new Map(localFiles.map((file) => [file.path, file]));
     const conflicts: string[] = [];
     const remoteBytes = new Map<string, Uint8Array>();
+    const transferMeter = new RepositoryByteMeter("transfer", await repositoryTransferAllowance());
     const deletes: string[] = [];
     const writes: Array<{ path: string; sha: string; bytes: Uint8Array; kind: "text" | "binary" }> = [];
     for (const path of new Set([...localByPath.keys(), ...remoteByPath.keys()])) {
@@ -990,7 +1011,7 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
       const remoteChangedFromBase = local ? remoteSha !== local.baseSha : remoteSha !== undefined;
       if (localChanged && remoteChangedFromBase) {
         if (remoteSha && local && local.status !== "deleted") {
-          const bytes = await fetchBlobBytes(octokit, meta.owner, meta.repo, remoteSha);
+          const bytes = await fetchBlobBytesForRepository(input.token, meta.owner, meta.repo, path, remoteSha, transferMeter);
           remoteBytes.set(path, bytes);
           const remoteHash = await sha256Bytes(bytes);
           if (remoteHash === local.currentHash) {
@@ -1013,10 +1034,13 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
         continue;
       }
       if (local?.baseSha === remoteSha) continue;
-      const bytes = remoteBytes.get(path) ?? await fetchBlobBytes(octokit, meta.owner, meta.repo, remoteSha);
+      const bytes = remoteBytes.get(path) ?? await fetchBlobBytesForRepository(input.token, meta.owner, meta.repo, path, remoteSha, transferMeter);
       writes.push({ path, sha: remoteSha, bytes, kind: isTextPath(path) ? "text" : "binary" });
     }
     if (conflicts.length) throw new Error(`Repository sync conflict: ${conflicts.sort().join(", ")}`);
+    const recoveryBytes = pendingBeforeSync.length ? localFiles.reduce((sum, file) => sum + file.size, 0) + transferMeter.measuredBytes : 0;
+    assertRepositoryAggregateBytes(transferMeter.measuredBytes + recoveryBytes, "transfer", await repositoryTransferAllowance());
+    syncPreflightIncludesRecovery = pendingBeforeSync.length > 0;
     await applyRemoteMergeAtomically({
       repoId: meta.id,
       scope,
@@ -1032,6 +1056,16 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
     if (remoteHeadSha !== meta.remoteHeadSha) await addLocalRepoLog(meta.id, "pull", `Remote head changed to ${remoteHeadSha.slice(0, 7)} with no file-content differences`);
     else await markLocalRepositoryRemoteCheck(meta.id, scope, remoteHeadSha, false);
   }
+  // Do not mutate unpushed commits until every remote blob has been downloaded
+  // and measured successfully. Limit rejection leaves local work byte-for-byte intact.
+  if (pendingBeforeSync.length) {
+    if (!syncPreflightIncludesRecovery) {
+      const currentFiles = await listAllLocalFiles(meta.id);
+      assertRepositoryAggregateBytes(currentFiles.reduce((sum, file) => sum + file.size, 0), "transfer", await repositoryTransferAllowance());
+    }
+    await createLocalRecoverySnapshot(meta.id, `Before full sync from ${meta.remoteHeadSha}`, scope);
+  }
+  await restoreUnpushedCommitsAsDirty(meta.id, scope);
   const dirtyAfterMerge = await listDirtyLocalFiles(meta.id);
   let committed = 0;
   if (dirtyAfterMerge.length) {
@@ -1124,10 +1158,12 @@ async function overwriteRemoteWithLocalLeased(meta: LocalRepositoryMeta, input: 
 
   const allFilesBeforePush = await listAllLocalFiles(meta.id);
   const commitsBeforePush = await listUnpushedLocalCommits(meta.id);
-  const recovery = await createLocalRecoverySnapshot(meta.id, `Before local-source overwrite of ${meta.branch}`, scope);
   // The app's current view = all non-deleted local files.
   const allLocal = allFilesBeforePush.filter((file) => file.status !== "deleted");
   if (allLocal.length === 0) throw new Error("Local working copy is empty.");
+  const overwriteMeter = new RepositoryByteMeter("mutation");
+  for (const file of allLocal) overwriteMeter.add(file.kind, file.kind === "text" ? utf8Bytes(file.text ?? "") : file.blob?.size ?? 0);
+  const recovery = await createLocalRecoverySnapshot(meta.id, `Before local-source overwrite of ${meta.branch}`, scope);
 
   // Drop malformed paths (empty segments, leading/trailing slashes, . / ..).
   const wellFormed = allLocal.filter((file) => {
@@ -1191,14 +1227,13 @@ async function overwriteRemoteWithLocalLeased(meta: LocalRepositoryMeta, input: 
 async function createBlobForFile(octokit: Octokit, meta: LocalRepositoryMeta, file: LocalRepositoryFile, signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted();
   if (file.kind === "text") {
+    assertRepositoryFileBytes("text", utf8Bytes(file.text ?? ""));
     const result = await octokit.rest.git.createBlob({ owner: meta.owner, repo: meta.repo, content: file.text ?? "", encoding: "utf-8", request: { signal } });
     return result.data.sha;
   }
   const bytes = file.blob ? new Uint8Array(await file.blob.arrayBuffer()) : new Uint8Array();
+  assertRepositoryFileBytes("binary", bytes.byteLength);
   signal?.throwIfAborted();
-  let binary = "";
-  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
-  signal?.throwIfAborted();
-  const result = await octokit.rest.git.createBlob({ owner: meta.owner, repo: meta.repo, content: btoa(binary), encoding: "base64", request: { signal } });
+  const result = await octokit.rest.git.createBlob({ owner: meta.owner, repo: meta.repo, content: bytesToBase64(bytes), encoding: "base64", request: { signal } });
   return result.data.sha;
 }

@@ -14,6 +14,7 @@ import { accountIdentity, beginStrandedLegacyRecovery, consumeLegacyAccountUpgra
 import { consumeLegacyAdoptionConsent, type LegacyAdoptionTarget } from "@/auth/legacyAdoptionConsent";
 import { finalizeLegacyRewriteOperationMigration, inspectLegacyRewriteOperationMigration, prepareLegacyRewriteOperationMigration } from "@/repository/localRewriteOperationStore";
 import { classifyRepositoryError, type RepositoryErrorKind } from "@/repository/repositoryError";
+import { RepositoryByteMeter, assertRepositoryFileBytes, utf8Bytes } from "@/repository/repositoryLimits";
 import { useAuthStore } from "@/store/authStore";
 import { assertRepositoryOperationScopeCurrent, captureRepositoryOperationScope, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
@@ -1155,22 +1156,7 @@ export async function putCleanLocalFile(input: {
   baseSha?: string;
   size: number;
 }): Promise<LocalRepositoryFile> {
-  const currentHash = input.kind === "text" ? await sha256Text(input.text ?? "") : await hashBlob(input.blob ?? new Blob());
-  const file: LocalRepositoryFile = {
-    key: fileKey(input.repoId, input.path),
-    repoId: input.repoId,
-    path: input.path,
-    kind: input.kind,
-    text: input.text,
-    blob: input.blob,
-    baseSha: input.baseSha,
-    baseHash: currentHash,
-    currentHash,
-    status: "clean",
-    committed: false,
-    size: input.size,
-    updatedAt: new Date().toISOString(),
-  };
+  const file = await prepareCleanLocalFile(input);
   await txStore("files", "readwrite", (store) => store.put(file), input.repoId);
   return file;
 }
@@ -1182,19 +1168,24 @@ export async function putCleanLocalFileScoped(input: Parameters<typeof putCleanL
 }
 
 async function prepareCleanLocalFile(input: Parameters<typeof putCleanLocalFile>[0]): Promise<LocalRepositoryFile> {
+  const measuredSize = input.kind === "text" ? utf8Bytes(input.text ?? "") : input.blob?.size ?? 0;
+  assertRepositoryFileBytes(input.kind, measuredSize);
   const currentHash = input.kind === "text" ? await sha256Text(input.text ?? "") : await hashBlob(input.blob ?? new Blob());
-  return { key: fileKey(input.repoId, input.path), repoId: input.repoId, path: input.path, kind: input.kind, text: input.text, blob: input.blob, baseSha: input.baseSha, baseHash: currentHash, currentHash, status: "clean", committed: false, size: input.size, updatedAt: new Date().toISOString() };
+  return { key: fileKey(input.repoId, input.path), repoId: input.repoId, path: input.path, kind: input.kind, text: input.text, blob: input.blob, baseSha: input.baseSha, baseHash: currentHash, currentHash, status: "clean", committed: false, size: measuredSize, updatedAt: new Date().toISOString() };
 }
 
 export async function writeLocalTextScoped(repoIdValue: string, path: string, text: string, scope: RepositoryOperationScope): Promise<LocalRepositoryFile> {
+  const size = utf8Bytes(text);
+  assertRepositoryFileBytes("text", size);
   const existing = await getLocalFileEntry(repoIdValue, path, scope);
   const currentHash = await sha256Text(text);
-  const file: LocalRepositoryFile = { key: fileKey(repoIdValue, path), repoId: repoIdValue, path, kind: "text", text, baseSha: existing?.baseSha, baseHash: existing?.baseHash, currentHash, status: statusAfterWrite(existing ?? undefined, currentHash), committed: false, size: new TextEncoder().encode(text).byteLength, updatedAt: new Date().toISOString() };
+  const file: LocalRepositoryFile = { key: fileKey(repoIdValue, path), repoId: repoIdValue, path, kind: "text", text, baseSha: existing?.baseSha, baseHash: existing?.baseHash, currentHash, status: statusAfterWrite(existing ?? undefined, currentHash), committed: false, size, updatedAt: new Date().toISOString() };
   await putScopedLocalFile(repoIdValue, scope, file);
   return file;
 }
 
 export async function writeLocalBinaryScoped(repoIdValue: string, path: string, bytes: Uint8Array, scope: RepositoryOperationScope): Promise<LocalRepositoryFile> {
+  assertRepositoryFileBytes("binary", bytes.byteLength);
   const existing = await getLocalFileEntry(repoIdValue, path, scope);
   const currentHash = await sha256Bytes(bytes);
   const file: LocalRepositoryFile = { key: fileKey(repoIdValue, path), repoId: repoIdValue, path, kind: "binary", blob: new Blob([bytesToArrayBuffer(bytes)]), baseSha: existing?.baseSha, baseHash: existing?.baseHash, currentHash, status: statusAfterWrite(existing ?? undefined, currentHash), committed: false, size: bytes.byteLength, updatedAt: new Date().toISOString() };
@@ -1222,6 +1213,8 @@ export async function deleteLocalFileScoped(repoIdValue: string, path: string, s
 }
 
 export async function writeLocalText(repoIdValue: string, path: string, text: string): Promise<LocalRepositoryFile> {
+  const size = utf8Bytes(text);
+  assertRepositoryFileBytes("text", size);
   const existing = await txStore<LocalRepositoryFile | undefined>("files", "readonly", (store) => store.get(fileKey(repoIdValue, path)));
   const currentHash = await sha256Text(text);
   const file: LocalRepositoryFile = {
@@ -1235,7 +1228,7 @@ export async function writeLocalText(repoIdValue: string, path: string, text: st
     currentHash,
     status: statusAfterWrite(existing, currentHash),
     committed: false,
-    size: new TextEncoder().encode(text).byteLength,
+    size,
     updatedAt: new Date().toISOString(),
   };
   await pausePrimaryFileWriteForTests();
@@ -1244,6 +1237,7 @@ export async function writeLocalText(repoIdValue: string, path: string, text: st
 }
 
 export async function writeLocalBinary(repoIdValue: string, path: string, bytes: Uint8Array): Promise<LocalRepositoryFile> {
+  assertRepositoryFileBytes("binary", bytes.byteLength);
   const existing = await txStore<LocalRepositoryFile | undefined>("files", "readonly", (store) => store.get(fileKey(repoIdValue, path)));
   const blob = new Blob([bytesToArrayBuffer(bytes)]);
   const currentHash = await sha256Bytes(bytes);
@@ -1277,6 +1271,8 @@ export async function applyLocalFileChangesAtomically(
   writes: LocalFileAtomicWrite[],
   expectedCurrentHashes: ReadonlyMap<string, string | null> = new Map(),
 ): Promise<void> {
+  const meter = new RepositoryByteMeter("mutation");
+  for (const write of writes) meter.add(write.kind, write.kind === "text" ? utf8Bytes(write.text) : write.bytes.byteLength);
   const originals = await allFromIndex<LocalRepositoryFile>("files", "repoId", repoIdValue);
   const originalsByPath = new Map(originals.map((file) => [file.path, file]));
   const deletes = new Set(deletePaths);
@@ -1368,6 +1364,8 @@ async function applyLocalTextFileMutations(
   mutations: LocalTextFileMutation[],
   commitMessage?: string,
 ): Promise<LocalCommit | null> {
+  const meter = new RepositoryByteMeter("mutation");
+  for (const mutation of mutations) if (typeof mutation.content === "string") meter.add("text", utf8Bytes(mutation.content));
   const paths = new Set<string>();
   for (const mutation of mutations) {
     if (paths.has(mutation.path)) throw new Error(`Duplicate local file mutation: ${mutation.path}`);

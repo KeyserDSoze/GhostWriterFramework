@@ -171,6 +171,8 @@ const en = {
     abort: "The GitHub operation was cancelled.",
     conflict: "The repository changed while this operation was running.",
     malformed: "GitHub returned an invalid repository response.",
+    "limit-exceeded": "This file or operation is {{measured}}; the safe browser limit is {{allowed}}. Reduce the manuscript file, compress or remove large assets, or manage the asset with Git LFS.",
+    "limit-exceeded-generic": "The browser does not have enough safe storage for this repository operation. Free storage, reduce the manuscript or assets, or manage large assets with Git LFS.",
     unknown: "The repository operation could not be completed."
   },
   repoSettings: {

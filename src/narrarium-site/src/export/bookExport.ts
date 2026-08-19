@@ -1,7 +1,7 @@
 import { parseDocument, stringify } from "yaml";
 import type { BookStructure, Chapter } from "@/types/book";
 import type { BookEntry, BookExportScope, BookExportSettings } from "@/types/settings";
-import { loadBinaryFileContent, loadFileContent } from "@/github/githubClient";
+import { loadFileContent, optionalBinaryFileContent } from "@/github/githubClient";
 import { slugify } from "@/narrarium/canon";
 import { paragraphSeparator, presentMetadata } from "@/export/metadataPresentation";
 import { renderEpubMarkdownHtml } from "@/markdown/safeMarkdown";
@@ -94,7 +94,7 @@ async function loadAsset(input: {
   const document = parseFrontmatter(raw);
   const imagePath = asString(document.frontmatter.path);
   if (!imagePath) return undefined;
-  const bytes = await loadBinaryFileContent(token, book.owner, book.repo, imagePath, branch).catch(() => null);
+  const bytes = await optionalBinaryFileContent(token, book.owner, book.repo, imagePath, branch);
   if (!bytes) return undefined;
   const extension = imagePath.split(".").pop()?.toLowerCase() || "png";
   return {

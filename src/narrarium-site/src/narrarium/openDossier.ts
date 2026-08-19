@@ -1,4 +1,4 @@
-import { loadFileContent, loadBinaryFileContent, slugToTitle } from "@/github/githubClient";
+import { loadFileContent, optionalBinaryFileContent, slugToTitle } from "@/github/githubClient";
 import { useDossierStore, type DossierEntry } from "@/store/dossierStore";
 import { useUiStore } from "@/store/uiStore";
 import type { BookFile } from "@/types/book";
@@ -41,7 +41,7 @@ export async function openCanonDossier(input: OpenDossierInput): Promise<void> {
 
   let imageUrl: string | undefined;
   if (file.imagePath) {
-    const bytes = await loadBinaryFileContent(token, owner, repo, file.imagePath, branch).catch(() => null);
+    const bytes = await optionalBinaryFileContent(token, owner, repo, file.imagePath, branch);
     if (bytes) {
       try { imageUrl = URL.createObjectURL(new Blob([bytesToArrayBuffer(bytes)], { type: imageMimeType(file.imagePath) })); } catch { /* ignore */ }
     }

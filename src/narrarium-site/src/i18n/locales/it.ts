@@ -171,6 +171,8 @@ const it = {
     abort: "L'operazione GitHub è stata annullata.",
     conflict: "Il repository è cambiato durante questa operazione.",
     malformed: "GitHub ha restituito una risposta repository non valida.",
+    "limit-exceeded": "Questo file o questa operazione occupa {{measured}}; il limite sicuro nel browser è {{allowed}}. Riduci il file del manoscritto, comprimi o rimuovi gli asset grandi oppure gestisci l'asset con Git LFS.",
+    "limit-exceeded-generic": "Il browser non dispone di spazio sicuro sufficiente per questa operazione repository. Libera spazio, riduci manoscritto o asset oppure gestisci gli asset grandi con Git LFS.",
     unknown: "L'operazione repository non è riuscita."
   },
   repoSettings: {

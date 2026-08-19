@@ -12,6 +12,7 @@ export const repositoryErrorKinds = [
   "abort",
   "conflict",
   "malformed",
+  "limit-exceeded",
   "unknown",
 ] as const;
 
@@ -31,24 +32,29 @@ export type RepositoryOperation = (typeof repositoryOperations)[number];
 
 export class RepositoryError extends Error {
   readonly cause?: unknown;
-  readonly details?: { rateLimitReset?: string };
+  readonly details?: { rateLimitReset?: string; measuredBytes?: number; allowedBytes?: number };
 
   constructor(
     message: string,
     readonly kind: RepositoryErrorKind,
     readonly operation: RepositoryOperation,
     readonly status?: number,
-    options?: { rateLimitReset?: string; cause?: unknown },
+    options?: { rateLimitReset?: string; measuredBytes?: number; allowedBytes?: number; cause?: unknown },
   ) {
     super(message);
     this.name = "RepositoryError";
     this.cause = options?.cause;
-    this.details = options?.rateLimitReset ? { rateLimitReset: options.rateLimitReset } : undefined;
+    this.details = options && (options.rateLimitReset || options.measuredBytes !== undefined || options.allowedBytes !== undefined)
+      ? { rateLimitReset: options.rateLimitReset, measuredBytes: options.measuredBytes, allowedBytes: options.allowedBytes }
+      : undefined;
   }
 }
 
 export function classifyRepositoryError(error: unknown, operation: RepositoryOperation, _path?: string): RepositoryError {
   if (error instanceof RepositoryError) return error;
+  if (error instanceof RepositoryLimitExceededError) {
+    return new RepositoryError("REPOSITORY_LIMIT_EXCEEDED", "limit-exceeded", operation, undefined, { measuredBytes: error.measuredBytes, allowedBytes: error.allowedBytes });
+  }
   const record = error && typeof error === "object" ? error as { name?: unknown; message?: unknown; status?: unknown; response?: { status?: unknown; headers?: Record<string, unknown>; data?: { message?: unknown } } } : null;
   const status = typeof record?.status === "number" ? record.status : typeof record?.response?.status === "number" ? record.response.status : undefined;
   const name = typeof record?.name === "string" ? record.name : "";
@@ -63,6 +69,7 @@ export function classifyRepositoryError(error: unknown, operation: RepositoryOpe
   const permissionDenied = status === 403 && /resource not accessible|installation|repository access|repo scope|insufficient permission|must have.*permission/.test(message);
   const offline = typeof navigator !== "undefined" && navigator.onLine === false;
   const kind: RepositoryErrorKind = name === "AbortError" || code === "ABORT_ERR" ? "abort"
+    : name === "QuotaExceededError" ? "limit-exceeded"
     : abuseLimited ? "abuse-limit"
       : rateLimited ? "rate-limit"
       : status === 401 ? "credential-invalid"
@@ -96,6 +103,10 @@ export function repositoryErrorDescription(error: unknown, t: (key: string, opti
   if (classified.kind === "rate-limit" && classified.details?.rateLimitReset) {
     return t("repositoryErrors.rate-limit-reset", { reset: new Date(classified.details.rateLimitReset).toLocaleString() });
   }
+  if (classified.kind === "limit-exceeded" && classified.details?.measuredBytes !== undefined && classified.details.allowedBytes !== undefined) {
+    return t("repositoryErrors.limit-exceeded", { measured: formatRepositoryBytes(classified.details.measuredBytes), allowed: formatRepositoryBytes(classified.details.allowedBytes) });
+  }
+  if (classified.kind === "limit-exceeded") return t("repositoryErrors.limit-exceeded-generic");
   return t(`repositoryErrors.${classified.kind}`, { reset: classified.details?.rateLimitReset ? new Date(classified.details.rateLimitReset).toLocaleString() : undefined });
 }
 
@@ -115,3 +126,4 @@ export async function optionalRepositoryRead<T>(read: () => Promise<T>): Promise
     throw error;
   }
 }
+import { RepositoryLimitExceededError, formatRepositoryBytes } from "@/repository/repositoryLimits";

@@ -34,8 +34,8 @@ beforeEach(() => {
     const marker = "/contents/";
     const path = decodeURIComponent(url.pathname.slice(url.pathname.indexOf(marker) + marker.length));
     const content = current.get(path);
-    if (content === undefined) return { ok: false, status: 404, headers: new Headers(), json: async () => ({ message: "Not Found" }) };
-    return { ok: true, status: 200, headers: new Headers(), json: async () => ({ type: "file", content: btoa(content), sha: `sha-${path}` }) };
+    if (content === undefined) return Response.json({ message: "Not Found" }, { status: 404 });
+    return Response.json({ type: "file", content: btoa(content), sha: `sha-${path}` });
   }));
 });
 

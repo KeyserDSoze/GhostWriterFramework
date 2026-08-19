@@ -13,6 +13,17 @@ Each book is a repository. As you work, Narrarium writes Markdown files and make
 
 Git actions (Commit, PR, Export, Image) are gathered in the **Actions** button on the book page.
 
+## Browser repository limits
+
+Narrarium validates measured bytes before IndexedDB writes, Git blob creation, clone, pull, repair, and sync:
+
+- text or Markdown file: **2 MiB**;
+- binary asset: **25 MiB**;
+- one save/push mutation: **50 MiB** total;
+- one clone/pull/repair transfer: **250 MiB** total, further reduced when browser storage quota is lower.
+
+Remote size metadata is only an early hint. Narrarium counts streamed bytes and stops at the limit. If an operation is rejected, existing local edits and unpushed commits remain intact. Split unusually large manuscript files, compress or remove large assets, or manage large assets with Git LFS outside the browser app.
+
 ## Contextual navigation
 
 The (hamburger) menu populates based on where you are:

@@ -20,6 +20,7 @@ import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { createTrackedGitHubClient } from "@/repository/githubRequest";
 import { recordRepositoryWriteValidated } from "@/repository/tokenHealth";
+import { RepositoryByteMeter, utf8Bytes } from "@/repository/repositoryLimits";
 
 function currentAccountIdentity(): string | null {
   return accountIdentity(useAuthStore.getState().user);
@@ -161,6 +162,8 @@ export async function commitAndPushTextFileMutation(input: {
   mutations: RepositoryTextMutation[];
   signal?: AbortSignal;
 }): Promise<{ commitSha: string; mode: "local" | "remote" }> {
+  const meter = new RepositoryByteMeter("mutation");
+  for (const mutation of input.mutations) if (typeof mutation.content === "string") meter.add("text", utf8Bytes(mutation.content));
   const operationScope = captureRepositoryOperationScope();
   input.signal?.throwIfAborted();
   const identity = currentAccountIdentity();

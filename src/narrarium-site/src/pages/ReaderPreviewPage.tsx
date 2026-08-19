@@ -13,13 +13,14 @@ import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAle
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
-import { loadBinaryFileContent, loadFileContent, slugToTitle } from "@/github/githubClient";
+import { loadFileContent, optionalBinaryFileContent, slugToTitle } from "@/github/githubClient";
 import { canonSectionMeta, CANON_SECTION_ORDER, type CanonSection } from "@/lib/canonSections";
 import { resolveBookExportSettings, resolveBookToken, type BookEntry, type BookExportSettings, type ReaderBookmark, type ReaderSettings } from "@/types/settings";
 import type { BookFile, BookStructure, Chapter, Paragraph } from "@/types/book";
 import { paragraphSeparator, presentMetadata, type PresentedMetadata } from "@/export/metadataPresentation";
 import { isApprovedRepositoryAssetPath, renderRepositoryMarkdownHtml } from "@/markdown/safeMarkdown";
 import { canDiscloseSecretBody, isSecretPath, secretAccessMapForRoute } from "@/assistant/secretPolicy";
+import { repositoryErrorDescription } from "@/repository/repositoryError";
 
 const PAGE_GAP = 32;
 
@@ -153,8 +154,9 @@ export function ReaderPreviewPage() {
       })
       .catch((err) => {
         if (active) {
-          setReaderLoadError(String(err));
-          toast({ title: t("reader.loadFailed"), description: String(err), variant: "destructive" });
+          const description = repositoryErrorDescription(err, t);
+          setReaderLoadError(description);
+          toast({ title: t("reader.loadFailed"), description, variant: "destructive" });
         }
       })
       .finally(() => { if (active) setBusy(false); });
@@ -599,7 +601,7 @@ async function loadReaderBook(input: {
   const rawBook = await loadFileContent(input.token, input.book.owner, input.book.repo, "book.md", input.branch);
   const bookDoc = splitMarkdown(rawBook);
   const cover = input.structure.bookCoverPath
-    ? await loadImageUrl(input, input.structure.bookCoverPath, input.structure.title).catch(() => undefined)
+    ? await loadImageUrl(input, input.structure.bookCoverPath, input.structure.title)
     : undefined;
   const chapters = await Promise.all(input.structure.chapters.map(async (chapter) => {
     const chapterEntities = collectReaderEntities(input.structure, chapter);
@@ -615,7 +617,7 @@ async function loadReaderBook(input: {
         fallbackAlt: paragraph.title,
         input: { ...input, entities: chapterEntities },
       });
-      const structureImage = input.readerSettings.showImages && paragraph.imagePath ? await loadImageUrl(input, paragraph.imagePath, paragraph.title).catch(() => undefined) : undefined;
+      const structureImage = input.readerSettings.showImages && paragraph.imagePath ? await loadImageUrl(input, paragraph.imagePath, paragraph.title) : undefined;
       return {
         paragraph,
         chapterSlug: chapter.slug,
@@ -627,7 +629,7 @@ async function loadReaderBook(input: {
         images: [...rendered.images, ...(structureImage ? [structureImage] : [])],
       };
     }));
-    const structureImage = input.readerSettings.showImages && chapter.imagePath ? await loadImageUrl(input, chapter.imagePath, chapter.title).catch(() => undefined) : undefined;
+    const structureImage = input.readerSettings.showImages && chapter.imagePath ? await loadImageUrl(input, chapter.imagePath, chapter.title) : undefined;
     return {
       chapter,
       frontmatter: chapterDoc.frontmatter,
@@ -657,7 +659,7 @@ async function renderReaderMarkdown(input: {
   const html = renderRepositoryMarkdownHtml(readerBody);
   const linkedHtml = input.input.readerSettings.showRichEntityLinks ? linkEntityHtml(html, input.input.entities) : html;
   const images = input.input.readerSettings.showImages
-    ? (await Promise.all(extracted.images.map((image) => loadImageUrl(input.input, image.path, image.alt || input.fallbackAlt).catch(() => undefined)))).filter(Boolean) as ReaderImage[]
+    ? (await Promise.all(extracted.images.map((image) => loadImageUrl(input.input, image.path, image.alt || input.fallbackAlt)))).filter(Boolean) as ReaderImage[]
     : [];
   return { html: linkedHtml, text: markdownToPlainText(readerBody), images };
 }
@@ -707,7 +709,7 @@ function isDialogueParagraph(text: string): boolean {
 async function loadEntityDetails(input: { entity: ReaderEntity; book: BookEntry; token: string; branch: string; objectUrls: string[] }): Promise<EntityDetails> {
   const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, input.entity.path, input.branch);
   const parts = splitMarkdown(raw);
-  const imageUrl = input.entity.imagePath ? (await loadImageUrl(input, input.entity.imagePath, input.entity.name).catch(() => undefined))?.url : undefined;
+  const imageUrl = input.entity.imagePath ? (await loadImageUrl(input, input.entity.imagePath, input.entity.name))?.url : undefined;
   return {
     entity: input.entity,
     html: renderRepositoryMarkdownHtml(parts.body),
@@ -820,7 +822,7 @@ async function loadImageUrl(input: { token: string; book?: BookEntry; owner?: st
   const owner = input.owner ?? input.book?.owner;
   const repo = input.repo ?? input.book?.repo;
   if (!owner || !repo) return undefined;
-  const bytes = await loadBinaryFileContent(input.token, owner, repo, path, input.branch).catch(() => null);
+  const bytes = await optionalBinaryFileContent(input.token, owner, repo, path, input.branch);
   if (!bytes) return undefined;
   const url = URL.createObjectURL(new Blob([bytesToArrayBuffer(bytes)], { type: imageMimeType(path) }));
   input.objectUrls.push(url);

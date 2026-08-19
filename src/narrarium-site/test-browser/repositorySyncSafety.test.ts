@@ -14,6 +14,15 @@ const octokit = vi.hoisted(() => ({
 }));
 
 vi.mock("@octokit/rest", () => ({ Octokit: class { rest = { git: octokit, repos: { get: octokit.getRepo } }; } }));
+vi.mock("@/repository/repositoryBlobTransport", () => ({
+  fetchRepositoryBlobBytes: vi.fn(async (input: { owner: string; repo: string; sha: string; kind: "text" | "binary"; meter: { add: (kind: "text" | "binary", size: number) => void }; signal?: AbortSignal }) => {
+    const blob = await octokit.getBlob({ owner: input.owner, repo: input.repo, file_sha: input.sha, request: { signal: input.signal } });
+    const binary = atob(blob.data.content.replace(/\n/g, ""));
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    input.meter.add(input.kind, bytes.byteLength);
+    return bytes;
+  }),
+}));
 
 import {
   createLocalCommit,
@@ -51,6 +60,7 @@ import { ensureLocalBookStructure, fetchRemoteStatus, invalidateRepositoryEnsure
 import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { useSettingsStore } from "@/store/settingsStore";
+import { REPOSITORY_TEXT_FILE_LIMIT_BYTES } from "@/repository/repositoryLimits";
 
 let repoId = "";
 const identity = "google:sub-writer";
@@ -88,6 +98,21 @@ function gate<T>() {
   const promise = new Promise<T>((resolve, rejectPromise) => { release = resolve; reject = rejectPromise; });
   return { promise, release, reject };
 }
+
+test("full sync preserves unpushed commits when a remote file exceeds limits", async () => {
+  await setup();
+  await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "base", baseSha: "plot-base", size: 4 });
+  const base = await getLocalFile(repoId, "plot.md");
+  await mutateLocalTextFilesAndCreateCommitAtomically(repoId, captureRepositoryOperationScope(), "local work", [{ path: "plot.md", content: "local", expectedCurrentHash: base!.currentHash }]);
+  octokit.getRef.mockResolvedValue({ data: { object: { sha: "remote-head" } } });
+  octokit.getCommit.mockImplementation(async ({ commit_sha }: { commit_sha: string }) => ({ data: { tree: { sha: `${commit_sha}-tree` } } }));
+  octokit.getTree.mockResolvedValue({ data: { truncated: false, tree: [{ type: "blob", path: "oversized.md", sha: "oversized-blob" }] } });
+  octokit.getBlob.mockResolvedValue({ data: { encoding: "base64", content: btoa("x".repeat(REPOSITORY_TEXT_FILE_LIMIT_BYTES + 1)) } });
+
+  await expect(syncFullRepository({ ...target, token: "token" })).rejects.toMatchObject({ kind: "limit-exceeded" });
+  expect((await listUnpushedLocalCommits(repoId)).map((commit) => commit.message)).toEqual(["local work"]);
+  expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "local", committed: true });
+});
 
 test("pull applies nothing when the account switches during download", async () => {
   await setup();

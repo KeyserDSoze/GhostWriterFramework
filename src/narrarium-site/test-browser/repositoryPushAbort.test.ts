@@ -26,6 +26,7 @@ vi.mock("@/repository/localRepository", async (importOriginal) => ({
 
 import { pushLocalCommits } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
+import { REPOSITORY_TEXT_FILE_LIMIT_BYTES, RepositoryLimitExceededError } from "@/repository/repositoryLimits";
 
 const identity = "google:sub-writer";
 
@@ -67,5 +68,15 @@ test("an in-flight push forwards abort to GitHub and never updates the branch", 
   await expect(operation).rejects.toMatchObject({ name: "AbortError", message: "cancelled" });
   expect(octokit.createCommit).not.toHaveBeenCalled();
   expect(octokit.updateRef).not.toHaveBeenCalled();
+  expect(local.markLocalCommitsPushed).not.toHaveBeenCalled();
+});
+
+test("an oversized committed file is rejected before createBlob and remains unpushed", async () => {
+  local.listAllLocalFiles.mockResolvedValue([{ path: "plot.md", kind: "text", text: "x".repeat(REPOSITORY_TEXT_FILE_LIMIT_BYTES + 1), currentHash: "new-hash", status: "clean", committed: true }]);
+  await expect(pushLocalCommits({
+    bookId: "book", token: "token", repoId: "repo-id", owner: "owner", repo: "repo", branch: "main", accountIdentity: identity, expectedRemoteHeadSha: "source-head",
+  })).rejects.toBeInstanceOf(RepositoryLimitExceededError);
+  expect(octokit.createBlob).not.toHaveBeenCalled();
+  expect(octokit.createTree).not.toHaveBeenCalled();
   expect(local.markLocalCommitsPushed).not.toHaveBeenCalled();
 });

@@ -10,7 +10,7 @@ import {
   extractParagraphSlug,
 } from "@/narrarium/auditPaths";
 import { isRewriteOperationManifestPath } from "@/narrarium/rewriteOperationPaths";
-import { classifyRepositoryError, isRepositoryNotFoundError, optionalRepositoryRead, RepositoryError } from "@/repository/repositoryError";
+import { classifyRepositoryError, isRepositoryError, isRepositoryNotFoundError, optionalRepositoryRead, RepositoryError } from "@/repository/repositoryError";
 import {
   resolveParagraphArtifactPaths,
   type ParagraphArtifactMetadata,
@@ -21,6 +21,8 @@ import { reconcileRemoteMutation, type IntendedRemoteRevision } from "@/reposito
 import { createTrackedGitHubClient } from "@/repository/githubRequest";
 import { accountIdentity } from "@/auth/accountIdentity";
 import { useAuthStore } from "@/store/authStore";
+import { REPOSITORY_BINARY_FILE_LIMIT_BYTES, REPOSITORY_TEXT_FILE_LIMIT_BYTES, RepositoryByteMeter, RepositoryLimitExceededError, assertRepositoryFileBytes, utf8Bytes } from "@/repository/repositoryLimits";
+import { readBoundedRepositoryResponse } from "@/repository/repositoryBlobTransport";
 
 type StructuralTextWrite = { path: string; text: string };
 
@@ -78,6 +80,7 @@ async function fetchContentJson(
   ref?: string,
   fresh = false,
   signal?: AbortSignal,
+  contentKind: "text" | "binary" | "metadata" = "text",
 ): Promise<{ content?: string; sha?: string }> {
   let response: Response;
   try {
@@ -105,7 +108,10 @@ async function fetchContentJson(
     throw classifyRepositoryError({ status: response.status, message, response: { status: response.status, headers: Object.fromEntries(response.headers), data: { message } } }, "read", path);
   }
   try {
-    const data: unknown = await response.json();
+    const decodedLimit = contentKind === "binary" ? REPOSITORY_BINARY_FILE_LIMIT_BYTES : REPOSITORY_TEXT_FILE_LIMIT_BYTES;
+    const envelopeLimit = contentKind === "metadata" ? decodedLimit : Math.ceil(decodedLimit * 4 / 3) + 64 * 1024;
+    const bytes = await readBoundedRepositoryResponse(response, "binary", new RepositoryByteMeter("transfer", envelopeLimit), signal, envelopeLimit);
+    const data: unknown = JSON.parse(new TextDecoder().decode(bytes));
     if (!data || typeof data !== "object" || Array.isArray(data)) {
       throw new TypeError("GitHub content response is not an object.");
     }
@@ -115,6 +121,7 @@ async function fetchContentJson(
     }
     return { content: record.content as string | undefined, sha: record.sha as string | undefined };
   } catch (error) {
+    if (error instanceof RepositoryLimitExceededError || error instanceof RepositoryError) throw error;
     if (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError") {
       throw new RepositoryError(`GitHub content read was aborted for ${path}.`, "abort", "read", undefined, { cause: error });
     }
@@ -131,17 +138,26 @@ async function localRepoId(owner: string, repo: string, branch: string | undefin
 
 /** Decode base64 content returned by the GitHub contents API (UTF-8 safe). */
 function decodeContent(content: string): string {
-  const bytes = decodeBytes(content);
+  const bytes = decodeBytes(content, "text");
   return new TextDecoder("utf-8").decode(bytes);
 }
 
-function decodeBytes(content: string): Uint8Array {
-  const binary = atob(content.replace(/\n/g, ""));
+function decodeBytes(content: string, kind: "text" | "binary" = "binary"): Uint8Array {
+  const encoded = content.replace(/\n/g, "");
+  const padding = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
+  const measuredBytes = Math.max(0, Math.floor(encoded.length * 3 / 4) - padding);
+  assertRepositoryFileBytes(kind, measuredBytes);
+  const binary = atob(encoded);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+function malformedContentError(error: unknown, path: string, binary = false): never {
+  if (error instanceof RepositoryLimitExceededError || error instanceof RepositoryError) throw error;
+  throw new RepositoryError(`GitHub returned malformed ${binary ? "binary " : ""}file content for ${path}.`, "malformed", "read", 200, { cause: error });
 }
 
 /**
@@ -240,6 +256,8 @@ export async function createNarrariumBookRepository(token: string, input: Create
   const repo = repoData.name;
   const branch = "main";
   const files = buildInitialBookFiles({ title: input.title, author: input.author, language: input.language });
+  const meter = new RepositoryByteMeter("mutation");
+  for (const file of files) meter.add("text", utf8Bytes(file.content));
 
   const { data: tree } = await octokit.rest.git.createTree({
     owner,
@@ -390,7 +408,7 @@ export async function loadBookStructure(
         language = frontmatterString(raw, "language");
         ghostwriter = frontmatterString(raw, "ghostwriter");
       }
-    } catch { /* no book.md – use defaults */ }
+    } catch (error) { if (error instanceof RepositoryLimitExceededError || isRepositoryError(error, "limit-exceeded")) throw error; /* no book.md – use defaults */ }
   }
 
   // ── Frontmatter display names (chapters, paragraphs, canon) via GraphQL batch ──
@@ -601,13 +619,13 @@ export async function loadFileContent(
   if (id) {
     const file = await settleOnAbort(getLocalFile(id, path, scope), signal);
     signal?.throwIfAborted();
-    if (file?.kind === "text" && file.text !== undefined) return file.text;
-    if (file?.kind === "binary" && file.blob) return new TextDecoder().decode(await settleOnAbort(file.blob.arrayBuffer(), signal));
+    if (file?.kind === "text" && file.text !== undefined) { assertRepositoryFileBytes("text", utf8Bytes(file.text)); return file.text; }
+    if (file?.kind === "binary" && file.blob) { assertRepositoryFileBytes("binary", file.blob.size); return new TextDecoder().decode(await settleOnAbort(file.blob.arrayBuffer(), signal)); }
   }
   const data = await fetchContentJson(token, owner, repo, path, ref, false, signal);
   signal?.throwIfAborted();
   if (data.content) {
-    try { return decodeContent(data.content); } catch (error) { throw new RepositoryError(`GitHub returned malformed file content for ${path}.`, "malformed", "read", 200, { cause: error }); }
+    try { return decodeContent(data.content); } catch (error) { malformedContentError(error, path); }
   }
   throw new RepositoryError(`${path} is not a file.`, "malformed", "read", 200);
 }
@@ -633,7 +651,7 @@ export async function loadRemoteFileContentAtRef(
 ): Promise<FileContent> {
   const data = await fetchContentJson(token, owner, repo, path, ref, true, signal);
   if (data.content && data.sha) {
-    try { return { content: decodeContent(data.content), sha: data.sha }; } catch (error) { throw new RepositoryError(`GitHub returned malformed file content for ${path}.`, "malformed", "read", 200, { cause: error }); }
+    try { return { content: decodeContent(data.content), sha: data.sha }; } catch (error) { malformedContentError(error, path); }
   }
   throw new RepositoryError(`${path} is not a file at ${ref}.`, "malformed", "read", 200);
 }
@@ -649,8 +667,8 @@ export async function loadBinaryFileContent(
   const id = await localRepoId(owner, repo, ref, scope);
   if (id) {
     const file = await getLocalFile(id, path, scope);
-    if (file?.kind === "binary" && file.blob) return new Uint8Array(await file.blob.arrayBuffer());
-    if (file?.kind === "text" && file.text !== undefined) return new TextEncoder().encode(file.text);
+    if (file?.kind === "binary" && file.blob) { assertRepositoryFileBytes("binary", file.blob.size); return new Uint8Array(await file.blob.arrayBuffer()); }
+    if (file?.kind === "text" && file.text !== undefined) { assertRepositoryFileBytes("text", utf8Bytes(file.text)); return new TextEncoder().encode(file.text); }
   }
   let response: Response;
   try {
@@ -660,8 +678,9 @@ export async function loadBinaryFileContent(
   }
   if (response.ok) {
     try {
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if ((response.headers.get("content-type") ?? "").includes("application/json")) {
+      const json = (response.headers.get("content-type") ?? "").includes("application/json");
+      const bytes = await readBoundedRepositoryResponse(response, "binary", new RepositoryByteMeter("transfer"));
+      if (json) {
         const envelope = JSON.parse(new TextDecoder().decode(bytes)) as { content?: string; encoding?: string };
         if (typeof envelope.content === "string" && envelope.encoding === "base64") return decodeBytes(envelope.content);
         throw new RepositoryError(`GitHub returned JSON instead of binary content for ${path}.`, "malformed", "read", response.status);
@@ -672,11 +691,16 @@ export async function loadBinaryFileContent(
   }
 
   // Fallback to the JSON contents API for small files or older API behaviour.
-  const data = await fetchContentJson(token, owner, repo, path, ref, true);
+  const data = await fetchContentJson(token, owner, repo, path, ref, true, undefined, "binary");
   if (data.content) {
-    try { return decodeBytes(data.content); } catch (error) { throw new RepositoryError(`GitHub returned malformed binary content for ${path}.`, "malformed", "read", 200, { cause: error }); }
+    try { return decodeBytes(data.content); } catch (error) { malformedContentError(error, path, true); }
   }
   throw new RepositoryError(`${path} is not a file.`, "malformed", "read", 200);
+}
+
+export async function optionalBinaryFileContent(token: string, owner: string, repo: string, path: string, ref?: string): Promise<Uint8Array | null> {
+  try { return await loadBinaryFileContent(token, owner, repo, path, ref); }
+  catch (error) { if (isRepositoryNotFoundError(error)) return null; throw error; }
 }
 
 // ─── Paragraph CRUD ───────────────────────────────────────────────────────────
@@ -713,11 +737,12 @@ async function findFileShaFromTree(
   branch: string,
   path: string,
 ): Promise<string | null> {
-  const octokit = createGitHubClient(token);
-  const ref = await octokit.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
-  const tree = await octokit.rest.git.getTree({ owner, repo, tree_sha: ref.data.object.sha, recursive: "true" });
-  const entry = tree.data.tree.find((item) => item.path === path && item.type === "blob");
-  return entry?.sha ?? null;
+  try {
+    return (await fetchContentJson(token, owner, repo, path, branch, true, undefined, "metadata")).sha ?? null;
+  } catch (error) {
+    if (isRepositoryNotFoundError(error)) return null;
+    throw error;
+  }
 }
 
 /** Read a file's text content and its current SHA (required for updates). */
@@ -736,12 +761,12 @@ export async function readFileWithSha(
   if (id) {
     const file = await getLocalFile(id, path, scope);
     signal?.throwIfAborted();
-    if (file?.kind === "text" && file.text !== undefined) return { content: file.text, sha: file.currentHash };
-    if (file?.kind === "binary" && file.blob) return { content: new TextDecoder().decode(await file.blob.arrayBuffer()), sha: file.currentHash };
+    if (file?.kind === "text" && file.text !== undefined) { assertRepositoryFileBytes("text", utf8Bytes(file.text)); return { content: file.text, sha: file.currentHash }; }
+    if (file?.kind === "binary" && file.blob) { assertRepositoryFileBytes("binary", file.blob.size); return { content: new TextDecoder().decode(await file.blob.arrayBuffer()), sha: file.currentHash }; }
   }
   const data = await fetchContentJson(token, owner, repo, path, branch, true, signal);
   if (data.content && data.sha) {
-    try { return { content: decodeContent(data.content), sha: data.sha }; } catch (error) { throw new RepositoryError(`GitHub returned malformed file content for ${path}.`, "malformed", "read", 200, { cause: error }); }
+    try { return { content: decodeContent(data.content), sha: data.sha }; } catch (error) { malformedContentError(error, path); }
   }
   throw new RepositoryError(`${path} is not a file.`, "malformed", "read", 200);
 }
@@ -758,6 +783,7 @@ export async function updateFile(
   message: string,
   signal?: AbortSignal,
 ): Promise<string> {
+  assertRepositoryFileBytes("text", utf8Bytes(content));
   signal?.throwIfAborted();
   const scope = captureRepositoryOperationScope();
   const id = await localRepoId(owner, repo, branch, scope);
@@ -788,30 +814,31 @@ export async function createOrUpdateBinaryFile(
   bytes: Uint8Array,
   message: string,
 ): Promise<string> {
+  assertRepositoryFileBytes("binary", bytes.byteLength);
   const scope = captureRepositoryOperationScope();
   const id = await localRepoId(owner, repo, branch, scope);
   if (id) return (await writeLocalBinaryScoped(id, path, bytes, scope)).currentHash;
   const octokit = createGitHubClient(token, { owner, repo, branch });
-  const existing = await optionalRepositoryRead(() => readFileWithSha(token, owner, repo, branch, path));
+  const existingSha = await findFileShaFromTree(token, owner, repo, branch, path);
   const body = {
     owner,
     repo,
     path,
     message,
     content: encodeBytes(bytes),
-    sha: existing?.sha,
+    sha: existingSha ?? undefined,
     branch,
   };
   let data: Awaited<ReturnType<typeof octokit.rest.repos.createOrUpdateFileContents>>["data"];
   try {
     ({ data } = await octokit.rest.repos.createOrUpdateFileContents(body));
   } catch (err) {
-    if (!isShaUpdateError(err)) throw classifyRepositoryError(err, existing ? "update" : "create", path);
+    if (!isShaUpdateError(err)) throw classifyRepositoryError(err, existingSha ? "update" : "create", path);
     const sha = await findFileShaFromTree(token, owner, repo, branch, path);
-    if (!sha) throw classifyRepositoryError(err, existing ? "update" : "create", path);
+    if (!sha) throw classifyRepositoryError(err, existingSha ? "update" : "create", path);
     try { ({ data } = await octokit.rest.repos.createOrUpdateFileContents({ ...body, sha })); } catch (error) { throw classifyRepositoryError(error, "update", path); }
   }
-  return data.content?.sha ?? existing?.sha ?? "";
+  return data.content?.sha ?? existingSha ?? "";
 }
 
 export async function createOrUpdateTextAndBinaryFilesAtomically(input: {
@@ -823,6 +850,9 @@ export async function createOrUpdateTextAndBinaryFilesAtomically(input: {
   binary: { path: string; bytes: Uint8Array };
   message: string;
 }): Promise<void> {
+  const meter = new RepositoryByteMeter("mutation");
+  meter.add("text", utf8Bytes(input.text.content));
+  meter.add("binary", input.binary.bytes.byteLength);
   const scope = captureRepositoryOperationScope();
   const id = await localRepoId(input.owner, input.repo, input.branch, scope);
   if (id) {
@@ -876,6 +906,7 @@ export async function createFile(
   message: string,
   signal?: AbortSignal,
 ): Promise<string> {
+  assertRepositoryFileBytes("text", utf8Bytes(content));
   signal?.throwIfAborted();
   const scope = captureRepositoryOperationScope();
   const id = await localRepoId(owner, repo, branch, scope);
@@ -945,6 +976,8 @@ export async function mutateTextFilesAtomically(
   message: string,
   signal?: AbortSignal,
 ): Promise<void> {
+  const meter = new RepositoryByteMeter("mutation");
+  for (const mutation of mutations) if (typeof mutation.content === "string") meter.add("text", utf8Bytes(mutation.content));
   signal?.throwIfAborted();
   const scope = captureRepositoryOperationScope();
   const id = await localRepoId(owner, repo, branch, scope);
