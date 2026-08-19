@@ -8,7 +8,6 @@ import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 import { accountIdentity, isAccountIdentityCurrent, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
 
 const REFRESH_BEFORE_MS = 5 * 60 * 1000;
-const RETRY_AFTER_MS = 60 * 1000;
 
 export function useTokenRefresh() {
   const user = useAuthStore((state) => state.user);
@@ -16,9 +15,11 @@ export function useTokenRefresh() {
   const { setAuth } = useAuthStore();
   const { instance } = useMsal();
   const refreshStateRef = useRef<{ identity: string | null; generation: number }>({ identity: null, generation: 0 });
+  const googleAttemptRef = useRef<{ key: string; active: boolean } | null>(null);
   const identity = accountIdentity(user);
   if (refreshStateRef.current.identity !== identity) {
     refreshStateRef.current = { identity, generation: refreshStateRef.current.generation + 1 };
+    googleAttemptRef.current = null;
   }
 
   const refreshGoogle = useGoogleLogin({
@@ -43,10 +44,13 @@ export function useTokenRefresh() {
       registerCloudAccount("google", tokenResponse.access_token, user.providerAccountId);
       if (!ownsRefresh()) return;
       setAuth(tokenResponse.access_token, user, "expires_in" in tokenResponse ? tokenResponse.expires_in : 3600);
+      googleAttemptRef.current = null;
     },
     // Background refresh must never log the user out. A failed silent refresh
     // leaves the current token in place; AuthGuard handles real expiry.
-    onError: () => undefined,
+    onError: () => {
+      if (googleAttemptRef.current) googleAttemptRef.current.active = false;
+    },
   });
 
   useEffect(() => {
@@ -62,7 +66,15 @@ export function useTokenRefresh() {
         && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user);
       if (!ownsRefresh()) return;
       if (user.provider === "google") {
-        try { refreshGoogle(); } catch { /* ignore, will retry */ }
+        // Google token flow cannot guarantee a truly silent refresh after the
+        // provider session expires. Never open an automatic popup for an
+        // already-expired token; AuthGuard sends the user to explicit login.
+        if (Date.now() >= accessTokenExpiry) return;
+        const key = `${expectedIdentity}:${accessTokenExpiry}`;
+        if (googleAttemptRef.current?.key === key) return;
+        googleAttemptRef.current = { key, active: true };
+        try { refreshGoogle(); }
+        catch { if (googleAttemptRef.current?.key === key) googleAttemptRef.current.active = false; }
         return;
       }
       const account = findMicrosoftAccount(user);
@@ -84,26 +96,39 @@ export function useTokenRefresh() {
         });
     };
 
-    const schedule = (): number => {
+    const invalidateExpiredToken = () => {
+      const expectedIdentity = identity;
+      const generation = refreshStateRef.current.generation;
+      if (cancelled || refreshStateRef.current.identity !== expectedIdentity || refreshStateRef.current.generation !== generation || !isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
+      const current = useAuthStore.getState();
+      if (current.accessTokenExpiry === accessTokenExpiry && Date.now() >= accessTokenExpiry) current.invalidateToken();
+    };
+
+    const scheduleRefresh = (): number => {
       const msLeft = accessTokenExpiry - Date.now();
       if (msLeft <= REFRESH_BEFORE_MS) {
         refresh();
-        return window.setTimeout(refresh, RETRY_AFTER_MS);
+        return window.setTimeout(() => undefined, Math.max(10_000, msLeft));
       }
       return window.setTimeout(refresh, Math.max(10_000, msLeft - REFRESH_BEFORE_MS));
     };
 
-    let timer = schedule();
+    const scheduleExpiry = () => window.setTimeout(invalidateExpiredToken, Math.max(0, accessTokenExpiry - Date.now()));
+    let refreshTimer = scheduleRefresh();
+    let expiryTimer = scheduleExpiry();
     const onVisible = () => {
       if (document.visibilityState === "visible") {
-        window.clearTimeout(timer);
-        timer = schedule();
+        window.clearTimeout(refreshTimer);
+        window.clearTimeout(expiryTimer);
+        refreshTimer = scheduleRefresh();
+        expiryTimer = scheduleExpiry();
       }
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
+      window.clearTimeout(refreshTimer);
+      window.clearTimeout(expiryTimer);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [accessTokenExpiry, identity, instance, refreshGoogle, setAuth, user]);

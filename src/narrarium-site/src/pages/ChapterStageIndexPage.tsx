@@ -51,7 +51,7 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
     return <Alert variant="destructive"><AlertDescription>{t("workspace.notFound")} <Link to={`/app/books/${bookId}`} className="underline">{t("workspace.backToBook")}</Link></AlertDescription></Alert>;
   }
 
-  const src = (): PipelineSource => ({ token, owner: book.owner, repo: book.repo, branch, settings, structure: structure!, chapter, accountScope: accountIdentity(useAuthStore.getState().user) });
+  const src = (paragraph?: typeof chapter.paragraphs[number]): PipelineSource => ({ token, owner: book.owner, repo: book.repo, branch, settings, structure: structure!, chapter, paragraph, accountScope: accountIdentity(useAuthStore.getState().user) });
 
   function paraSlugOf(path: string) { return (path.split("/").pop() ?? "").replace(/\.md$/i, ""); }
 
@@ -81,13 +81,13 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
       const load = (path?: string) => path ? loadFileContent(token, book!.owner, book!.repo, path, branch).then(stripFrontmatter).catch(() => "") : Promise.resolve("");
       if (kind === "script") {
         const prose = (await load(p.draftPath)) || (await load(p.path));
-        setGenText(await proseToScript(src(), prose, genGw));
+        setGenText(await proseToScript(src(p), prose, genGw));
       } else if (kind === "draft") {
         const script = await load(p.scriptPath);
-        setGenText(await scriptToProse(src(), script, genGw));
+        setGenText(await scriptToProse(src(p), script, genGw));
       } else {
         const draft = (await load(p.draftPath)) || (await load(p.path));
-        setGenText(await refineProse(src(), draft, genGw));
+        setGenText(await refineProse(src(p), draft, genGw));
       }
     } catch (err) {
       toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });

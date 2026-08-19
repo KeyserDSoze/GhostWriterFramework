@@ -1,5 +1,35 @@
 [
   {
+    "version": "0.76.54",
+    "date": "2026-08-19",
+    "en": {
+      "title": "Reliable Google login, contextual shortcuts, and unified ghostwriters",
+      "summary": "This release stops repeated Google refresh popups, adds discoverable contextual keyboard navigation, unifies prose and punctuation inside default ghostwriters, and makes repository operations easier to diagnose safely.",
+      "changes": [
+        "Stopped automatic Google popup loops after token expiry: Narrarium attempts one preventive refresh, invalidates the exact expired token, and waits for an explicit login click.",
+        "Replaced Ctrl/Cmd+B and Ctrl/Cmd+N with Alt+Left and Alt+Right for chapter and paragraph navigation while preserving draft, script, final, evaluation, and reader-evaluation views across chapter boundaries.",
+        "Added a complete keyboard-shortcut reference to the user menu and removed the duplicate previous-document listener.",
+        "Added an editable default ghostwriter for new books, unified writing and punctuation rules inside ghostwriter profiles, and applied explicit, paragraph, chapter, then book-level precedence with safe legacy fallbacks.",
+        "Made ghostwriter creation, editing, deletion, and default selection commit and push through conflict-safe repository mutations.",
+        "Added bounded, account-scoped, privacy-safe diagnostics for clone, repair, fetch, pull, push, and sync operations in Repository Status.",
+        "Made reader-evaluation deletion commit and push immediately instead of remaining only as a local pending deletion."
+      ]
+    },
+    "it": {
+      "title": "Login Google affidabile, shortcut contestuali e ghostwriter unificati",
+      "summary": "Questa release ferma i popup ripetuti del refresh Google, aggiunge navigazione da tastiera contestuale e consultabile, unifica prosa e punteggiatura nei ghostwriter predefiniti e rende diagnosticabili in sicurezza le operazioni repository.",
+      "changes": [
+        "Fermati i loop di popup Google dopo la scadenza del token: Narrarium tenta un solo refresh preventivo, invalida esattamente il token scaduto e attende un click esplicito per il login.",
+        "Sostituiti Ctrl/Cmd+B e Ctrl/Cmd+N con Alt+Freccia sinistra e Alt+Freccia destra per navigare capitoli e paragrafi mantenendo viste bozza, script, finale, valutazione e valutazioni lettori anche tra capitoli adiacenti.",
+        "Aggiunto nel menu utente il riferimento completo degli shortcut e rimosso il listener duplicato per il documento precedente.",
+        "Aggiunto un ghostwriter predefinito modificabile ai nuovi libri, unificate le regole di scrittura e punteggiatura nei profili e applicata la precedenza esplicito, paragrafo, capitolo, libro con fallback legacy sicuri.",
+        "Creazione, modifica, eliminazione e selezione del ghostwriter predefinito ora producono commit e push tramite mutazioni repository protette dai conflitti.",
+        "Aggiunta diagnostica limitata, account-scoped e privacy-safe per clone, repair, fetch, pull, push e sync nella finestra Stato repository.",
+        "La cancellazione delle valutazioni lettori ora crea e pusha subito il commit invece di restare una cancellazione locale in sospeso."
+      ]
+    }
+  },
+  {
     "version": "0.76.53",
     "date": "2026-08-19",
     "en": {

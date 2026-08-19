@@ -34,6 +34,17 @@ describe("auth continuity race contracts", () => {
     expect(refresh).toContain("registerCloudAccount(\"microsoft\"");
   });
 
+  it("never loops Google popups after the access token has expired", () => {
+    const guard = source("src/components/auth/AuthGuard.tsx");
+    const refresh = source("src/hooks/useTokenRefresh.ts");
+    expect(guard).toContain("Do not launch or retry it automatically");
+    expect(guard).toContain("setStatus(\"unauthenticated\")");
+    expect(refresh).toContain("if (Date.now() >= accessTokenExpiry) return;");
+    expect(refresh).toContain("if (googleAttemptRef.current?.key === key) return;");
+    expect(refresh).toContain("current.invalidateToken()");
+    expect(refresh).not.toContain("RETRY_AFTER_MS");
+  });
+
   it("requires the popup-selected Microsoft account on silent results", () => {
     const login = source("src/components/auth/LoginScreen.tsx");
     expect(login).toContain("silentResult.account.homeAccountId !== result.account.homeAccountId");

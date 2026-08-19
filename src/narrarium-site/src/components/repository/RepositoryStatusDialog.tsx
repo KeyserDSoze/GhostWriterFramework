@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
-import { addLocalRepoLog, buildLocalBookStructure, effectiveRemoteStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryFile, type LocalRepositoryMeta, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
+import { buildLocalBookStructure, effectiveRemoteStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryDiagnostic, type LocalRepositoryFile, type LocalRepositoryMeta, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
 import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository, checkRepositoryTokenHealth } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 import { useAuthStore } from "@/store/authStore";
@@ -56,6 +56,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const [ahead, setAhead] = useState(0);
   const [storage, setStorage] = useState<{ usage?: number; quota?: number }>({});
   const [logs, setLogs] = useState<LocalRepoLogEntry[]>([]);
+  const [diagnostics, setDiagnostics] = useState<LocalRepositoryDiagnostic[]>([]);
   const [recoveries, setRecoveries] = useState<LocalRepositoryRecovery[]>([]);
   const [maintenance, setMaintenance] = useState<RepositoryMaintenanceSnapshot | null>(null);
   const [maintenanceError, setMaintenanceError] = useState<string | null>(null);
@@ -100,6 +101,8 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   }
 
   async function refresh() {
+    setDiagnostics([]);
+    setLogs([]);
     if (!book || !branch || !currentAccountIdentity) { setMaintenance(null); setRepoMeta(null); setStatus(null); setDirtyFiles([]); setAhead(0); setRecoveries([]); return; }
     try {
       const snapshot = await lookupRepositoryMaintenanceTarget({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentAccountIdentity });
@@ -109,13 +112,16 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
        setRepoMeta(snapshot.repository);
       setDirtyFiles(snapshot.dirtyFiles);
       setAhead(snapshot.unpushedCommits.length);
-      setLogs(snapshot.logs);
+       setLogs(snapshot.logs);
+       setDiagnostics(snapshot.diagnostics);
       setRecoveries(snapshot.recoveries);
       const dirty = snapshot.dirtyFiles;
       if (!message && dirty.length) setMessage(dirty.length === 1 ? t("repoStatus.defaultCommitSingle", { path: dirty[0].path }) : t("repoStatus.defaultCommitMany", { count: dirty.length }));
     } catch (error) {
       setMaintenance(null);
       setRepoMeta(null);
+      setDiagnostics([]);
+      setLogs([]);
       setMaintenanceError(maintenanceErrorText(error));
     }
     setStorage(await navigator.storage?.estimate?.().catch(() => ({})) ?? {});
@@ -134,7 +140,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
     setStructure(book.id, await buildLocalBookStructure(repo));
   }
 
-  useEffect(() => { if (open) void refresh(); }, [open, book?.id, branch]);
+  useEffect(() => { if (open) void refresh(); }, [open, book?.id, book?.owner, book?.repo, branch, currentAccountIdentity]);
   useEffect(() => {
     let cancelled = false;
     setTokenHealth(null);
@@ -152,11 +158,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
       await refreshBookStructure();
       await refresh();
     } catch (err) {
-      if (book) {
-        const repo = await currentRepo().catch(() => null);
-        if (repo) await addLocalRepoLog(repo.id, "error", `${label}: ${err instanceof Error ? err.message : String(err)}`).catch(() => undefined);
-      }
-        toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
+      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -336,6 +338,24 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
               {maintenance.removalPending && <p className="font-medium text-amber-700 dark:text-amber-300">{t("repoStatus.removalPending")}</p>}
               <Input value={removeConfirmation} onChange={(event) => setRemoveConfirmation(event.target.value)} placeholder={t("repoStatus.removeConfirmation", { value: `REMOVE ${book.owner}/${book.repo}` })} disabled={disabled} />
             </div>}
+            <div className="space-y-2 rounded-xl border p-3">
+              <p className="text-sm font-medium">{t("repoStatus.diagnostics")}</p>
+              {diagnostics.length ? (
+                <div className="max-h-56 space-y-1 overflow-auto text-xs">
+                  {diagnostics.map((entry) => (
+                    <div key={entry.id} className="rounded border px-2 py-1.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={entry.outcome === "failure" ? "rounded-full border border-destructive/40 bg-destructive/10 px-2 py-0.5 font-medium uppercase text-destructive" : "rounded-full border bg-muted px-2 py-0.5 font-medium uppercase text-muted-foreground"}>{entry.outcome}</span>
+                        <span className="font-medium">{entry.operation}</span>
+                        <span>{entry.stage}</span>
+                        <span className="text-muted-foreground">{new Date(entry.createdAt).toLocaleString()}</span>
+                      </div>
+                      <p className="mt-1 text-muted-foreground">{entry.errorKind ?? t("repoStatus.diagnosticNoError")} · {entry.durationMs ?? 0} ms{entry.fileCount !== undefined ? ` · ${entry.fileCount} files` : ""}{entry.byteCount !== undefined ? ` · ${formatBytes(entry.byteCount)}` : ""}{entry.httpStatus !== undefined ? ` · HTTP ${entry.httpStatus}` : ""}{entry.retryable !== undefined ? ` · ${entry.retryable ? t("repoStatus.diagnosticRetryable") : t("repoStatus.diagnosticNotRetryable")}` : ""}{entry.commitShaPrefix ? ` · ${entry.commitShaPrefix}` : ""}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-sm text-muted-foreground">{t("repoStatus.noDiagnostics")}</p>}
+            </div>
             <div className="space-y-2 rounded-xl border p-3">
               <p className="text-sm font-medium">{t("repoStatus.localChanges")}</p>
               {dirtyFiles.length ? (

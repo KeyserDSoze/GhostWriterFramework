@@ -474,6 +474,7 @@ export async function loadBookStructure(
         title: metaMap[p]?.name ?? slugToTitle(filename.replace(/\.md$/, "")),
         path: p,
         revision: treeData.tree.find((node) => node.path === p)?.sha,
+        ghostwriter: metaMap[p]?.ghostwriter,
         draftPath: draftPaths.get(p),
         scriptPath: scriptPaths.get(p),
         evaluationPath: allPaths.includes(evaluationPath) ? evaluationPath : undefined,

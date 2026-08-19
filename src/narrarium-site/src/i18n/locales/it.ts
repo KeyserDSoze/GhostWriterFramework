@@ -128,6 +128,11 @@ const it = {
     tokenPermission: { unknown: "L'accesso al repository non è ancora stato verificato.", "read-validated": "Accesso in lettura verificato.", "write-validated": "Accesso in lettura e scrittura verificato.", denied: "Accesso al repository negato." },
     expiration: { unknown: "Scadenza sconosciuta.", expired: "Token scaduto il {{date}}.", "one-day": "Il token scade entro 1 giorno ({{date}}).", "seven-days": "Il token scade entro 7 giorni ({{date}}).", "thirty-days": "Il token scade entro 30 giorni ({{date}}).", ok: "Token in scadenza il {{date}}." },
     history: "Cronologia sync",
+    diagnostics: "Diagnostica operazioni",
+    noDiagnostics: "Non sono ancora presenti diagnostiche strutturate.",
+    diagnosticNoError: "Nessun errore",
+    diagnosticRetryable: "riprovabile",
+    diagnosticNotRetryable: "non riprovabile",
     logAll: "Tutto",
     logKinds: {
       clone: "clone",
@@ -1103,7 +1108,7 @@ const it = {
   },
   ghostwriters: {
     title: "Ghostwriter",
-    intro: "Scrittori dedicati con uno stile proprio. Sceglili nello scripting o nei capitoli; se non ne scegli uno si usa lo stile predefinito del libro.",
+    intro: "Ogni ghostwriter riunisce regole di prosa, voce e punteggiatura. Scegli il predefinito del libro, poi sostituiscilo per singoli capitoli o paragrafi.",
     new: "Nuovo",
     loading: "Caricamento ghostwriter…",
     empty: "Ancora nessun ghostwriter.",
@@ -1111,6 +1116,7 @@ const it = {
     selectHint: "Seleziona o crea un ghostwriter per modificarlo.",
     loadFailed: "Caricamento ghostwriter non riuscito",
     saveFailed: "Salvataggio ghostwriter non riuscito",
+    alreadyExists: "Esiste già un ghostwriter con questo nome.",
     name: "Nome",
     language: "Lingua",
     tone: "Tono",
@@ -1124,7 +1130,12 @@ const it = {
     influences: "Influenze",
     strengths: "Punti di forza",
     avoid: "Da evitare",
-    instructions: "Istruzioni di stile"
+    instructions: "Istruzioni di stile",
+    writingStyle: "Stile di scrittura",
+    punctuationStyle: "Stile di punteggiatura",
+    setDefault: "Imposta come predefinito",
+    defaultActive: "Predefinito",
+    defaultSet: "{{name}} è ora il ghostwriter predefinito."
   },
   readerPersonas: {
     title: "Lettori simulati",
@@ -1424,7 +1435,7 @@ const it = {
     scriptToDraftDesc: "Trasforma lo script in prosa di bozza seguendo i beat.",
     draftToFinalDesc: "Rifinisci la bozza nel paragrafo definitivo.",
     ghostwriter: "Ghostwriter",
-    defaultStyle: "Stile predefinito",
+    defaultStyle: "Ghostwriter ereditato",
     regenerate: "Rigenera",
     generate: "Genera",
     generateHint: "Premi Genera per creare l'anteprima. Puoi scegliere un ghostwriter prima di generare.",
@@ -2248,6 +2259,26 @@ const it = {
     openNotes: "Apri note",
     localPending_one: "{{count}} bozza locale",
     localPending_other: "{{count}} bozze locali"
+  },
+  shortcuts: {
+    title: "Scorciatoie da tastiera",
+    description: "Le scorciatoie si adattano al libro, capitolo, paragrafo e vista correnti.",
+    items: {
+      previous: "Capitolo o paragrafo precedente, mantenendo la vista corrente",
+      next: "Capitolo o paragrafo successivo, mantenendo la vista corrente",
+      nextView: "Vista successiva del capitolo o paragrafo corrente",
+      previousView: "Vista precedente del capitolo o paragrafo corrente",
+      save: "Salva la pagina corrente",
+      sync: "Salva e sincronizza il repository corrente",
+      notes: "Apri le note rapide",
+      debug: "Apri la diagnostica LLM",
+      research: "Apri la ricerca del libro",
+      quickSwitch: "Apri il cambio rapido",
+      previousDocument: "Torna al documento precedente",
+      copy: "Copia e aggiungi la prosa selezionata allo storico appunti",
+      readerPrevious: "Pagina reader precedente",
+      readerNext: "Pagina reader successiva",
+    },
   },
   copilotTools: {
     introTitle: "Registry tool Copilot",

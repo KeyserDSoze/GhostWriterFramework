@@ -155,8 +155,8 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
   }
 
   const actions: ContextualAction[] = [...pageActions];
-  if (navTarget.previousHref) actions.push({ id: "navigate-prev", label: t("quickNav.previous"), icon: <ArrowLeft className="h-4 w-4" />, shortcut: "Ctrl+B", to: navTarget.previousHref });
-  if (navTarget.nextHref) actions.push({ id: "navigate-next", label: t("quickNav.next"), icon: <ArrowRight className="h-4 w-4" />, shortcut: "Ctrl+N", to: navTarget.nextHref });
+  if (navTarget.previousHref) actions.push({ id: "navigate-prev", label: t("quickNav.previous"), icon: <ArrowLeft className="h-4 w-4" />, shortcut: "Alt+←", to: navTarget.previousHref });
+  if (navTarget.nextHref) actions.push({ id: "navigate-next", label: t("quickNav.next"), icon: <ArrowRight className="h-4 w-4" />, shortcut: "Alt+→", to: navTarget.nextHref });
   if (navTarget.nextViewHref) actions.push({ id: "navigate-next-view", label: t("quickNav.nextView"), icon: <Repeat className="h-4 w-4" />, shortcut: "Ctrl+Tab", to: navTarget.nextViewHref });
   if (navTarget.previousViewHref) actions.push({ id: "navigate-previous-view", label: t("quickNav.previousView"), icon: <Repeat className="h-4 w-4" />, shortcut: "Ctrl+Shift+Tab", to: navTarget.previousViewHref });
   if (bookId) actions.push({ id: "open-notes", label: t("quickNav.openNotes"), icon: <NotebookPen className="h-4 w-4" />, shortcut: "Ctrl+M", run: () => setNotesOpen(true) });

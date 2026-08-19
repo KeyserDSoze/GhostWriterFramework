@@ -80,7 +80,7 @@ export function ParagraphSplitPage() {
 
   const buildSource = (): PipelineSource | null => {
     if (!book || !structure || !chapter) return null;
-    return { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, accountScope: accountIdentity(useAuthStore.getState().user) };
+    return { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph, accountScope: accountIdentity(useAuthStore.getState().user) };
   };
 
   const draftAssist = useProseAssist({ textareaRef: draftRef, getBody: () => draft.body, setBody: (v) => setDraft((s) => ({ ...s, body: v })), buildSource });

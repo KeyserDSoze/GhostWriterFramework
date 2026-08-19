@@ -4,7 +4,7 @@ import { useAuthStore } from "@/store/authStore";
 import { assertRepositoryOperationScopeCurrent, captureRepositoryOperationScope, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { clearRewriteMaintenanceCompletion, clearRewriteMaintenanceTombstone, finalizeLocalRewriteMaintenanceTombstone, fenceAndRemoveLocalRewriteOperationsForMaintenance, getRewriteMaintenanceCompletion, getRewriteMaintenanceTombstone, listLocalRewriteOperationsForMaintenance, type ExpectedRewriteMaintenanceRecord } from "@/repository/localRewriteOperationStore";
 import type { RewriteOperationManifest } from "@/narrarium/rewriteFromReaderFeedback";
-import type { LocalCommit, LocalRepoLogEntry, LocalRepositoryFile, LocalRepositoryMeta, LocalRepositoryRecovery, LocalRepoStatus } from "@/repository/localRepository";
+import { listRepositoryDiagnostics, type LocalCommit, type LocalRepoLogEntry, type LocalRepositoryDiagnostic, type LocalRepositoryFile, type LocalRepositoryMeta, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
 
 const DB_NAME = "narrarium-local-repositories";
 const RECEIPT_PREFIX = "narrarium:backup-receipt:";
@@ -48,6 +48,7 @@ export interface RepositoryMaintenanceSnapshot {
   commits: LocalCommit[];
   unpushedCommits: LocalCommit[];
   logs: LocalRepoLogEntry[];
+  diagnostics: LocalRepositoryDiagnostic[];
   recoveries: LocalRepositoryRecovery[];
   rewriteOperations: RewriteOperationManifest[];
   rewriteOperationCount: number;
@@ -176,8 +177,8 @@ export async function lookupRepositoryMaintenanceTarget(target: RepositoryMainte
   const exactId = scopedRepoId(target);
   if (target.repoId && target.repoId !== exactId) throw new RepositoryMaintenanceError("TARGET_MISMATCH");
   const db = await openPrimary();
-   const stores = ["repositories", "files", "commits", "logs", "recoveries", "migrationJournals", "removalJournals", "maintenanceTombstones", "maintenanceCompletions"].filter((name) => db.objectStoreNames.contains(name));
-  const result = await new Promise<Omit<RepositoryMaintenanceSnapshot, "rewriteOperations" | "rewriteOperationCount" | "hasUserWork" | "digest">>((resolve, reject) => {
+    const stores = ["repositories", "files", "commits", "logs", "repositoryDiagnostics", "recoveries", "migrationJournals", "removalJournals", "maintenanceTombstones", "maintenanceCompletions"].filter((name) => db.objectStoreNames.contains(name));
+  const result = await new Promise<Omit<RepositoryMaintenanceSnapshot, "diagnostics" | "rewriteOperations" | "rewriteOperationCount" | "hasUserWork" | "digest">>((resolve, reject) => {
     const tx = db.transaction(stores, "readonly");
     const repositories = tx.objectStore("repositories");
      const requests = { repository: repositories.get(exactId), candidates: repositories.index("remote").getAll(IDBKeyRange.only([target.owner, target.repo, target.branch])), files: tx.objectStore("files").index("repoId").getAll(exactId), commits: tx.objectStore("commits").index("repoId").getAll(exactId), logs: tx.objectStore("logs").index("repoId").getAll(exactId), recoveries: tx.objectStore("recoveries").index("repoId").getAll(exactId), migrations: tx.objectStore("migrationJournals").getAll(), removals: tx.objectStore("removalJournals").getAll(), tombstone: tx.objectStore("maintenanceTombstones").get(exactId), completion: tx.objectStore("maintenanceCompletions").get(exactId) };
@@ -196,7 +197,7 @@ export async function lookupRepositoryMaintenanceTarget(target: RepositoryMainte
        if (repository && (repository.id !== exactId || repository.accountScope !== target.accountIdentity || repository.bookId !== target.bookId || repository.owner !== target.owner || repository.repo !== target.repo || repository.branch !== target.branch || (removal && removal.localInstanceId !== repository.localInstanceId))) { reject(new RepositoryMaintenanceError("TARGET_MISMATCH")); return; }
       const files = (requests.files.result as LocalRepositoryFile[]).sort((a, b) => a.path.localeCompare(b.path));
       const commits = (requests.commits.result as LocalCommit[]).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-      const logs = (requests.logs.result as LocalRepoLogEntry[]).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const logs = (requests.logs.result as LocalRepoLogEntry[]).map((entry) => ({ ...entry, message: `Repository ${entry.kind} operation recorded.` })).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
         const recoveries = requests.recoveries.result as LocalRepositoryRecovery[];
         const recoveryInstanceId = repository?.localInstanceId ?? completion?.localInstanceId;
         const scopedRecoveries = recoveries.filter((recovery) => recovery.accountIdentity === target.accountIdentity && recovery.repoId === exactId && recovery.repository?.id === exactId && (!recoveryInstanceId || recovery.repository?.localInstanceId === recoveryInstanceId) && recovery.repository?.accountScope === target.accountIdentity && recovery.repository?.bookId === target.bookId && recovery.repository?.owner === target.owner && recovery.repository?.repo === target.repo && recovery.repository?.branch === target.branch);
@@ -219,7 +220,8 @@ export async function lookupRepositoryMaintenanceTarget(target: RepositoryMainte
   const primaryDigest = result.repository && result.lifecycle ? await primarySnapshotDigest({ repository: result.repository, lifecycle: result.lifecycle, files: result.files, commits: result.commits, recoveries: result.recoveries }) : "";
   const rewriteDigest = await rewriteSnapshotDigest(rewriteOperations);
   const digest = primaryDigest ? await sha256(`${primaryDigest}:${rewriteDigest}`) : "";
-    return { ...result, rewriteOperations, rewriteOperationCount: rewriteOperations.length, hasUserWork, removalPending: result.removalPending || Boolean(rewriteTombstone) || Boolean(primaryCompletion && primaryCompletion.phase !== "finalized"), digest };
+    const diagnostics = result.repository ? await listRepositoryDiagnostics(exactId, result.repository.localInstanceId, scope) : [];
+    return { ...result, diagnostics, rewriteOperations, rewriteOperationCount: rewriteOperations.length, hasUserWork, removalPending: result.removalPending || Boolean(rewriteTombstone) || Boolean(primaryCompletion && primaryCompletion.phase !== "finalized"), digest };
 }
 
 function safeSegment(value: string): string { return encodeURIComponent(value).replace(/%2F/gi, "%252F"); }
@@ -341,7 +343,7 @@ async function prepareRemoval(target: RepositoryMaintenanceTarget, receiptId: st
   const scope = captureRepositoryOperationScope();
   const db = await openPrimary();
   const journal = await new Promise<RemovalJournal>((resolve, reject) => {
-    const stores = ["repositories", "files", "commits", "recoveries", "logs", "migrationJournals", "maintenanceFences", "removalJournals", "maintenanceTombstones", "consumedBackupReceipts"];
+    const stores = ["repositories", "files", "commits", "recoveries", "logs", "repositoryDiagnostics", "migrationJournals", "maintenanceFences", "removalJournals", "maintenanceTombstones", "consumedBackupReceipts"];
     const tx = db.transaction(stores, "readwrite");
     const repositories = tx.objectStore("repositories");
     const requests = { repository: repositories.get(receipt.repoId), files: tx.objectStore("files").index("repoId").getAll(receipt.repoId), commits: tx.objectStore("commits").index("repoId").getAll(receipt.repoId), recoveries: tx.objectStore("recoveries").index("repoId").getAll(receipt.repoId), logs: tx.objectStore("logs").index("repoId").getAll(receipt.repoId), migrations: tx.objectStore("migrationJournals").getAll(), consumed: tx.objectStore("consumedBackupReceipts").get(receipt.receiptId), tombstone: tx.objectStore("maintenanceTombstones").get(receipt.repoId) };
@@ -383,7 +385,7 @@ async function cancelPreparedRemoval(journal: RemovalJournal): Promise<void> {
   }); db.close();
 }
 async function deletePrimary(journal: RemovalJournal, scope: RepositoryOperationScope): Promise<void> {
-  const db = await openPrimary(); await new Promise<void>((resolve, reject) => { const tx = db.transaction(["repositories", "files", "commits", "logs", "maintenanceFences"], "readwrite"); const repositories = tx.objectStore("repositories"); const request = repositories.get(journal.repoId); let validationError: Error | null = null; request.onsuccess = () => { const current = request.result as LocalRepositoryMeta | undefined; try { assertRepositoryOperationScopeCurrent(scope); } catch (error) { validationError = error as Error; tx.abort(); return; } if (current && (current.localInstanceId !== journal.localInstanceId || (current.operationFence ?? 0) !== journal.removalFence)) { validationError = new RepositoryOwnershipChangedError("A replacement repository cannot be removed by this journal."); tx.abort(); return; } if (current) repositories.delete(journal.repoId); for (const name of ["files", "commits", "logs"]) { const store = tx.objectStore(name); const cursor = store.index("repoId").openKeyCursor(IDBKeyRange.only(journal.repoId)); cursor.onsuccess = () => { if (cursor.result) { store.delete(cursor.result.primaryKey); cursor.result.continue(); } }; cursor.onerror = () => tx.abort(); } }; request.onerror = () => tx.abort(); tx.oncomplete = () => resolve(); tx.onerror = () => reject(validationError ?? tx.error); tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Primary maintenance deletion was aborted.")); }); db.close();
+  const db = await openPrimary(); await new Promise<void>((resolve, reject) => { const tx = db.transaction(["repositories", "files", "commits", "logs", "repositoryDiagnostics", "maintenanceFences"], "readwrite"); const repositories = tx.objectStore("repositories"); const request = repositories.get(journal.repoId); let validationError: Error | null = null; request.onsuccess = () => { const current = request.result as LocalRepositoryMeta | undefined; try { assertRepositoryOperationScopeCurrent(scope); } catch (error) { validationError = error as Error; tx.abort(); return; } if (current && (current.localInstanceId !== journal.localInstanceId || (current.operationFence ?? 0) !== journal.removalFence)) { validationError = new RepositoryOwnershipChangedError("A replacement repository cannot be removed by this journal."); tx.abort(); return; } if (current) repositories.delete(journal.repoId); for (const name of ["files", "commits", "logs"]) { const store = tx.objectStore(name); const cursor = store.index("repoId").openKeyCursor(IDBKeyRange.only(journal.repoId)); cursor.onsuccess = () => { if (cursor.result) { store.delete(cursor.result.primaryKey); cursor.result.continue(); } }; cursor.onerror = () => tx.abort(); } const diagnostics = tx.objectStore("repositoryDiagnostics"); const diagnosticCursor = diagnostics.index("localInstanceId").openKeyCursor(IDBKeyRange.only(journal.localInstanceId)); diagnosticCursor.onsuccess = () => { const cursor = diagnosticCursor.result; if (cursor) { diagnostics.delete(cursor.primaryKey); cursor.continue(); } }; diagnosticCursor.onerror = () => tx.abort(); }; request.onerror = () => tx.abort(); tx.oncomplete = () => resolve(); tx.onerror = () => reject(validationError ?? tx.error); tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Primary maintenance deletion was aborted.")); }); db.close();
 }
 
 export async function removeRepositoryWithBackupReceipt(target: RepositoryMaintenanceTarget, receiptId: string): Promise<{ recoveriesPreserved: number; rewriteOperationsRemoved: number }> {

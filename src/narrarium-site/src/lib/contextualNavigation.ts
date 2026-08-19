@@ -104,7 +104,7 @@ export function resolveContextualNavigation(structure: BookStructure | undefined
       { key: "overview", href: paragraphHref(bookId, chapterSlug, paragraphNumber) },
       { key: "/workspace/draft", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/workspace/draft") },
       { key: "/workspace/script", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/workspace/script") },
-      ...(typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches ? [{ key: "/split", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/split") }] : []),
+      ...(typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1024px)").matches ? [{ key: "/split", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/split") }] : []),
       { key: "/workspace/evaluation", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/workspace/evaluation") },
       { key: "/reader-evaluations", href: paragraphHref(bookId, chapterSlug, paragraphNumber, "/reader-evaluations") },
     ];

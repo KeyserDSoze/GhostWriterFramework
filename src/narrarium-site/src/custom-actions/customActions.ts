@@ -384,7 +384,7 @@ async function loadWritingStyle(target: CustomActionTargetContext, signal?: Abor
 
 async function loadGhostwriter(target: CustomActionTargetContext, frontmatter: Record<string, unknown>, settings: AppSettings, accountScope: string | null, signal?: AbortSignal): Promise<string> {
   if (!target.book || !target.structure || !target.token || !target.branch) return "";
-  const slug = typeof frontmatter.ghostwriter === "string" ? frontmatter.ghostwriter : "";
+  const slug = (typeof frontmatter.ghostwriter === "string" ? frontmatter.ghostwriter : "") || target.paragraph?.ghostwriter || target.chapter?.ghostwriter || target.structure.ghostwriter || "";
   if (!slug) return "";
   let profile;
   try {

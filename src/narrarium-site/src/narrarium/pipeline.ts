@@ -22,6 +22,7 @@ interface PipelineSource {
   structure: BookStructure;
   /** Optional: present when working inside a chapter/paragraph/draft. Absent for canon, prompts, etc. */
   chapter?: Chapter;
+  paragraph?: Paragraph;
   signal?: AbortSignal;
 }
 
@@ -57,8 +58,17 @@ export async function loadGhostwriterProfile(src: PipelineSource, slug?: string)
   }
 }
 
-function resolveGhostwriterSlug(src: PipelineSource, ghostwriterSlug?: string): string | undefined {
-  return ghostwriterSlug?.trim() || src.chapter?.ghostwriter || src.structure.ghostwriter;
+export function resolveGhostwriterSlug(src: Pick<PipelineSource, "structure" | "chapter" | "paragraph">, ghostwriterSlug?: string): string | undefined {
+  return ghostwriterSlug?.trim() || src.paragraph?.ghostwriter || src.chapter?.ghostwriter || src.structure.ghostwriter;
+}
+
+export function composeGhostwriterStyleContext(input: { ghost: GhostwriterProfile | null; globalStyle: string; chapterStyle: string; punctuationStyle: string }): string {
+  return [
+    input.ghost ? `GHOSTWRITER:\n${ghostwriterPrompt(input.ghost)}` : "",
+    !input.ghost?.writingStyle && input.globalStyle ? `WRITING STYLE (legacy fallback):\n${input.globalStyle}` : "",
+    !input.ghost?.writingStyle && input.chapterStyle ? `WRITING STYLE (legacy chapter fallback):\n${input.chapterStyle}` : "",
+    !input.ghost?.punctuationStyle && input.punctuationStyle ? `PUNCTUATION STYLE (legacy fallback):\n${input.punctuationStyle}` : "",
+  ].filter(Boolean).join("\n\n");
 }
 
 /** Common style + story context shared by every generation/improve call. */
@@ -71,12 +81,7 @@ async function buildContext(src: PipelineSource, ghostwriterSlug?: string): Prom
     src.chapter ? tryLoad(src, `resumes/chapters/${src.chapter.slug}.md`) : Promise.resolve(""),
   ]);
   const ghost = await loadGhostwriterProfile(src, resolveGhostwriterSlug(src, ghostwriterSlug));
-  const style = [
-    globalStyle ? `WRITING STYLE (global):\n${globalStyle}` : "",
-    chapterStyle ? `WRITING STYLE (chapter override):\n${chapterStyle}` : "",
-    ghost ? `GHOSTWRITER:\n${ghostwriterPrompt(ghost)}` : "",
-    punctuationStyle ? `PUNCTUATION STYLE (binding, always apply):\n${punctuationStyle}` : "",
-  ].filter(Boolean).join("\n\n");
+  const style = composeGhostwriterStyleContext({ ghost, globalStyle, chapterStyle, punctuationStyle });
   const story = [
     bookResume ? `BOOK SO FAR:\n${bookResume}` : "",
     chapterResume ? `CHAPTER SO FAR:\n${chapterResume}` : "",

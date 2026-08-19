@@ -7,7 +7,7 @@ import type { BookStructure } from "@/types/book";
 import type { AppSettings, BookEntry } from "@/types/settings";
 import { builtinReaderPersonas, mergeReaderPersonas, parseReaderPersona, readerPersonaSystemPrompt, serializeReaderPersona, type ReaderEvaluationDepth, type ReaderPersonaProfile } from "@/narrarium/readerPersona";
 import { isRepositoryError, optionalRepositoryRead } from "@/repository/repositoryError";
-import { captureImmediateMutation, commitImmediateMutation, mergeManagedFrontmatter } from "@/assistant/immediateMutation";
+import { captureImmediateMutation, commitImmediateMutation, commitImmediateMutations, mergeManagedFrontmatter } from "@/assistant/immediateMutation";
 import { commitAndPushTextFileMutation, RepositoryConflictError, resolveRepositoryHeadForMutation } from "@/repository/safeRepositoryMutation";
 
 export type ReaderEvaluationTargetType = "chapter" | "paragraph" | "selection";
@@ -128,6 +128,17 @@ export async function saveReaderPersona(input: { token: string; book: BookEntry;
   const content = renderFile(frontmatter, generatedMatch[2]);
   await commitImmediateMutation({ ...input, snapshot, content, message: `${snapshot.content ? "Update" : "Add"} simulated reader ${input.profile.name}` });
   return path;
+}
+
+export async function deleteReaderEvaluation(input: { token: string; book: BookEntry; branch: string; record: ReaderEvaluationRecord; signal?: AbortSignal }): Promise<boolean> {
+  const snapshot = await captureImmediateMutation({ ...input, path: input.record.path });
+  if (!snapshot.content) return false;
+  await commitImmediateMutations({
+    ...input,
+    snapshots: [{ snapshot, content: null }],
+    message: `Delete reader evaluation ${input.record.readerName}`,
+  });
+  return true;
 }
 
 export async function deleteReaderPersonaOverride(input: { token: string; book: BookEntry; branch: string; profile: ReaderPersonaProfile }): Promise<void> {

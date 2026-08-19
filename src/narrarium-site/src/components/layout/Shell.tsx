@@ -87,13 +87,6 @@ export function Shell() {
         return;
       }
 
-      if (event.code === "Backquote") {
-        const previous = useNavigationHistoryStore.getState().previous;
-        if (!previous) return;
-        event.preventDefault();
-        navigate(previous.pathname);
-        return;
-      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

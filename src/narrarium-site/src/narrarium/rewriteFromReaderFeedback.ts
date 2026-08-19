@@ -4,7 +4,8 @@ import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import type { LlmRunMetadata } from "@/assistant/llm";
 import { loadFileContent, loadRemoteFileContentAtRef } from "@/github/githubClient";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
-import { ghostwriterPrompt, parseGhostwriter } from "@/narrarium/ghostwriter";
+import { parseGhostwriter } from "@/narrarium/ghostwriter";
+import { composeGhostwriterStyleContext } from "@/narrarium/pipeline";
 import {
   hashReaderSource,
   latestNonStaleCompletedReaderEvaluations,
@@ -458,6 +459,7 @@ async function loadCurrentReaderOpinion(
 async function loadWritingContext(
   context: RewriteRepositoryContext,
   chapter: Chapter,
+  paragraph: Paragraph,
   surrounding: { previous: string; next: string; alreadyRewritten?: string[] },
   relevanceText: string,
 ): Promise<string> {
@@ -469,7 +471,7 @@ async function loadWritingContext(
     load("resumes/total.md"),
     load(`resumes/chapters/${chapter.slug}.md`),
   ]);
-  const ghostwriterSlug = chapter.ghostwriter || context.structure.ghostwriter;
+  const ghostwriterSlug = paragraph.ghostwriter || chapter.ghostwriter || context.structure.ghostwriter;
   const ghostwriterEntry = context.structure.ghostwriters.find((entry) => entry.slug === ghostwriterSlug);
   const ghostwriterRaw = await load(ghostwriterEntry?.path);
   const searchable = relevanceText.toLowerCase();
@@ -480,11 +482,10 @@ async function loadWritingContext(
     })
     .slice(0, 24);
   const canon = await Promise.all(canonFiles.map(async (file) => ({ path: file.path, raw: file.content ?? await readOptional(context, file.path) })));
+  const ghostwriterProfile = ghostwriterRaw && ghostwriterEntry ? parseGhostwriter(ghostwriterEntry.slug, ghostwriterRaw) : null;
+  const styleContext = composeGhostwriterStyleContext({ ghost: ghostwriterProfile, globalStyle: globalStyle ?? "", chapterStyle: chapterStyle ?? "", punctuationStyle: punctuation ?? "" });
   return [
-    globalStyle ? `GLOBAL WRITING STYLE:\n${globalStyle}` : "",
-    chapterStyle ? `CHAPTER WRITING STYLE:\n${chapterStyle}` : "",
-    punctuation ? `BINDING PUNCTUATION STYLE:\n${punctuation}` : "",
-    ghostwriterRaw && ghostwriterEntry ? `GHOSTWRITER:\n${ghostwriterPrompt(parseGhostwriter(ghostwriterEntry.slug, ghostwriterRaw))}` : "",
+    styleContext,
     totalResume ? `BOOK CONTINUITY:\n${totalResume}` : "",
     chapterResume ? `CHAPTER CONTINUITY:\n${chapterResume}` : "",
     surrounding.previous ? `IMMEDIATE PREVIOUS PARAGRAPH:\n${surrounding.previous}` : "",
@@ -580,7 +581,7 @@ export async function prepareParagraphFeedbackProposal(input: RewriteRepositoryC
     index > 0 ? loadParagraphSource(context, chapter.paragraphs[index - 1]).then((value) => value.body) : "",
     index + 1 < chapter.paragraphs.length ? loadParagraphSource(context, chapter.paragraphs[index + 1]).then((value) => value.body) : "",
   ]);
-  const writingContext = await loadWritingContext(context, chapter, { previous, next }, `${final.body}\n${feedback.primary.body}`);
+  const writingContext = await loadWritingContext(context, chapter, paragraph!, { previous, next }, `${final.body}\n${feedback.primary.body}`);
   const generated = await generateParagraph({
     context,
     chapter,
@@ -880,7 +881,7 @@ export async function runChapterFeedbackRewrite(input: RewriteRepositoryContext 
       const previous = index > 0 ? (rewritten[index - 1] ?? finalSources[index - 1].body) : "";
       const next = index + 1 < chapter.paragraphs.length ? finalSources[index + 1].body : "";
       const paragraphOpinion = selectedParagraphOpinion?.record ?? paragraphFeedback?.primary;
-      const writingContext = await loadWritingContext(context, chapter, { previous, next, alreadyRewritten: rewritten }, `${chapterFeedback.primary.body}\n${paragraphOpinion?.body ?? ""}\n${final.body}`);
+      const writingContext = await loadWritingContext(context, chapter, paragraph, { previous, next, alreadyRewritten: rewritten }, `${chapterFeedback.primary.body}\n${paragraphOpinion?.body ?? ""}\n${final.body}`);
       const generated = await generateParagraph({
         context,
         chapter,
@@ -1043,7 +1044,7 @@ export async function resumeChapterFeedbackRewrite(input: RewriteRepositoryConte
       const previous = index > 0 ? (rewritten[index - 1] ?? finalSources[index - 1].body) : "";
       const next = index + 1 < chapter.paragraphs.length ? finalSources[index + 1].body : "";
       const paragraphOpinion = selectedParagraphOpinion?.record ?? paragraphFeedback?.primary;
-      const writingContext = await loadWritingContext(context, chapter, { previous, next, alreadyRewritten: rewritten.filter(Boolean) }, `${chapterFeedback.primary.body}\n${paragraphOpinion?.body ?? ""}\n${final.body}`);
+      const writingContext = await loadWritingContext(context, chapter, paragraph, { previous, next, alreadyRewritten: rewritten.filter(Boolean) }, `${chapterFeedback.primary.body}\n${paragraphOpinion?.body ?? ""}\n${final.body}`);
       const generated = await generateParagraph({
         context,
         chapter,

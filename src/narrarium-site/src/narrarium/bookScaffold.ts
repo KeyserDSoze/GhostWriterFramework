@@ -1,6 +1,7 @@
 import { stringify } from "yaml";
 import { defaultEvaluationGuidelinesMarkdown, defaultWritingStyleBody, defaultWritingStyleTitle } from "@/narrarium/defaultGuidelines";
 import { builtinReaderPersonas, serializeReaderPersona } from "@/narrarium/readerPersona";
+import { defaultGhostwriter, serializeGhostwriter } from "@/narrarium/ghostwriter";
 
 export interface InitialBookFile {
   path: string;
@@ -18,6 +19,7 @@ export function buildInitialBookFiles(input: InitialBookInput): InitialBookFile[
   const language = input.language?.trim() || "en";
   const author = input.author?.trim();
   const readerPersonas = builtinReaderPersonas(language).map((profile) => ({ path: `personas/${profile.slug}.md`, content: serializeReaderPersona(profile) }));
+  const initialGhostwriter = defaultGhostwriter(language);
   return [
     {
       path: "README.md",
@@ -25,7 +27,7 @@ export function buildInitialBookFiles(input: InitialBookInput): InitialBookFile[
     },
     {
       path: "book.md",
-      content: renderMarkdown(clean({ type: "book", id: "book", title, author, language, canon: "draft" }), "# Book\n\nDescribe the book here.\n"),
+      content: renderMarkdown(clean({ type: "book", id: "book", title, author, language, canon: "draft", ghostwriter: initialGhostwriter.slug }), "# Book\n\nDescribe the book here.\n"),
     },
     {
       path: "context.md",
@@ -65,6 +67,10 @@ export function buildInitialBookFiles(input: InitialBookInput): InitialBookFile[
     {
       path: "story-design.md",
       content: renderMarkdown({ type: "note", id: "note:story-design", title: "Story Design", scope: "story-design", bucket: "story-design" }, "# Story Design\n\n## Premise\n\n## Main Conflict\n\n## Character Arcs\n\n## Structure\n"),
+    },
+    {
+      path: `ghostwriters/${initialGhostwriter.slug}.md`,
+      content: serializeGhostwriter(initialGhostwriter),
     },
     {
       path: "writing-style.md",

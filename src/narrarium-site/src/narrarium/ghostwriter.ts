@@ -11,6 +11,8 @@ export interface GhostwriterProfile {
   sentenceRhythm: string;
   dialogueStyle: string;
   vocabulary: string;
+  writingStyle: string;
+  punctuationStyle: string;
   influences: string[];
   strengths: string[];
   avoid: string[];
@@ -29,6 +31,8 @@ export function emptyGhostwriter(name: string): Omit<GhostwriterProfile, "slug">
     sentenceRhythm: "",
     dialogueStyle: "",
     vocabulary: "",
+    writingStyle: "",
+    punctuationStyle: "",
     influences: [],
     strengths: [],
     avoid: [],
@@ -59,6 +63,8 @@ export function parseGhostwriter(slug: string, raw: string): GhostwriterProfile 
     sentenceRhythm: str("sentence_rhythm"),
     dialogueStyle: str("dialogue_style"),
     vocabulary: str("vocabulary"),
+    writingStyle: str("writing_style"),
+    punctuationStyle: str("punctuation_style"),
     influences: asArray(fm["influences"]),
     strengths: asArray(fm["strengths"]),
     avoid: asArray(fm["avoid"]),
@@ -80,6 +86,8 @@ export function serializeGhostwriter(profile: GhostwriterProfile): string {
     sentence_rhythm: profile.sentenceRhythm || undefined,
     dialogue_style: profile.dialogueStyle || undefined,
     vocabulary: profile.vocabulary || undefined,
+    writing_style: profile.writingStyle || undefined,
+    punctuation_style: profile.punctuationStyle || undefined,
     influences: profile.influences,
     strengths: profile.strengths,
     avoid: profile.avoid,
@@ -100,9 +108,34 @@ export function ghostwriterPrompt(profile: GhostwriterProfile): string {
   if (profile.sentenceRhythm) lines.push(`Sentence rhythm: ${profile.sentenceRhythm}.`);
   if (profile.dialogueStyle) lines.push(`Dialogue style: ${profile.dialogueStyle}.`);
   if (profile.vocabulary) lines.push(`Vocabulary: ${profile.vocabulary}.`);
+  if (profile.writingStyle) lines.push(`Writing style: ${profile.writingStyle}.`);
+  if (profile.punctuationStyle) lines.push(`Binding punctuation style: ${profile.punctuationStyle}.`);
   if (profile.influences.length) lines.push(`Influences: ${profile.influences.join(", ")}.`);
   if (profile.strengths.length) lines.push(`Strengths to lean on: ${profile.strengths.join(", ")}.`);
   if (profile.avoid.length) lines.push(`Avoid: ${profile.avoid.join(", ")}.`);
   if (profile.body) lines.push(`Detailed instructions:\n${profile.body}`);
   return lines.join("\n");
+}
+
+export function defaultGhostwriter(language?: string): GhostwriterProfile {
+  const italian = language?.trim().toLowerCase().startsWith("it");
+  return {
+    slug: "default",
+    ...emptyGhostwriter(italian ? "Ghostwriter predefinito" : "Default Ghostwriter"),
+    language: italian ? "Italiano" : "English",
+    tone: italian ? "Naturale, concreto e misurato" : "Natural, concrete, and measured",
+    voice: italian ? "Chiara, narrativa e coerente con il punto di vista" : "Clear, narrative, and consistent with the viewpoint",
+    sentenceRhythm: italian ? "Alterna frasi brevi e medie secondo tensione e respiro della scena" : "Alternate short and medium sentences according to scene tension and breathing room",
+    dialogueStyle: italian ? "Dialoghi leggibili, naturali e attribuiti con action beat sobri" : "Readable, natural dialogue with restrained action beats",
+    vocabulary: italian ? "Preciso e accessibile, senza ricercatezza gratuita" : "Precise and accessible, without gratuitous ornament",
+    writingStyle: italian
+      ? "Preserva canone e intento; usa scene concrete, punto di vista leggibile, dettagli sensoriali pertinenti e ritmo intenzionale. Evita riassunti generici e spiegazioni ridondanti."
+      : "Preserve canon and intent; use concrete scenes, a readable viewpoint, relevant sensory detail, and purposeful rhythm. Avoid generic summary and redundant explanation.",
+    punctuationStyle: italian
+      ? "Usa la punteggiatura italiana standard. Per i dialoghi usa le caporali « » in modo coerente; usa il carattere unico … per i puntini di sospensione."
+      : "Use standard English punctuation. Keep dialogue quotation marks consistent and use the single ellipsis character … rather than three periods.",
+    body: italian
+      ? "Scrivi una prosa narrativa pulita e professionale. Migliora chiarezza, tensione e precisione emotiva senza introdurre fatti non richiesti."
+      : "Write clean, professional narrative prose. Improve clarity, tension, and emotional precision without introducing unrequested facts.",
+  };
 }

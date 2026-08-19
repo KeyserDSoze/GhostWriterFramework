@@ -75,6 +75,8 @@ export interface Paragraph {
   path: string;
   /** Blob/content revision observed when this paragraph was loaded. */
   revision?: string;
+  /** Optional paragraph-level ghostwriter slug from paragraph frontmatter. */
+  ghostwriter?: string;
   draftPath?: string;
   scriptPath?: string;
   evaluationPath?: string;

@@ -28,6 +28,11 @@ function isFocusableEditorTarget(target: EventTarget | null): boolean {
   );
 }
 
+export function contextualNavigationDirection(event: Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey">): -1 | 0 | 1 {
+  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return 0;
+  return event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+}
+
 /** Global keyboard shortcuts mounted once in the Shell. */
 export function useGlobalShortcuts() {
   const navigate = useNavigate();
@@ -36,6 +41,19 @@ export function useGlobalShortcuts() {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      const direction = contextualNavigationDirection(event);
+      if (direction) {
+        const route = parseAppRoute(location.pathname);
+        const bookId = "bookId" in route ? route.bookId : undefined;
+        const structure = bookId ? structures[bookId] : undefined;
+        const target = resolveContextualNavigation(structure, location.pathname, bookId);
+        const href = direction < 0 ? target.previousHref : target.nextHref;
+        if (!href) return;
+        event.preventDefault();
+        navigate(href);
+        return;
+      }
+
       const mod = event.ctrlKey || event.metaKey;
       if (!mod) return;
       const key = event.key.toLowerCase();
@@ -74,22 +92,6 @@ export function useGlobalShortcuts() {
         if (event.shiftKey && isFocusableEditorTarget(event.target)) return;
         event.preventDefault();
         navigate(href);
-        return;
-      }
-
-      // Ctrl/Cmd+B → contextual previous chapter/paragraph while keeping the same view mode.
-      if (key === "b") {
-        if (!target.previousHref) return;
-        event.preventDefault();
-        navigate(target.previousHref);
-        return;
-      }
-
-      // Ctrl/Cmd+N → contextual next chapter/paragraph while keeping the same view mode.
-      if (key === "n") {
-        if (!target.nextHref) return;
-        event.preventDefault();
-        navigate(target.nextHref);
         return;
       }
 

@@ -13,12 +13,12 @@ import {
 import { accountIdentity, beginStrandedLegacyRecovery, consumeLegacyAccountUpgradeEvidence, getLegacyAccountUpgradeEvidence, legacyEmailAccountIdentity } from "@/auth/accountIdentity";
 import { consumeLegacyAdoptionConsent, type LegacyAdoptionTarget } from "@/auth/legacyAdoptionConsent";
 import { finalizeLegacyRewriteOperationMigration, inspectLegacyRewriteOperationMigration, prepareLegacyRewriteOperationMigration } from "@/repository/localRewriteOperationStore";
-import type { RepositoryErrorKind } from "@/repository/repositoryError";
+import { classifyRepositoryError, type RepositoryErrorKind } from "@/repository/repositoryError";
 import { useAuthStore } from "@/store/authStore";
 import { assertRepositoryOperationScopeCurrent, captureRepositoryOperationScope, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 const DB_NAME = "narrarium-local-repositories";
-const DB_VERSION = 12;
+const DB_VERSION = 13;
 
 export type LocalFileStatus = "clean" | "modified" | "new" | "deleted";
 export type LocalFileKind = "text" | "binary";
@@ -139,6 +139,33 @@ export interface LocalRepoLogEntry {
   kind: LocalRepoLogKind;
   message: string;
   createdAt: string;
+}
+
+export const REPOSITORY_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
+export const REPOSITORY_DIAGNOSTIC_MAX_RECORDS = 200;
+export const REPOSITORY_DIAGNOSTIC_MAX_BYTES = 64 * 1024;
+
+export type RepositoryDiagnosticOperation = "clone" | "repair" | "fetch" | "pull" | "push" | "sync";
+export type RepositoryDiagnosticStage = "start" | "remote-read" | "download" | "merge" | "commit" | "push" | "finalize";
+export type RepositoryDiagnosticOutcome = "started" | "stage" | "success" | "failure" | "cancelled";
+
+export interface LocalRepositoryDiagnostic {
+  id: string;
+  schemaVersion: typeof REPOSITORY_DIAGNOSTIC_SCHEMA_VERSION;
+  operationId: string;
+  localInstanceId: string;
+  operation: RepositoryDiagnosticOperation;
+  stage: RepositoryDiagnosticStage;
+  outcome: RepositoryDiagnosticOutcome;
+  createdAt: string;
+  startedAt: string;
+  durationMs?: number;
+  fileCount?: number;
+  byteCount?: number;
+  errorKind?: RepositoryErrorKind;
+  httpStatus?: number;
+  retryable?: boolean;
+  commitShaPrefix?: string;
 }
 
 export interface LocalRepoStatus {
@@ -329,6 +356,12 @@ function openDb(): Promise<IDBDatabase> {
         const logs = db.createObjectStore("logs", { keyPath: "id" });
         logs.createIndex("repoId", "repoId", { unique: false });
       }
+      if (!db.objectStoreNames.contains("repositoryDiagnostics")) {
+        const diagnostics = db.createObjectStore("repositoryDiagnostics", { keyPath: "id" });
+        diagnostics.createIndex("localInstanceId", "localInstanceId", { unique: false });
+        diagnostics.createIndex("operationId", "operationId", { unique: false });
+        diagnostics.createIndex("createdAt", "createdAt", { unique: false });
+      }
       if (!db.objectStoreNames.contains("recoveries")) {
         const recoveries = db.createObjectStore("recoveries", { keyPath: "id" });
         recoveries.createIndex("repoId", "repoId", { unique: false });
@@ -345,6 +378,15 @@ function openDb(): Promise<IDBDatabase> {
           const row = cursor.result;
           if (!row) return;
           if (!row.value.localInstanceId) row.update({ ...row.value, localInstanceId: crypto.randomUUID() });
+          row.continue();
+        };
+      }
+      if (event.oldVersion < 13 && db.objectStoreNames.contains("logs")) {
+        const cursor = request.transaction!.objectStore("logs").openCursor();
+        cursor.onsuccess = () => {
+          const row = cursor.result;
+          if (!row) return;
+          row.update({ ...row.value, message: safeLegacyLogMessage(row.value.kind as LocalRepoLogKind) });
           row.continue();
         };
       }
@@ -981,16 +1023,12 @@ export async function listAllLocalFiles(repoIdValue: string): Promise<LocalRepos
 export async function removeLocalRepository(repoIdValue: string, scope: RepositoryOperationScope): Promise<void> {
   const db = await openDb();
   // Recovery snapshots intentionally outlive the working copy they protect.
-  const stores = ["repositories", "files", "commits", "logs"].filter((store) => db.objectStoreNames.contains(store));
+  const stores = ["repositories", "files", "commits", "logs", "repositoryDiagnostics"].filter((store) => db.objectStoreNames.contains(store));
   await new Promise<void>((resolve, reject) => {
     const tx = guardedWriteTransaction(db, stores, repoIdValue);
     const repositories = tx.objectStore("repositories");
     let validationError: Error | null = null;
     const repositoryRequest = repositories.get(repoIdValue);
-    repositoryRequest.onsuccess = () => {
-      try { validateRepositoryOperation(repositoryRequest.result as LocalRepositoryMeta | undefined, scope); repositories.delete(repoIdValue); }
-      catch (error) { validationError = error as Error; tx.abort(); }
-    };
     repositoryRequest.onerror = () => tx.abort();
     for (const storeName of ["files", "commits", "logs"]) {
       if (!stores.includes(storeName)) continue;
@@ -1004,6 +1042,16 @@ export async function removeLocalRepository(repoIdValue: string, scope: Reposito
         cursor.continue();
       };
     }
+    repositoryRequest.onsuccess = () => {
+      try {
+        const repository = validateRepositoryOperation(repositoryRequest.result as LocalRepositoryMeta | undefined, scope);
+        repositories.delete(repoIdValue);
+        const diagnostics = tx.objectStore("repositoryDiagnostics");
+        const cursorRequest = diagnostics.index("localInstanceId").openKeyCursor(IDBKeyRange.only(repository.localInstanceId));
+        cursorRequest.onsuccess = () => { const cursor = cursorRequest.result; if (cursor) { diagnostics.delete(cursor.primaryKey); cursor.continue(); } };
+        cursorRequest.onerror = () => tx.abort();
+      } catch (error) { validationError = error as Error; tx.abort(); }
+    };
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(validationError ?? tx.error);
     tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local repository removal was aborted."));
@@ -1013,7 +1061,7 @@ export async function removeLocalRepository(repoIdValue: string, scope: Reposito
 /** Cleanup only for a clone created by the supplied immutable operation scope. */
 export async function removeAbandonedLocalClone(expected: Pick<LocalRepositoryMeta, "id" | "bookId" | "owner" | "repo" | "branch">, scope: RepositoryOperationScope, cloneOperationId: string): Promise<void> {
   const db = await openDb();
-  const stores = ["repositories", "files", "commits", "logs"].filter((store) => db.objectStoreNames.contains(store));
+  const stores = ["repositories", "files", "commits", "logs", "repositoryDiagnostics"].filter((store) => db.objectStoreNames.contains(store));
   await new Promise<void>((resolve, reject) => {
     const tx = guardedWriteTransaction(db, stores, expected.id);
     const repositories = tx.objectStore("repositories");
@@ -1043,6 +1091,10 @@ export async function removeAbandonedLocalClone(expected: Pick<LocalRepositoryMe
         const cursorRequest = store.index("repoId").openKeyCursor(IDBKeyRange.only(expected.id));
         cursorRequest.onsuccess = () => { const cursor = cursorRequest.result; if (cursor) { store.delete(cursor.primaryKey); cursor.continue(); } };
       }
+      const diagnostics = tx.objectStore("repositoryDiagnostics");
+      const diagnosticCursor = diagnostics.index("localInstanceId").openKeyCursor(IDBKeyRange.only(repository.localInstanceId));
+      diagnosticCursor.onsuccess = () => { const cursor = diagnosticCursor.result; if (cursor) { diagnostics.delete(cursor.primaryKey); cursor.continue(); } };
+      diagnosticCursor.onerror = () => tx.abort();
     };
     request.onerror = () => tx.abort();
     tx.oncomplete = () => resolve();
@@ -1610,14 +1662,103 @@ export async function getLocalRepositoryStatusSnapshot(owner: string, repo: stri
   });
 }
 
-export async function addLocalRepoLog(repoIdValue: string, kind: LocalRepoLogKind, message: string): Promise<void> {
-  const entry: LocalRepoLogEntry = { id: crypto.randomUUID(), repoId: repoIdValue, kind, message, createdAt: new Date().toISOString() };
+export async function addLocalRepoLog(repoIdValue: string, kind: LocalRepoLogKind, _message: string): Promise<void> {
+  const entry: LocalRepoLogEntry = { id: crypto.randomUUID(), repoId: repoIdValue, kind, message: safeLegacyLogMessage(kind), createdAt: new Date().toISOString() };
   await txStore("logs", "readwrite", (store) => store.put(entry), repoIdValue);
 }
 
 export async function listLocalRepoLogs(repoIdValue: string, limit = 30): Promise<LocalRepoLogEntry[]> {
   const entries = await allFromIndex<LocalRepoLogEntry>("logs", "repoId", repoIdValue);
-  return entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
+  return entries.map((entry) => ({ ...entry, message: safeLegacyLogMessage(entry.kind) })).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
+}
+
+export function safeLegacyLogMessage(kind: LocalRepoLogKind): string {
+  return kind === "error" ? "Repository operation failed." : `Repository ${kind} operation recorded.`;
+}
+
+function diagnosticBytes(record: LocalRepositoryDiagnostic): number {
+  return new TextEncoder().encode(JSON.stringify(record)).byteLength;
+}
+
+function diagnosticRetryable(kind: RepositoryErrorKind): boolean {
+  return ["network", "rate-limit", "abuse-limit", "service-unavailable", "permission-unverified", "abort"].includes(kind);
+}
+
+function diagnosticShaPrefix(value?: string): string | undefined {
+  return value && /^[0-9a-f]{7,64}$/i.test(value) ? value.slice(0, 12) : undefined;
+}
+
+function diagnosticUuid(value: string): string {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : crypto.randomUUID();
+}
+
+export function repositoryDiagnosticFromError(error: unknown, operation: "read" | "update" | "compare" = "read"): Pick<LocalRepositoryDiagnostic, "errorKind" | "httpStatus" | "retryable"> {
+  const classified = classifyRepositoryError(error, operation);
+  return { errorKind: classified.kind, httpStatus: classified.status, retryable: diagnosticRetryable(classified.kind) };
+}
+
+export async function recordRepositoryDiagnostic(input: {
+  repoId: string;
+  scope: RepositoryOperationScope;
+  operationId: string;
+  operation: RepositoryDiagnosticOperation;
+  localInstanceId: string;
+  stage: RepositoryDiagnosticStage;
+  outcome: RepositoryDiagnosticOutcome;
+  startedAt: string;
+  durationMs?: number;
+  fileCount?: number;
+  byteCount?: number;
+  error?: unknown;
+  errorOperation?: "read" | "update" | "compare";
+  commitSha?: string;
+}): Promise<LocalRepositoryDiagnostic> {
+  const now = new Date().toISOString();
+  const record: LocalRepositoryDiagnostic = {
+    id: crypto.randomUUID(),
+    schemaVersion: REPOSITORY_DIAGNOSTIC_SCHEMA_VERSION,
+    operationId: diagnosticUuid(input.operationId),
+    localInstanceId: diagnosticUuid(input.localInstanceId),
+    operation: input.operation,
+    stage: input.stage,
+    outcome: input.outcome,
+    createdAt: now,
+    startedAt: input.startedAt,
+    ...(Number.isFinite(input.durationMs) && input.durationMs! >= 0 ? { durationMs: Math.round(input.durationMs!) } : {}),
+    ...(Number.isInteger(input.fileCount) && input.fileCount! >= 0 ? { fileCount: input.fileCount } : {}),
+    ...(Number.isInteger(input.byteCount) && input.byteCount! >= 0 ? { byteCount: input.byteCount } : {}),
+    ...(input.error ? repositoryDiagnosticFromError(input.error, input.errorOperation) : {}),
+    ...(input.commitSha ? { commitShaPrefix: diagnosticShaPrefix(input.commitSha) } : {}),
+  };
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = guardedWriteTransaction(db, ["repositories", "repositoryDiagnostics"], input.repoId);
+    const diagnostics = tx.objectStore("repositoryDiagnostics");
+    diagnostics.put(record);
+    const request = diagnostics.index("localInstanceId").getAll(input.localInstanceId);
+    request.onsuccess = () => {
+      const rows = (request.result as LocalRepositoryDiagnostic[]).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+      let bytes = rows.reduce((sum, row) => sum + diagnosticBytes(row), 0);
+      for (const row of rows.slice(REPOSITORY_DIAGNOSTIC_MAX_RECORDS)) { diagnostics.delete(row.id); bytes -= diagnosticBytes(row); }
+      for (const row of rows.slice(0, REPOSITORY_DIAGNOSTIC_MAX_RECORDS).reverse()) {
+        if (bytes <= REPOSITORY_DIAGNOSTIC_MAX_BYTES) break;
+        diagnostics.delete(row.id);
+        bytes -= diagnosticBytes(row);
+      }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(transactionError(tx));
+    tx.onabort = () => reject(transactionError(tx) ?? new Error("Repository diagnostic transaction aborted."));
+  });
+  return record;
+}
+
+export async function listRepositoryDiagnostics(repoIdValue: string, localInstanceId: string, scope: RepositoryOperationScope, limit = REPOSITORY_DIAGNOSTIC_MAX_RECORDS): Promise<LocalRepositoryDiagnostic[]> {
+  const repository = await getLocalRepositoryById(repoIdValue, scope.accountIdentity);
+  if (!repository || repository.localInstanceId !== localInstanceId) return [];
+  const rows = await allFromIndex<LocalRepositoryDiagnostic>("repositoryDiagnostics", "localInstanceId", localInstanceId);
+  return rows.filter((row) => row.schemaVersion === REPOSITORY_DIAGNOSTIC_SCHEMA_VERSION).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).slice(0, limit);
 }
 
 export async function createLocalCommit(
@@ -2487,6 +2628,7 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
       const filename = p.split("/").pop() ?? "";
       const num = filename.match(/^(\d{3})(?:-[^/]+)?\.md$/)?.[1] ?? "";
       const paragraphSlug = filename.replace(/\.md$/i, "");
+      const paragraphFm = splitFrontmatter(textMap.get(p) ?? "");
       const evaluationPath = `evaluations/paragraphs/${slug}/${paragraphSlug}.md`;
       const auditPath = buildParagraphAuditPath(slug, paragraphSlug);
       const imagePromptPath = `assets/chapters/${slug}/paragraphs/${paragraphSlug}/primary.md`;
@@ -2495,6 +2637,7 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
         title: titleName(p, slugToTitle(filename.replace(/\.md$/, ""))),
         path: p,
         revision: files.find((file) => file.path === p)?.currentHash,
+        ghostwriter: typeof paragraphFm.ghostwriter === "string" && paragraphFm.ghostwriter ? paragraphFm.ghostwriter : undefined,
         draftPath: draftPaths.get(p),
         scriptPath: scriptPaths.get(p),
         evaluationPath: allPaths.includes(evaluationPath) ? evaluationPath : undefined,

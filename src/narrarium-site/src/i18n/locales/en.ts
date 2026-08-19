@@ -128,6 +128,11 @@ const en = {
     tokenPermission: { unknown: "Repository access has not been validated yet.", "read-validated": "Repository read access verified.", "write-validated": "Repository read and write access verified.", denied: "Repository access denied." },
     expiration: { unknown: "Expiration unknown.", expired: "Token expired on {{date}}.", "one-day": "Token expires within 1 day ({{date}}).", "seven-days": "Token expires within 7 days ({{date}}).", "thirty-days": "Token expires within 30 days ({{date}}).", ok: "Token expires on {{date}}." },
     history: "Sync history",
+    diagnostics: "Operation diagnostics",
+    noDiagnostics: "No structured operation diagnostics recorded yet.",
+    diagnosticNoError: "No error",
+    diagnosticRetryable: "retryable",
+    diagnosticNotRetryable: "not retryable",
     logAll: "All",
     logKinds: {
       clone: "clone",
@@ -1103,7 +1108,7 @@ const en = {
   },
   ghostwriters: {
     title: "Ghostwriters",
-    intro: "Dedicated writers with their own style. Pick them while scripting or per chapter; without one the book default writing style is used.",
+    intro: "Each ghostwriter combines prose, voice, and punctuation rules. Choose a book default, then override it for individual chapters or paragraphs.",
     new: "New",
     loading: "Loading ghostwriters…",
     empty: "No ghostwriters yet.",
@@ -1111,6 +1116,7 @@ const en = {
     selectHint: "Select or create a ghostwriter to edit it.",
     loadFailed: "Failed to load ghostwriter",
     saveFailed: "Failed to save ghostwriter",
+    alreadyExists: "A ghostwriter with this name already exists.",
     name: "Name",
     language: "Language",
     tone: "Tone",
@@ -1124,7 +1130,12 @@ const en = {
     influences: "Influences",
     strengths: "Strengths",
     avoid: "Avoid",
-    instructions: "Style instructions"
+    instructions: "Style instructions",
+    writingStyle: "Writing style",
+    punctuationStyle: "Punctuation style",
+    setDefault: "Set as default",
+    defaultActive: "Default",
+    defaultSet: "{{name}} is now the default ghostwriter."
   },
   readerPersonas: {
     title: "Simulated readers",
@@ -1424,7 +1435,7 @@ const en = {
     scriptToDraftDesc: "Turn the script into draft prose following the beats.",
     draftToFinalDesc: "Polish the draft into the final paragraph.",
     ghostwriter: "Ghostwriter",
-    defaultStyle: "Default style",
+    defaultStyle: "Inherited ghostwriter",
     regenerate: "Regenerate",
     generate: "Generate",
     generateHint: "Press Generate to create the preview. You can pick a ghostwriter before generating.",
@@ -2248,6 +2259,26 @@ const en = {
     openNotes: "Open notes",
     localPending_one: "{{count}} local draft",
     localPending_other: "{{count}} local drafts"
+  },
+  shortcuts: {
+    title: "Keyboard shortcuts",
+    description: "Shortcuts adapt to the current book, chapter, paragraph, and view.",
+    items: {
+      previous: "Previous chapter or paragraph, preserving the current view",
+      next: "Next chapter or paragraph, preserving the current view",
+      nextView: "Next view of the current chapter or paragraph",
+      previousView: "Previous view of the current chapter or paragraph",
+      save: "Save the current page",
+      sync: "Save and synchronize the current repository",
+      notes: "Open quick notes",
+      debug: "Open LLM diagnostics",
+      research: "Open book research",
+      quickSwitch: "Open quick switch",
+      previousDocument: "Return to the previous document",
+      copy: "Copy and add selected prose to clipboard history",
+      readerPrevious: "Previous reader page",
+      readerNext: "Next reader page",
+    },
   },
   copilotTools: {
     introTitle: "Copilot tool registry",

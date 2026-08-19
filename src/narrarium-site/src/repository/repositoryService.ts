@@ -24,6 +24,9 @@ import {
   listAllLocalFiles,
   listDirtyLocalFiles,
   listUnpushedLocalCommits,
+  recordRepositoryDiagnostic,
+  type RepositoryDiagnosticOperation,
+  type RepositoryDiagnosticStage,
   markLocalRepositoryRemoteCheck,
   markLocalRepositoryRemoteChecking,
   markLocalRepositoryRemoteFailure,
@@ -32,7 +35,6 @@ import {
   heartbeatRepositoryLifecycleLease,
   markLocalCommitsPushed,
   putCleanLocalFileScoped,
-  removeAbandonedLocalClone,
   releaseLocalRepositoryRepair,
   releaseLegacyLocalRepositoryMigration,
   reclaimExpiredRepositoryLifecycleLease,
@@ -170,6 +172,28 @@ function operationScope(target: ExactRepositoryTarget): RepositoryOperationScope
   return scope;
 }
 
+async function diagnostic(input: {
+  meta: LocalRepositoryMeta;
+  scope: RepositoryOperationScope;
+  operationId: string;
+  operation: RepositoryDiagnosticOperation;
+  stage: RepositoryDiagnosticStage;
+  outcome: "started" | "stage" | "success" | "failure" | "cancelled";
+  startedAt: string;
+  durationMs?: number;
+  fileCount?: number;
+  byteCount?: number;
+  error?: unknown;
+  errorOperation?: "read" | "update" | "compare";
+  commitSha?: string;
+}): Promise<void> {
+  await recordRepositoryDiagnostic({
+    repoId: input.meta.id,
+    localInstanceId: input.meta.localInstanceId,
+    ...input,
+  }).catch(() => undefined);
+}
+
 async function exactLocalRepository(target: ExactRepositoryTarget, scope = operationScope(target)): Promise<LocalRepositoryMeta> {
   assertRepositoryOperationScopeCurrent(scope);
   if (!target.accountIdentity || !isAccountIdentityCurrent(target.accountIdentity, useAuthStore.getState().user)) {
@@ -290,6 +314,7 @@ async function ensureLocalBookStructureOnce(input: {
     .filter((item) => item.type === "blob" && item.path)
     .map((item) => ({ path: item.path!, sha: item.sha, size: item.size ?? 0 }));
   const cloneOperationId = crypto.randomUUID();
+  const startedAt = new Date().toISOString();
   const meta = await createLocalRepositoryClone({
     bookId: input.bookId,
     owner: input.book.owner,
@@ -302,6 +327,7 @@ async function ensureLocalBookStructureOnce(input: {
     // interrupted clone can never masquerade as a complete, clean, synced repo.
     expectedFileCount: blobs.length,
   }, scope, cloneOperationId);
+  await diagnostic({ meta, scope, operationId: cloneOperationId, operation: "clone", stage: "start", outcome: "started", startedAt, fileCount: blobs.length });
   if (persistent === false) await addLocalRepoLog(meta.id, "error", "Browser storage persistence was not granted; export backups regularly because the working copy may be evicted");
 
   let done = 0;
@@ -321,7 +347,9 @@ async function ensureLocalBookStructureOnce(input: {
     });
     });
   } catch (error) {
-    await removeAbandonedLocalClone(meta, scope, cloneOperationId).catch(() => undefined);
+    const classified = classifyRepositoryError(error, "read");
+    await markLocalRepositoryRepairRequired(meta.id, scope, cloneOperationId).catch(() => undefined);
+    await diagnostic({ meta, scope, operationId: cloneOperationId, operation: "clone", stage: "download", outcome: classified.kind === "abort" ? "cancelled" : "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), fileCount: done, error: classified });
     throw error;
   }
 
@@ -329,10 +357,12 @@ async function ensureLocalBookStructureOnce(input: {
     // Extremely large tree we could not enumerate in one request: leave the repo
     // marked incomplete so it is re-verified, rather than trusting a partial file set.
     await markLocalRepositoryRepairRequired(meta.id, scope, cloneOperationId);
+    await diagnostic({ meta, scope, operationId: cloneOperationId, operation: "clone", stage: "finalize", outcome: "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), fileCount: blobs.length, error: new Error("Remote tree truncated") });
     await addLocalRepoLog(meta.id, "error", `Remote tree truncated at ${blobs.length} files; clone left ready for repair`);
   } else {
     input.onProgress?.({ done: blobs.length, total: blobs.length, phase: "finalizing" });
     await markLocalRepositoryCloneComplete(meta.id, scope, cloneOperationId, blobs.length, headSha);
+    await diagnostic({ meta, scope, operationId: cloneOperationId, operation: "clone", stage: "finalize", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt), fileCount: blobs.length });
   }
   await addLocalRepoLog(meta.id, "clone", `Cloned ${blobs.length} files from ${meta.branch}`);
 
@@ -445,10 +475,16 @@ export async function verifyAndRepairLocalRepository(input: {
   const selected = await exactLocalRepository(target, scope);
   return withRepositoryMutationLease(selected.id, async () => {
     const claimed = await claimLocalRepositoryRepair(selected.id, scope, repairOperationId);
+    const startedAt = new Date().toISOString();
+    await diagnostic({ meta: claimed, scope, operationId: repairOperationId, operation: "repair", stage: "start", outcome: "started", startedAt });
     try {
-      return await withLifecycleHeartbeat(claimed.id, scope, repairOperationId, () => verifyAndRepairLocalRepositoryLeased(claimed, token, scope, repairOperationId, input.onProgress));
+      const result = await withLifecycleHeartbeat(claimed.id, scope, repairOperationId, () => verifyAndRepairLocalRepositoryLeased(claimed, token, scope, repairOperationId, input.onProgress));
+      await diagnostic({ meta: claimed, scope, operationId: repairOperationId, operation: "repair", stage: "finalize", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt), fileCount: result.repaired });
+      return result;
     } catch (error) {
       await releaseLocalRepositoryRepair(claimed.id, scope, repairOperationId).catch(() => undefined);
+      const classified = classifyRepositoryError(error, "compare");
+      await diagnostic({ meta: claimed, scope, operationId: repairOperationId, operation: "repair", stage: "download", outcome: classified.kind === "abort" ? "cancelled" : "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), error: classified });
       throw error;
     }
   });
@@ -581,17 +617,23 @@ export function autoCommitMessage(paths: string[]): string {
 export async function fetchRemoteStatus(input: ExactRepositoryTarget & { token: string; signal?: AbortSignal }): Promise<RemoteStatusResult> {
   const scope = operationScope(input);
   const meta = await exactLocalRepository(input, scope);
-  const previous = await markLocalRepositoryRemoteChecking(meta.id, scope);
-  const octokit = trackedOctokit(input.token, input);
+  const operationId = crypto.randomUUID();
+  const startedAt = new Date().toISOString();
+  await diagnostic({ meta, scope, operationId, operation: "fetch", stage: "start", outcome: "started", startedAt });
+  let previous: Awaited<ReturnType<typeof markLocalRepositoryRemoteChecking>> | undefined;
   try {
+    previous = await markLocalRepositoryRemoteChecking(meta.id, scope);
+    const octokit = trackedOctokit(input.token, input);
     const { remoteHeadSha, changed } = await resolveRemoteChangeState(octokit, meta, input.signal);
     input.signal?.throwIfAborted();
     await markLocalRepositoryRemoteCheck(meta.id, scope, remoteHeadSha, changed);
+    await diagnostic({ meta, scope, operationId, operation: "fetch", stage: "remote-read", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt) });
     await addLocalRepoLog(meta.id, "fetch", changed ? `Remote changed: ${remoteHeadSha.slice(0, 7)}` : "Remote up to date");
     return { remoteHeadSha, changed };
   } catch (error) {
     const classified = classifyRepositoryError(error, "read");
     await markLocalRepositoryRemoteFailure(meta.id, scope, classified.kind, previous).catch(() => undefined);
+    await diagnostic({ meta, scope, operationId, operation: "fetch", stage: "remote-read", outcome: classified.kind === "abort" ? "cancelled" : "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), error: classified });
     throw classified;
   }
 }
@@ -651,26 +693,36 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
   confirmed?: boolean;
   signal?: AbortSignal;
 }, scope: RepositoryOperationScope): Promise<{ updated: number; remoteHeadSha: string; recoveryId?: string }> {
+  const operationId = crypto.randomUUID();
+  const startedAt = new Date().toISOString();
+  await diagnostic({ meta, scope, operationId, operation: "pull", stage: "start", outcome: "started", startedAt });
   const dirty = await listDirtyLocalFiles(meta.id);
   const ahead = await listUnpushedLocalCommits(meta.id);
   const destructive = input.mode === "remote-wins";
   if ((dirty.length || ahead.length) && !destructive) {
+    await diagnostic({ meta, scope, operationId, operation: "pull", stage: "merge", outcome: "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), error: new Error("Pull requires confirmation") });
     throw new Error("Pull requires a clean working copy. Use the confirmed remote-wins recovery action to discard local work.");
   }
-  if (destructive && !input.confirmed) throw new Error("Remote-wins pull requires explicit confirmation.");
+  if (destructive && !input.confirmed) {
+    await diagnostic({ meta, scope, operationId, operation: "pull", stage: "merge", outcome: "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), error: new Error("Remote-wins pull requires confirmation") });
+    throw new Error("Remote-wins pull requires explicit confirmation.");
+  }
 
-  const previous = await markLocalRepositoryRemoteChecking(meta.id, scope);
+  let previous: Awaited<ReturnType<typeof markLocalRepositoryRemoteChecking>> | undefined;
   try {
+  previous = await markLocalRepositoryRemoteChecking(meta.id, scope);
   const octokit = trackedOctokit(input.token, input);
   const { remoteHeadSha, changed } = await resolveRemoteChangeState(octokit, meta, input.signal);
   input.signal?.throwIfAborted();
   if (remoteHeadSha === meta.remoteHeadSha && !dirty.length && !ahead.length) {
     await markLocalRepositoryRemoteCheck(meta.id, scope, remoteHeadSha, false);
+    await diagnostic({ meta, scope, operationId, operation: "pull", stage: "finalize", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt) });
     return { updated: 0, remoteHeadSha };
   }
   if (!changed && !dirty.length && !ahead.length) {
     await updateLocalRepositoryHead(meta.id, scope, remoteHeadSha);
     await addLocalRepoLog(meta.id, "pull", `Remote head changed to ${remoteHeadSha.slice(0, 7)} with no file-content differences`);
+    await diagnostic({ meta, scope, operationId, operation: "pull", stage: "finalize", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt) });
     return { updated: 0, remoteHeadSha };
   }
   const remoteTree = await octokit.rest.git.getTree({ owner: meta.owner, repo: meta.repo, tree_sha: remoteHeadSha, recursive: "1", request: { signal: input.signal } });
@@ -705,11 +757,13 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
     !destructive,
   );
   const recoveryId = recovery.id;
-  await addLocalRepoLog(meta.id, "pull", `Pulled ${updated} files from remote${recoveryId ? ` after recovery snapshot ${recoveryId}` : ""}`);
+    await addLocalRepoLog(meta.id, "pull", `Pulled ${updated} files from remote${recoveryId ? ` after recovery snapshot ${recoveryId}` : ""}`);
+    await diagnostic({ meta, scope, operationId, operation: "pull", stage: "finalize", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt), fileCount: updated });
   return { updated, remoteHeadSha, ...(recoveryId ? { recoveryId } : {}) };
   } catch (error) {
     const classified = classifyRepositoryError(error, "compare");
     await markLocalRepositoryRemoteFailure(meta.id, scope, classified.kind, previous).catch(() => undefined);
+    await diagnostic({ meta, scope, operationId, operation: "pull", stage: "merge", outcome: classified.kind === "abort" ? "cancelled" : "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), error: classified });
     throw error instanceof RepositoryOwnershipChangedError || classified.kind === "unknown" ? error : classified;
   }
 }
@@ -746,16 +800,32 @@ export async function pushLocalCommits(input: PushLocalCommitsInput): Promise<Pu
   input.signal?.throwIfAborted();
   const scope = operationScope(input);
   const selected = await exactLocalRepository(input, scope);
+  const operationId = crypto.randomUUID();
+  const startedAt = new Date().toISOString();
+  await diagnostic({ meta: selected, scope, operationId, operation: "push", stage: "start", outcome: "started", startedAt });
   try {
-    return await withRepositoryMutationLease(selected.id, async () => {
+    const result = await withRepositoryMutationLease(selected.id, async () => {
       const meta = await exactLocalRepository(input, scope);
       return pushLocalCommitsLocked(meta, input, scope);
     });
+    await diagnostic({ meta: selected, scope, operationId, operation: "push", stage: "push", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt), fileCount: result.files, commitSha: result.commitSha });
+    return result;
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
-    if (error instanceof RepositoryOwnershipChangedError || error instanceof RemoteHeadMismatchError || error instanceof AmbiguousLocalPushError) throw error;
+    if (error instanceof DOMException && error.name === "AbortError") {
+      await diagnostic({ meta: selected, scope, operationId, operation: "push", stage: "push", outcome: "cancelled", startedAt, durationMs: Date.now() - Date.parse(startedAt), error, errorOperation: "update" });
+      throw error;
+    }
+    if (error instanceof RepositoryOwnershipChangedError || error instanceof RemoteHeadMismatchError || error instanceof AmbiguousLocalPushError) {
+      await diagnostic({ meta: selected, scope, operationId, operation: "push", stage: "push", outcome: "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), error, errorOperation: "update" });
+      throw error;
+    }
     const record = error && typeof error === "object" ? error as { status?: unknown; response?: unknown; name?: unknown } : undefined;
-    if (error instanceof RepositoryError || typeof record?.status === "number" || record?.response || record?.name === "TypeError" || record?.name === "AbortError") throw classifyRepositoryError(error, "update");
+    if (error instanceof RepositoryError || typeof record?.status === "number" || record?.response || record?.name === "TypeError" || record?.name === "AbortError") {
+      const classified = classifyRepositoryError(error, "update");
+      await diagnostic({ meta: selected, scope, operationId, operation: "push", stage: "push", outcome: classified.kind === "abort" ? "cancelled" : "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), error: classified, errorOperation: "update" });
+      throw classified;
+    }
+    await diagnostic({ meta: selected, scope, operationId, operation: "push", stage: "push", outcome: "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), error, errorOperation: "update" });
     throw error;
   }
 }
@@ -878,7 +948,18 @@ async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLoca
 export async function syncFullRepository(input: ExactRepositoryTarget & { token: string }): Promise<SyncResult> {
   const scope = operationScope(input);
   const selected = await exactLocalRepository(input, scope);
-  return withRepositoryMutationLease(selected.id, async () => syncFullRepositoryLeased(await exactLocalRepository(input, scope), input, scope));
+  const operationId = crypto.randomUUID();
+  const startedAt = new Date().toISOString();
+  await diagnostic({ meta: selected, scope, operationId, operation: "sync", stage: "start", outcome: "started", startedAt });
+  try {
+    const result = await withRepositoryMutationLease(selected.id, async () => syncFullRepositoryLeased(await exactLocalRepository(input, scope), input, scope));
+    await diagnostic({ meta: selected, scope, operationId, operation: "sync", stage: "finalize", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt), fileCount: result.pulled + result.committed, });
+    return result;
+  } catch (error) {
+    const classified = classifyRepositoryError(error, "compare");
+    await diagnostic({ meta: selected, scope, operationId, operation: "sync", stage: "merge", outcome: classified.kind === "abort" ? "cancelled" : "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), error: classified });
+    throw error;
+  }
 }
 
 async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactRepositoryTarget & { token: string }, scope: RepositoryOperationScope): Promise<SyncResult> {

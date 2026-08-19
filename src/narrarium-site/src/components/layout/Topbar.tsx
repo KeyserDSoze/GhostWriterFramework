@@ -1,4 +1,4 @@
-import { Activity, ArrowLeftRight, BookOpen, CircleAlert, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, History, Languages, LogOut, Menu, Moon, NotebookPen, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2, Wand2 } from "lucide-react";
+import { Activity, ArrowLeftRight, BookOpen, CircleAlert, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, History, Keyboard, Languages, LogOut, Menu, Moon, NotebookPen, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2, Wand2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,6 +38,7 @@ import { useCurrentObjectPendingCommit } from "@/hooks/useCurrentObjectPendingCo
 import { useAppUpdateStore } from "@/store/appUpdateStore";
 import { activateAvailableUpdate } from "@/pwa";
 import { accountIdentity } from "@/auth/accountIdentity";
+import { KeyboardShortcutsDialog } from "@/components/layout/KeyboardShortcutsDialog";
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -85,6 +86,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const speechGenerationRef = useRef(0);
   const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "behind" | "offline" | "none" }>({ label: "", tone: "none" });
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   useEffect(() => {
     const openRepositoryStatus = () => setRepoDialogOpen(true);
     window.addEventListener("narrarium:open-repository-status", openRepositoryStatus);
@@ -438,6 +440,10 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               <HelpCircle className="mr-2 h-4 w-4" />
               {t("nav.help")}
             </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShortcutsOpen(true)}>
+              <Keyboard className="mr-2 h-4 w-4" />
+              {t("shortcuts.title")}
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => window.dispatchEvent(new Event("narrarium:open-onboarding"))}>
               <Wand2 className="mr-2 h-4 w-4" />
               {t("onboarding.open")}
@@ -462,6 +468,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         </DropdownMenu>
       </div>
       <RepositoryStatusDialog open={repoDialogOpen} onOpenChange={setRepoDialogOpen} book={currentBook} branch={currentBranch} settings={settings} />
+      <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </header>
   );
 }

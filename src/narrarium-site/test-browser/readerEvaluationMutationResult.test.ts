@@ -1,5 +1,5 @@
 import { beforeEach, expect, test, vi } from "vitest";
-import { generateReaderEvaluationSummary, runReaderEvaluations } from "@/narrarium/readerEvaluations";
+import { deleteReaderEvaluation, generateReaderEvaluationSummary, runReaderEvaluations } from "@/narrarium/readerEvaluations";
 import { emptyReaderPersona } from "@/narrarium/readerPersona";
 
 const router = vi.hoisted(() => ({ completeToolRouted: vi.fn() }));
@@ -21,6 +21,7 @@ const safeMutation = vi.hoisted(() => ({
 const immediateMutation = vi.hoisted(() => ({
   captureImmediateMutation: vi.fn(),
   commitImmediateMutation: vi.fn(),
+  commitImmediateMutations: vi.fn(),
   mergeManagedFrontmatter: (existing: Record<string, unknown>, managed: Record<string, unknown>, keys: string[]) => ({
     ...Object.fromEntries(Object.entries(existing).filter(([key]) => !keys.includes(key))),
     ...managed,
@@ -43,9 +44,11 @@ beforeEach(() => {
   github.updateFile.mockResolvedValue(undefined);
   github.readFileWithSha.mockImplementation(async (_token, _owner, _repo, _branch, path) =>
     path === "chapters/001-start/chapter.md" ? { sha: "sha", content: "Text" }
-      : path === legacyGood ? { sha: "legacy-sha", content: "legacy" } : null);
+      : path === currentGood ? { sha: "good-sha", content: "good" }
+        : path === legacyGood ? { sha: "legacy-sha", content: "legacy" } : null);
   safeMutation.resolveRepositoryHeadForMutation.mockResolvedValue("head");
   safeMutation.commitAndPushTextFileMutation.mockResolvedValue({ commitSha: "next", mode: "remote" });
+  immediateMutation.commitImmediateMutations.mockResolvedValue("next");
   immediateMutation.captureImmediateMutation.mockImplementation(async ({ path, remoteHeadSha }) => {
     const current = await github.readFileWithSha("token", "owner", "repo", "main", path);
     return { path, content: current?.content ?? null, sha: current?.sha ?? null, hash: current ? `hash:${current.content}` : null, remoteHeadSha: remoteHeadSha ?? "head" };
@@ -158,4 +161,35 @@ test("reader evaluation mutation result includes completed, failed-record, and l
       { path: legacyGood, content: null, expectedCurrentHash: "hash:legacy" },
     ]),
   }));
+});
+
+test("deletes reader evaluations through the safe immediate mutation path", async () => {
+  const record = {
+    path: currentGood,
+    id: "good",
+    targetType: "chapter" as const,
+    targetId: "chapter:001-start",
+    readerId: "good",
+    readerName: "Good Reader",
+    readerType: "standard",
+    createdAt: "now",
+    sourceContentHash: "source",
+    sourceContentVersion: "sha",
+    status: "completed" as const,
+    body: "Body",
+  };
+
+  await expect(deleteReaderEvaluation({
+    token: "token",
+    book: { id: "book", owner: "owner", repo: "repo" } as any,
+    branch: "main",
+    record,
+  })).resolves.toBe(true);
+
+  expect(immediateMutation.captureImmediateMutation).toHaveBeenCalledWith(expect.objectContaining({ path: currentGood }));
+  expect(immediateMutation.commitImmediateMutations).toHaveBeenCalledWith(expect.objectContaining({
+    message: "Delete reader evaluation Good Reader",
+    snapshots: [expect.objectContaining({ snapshot: expect.objectContaining({ path: currentGood }), content: null })],
+  }));
+  expect(github.deleteFile).not.toHaveBeenCalled();
 });

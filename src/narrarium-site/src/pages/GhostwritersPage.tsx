@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Loader2, PenLine, Plus, Save, Trash2, Users } from "lucide-react";
+import { Loader2, PenLine, Plus, Save, Star, Trash2, Users } from "lucide-react";
+import { parseDocument, stringify } from "yaml";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,10 +15,11 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { resolveBookToken } from "@/types/settings";
-import { createFile, deleteFile, readFileWithSha, updateFile } from "@/github/githubClient";
+import { readFileWithSha } from "@/github/githubClient";
 import { emptyGhostwriter, parseGhostwriter, serializeGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
 import { slugify } from "@/narrarium/canon";
 import { resolveUnsavedChanges } from "@/hooks/resolveUnsavedChanges";
+import { captureImmediateMutation, commitImmediateMutation, commitImmediateMutations } from "@/assistant/immediateMutation";
 
 export function GhostwritersPage() {
   const { bookId } = useParams<{ bookId: string }>();
@@ -31,7 +33,6 @@ export function GhostwritersPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [profile, setProfile] = useState<GhostwriterProfile | null>(null);
   const [savedProfile, setSavedProfile] = useState("");
-  const [sha, setSha] = useState("");
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -44,11 +45,10 @@ export function GhostwritersPage() {
     if (!entry) return;
     setBusy(true);
     readFileWithSha(token, book.owner, book.repo, branch, entry.path)
-      .then(({ content, sha: fileSha }) => {
+      .then(({ content }) => {
         const loaded = parseGhostwriter(selected, content);
         setProfile(loaded);
         setSavedProfile(serializeGhostwriter(loaded));
-        setSha(fileSha);
       })
       .catch((err) => toast({ title: t("ghostwriters.loadFailed"), description: String(err), variant: "destructive" }))
       .finally(() => setBusy(false));
@@ -61,7 +61,9 @@ export function GhostwritersPage() {
     setBusy(true);
     try {
       const content = serializeGhostwriter({ slug, ...emptyGhostwriter(name) });
-      await createFile(token, book.owner, book.repo, branch, `ghostwriters/${slug}.md`, content, `Add ghostwriter ${slug}`);
+      const snapshot = await captureImmediateMutation({ token, book, branch, path: `ghostwriters/${slug}.md` });
+      if (snapshot.content) throw new Error(t("ghostwriters.alreadyExists"));
+      await commitImmediateMutation({ token, book, branch, snapshot, content, message: `Add ghostwriter ${slug}` });
       setNewName(""); setCreating(false);
       await reload();
       setSelected(slug);
@@ -75,8 +77,8 @@ export function GhostwritersPage() {
     setBusy(true);
     try {
       const content = serializeGhostwriter(profile);
-      const nextSha = await updateFile(token, book.owner, book.repo, branch, `ghostwriters/${profile.slug}.md`, sha, content, `Update ghostwriter ${profile.slug}`);
-      setSha(nextSha);
+      const snapshot = await captureImmediateMutation({ token, book, branch, path: `ghostwriters/${profile.slug}.md` });
+      await commitImmediateMutation({ token, book, branch, snapshot, content, message: `Update ghostwriter ${profile.slug}` });
       setSavedProfile(content);
       toast({ title: t("common.saved") });
       await reload();
@@ -105,12 +107,31 @@ export function GhostwritersPage() {
   }
 
   async function remove() {
-    if (!profile || !book || !token) return;
+    if (!profile || !book || !token || structure?.ghostwriter === profile.slug) return;
     setBusy(true);
     try {
-      await deleteFile(token, book.owner, book.repo, branch, `ghostwriters/${profile.slug}.md`, sha, `Remove ghostwriter ${profile.slug}`);
+      const snapshot = await captureImmediateMutation({ token, book, branch, path: `ghostwriters/${profile.slug}.md` });
+      if (!snapshot.content) return;
+      await commitImmediateMutations({ token, book, branch, snapshots: [{ snapshot, content: null }], message: `Remove ghostwriter ${profile.slug}` });
       setSelected(null); setProfile(null); setSavedProfile("");
       await reload();
+    } catch (err) {
+      toast({ title: t("ghostwriters.saveFailed"), description: String(err), variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  async function setAsDefault() {
+    if (!profile || !book || !token || structure?.ghostwriter === profile.slug || !await allowProfileChange()) return;
+    setBusy(true);
+    try {
+      const snapshot = await captureImmediateMutation({ token, book, branch, path: "book.md" });
+      const match = snapshot.content ? /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(snapshot.content) : null;
+      const frontmatter = match ? ((parseDocument(match[1]).toJSON() as Record<string, unknown>) ?? {}) : { type: "book", id: "book", title: structure?.title ?? book.name };
+      frontmatter.ghostwriter = profile.slug;
+      const content = `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${(match?.[2] ?? structure?.description ?? "").trim()}\n`;
+      await commitImmediateMutation({ token, book, branch, snapshot, content, message: `Set default ghostwriter ${profile.slug}` });
+      await reload();
+      toast({ title: t("ghostwriters.defaultSet", { name: profile.name }) });
     } catch (err) {
       toast({ title: t("ghostwriters.saveFailed"), description: String(err), variant: "destructive" });
     } finally { setBusy(false); }
@@ -142,7 +163,7 @@ export function GhostwritersPage() {
         <div className="space-y-1">
           {list.map((g) => (
             <button key={g.slug} type="button" onClick={() => void selectProfile(g.slug)} className={selected === g.slug ? "flex w-full items-center gap-2 rounded-lg border bg-primary/5 px-3 py-2 text-left text-sm" : "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm hover:bg-muted/40"}>
-              <PenLine className="h-4 w-4 text-muted-foreground" />{g.name}
+              <PenLine className="h-4 w-4 text-muted-foreground" />{g.name}{structure?.ghostwriter === g.slug && <Star className="ml-auto h-3.5 w-3.5 fill-current text-amber-500" />}
             </button>
           ))}
         </div>
@@ -156,9 +177,14 @@ export function GhostwritersPage() {
             <div className="flex items-center justify-between">
               <h2 className="font-serif text-xl font-semibold">{profile.name}</h2>
               <div className="flex gap-2">
-                <Button size="sm" variant="ghost" onClick={() => void remove()} disabled={busy}><Trash2 className="mr-1 h-4 w-4" />{t("common.delete")}</Button>
+                <Button size="sm" variant="outline" onClick={() => void setAsDefault()} disabled={busy || structure?.ghostwriter === profile.slug}><Star className="mr-1 h-4 w-4" />{structure?.ghostwriter === profile.slug ? t("ghostwriters.defaultActive") : t("ghostwriters.setDefault")}</Button>
+                <Button size="sm" variant="ghost" onClick={() => void remove()} disabled={busy || structure?.ghostwriter === profile.slug}><Trash2 className="mr-1 h-4 w-4" />{t("common.delete")}</Button>
                 <Button size="sm" onClick={() => void save()} disabled={busy || !dirty}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}{t("common.save")}</Button>
               </div>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-1"><Label>{t("ghostwriters.writingStyle")}</Label><AutoTextarea value={profile.writingStyle} onChange={(e) => patch({ writingStyle: e.target.value })} className="min-h-32 text-sm leading-6" /></div>
+              <div className="space-y-1"><Label>{t("ghostwriters.punctuationStyle")}</Label><AutoTextarea value={profile.punctuationStyle} onChange={(e) => patch({ punctuationStyle: e.target.value })} className="min-h-32 text-sm leading-6" /></div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label={t("ghostwriters.name")} value={profile.name} onChange={(v) => patch({ name: v })} />

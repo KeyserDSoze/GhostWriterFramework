@@ -16,8 +16,8 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useHasLocalRewriteOperation } from "@/hooks/useHasLocalRewriteOperation";
 import { resolveBookToken } from "@/types/settings";
-import { deleteFile, loadFileContent, readFileWithSha } from "@/github/githubClient";
-import { generateReaderEvaluationSummary, hashReaderSource, latestNonStaleCompletedReaderEvaluations, loadReaderPersonas, parseReaderEvaluation, runReaderEvaluations, type ReaderEvaluationProgress, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
+import { loadFileContent, readFileWithSha } from "@/github/githubClient";
+import { deleteReaderEvaluation, generateReaderEvaluationSummary, hashReaderSource, latestNonStaleCompletedReaderEvaluations, loadReaderPersonas, parseReaderEvaluation, runReaderEvaluations, type ReaderEvaluationProgress, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
 import type { ReaderEvaluationDepth, ReaderPersonaProfile } from "@/narrarium/readerPersona";
 import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
 import { useRegisterPageActions } from "@/store/pageActionsStore";
@@ -172,9 +172,8 @@ export function ReaderEvaluationsPage() {
 
   async function removeEvaluation(record: ReaderEvaluationRecord) {
     if (!book || !window.confirm(t("readerEvaluations.deleteConfirm", { reader: record.readerName }))) return;
-    const file = await readFileWithSha(token, book.owner, book.repo, branch, record.path).catch(() => null);
-    if (!file) return;
-    await deleteFile(token, book.owner, book.repo, branch, record.path, file.sha, `Delete reader evaluation ${record.readerName}`);
+    const deleted = await deleteReaderEvaluation({ token, book, branch, record });
+    if (!deleted) return;
     setHistory((current) => current.filter((entry) => entry.path !== record.path));
     await reload();
   }

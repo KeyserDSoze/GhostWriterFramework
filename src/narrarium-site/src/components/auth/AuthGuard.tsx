@@ -267,14 +267,14 @@ export function AuthGuard({ children }: AuthGuardProps) {
         setStatus("offline");
         return;
       }
-      // Known user, but token missing/expired → try silent re-auth
-      const attemptKey = `google:${identity}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
-      if (lastAttemptKeyRef.current === attemptKey) return;
-      lastAttemptKeyRef.current = attemptKey;
-      useUiStore.getState().setAuthActivity("refreshing");
-      setStatus("checking");
-      beginAttempt(identity!);
-      setSilentAttemptNonce((value) => value + 1);
+      // Google OAuth token flow may open a popup even with prompt=none once the
+      // provider session is stale. Do not launch or retry it automatically.
+      // Preserve remembered identity and require one explicit login click.
+      silentFallbackIdentityRef.current = identity;
+      cancelAttempt();
+      useUiStore.getState().setAuthActivity("idle");
+      invalidateToken();
+      setStatus("unauthenticated");
     } else if (user?.provider === "microsoft") {
       if (navigator.onLine === false) {
         useUiStore.getState().setAuthActivity("offline");
@@ -313,6 +313,14 @@ export function AuthGuard({ children }: AuthGuardProps) {
       const valid = !!accessToken && !!accessTokenExpiry && Date.now() < accessTokenExpiry;
       const activity = useUiStore.getState().authActivity;
       if (user && !valid && navigator.onLine !== false && activity !== "refreshing") {
+        if (user.provider === "google") {
+          silentFallbackIdentityRef.current = accountIdentity(user);
+          cancelAttempt();
+          useUiStore.getState().setAuthActivity("idle");
+          invalidateToken();
+          setStatus("unauthenticated");
+          return;
+        }
         if (retryIdentityRef.current !== accountIdentity(user)) {
           retryIdentityRef.current = accountIdentity(user);
           silentRetryCountRef.current = 0;
