@@ -44,6 +44,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Chromium
+        run: npm run e2e:install
+
       - name: Configure Pages
         uses: actions/configure-pages@v6
 
@@ -61,6 +64,21 @@ jobs:
           MCP_HEALTH_URL: https://narrarium.space/health
           VITE_GITHUB_MODELS_BASE: ${{ vars.VITE_GITHUB_MODELS_BASE }}
         run: npm run docs:build
+
+      - name: Run Narrarium site E2E tests
+        env:
+          SITE_BASE: /
+          SITE_URL: https://narrarium.net
+          MCP_PUBLIC_URL: https://narrarium.space/mcp
+          MCP_HEALTH_URL: https://narrarium.space/health
+          VITE_GITHUB_MODELS_BASE: ${{ vars.VITE_GITHUB_MODELS_BASE }}
+        run: npm run test:e2e:build
+
+      - name: Execute Narrarium site E2E tests
+        env:
+          SITE_BASE: /
+        run: npm run test:e2e
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
         with:

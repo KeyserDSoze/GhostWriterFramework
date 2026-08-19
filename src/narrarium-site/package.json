@@ -1,14 +1,14 @@
 {
   "name": "narrarium-site",
   "private": true,
-  "version": "0.76.50",
+  "version": "0.76.51",
   "type": "module",
   "description": "GitHub Pages site and web app for Narrarium Framework.",
   "scripts": {
     "predev": "node scripts/generate-docs.mjs",
     "dev": "vite",
     "prebuild": "node scripts/check-patch-notes.mjs && node scripts/generate-docs.mjs",
-    "build": "tsc -b && vite build && node scripts/write-spa-fallback.mjs",
+    "build": "tsc -b && vite build && node scripts/write-spa-fallback.mjs && node scripts/assert-production-bundle.mjs",
     "preview": "vite preview",
     "test": "npm run test:typecheck && npm run test:unit && npm run test:browser",
     "test:unit": "node --experimental-strip-types --test test/*.test.mjs",

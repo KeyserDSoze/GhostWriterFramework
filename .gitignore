@@ -1,8 +1,11 @@
 node_modules/
 dist/
+src/narrarium-site/dist-e2e/
 .astro/
 .DS_Store
 coverage/
+test-results/
+playwright-report/
 packages/astro-reader/public/downloads/
 bin/
 obj/

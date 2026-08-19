@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.51",
+    "date": "2026-08-18",
+    "en": {
+      "title": "Real-browser save and sync coverage",
+      "summary": "This release adds a deterministic Chromium regression flow for opening an existing local book, editing a draft, saving it, and synchronizing it to GitHub.",
+      "changes": [
+        "Added production-preview Chromium coverage for an existing account-scoped local book and authoritative branch, with deterministic Google Drive and GitHub fixtures.",
+        "Verified rendered paragraph editing, visible save completion, commit/push ordering, edited blob content, local clean settlement, reload persistence, and bounded branch-head requests.",
+        "Added CI and Pages browser installation and E2E gates without using real credentials or remote writes.",
+        "Kept the deterministic test authentication adapter isolated from ordinary production builds and preserved GitHub Pages base paths."
+      ]
+    },
+    "it": {
+      "title": "Copertura reale browser per salvataggio e sync",
+      "summary": "Questa release aggiunge un flusso di regressione Chromium deterministico per aprire un libro locale esistente, modificare una bozza, salvarla e sincronizzarla su GitHub.",
+      "changes": [
+        "Aggiunta la copertura Chromium sul preview di produzione per un libro locale account-scoped esistente e il suo branch autorevole, con fixture Google Drive e GitHub deterministiche.",
+        "Verificati editing reale del paragrafo, completamento del salvataggio visibile, ordine commit/push, contenuto blob modificato, settlement locale pulito, persistenza al reload e richieste branch-head limitate.",
+        "Aggiunti installazione Chromium e gate E2E nei workflow CI e Pages senza credenziali reali o scritture remote.",
+        "Tenuto isolato l'adapter di autenticazione deterministico dai build production ordinari e preservati i base path GitHub Pages."
+      ]
+    }
+  },
+  {
     "version": "0.76.50",
     "date": "2026-08-18",
     "en": {

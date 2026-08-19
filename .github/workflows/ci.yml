@@ -25,7 +25,22 @@ jobs:
         run: npm ci
 
       - name: Build workspace
+        env:
+          SITE_BASE: /
         run: npm run build
+
+      - name: Install Chromium
+        run: npm run e2e:install
+
+      - name: Build E2E site
+        env:
+          SITE_BASE: /
+        run: npm run test:e2e:build
+
+      - name: Run E2E smoke tests
+        env:
+          SITE_BASE: /
+        run: npm run test:e2e
 
       - name: Validate types
         run: npm run validate

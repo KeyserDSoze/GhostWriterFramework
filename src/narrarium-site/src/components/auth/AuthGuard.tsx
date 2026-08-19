@@ -42,6 +42,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const silentFallbackIdentityRef = useRef<string | null>(null);
   const retryTimerGenerationRef = useRef(0);
   const googleInvocationQueueRef = useRef<Array<{ nonce: number; identity: string }>>([]);
+  const e2eAuth = __NARRARIUM_E2E_BUILD__ && import.meta.env.VITE_E2E === "true";
 
   function clearSilentAuthTimeout() {
     if (silentAuthTimeoutRef.current != null) {
@@ -231,6 +232,16 @@ export function AuthGuard({ children }: AuthGuardProps) {
       Date.now() < accessTokenExpiry &&
       tokenBound;
 
+    // E2E builds use a deterministic local identity instead of exercising a real
+    // provider popup. The production build never enables this compile-time flag.
+    if (e2eAuth) {
+      const e2eUser = user ?? { provider: "google" as const, providerAccountId: "e2e-google-user", name: "E2E User", email: "e2e@example.test", picture: "" };
+      if (!user || !accessToken) setAuth("e2e-google-token", e2eUser, 3600);
+      useUiStore.getState().setAuthActivity("idle");
+      setStatus("ok");
+      return;
+    }
+
     const immutableIdentity = Boolean(user?.providerAccountId?.trim()) && (user?.provider !== "microsoft" || Boolean(user.homeAccountId?.trim() && user.localAccountId?.trim()));
     const identity = accountIdentity(user);
     if (observedIdentityRef.current !== identity) {
@@ -280,7 +291,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
       clearSilentAuthTimeout();
       setStatus("unauthenticated");
     }
-  }, [accessToken, accessTokenExpiry, clearAuthForLegacyUpgrade, instance, invalidateToken, setAuth, silentAttemptNonce, silentLogin, user]);
+  }, [accessToken, accessTokenExpiry, clearAuthForLegacyUpgrade, e2eAuth, instance, invalidateToken, setAuth, silentAttemptNonce, silentLogin, user]);
 
   useEffect(() => {
     if (!silentAttemptNonce || user?.provider !== "google") return;

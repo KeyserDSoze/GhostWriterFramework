@@ -9,6 +9,8 @@ const require = createRequire(import.meta.url);
 const pkg = require("./package.json") as { version: string };
 
 const repoName = process.env.GITHUB_REPOSITORY?.split("/")[1];
+const e2eBuild = process.env.NARRARIUM_E2E_BUILD === "1";
+const outputDir = e2eBuild ? "dist-e2e" : "dist";
 const siteBase =
   process.env.SITE_BASE ??
   process.env.DOCS_BASE ??
@@ -19,6 +21,7 @@ export default defineConfig({
   base: siteBase,
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    __NARRARIUM_E2E_BUILD__: JSON.stringify(e2eBuild),
   },
   plugins: [
     react(),
@@ -47,7 +50,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: path.resolve(__dirname, "dist"),
+    outDir: path.resolve(__dirname, outputDir),
     emptyOutDir: true,
     chunkSizeWarningLimit: 600,
     rollupOptions: {
