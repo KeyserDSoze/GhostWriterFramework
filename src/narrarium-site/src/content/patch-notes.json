@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.53",
+    "date": "2026-08-19",
+    "en": {
+      "title": "E2E configuration included in CI",
+      "summary": "This follow-up includes the Playwright configuration and scenarios in the repository so CI and Pages execute the same real-browser tests as local development.",
+      "changes": [
+        "Added the root Playwright configuration and deterministic Chromium scenarios to the tracked release commit.",
+        "Ensured CI and GitHub Pages can discover the production-preview E2E files instead of failing before test startup.",
+        "Kept the two real-browser flows for opening an existing local book, editing, saving, syncing and validating bounded GitHub requests."
+      ]
+    },
+    "it": {
+      "title": "Configurazione E2E inclusa nella CI",
+      "summary": "Questo follow-up include configurazione Playwright e scenari nel repository, cosi CI e Pages eseguono gli stessi test browser reali dello sviluppo locale.",
+      "changes": [
+        "Aggiunti al commit della release la configurazione Playwright root e gli scenari Chromium deterministici.",
+        "Garantito che CI e GitHub Pages possano scoprire i file E2E sul preview production invece di fallire prima dell'avvio dei test.",
+        "Mantenuti i due flussi browser reali per aprire un libro locale esistente, modificarlo, salvarlo, sincronizzarlo e verificare richieste GitHub limitate."
+      ]
+    }
+  },
+  {
     "version": "0.76.52",
     "date": "2026-08-19",
     "en": {
