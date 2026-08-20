@@ -10,6 +10,17 @@ const COMPLETION_STORE_NAME = "maintenanceCompletions";
 const MIGRATION_COMPLETION_STORE_NAME = "migrationCompletions";
 
 export const LOCAL_REWRITE_OPERATIONS_CHANGED_EVENT = "narrarium:local-rewrite-operations-changed";
+export const LOCAL_REWRITE_DATABASE_BLOCKED_EVENT = "narrarium:local-rewrite-database-blocked";
+
+export class RewriteOperationDatabaseBlockedError extends Error {
+  readonly code = "LOCAL_REWRITE_DATABASE_BLOCKED";
+  readonly retryable = true;
+
+  constructor() {
+    super("Local rewrite operation database upgrade is blocked by another tab. Close or reload other Narrarium tabs and retry.");
+    this.name = "RewriteOperationDatabaseBlockedError";
+  }
+}
 
 type StoredRewriteOperation = Omit<RewriteOperationManifest, "localInstanceId"> & {
   storageId: string;
@@ -151,9 +162,19 @@ function targetKey(scope: RewriteOperationManifest["scope"], chapterSlug: string
 function openDb(): Promise<IDBDatabase> {
   dbPromise ??= new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onblocked = () => reject(new Error("Local rewrite operation database upgrade is blocked by another tab. Close or reload other Narrarium tabs and retry."));
+    let blocked = false;
+    request.onblocked = () => {
+      blocked = true;
+      if (typeof window !== "undefined") window.dispatchEvent(new Event(LOCAL_REWRITE_DATABASE_BLOCKED_EVENT));
+      reject(new RewriteOperationDatabaseBlockedError());
+    };
     request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const db = request.result;
+      if (blocked) { db.close(); return; }
+      db.onversionchange = () => { db.close(); dbPromise = null; };
+      resolve(db);
+    };
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -180,7 +201,6 @@ function openDb(): Promise<IDBDatabase> {
   }).then(async (db) => {
     try {
       await reconcileLegacyRewriteOperations(db);
-      db.onversionchange = () => { db.close(); dbPromise = null; };
       return db;
     } catch (error) {
       db.close();
@@ -191,6 +211,16 @@ function openDb(): Promise<IDBDatabase> {
     throw error;
   });
   return dbPromise;
+}
+
+export async function ensureLocalRewriteOperationStoreReady(): Promise<void> {
+  await openDb();
+}
+
+export async function closeLocalRewriteOperationStoreForTests(): Promise<void> {
+  const pending = dbPromise;
+  dbPromise = null;
+  if (pending) await pending.then((db) => db.close()).catch(() => undefined);
 }
 
 function notifyChanged(): void {

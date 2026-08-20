@@ -29,6 +29,7 @@ import { Input } from "@/components/ui/input";
 import { useNavigationHistoryStore, type NavigationHistoryEntry } from "@/store/navigationHistoryStore";
 import { FeedbackRewriteWorkflowDialog } from "@/components/book/FeedbackRewriteWorkflowDialog";
 import { useDirtyNavigationGuard } from "@/hooks/useDirtyNavigationGuard";
+import { useRewriteDatabaseBlockedNotification } from "@/hooks/useRewriteDatabaseBlockedNotification";
 
 const AssistantPanel = lazy(() =>
   import("@/components/assistant/AssistantPanel").then((module) => ({ default: module.AssistantPanel })),
@@ -51,6 +52,7 @@ export function Shell() {
   useClipboardSync();
   useGlobalShortcuts();
   useDirtyNavigationGuard(t("common.unsavedNavigationConfirm"));
+  useRewriteDatabaseBlockedNotification();
 
   useEffect(() => {
     const route = parseAppRoute(location.pathname);

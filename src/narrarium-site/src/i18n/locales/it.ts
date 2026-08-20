@@ -175,6 +175,10 @@ const it = {
     "limit-exceeded-generic": "Il browser non dispone di spazio sicuro sufficiente per questa operazione repository. Libera spazio, riduci manoscritto o asset oppure gestisci gli asset grandi con Git LFS.",
     unknown: "L'operazione repository non è riuscita."
   },
+  rewriteDatabase: {
+    blockedTitle: "Un'altra scheda Narrarium blocca il recovery locale",
+    blockedDescription: "Chiudi o ricarica le altre schede Narrarium, poi riprova. I dati locali della riscrittura non sono stati eliminati.",
+  },
   repoSettings: {
     title: "Repository locali",
     description: "Configura salvataggio locale, controlli remoti e sincronizzazione della working copy IndexedDB.",

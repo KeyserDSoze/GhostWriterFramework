@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.56",
+    "date": "2026-08-20",
+    "en": {
+      "title": "Rewrite recovery no longer hangs across tabs",
+      "summary": "Narrarium now detects when an older tab blocks the local rewrite-operation database upgrade, settles promptly, preserves records, and lets the user retry after closing or refreshing the other tab.",
+      "changes": [
+        "Added a typed, retryable blocked-database error and reset rejected or stale cached open promises.",
+        "Installed version-change handling as soon as a connection opens so another tab can upgrade without waiting indefinitely.",
+        "Closed a connection that succeeds after its original blocked request was already rejected, preventing leaked stale database handles.",
+        "Added an actionable localized toast explaining that another Narrarium tab must be closed or refreshed and that rewrite data remains safe.",
+        "Added deterministic old-tab/new-tab, reload, retry, current-record and legacy-record migration coverage."
+      ]
+    },
+    "it": {
+      "title": "Il recovery delle riscritture non si blocca più tra schede",
+      "summary": "Narrarium ora rileva quando una scheda precedente blocca l'upgrade del database locale delle riscritture, termina rapidamente il tentativo, conserva i record e consente di riprovare dopo aver chiuso o ricaricato l'altra scheda.",
+      "changes": [
+        "Aggiunto un errore tipizzato e riprovabile per database bloccato, con reset delle promise di apertura rifiutate o obsolete.",
+        "Installata la gestione version-change appena la connessione si apre, così un'altra scheda può eseguire l'upgrade senza attese indefinite.",
+        "Chiusa la connessione che riesce dopo che la richiesta originale era già stata rifiutata per blocco, evitando handle database obsoleti.",
+        "Aggiunto un toast localizzato e azionabile che chiede di chiudere o ricaricare l'altra scheda Narrarium e conferma che i dati di riscrittura restano al sicuro.",
+        "Aggiunta copertura deterministica per vecchia/nuova scheda, reload, retry, record correnti e migrazione dei record legacy."
+      ]
+    }
+  },
+  {
     "version": "0.76.55",
     "date": "2026-08-19",
     "en": {

@@ -175,6 +175,10 @@ const en = {
     "limit-exceeded-generic": "The browser does not have enough safe storage for this repository operation. Free storage, reduce the manuscript or assets, or manage large assets with Git LFS.",
     unknown: "The repository operation could not be completed."
   },
+  rewriteDatabase: {
+    blockedTitle: "Another Narrarium tab is blocking local recovery",
+    blockedDescription: "Close or reload the other Narrarium tabs, then retry. Your local rewrite data has not been deleted.",
+  },
   repoSettings: {
     title: "Local repositories",
     description: "Configure local saving, remote checks, and IndexedDB working-copy sync.",
