@@ -23,6 +23,13 @@ describe("editor review dirty transitions", () => {
     expect(personas).toContain('setSavedDraft(persisted ? JSON.stringify(profile) : "")');
   });
 
+  it("guards ghostwriter deletion with a surviving profile from the same repository head", () => {
+    const ghostwriters = readFileSync(resolve(process.cwd(), "src/pages/GhostwritersPage.tsx"), "utf8");
+    expect(ghostwriters).toContain("remoteHeadSha: profileSnapshot.remoteHeadSha");
+    expect(ghostwriters).toContain("if (!survivorGuard)");
+    expect(ghostwriters).toContain("[{ snapshot: profileSnapshot, content: null }, survivorGuard, ...guards]");
+  });
+
   it("keeps a duplicate dirty until its first save succeeds", async () => {
     let baseline = "";
     const duplicate = { id: "reader:copy", name: "Copy" };

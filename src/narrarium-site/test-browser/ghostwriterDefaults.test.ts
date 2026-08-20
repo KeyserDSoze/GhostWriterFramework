@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { buildInitialBookFiles } from "@/narrarium/bookScaffold";
-import { defaultGhostwriter, ghostwriterPrompt, parseGhostwriter, serializeGhostwriter } from "@/narrarium/ghostwriter";
+import { canDeleteGhostwriter, defaultGhostwriter, ghostwriterPrompt, ghostwriterReferencePaths, parseGhostwriter, serializeGhostwriter } from "@/narrarium/ghostwriter";
 import { composeGhostwriterStyleContext, resolveGhostwriterSlug } from "@/narrarium/pipeline";
 
 test("new books include and select a complete default ghostwriter", () => {
@@ -41,4 +41,30 @@ test("only the selected ghostwriter defines prose and punctuation style", () => 
   expect(context).toContain(ghostwriter.writingStyle);
   expect(context).toContain(ghostwriter.punctuationStyle);
   expect(composeGhostwriterStyleContext(null)).toBe("");
+});
+
+test("ghostwriter deletion checks only canonical markdown files for references", () => {
+  expect(ghostwriterReferencePaths([
+    { path: "book.md" },
+    { path: "chapters/001-opening/chapter.md" },
+    { path: "drafts/001-opening/001-scene.md" },
+    { path: "scripts/001-opening/001-scene.md" },
+    { path: "scripts/requirements-manuscript.txt" },
+    { path: "chapters/001-opening/research.txt" },
+    { path: "ghostwriters/custom.md" },
+    { path: "book.md" },
+  ])).toEqual([
+    "book.md",
+    "chapters/001-opening/chapter.md",
+    "drafts/001-opening/001-scene.md",
+    "scripts/001-opening/001-scene.md",
+  ]);
+});
+
+test("ghostwriter deletion always preserves the selected default profile", () => {
+  expect(canDeleteGhostwriter("default", "default", 2)).toBe(false);
+  expect(canDeleteGhostwriter("custom", "custom", 2)).toBe(false);
+  expect(canDeleteGhostwriter("default", "custom", 2)).toBe(true);
+  expect(canDeleteGhostwriter("custom", "default", 2)).toBe(true);
+  expect(canDeleteGhostwriter("only-profile", undefined, 1)).toBe(false);
 });

@@ -1125,6 +1125,7 @@ const en = {
     provisionFailed: "Could not create the default ghostwriter",
     invalidProfile: "A ghostwriter needs a name and a temperature between 0 and 2.",
     inUse: "This ghostwriter is still selected by a book, chapter, paragraph, draft, or script.",
+    defaultRequired: "At least one other ghostwriter must remain available.",
     alreadyExists: "A ghostwriter with this name already exists.",
     name: "Name",
     language: "Language",

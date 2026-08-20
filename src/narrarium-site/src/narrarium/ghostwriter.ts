@@ -20,6 +20,16 @@ export interface GhostwriterProfile {
   body: string;
 }
 
+export function ghostwriterReferencePaths(files: Array<{ path: string }>): string[] {
+  return Array.from(new Set(files.map((file) => file.path))).filter(
+    (path) => path === "book.md" || /^(?:chapters|drafts|scripts)\/.*\.md$/.test(path),
+  );
+}
+
+export function canDeleteGhostwriter(slug: string, defaultSlug: string | undefined, profileCount: number): boolean {
+  return profileCount > 1 && slug !== defaultSlug;
+}
+
 export function emptyGhostwriter(name: string): Omit<GhostwriterProfile, "slug"> {
   return {
     name,

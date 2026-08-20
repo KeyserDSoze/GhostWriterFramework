@@ -16,7 +16,7 @@ import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAle
 import { useRegisterPageSave } from "@/store/saveStore";
 import { resolveBookToken } from "@/types/settings";
 import { readFileWithSha } from "@/github/githubClient";
-import { emptyGhostwriter, parseGhostwriter, serializeGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
+import { canDeleteGhostwriter, emptyGhostwriter, ghostwriterReferencePaths, parseGhostwriter, serializeGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
 import { slugify } from "@/narrarium/canon";
 import { resolveUnsavedChanges } from "@/hooks/resolveUnsavedChanges";
 import { captureImmediateMutation, commitImmediateMutation, commitImmediateMutations } from "@/assistant/immediateMutation";
@@ -116,14 +116,22 @@ export function GhostwritersPage() {
   }
 
   async function remove() {
-    if (!profile || !book || !token || structure?.ghostwriter === profile.slug) return;
+    if (!profile || !book || !token || !canDeleteGhostwriter(profile.slug, structure?.ghostwriter, list.length)) return;
     setBusy(true);
     try {
       const profileSnapshot = await captureImmediateMutation({ token, book, branch, path: `ghostwriters/${profile.slug}.md` });
       if (!profileSnapshot.content) return;
-      const candidatePaths = (structure?.searchableFiles ?? [])
-        .map((entry) => entry.path)
-        .filter((path) => !path.startsWith("ghostwriters/") && /^(?:book\.md|chapters\/|drafts\/|scripts\/)/.test(path));
+      let survivorGuard: Parameters<typeof commitImmediateMutations>[0]["snapshots"][number] | null = null;
+      for (const entry of list) {
+        if (entry.slug === profile.slug) continue;
+        const snapshot = await captureImmediateMutation({ token, book, branch, path: entry.path, remoteHeadSha: profileSnapshot.remoteHeadSha });
+        if (snapshot.content !== null) {
+          survivorGuard = { snapshot, content: undefined };
+          break;
+        }
+      }
+      if (!survivorGuard) throw new Error(t("ghostwriters.defaultRequired"));
+      const candidatePaths = ghostwriterReferencePaths(structure?.searchableFiles ?? []);
       const guards: Parameters<typeof commitImmediateMutations>[0]["snapshots"] = [];
       for (const path of candidatePaths) {
         const snapshot = await captureImmediateMutation({ token, book, branch, path, remoteHeadSha: profileSnapshot.remoteHeadSha });
@@ -137,7 +145,7 @@ export function GhostwritersPage() {
         if (frontmatter?.ghostwriter === profile.slug) throw new Error(t("ghostwriters.inUse"));
         guards.push({ snapshot, content: undefined });
       }
-      await commitImmediateMutations({ token, book, branch, snapshots: [{ snapshot: profileSnapshot, content: null }, ...guards], message: `Remove ghostwriter ${profile.slug}` });
+      await commitImmediateMutations({ token, book, branch, snapshots: [{ snapshot: profileSnapshot, content: null }, survivorGuard, ...guards], message: `Remove ghostwriter ${profile.slug}` });
       setSelected(null); setProfile(null); setSavedProfile("");
       await reload();
     } catch (err) {
@@ -203,7 +211,7 @@ export function GhostwritersPage() {
               <h2 className="font-serif text-xl font-semibold">{profile.name}</h2>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={() => void setAsDefault()} disabled={busy || structure?.ghostwriter === profile.slug}><Star className="mr-1 h-4 w-4" />{structure?.ghostwriter === profile.slug ? t("ghostwriters.defaultActive") : t("ghostwriters.setDefault")}</Button>
-                <Button size="sm" variant="ghost" onClick={() => void remove()} disabled={busy || structure?.ghostwriter === profile.slug}><Trash2 className="mr-1 h-4 w-4" />{t("common.delete")}</Button>
+                <Button size="sm" variant="ghost" onClick={() => void remove()} disabled={busy || !canDeleteGhostwriter(profile.slug, structure?.ghostwriter, list.length)}><Trash2 className="mr-1 h-4 w-4" />{t("common.delete")}</Button>
                 <Button size="sm" onClick={() => void save()} disabled={busy || !dirty || !profile.name.trim() || !Number.isFinite(profile.temperature) || profile.temperature < 0 || profile.temperature > 2}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}{t("common.save")}</Button>
               </div>
             </div>

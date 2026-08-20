@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.60",
+    "date": "2026-08-20",
+    "en": {
+      "title": "Ghostwriter deletion preserves a valid default",
+      "summary": "Non-default ghostwriters can now be deleted without unrelated script requirement files blocking the operation, while Narrarium always preserves an available default profile.",
+      "changes": [
+        "Restricted ghostwriter reference checks to canonical Markdown documents, so plain-text files such as scripts/requirements-manuscript.txt are no longer parsed as YAML frontmatter.",
+        "Kept the currently selected book default protected from deletion, whether it is the original default profile or a custom profile.",
+        "Allowed the original default profile to be deleted after a custom ghostwriter becomes the book default.",
+        "Added a same-repository-head guard that prevents concurrent tabs from deleting the final remaining ghostwriter."
+      ]
+    },
+    "it": {
+      "title": "La cancellazione dei ghostwriter preserva un default valido",
+      "summary": "I ghostwriter non predefiniti ora possono essere eliminati senza che file di requisiti script non correlati blocchino l'operazione, mentre Narrarium conserva sempre un profilo predefinito disponibile.",
+      "changes": [
+        "Limitato il controllo dei riferimenti ghostwriter ai documenti Markdown canonici, così file di testo come scripts/requirements-manuscript.txt non vengono più interpretati come frontmatter YAML.",
+        "Mantenuto protetto dalla cancellazione il default del libro attualmente selezionato, sia esso il profilo iniziale o un profilo personalizzato.",
+        "Consentita la cancellazione del profilo default iniziale dopo che un ghostwriter personalizzato diventa il predefinito del libro.",
+        "Aggiunto un guard sullo stesso stato remoto del repository che impedisce a schede concorrenti di eliminare l'ultimo ghostwriter rimasto."
+      ]
+    }
+  },
+  {
     "version": "0.76.59",
     "date": "2026-08-20",
     "en": {
