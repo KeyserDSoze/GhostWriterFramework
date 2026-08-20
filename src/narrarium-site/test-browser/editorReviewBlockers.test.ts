@@ -30,6 +30,13 @@ describe("editor review dirty transitions", () => {
     expect(ghostwriters).toContain("[{ snapshot: profileSnapshot, content: null }, survivorGuard, ...guards]");
   });
 
+  it("keeps the ghostwriter editor inside the mobile viewport", () => {
+    const ghostwriters = readFileSync(resolve(process.cwd(), "src/pages/GhostwritersPage.tsx"), "utf8");
+    expect(ghostwriters).toContain("max-w-full gap-6 overflow-x-hidden lg:grid-cols-[300px_minmax(0,1fr)]");
+    expect(ghostwriters).toContain("flex min-w-0 flex-wrap items-center justify-between gap-2");
+    expect(ghostwriters).toContain("min-w-0 truncate");
+  });
+
   it("keeps a duplicate dirty until its first save succeeds", async () => {
     let baseline = "";
     const duplicate = { id: "reader:copy", name: "Copy" };

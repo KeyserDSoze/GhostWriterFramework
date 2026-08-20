@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.62",
+    "date": "2026-08-20",
+    "en": {
+      "title": "Ghostwriter editor fits mobile screens",
+      "summary": "The Ghostwriter page no longer creates horizontal page overflow on narrow screens, while chapter-level assignment remains available through the existing editor and Copilot metadata tools.",
+      "changes": [
+        "Constrained the Ghostwriter two-column layout and long profile controls to the mobile viewport.",
+        "Wrapped action buttons and truncated long profile names without changing their editing behavior.",
+        "Documented the current Copilot capability: existing ghostwriter slugs can be assigned to chapters or paragraphs, while creating a complete new profile still uses the Ghostwriter page."
+      ]
+    },
+    "it": {
+      "title": "L'editor Ghostwriter entra negli schermi mobile",
+      "summary": "La pagina Ghostwriter non crea più overflow orizzontale sugli schermi stretti, mentre l'assegnazione a livello di capitolo resta disponibile tramite l'editor e i metadati Copilot esistenti.",
+      "changes": [
+        "Limitato il layout a due colonne e i controlli dei profili lunghi alla larghezza dello schermo mobile.",
+        "Mandati a capo i pulsanti e abbreviati visivamente i nomi lunghi senza modificare il comportamento di editing.",
+        "Documentata la capacità attuale del Copilot: gli slug ghostwriter esistenti possono essere assegnati a capitoli o paragrafi, mentre la creazione di un profilo completo nuovo avviene ancora dalla pagina Ghostwriter."
+      ]
+    }
+  },
+  {
     "version": "0.76.61",
     "date": "2026-08-20",
     "en": {

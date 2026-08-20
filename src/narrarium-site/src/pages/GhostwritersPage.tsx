@@ -178,17 +178,17 @@ export function GhostwritersPage() {
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
+    <div className="grid min-w-0 max-w-full gap-6 overflow-x-hidden lg:grid-cols-[300px_minmax(0,1fr)]">
+      <div className="min-w-0 space-y-3">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
           <h1 className="flex items-center gap-2 font-serif text-2xl font-semibold"><Users className="h-5 w-5" />{t("ghostwriters.title")}</h1>
           <Button size="sm" variant="outline" onClick={() => setCreating(true)}><Plus className="mr-1 h-4 w-4" />{t("ghostwriters.new")}</Button>
         </div>
         <p className="text-sm text-muted-foreground">{t("ghostwriters.intro")}</p>
         {creating && (
-          <div className="flex gap-2">
-            <Input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={t("ghostwriters.namePlaceholder")} onKeyDown={(e) => { if (e.key === "Enter") void createGhostwriter(); }} />
-            <Button size="sm" onClick={() => void createGhostwriter()} disabled={!newName.trim() || busy}>{t("common.add")}</Button>
+            <div className="flex min-w-0 max-w-full gap-2">
+              <Input className="min-w-0" autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={t("ghostwriters.namePlaceholder")} onKeyDown={(e) => { if (e.key === "Enter") void createGhostwriter(); }} />
+              <Button className="shrink-0" size="sm" onClick={() => void createGhostwriter()} disabled={!newName.trim() || busy}>{t("common.add")}</Button>
           </div>
         )}
         {loading && !structure ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("ghostwriters.loading")}</div> : null}
@@ -196,30 +196,30 @@ export function GhostwritersPage() {
         <div className="space-y-1">
           {list.map((g) => (
             <button key={g.slug} type="button" onClick={() => void selectProfile(g.slug)} className={selected === g.slug ? "flex w-full items-center gap-2 rounded-lg border bg-primary/5 px-3 py-2 text-left text-sm" : "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm hover:bg-muted/40"}>
-              <PenLine className="h-4 w-4 text-muted-foreground" />{g.name}{structure?.ghostwriter === g.slug && <Star className="ml-auto h-3.5 w-3.5 fill-current text-amber-500" />}
+               <PenLine className="h-4 w-4 shrink-0 text-muted-foreground" /><span className="min-w-0 truncate">{g.name}</span>{structure?.ghostwriter === g.slug && <Star className="ml-auto h-3.5 w-3.5 shrink-0 fill-current text-amber-500" />}
             </button>
           ))}
         </div>
       </div>
 
-      <div>
+      <div className="min-w-0">
         {!profile ? (
           <div className="rounded-2xl border border-dashed p-10 text-center text-sm text-muted-foreground">{t("ghostwriters.selectHint")}</div>
         ) : (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-serif text-xl font-semibold">{profile.name}</h2>
-              <div className="flex gap-2">
+           <div className="min-w-0 space-y-4">
+             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+               <h2 className="min-w-0 truncate font-serif text-xl font-semibold">{profile.name}</h2>
+               <div className="flex max-w-full flex-wrap gap-2">
                 <Button size="sm" variant="outline" onClick={() => void setAsDefault()} disabled={busy || structure?.ghostwriter === profile.slug}><Star className="mr-1 h-4 w-4" />{structure?.ghostwriter === profile.slug ? t("ghostwriters.defaultActive") : t("ghostwriters.setDefault")}</Button>
                 <Button size="sm" variant="ghost" onClick={() => void remove()} disabled={busy || !canDeleteGhostwriter(profile.slug, structure?.ghostwriter, list.length)}><Trash2 className="mr-1 h-4 w-4" />{t("common.delete")}</Button>
                 <Button size="sm" onClick={() => void save()} disabled={busy || !dirty || !profile.name.trim() || !Number.isFinite(profile.temperature) || profile.temperature < 0 || profile.temperature > 2}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}{t("common.save")}</Button>
               </div>
             </div>
-            <div className="grid gap-4 lg:grid-cols-2">
+             <div className="grid min-w-0 gap-4 lg:grid-cols-2">
               <div className="space-y-1"><Label>{t("ghostwriters.writingStyle")}</Label><AutoTextarea value={profile.writingStyle} onChange={(e) => patch({ writingStyle: e.target.value })} className="min-h-32 text-sm leading-6" /></div>
               <div className="space-y-1"><Label>{t("ghostwriters.punctuationStyle")}</Label><AutoTextarea value={profile.punctuationStyle} onChange={(e) => patch({ punctuationStyle: e.target.value })} className="min-h-32 text-sm leading-6" /></div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+             <div className="grid min-w-0 gap-3 sm:grid-cols-2">
               <Field label={t("ghostwriters.name")} value={profile.name} onChange={(v) => patch({ name: v })} />
               <Field label={t("ghostwriters.language")} value={profile.language} onChange={(v) => patch({ language: v })} />
               <Field label={t("ghostwriters.tone")} value={profile.tone} onChange={(v) => patch({ tone: v })} />
