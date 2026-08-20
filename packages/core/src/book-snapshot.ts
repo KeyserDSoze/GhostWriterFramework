@@ -7,6 +7,7 @@ import {
   characterSchema,
   contextSchema,
   factionSchema,
+  ghostwriterSchema,
   guidelineSchema,
   itemSchema,
   locationSchema,
@@ -58,7 +59,11 @@ export function classifyNarrariumDocumentKind(path: string): NarrariumDocumentKi
   if (normalizedPath === "notes.md") return "note";
   if (normalizedPath === "promoted.md") return "note";
   if (normalizedPath === "story-design.md") return "note";
+  if (/^(?:guidelines\/)?(?:writing-style|style|prose|voices|chapter-rules|structure)\.md$/i.test(normalizedPath)) return "unknown";
+  if (normalizedPath.startsWith("guidelines/styles/")) return "unknown";
   if (normalizedPath.startsWith("guidelines/")) return "guideline";
+  if (normalizedPath.startsWith("ghostwriters/") && normalizedPath.endsWith(".md")) return "ghostwriter";
+  if (/^(?:chapters|drafts)\/[^/]+\/writing-style\.md$/i.test(normalizedPath)) return "unknown";
   if (normalizedPath.startsWith("characters/")) return "character";
   if (normalizedPath.startsWith("items/")) return "item";
   if (normalizedPath.startsWith("locations/")) return "location";
@@ -93,6 +98,8 @@ export function parseNarrariumMarkdownDocument(path: string, rawMarkdown: string
       return buildTypedDocument(kind, normalizedPath, plotSchema.parse(frontmatter), body, rawMarkdown);
     case "guideline":
       return buildTypedDocument(kind, normalizedPath, guidelineSchema.parse(frontmatter), body, rawMarkdown);
+    case "ghostwriter":
+      return buildTypedDocument(kind, normalizedPath, ghostwriterSchema.parse(frontmatter), body, rawMarkdown);
     case "character":
       return buildTypedDocument(kind, normalizedPath, characterSchema.parse(frontmatter), body, rawMarkdown);
     case "item":
@@ -181,6 +188,9 @@ export function buildNarrariumBookSnapshot(input: BuildNarrariumBookSnapshotInpu
       case "guideline":
         snapshot.guidelines.push(document as (typeof snapshot.guidelines)[number]);
         break;
+      case "ghostwriter":
+        snapshot.ghostwriters.push(document as (typeof snapshot.ghostwriters)[number]);
+        break;
       case "character":
         snapshot.characters.push(document as (typeof snapshot.characters)[number]);
         break;
@@ -240,6 +250,7 @@ export function buildNarrariumBookSnapshot(input: BuildNarrariumBookSnapshotInpu
 
   snapshot.chapterDraftIdeas.sort(compareDocuments);
   snapshot.guidelines.sort(compareDocuments);
+  snapshot.ghostwriters.sort(compareDocuments);
   snapshot.chapterDraftNotes.sort(compareDocuments);
   snapshot.chapterDraftPromoted.sort(compareDocuments);
   snapshot.characters.sort(compareDocuments);

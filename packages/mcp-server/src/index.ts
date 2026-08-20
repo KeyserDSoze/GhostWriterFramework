@@ -1332,7 +1332,7 @@ server.tool(
         optional: [
           "Summary",
           "POV ids",
-          "Explicit style refs or narration mode if this chapter should differ from the book default",
+          "Ghostwriter profile slug or narration mode if this chapter should differ from the book default",
           "Timeline reference",
           "Tags",
           "Notes body or beat scaffold",
@@ -1363,6 +1363,7 @@ server.tool(
         optional: [
           "Summary",
           "Viewpoint",
+          "Ghostwriter profile slug if this scene should differ from the chapter or book default",
           "Tags",
           "Optional body text",
           "If the prose is not ready yet, create a matching paragraph draft first",
@@ -1374,7 +1375,7 @@ server.tool(
 
 server.tool(
   "chapter_writing_context",
-  "Assemble the point-in-time context that should be read before writing or polishing a chapter: prose defaults, scoped story-so-far context, prior chapter state, and matching chapter draft without leaking later story material. In prose, keep canon names as plain text instead of markdown links; the reader resolves visible mentions.",
+  "Assemble the point-in-time context that should be read before writing or polishing a chapter: the selected ghostwriter profile, scoped story-so-far context, prior chapter state, and matching chapter draft without leaking later story material. In prose, keep canon names as plain text instead of markdown links; the reader resolves visible mentions.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -1387,7 +1388,7 @@ server.tool(
 
 server.tool(
   "paragraph_writing_context",
-  "Assemble the point-in-time context that should be read before writing or polishing a paragraph: prose defaults, scoped story-so-far context, prior scenes only, and the matching paragraph draft or final paragraph without leaking later story material. In prose, keep canon names as plain text instead of markdown links; the reader resolves visible mentions.",
+  "Assemble the point-in-time context that should be read before writing or polishing a paragraph: the selected ghostwriter profile, scoped story-so-far context, prior scenes only, and the matching paragraph draft or final paragraph without leaking later story material. In prose, keep canon names as plain text instead of markdown links; the reader resolves visible mentions.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -1654,7 +1655,7 @@ server.tool(
     title: z.string().min(1),
     summary: z.string().optional(),
     pov: z.array(z.string()).default([]),
-    styleRefs: z.array(z.string()).default([]),
+    ghostwriter: z.string().optional(),
     narrationPerson: z.string().optional(),
     narrationTense: z.string().optional(),
     proseMode: z.array(z.string()).default([]),
@@ -1664,7 +1665,7 @@ server.tool(
     overwrite: z.boolean().default(false),
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
-  async ({ rootPath, number, title, summary, pov, styleRefs, narrationPerson, narrationTense, proseMode, timelineRef, tags, body, overwrite, frontmatter }) => {
+  async ({ rootPath, number, title, summary, pov, ghostwriter, narrationPerson, narrationTense, proseMode, timelineRef, tags, body, overwrite, frontmatter }) => {
     const result = await createChapter(rootPath, {
       number,
       title,
@@ -1673,7 +1674,7 @@ server.tool(
       frontmatter: {
         summary,
         pov,
-        style_refs: styleRefs,
+        ghostwriter,
         narration_person: narrationPerson,
         narration_tense: narrationTense,
         prose_mode: proseMode,
@@ -1697,18 +1698,19 @@ server.tool(
     chapter: z.string().min(1),
     number: z.number().int().positive(),
     title: z.string().min(1),
+    ghostwriter: z.string().optional(),
     body: z.string().optional(),
     overwrite: z.boolean().default(false),
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
-  async ({ rootPath, chapter, number, title, body, overwrite, frontmatter }) => {
+  async ({ rootPath, chapter, number, title, ghostwriter, body, overwrite, frontmatter }) => {
     const result = await createParagraph(rootPath, {
       chapter,
       number,
       title,
       body,
       overwrite,
-      frontmatter,
+      frontmatter: { ghostwriter, ...frontmatter },
     });
 
     return textResponse(
@@ -1726,7 +1728,7 @@ server.tool(
     title: z.string().min(1),
     summary: z.string().optional(),
     pov: z.array(z.string()).default([]),
-    styleRefs: z.array(z.string()).default([]),
+    ghostwriter: z.string().optional(),
     narrationPerson: z.string().optional(),
     narrationTense: z.string().optional(),
     proseMode: z.array(z.string()).default([]),
@@ -1736,7 +1738,7 @@ server.tool(
     overwrite: z.boolean().default(false),
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
-  async ({ rootPath, number, title, summary, pov, styleRefs, narrationPerson, narrationTense, proseMode, timelineRef, tags, body, overwrite, frontmatter }) => {
+  async ({ rootPath, number, title, summary, pov, ghostwriter, narrationPerson, narrationTense, proseMode, timelineRef, tags, body, overwrite, frontmatter }) => {
     const result = await createChapterDraft(rootPath, {
       number,
       title,
@@ -1745,7 +1747,7 @@ server.tool(
       frontmatter: {
         summary,
         pov,
-        style_refs: styleRefs,
+        ghostwriter,
         narration_person: narrationPerson,
         narration_tense: narrationTense,
         prose_mode: proseMode,
@@ -1939,18 +1941,19 @@ server.tool(
     chapter: z.string().min(1),
     number: z.number().int().positive(),
     title: z.string().min(1),
+    ghostwriter: z.string().optional(),
     body: z.string().optional(),
     overwrite: z.boolean().default(false),
     frontmatter: z.record(z.string(), z.unknown()).default({}),
   },
-  async ({ rootPath, chapter, number, title, body, overwrite, frontmatter }) => {
+  async ({ rootPath, chapter, number, title, ghostwriter, body, overwrite, frontmatter }) => {
     const result = await createParagraphDraft(rootPath, {
       chapter,
       number,
       title,
       body,
       overwrite,
-      frontmatter,
+      frontmatter: { ghostwriter, ...frontmatter },
     });
 
     return textResponse(
@@ -2533,7 +2536,7 @@ server.tool(
 
 server.tool(
   "evaluate_chapter",
-  "Refresh a full chapter evaluation by reading the whole chapter across all paragraph files, combining objective text signals with editorial reading against the active writing-style files and canon coherence checks, then writing objective/editorial scores, a weighted verdict, an explanation of why that verdict landed there, and next steps plus paragraph evaluation files.",
+  "Refresh a full chapter evaluation by reading the whole chapter across all paragraph files, combining objective text signals with editorial reading against each scope's selected ghostwriter profile and canon coherence checks, then writing objective/editorial scores, a weighted verdict, an explanation of why that verdict landed there, and next steps plus paragraph evaluation files.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -2546,7 +2549,7 @@ server.tool(
 
 server.tool(
   "evaluate_paragraph",
-  "Refresh the saved evaluation for a single paragraph while still using the full chapter as context, including objective scores, writing-style-aware editorial notes, canon coherence checks, a weighted verdict, an explanation of why that verdict landed there, and concrete next steps.",
+  "Refresh the saved evaluation for a single paragraph while still using the full chapter as context, including objective scores, editorial notes based on the selected ghostwriter, canon coherence checks, a weighted verdict, an explanation of why that verdict landed there, and concrete next steps.",
   {
     rootPath: z.string().min(1),
     chapter: z.string().min(1),
@@ -2601,7 +2604,7 @@ server.tool(
 
 server.tool(
   "evaluate_book",
-  "Refresh the total book evaluation with chapter scorecards, writing-style-aware editorial checks, canon coherence checks, weighted verdict summaries, explicit verdict explanations, and revision priorities, and optionally refresh all chapter and paragraph evaluations too.",
+  "Refresh the total book evaluation with chapter scorecards, selected-ghostwriter editorial checks, canon coherence checks, weighted verdict summaries, explicit verdict explanations, and revision priorities, and optionally refresh all chapter and paragraph evaluations too.",
   {
     rootPath: z.string().min(1),
     syncChapterEvaluations: z.boolean().default(true),
@@ -3361,7 +3364,7 @@ async function finalizeWizardSession(
         frontmatter: {
           summary: stringOrUndefined(data.summary),
           pov: stringArrayOrEmpty(data.pov),
-          style_refs: stringArrayOrEmpty(data.styleRefs),
+          ghostwriter: stringOrUndefined(data.ghostwriter),
           narration_person: stringOrUndefined(data.narrationPerson),
           narration_tense: stringOrUndefined(data.narrationTense),
           prose_mode: stringArrayOrEmpty(data.proseMode),
@@ -3693,6 +3696,7 @@ File path: \`scripts/<chapter-slug>/<paragraph-slug>.md\``,
     number: z.number().int().positive().describe("Paragraph number within the chapter"),
     title: z.string().min(1).describe("Paragraph title (used to build the filename slug)"),
     location: z.string().optional().describe("Where the scene takes place — free text or canon location slug"),
+    ghostwriter: z.string().optional().describe("Ghostwriter profile slug selected for this script"),
     body: z.string().optional().describe("Full script body using the meta-language. If omitted a template is generated."),
     tags: z.array(z.string()).default([]).describe("Optional tags"),
     secretRefs: z.array(z.string()).default([]).describe("Secret ids referenced by this script"),
@@ -3704,8 +3708,8 @@ File path: \`scripts/<chapter-slug>/<paragraph-slug>.md\``,
     revealPolicy: z.record(z.string(), scriptSecretModeSchema).default({}).describe("Reveal mode by secret id"),
     overwrite: z.boolean().default(false).describe("Overwrite if the script already exists"),
   },
-  async ({ rootPath, chapter, number, title, location, body, tags, secretRefs, characterRefs, locationRefs, itemRefs, factionRefs, timelineRefs, revealPolicy, overwrite }) => {
-    const result = await createScript(rootPath, { chapter, number, title, location, body, tags, secretRefs, characterRefs, locationRefs, itemRefs, factionRefs, timelineRefs, revealPolicy, overwrite });
+  async ({ rootPath, chapter, number, title, location, ghostwriter, body, tags, secretRefs, characterRefs, locationRefs, itemRefs, factionRefs, timelineRefs, revealPolicy, overwrite }) => {
+    const result = await createScript(rootPath, { chapter, number, title, location, ghostwriter, body, tags, secretRefs, characterRefs, locationRefs, itemRefs, factionRefs, timelineRefs, revealPolicy, overwrite });
     const ledger = await syncScriptLedger(rootPath);
     return textResponse(`Script created at ${result.filePath}\nScript id: ${result.scriptId}\n${formatScriptLedgerSyncNote(ledger)}`);
   },
@@ -3796,10 +3800,10 @@ server.tool(
 Returns:
 - The script body with meta-language beats
 - The script meta-language legend
-- The book writing-style guideline
+- The selected ghostwriter profile, including its style and punctuation fields
 - The existing paragraph body if one already exists (revision mode)
 
-After calling this tool, write the paragraph prose following the writing-style rules and the beat order in the script, then call \`create_paragraph\` or \`update_paragraph\` with the result.`,
+After calling this tool, write the paragraph prose following the selected ghostwriter and the beat order in the script, then call \`create_paragraph\` or \`update_paragraph\` with the result.`,
   {
     rootPath: z.string().min(1).describe("Absolute path to the book repository root"),
     chapter: z.string().min(1).describe("Chapter slug or id"),
@@ -3841,9 +3845,7 @@ After calling this tool, write the paragraph prose following the writing-style r
         "- Treat forbidden_on_page and forbidden as hard prose constraints.",
       ].join("\n"),
       ``,
-      ctx.writingStyleBody
-        ? `### Writing style\n\n${ctx.writingStyleBody}`
-        : "*(No writing-style guideline found — proceed with general prose craft.)*",
+      `### Selected ghostwriter: ${ctx.ghostwriter.name}\n\n**Source:** ${ctx.ghostwriter.path}\n\n${ctx.ghostwriter.instructions}`,
       ``,
       ctx.existingParagraphBody
         ? `### Existing paragraph (revision mode)\n\n${ctx.existingParagraphBody}`

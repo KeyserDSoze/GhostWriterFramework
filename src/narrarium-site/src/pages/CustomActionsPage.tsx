@@ -229,7 +229,6 @@ function CustomActionCard({ action, index, isFirst, isLast, onMove, onRemove, on
             <InjectionSwitch label={t("customActions.includeBody")} checked={action.injections.includeBody} onChange={(includeBody) => patchInjections({ includeBody })} />
             <InjectionSwitch label={t("customActions.includeFrontmatter")} checked={action.injections.includeFrontmatter} onChange={(includeFrontmatter) => patchInjections({ includeFrontmatter })} />
             <InjectionSwitch label={t("customActions.includeContext")} checked={action.injections.includeContext} onChange={(includeContext) => patchInjections({ includeContext })} />
-            <InjectionSwitch label={t("customActions.includeWritingStyle")} checked={action.injections.includeWritingStyle} onChange={(includeWritingStyle) => patchInjections({ includeWritingStyle })} />
             <InjectionSwitch label={t("customActions.includeGhostwriter")} checked={action.injections.includeGhostwriter} onChange={(includeGhostwriter) => patchInjections({ includeGhostwriter })} />
           </div>
         </section>

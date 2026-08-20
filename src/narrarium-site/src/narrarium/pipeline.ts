@@ -62,26 +62,18 @@ export function resolveGhostwriterSlug(src: Pick<PipelineSource, "structure" | "
   return ghostwriterSlug?.trim() || src.paragraph?.ghostwriter || src.chapter?.ghostwriter || src.structure.ghostwriter;
 }
 
-export function composeGhostwriterStyleContext(input: { ghost: GhostwriterProfile | null; globalStyle: string; chapterStyle: string; punctuationStyle: string }): string {
-  return [
-    input.ghost ? `GHOSTWRITER:\n${ghostwriterPrompt(input.ghost)}` : "",
-    !input.ghost?.writingStyle && input.globalStyle ? `WRITING STYLE (legacy fallback):\n${input.globalStyle}` : "",
-    !input.ghost?.writingStyle && input.chapterStyle ? `WRITING STYLE (legacy chapter fallback):\n${input.chapterStyle}` : "",
-    !input.ghost?.punctuationStyle && input.punctuationStyle ? `PUNCTUATION STYLE (legacy fallback):\n${input.punctuationStyle}` : "",
-  ].filter(Boolean).join("\n\n");
+export function composeGhostwriterStyleContext(ghost: GhostwriterProfile | null): string {
+  return ghost ? `GHOSTWRITER:\n${ghostwriterPrompt(ghost)}` : "";
 }
 
 /** Common style + story context shared by every generation/improve call. */
 async function buildContext(src: PipelineSource, ghostwriterSlug?: string): Promise<{ style: string; story: string }> {
-  const [globalStyle, chapterStyle, punctuationStyle, bookResume, chapterResume] = await Promise.all([
-    tryLoad(src, src.structure.globalWritingStylePath),
-    tryLoad(src, src.chapter?.writingStylePath),
-    tryLoad(src, src.structure.globalPunctuationStylePath),
+  const [bookResume, chapterResume] = await Promise.all([
     tryLoad(src, "resumes/total.md"),
     src.chapter ? tryLoad(src, `resumes/chapters/${src.chapter.slug}.md`) : Promise.resolve(""),
   ]);
   const ghost = await loadGhostwriterProfile(src, resolveGhostwriterSlug(src, ghostwriterSlug));
-  const style = composeGhostwriterStyleContext({ ghost, globalStyle, chapterStyle, punctuationStyle });
+  const style = composeGhostwriterStyleContext(ghost);
   const story = [
     bookResume ? `BOOK SO FAR:\n${bookResume}` : "",
     chapterResume ? `CHAPTER SO FAR:\n${chapterResume}` : "",

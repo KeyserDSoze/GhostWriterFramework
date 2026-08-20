@@ -16,6 +16,9 @@ import {
   DEFAULT_CANON,
   ENTITY_TYPE_TO_DIRECTORY,
   ENTITY_TYPES,
+  DEFAULT_GHOSTWRITER,
+  DEFAULT_GHOSTWRITER_FILE,
+  GHOSTWRITERS_DIRECTORY,
   GUIDELINE_FILES,
   IDEAS_FILE,
   NOTES_FILE,
@@ -44,6 +47,7 @@ import {
   contextSchema,
   entitySchemaMap,
   factionSchema,
+  ghostwriterSchema,
   guidelineSchema,
   itemSchema,
   locationSchema,
@@ -64,6 +68,7 @@ import {
   type ContextFrontmatter,
   type EntityType,
   type FactionFrontmatter,
+  type GhostwriterFrontmatter,
   type GuidelineFrontmatter,
   type ItemFrontmatter,
   type LocationFrontmatter,
@@ -113,14 +118,6 @@ type MarkdownDocument<T = Record<string, unknown>> = {
 
 const SUPPORTED_REFERENCE_PATTERN = /\b(?:chapter:[a-z0-9-]+|paragraph:[a-z0-9-]+:[a-z0-9-]+|character:[a-z0-9-]+|location:[a-z0-9-]+|faction:[a-z0-9-]+|item:[a-z0-9-]+|secret:[a-z0-9-]+|timeline-event:[a-z0-9-]+|guideline:[a-z0-9-]+|style:[a-z0-9-]+)\b/gi;
 const OPENCODE_INSTRUCTION_FILE = ".github/copilot-instructions.md";
-const LEGACY_WRITING_GUIDELINE_FILES = [
-  "guidelines/prose.md",
-  "guidelines/style.md",
-  "guidelines/voices.md",
-  "guidelines/chapter-rules.md",
-  "guidelines/structure.md",
-] as const;
-const LEGACY_WRITING_GUIDELINE_DIRECTORIES = ["guidelines/styles"] as const;
 const QUERY_CANON_LEXICONS: Record<string, QueryCanonLexicon> = {
   en: {
     chapterAliases: ["chapter", "chap", "chap."],
@@ -361,10 +358,12 @@ type GuidelineDocument = MarkdownDocument<GuidelineFrontmatter> & {
   slug: string;
 };
 
+type GhostwriterDocument = MarkdownDocument<GhostwriterFrontmatter> & {
+  slug: string;
+};
+
 type EvaluationStyleContext = {
-  globalWritingStyle: GuidelineDocument | null;
-  chapterWritingStyle: GuidelineDocument | null;
-  draftWritingStyle: GuidelineDocument | null;
+  ghostwriter: GhostwriterDocument;
   metadataSignals: Array<{ key: string; value: string }>;
   expectationText: string;
   showDontTell: boolean;
@@ -510,6 +509,7 @@ type ParagraphEvaluationInsight = {
   weightedVerdict: string;
   recommendedFocus: string;
   nextSteps: string[];
+  styleContext: EvaluationStyleContext;
 };
 
 type ChapterEvaluationDraft = {
@@ -987,6 +987,7 @@ export async function initializeBookRepo(
         title: options.title,
         author: options.author,
         language: options.language ?? "en",
+        ghostwriter: DEFAULT_GHOSTWRITER,
         canon: DEFAULT_CANON,
       }),
       defaultBodyForType("book"),
@@ -1102,20 +1103,7 @@ export async function initializeBookRepo(
     created,
   );
 
-  await ensureFile(
-    root,
-    GUIDELINE_FILES.writingStyle,
-    renderMarkdown(
-      guidelineSchema.parse({
-        type: "guideline",
-        id: "guideline:writing-style",
-        title: "Writing Style",
-        scope: "writing-style",
-      }),
-      defaultWritingStyleBody(),
-    ),
-    created,
-  );
+  await ensureFile(root, DEFAULT_GHOSTWRITER_FILE, defaultGhostwriterMarkdown(options.language), created);
 
   await ensureFile(
     root,
@@ -1311,6 +1299,21 @@ export async function upgradeBookRepo(
 
   const updated: string[] = [];
 
+  const selectedGhostwriter = book.frontmatter.ghostwriter;
+  const selectedProfileExists = selectedGhostwriter
+    ? await pathExists(path.join(root, GHOSTWRITERS_DIRECTORY, `${selectedGhostwriter}.md`))
+    : false;
+  if (!selectedProfileExists) {
+    const bookPath = path.join(root, BOOK_FILE);
+    const currentBook = await readMarkdownFile(bookPath, bookSchema);
+    await writeFile(
+      bookPath,
+      renderMarkdown({ ...currentBook.frontmatter, ghostwriter: DEFAULT_GHOSTWRITER }, currentBook.body),
+      "utf8",
+    );
+    updated.push(BOOK_FILE);
+  }
+
   for (const file of getManagedBookScaffoldFiles(options?.createSkills ?? true)) {
     const filePath = path.join(root, file.relativePath);
     const existingContent = await readFile(filePath, "utf8").catch(() => null);
@@ -1342,23 +1345,10 @@ export async function upgradeBookRepo(
     }
   }
 
-  for (const relativePath of LEGACY_WRITING_GUIDELINE_FILES) {
-    const filePath = path.join(root, relativePath);
-    if (await pathExists(filePath)) {
-      await rm(filePath, { force: true });
-      updated.push(toPosixPath(relativePath));
-    }
-  }
-
-  for (const relativePath of LEGACY_WRITING_GUIDELINE_DIRECTORIES) {
-    const directoryPath = path.join(root, relativePath);
-    if (await pathExists(directoryPath)) {
-      await rm(directoryPath, { recursive: true, force: true });
-      updated.push(toPosixPath(relativePath));
-    }
-  }
-
-  const migrated = await migrateLegacyStoryMarkdownLinks(root);
+  const migrated = uniqueValues([
+    ...(await migrateLegacyStoryMarkdownLinks(root)),
+    ...(await removeLegacyStyleFiles(root)),
+  ]);
 
   const seededPersonas = await seedDefaultPersonas(root, book.frontmatter.language);
   for (const p of seededPersonas) {
@@ -1371,6 +1361,21 @@ export async function upgradeBookRepo(
     updated,
     migrated,
   };
+}
+
+async function removeLegacyStyleFiles(root: string): Promise<string[]> {
+  const files = await fg([
+    "writing-style.md",
+    "punctuation-style.md",
+    "guidelines/{writing-style,punctuation-style,style,prose,voices,chapter-rules,structure}.md",
+    "guidelines/styles/**/*.md",
+    "chapters/*/writing-style.md",
+    "drafts/*/writing-style.md",
+  ], { cwd: root, absolute: true, onlyFiles: true });
+  const removed = files.map((filePath) => toPosixPath(path.relative(root, filePath))).sort();
+  await Promise.all(files.map((filePath) => rm(filePath, { force: true })));
+  await rm(path.join(root, "guidelines", "styles"), { recursive: true, force: true });
+  return removed;
 }
 
 async function migrateLegacyStoryMarkdownLinks(rootPath: string): Promise<string[]> {
@@ -2721,7 +2726,7 @@ export async function readParagraph(
 export async function buildChapterWritingContext(
   rootPath: string,
   chapter: string,
-  options?: { throughParagraphNumber?: number },
+  options?: { throughParagraphNumber?: number; ghostwriter?: string },
 ): Promise<{ text: string; files: string[] }> {
   const root = path.resolve(rootPath);
   const chapterSlugValue = normalizeChapterReference(chapter);
@@ -2738,8 +2743,19 @@ export async function buildChapterWritingContext(
       : chapters.filter((entry) => entry.slug !== chapterSlugValue);
   const previousChapter = previousChapters.at(-1) ?? null;
 
-  const writingStyle = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.writingStyle));
-  addContextSection(sections, files, root, writingStyle, "Always-read writing style", 2200);
+  const ghostwriter = await resolveGhostwriter(root, {
+    explicit: options?.ghostwriter,
+    chapter: chapterData?.metadata.ghostwriter,
+    chapterDraft: draft?.metadata.ghostwriter,
+  });
+  addContextSection(
+    sections,
+    files,
+    root,
+    { ...ghostwriter, body: ghostwriterInstructionText(ghostwriter) },
+    `Selected ghostwriter: ${ghostwriter.frontmatter.name}`,
+    2400,
+  );
 
   const contextDocument = await readLooseMarkdownIfExists(path.join(root, CONTEXT_FILE));
   addContextSection(sections, files, root, contextDocument, "Stable book context", 1400);
@@ -2749,22 +2765,6 @@ export async function buildChapterWritingContext(
 
   const bookNotes = await readLooseMarkdownIfExists(path.join(root, NOTES_FILE));
   addWorkItemSection(sections, files, root, bookNotes, "Book notes", 8, "No active book notes yet.");
-
-  const styleContext = await buildEffectiveChapterStyleContext(root, chapterSlugValue, Boolean(chapterData), Boolean(draft));
-  sections.push(styleContext.summarySection);
-  for (const relativePath of styleContext.files) {
-    files.add(relativePath);
-  }
-  for (const profileDocument of styleContext.documents) {
-    addContextSection(
-      sections,
-      files,
-      root,
-      profileDocument,
-      toPosixPath(path.relative(root, profileDocument.path)).startsWith("drafts/") ? "Chapter-specific writing style (draft)" : "Chapter-specific writing style",
-      1600,
-    );
-  }
 
   const plot = await readPlot(root);
   addScopedChapterContextSection(
@@ -2888,6 +2888,7 @@ export async function buildParagraphWritingContext(
   const targetNumber = paragraphDraft?.metadata.number ?? paragraphFinal?.metadata.number;
   const chapterContext = await buildChapterWritingContext(root, chapterSlugValue, {
     throughParagraphNumber: targetNumber,
+    ghostwriter: paragraphFinal?.metadata.ghostwriter ?? paragraphDraft?.metadata.ghostwriter,
   });
   const files = new Set(chapterContext.files);
 
@@ -2987,7 +2988,7 @@ export async function buildResumeBookContext(
       files.add(filePath);
     }
   } else {
-    const writingStyle = await readLooseMarkdownIfExists(path.join(root, GUIDELINE_FILES.writingStyle));
+    const ghostwriter = await resolveGhostwriter(root);
     const contextDocument = await readLooseMarkdownIfExists(path.join(root, CONTEXT_FILE));
     const storyDesign = await readLooseMarkdownIfExists(path.join(root, STORY_DESIGN_FILE));
     const bookNotes = await readLooseMarkdownIfExists(path.join(root, NOTES_FILE));
@@ -2999,7 +3000,14 @@ export async function buildResumeBookContext(
       ? await readLooseMarkdownIfExists(path.join(root, STORY_STATE_STATUS_FILE))
       : null;
 
-    addContextSection(sections, files, root, writingStyle, "Always-read writing style", 2200);
+    addContextSection(
+      sections,
+      files,
+      root,
+      { ...ghostwriter, body: ghostwriterInstructionText(ghostwriter) },
+      `Selected ghostwriter: ${ghostwriter.frontmatter.name}`,
+      2400,
+    );
     addContextSection(sections, files, root, contextDocument, "Stable book context", 1400);
     addContextSection(sections, files, root, storyDesign, "Story design", 1300);
     addWorkItemSection(sections, files, root, bookNotes, "Book notes", 8, "No active book notes yet.");
@@ -3050,104 +3058,65 @@ export async function buildResumeBookContext(
   };
 }
 
-async function readWritingStyleDocuments(
+async function resolveGhostwriter(
   root: string,
-  chapterSlugValue?: string,
-  hasFinalChapter = false,
-  hasDraftChapter = false,
-): Promise<{
-  global: GuidelineDocument | null;
-  chapter: GuidelineDocument | null;
-  draft: GuidelineDocument | null;
-}> {
-  const global = await readGlobalWritingStyleDocument(root);
-  const chapter = chapterSlugValue && hasFinalChapter
-    ? await readGuidelineIfExists(path.join(root, "chapters", chapterSlugValue, "writing-style.md"))
-    : null;
-  const draft = chapterSlugValue && hasDraftChapter
-    ? await readGuidelineIfExists(path.join(root, "drafts", chapterSlugValue, "writing-style.md"))
-    : null;
+  selections: { explicit?: string; paragraph?: string; paragraphDraft?: string; chapter?: string; chapterDraft?: string } = {},
+): Promise<GhostwriterDocument> {
+  const book = await readBook(root);
+  const slug = selections.explicit
+    ?? selections.paragraph
+    ?? selections.paragraphDraft
+    ?? selections.chapter
+    ?? selections.chapterDraft
+    ?? book?.frontmatter.ghostwriter;
+  if (!slug) throw new Error("No ghostwriter is selected. Set ghostwriter in book.md or the current chapter/paragraph frontmatter.");
+  if (slugify(slug) !== slug) throw new Error(`Invalid ghostwriter slug: ${slug}`);
 
-  return { global, chapter, draft };
+  const filePath = path.join(root, GHOSTWRITERS_DIRECTORY, `${slug}.md`);
+  if (!(await pathExists(filePath))) throw new Error(`Selected ghostwriter does not exist: ${toPosixPath(path.relative(root, filePath))}`);
+  const document = await readMarkdownFile(filePath, ghostwriterSchema);
+  return { ...document, slug };
 }
 
-const LEGACY_WRITING_STYLE_FILES = ["guidelines/writing-style.md", "guidelines/style.md"] as const;
-
-async function readGlobalWritingStyleDocument(root: string): Promise<GuidelineDocument | null> {
-  for (const relativePath of [GUIDELINE_FILES.writingStyle, ...LEGACY_WRITING_STYLE_FILES]) {
-    const document = await readGuidelineIfExists(path.join(root, relativePath));
-    if (document) return document;
-  }
-  return null;
+function ghostwriterInstructionText(document: GhostwriterDocument): string {
+  const profile = document.frontmatter;
+  const entries: Array<[string, unknown]> = [
+    ["Language", profile.language],
+    ["Tone", profile.tone],
+    ["Voice", profile.voice],
+    ["Default POV", profile.pov_default],
+    ["Default tense", profile.tense_default],
+    ["Sentence rhythm", profile.sentence_rhythm],
+    ["Dialogue style", profile.dialogue_style],
+    ["Vocabulary", profile.vocabulary],
+    ["Writing style", profile.writing_style],
+    ["Punctuation style", profile.punctuation_style],
+    ["Influences", profile.influences],
+    ["Strengths", profile.strengths],
+    ["Avoid", profile.avoid],
+  ];
+  return [
+    `Ghostwriter profile: ${profile.name}`,
+    ...entries.flatMap(([label, value]) => {
+      const text = Array.isArray(value) ? value.join(", ") : typeof value === "string" ? value.trim() : "";
+      return text ? [`- ${label}: ${text}`] : [];
+    }),
+    ...(document.body ? ["", document.body] : []),
+  ].join("\n");
 }
 
-async function readGlobalWritingStyleRaw(root: string): Promise<string | null> {
-  for (const relativePath of [GUIDELINE_FILES.writingStyle, ...LEGACY_WRITING_STYLE_FILES]) {
-    const raw = await readFile(path.join(root, relativePath), "utf8").catch(() => null);
-    if (raw) return raw;
-  }
-  return null;
-}
-
-async function readGuidelineIfExists(filePath: string): Promise<GuidelineDocument | null> {
-  if (!(await pathExists(filePath))) {
-    return null;
-  }
-
-  const document = await readMarkdownFile(filePath, guidelineSchema);
-  return {
-    ...document,
-    slug: path.basename(filePath, ".md"),
-  };
-}
-
-async function listWritingStyleSourceFiles(root: string, chapterSlugValue?: string): Promise<string[]> {
-  const styleDocuments = await readWritingStyleDocuments(root, chapterSlugValue, true, true);
-  return [styleDocuments.global, styleDocuments.chapter, styleDocuments.draft]
-    .filter((document): document is GuidelineDocument => Boolean(document))
-    .map((document) => toPosixPath(path.relative(root, document.path)));
-}
-
-async function buildEffectiveChapterStyleContext(
+async function resolveChapterGhostwriter(
   root: string,
   chapterSlugValue: string,
-  hasFinalChapter: boolean,
-  hasDraftChapter: boolean,
-): Promise<{
-  summarySection: string;
-  documents: GuidelineDocument[];
-  files: string[];
-}> {
-  const { global: globalStyle, chapter: chapterStyle, draft: draftStyle } = await readWritingStyleDocuments(
-    root,
-    chapterSlugValue,
-    hasFinalChapter,
-    hasDraftChapter,
-  );
-  const documents = [chapterStyle, draftStyle].filter((document): document is GuidelineDocument => Boolean(document));
-  const files = [globalStyle, ...documents]
-    .filter((document): document is GuidelineDocument => Boolean(document))
-    .map((document) => toPosixPath(path.relative(root, document.path)));
-  const summarySection = [
-    "## Effective chapter style",
-    "",
-    `- Always use the global writing style from ${GUIDELINE_FILES.writingStyle}.`,
-    chapterStyle
-      ? `- Chapter-specific writing style: ${toPosixPath(path.relative(root, chapterStyle.path))}`
-      : "- Chapter-specific writing style: none in final chapter files.",
-    draftStyle
-      ? `- Draft-specific writing style: ${toPosixPath(path.relative(root, draftStyle.path))}`
-      : "- Draft-specific writing style: none in chapter draft files.",
-    documents.length > 0
-      ? "- When a chapter-specific writing-style.md exists, treat it as an explicit local override/addendum on top of the global writing style."
-      : "- No chapter-local writing-style.md is present, so the global writing style applies on its own.",
-  ].join("\n");
-
-  return {
-    summarySection,
-    documents,
-    files,
-  };
+  paragraphGhostwriter?: string,
+): Promise<GhostwriterDocument> {
+  const chapterData = await readChapter(root, chapterSlugValue).catch(() => null);
+  const draft = await readChapterDraft(root, chapterSlugValue).catch(() => null);
+  return resolveGhostwriter(root, {
+    paragraph: paragraphGhostwriter,
+    chapter: chapterData?.metadata.ghostwriter,
+    chapterDraft: draft?.metadata.ghostwriter,
+  });
 }
 
 export async function createChapterFromDraft(
@@ -3165,7 +3134,7 @@ export async function createChapterFromDraft(
   const finalFrontmatter = compactFrontmatterPatch({
     summary: draft.metadata.summary,
     pov: draft.metadata.pov,
-    style_refs: draft.metadata.style_refs,
+    ghostwriter: draft.metadata.ghostwriter,
     narration_person: draft.metadata.narration_person,
     narration_tense: draft.metadata.narration_tense,
     prose_mode: draft.metadata.prose_mode,
@@ -3216,6 +3185,7 @@ export async function createParagraphFromDraft(
   const finalFrontmatter = compactFrontmatterPatch({
     summary: draft.metadata.summary,
     viewpoint: draft.metadata.viewpoint,
+    ghostwriter: draft.metadata.ghostwriter,
     tags: draft.metadata.tags,
     ...(options.frontmatterPatch ?? {}),
   });
@@ -3510,11 +3480,13 @@ export async function reviseParagraph(
     chapterData.metadata.pov,
     paragraphDocument.body,
   );
+  const revisionGhostwriter = await resolveChapterGhostwriter(root, chapterSlugValue, paragraphDocument.frontmatter.ghostwriter);
   const proposal = reviseMarkdownBody(paragraphDocument.body, {
     mode: options.mode,
     intensity,
     preserveFacts,
     viewpointLabel: primaryTarget?.title ?? paragraphDocument.frontmatter.viewpoint,
+    ghostwriterInstructions: ghostwriterInstructionText(revisionGhostwriter),
   });
   const suggestedStateChanges = suggestParagraphStateChanges(paragraphDocument.body, {
     primaryTarget,
@@ -3525,13 +3497,12 @@ export async function reviseParagraph(
   const continuityImpact = classifyRevisionContinuityImpact(suggestedStateChanges);
   const chapterResumePath = path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`);
   const storyStateStatus = await readStoryStateStatus(root);
-  const revisionStyleSources = await listWritingStyleSourceFiles(root, chapterSlugValue);
   const sources = uniqueValues(
     [
       toPosixPath(path.relative(root, filePath)),
       toPosixPath(path.join("chapters", chapterSlugValue, "chapter.md")),
       ...(await pathExists(chapterResumePath) ? [toPosixPath(path.relative(root, chapterResumePath))] : []),
-      ...revisionStyleSources,
+      toPosixPath(path.relative(root, revisionGhostwriter.path)),
       ...(await pathExists(path.join(root, STORY_STATE_CURRENT_FILE)) ? [STORY_STATE_CURRENT_FILE] : []),
       ...(storyStateStatus.dirty ? [STORY_STATE_STATUS_FILE] : []),
       ...(previousParagraph ? [toPosixPath(path.relative(root, previousParagraph.path))] : []),
@@ -3607,8 +3578,7 @@ export async function reviewDialogueActionBeats(
   const includeTicSuggestions = options.includeTicSuggestions ?? true;
   const chapterResumePath = path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`);
   const storyStateStatus = await readStoryStateStatus(root);
-  const revisionStyleSources = await listWritingStyleSourceFiles(root, chapterSlugValue);
-  const chapterStyleContext = await buildEffectiveChapterStyleContext(root, chapterSlugValue, true, true);
+  const revisionGhostwriter = await resolveChapterGhostwriter(root, chapterSlugValue, paragraphDocument.frontmatter.ghostwriter);
   const bookLanguage = normalizeBookLanguage((await readBook(root))?.frontmatter.language);
 
   const proposals = parsedBeats.map((beat) =>
@@ -3649,7 +3619,7 @@ export async function reviewDialogueActionBeats(
       toPosixPath(path.relative(root, filePath)),
       toPosixPath(path.join("chapters", chapterSlugValue, "chapter.md")),
       ...(await pathExists(chapterResumePath) ? [toPosixPath(path.relative(root, chapterResumePath))] : []),
-      ...revisionStyleSources,
+      toPosixPath(path.relative(root, revisionGhostwriter.path)),
       ...(await pathExists(path.join(root, STORY_STATE_CURRENT_FILE)) ? [STORY_STATE_CURRENT_FILE] : []),
       ...(storyStateStatus.dirty ? [STORY_STATE_STATUS_FILE] : []),
       ...proposals.flatMap((proposal) => {
@@ -3674,7 +3644,7 @@ export async function reviewDialogueActionBeats(
     editorialNotes: buildDialogueActionEditorialNotes({
       proposals,
       intensity,
-      chapterStyleSummary: chapterStyleContext.summarySection,
+      chapterStyleSummary: `Selected ghostwriter: ${revisionGhostwriter.frontmatter.name} (${toPosixPath(path.relative(root, revisionGhostwriter.path))})`,
     }),
     beatProposals: proposals.map(stripInternalDialogueActionBeatProposal),
     ticSuggestions,
@@ -3817,7 +3787,12 @@ export async function reviseChapter(
   const targets = await buildQueryCanonTargets(root, chapters);
   const chapterResumePath = path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`);
   const storyStateStatus = await readStoryStateStatus(root);
-  const revisionStyleSources = await listWritingStyleSourceFiles(root, chapterSlugValue);
+  const revisionGhostwriter = await resolveChapterGhostwriter(root, chapterSlugValue);
+  const paragraphGhostwriters = await Promise.all(
+    chapterData.paragraphs.map((paragraph) =>
+      resolveChapterGhostwriter(root, chapterSlugValue, paragraph.metadata.ghostwriter),
+    ),
+  );
 
   const proposedParagraphs = chapterData.paragraphs.map((paragraph, index) => {
     const previousParagraph = index > 0 ? chapterData.paragraphs[index - 1] : null;
@@ -3833,6 +3808,7 @@ export async function reviseChapter(
       intensity,
       preserveFacts,
       viewpointLabel: primaryTarget?.title ?? paragraph.metadata.viewpoint,
+      ghostwriterInstructions: ghostwriterInstructionText(paragraphGhostwriters[index]),
     });
     const suggestedStateChanges = suggestParagraphStateChanges(paragraph.body, {
       primaryTarget,
@@ -3880,7 +3856,7 @@ export async function reviseChapter(
       toPosixPath(path.relative(root, chapterFilePath)),
       ...chapterData.paragraphs.map((paragraph) => toPosixPath(path.relative(root, paragraph.path))),
       ...(await pathExists(chapterResumePath) ? [toPosixPath(path.relative(root, chapterResumePath))] : []),
-      ...revisionStyleSources,
+      ...[revisionGhostwriter, ...paragraphGhostwriters].map((profile) => toPosixPath(path.relative(root, profile.path))),
       ...(await pathExists(path.join(root, STORY_STATE_CURRENT_FILE)) ? [STORY_STATE_CURRENT_FILE] : []),
       ...(storyStateStatus.dirty ? [STORY_STATE_STATUS_FILE] : []),
     ],
@@ -4805,7 +4781,7 @@ export async function listRelatedCanon(
     cwd: root,
     absolute: true,
     onlyFiles: true,
-    ignore: ["**/node_modules/**", "**/dist/**", "**/.astro/**"],
+    ignore: ["**/node_modules/**", "**/dist/**", "**/.astro/**", "chapters/*/writing-style.md", "drafts/*/writing-style.md"],
   });
 
   const hits: RelatedCanonHit[] = [];
@@ -5254,12 +5230,8 @@ export async function prepareParagraphEvaluation(
   const analysis = analyzeText(paragraphText);
   const canonContext = await buildEvaluationCanonContext(root);
   const mentions = findCanonMentions(paragraphText, canonContext.entities);
-  const guidelinesParts = [
-    draft.styleContext.globalWritingStyle?.body,
-    draft.styleContext.chapterWritingStyle?.body,
-    draft.styleContext.draftWritingStyle?.body,
-    ...draft.styleContext.metadataSignals.map((signal) => signal.value),
-  ].filter((text): text is string => Boolean(text?.trim()));
+  const paragraphStyleContext = paragraphInsight.styleContext;
+  const guidelinesParts = [ghostwriterInstructionText(paragraphStyleContext.ghostwriter)];
   const styleGuidelinesText = guidelinesParts.join("\n\n").trim();
   const inheritedViewpoint = (draft.chapterData.metadata.pov ?? []).join(", ") || "not set";
   const contextParagraphs = draft.chapterData.paragraphs
@@ -5305,15 +5277,15 @@ export async function prepareParagraphEvaluation(
     objectiveStrengths: paragraphInsight.strengths,
     objectiveConcerns: paragraphInsight.concerns,
     styleFlags: {
-      showDontTell: draft.styleContext.showDontTell,
-      prefersShortSentences: draft.styleContext.prefersShortSentences,
-      prefersLyricalImagery: draft.styleContext.prefersLyricalImagery,
-      valuesDialogue: draft.styleContext.valuesDialogue,
-      valuesPhysicality: draft.styleContext.valuesPhysicality,
-      valuesActiveSpace: draft.styleContext.valuesActiveSpace,
-      valuesObjectFunction: draft.styleContext.valuesObjectFunction,
-      valuesSubtext: draft.styleContext.valuesSubtext,
-      valuesControlledProse: draft.styleContext.valuesControlledProse,
+      showDontTell: paragraphStyleContext.showDontTell,
+      prefersShortSentences: paragraphStyleContext.prefersShortSentences,
+      prefersLyricalImagery: paragraphStyleContext.prefersLyricalImagery,
+      valuesDialogue: paragraphStyleContext.valuesDialogue,
+      valuesPhysicality: paragraphStyleContext.valuesPhysicality,
+      valuesActiveSpace: paragraphStyleContext.valuesActiveSpace,
+      valuesObjectFunction: paragraphStyleContext.valuesObjectFunction,
+      valuesSubtext: paragraphStyleContext.valuesSubtext,
+      valuesControlledProse: paragraphStyleContext.valuesControlledProse,
     },
     styleGuidelinesText,
     canonMentions: mentions.map((entity) => ({
@@ -5461,11 +5433,11 @@ export async function evaluateBook(
       nextSteps: draft.nextSteps,
     });
 
-    collectGuidelineTitles(aggregatedStyles, [
-      draft.styleContext.globalWritingStyle,
-      draft.styleContext.chapterWritingStyle,
-      draft.styleContext.draftWritingStyle,
-    ].filter((guideline): guideline is GuidelineDocument => Boolean(guideline)));
+    for (const styleContext of [draft.styleContext, ...draft.paragraphInsights.map((entry) => entry.styleContext)]) {
+      const titles = aggregatedStyles.get(styleContext.ghostwriter.frontmatter.id) ?? [];
+      titles.push(`${styleContext.ghostwriter.frontmatter.id} (${styleContext.ghostwriter.frontmatter.name})`);
+      aggregatedStyles.set(styleContext.ghostwriter.frontmatter.id, uniqueValues(titles));
+    }
 
     for (const signal of draft.styleContext.metadataSignals) {
       const values = aggregatedSignals.get(signal.key) ?? [];
@@ -5592,8 +5564,8 @@ export async function evaluateBook(
       "# Style Context",
       "",
       activeStyleRefs.length > 0
-        ? `- Active guideline references: ${activeStyleRefs.join(", ")}`
-        : "- Active guideline references: none resolved yet, rely on guidelines/ defaults.",
+        ? `- Active ghostwriters: ${activeStyleRefs.join(", ")}`
+        : "- Active ghostwriters: none resolved.",
       ...(styleSignals.length > 0
         ? styleSignals.map(([key, values]) => `- ${humanizeKey(key)}: ${values.join(", ")}`)
         : ["- Style signals from metadata: none detected."]),
@@ -5603,7 +5575,7 @@ export async function evaluateBook(
       "- Verify chronology across chapters and timeline files.",
       "- Verify major characters keep a consistent voice and motivation.",
       "- Verify secrets are only revealed after their allowed threshold.",
-      "- Verify chapter openings and endings follow the style rules in guidelines/.",
+      "- Verify chapter openings and endings follow their selected ghostwriter profiles.",
       "- Verify chapter and paragraph evaluations stay aligned with each other after revisions.",
       "",
       "# Chapter Breakdown",
@@ -5661,17 +5633,18 @@ async function buildChapterEvaluationDraft(root: string, chapter: string): Promi
   const chapterAnalysis = analyzeText(chapterText);
   const inheritedViewpoint = (chapterData.metadata.pov ?? []).join(", ") || "not set";
 
-  const paragraphInsights: ParagraphEvaluationInsight[] = chapterData.paragraphs.map((paragraph) => {
+  const paragraphInsights: ParagraphEvaluationInsight[] = await Promise.all(chapterData.paragraphs.map(async (paragraph) => {
+    const paragraphStyleContext = await resolveEvaluationStyleContext(root, chapterData, paragraph.metadata.ghostwriter);
     const paragraphAnalysis = analyzeText(paragraph.body);
     const summaryPresent = Boolean(paragraph.metadata.summary);
     const viewpoint = paragraph.metadata.viewpoint ?? inheritedViewpoint;
-    const scorecard = buildParagraphScorecard(chapterData, paragraph, paragraphAnalysis, styleContext);
+    const scorecard = buildParagraphScorecard(chapterData, paragraph, paragraphAnalysis, paragraphStyleContext);
     const strengths = collectEvaluationNotes(scorecard, "strengths", 4);
     const concerns = collectEvaluationNotes(scorecard, "concerns", 4);
-    const editorial = buildParagraphEditorialAssessment(chapterData, paragraph, paragraphAnalysis, styleContext);
+    const editorial = buildParagraphEditorialAssessment(chapterData, paragraph, paragraphAnalysis, paragraphStyleContext);
     const canon = buildParagraphCanonAssessment(chapterData, paragraph, paragraphAnalysis, canonContext);
     const nextSteps = uniqueValues([
-      ...buildParagraphNextSteps(chapterData, paragraph, paragraphAnalysis, styleContext),
+      ...buildParagraphNextSteps(chapterData, paragraph, paragraphAnalysis, paragraphStyleContext),
       ...editorial.nextSteps,
       ...canon.nextSteps,
     ]);
@@ -5716,8 +5689,9 @@ async function buildChapterEvaluationDraft(root: string, chapter: string): Promi
       weightedVerdict,
       recommendedFocus,
       nextSteps,
+      styleContext: paragraphStyleContext,
     };
-  });
+  }));
 
   const scorecard = buildChapterScorecard(chapterData, chapterAnalysis, paragraphInsights, styleContext);
   const strengths = collectEvaluationNotes(scorecard, "strengths", 5);
@@ -5766,31 +5740,18 @@ async function buildChapterEvaluationDraft(root: string, chapter: string): Promi
 async function resolveEvaluationStyleContext(
   root: string,
   chapterData: ChapterReadResult,
+  paragraphGhostwriter?: string,
 ): Promise<EvaluationStyleContext> {
-  const { global, chapter, draft } = await readWritingStyleDocuments(
+  const ghostwriter = await resolveChapterGhostwriter(
     root,
     chapterData.metadata.id.replace(/^chapter:/, ""),
-    true,
-    true,
+    paragraphGhostwriter,
   );
-  const metadataEntries = [chapterData.metadata, ...chapterData.paragraphs.map((paragraph) => paragraph.metadata)];
-  const metadataSignals = uniqueSignalEntries(
-    metadataEntries.flatMap((metadata) => extractStyleSignals(metadata as Record<string, unknown>)),
-  );
-  const expectationText = [
-    global?.body,
-    chapter?.body,
-    draft?.body,
-    ...metadataSignals.map((signal) => signal.value),
-  ]
-    .filter((value): value is string => Boolean(value && value.trim()))
-    .join("\n")
-    .toLowerCase();
+  const metadataSignals: Array<{ key: string; value: string }> = [];
+  const expectationText = ghostwriterInstructionText(ghostwriter).toLowerCase();
 
   return {
-    globalWritingStyle: global,
-    chapterWritingStyle: chapter,
-    draftWritingStyle: draft,
+    ghostwriter,
     metadataSignals,
     expectationText,
     showDontTell: containsShowDontTellText(expectationText),
@@ -5810,6 +5771,7 @@ async function listGuidelines(root: string): Promise<GuidelineDocument[]> {
     cwd: root,
     absolute: true,
     onlyFiles: true,
+    ignore: ["writing-style.md", "style.md", "prose.md", "voices.md", "chapter-rules.md", "structure.md", "styles/**"],
   });
 
   const results: GuidelineDocument[] = [];
@@ -6008,7 +5970,7 @@ function renderParagraphEvaluationContent(
       "",
       "# Style Context",
       "",
-      ...renderStyleContextLines(root, draft.styleContext),
+      ...renderStyleContextLines(root, paragraph.styleContext),
       "",
       "# Editorial Reading",
       "",
@@ -6162,10 +6124,8 @@ function buildChapterScorecard(
   const styleStrengths: string[] = [];
   const styleConcerns: string[] = [];
   let styleAlignment = paragraphStyle || 5;
-  if (styleContext.globalWritingStyle || styleContext.chapterWritingStyle || styleContext.draftWritingStyle) {
-    styleAlignment += 1;
-    styleStrengths.push("The evaluation has explicit writing-style material to check against.");
-  }
+  styleAlignment += 1;
+  styleStrengths.push("The evaluation has an explicit ghostwriter profile to check against.");
   if (styleContext.showDontTell) {
     if (chapterAnalysis.sensoryCueCount >= chapterAnalysis.tellingCueCount) {
       styleAlignment += 1;
@@ -6284,10 +6244,8 @@ function buildParagraphScorecard(
   const styleStrengths: string[] = [];
   const styleConcerns: string[] = [];
   let styleAlignment = 6;
-  if (styleContext.globalWritingStyle || styleContext.chapterWritingStyle || styleContext.draftWritingStyle) {
-    styleAlignment += 1;
-    styleStrengths.push("The scene can be checked against explicit writing-style guidance.");
-  }
+  styleAlignment += 1;
+  styleStrengths.push("The scene can be checked against its selected ghostwriter profile.");
   if (styleContext.showDontTell) {
     if (analysis.sensoryCueCount >= analysis.tellingCueCount) {
       styleAlignment += 1;
@@ -6343,7 +6301,7 @@ function buildParagraphEditorialAssessment(
 
   if (styleContext.valuesControlledProse) {
     if (analysis.avgSentenceWords <= 22) {
-      strengths.push("Sentence control stays close to the book's controlled writing-style contract.");
+      strengths.push("Sentence control stays close to the selected ghostwriter's controlled prose contract.");
     } else {
       concerns.push("The paragraph drifts away from the book's controlled prose contract with sentences that run too long.");
       nextSteps.push(`Tighten sentence control in ${path.basename(paragraph.path, ".md")} so the prose feels more disciplined.`);
@@ -6354,7 +6312,7 @@ function buildParagraphEditorialAssessment(
     if (movementCueCount > 0) {
       strengths.push("The paragraph uses physical movement instead of leaving tension entirely abstract.");
     } else {
-      concerns.push("The writing style asks for purposeful physicality, but this paragraph stays mostly static.");
+      concerns.push("The selected ghostwriter asks for purposeful physicality, but this paragraph stays mostly static.");
       nextSteps.push(`Add one purposeful physical beat to ${path.basename(paragraph.path, ".md")} that reveals tension or pressure.`);
     }
   }
@@ -6363,7 +6321,7 @@ function buildParagraphEditorialAssessment(
     if (movementCueCount >= 2) {
       strengths.push("Blocking and distance cues help the scene use space actively.");
     } else {
-      concerns.push("The writing style expects active space, but the scene does not yet make distance or blocking carry enough meaning.");
+      concerns.push("The selected ghostwriter expects active space, but the scene does not yet make distance or blocking carry enough meaning.");
       nextSteps.push(`Clarify how bodies move or resist space inside ${path.basename(paragraph.path, ".md")}.`);
     }
   }
@@ -6372,7 +6330,7 @@ function buildParagraphEditorialAssessment(
     if (objectCueCount > 0) {
       strengths.push("Objects or surfaces participate in the paragraph instead of staying decorative.");
     } else {
-      concerns.push("The writing style values functional objects, but this paragraph does not yet make props or surfaces do narrative work.");
+      concerns.push("The selected ghostwriter values functional objects, but this paragraph does not yet make props or surfaces do narrative work.");
       nextSteps.push(`Let at least one object or surface in ${path.basename(paragraph.path, ".md")} carry pressure, status, or subtext.`);
     }
   }
@@ -6413,7 +6371,7 @@ function buildChapterEditorialAssessment(
     if (chapterAnalysis.avgSentenceWords <= 22) {
       strengths.push("Chapter-level sentence control fits the book's controlled prose contract.");
     } else {
-      concerns.push("Chapter-level prose runs looser than the active writing-style contract expects.");
+      concerns.push("Chapter-level prose runs looser than the selected ghostwriter profile expects.");
       nextSteps.push(`Tighten long chapter sentences in ${chapterData.metadata.id} so the prose stays controlled.`);
     }
   }
@@ -6421,7 +6379,7 @@ function buildChapterEditorialAssessment(
   if (styleContext.valuesPhysicality && movementCueCount >= Math.max(2, chapterData.paragraphs.length)) {
     strengths.push("The chapter gives physical beats enough presence to keep tension embodied.");
   } else if (styleContext.valuesPhysicality) {
-    concerns.push("The chapter-level writing style asks for purposeful physicality, but the chapter still feels under-blocked or under-bodied in places.");
+    concerns.push("The selected ghostwriter asks for purposeful physicality, but the chapter still feels under-blocked or under-bodied in places.");
     nextSteps.push(`Review the weakest scenes in ${chapterData.metadata.id} for missing physical pressure and blocking.`);
   }
 
@@ -6980,15 +6938,7 @@ function collectEvaluationNotes(
 }
 
 function buildStyleExpectationText(styleContext: EvaluationStyleContext): string {
-  return [
-    styleContext.globalWritingStyle?.body,
-    styleContext.chapterWritingStyle?.body,
-    styleContext.draftWritingStyle?.body,
-    ...styleContext.metadataSignals.map((signal) => signal.value),
-  ]
-    .filter((value): value is string => Boolean(value && value.trim()))
-    .join("\n")
-    .toLowerCase();
+  return ghostwriterInstructionText(styleContext.ghostwriter).toLowerCase();
 }
 
 function containsAnyExpectation(expectationText: string, fragments: string[]): boolean {
@@ -7038,25 +6988,9 @@ function renderBulletSection(values: string[], fallback: string): string[] {
 }
 
 function renderStyleContextLines(root: string, styleContext: EvaluationStyleContext): string[] {
-  const lines: string[] = [];
-
-  lines.push(
-    styleContext.globalWritingStyle
-      ? `- Global writing style: ${styleContext.globalWritingStyle.frontmatter.id} (${toPosixPath(path.relative(root, styleContext.globalWritingStyle.path))})`
-      : "- Global writing style: none found.",
-  );
-
-  lines.push(
-    styleContext.chapterWritingStyle
-      ? `- Chapter writing style: ${styleContext.chapterWritingStyle.frontmatter.id} (${toPosixPath(path.relative(root, styleContext.chapterWritingStyle.path))})`
-      : "- Chapter writing style: none.",
-  );
-
-  lines.push(
-    styleContext.draftWritingStyle
-      ? `- Draft writing style: ${styleContext.draftWritingStyle.frontmatter.id} (${toPosixPath(path.relative(root, styleContext.draftWritingStyle.path))})`
-      : "- Draft writing style: none.",
-  );
+  const lines: string[] = [
+    `- Selected ghostwriter: ${styleContext.ghostwriter.frontmatter.id} (${toPosixPath(path.relative(root, styleContext.ghostwriter.path))})`,
+  ];
 
   if (styleContext.metadataSignals.length > 0) {
     lines.push(
@@ -7095,90 +7029,6 @@ function summarizeEditorialExpectations(styleContext: EvaluationStyleContext): s
   return values.join(", ") || "no special editorial emphasis detected";
 }
 
-function extractStyleRefs(metadata: Record<string, unknown>): string[] {
-  const refKeys = [
-    "style_ref",
-    "style_refs",
-    "guideline_ref",
-    "guideline_refs",
-    "evaluation_style_ref",
-    "evaluation_style_refs",
-    "writing_style_ref",
-    "writing_style_refs",
-    "chapter_style_ref",
-    "chapter_style_refs",
-    "custom_style_ref",
-    "custom_style_refs",
-    "refs",
-  ];
-
-  return uniqueValues(
-    refKeys.flatMap((key) => readStringValues(metadata[key]).filter((value) => value.startsWith("guideline:"))),
-  );
-}
-
-function extractStyleSignals(metadata: Record<string, unknown>): Array<{ key: string; value: string }> {
-  const signalKeys = [
-    "style",
-    "style_note",
-    "style_notes",
-    "custom_style",
-    "custom_styles",
-    "writing_style",
-    "writing_styles",
-    "methodology",
-    "methodologies",
-    "writing_pattern",
-    "writing_patterns",
-    "style_pattern",
-    "style_patterns",
-    "narrative_mode",
-    "narrative_modes",
-    "tone",
-    "voice",
-    "register",
-    "pacing_mode",
-    "tags",
-  ];
-
-  const results = signalKeys.flatMap((key) =>
-    readStringValues(metadata[key]).map((value) => ({ key, value })),
-  );
-
-  if (metadata.show_dont_tell === true || metadata.showDontTell === true) {
-    results.push({ key: "show_dont_tell", value: "enabled" });
-  }
-
-  return results;
-}
-
-function readStringValues(value: unknown): string[] {
-  if (typeof value === "string") return value.trim() ? [value.trim()] : [];
-  if (Array.isArray(value)) {
-    return value
-      .filter((entry): entry is string => typeof entry === "string")
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-  }
-  return [];
-}
-
-function uniqueSignalEntries(
-  values: Array<{ key: string; value: string }>,
-): Array<{ key: string; value: string }> {
-  const seen = new Set<string>();
-  const results: Array<{ key: string; value: string }> = [];
-
-  for (const value of values) {
-    const normalizedKey = `${value.key.toLowerCase()}::${value.value.toLowerCase()}`;
-    if (seen.has(normalizedKey)) continue;
-    seen.add(normalizedKey);
-    results.push(value);
-  }
-
-  return results;
-}
-
 function containsShowDontTellText(value: string): boolean {
   const normalized = value.toLowerCase();
   return (
@@ -7213,14 +7063,6 @@ function findParagraphInsight(
 
 function getScore(scorecard: ScorecardEntry[], label: string): number {
   return scorecard.find((entry) => entry.label === label)?.score ?? 0;
-}
-
-function collectGuidelineTitles(bucket: Map<string, string[]>, guidelines: GuidelineDocument[]): void {
-  for (const guideline of guidelines) {
-    const values = bucket.get(guideline.slug) ?? [];
-    values.push(`${guideline.frontmatter.id} (${guideline.frontmatter.title})`);
-    bucket.set(guideline.slug, uniqueValues(values));
-  }
 }
 
 function averageScore(values: number[]): number {
@@ -7319,10 +7161,22 @@ export async function validateBook(rootPath: string): Promise<{
     cwd: root,
     absolute: true,
     onlyFiles: true,
-    ignore: ["**/node_modules/**", "**/dist/**", "**/.astro/**"],
+    ignore: ["**/node_modules/**", "**/dist/**", "**/.astro/**", "guidelines/{writing-style,style,prose,voices,chapter-rules,structure}.md", "guidelines/styles/**", "chapters/*/writing-style.md", "drafts/*/writing-style.md"],
   });
 
   const errors: Array<{ path: string; message: string }> = [];
+
+  const legacyStyleFiles = await fg([
+    "writing-style.md",
+    "punctuation-style.md",
+    "guidelines/{writing-style,punctuation-style,style,prose,voices,chapter-rules,structure}.md",
+    "guidelines/styles/**/*.md",
+    "chapters/*/writing-style.md",
+    "drafts/*/writing-style.md",
+  ], { cwd: root, onlyFiles: true });
+  for (const legacyPath of legacyStyleFiles.sort()) {
+    errors.push({ path: legacyPath, message: "Standalone style files are unsupported. Move prose and punctuation rules into a ghostwriter profile." });
+  }
 
   for (const filePath of files) {
     try {
@@ -7333,6 +7187,36 @@ export async function validateBook(rootPath: string): Promise<{
         message: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  for (const filePath of files) {
+    const relativePath = toPosixPath(path.relative(root, filePath));
+    if (relativePath.startsWith(`${GHOSTWRITERS_DIRECTORY}/`)) continue;
+    const raw = await readFile(filePath, "utf8").catch(() => null);
+    if (!raw) continue;
+    let selected: unknown;
+    try {
+      selected = matter(raw).data.ghostwriter;
+    } catch {
+      continue;
+    }
+    if (typeof selected !== "string") continue;
+    if (slugify(selected) !== selected) {
+      errors.push({ path: relativePath, message: `Invalid ghostwriter slug: ${selected}` });
+    } else if (!(await pathExists(path.join(root, GHOSTWRITERS_DIRECTORY, `${selected}.md`)))) {
+      errors.push({ path: relativePath, message: `Selected ghostwriter does not exist: ${GHOSTWRITERS_DIRECTORY}/${selected}.md` });
+    }
+  }
+
+  const bookDocument = await readBook(root).catch(() => null);
+  const selectedGhostwriter = bookDocument?.frontmatter.ghostwriter;
+  if (!selectedGhostwriter) {
+    errors.push({ path: BOOK_FILE, message: "book.md must select a ghostwriter." });
+  } else if (!(await pathExists(path.join(root, GHOSTWRITERS_DIRECTORY, `${selectedGhostwriter}.md`)))) {
+    errors.push({
+      path: BOOK_FILE,
+      message: `Selected ghostwriter does not exist: ${GHOSTWRITERS_DIRECTORY}/${selectedGhostwriter}.md`,
+    });
   }
 
   return {
@@ -9572,6 +9456,7 @@ function reviseMarkdownBody(
     intensity: RevisionIntensity;
     preserveFacts: boolean;
     viewpointLabel?: string;
+    ghostwriterInstructions?: string;
   },
 ): ParagraphRevisionProposal {
   const blocks = body.trim().split(/\n\s*\n/);
@@ -9605,6 +9490,7 @@ function reviseProseBlock(
     intensity: RevisionIntensity;
     preserveFacts: boolean;
     viewpointLabel?: string;
+    ghostwriterInstructions?: string;
   },
 ): ParagraphRevisionProposal {
   let revised = normalizeRevisionSpacing(text);
@@ -9655,6 +9541,16 @@ function reviseProseBlock(
       apply(tightenCommonPhrases, "Compresses repeated support phrasing around the core beat.");
       apply((value) => removeRevisionFillerWords(value, options.intensity), "Drops extra modifiers that restate what the sentence already implies.");
       break;
+  }
+
+  const ghostwriterInstructions = options.ghostwriterInstructions?.toLowerCase() ?? "";
+  if (containsAnyExpectation(ghostwriterInstructions, ["short sentence", "short sentences", "frasi brevi", "tight sentence", "controlled prose"])) {
+    apply((value) => breakLongRevisionSentences(value, options.intensity), "Applies the selected ghostwriter's sentence-rhythm guidance.");
+  }
+  if (ghostwriterInstructions.includes("single ellipsis character")) {
+    apply((value) => value.replace(/\.{3}/g, "…"), "Applies the selected ghostwriter's ellipsis punctuation rule.");
+  } else if (containsAnyExpectation(ghostwriterInstructions, ["three periods", "tre punti"])) {
+    apply((value) => value.replace(/…/g, "..."), "Applies the selected ghostwriter's ellipsis punctuation rule.");
   }
 
   revised = capitalizeRevisionSentenceStarts(revised);
@@ -10528,6 +10424,13 @@ async function validateFile(root: string, filePath: string): Promise<void> {
     return;
   }
 
+  if (relativePath.startsWith(`${GHOSTWRITERS_DIRECTORY}/`)) {
+    const ghostwriter = ghostwriterSchema.parse(data);
+    const expectedId = `ghostwriter:${path.basename(filePath, ".md")}`;
+    if (ghostwriter.id !== expectedId) throw new Error(`Ghostwriter id must match its filename: ${expectedId}`);
+    return;
+  }
+
   if (relativePath.startsWith("research/wikipedia/")) {
     researchNoteSchema.parse(data);
     return;
@@ -10547,11 +10450,6 @@ async function validateFile(root: string, filePath: string): Promise<void> {
     return;
   }
 
-  if (relativePath.startsWith("chapters/") && path.basename(filePath) === "writing-style.md") {
-    guidelineSchema.parse(data);
-    return;
-  }
-
   if (relativePath.startsWith("chapters/")) {
     paragraphSchema.parse(data);
     return;
@@ -10559,11 +10457,6 @@ async function validateFile(root: string, filePath: string): Promise<void> {
 
   if (relativePath.startsWith("drafts/") && path.basename(filePath) === "chapter.md") {
     chapterDraftSchema.parse(data);
-    return;
-  }
-
-  if (relativePath.startsWith("drafts/") && path.basename(filePath) === "writing-style.md") {
-    guidelineSchema.parse(data);
     return;
   }
 
@@ -11994,7 +11887,7 @@ function buildGithubCopilotInstructions(): string {
     "- `resumes/` for running summaries",
     "- `state/` for structured continuity snapshots and sync status",
     "- `evaluations/` for critique and continuity checks",
-    "- `writing-style.md` for the always-on writing and review contract of the book",
+    "- `ghostwriters/<slug>.md` for complete prose profiles selected from book, chapter, paragraph, draft, or script frontmatter",
     "",
     "## Working rules",
     "",
@@ -12044,14 +11937,14 @@ function buildGithubCopilotInstructions(): string {
       "- Respect chapter numbering and paragraph numbering.",
       "- Keep prose in body content and structured facts in frontmatter.",
       "- In chapter and paragraph prose, write character, item, location, faction, secret, and timeline-event names as plain text. Do not insert markdown links to canon files or reader routes; the reader resolves visible mentions automatically.",
-      "- Always read `writing-style.md` before drafting or revising chapter and paragraph prose.",
-      "- If `chapters/<chapter>/writing-style.md` or `drafts/<chapter>/writing-style.md` exists, treat it as an explicit chapter-local addendum or override on top of the global writing-style file.",
-    "- Before writing or rewriting a scene, review `context.md`, `story-design.md`, `notes.md`, any matching chapter draft notes, the relevant prior chapter content, the scoped summaries for story so far, the global `writing-style.md`, any chapter-specific `writing-style.md`, any point-in-time state snapshot available before that point, and any matching files in `drafts/`.",
+      "- Always read the selected `ghostwriters/<slug>.md` profile before drafting, revising, or evaluating prose. Its frontmatter and body are one prose contract.",
+      "- Resolve the ghostwriter from the closest explicit selection, then paragraph, chapter, and finally `book.md`.",
+    "- Before writing or rewriting a scene, review `context.md`, `story-design.md`, `notes.md`, any matching chapter draft notes, the relevant prior chapter content, scoped story summaries, the selected ghostwriter, any point-in-time state snapshot available before that point, and any matching files in `drafts/`.",
     "- Treat `ideas.md` as unstable material under review; do not treat active ideas as accepted canon or default drafting instructions unless the user asks you to use them.",
     "- Treat notes, ideas, and promoted archives as working support material, not canon. If something becomes a stable fact, move it into the correct canon file.",
     "- Keep `plot.md` aligned with chapter summaries, secret reveals, and timeline references.",
     "- After `update_paragraph`, assume plot and resume files were refreshed automatically by the MCP layer, and review `sync_story_state` separately only when continuity snapshots must be updated.",
-    "- If stylistic guidance is missing, update `writing-style.md` or add a chapter-local `writing-style.md` instead of inventing a new style ad hoc.",
+    "- If stylistic guidance is missing, update or select a ghostwriter profile instead of inventing a style ad hoc.",
   ].join("\n");
 }
 
@@ -12207,12 +12100,12 @@ function buildResumeBookCommand(): string {
     "Before doing anything else:",
     "1. Parse `$ARGUMENTS`: if the first token starts with `chapter:`, use it as the chapter target; if the next token looks like a paragraph id or slug, use it as the paragraph target; everything after that is the follow-up request.",
     "2. Call the `resume_book_context` MCP tool with the scoped `chapter` and optional `paragraph` when a target was provided; otherwise call it without scope.",
-    "3. Read the files it references, especially `context.md`, `story-design.md`, `notes.md`, any scoped chapter draft notes, `writing-style.md`, any chapter-specific `writing-style.md`, scoped story summaries, `state/current.md`, `state/status.md` when present, and the latest files in `conversations/`.",
+    "3. Read the files it references, especially `context.md`, `story-design.md`, `notes.md`, any scoped chapter draft notes, the selected ghostwriter profile, scoped story summaries, `state/current.md`, `state/status.md` when present, and the latest files in `conversations/`.",
     "4. Briefly restate where the book stands, what the latest conversation was doing, and the next best actions.",
     "5. Then continue with the parsed follow-up request if one is present.",
     "6. If no extra request is present, ask for the next book task only after giving the short status recap.",
     "",
-    "Prefer continuity over novelty. Respect `known_from`, `reveal_in`, and the writing-style rules.",
+    "Prefer continuity over novelty. Respect `known_from`, `reveal_in`, and the selected ghostwriter profile.",
   ].join("\n");
 }
 
@@ -12336,12 +12229,12 @@ function buildConversationExportPlugin(): string {
     '      "",',
     '      "## Read first",',
     '      "",',
-      '      "1. writing-style.md",',
+      '      "1. The selected ghostwriters/<slug>.md profile",',
       '      "2. plot.md",',
       '      "3. resumes/total.md",',
       '      "4. state/current.md",',
       '      "5. state/status.md if it shows dirty: true",',
-      '      "6. Any chapter-specific writing-style.md or matching files in drafts/",',
+      '      "6. Any matching files in drafts/",',
     '      ...(continuationSessionLine ? [continuationSessionLine] : []),',
     '      "",',
     '      "## Current conversation snapshot",',
@@ -12896,11 +12789,45 @@ function formatPromotedStoryDesignSection(entry: WorkItemEntryFrontmatter): stri
     .join("\n");
 }
 
-function defaultWritingStyleBody(): string {
+function defaultGhostwriterMarkdown(language?: string): string {
+  const italian = normalizeBookLanguage(language) === "it";
+  return renderMarkdown(
+    ghostwriterSchema.parse({
+      type: "ghostwriter",
+      id: `ghostwriter:${DEFAULT_GHOSTWRITER}`,
+      name: italian ? "Ghostwriter predefinito" : "Default Ghostwriter",
+      language: italian ? "Italiano" : "English",
+      tone: italian ? "Naturale, concreto e misurato" : "Natural, concrete, and measured",
+      voice: italian ? "Chiara, narrativa e coerente con il punto di vista" : "Clear, narrative, and consistent with the viewpoint",
+      sentence_rhythm: italian
+        ? "Alterna frasi brevi e medie secondo tensione e respiro della scena"
+        : "Alternate short and medium sentences according to scene tension and breathing room",
+      dialogue_style: italian
+        ? "Dialoghi leggibili, naturali e attribuiti con action beat sobri"
+        : "Readable, natural dialogue with restrained action beats",
+      vocabulary: italian
+        ? "Preciso e accessibile, senza ricercatezza gratuita"
+        : "Precise and accessible, without gratuitous ornament",
+      writing_style: italian
+        ? "Preserva canone e intento; usa scene concrete, punto di vista leggibile, dettagli sensoriali pertinenti e ritmo intenzionale. Evita riassunti generici e spiegazioni ridondanti."
+        : "Preserve canon and intent; use concrete scenes, a readable viewpoint, relevant sensory detail, and purposeful rhythm. Avoid generic summary and redundant explanation.",
+      punctuation_style: italian
+        ? "Usa la punteggiatura italiana standard. Per i dialoghi usa le caporali « » in modo coerente; usa il carattere unico … per i puntini di sospensione."
+        : "Use standard English punctuation. Keep dialogue quotation marks consistent and use the single ellipsis character … rather than three periods.",
+      influences: [],
+      strengths: [],
+      avoid: [],
+      temperature: 0.8,
+    }),
+    defaultGhostwriterBody(),
+  );
+}
+
+function defaultGhostwriterBody(): string {
   return [
     "Act as a narrative editor experienced in historical fiction and high-tension scenes.",
     "",
-    "This file defines the book's writing and review contract. Read it before drafting or revising any chapter or paragraph.",
+    "This profile defines the book's writing and review contract. Read it before drafting or revising any chapter or paragraph.",
     "",
     "# Invariants",
     "",
@@ -13055,8 +12982,7 @@ function defaultWritingStyleBody(): string {
     "",
     "- Keep original dialogue unless a change is genuinely necessary.",
     "- Define here how the book handles narrative person, POV distance, tense, and direct speech.",
-    "- If one chapter needs special handling, add a `writing-style.md` file inside that chapter or draft chapter folder.",
-    "- The global file remains active even when a local override exists.",
+    "- Select another ghostwriter in chapter or paragraph frontmatter when that scope needs a different prose contract.",
     "",
     "# Dialogue action beats",
     "",
@@ -14012,6 +13938,7 @@ export type CreateScriptInput = {
   number: number;
   title: string;
   location?: string;
+  ghostwriter?: string;
   body?: string;
   tags?: string[];
   secretRefs?: string[];
@@ -14203,6 +14130,7 @@ export async function createScript(
     number: input.number,
     title: input.title,
     location: input.location,
+    ghostwriter: input.ghostwriter,
     secret_refs: uniqueValues(input.secretRefs ?? []),
     character_refs: uniqueValues(input.characterRefs ?? []),
     location_refs: uniqueValues(input.locationRefs ?? []),
@@ -14825,7 +14753,12 @@ export async function scriptToParagraphContext(
   scriptFilePath: string;
   scriptBody: string;
   location: string | undefined;
-  writingStyleBody: string | undefined;
+  ghostwriter: {
+    slug: string;
+    name: string;
+    path: string;
+    instructions: string;
+  };
   existingParagraphBody: string | undefined;
   legend: string;
   directiveSummary: string;
@@ -14840,20 +14773,31 @@ export async function scriptToParagraphContext(
   const parsedBody = parseScriptBody(script.body, { path: relativeScriptPath });
   const canonicalSecrets = await buildCanonicalSecretLookup(root);
 
-  const wsRaw = await readGlobalWritingStyleRaw(root);
-  const writingStyleBody = wsRaw ? String(matter(wsRaw).content ?? "").trim() : undefined;
-
   const chapterSlugNorm = normalizeChapterReference(chapter);
   const paragraphSlug = paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim();
   const paraPath = path.join(root, "chapters", chapterSlugNorm, `${paragraphSlug}.md`);
   const paraRaw = await readFile(paraPath, "utf8").catch(() => null);
   const existingParagraphBody = paraRaw ? String(matter(paraRaw).content ?? "").trim() : undefined;
+  const paragraphFinal = await readParagraph(root, chapterSlugNorm, paragraphSlug).catch(() => null);
+  const paragraphDraft = await readParagraphDraft(root, chapterSlugNorm, paragraphSlug).catch(() => null);
+  const selectedGhostwriter = await resolveGhostwriter(root, {
+    explicit: script.frontmatter.ghostwriter,
+    paragraph: paragraphFinal?.metadata.ghostwriter,
+    paragraphDraft: paragraphDraft?.metadata.ghostwriter,
+    chapter: (await readChapter(root, chapterSlugNorm).catch(() => null))?.metadata.ghostwriter,
+    chapterDraft: (await readChapterDraft(root, chapterSlugNorm).catch(() => null))?.metadata.ghostwriter,
+  });
 
   return {
     scriptFilePath: script.filePath,
     scriptBody: script.body,
     location: script.frontmatter.location,
-    writingStyleBody,
+    ghostwriter: {
+      slug: selectedGhostwriter.slug,
+      name: selectedGhostwriter.frontmatter.name,
+      path: toPosixPath(path.relative(root, selectedGhostwriter.path)),
+      instructions: ghostwriterInstructionText(selectedGhostwriter),
+    },
     existingParagraphBody,
     legend: SCRIPT_LEGEND,
     directiveSummary: formatScriptDirectiveSummary(parsedBody),

@@ -15,7 +15,7 @@ describe("cloud settings nested schema normalization", () => {
     expect(settings.copilotTools.toolOverrides).toBeTypeOf("object");
     expect(settings.customActionsSchemaVersion).toBe(1);
     if ("customActions" in shape && Array.isArray(shape.customActions) && shape.customActions.length) {
-      expect(settings.customActions[0]?.injections).toEqual({ includeBody: true, includeFrontmatter: false, includeContext: true, includeWritingStyle: true, includeGhostwriter: true });
+      expect(settings.customActions[0]?.injections).toEqual({ includeBody: true, includeFrontmatter: false, includeContext: true, includeGhostwriter: true });
     } else {
       expect(settings.customActions).toEqual([]);
     }

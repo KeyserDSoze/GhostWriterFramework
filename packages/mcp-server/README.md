@@ -173,13 +173,13 @@ See `docs/revise-paragraph.md` for modes, examples, and the manual apply workflo
 
 See `docs/revise-chapter.md` for the chapter-level workflow and output structure.
 
-Chapter and paragraph writing context now always load `guidelines/writing-style.md`. If `chapters/<slug>/writing-style.md` or `drafts/<slug>/writing-style.md` exists, that chapter-local file is layered on top as an explicit override/addendum. Chapter and paragraph writing context also stay scoped to the story up to that point instead of pulling in later chapter material.
+Chapter and paragraph writing context loads the selected `ghostwriters/<slug>.md` profile, including its frontmatter style and punctuation fields and its body. Selection resolves from paragraph, chapter, then `book.md`, while story context remains scoped to that point.
 
 `resume_book_context` also accepts optional `chapter` and `paragraph` parameters when you want to restart from a specific writing point instead of the latest overall state.
 
 Use `save_book_item` and `save_chapter_item` for structured active ideas and notes, `promote_book_item` and `promote_chapter_item` to archive promoted items out of the active queues, and `update_book_notes` / `update_chapter_notes` when you want to edit the supporting documents themselves.
 
-Evaluation tools now combine objective text signals with an editorial reading against `guidelines/writing-style.md` and any chapter-specific `writing-style.md` files, plus canon coherence checks against characters, locations, factions, items, and timeline references when they are present on the page. The saved evaluation files expose both objective and editorial scores, a weighted verdict, recommended focus, and a dedicated `Why the weighted verdict landed here` section.
+Evaluation tools now combine objective text signals with an editorial reading against each scope's selected ghostwriter profile, plus canon coherence checks against characters, locations, factions, items, and timeline references when they are present on the page. The saved evaluation files expose both objective and editorial scores, a weighted verdict, recommended focus, and a dedicated `Why the weighted verdict landed here` section.
 
 See `docs/style-profiles.md` for the chapter style workflow.
 

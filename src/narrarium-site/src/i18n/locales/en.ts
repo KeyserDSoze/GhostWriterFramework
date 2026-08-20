@@ -973,7 +973,7 @@ const en = {
     auditIncludeLocations: "Include locations",
     auditIncludeItems: "Include items",
     auditIncludeFactions: "Include factions",
-    auditIncludeWritingStyle: "Include writing style",
+    auditIncludeGhostwriter: "Include ghostwriter",
     auditIncludeSummary: "Include summary",
     auditIncludePreviousContext: "Include previous context",
     auditIncludeNextContext: "Include next context",
@@ -1122,6 +1122,9 @@ const en = {
     selectHint: "Select or create a ghostwriter to edit it.",
     loadFailed: "Failed to load ghostwriter",
     saveFailed: "Failed to save ghostwriter",
+    provisionFailed: "Could not create the default ghostwriter",
+    invalidProfile: "A ghostwriter needs a name and a temperature between 0 and 2.",
+    inUse: "This ghostwriter is still selected by a book, chapter, paragraph, draft, or script.",
     alreadyExists: "A ghostwriter with this name already exists.",
     name: "Name",
     language: "Language",
@@ -1504,7 +1507,6 @@ const en = {
     includeBody: "Include Body",
     includeFrontmatter: "Include Front Matter / Header",
     includeContext: "Include Context",
-    includeWritingStyle: "Include Writing Style",
     includeGhostwriter: "Include Ghostwriter",
     result: "Result",
     replacePreview: "Replacement preview",
@@ -1597,25 +1599,6 @@ const en = {
     priceImgOutput: "Img: output (€ / 1M)",
     priceTts: "TTS (€ / 1M chars)",
     priceStt: "STT (€ / hour)"
-  },
-  writingStyle: {
-    title: "Writing style",
-    badge: "Writing contract",
-    bookScope: "Book-wide",
-    chapterScope: "Chapter override",
-    chapterTitle: "Chapter style {{slug}}",
-    chapterButton: "Chapter style",
-    intro: "The always-on writing contract: narration, dialogue, rhythm, what to preserve and what to improve.",
-    chapterIntro: "Style exception for this chapter, layered on top of the global style.",
-    editorHint: "Write the rules that should guide drafting, revision, dialogue, rhythm, viewpoint, and prose consistency.",
-    placeholder: "Write the style rules here…"
-  },
-  punctuationStyle: {
-    title: "Punctuation style",
-    badge: "Punctuation contract",
-    intro: "Always-on punctuation rules for prose and dialogue: which quote marks to use and where each punctuation mark goes. These rules are injected into every prompt that writes, rewrites, or edits paragraphs and drafts.",
-    editorHint: "Define your punctuation rules, for example guillemets « » for dialogue with every mark inside except the final full stop, which stays outside. Keep them concrete so Copilot applies them consistently.",
-    placeholder: "Write the punctuation rules here…"
   },
   merge: {
     button: "Merge draft + final",

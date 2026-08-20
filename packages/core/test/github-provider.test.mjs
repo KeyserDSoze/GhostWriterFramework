@@ -76,7 +76,7 @@ test("GitHubRemoteProvider loads a Narrarium snapshot from repository markdown",
       return jsonResponse({
         sha: "blob-chapter",
         encoding: "base64",
-        content: markdownToBase64(`---\ntype: chapter\nid: chapter:001-the-arrival\nnumber: 1\ntitle: The Arrival\ncanon: draft\npov: []\nstyle_refs: []\nprose_mode: []\ntags: []\n---\n\n# Purpose\n\nOpen with pressure.\n`),
+        content: markdownToBase64(`---\ntype: chapter\nid: chapter:001-the-arrival\nnumber: 1\ntitle: The Arrival\ncanon: draft\npov: []\nprose_mode: []\ntags: []\n---\n\n# Purpose\n\nOpen with pressure.\n`),
       });
     }
 

@@ -47,11 +47,13 @@ npx create-narrarium-book --upgrade . --with-reader
 
 The upgrade command creates missing folders, refreshes managed OpenCode and skill files, updates root convenience scripts, and migrates legacy story prose links like `[Mariamne](../../characters/mariamne-ii/)` into plain-text canon mentions so the reader can resolve visible names automatically.
 
+Upgrade also creates `ghostwriters/default.md` and selects it when the current selection is missing or invalid. It never imports old writing-style content into the profile, overwrites an existing profile, or deletes old style files.
+
 ## What it creates
 
 - canonical book folders such as `characters/`, `locations/`, `factions/`, `chapters/`, `drafts/`, and `secrets/`
-- `context.md`, `ideas.md`, `story-design.md`, `notes.md`, `promoted.md`, `plot.md`, `guidelines/writing-style.md`, `conversations/`, `resumes/`, `evaluations/`, and `research/wikipedia/`
-- optional chapter-specific `writing-style.md` files can be added later inside `chapters/<slug>/` or `drafts/<slug>/` when one chapter needs a local override
+- `context.md`, `ideas.md`, `story-design.md`, `notes.md`, `promoted.md`, `plot.md`, `ghostwriters/default.md`, `conversations/`, `resumes/`, `evaluations/`, and `research/wikipedia/`
+- `book.md` selects the default ghostwriter; chapter, paragraph, draft, or script frontmatter can select another profile
 - `opencode.jsonc` plus bundled Narrarium skills for OpenCode and Claude, including `instructions` that point to `.github/copilot-instructions.md` so the same book-writing rules are reused by both tools
 - `conversations/README.md` plus automatic OpenCode exports, `RESUME.md`, `CONTINUATION.md`, and a `/resume-book` command for restarting from repo state globally or from a target chapter/paragraph
 - optional sample content

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, ArrowRight, ClipboardCheck, Columns2, FileEdit, FileText, History, NotebookPen, NotebookText, Repeat, Network, PenLine, Play, RefreshCcw, RotateCcw, Search, ShieldAlert, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, ClipboardCheck, Columns2, FileEdit, FileText, History, NotebookPen, NotebookText, Repeat, Network, Play, RefreshCcw, RotateCcw, Search, ShieldAlert, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useBookStructure } from "@/hooks/useBookStructure";
@@ -42,7 +42,7 @@ export interface ContextualImageProps {
 
 /**
  * The contextual navigable actions for the current route (script/draft/final/evaluation,
- * indexes, resume, writing-style, ghostwriters, audit). Shared by FloatingActions and the right-click menu.
+ * indexes, resume, ghostwriters, audit). Shared by FloatingActions and the right-click menu.
  */
 export function useContextualActions(): { actions: ContextualAction[]; hasBookActions: boolean; imageProps: ContextualImageProps | null } {
   const { t } = useTranslation();
@@ -77,7 +77,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
   const auditScope = (() => {
     if (route.kind === "paragraph" || route.kind === "paragraph-workspace" || route.kind === "paragraph-reader-evaluations" || route.kind === "paragraph-audit") return "paragraph";
     if (route.kind === "chapter" || route.kind === "chapter-workspace" || route.kind === "chapter-reader-evaluations" || route.kind === "chapter-audit") return "chapter";
-    if (["book", "book-dashboard", "book-assets", "book-ghostwriters", "book-writing-style", "book-evaluation-style", "book-simulated-readers", "reader", "book-export", "research", "research-detail", "canon", "book-audit"].includes(route.kind)) return "book";
+    if (["book", "book-dashboard", "book-assets", "book-ghostwriters", "book-evaluation-style", "book-simulated-readers", "reader", "book-export", "research", "research-detail", "canon", "book-audit"].includes(route.kind)) return "book";
     return null;
   })();
   const auditTarget: AuditTarget | null = auditScope === "paragraph" && paragraph && chapterId
@@ -192,7 +192,6 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
     }
     actions.push({ id: "research", label: t("research.title"), to: `/app/books/${bookId}/research`, icon: <Search className="h-4 w-4" /> });
     actions.push({ id: "gw", label: t("ghostwriters.title"), to: `/app/books/${bookId}/ghostwriters`, icon: <Wand2 className="h-4 w-4" /> });
-    actions.push({ id: "style", label: t("writingStyle.title"), to: `/app/books/${bookId}/writing-style`, icon: <PenLine className="h-4 w-4" /> });
     actions.push({ id: "personas", label: t("readerPersonas.title"), to: `/app/books/${bookId}/simulated-readers`, icon: <Users className="h-4 w-4" /> });
   }
 

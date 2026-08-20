@@ -13,7 +13,7 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { resolveBookToken } from "@/types/settings";
 import { isGitHubFileNotFoundError, loadFileContent, mutateTextFilesAtomically, readFileWithSha } from "@/github/githubClient";
-import { stringify } from "yaml";
+import { parseDocument, stringify } from "yaml";
 import { GeneratePreviewDialog } from "@/components/book/GeneratePreviewDialog";
 import { proseToScript, refineProse, scriptToProse, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
 import { commitCanonicalScriptMutation } from "@/narrarium/scriptLedger";
@@ -40,6 +40,7 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
   const [genLoading, setGenLoading] = useState(false);
   const [genGw, setGenGw] = useState("");
   const [genPara, setGenPara] = useState<string>("");
+  const [genFrontmatter, setGenFrontmatter] = useState<Record<string, unknown>>({});
   const genTargetHashRef = useRef<string | null>(null);
 
   if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
@@ -60,14 +61,26 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
     const chapterRef = chapter!;
     const bookRef = book!;
     const targetPath = kind === "script" ? `scripts/${chapterRef.slug}/${paraSlug}.md` : kind === "draft" ? `drafts/${chapterRef.slug}/${paraSlug}.md` : `${chapterRef.path}/${paraSlug}.md`;
+    let targetRaw = "";
     try {
-      const hash = await sha256Text((await readFileWithSha(token, bookRef.owner, bookRef.repo, branch, targetPath)).content);
+      targetRaw = (await readFileWithSha(token, bookRef.owner, bookRef.repo, branch, targetPath)).content;
+      const hash = await sha256Text(targetRaw);
       genTargetHashRef.current = hash;
     } catch (error) {
       if (!isGitHubFileNotFoundError(error)) { toast({ title: t("workspace.loadFailed"), description: String(error), variant: "destructive" }); return; }
       genTargetHashRef.current = null;
     }
-    setGenKind(kind); setGenPara(paraSlug); setGenGw(""); setGenText(""); setGenOpen(true); setGenLoading(false);
+    const targetFrontmatter = frontmatterFromMarkdown(targetRaw);
+    let selectedGhostwriter = typeof targetFrontmatter.ghostwriter === "string" ? targetFrontmatter.ghostwriter : "";
+    if (!selectedGhostwriter && kind === "draft") {
+      const paragraph = chapterRef.paragraphs.find((entry) => paraSlugOf(entry.path) === paraSlug);
+      if (paragraph?.scriptPath) {
+        const raw = await loadFileContent(token, bookRef.owner, bookRef.repo, paragraph.scriptPath, branch).catch(() => "");
+        const scriptFrontmatter = frontmatterFromMarkdown(raw);
+        selectedGhostwriter = typeof scriptFrontmatter.ghostwriter === "string" ? scriptFrontmatter.ghostwriter : "";
+      }
+    }
+    setGenKind(kind); setGenPara(paraSlug); setGenGw(selectedGhostwriter); setGenFrontmatter(targetFrontmatter); setGenText(""); setGenOpen(true); setGenLoading(false);
   }
 
   async function runGen() {
@@ -103,15 +116,16 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
     let fm: Record<string, unknown> = {};
     if (genKind === "script") {
       path = `scripts/${chapter!.slug}/${genPara}.md`;
-      fm = { type: "script", id: `script:${chapter!.slug}:${genPara}`, chapter: `chapter:${chapter!.slug}`, paragraph: `paragraph:${chapter!.slug}:${genPara}`, number, title: titleText };
+      fm = { ...genFrontmatter, type: "script", id: `script:${chapter!.slug}:${genPara}`, chapter: `chapter:${chapter!.slug}`, paragraph: `paragraph:${chapter!.slug}:${genPara}`, number, title: titleText };
     } else if (genKind === "draft") {
       path = `drafts/${chapter!.slug}/${genPara}.md`;
-      fm = { type: "paragraph-draft", id: `draft:paragraph:${chapter!.slug}:${genPara}`, paragraph: `paragraph:${chapter!.slug}:${genPara}`, chapter: `chapter:${chapter!.slug}`, number, title: titleText, canon: "draft" };
+      fm = { ...genFrontmatter, type: "paragraph-draft", id: `draft:paragraph:${chapter!.slug}:${genPara}`, paragraph: `paragraph:${chapter!.slug}:${genPara}`, chapter: `chapter:${chapter!.slug}`, number, title: titleText, canon: "draft" };
     } else {
       path = `${chapter!.path}/${genPara}.md`;
-      fm = { type: "paragraph", id: `paragraph:${chapter!.slug}:${genPara}`, chapter: `chapter:${chapter!.slug}`, number, title: titleText };
+      fm = { ...genFrontmatter, type: "paragraph", id: `paragraph:${chapter!.slug}:${genPara}`, chapter: `chapter:${chapter!.slug}`, number, title: titleText };
     }
     if (genGw) fm.ghostwriter = genGw;
+    else delete fm.ghostwriter;
     const content = `---\n${stringify(fm).trim()}\n---\n\n${genText.trim()}\n`;
     try {
       if (genKind === "script") {
@@ -178,6 +192,14 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
       />
     </div>
   );
+}
+
+function frontmatterFromMarkdown(raw: string): Record<string, unknown> {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
+  if (!match) return {};
+  const document = parseDocument(match[1]);
+  if (document.errors.length) throw new Error(document.errors[0].message);
+  return document.toJSON() as Record<string, unknown> | null ?? {};
 }
 
 function StageLink({ active, href, icon, label, missing }: { active: boolean; href: string; icon: React.ReactNode; label: string; missing: string }) {

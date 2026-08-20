@@ -27,7 +27,7 @@ Narrarium is a browser application for writing books whose repository is the sou
 
 ## Where data lives
 
-- **GitHub repository:** book metadata, canon, chapters, paragraphs, drafts, scripts, evaluations, research, assets, writing style, simulated readers and reader evaluations.
+- **GitHub repository:** book metadata, canon, chapters, paragraphs, drafts, scripts, evaluations, research, assets, ghostwriters, simulated readers and reader evaluations.
 - **Local browser repository:** the active working copy used for fast local-first editing, commits, pulls and pushes.
 - **Google Drive or OneDrive:** private application settings, AI credentials, connected books, Copilot chats, clipboard and cost ledger.
 - **AI providers:** requests are sent directly from the browser using integrations configured by the user.
@@ -37,7 +37,7 @@ Narrarium is a browser application for writing books whose repository is the sou
 - structured book and canon management;
 - chapter and paragraph writing;
 - Script → Draft → Final workflow;
-- writing-style and evaluation-style contracts;
+- ghostwriter prose contracts and evaluation-style contracts;
 - Copilot and Fantasmino with a configurable Tool Registry;
 - Router-based AI tasks and fallbacks;
 - deep research and promotion into canon;
@@ -54,7 +54,7 @@ Narrarium è un'applicazione browser per scrivere libri in cui il repository è 
 
 ## Dove vivono i dati
 
-- **Repository GitHub:** metadati libro, canone, capitoli, paragrafi, bozze, script, valutazioni, ricerche, asset, stile di scrittura, lettori simulati e relative valutazioni.
+- **Repository GitHub:** metadati libro, canone, capitoli, paragrafi, bozze, script, valutazioni, ricerche, asset, ghostwriter, lettori simulati e relative valutazioni.
 - **Repository locale del browser:** working copy local-first usata per modifica rapida, commit, pull e push.
 - **Google Drive o OneDrive:** impostazioni private, credenziali AI, libri collegati, chat Copilot, clipboard e registro costi.
 - **Provider AI:** le richieste partono direttamente dal browser usando le integrazioni configurate dall'utente.
@@ -64,7 +64,7 @@ Narrarium è un'applicazione browser per scrivere libri in cui il repository è 
 - gestione strutturata del libro e del canone;
 - scrittura di capitoli e paragrafi;
 - flusso Script → Bozza → Definitivo;
-- contratti di stile di scrittura e stile valutativo;
+- contratti di prosa dei ghostwriter e stile valutativo;
 - Copilot e Fantasmino con Tool Registry configurabile;
 - Router AI con task e fallback;
 - Deep Research e promozione nel canone;
@@ -99,7 +99,7 @@ In Narrarium open **Settings → GitHub** and save the token as the default PAT,
 
 ## 4. Create or connect a book
 
-Open **My Books → Add Book**. You can connect an existing Narrarium repository or create a new one. New books include book metadata, writing style, evaluation style, standard simulated readers, plot, notes and the main directory structure.
+Open **My Books → Add Book**. You can connect an existing Narrarium repository or create a new one. New books include book metadata, a selected default ghostwriter, evaluation style, standard simulated readers, plot, notes and the main directory structure.
 
 ## 5. Configure the book
 
@@ -131,7 +131,7 @@ In Narrarium apri **Impostazioni → GitHub** e salva il token come PAT predefin
 
 ## 4. Crea o collega un libro
 
-Apri **I miei libri → Aggiungi libro**. Puoi collegare un repository Narrarium esistente o crearne uno nuovo. I nuovi libri includono metadati, stile di scrittura, stile valutativo, lettori simulati standard, plot, note e struttura principale.
+Apri **I miei libri → Aggiungi libro**. Puoi collegare un repository Narrarium esistente o crearne uno nuovo. I nuovi libri includono metadati, un ghostwriter predefinito selezionato, stile valutativo, lettori simulati standard, plot, note e struttura principale.
 
 ## 5. Configura il libro
 
@@ -278,9 +278,9 @@ Narrarium supports **Script → Draft → Final** for every scene.
 - **Draft:** rough prose generated from the script or written manually.
 - **Final:** definitive paragraph, optionally refined from the draft.
 
-## Writing style and Ghostwriters
+## Ghostwriters
 
-The book writing style is an always-on Markdown contract. Chapters can add local overrides. Ghostwriter profiles provide reusable voice, tone, rhythm, dialogue and vocabulary instructions.
+The selected ghostwriter is the complete prose contract. Its profile defines voice, writing style, punctuation, tone, rhythm, dialogue and vocabulary. A book has a default profile, with optional chapter and paragraph selections.
 
 ## Selection tools
 
@@ -297,9 +297,9 @@ Narrarium supporta **Script → Bozza → Definitivo** per ogni scena.
 - **Bozza:** prosa grezza generata dallo script o scritta manualmente.
 - **Definitivo:** paragrafo finale, eventualmente rifinito dalla bozza.
 
-## Stile di scrittura e Ghostwriter
+## Ghostwriter
 
-Lo stile del libro è un contratto Markdown sempre attivo. I capitoli possono aggiungere override locali. I Ghostwriter forniscono istruzioni riutilizzabili per voce, tono, ritmo, dialoghi e lessico.
+Il ghostwriter selezionato è il contratto completo della prosa. Il profilo definisce voce, stile di scrittura, punteggiatura, tono, ritmo, dialoghi e lessico. Il libro ha un profilo predefinito, con selezioni opzionali per capitolo e paragrafo.
 
 ## Strumenti sulla selezione
 

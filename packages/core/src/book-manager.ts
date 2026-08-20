@@ -6,6 +6,7 @@ import type {
   CharacterFrontmatter,
   ContextFrontmatter,
   FactionFrontmatter,
+  GhostwriterFrontmatter,
   GuidelineFrontmatter,
   ItemFrontmatter,
   LocationFrontmatter,
@@ -83,6 +84,7 @@ export type NarrariumDocumentKind =
   | "context"
   | "note"
   | "guideline"
+  | "ghostwriter"
   | "character"
   | "item"
   | "location"
@@ -109,6 +111,7 @@ export type NarrariumKnownFrontmatter =
   | ContextFrontmatter
   | NoteFrontmatter
   | GuidelineFrontmatter
+  | GhostwriterFrontmatter
   | CharacterFrontmatter
   | ItemFrontmatter
   | LocationFrontmatter
@@ -162,6 +165,7 @@ export interface NarrariumBookSnapshot {
   promotedItems: NarrariumNoteDocument | null;
   storyDesign: NarrariumNoteDocument | null;
   guidelines: Array<NarrariumDocument<GuidelineFrontmatter>>;
+  ghostwriters: Array<NarrariumDocument<GhostwriterFrontmatter>>;
   characters: Array<NarrariumDocument<CharacterFrontmatter>>;
   items: Array<NarrariumDocument<ItemFrontmatter>>;
   locations: Array<NarrariumDocument<LocationFrontmatter>>;
@@ -210,6 +214,7 @@ export function createEmptyBookSnapshot(input: CreateEmptyBookSnapshotInput): Na
     promotedItems: null,
     storyDesign: null,
     guidelines: [],
+    ghostwriters: [],
     characters: [],
     items: [],
     locations: [],

@@ -8,6 +8,7 @@ import { useAuthStore } from "@/store/authStore";
 import { useBooksStore, type LegacyBookStructureErrorCode } from "@/store/booksStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { resolveBookToken } from "@/types/settings";
+import { ensureDefaultGhostwriter } from "@/narrarium/defaultGhostwriter";
 
 type Operation = { token: string; epoch: number; controller: AbortController; promise: Promise<void> };
 
@@ -168,9 +169,30 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
     if (!ownsOperation()) return;
     useBooksStore.getState().setStructure(bookId, nextStructure, generation);
     useBooksStore.getState().setError(bookId);
+    finishLocalLoading();
+
+    if (scopeIsCurrent()) {
+      for (let attempt = 0; attempt < 3 && scopeIsCurrent(); attempt += 1) {
+        try {
+          const changed = await ensureDefaultGhostwriter({ token: tokenValue, book, branch: authoritativeBranch, structure: nextStructure, signal: controller.signal });
+          if (changed) {
+            const refreshed = await getExistingLocalBookStructure(bookId, book.owner, book.repo, authoritativeBranch, identity);
+            if (refreshed) nextStructure = refreshed.structure;
+            if (scopeIsCurrent()) useBooksStore.getState().setStructure(bookId, nextStructure, generation);
+          }
+          break;
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          if (attempt < 2) {
+            await new Promise((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)));
+            continue;
+          }
+          toast({ title: i18n.t("ghostwriters.provisionFailed"), description: error instanceof Error ? error.message : String(error), variant: "destructive" });
+        }
+      }
+    }
 
     // A remote status check is opportunistic and must never hold the local loading UI.
-    finishLocalLoading();
     const latestRepositorySettings = useSettingsStore.getState().settings.repository;
     if (!latestRepositorySettings.autoFetchOnOpen || !navigator.onLine) return;
     try {

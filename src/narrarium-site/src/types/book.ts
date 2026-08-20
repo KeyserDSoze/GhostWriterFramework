@@ -95,8 +95,6 @@ export interface Chapter {
   /** Optional chapter-level ghostwriter slug from chapter.md frontmatter. */
   ghostwriter?: string;
   paragraphs: Paragraph[];
-  /** Path to the chapter-level writing style file, if present */
-  writingStylePath?: string;
   draftPath?: string;
   auditPath?: string;
   imagePath?: string;
@@ -133,12 +131,6 @@ export interface BookStructure {
   items: BookFile[];
   timelines: BookFile[];
   secrets: BookFile[];
-  /** writing-style.md, or legacy guidelines/writing-style.md / guidelines/style.md */
-  globalWritingStylePath?: string;
-  /** punctuation-style.md at the repo root: binding punctuation rules for prose */
-  globalPunctuationStylePath?: string;
-  /** guidelines/voices.md */
-  voicesPath?: string;
   plotPath?: string;
   /** ghostwriters/<slug>.md profiles */
   ghostwriters: Ghostwriter[];

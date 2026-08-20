@@ -12,8 +12,6 @@ export type AppRouteContext =
   | { kind: "book-dashboard"; bookId: string }
   | { kind: "book-assets"; bookId: string }
   | { kind: "book-ghostwriters"; bookId: string }
-  | { kind: "book-writing-style"; bookId: string }
-  | { kind: "book-punctuation-style"; bookId: string }
   | { kind: "book-evaluation-style"; bookId: string }
   | { kind: "book-simulated-readers"; bookId: string }
   | { kind: "reader"; bookId: string }
@@ -31,7 +29,6 @@ export type AppRouteContext =
   | { kind: "paragraph-reader-evaluations"; bookId: string; chapterId: string; paragraphNum: string }
   | { kind: "chapter-audit"; bookId: string; chapterId: string }
   | { kind: "paragraph-audit"; bookId: string; chapterId: string; paragraphNum: string }
-  | { kind: "chapter-writing-style"; bookId: string; chapterId: string }
   | { kind: "app-page"; page: string }
   | { kind: "other"; pathname: string };
 
@@ -80,14 +77,8 @@ export function parseAppRoute(pathname: string): AppRouteContext {
   match = /^\/app\/books\/([^/]+)\/ghostwriters$/.exec(clean);
   if (match) return { kind: "book-ghostwriters", bookId: decodeURIComponent(match[1]) };
 
-  match = /^\/app\/books\/([^/]+)\/writing-style$/.exec(clean);
-  if (match) return { kind: "book-writing-style", bookId: decodeURIComponent(match[1]) };
-
   match = /^\/app\/books\/([^/]+)\/evaluation-style$/.exec(clean);
   if (match) return { kind: "book-evaluation-style", bookId: decodeURIComponent(match[1]) };
-
-  match = /^\/app\/books\/([^/]+)\/punctuation-style$/.exec(clean);
-  if (match) return { kind: "book-punctuation-style", bookId: decodeURIComponent(match[1]) };
 
   match = /^\/app\/books\/([^/]+)\/simulated-readers$/.exec(clean);
   if (match) return { kind: "book-simulated-readers", bookId: decodeURIComponent(match[1]) };
@@ -146,9 +137,6 @@ export function parseAppRoute(pathname: string): AppRouteContext {
       workspaceKind: decodeURIComponent(match[3]),
     };
   }
-
-  match = /^\/app\/books\/([^/]+)\/chapters\/([^/]+)\/writing-style$/.exec(clean);
-  if (match) return { kind: "chapter-writing-style", bookId: decodeURIComponent(match[1]), chapterId: decodeURIComponent(match[2]) };
 
   match = /^\/app\/books\/([^/]+)\/chapters\/([^/]+)\/(drafts|scripts)$/.exec(clean);
   if (match) {
@@ -242,14 +230,12 @@ export async function loadWriterContext(
       }
     };
 
-    await pushFile(structure.globalWritingStylePath);
-    await pushFile(structure.globalPunctuationStylePath);
-    await pushFile(structure.voicesPath);
+    const ghostwriterSlug = paragraph?.ghostwriter || chapter?.ghostwriter || structure.ghostwriter;
+    await pushFile(structure.ghostwriters.find((entry) => entry.slug === ghostwriterSlug)?.path);
     await pushFile(structure.plotPath);
 
     if (chapter) {
       await pushFile("book.md");
-      await pushFile(chapter.writingStylePath);
       await pushFile(`resumes/chapters/${chapter.slug}.md`);
       await pushFile(`evaluations/chapters/${chapter.slug}.md`);
     }
@@ -259,8 +245,6 @@ export async function loadWriterContext(
       case "book-dashboard":
       case "book-assets":
       case "book-ghostwriters":
-      case "book-writing-style":
-      case "book-punctuation-style":
       case "book-evaluation-style":
         await pushFile("evaluation-guidelines.md");
         await pushFile("book.md");
@@ -283,9 +267,7 @@ export async function loadWriterContext(
         await pushFile("book.md");
         break;
       case "chapter":
-      case "chapter-writing-style":
         await pushFile(`${chapter?.path}/chapter.md`, true);
-        if (route.kind === "chapter-writing-style") await pushFile(chapter?.writingStylePath);
         await Promise.all((chapter?.paragraphs ?? []).slice(0, 12).map((entry) => pushFile(entry.path)));
         break;
       case "chapter-workspace":
@@ -352,8 +334,6 @@ export function buildContextTitle(
     case "book-dashboard": return "Book dashboard";
     case "book-assets": return "Book assets";
     case "book-ghostwriters": return "Ghostwriters";
-    case "book-writing-style": return "Writing Style";
-    case "book-punctuation-style": return "Punctuation Style";
     case "book-evaluation-style": return "Evaluation Style";
     case "book-simulated-readers":
       return "Simulated Readers";
@@ -371,7 +351,6 @@ export function buildContextTitle(
       return structure?.researchFiles.find((file) => file.slug === route.researchSlug)?.title ?? route.researchSlug;
     case "chapter":
     case "chapter-workspace":
-    case "chapter-writing-style":
       return chapter?.title ?? route.chapterId;
     case "paragraph":
     case "paragraph-workspace":
@@ -403,8 +382,6 @@ export function buildContextSummary(
     case "book-dashboard": return `Dashboard for ${structure?.title ?? book?.name ?? "book"}.`;
     case "book-assets": return `Assets for ${structure?.title ?? book?.name ?? "book"}.`;
     case "book-ghostwriters": return `Ghostwriters for ${structure?.title ?? book?.name ?? "book"}.`;
-    case "book-writing-style": return `Editing writing style for ${structure?.title ?? book?.name ?? "book"}.`;
-    case "book-punctuation-style": return `Editing punctuation style for ${structure?.title ?? book?.name ?? "book"}.`;
     case "book-evaluation-style": return `Editing evaluation style for ${structure?.title ?? book?.name ?? "book"}.`;
     case "book-simulated-readers":
       return `Managing simulated readers for ${structure?.title ?? book?.name ?? "book"}.`;
@@ -430,8 +407,6 @@ export function buildContextSummary(
       return `Paragraph ${paragraph?.number ?? route.paragraphNum} in chapter ${chapter?.slug ?? route.chapterId}.`;
     case "chapter-workspace":
       return `Workspace ${route.workspaceKind} for chapter ${chapter?.slug ?? route.chapterId}.`;
-    case "chapter-writing-style":
-      return `Writing style for chapter ${chapter?.slug ?? route.chapterId}.`;
     case "paragraph-workspace":
       return `Workspace ${route.workspaceKind} for paragraph ${paragraph?.number ?? route.paragraphNum}.`;
     case "canon":
@@ -451,7 +426,7 @@ function buildNoteTargetPath(route: AppRouteContext, chapter: Chapter | null): s
   if (route.kind === "chapter" || route.kind === "paragraph" || route.kind === "chapter-workspace" || route.kind === "paragraph-workspace" || route.kind === "chapter-audit" || route.kind === "paragraph-audit") {
     return chapter ? `drafts/${chapter.slug}/notes.md` : null;
   }
-  if (route.kind === "book" || route.kind === "book-dashboard" || route.kind === "book-assets" || route.kind === "book-ghostwriters" || route.kind === "book-writing-style" || route.kind === "book-punctuation-style" || route.kind === "book-evaluation-style" || route.kind === "book-simulated-readers" || route.kind === "reader" || route.kind === "book-export" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "book-audit" || route.kind === "app-home") {
+  if (route.kind === "book" || route.kind === "book-dashboard" || route.kind === "book-assets" || route.kind === "book-ghostwriters" || route.kind === "book-evaluation-style" || route.kind === "book-simulated-readers" || route.kind === "reader" || route.kind === "book-export" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "book-audit" || route.kind === "app-home") {
     return "notes.md";
   }
   return null;
@@ -511,9 +486,7 @@ export function buildAvailableFileManifest(structure: BookStructure, secretAcces
   const existingFirstClassPaths = new Set((structure.firstClassFiles ?? structure.rootFiles ?? []).map((file) => file.path));
   ["context.md", "ideas.md", "story-design.md", "notes.md", "promoted.md", "evaluation-guidelines.md", "state/current.md", "state/status.md", "state/script-ledger.md", "resumes/total.md", "evaluations/total.md"].forEach((path) => add(path, "first-class conventional file", existingFirstClassPaths.has(path)));
   add(structure.plotPath, "plot");
-  add(structure.globalWritingStylePath, "global writing style");
-  add(structure.globalPunctuationStylePath, "global punctuation style");
-  add(structure.voicesPath, "voices/style reference");
+  structure.ghostwriters.forEach((file) => add(file.path, "ghostwriter"));
   structure.readerPersonas.forEach((file) => add(file.path, "simulated reader persona"));
   structure.readerEvaluationFiles.forEach((file) => add(file.path, file.path.includes("/summaries/") ? "reader evaluation summary" : "reader evaluation"));
   structure.auditFiles.forEach((file) => add(file.path, "audit report"));
@@ -524,7 +497,6 @@ export function buildAvailableFileManifest(structure: BookStructure, secretAcces
 
   for (const chapter of structure.chapters) {
     add(`${chapter.path}/chapter.md`, "chapter metadata/body");
-    add(chapter.writingStylePath, "chapter writing style");
     add(chapter.draftPath, "chapter draft");
     add(`resumes/chapters/${chapter.slug}.md`, "chapter resume", chapter.hasResume);
     add(`evaluations/chapters/${chapter.slug}.md`, "chapter evaluation", chapter.hasEvaluation);

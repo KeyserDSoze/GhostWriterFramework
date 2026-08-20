@@ -16,7 +16,8 @@ Sono tutti connessi: dallo script generi/rigeneri la bozza; dalla bozza generi i
 
 Un **ghostwriter** è uno scrittore con uno stile proprio (tono, voce, ritmo, vocabolario, influenze, cosa evitare, ecc.). Li crei nella sezione Ghostwriter del libro e li salvi nel repository.
 
-- Se non scegli un ghostwriter, viene usato lo **stile di scrittura predefinito** del libro (`guidelines/writing-style.md`).
+- Ogni libro ha un **ghostwriter predefinito** selezionato, creato automaticamente quando manca.
+- Il profilo del ghostwriter è l'unico contratto della prosa e include stile di scrittura e regole di punteggiatura.
 - Puoi scegliere un ghostwriter quando generi script/bozza/finale; finisce nei metadati del file.
 - Lo stile può avere anche un'eccezione **per capitolo**.
 

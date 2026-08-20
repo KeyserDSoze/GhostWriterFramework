@@ -40,6 +40,11 @@ export function GhostwritersPage() {
   const list = useMemo(() => structure?.ghostwriters ?? [], [structure]);
 
   useEffect(() => {
+    if (selected || !list.length) return;
+    setSelected(list.find((entry) => entry.slug === structure?.ghostwriter)?.slug ?? list[0].slug);
+  }, [list, selected, structure?.ghostwriter]);
+
+  useEffect(() => {
     if (!book || !token || !selected) return;
     const entry = list.find((g) => g.slug === selected);
     if (!entry) return;
@@ -74,6 +79,10 @@ export function GhostwritersPage() {
 
   async function save(): Promise<boolean> {
     if (!profile || !book || !token) return false;
+    if (!profile.name.trim() || !Number.isFinite(profile.temperature) || profile.temperature < 0 || profile.temperature > 2) {
+      toast({ title: t("ghostwriters.invalidProfile"), variant: "destructive" });
+      return false;
+    }
     setBusy(true);
     try {
       const content = serializeGhostwriter(profile);
@@ -110,9 +119,25 @@ export function GhostwritersPage() {
     if (!profile || !book || !token || structure?.ghostwriter === profile.slug) return;
     setBusy(true);
     try {
-      const snapshot = await captureImmediateMutation({ token, book, branch, path: `ghostwriters/${profile.slug}.md` });
-      if (!snapshot.content) return;
-      await commitImmediateMutations({ token, book, branch, snapshots: [{ snapshot, content: null }], message: `Remove ghostwriter ${profile.slug}` });
+      const profileSnapshot = await captureImmediateMutation({ token, book, branch, path: `ghostwriters/${profile.slug}.md` });
+      if (!profileSnapshot.content) return;
+      const candidatePaths = (structure?.searchableFiles ?? [])
+        .map((entry) => entry.path)
+        .filter((path) => !path.startsWith("ghostwriters/") && /^(?:book\.md|chapters\/|drafts\/|scripts\/)/.test(path));
+      const guards: Parameters<typeof commitImmediateMutations>[0]["snapshots"] = [];
+      for (const path of candidatePaths) {
+        const snapshot = await captureImmediateMutation({ token, book, branch, path, remoteHeadSha: profileSnapshot.remoteHeadSha });
+        if (snapshot.content === null) continue;
+        const content = snapshot.content;
+        const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
+        if (!match) throw new Error(`${path}: invalid or missing YAML frontmatter`);
+        const document = parseDocument(match[1]);
+        if (document.errors.length) throw new Error(`${path}: ${document.errors[0].message}`);
+        const frontmatter = document.toJSON() as Record<string, unknown> | null;
+        if (frontmatter?.ghostwriter === profile.slug) throw new Error(t("ghostwriters.inUse"));
+        guards.push({ snapshot, content: undefined });
+      }
+      await commitImmediateMutations({ token, book, branch, snapshots: [{ snapshot: profileSnapshot, content: null }, ...guards], message: `Remove ghostwriter ${profile.slug}` });
       setSelected(null); setProfile(null); setSavedProfile("");
       await reload();
     } catch (err) {
@@ -179,7 +204,7 @@ export function GhostwritersPage() {
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={() => void setAsDefault()} disabled={busy || structure?.ghostwriter === profile.slug}><Star className="mr-1 h-4 w-4" />{structure?.ghostwriter === profile.slug ? t("ghostwriters.defaultActive") : t("ghostwriters.setDefault")}</Button>
                 <Button size="sm" variant="ghost" onClick={() => void remove()} disabled={busy || structure?.ghostwriter === profile.slug}><Trash2 className="mr-1 h-4 w-4" />{t("common.delete")}</Button>
-                <Button size="sm" onClick={() => void save()} disabled={busy || !dirty}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}{t("common.save")}</Button>
+                <Button size="sm" onClick={() => void save()} disabled={busy || !dirty || !profile.name.trim() || !Number.isFinite(profile.temperature) || profile.temperature < 0 || profile.temperature > 2}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}{t("common.save")}</Button>
               </div>
             </div>
             <div className="grid gap-4 lg:grid-cols-2">

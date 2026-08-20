@@ -9,6 +9,8 @@ import { builtinReaderPersonas, mergeReaderPersonas, parseReaderPersona, readerP
 import { isRepositoryError, optionalRepositoryRead } from "@/repository/repositoryError";
 import { captureImmediateMutation, commitImmediateMutation, commitImmediateMutations, mergeManagedFrontmatter } from "@/assistant/immediateMutation";
 import { commitAndPushTextFileMutation, RepositoryConflictError, resolveRepositoryHeadForMutation } from "@/repository/safeRepositoryMutation";
+import { ghostwriterPrompt } from "@/narrarium/ghostwriter";
+import { loadGhostwriterProfile, resolveGhostwriterSlug } from "@/narrarium/pipeline";
 
 export type ReaderEvaluationTargetType = "chapter" | "paragraph" | "selection";
 
@@ -265,9 +267,12 @@ function isAbortError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
 }
 
-async function optionalContext(input: { token: string; book: BookEntry; branch: string; structure: BookStructure; target: ReaderEvaluationTarget; includeContext?: boolean }): Promise<string> {
+async function optionalContext(input: { token: string; book: BookEntry; branch: string; structure: BookStructure; settings: AppSettings; accountScope: string | null; target: ReaderEvaluationTarget; includeContext?: boolean; signal?: AbortSignal }): Promise<string> {
   if (!input.includeContext) return "";
-  const style = input.structure.globalWritingStylePath ? await optionalRepositoryRead(() => loadFileContent(input.token, input.book.owner, input.book.repo, input.structure.globalWritingStylePath!, input.branch)) ?? "" : "";
+  const chapter = input.structure.chapters.find((entry) => entry.slug === input.target.chapterId);
+  const paragraph = input.target.paragraphId ? chapter?.paragraphs.find((entry) => entry.number === input.target.paragraphId || entry.path.endsWith(`/${input.target.paragraphId}.md`)) : undefined;
+  const ghostwriter = await loadGhostwriterProfile({ ...input, owner: input.book.owner, repo: input.book.repo, chapter, paragraph }, resolveGhostwriterSlug({ structure: input.structure, chapter, paragraph }));
+  const style = ghostwriter ? ghostwriterPrompt(ghostwriter) : "";
   const resume = await optionalRepositoryRead(() => loadFileContent(input.token, input.book.owner, input.book.repo, `resumes/chapters/${input.target.chapterId}.md`, input.branch)) ?? "";
   const canon = [
     ...input.structure.characters.map((entry) => entry.name ?? entry.path),
@@ -275,7 +280,7 @@ async function optionalContext(input: { token: string; book: BookEntry; branch: 
     ...input.structure.items.map((entry) => entry.name ?? entry.path),
     ...input.structure.factions.map((entry) => entry.name ?? entry.path),
   ].slice(0, 80).join(", ");
-  return [style ? `WRITING STYLE:\n${style}` : "", resume ? `CHAPTER RESUME:\n${resume}` : "", canon ? `RELEVANT CANON MANIFEST:\n${canon}` : ""].filter(Boolean).join("\n\n");
+  return [style ? `GHOSTWRITER:\n${style}` : "", resume ? `CHAPTER RESUME:\n${resume}` : "", canon ? `RELEVANT CANON MANIFEST:\n${canon}` : ""].filter(Boolean).join("\n\n");
 }
 
 async function assertReaderEvaluationTargetCurrent(input: {

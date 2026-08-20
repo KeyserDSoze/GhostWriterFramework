@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   BookManager,
   LocalStorageBookProfileStore,
+  buildNarrariumBookSnapshot,
   createEmptyBookSnapshot,
 } from "../dist/index.js";
 
@@ -23,6 +24,30 @@ class MemoryStorage {
     this.values.delete(key);
   }
 }
+
+test("book snapshots classify and retain ghostwriter profiles", () => {
+  const snapshot = buildNarrariumBookSnapshot({
+    profileId: "profile-1",
+    provider: "github",
+    branch: "main",
+    commitSha: "abc123",
+    documents: [
+      {
+        path: "book.md",
+        rawMarkdown: "---\ntype: book\nid: book\ntitle: Test\nlanguage: en\nghostwriter: default\n---\n",
+      },
+      {
+        path: "ghostwriters/default.md",
+        rawMarkdown: "---\ntype: ghostwriter\nid: ghostwriter:default\nname: Default\nwriting_style: Concrete\npunctuation_style: Standard\n---\n\nKeep scenes precise.\n",
+      },
+    ],
+  });
+
+  assert.equal(snapshot.ghostwriters.length, 1);
+  assert.equal(snapshot.ghostwriters[0].kind, "ghostwriter");
+  assert.equal(snapshot.ghostwriters[0].frontmatter.writing_style, "Concrete");
+  assert.equal(snapshot.ghostwriters[0].body, "Keep scenes precise.");
+});
 
 test("book manager persists profiles and delegates remote load and push", async () => {
   const storage = new MemoryStorage();
@@ -124,7 +149,6 @@ test("workspace offers high-level chapter, paragraph, and character mutations", 
       number: 1,
       title: "The Arrival",
       pov: [],
-      style_refs: [],
       prose_mode: [],
       tags: [],
       canon: "draft",

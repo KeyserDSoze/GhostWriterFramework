@@ -7,6 +7,7 @@ export const REWRITE_OPERATIONS_DIRECTORY = "operations/rewrite-from-reader-feed
 
 export const BOOK_DIRECTORIES = [
   "guidelines",
+  "ghostwriters",
   "characters",
   "items",
   "locations",
@@ -80,9 +81,11 @@ export const NOTES_FILE = "notes.md";
 export const PLOT_FILE = "plot.md";
 export const PROMOTED_FILE = "promoted.md";
 export const STORY_DESIGN_FILE = "story-design.md";
+export const GHOSTWRITERS_DIRECTORY = "ghostwriters";
+export const DEFAULT_GHOSTWRITER = "default";
+export const DEFAULT_GHOSTWRITER_FILE = `${GHOSTWRITERS_DIRECTORY}/${DEFAULT_GHOSTWRITER}.md`;
 
 export const GUIDELINE_FILES = {
-  writingStyle: "writing-style.md",
   images: "guidelines/images.md",
 } as const;
 
@@ -107,6 +110,7 @@ export const CONTENT_GLOB = [
   "promoted.md",
   "story-design.md",
   "guidelines/**/*.md",
+  "ghostwriters/**/*.md",
   "characters/**/*.md",
   "items/**/*.md",
   "locations/**/*.md",

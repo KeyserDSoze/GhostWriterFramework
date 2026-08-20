@@ -17,6 +17,7 @@ export declare function loadHomePageData(): Promise<{
             author?: string | undefined;
             genre?: string | undefined;
             audience?: string | undefined;
+            ghostwriter?: string | undefined;
         };
         body: string;
         path: string;

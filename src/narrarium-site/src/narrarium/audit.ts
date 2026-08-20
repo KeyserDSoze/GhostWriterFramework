@@ -472,11 +472,10 @@ export async function buildAuditContext(input: AuditServiceBase & { contextSetti
     for (const file of files) await add(file.path, role, group);
   };
 
-  const addStyles = async (chapter: Chapter | undefined, group: string) => {
-    if (!auditSettings.includeWritingStyle) return;
-    await add(input.structure.globalWritingStylePath, "writing-style", group);
-    await add(input.structure.globalPunctuationStylePath, "punctuation-style", group);
-    await add(chapter?.writingStylePath, "chapter-writing-style", group);
+  const addGhostwriter = async (chapter: Chapter | undefined, paragraph: Paragraph | undefined, group: string) => {
+    if (!auditSettings.includeGhostwriter) return;
+    const slug = paragraph?.ghostwriter || chapter?.ghostwriter || input.structure.ghostwriter;
+    await add(input.structure.ghostwriters.find((entry) => entry.slug === slug)?.path, "ghostwriter", group);
   };
 
   const addEntityGroups = async (mentionText: string | null, group: string) => {
@@ -507,12 +506,13 @@ export async function buildAuditContext(input: AuditServiceBase & { contextSetti
     await add("book.md", "book", "book", true);
     await add(input.structure.plotPath ?? "plot.md", "plot", "book");
     if (auditSettings.includeSummary) await add("resumes/total.md", "book-summary", "book");
-    await addStyles(undefined, "book");
+    await addGhostwriter(undefined, undefined, "book");
     for (const chapter of input.structure.chapters) {
       const group = `chapter:${chapter.slug}`;
       await add(`${chapter.path}/chapter.md`, "chapter", group, true);
       for (const paragraph of chapter.paragraphs) await add(paragraph.path, "paragraph", group, true);
-      if (auditSettings.includeWritingStyle) await add(chapter.writingStylePath, "chapter-writing-style", group);
+      await addGhostwriter(chapter, undefined, group);
+      for (const paragraph of chapter.paragraphs) await addGhostwriter(chapter, paragraph, group);
       if (auditSettings.includeSummary && chapter.hasResume) await add(`resumes/chapters/${chapter.slug}.md`, "chapter-summary", group);
     }
     await addTimelineAndSecrets(null, "canon");
@@ -523,7 +523,8 @@ export async function buildAuditContext(input: AuditServiceBase & { contextSetti
     const group = `chapter:${chapter.slug}`;
     await add(`${chapter.path}/chapter.md`, "chapter", group, true);
     for (const paragraph of chapter.paragraphs) await add(paragraph.path, "paragraph", group, true);
-    await addStyles(chapter, group);
+    await addGhostwriter(chapter, undefined, group);
+    for (const paragraph of chapter.paragraphs) await addGhostwriter(chapter, paragraph, group);
     if (auditSettings.includeSummary && chapter.hasResume) await add(`resumes/chapters/${chapter.slug}.md`, "chapter-summary", group);
 
     const chapterIndex = input.structure.chapters.indexOf(chapter);
@@ -554,7 +555,7 @@ export async function buildAuditContext(input: AuditServiceBase & { contextSetti
     if (auditSettings.includePreviousContext && paragraphIndex > 0) await add(chapter.paragraphs[paragraphIndex - 1].path, "previous-paragraph", group);
     await add(paragraph.path, "target-paragraph", group, true);
     if (auditSettings.includeNextContext && paragraphIndex < chapter.paragraphs.length - 1) await add(chapter.paragraphs[paragraphIndex + 1].path, "next-paragraph", group);
-    await addStyles(chapter, group);
+    await addGhostwriter(chapter, paragraph, group);
     if (auditSettings.includeSummary && chapter.hasResume) await add(`resumes/chapters/${chapter.slug}.md`, "chapter-summary", group);
     const mentionText = documents.map((doc) => doc.content).join("\n");
     await addTimelineAndSecrets(mentionText, "canon");

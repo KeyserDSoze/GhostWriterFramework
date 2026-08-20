@@ -13,8 +13,9 @@ notes.md
 promoted.md
 plot.md
 guidelines/
-  writing-style.md
   images.md
+ghostwriters/
+  default.md
 characters/
 items/
 locations/
@@ -143,11 +144,12 @@ All content files should start with YAML frontmatter.
 - `sources`: optional research sources
 - `historical`: marks content that should be checked against external sources
 
-### Writing style files
+### Ghostwriter profiles
 
-- `guidelines/writing-style.md`: the always-on writing and review contract for the whole book
-- `chapters/<slug>/writing-style.md`: optional final-chapter-specific style override/addendum
-- `drafts/<slug>/writing-style.md`: optional draft-chapter-specific style override/addendum
+- `book.md` selects the default profile with `ghostwriter: default`
+- `ghostwriters/<slug>.md` contains one complete prose contract: style and punctuation frontmatter plus detailed body instructions
+- chapter, paragraph, draft, and script frontmatter can select another profile with `ghostwriter`
+- resolution uses the closest explicit selection, then paragraph, chapter, and book
 
 The generated reader uses `known_from` and `reveal_in` for spoiler-safe search, canon popups, public atlas pages, and backlink filtering.
 
@@ -256,20 +258,16 @@ state_changes:
 Lyra returns to Gray Harbor and realizes the city is already watching for her.
 ```
 
-### Chapter style override example
+### Ghostwriter selection example
 
 ```md
 ---
-type: guideline
-id: guideline:chapter-writing-style
-title: Chapter Writing Style
-scope: chapter-writing-style
+type: chapter
+id: chapter:002-glass-confession
+number: 2
+title: Glass Confession
+ghostwriter: intimate-confession
 ---
-
-# Local Override
-
-- Use first-person confession with clipped pressure.
-- Keep physicality close to the speaking body.
 ```
 
 ## Story state snapshots
@@ -355,14 +353,14 @@ Treat `state_changes` as the chapter delta, not as a full-world snapshot.
 - see `docs/revise-chapter.md` for the chapter-level workflow and output model
 - use `resumes/` to keep running summaries stable
 - use `state/` for structured continuity snapshots and refresh it manually with `sync_story_state` after stable rewrites
-- use `evaluations/` for structural critique, continuity checks, quality notes, editorial reading against the active writing-style files, canon coherence checks against active characters, locations, factions, items, and timelines, plus an explicit explanation of why the weighted verdict landed where it did
+- use `evaluations/` for structural critique, continuity checks, quality notes, editorial reading against selected ghostwriter profiles, canon coherence checks against active characters, locations, factions, items, and timelines, plus an explicit explanation of why the weighted verdict landed where it did
 - chapter and paragraph evaluations should be saved files, not just transient chat output
 - use `conversations/` for portable exported chat history, resume files, and continuation prompts; treat it as support material, not canon
 - use `npm run doctor` or `doctorBook()` to catch broken references, stale maintenance files, missing asset descriptions, and spoiler-threshold problems
 - if content is historical or factual, fetch research before writing canon
 - before fetching Wikipedia again, reuse a matching snapshot from `research/wikipedia/` when one already exists; use explicit refresh controls when the snapshot is stale or should be bypassed
 - prefer updating existing canon files over duplicating similar facts elsewhere
-- before writing final chapter or paragraph prose, read `guidelines/writing-style.md`, any chapter-specific `writing-style.md`, relevant prior story files, and any matching files in `drafts/`
+- before writing final chapter or paragraph prose, read the selected `ghostwriters/<slug>.md` profile, relevant prior story files, and any matching files in `drafts/`
 - write character, item, location, faction, secret, and timeline-event names as plain text in chapter and paragraph prose; do not insert markdown links to canon files or reader routes because the reader resolves visible mentions automatically
 - treat `ideas.md`, `notes.md`, `story-design.md`, `promoted.md`, and their chapter-draft variants as working support material, not canon; move stable facts into canon files when they become true in the book
 - keep `plot.md` aligned with chapter summaries, reveals, and dated timeline anchors

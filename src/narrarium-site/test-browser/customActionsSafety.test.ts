@@ -29,7 +29,7 @@ function action(patch: Partial<CustomAction> = {}): CustomAction {
     capability: "default",
     targetTypes: ["book"],
     activation: "selection",
-    injections: { includeBody: true, includeFrontmatter: false, includeContext: true, includeWritingStyle: false, includeGhostwriter: false },
+    injections: { includeBody: true, includeFrontmatter: false, includeContext: true, includeGhostwriter: false },
     outputMode: "replace",
     enabled: true,
     ...patch,
@@ -124,24 +124,22 @@ describe("custom action execution safety", () => {
     expect(prompt).not.toContain("FILE: book.md");
   });
 
-  it("keeps context disjoint from body, style, punctuation, and voice injections", async () => {
+  it("keeps context disjoint from body and ghostwriter injections", async () => {
     loadWriterContext.mockResolvedValue({
       summary: "summary",
       relevantFiles: [
         { path: "book.md", content: "body" },
-        { path: "guidelines/writing-style.md", content: "style" },
-        { path: "guidelines/punctuation-style.md", content: "punctuation" },
-        { path: "guidelines/voices.md", content: "voices" },
+        { path: "ghostwriters/default.md", content: "ghostwriter" },
         { path: "plot.md", content: "plot" },
       ],
     });
-    const current = action({ injections: { includeBody: false, includeFrontmatter: false, includeContext: true, includeWritingStyle: false, includeGhostwriter: false } });
+    const current = action({ injections: { includeBody: false, includeFrontmatter: false, includeContext: true, includeGhostwriter: false } });
     const data = input(current);
-    data.structures = { "book-1": { title: "Book", globalWritingStylePath: "guidelines/writing-style.md", globalPunctuationStylePath: "guidelines/punctuation-style.md", voicesPath: "guidelines/voices.md", chapters: [] } as BookStructure };
+    data.structures = { "book-1": { title: "Book", ghostwriters: [{ slug: "default", path: "ghostwriters/default.md", name: "Default" }], chapters: [] } as unknown as BookStructure };
     await runCustomAction(data);
     const prompt = (completeTextRouted.mock.calls[0][1] as Array<{ content: string }>)[1].content;
     expect(prompt).toContain("FILE: plot.md");
-    expect(prompt).not.toMatch(/FILE: (book\.md|guidelines\/(writing-style|punctuation-style|voices)\.md)/);
+    expect(prompt).not.toMatch(/FILE: (book\.md|ghostwriters\/default\.md)/);
   });
 
   it("rejects unknown workspace kinds without falling back to source prose", () => {

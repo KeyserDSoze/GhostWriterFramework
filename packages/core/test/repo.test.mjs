@@ -33,6 +33,7 @@ import {
   rewriteOperationManifestPath,
   queryCanon,
   parseScriptBody,
+  prepareParagraphEvaluation,
   readChapter,
   readEntity,
   readScriptLedger,
@@ -176,7 +177,8 @@ test("core book workflow supports canon indexes and structural updates", async (
     const plot = await syncPlot(rootPath);
     const opencodeConfig = await readFile(path.join(rootPath, "opencode.jsonc"), "utf8");
     const contextDocument = await readFile(path.join(rootPath, "context.md"), "utf8");
-    const writingStyleDocument = await readFile(path.join(rootPath, "writing-style.md"), "utf8");
+    const bookDocument = await readFile(path.join(rootPath, "book.md"), "utf8");
+    const ghostwriterDocument = await readFile(path.join(rootPath, "ghostwriters", "default.md"), "utf8");
     const notesDocument = await readFile(path.join(rootPath, "notes.md"), "utf8");
     const storyDesignDocument = await readFile(path.join(rootPath, "story-design.md"), "utf8");
     const conversationsReadme = await readFile(path.join(rootPath, "conversations", "README.md"), "utf8");
@@ -257,8 +259,11 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.match(plot.content, /2214-06-12/);
     assert.match(earlyTotalResume.content, /The harbor watches before it welcomes/);
     assert.match(contextDocument, /# Historical And Temporal Frame/);
-    assert.match(writingStyleDocument, /# Dialogue action beats/);
-    assert.match(writingStyleDocument, /prefer a simple tag like `said` or `asked`/);
+    assert.match(bookDocument, /ghostwriter: default/);
+    assert.match(ghostwriterDocument, /writing_style:/);
+    assert.match(ghostwriterDocument, /punctuation_style:/);
+    assert.match(ghostwriterDocument, /# Dialogue action beats/);
+    assert.equal(await access(path.join(rootPath, "writing-style.md")).then(() => true).catch(() => false), false);
     assert.match(notesDocument, /# Active Notes/);
     assert.match(storyDesignDocument, /# Core Design/);
     assert.match(opencodeConfig, /"default_agent": "build"/);
@@ -275,7 +280,7 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.equal(refreshedResumes.chapterCount, 1);
     assert.equal(storyState.chapterCount, 1);
     assert.equal(evaluation.chapterCount, 1);
-    assert.match(totalEvaluation, /Active guideline references: guideline:writing-style/);
+    assert.match(totalEvaluation, /Active ghostwriters: ghostwriter:default/);
     assert.match(totalEvaluation, /Average weighted verdict score:/);
     assert.match(totalEvaluation, /Overall weighted verdict:/);
     assert.match(totalEvaluation, /# Why the weighted verdict landed here/);
@@ -286,13 +291,13 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.match(chapterEvaluation, /Weighted verdict:/);
     assert.match(chapterEvaluation, /Recommended focus:/);
     assert.match(chapterEvaluation, /Strongest drag on the verdict:/);
-    assert.match(chapterEvaluation, /Global writing style: guideline:writing-style/);
+    assert.match(chapterEvaluation, /Selected ghostwriter: ghostwriter:default/);
     assert.match(paragraphEvaluation, /# Editorial Reading/);
     assert.match(paragraphEvaluation, /# Canon Coherence/);
     assert.match(paragraphEvaluation, /# Why the weighted verdict landed here/);
     assert.match(paragraphEvaluation, /Weighted verdict:/);
     assert.match(paragraphEvaluation, /Strongest signal in favor:/);
-    assert.match(paragraphEvaluation, /writing-style guidance/);
+    assert.match(paragraphEvaluation, /selected ghostwriter profile/);
     assert.match(paragraphEvaluation, /Timeline reference chapter:001-the-arrival anchors chronology to canon|Timeline reference/);
     assert.equal(validation.valid, true);
     assert.match(syncedChapterResume, /state_changes:/);
@@ -740,7 +745,7 @@ test("reviseParagraph proposes edits without writing files and suggests continui
       frontmatter: {
         viewpoint: "character:lyra-vale",
       },
-      body: "# Scene\n\nLyra was very tired, and she felt cornered in Gray Harbor. She needed to warn Taren before the watch sealed the gate, and she realized that the registry seal had been pressed at the wrong angle.",
+      body: "# Scene\n\nLyra was very tired... and she felt cornered in Gray Harbor. She needed to warn Taren before the watch sealed the gate, and she realized that the registry seal had been pressed at the wrong angle.",
     });
 
     const result = await reviseParagraph(rootPath, {
@@ -753,6 +758,7 @@ test("reviseParagraph proposes edits without writing files and suggests continui
 
     assert.notEqual(result.proposedBody, result.originalBody);
     assert.match(result.proposedBody, /exhausted/i);
+    assert.match(result.sources.join("\n"), /ghostwriters\/default\.md/);
     assert.equal(result.continuityImpact, "clear");
     assert.equal(result.shouldReviewStateChanges, true);
     assert.equal(result.mode, "tension");
@@ -1116,7 +1122,6 @@ test("upgradeBookRepo refreshes managed scaffolding and preserves author files",
     const result = await upgradeBookRepo(rootPath);
     const opencodeConfig = await readFile(path.join(rootPath, "opencode.jsonc"), "utf8");
     const resumeCommand = await readFile(path.join(rootPath, ".opencode", "commands", "resume-book.md"), "utf8");
-    const writingStyle = await readFile(path.join(rootPath, "guidelines", "writing-style.md"), "utf8");
     const chapterFile = await readFile(path.join(rootPath, "chapters", "001-upgrade-arrival", "chapter.md"), "utf8");
     const paragraphFile = await readFile(path.join(rootPath, "chapters", "001-upgrade-arrival", "001-linked-scene.md"), "utf8");
     const draftFile = await readFile(path.join(rootPath, "drafts", "001-upgrade-arrival", "002-linked-draft.md"), "utf8");
@@ -1124,18 +1129,16 @@ test("upgradeBookRepo refreshes managed scaffolding and preserves author files",
     assert.match(opencodeConfig, /"legacy": true/);
     assert.match(opencodeConfig, /\.github\/copilot-instructions\.md/);
     assert.match(resumeCommand, /resume_book_context/);
-    assert.equal(writingStyle, "# Custom Writing Style\n\nKeep this intact.\n");
     assert.match(result.updated.join("\n"), /resume-book\.md/);
     assert.match(result.updated.join("\n"), /opencode\.jsonc/);
-    assert.match(result.updated.join("\n"), /guidelines\/prose\.md/);
-    assert.match(result.updated.join("\n"), /guidelines\/styles/);
-    assert.deepEqual(result.migrated, [
-      "chapters/001-upgrade-arrival/001-linked-scene.md",
-      "chapters/001-upgrade-arrival/chapter.md",
-      "drafts/001-upgrade-arrival/002-linked-draft.md",
-    ]);
+    assert.equal(result.migrated.includes("chapters/001-upgrade-arrival/001-linked-scene.md"), true);
+    assert.equal(result.migrated.includes("chapters/001-upgrade-arrival/chapter.md"), true);
+    assert.equal(result.migrated.includes("drafts/001-upgrade-arrival/002-linked-draft.md"), true);
+    assert.equal(result.migrated.includes("guidelines/writing-style.md"), true);
+    assert.equal(await access(path.join(rootPath, "guidelines", "writing-style.md")).then(() => true).catch(() => false), false);
     assert.equal(await access(path.join(rootPath, "guidelines", "prose.md")).then(() => true).catch(() => false), false);
     assert.equal(await access(path.join(rootPath, "guidelines", "styles")).then(() => true).catch(() => false), false);
+    assert.equal((await validateBook(rootPath)).valid, true);
     assert.match(chapterFile, /Lyra Vale reaches Gray Harbor\./);
     assert.doesNotMatch(chapterFile, /\]\(\.\.\/\.\.\/(characters|locations)\//);
     assert.match(paragraphFile, /Brass Key stays hidden beside the \[external archive\]\(https:\/\/example\.com\/archive\)\./);
@@ -1147,8 +1150,8 @@ test("upgradeBookRepo refreshes managed scaffolding and preserves author files",
   }
 });
 
-test("upgradeBookRepo creates default writing-style when missing but preserves it when present", async () => {
-  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-upgrade-writing-style-"));
+test("upgradeBookRepo creates and selects a default ghostwriter, removes old styles, and preserves profiles", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-upgrade-ghostwriter-"));
 
   try {
     await initializeBookRepo(rootPath, {
@@ -1156,18 +1159,43 @@ test("upgradeBookRepo creates default writing-style when missing but preserves i
       language: "en",
     });
 
-    await rm(path.join(rootPath, "writing-style.md"), { force: true });
+    await rm(path.join(rootPath, "ghostwriters", "default.md"), { force: true });
+    const bookPath = path.join(rootPath, "book.md");
+    await writeFile(bookPath, (await readFile(bookPath, "utf8")).replace("ghostwriter: default\n", ""), "utf8");
+    await writeFile(path.join(rootPath, "writing-style.md"), "# Old Style\n\nDo not import me.\n", "utf8");
 
     const firstUpgrade = await upgradeBookRepo(rootPath);
-    const generatedWritingStyle = await readFile(path.join(rootPath, "writing-style.md"), "utf8");
-    assert.match(generatedWritingStyle, /# Dialogue action beats/);
-    assert.equal(firstUpgrade.created.includes("writing-style.md"), true);
+    const generatedGhostwriter = await readFile(path.join(rootPath, "ghostwriters", "default.md"), "utf8");
+    const upgradedBook = await readFile(bookPath, "utf8");
+    assert.match(generatedGhostwriter, /writing_style:/);
+    assert.doesNotMatch(generatedGhostwriter, /Do not import me/);
+    assert.match(upgradedBook, /ghostwriter: default/);
+    assert.equal(firstUpgrade.created.includes("ghostwriters/default.md"), true);
 
-    await writeFile(path.join(rootPath, "writing-style.md"), "# Custom Writing Style\n\nDo not overwrite me.\n", "utf8");
+    await writeFile(path.join(rootPath, "ghostwriters", "default.md"), "---\ntype: ghostwriter\nid: ghostwriter:default\nname: Custom\n---\n\nDo not overwrite me.\n", "utf8");
 
     await upgradeBookRepo(rootPath);
-    const preservedWritingStyle = await readFile(path.join(rootPath, "writing-style.md"), "utf8");
-    assert.equal(preservedWritingStyle, "# Custom Writing Style\n\nDo not overwrite me.\n");
+    const preservedGhostwriter = await readFile(path.join(rootPath, "ghostwriters", "default.md"), "utf8");
+    assert.match(preservedGhostwriter, /Do not overwrite me/);
+    assert.equal(await access(path.join(rootPath, "writing-style.md")).then(() => true).catch(() => false), false);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("validateBook rejects missing ghostwriter references and mismatched profile ids", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-ghostwriter-validation-"));
+  try {
+    await initializeBookRepo(rootPath, { title: "Validation Book", language: "en" });
+    await createChapter(rootPath, { number: 1, title: "Opening", body: "Opening body." });
+    const chapterPath = path.join(rootPath, "chapters", "001-opening", "chapter.md");
+    await writeFile(chapterPath, (await readFile(chapterPath, "utf8")).replace("pov: []", "pov: []\nghostwriter: missing"), "utf8");
+    await writeFile(path.join(rootPath, "ghostwriters", "default.md"), (await readFile(path.join(rootPath, "ghostwriters", "default.md"), "utf8")).replace("id: ghostwriter:default", "id: ghostwriter:wrong"), "utf8");
+
+    const validation = await validateBook(rootPath);
+    assert.equal(validation.valid, false);
+    assert.equal(validation.errors.some((entry) => entry.path === "chapters/001-opening/chapter.md" && entry.message.includes("ghostwriters/missing.md")), true);
+    assert.equal(validation.errors.some((entry) => entry.path === "ghostwriters/default.md" && entry.message.includes("ghostwriter:default")), true);
   } finally {
     await rm(rootPath, { recursive: true, force: true });
   }
@@ -1412,8 +1440,8 @@ test("writing contexts stay scoped to story so far without leaking later scenes 
   }
 });
 
-test("chapter writing contexts always include the global writing style and surface chapter-specific writing-style files when present", async () => {
-  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-writing-style-"));
+test("writing contexts resolve selected ghostwriters and include profile frontmatter and body", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-ghostwriter-context-"));
 
   try {
     await initializeBookRepo(rootPath, {
@@ -1431,22 +1459,25 @@ test("chapter writing contexts always include the global writing style and surfa
     await createChapterDraft(rootPath, {
       number: 2,
       title: "Glass Confession",
+      frontmatter: { ghostwriter: "intimate-confession" },
       body: "# Rough Intent\n\nMake the confession intimate and immediate.",
     });
 
     await writeFile(
-      path.join(rootPath, "drafts", "002-glass-confession", "writing-style.md"),
+      path.join(rootPath, "ghostwriters", "intimate-confession.md"),
       `---
-type: guideline
-id: guideline:chapter-writing-style
-title: Chapter Writing Style
-scope: chapter-writing-style
+type: ghostwriter
+id: ghostwriter:intimate-confession
+name: Intimate Confession
+writing_style: Use first-person pressure anchored in physical detail.
+punctuation_style: Use em dashes only for interruptions.
+influences: []
+strengths: []
+avoid: []
+temperature: 0.7
 ---
 
-# Local Override
-
-- Use first-person confession with clipped pressure.
-- Keep physicality close to the speaking body.
+Keep physicality close to the speaking body.
 `,
       "utf8",
     );
@@ -1457,13 +1488,28 @@ scope: chapter-writing-style
       body: "# Purpose\n\nKeep the narration close and confessional.",
     });
     const styledChapter = await readChapter(rootPath, "chapter:002-glass-confession");
+    await createParagraph(rootPath, {
+      chapter: "chapter:002-glass-confession",
+      number: 1,
+      title: "Confession",
+      body: "I kept my hand on the glass while I told the truth.",
+    });
+    const evaluationContext = await prepareParagraphEvaluation(
+      rootPath,
+      "chapter:002-glass-confession",
+      "001-confession",
+    );
 
-    assert.match(defaultContext.text, /Always-read writing style/);
-    assert.match(defaultContext.text, /Source: writing-style\.md/);
-    assert.match(defaultContext.text, /Chapter-specific writing style: none in final chapter files/);
-    assert.match(styledContext.text, /Always use the global writing style from writing-style\.md/);
-    assert.match(styledContext.text, /Draft-specific writing style: drafts\/002-glass-confession\/writing-style\.md/);
-    assert.match(styledContext.text, /Use first-person confession with clipped pressure/);
+    assert.match(defaultContext.text, /Selected ghostwriter: Default Ghostwriter/);
+    assert.match(defaultContext.text, /Source: ghostwriters\/default\.md/);
+    assert.match(styledContext.text, /Selected ghostwriter: Intimate Confession/);
+    assert.match(styledContext.text, /Source: ghostwriters\/intimate-confession\.md/);
+    assert.match(styledContext.text, /Writing style: Use first-person pressure anchored in physical detail/);
+    assert.match(styledContext.text, /Punctuation style: Use em dashes only for interruptions/);
+    assert.match(styledContext.text, /Keep physicality close to the speaking body/);
+    assert.match(evaluationContext.styleGuidelinesText, /Writing style: Use first-person pressure anchored in physical detail/);
+    assert.match(evaluationContext.styleGuidelinesText, /Punctuation style: Use em dashes only for interruptions/);
+    assert.match(evaluationContext.styleGuidelinesText, /Keep physicality close to the speaking body/);
     assert.equal(styledChapter.metadata.title, "Glass Confession");
     assert.match(promoted.filePath, /chapter\.md$/);
   } finally {
@@ -1578,7 +1624,7 @@ test("draft workflow can assemble writing context and promote drafts into final 
 
     const chapter = await readChapter(rootPath, "chapter:001-the-threshold");
 
-    assert.match(context.text, /Source: writing-style\.md/);
+    assert.match(context.text, /Source: ghostwriters\/default\.md/);
     assert.match(context.text, /story-design\.md/);
     assert.match(context.text, /notes\.md/);
     assert.match(context.text, /strained relationship with the harbor ledgers/);

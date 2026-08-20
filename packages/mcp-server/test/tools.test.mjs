@@ -114,6 +114,7 @@ test("mcp server tools support guided creation and structural updates", async ()
       rootPath,
       number: 1,
       title: "Opening Move",
+      ghostwriter: "physical-pressure",
       body: "# Rough Intent\n\nEscalate pressure before the finished prose.",
     });
 
@@ -126,17 +127,20 @@ test("mcp server tools support guided creation and structural updates", async ()
     });
 
     await writeFile(
-      path.join(rootPath, "drafts", "001-opening-move", "writing-style.md"),
+      path.join(rootPath, "ghostwriters", "physical-pressure.md"),
       `---
-type: guideline
-id: guideline:chapter-writing-style
-title: Chapter Writing Style
-scope: chapter-writing-style
+type: ghostwriter
+id: ghostwriter:physical-pressure
+name: Physical Pressure
+writing_style: Use first-person pressure anchored in physical detail.
+punctuation_style: Keep interruptions sharp and consistent.
+influences: []
+strengths: []
+avoid: []
+temperature: 0.7
 ---
 
-# Local Override
-
-- Use first-person pressure anchored in physical detail.
+Keep physicality close to the speaking body.
 `,
       "utf8",
     );
@@ -491,6 +495,8 @@ scope: chapter-writing-style
 
     assert.match(setupText, /npx create-narrarium-book/);
     assert.match(specText, /Narrarium repository structure/);
+    assert.match(specText, /ghostwriters\/<slug>\.md/);
+    assert.doesNotMatch(specText, /always use writing-style\.md/);
     assert.match(assetText, /Created asset prompt/);
     assert.match(createChapterText, /sync_story_state/);
     assert.match(createParagraphText, /sync_story_state/);
@@ -502,15 +508,15 @@ scope: chapter-writing-style
     assert.match(saveChapterIdeaText, /Saved chapter idea entry/);
     assert.match(promoteBookIdeaText, /Promoted idea entry/);
     assert.match(promoteChapterIdeaText, /Promoted chapter idea entry/);
-    assert.match(chapterContextText, /Always-read writing style/);
+    assert.match(chapterContextText, /Selected ghostwriter: Physical Pressure/);
     assert.match(chapterContextText, /Story design/);
     assert.match(chapterContextText, /Book notes/);
     assert.match(chapterContextText, /Chapter draft notes/);
     assert.match(chapterContextText, /forged registry seal/);
     assert.match(chapterContextText, /Watch pattern/);
-    assert.match(chapterContextText, /Source: writing-style\.md/);
-    assert.match(chapterContextText, /drafts\/001-opening-move\/writing-style\.md/);
-    assert.match(chapterContextText, /Use first-person pressure anchored in physical detail/);
+    assert.match(chapterContextText, /Source: ghostwriters\/physical-pressure\.md/);
+    assert.match(chapterContextText, /Writing style: Use first-person pressure anchored in physical detail/);
+    assert.match(chapterContextText, /Punctuation style: Keep interruptions sharp and consistent/);
     assert.match(paragraphContextText, /Target paragraph draft/);
     assert.match(resumeBookContextText, /Resume Book Context/);
     assert.match(resumeBookContextText, /Conversation Resume/);
@@ -665,6 +671,9 @@ test("mcp script tools sync ledger and expose parsed writing context", async () 
     assert.match(createScriptText, /Script ledger synced at/);
     assert.match(createScriptText, /Checks: 0 errors, 0 warnings/);
     assert.match(contextText, /Script directives/);
+    assert.match(contextText, /Selected ghostwriter: Default Ghostwriter/);
+    assert.match(contextText, /Punctuation style:/);
+    assert.match(contextText, /ghostwriters\/default\.md/);
     assert.match(contextText, /Secret context and reveal guard/);
     assert.match(contextText, /Script variables/);
     assert.match(contextText, /secret:the-child-belongs-to-the-hidden-queen/);

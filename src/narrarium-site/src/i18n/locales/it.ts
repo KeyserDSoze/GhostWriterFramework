@@ -973,7 +973,7 @@ const it = {
     auditIncludeLocations: "Includi luoghi",
     auditIncludeItems: "Includi oggetti",
     auditIncludeFactions: "Includi fazioni",
-    auditIncludeWritingStyle: "Includi stile di scrittura",
+    auditIncludeGhostwriter: "Includi ghostwriter",
     auditIncludeSummary: "Includi riepilogo",
     auditIncludePreviousContext: "Includi contesto precedente",
     auditIncludeNextContext: "Includi contesto successivo",
@@ -1122,6 +1122,9 @@ const it = {
     selectHint: "Seleziona o crea un ghostwriter per modificarlo.",
     loadFailed: "Caricamento ghostwriter non riuscito",
     saveFailed: "Salvataggio ghostwriter non riuscito",
+    provisionFailed: "Impossibile creare il ghostwriter predefinito",
+    invalidProfile: "Un ghostwriter deve avere un nome e una temperatura compresa tra 0 e 2.",
+    inUse: "Questo ghostwriter è ancora selezionato da un libro, capitolo, paragrafo, bozza o script.",
     alreadyExists: "Esiste già un ghostwriter con questo nome.",
     name: "Nome",
     language: "Lingua",
@@ -1504,7 +1507,6 @@ const it = {
     includeBody: "Include Body",
     includeFrontmatter: "Include Front Matter / Header",
     includeContext: "Include Context",
-    includeWritingStyle: "Include Writing Style",
     includeGhostwriter: "Include Ghostwriter",
     result: "Risultato",
     replacePreview: "Anteprima sostituzione",
@@ -1597,25 +1599,6 @@ const it = {
     priceImgOutput: "Img: output (€ / 1M)",
     priceTts: "TTS (€ / 1M caratteri)",
     priceStt: "STT (€ / ora)"
-  },
-  writingStyle: {
-    title: "Stile di scrittura",
-    badge: "Contratto di scrittura",
-    bookScope: "Valido per il libro",
-    chapterScope: "Override capitolo",
-    chapterTitle: "Stile capitolo {{slug}}",
-    chapterButton: "Stile capitolo",
-    intro: "Lo stile sempre attivo del libro: narrazione, dialoghi, ritmo, cosa preservare e cosa migliorare.",
-    chapterIntro: "Eccezione di stile per questo capitolo, applicata sopra lo stile globale.",
-    editorHint: "Scrivi le regole che devono guidare stesura, revisione, dialoghi, ritmo, punto di vista e coerenza della prosa.",
-     placeholder: "Scrivi qui le regole di stile…"
-  },
-  punctuationStyle: {
-    title: "Stile di punteggiatura",
-    badge: "Contratto di punteggiatura",
-    intro: "Regole di punteggiatura sempre attive per prosa e dialoghi: quali virgolette usare e dove va ogni segno di punteggiatura. Queste regole vengono inserite in ogni prompt che scrive, riscrive o modifica paragrafi e bozze.",
-    editorHint: "Definisci le tue regole di punteggiatura, ad esempio le caporali « » per i dialoghi con tutti i segni dentro tranne il punto finale, che resta fuori. Tienile concrete così Copilot le applica in modo coerente.",
-    placeholder: "Scrivi qui le regole di punteggiatura…"
   },
   merge: {
     button: "Unisci bozza + definitivo",

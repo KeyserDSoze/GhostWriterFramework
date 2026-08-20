@@ -7,7 +7,7 @@ import { loadFileContent } from "@/github/githubClient";
 import { resolveAuthoritativeBranch } from "@/github/branchRules";
 import { CANON_SECTION_ORDER } from "@/lib/canonSections";
 import { ghostwriterPrompt } from "@/narrarium/ghostwriter";
-import { loadGhostwriterProfile, stripFrontmatter } from "@/narrarium/pipeline";
+import { loadGhostwriterProfile } from "@/narrarium/pipeline";
 import type { BookStructure, Chapter, Paragraph } from "@/types/book";
 import { CHAT_CAPABILITIES, resolveBookToken, type AppSettings, type BookEntry, type ChatCapability, type CustomAction } from "@/types/settings";
 import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
@@ -70,7 +70,6 @@ export function createBlankCustomAction(): CustomAction {
       includeBody: true,
       includeFrontmatter: false,
       includeContext: true,
-      includeWritingStyle: true,
       includeGhostwriter: true,
     },
     outputMode: "show",
@@ -267,10 +266,7 @@ async function buildCustomActionMessages(input: CustomActionPromptInput, target:
     const context = await loadWriterContext(input.pathname, input.settings, input.books, input.structures, input.workingBranches, target.branch, loadFileContent, input.signal);
     const separatelyControlledPaths = new Set([
       target.filePath,
-      target.structure?.globalWritingStylePath,
-      target.structure?.globalPunctuationStylePath,
-      target.structure?.voicesPath,
-      target.chapter?.writingStylePath,
+      ...((target.structure?.ghostwriters ?? []).map((entry) => entry.path)),
     ].filter(Boolean));
     const files = context.relevantFiles
       .filter((file) => !separatelyControlledPaths.has(file.path))
@@ -281,10 +277,6 @@ async function buildCustomActionMessages(input: CustomActionPromptInput, target:
       `NARRARIUM CONTEXT:\n${context.summary}`,
       files ? `RELEVANT FILES:\n${files}` : "",
     ].filter(Boolean).join("\n\n"));
-  }
-  if (action.injections.includeWritingStyle) {
-    const style = await loadWritingStyle(target, input.signal);
-    if (style.trim()) injected.push(`WRITING STYLE:\n${style.trim()}`);
   }
   if (action.injections.includeGhostwriter) {
     const ghost = await loadGhostwriter(target, doc.frontmatterRecord, input.settings, input.accountScope, input.signal);
@@ -364,22 +356,6 @@ function splitMarkdown(raw: string): MarkdownParts {
     frontmatterRecord = {};
   }
   return { frontmatter: match[1], frontmatterRecord, body: (match[3] ?? "").replace(/^\s*\n/, ""), raw };
-}
-
-async function loadWritingStyle(target: CustomActionTargetContext, signal?: AbortSignal): Promise<string> {
-  if (!target.book || !target.structure || !target.token || !target.branch) return "";
-  const paths = [target.structure.globalWritingStylePath, target.chapter?.writingStylePath, target.structure.globalPunctuationStylePath, target.structure.voicesPath].filter(Boolean) as string[];
-  const blocks = await Promise.all(paths.map(async (path) => {
-    let raw = "";
-    try {
-      raw = await loadFileContent(target.token, target.book!.owner, target.book!.repo, path, target.branch, signal);
-    } catch (error) {
-      if (signal?.aborted) throw signal.reason;
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
-    }
-    return raw ? `${path}:\n${stripFrontmatter(raw)}` : "";
-  }));
-  return blocks.filter(Boolean).join("\n\n");
 }
 
 async function loadGhostwriter(target: CustomActionTargetContext, frontmatter: Record<string, unknown>, settings: AppSettings, accountScope: string | null, signal?: AbortSignal): Promise<string> {

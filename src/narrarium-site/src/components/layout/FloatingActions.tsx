@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ChevronUp, ClipboardCheck, FileEdit, FileText, NotebookText, Network, PenLine, Save, Sparkles, Wand2, X } from "lucide-react";
+import { ChevronUp, ClipboardCheck, FileEdit, FileText, NotebookText, Network, Save, Sparkles, Wand2, X } from "lucide-react";
 import { useUiStore } from "@/store/uiStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
@@ -131,7 +131,6 @@ export function FloatingActions() {
     rows.push({ label: chapter.hasEvaluation ? t("chapter.openEvaluation") : t("chapter.createEvaluation"), onClick: () => void openOrCreateChapter("evaluation"), icon: <ClipboardCheck className="h-4 w-4" /> });
   } else if (bookId) {
     rows.push({ label: t("ghostwriters.title"), to: `/app/books/${bookId}/ghostwriters`, icon: <Wand2 className="h-4 w-4" /> });
-    rows.push({ label: t("writingStyle.title"), to: `/app/books/${bookId}/writing-style`, icon: <PenLine className="h-4 w-4" /> });
   }
 
   if (floatingHidden || rows.length === 0) return null;

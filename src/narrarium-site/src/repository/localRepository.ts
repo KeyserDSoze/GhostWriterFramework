@@ -2655,7 +2655,6 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
       title: titleName(`${folder}/chapter.md`, slugToTitle(slug)),
       ghostwriter: typeof chapterFm.ghostwriter === "string" && chapterFm.ghostwriter ? chapterFm.ghostwriter : undefined,
       paragraphs,
-      writingStylePath: folderPaths.find((p) => p.endsWith("writing-style.md")),
       draftPath: allPaths.includes(`drafts/${slug}/chapter.md`)
         ? `drafts/${slug}/chapter.md`
         : folderPaths.find((p) => p.endsWith("draft.md")),
@@ -2695,9 +2694,6 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
     items: filesUnder("items"),
     timelines: filesUnder("timelines"),
     secrets: filesUnder("secrets"),
-    globalWritingStylePath: allPaths.find((p) => p === "writing-style.md") ?? allPaths.find((p) => p === "guidelines/writing-style.md" || p === "guidelines/style.md"),
-    globalPunctuationStylePath: allPaths.includes("punctuation-style.md") ? "punctuation-style.md" : undefined,
-    voicesPath: allPaths.find((p) => p === "guidelines/voices.md"),
     plotPath: allPaths.includes("plot.md") ? "plot.md" : undefined,
     ghostwriters: allPaths
       .filter((p) => /^ghostwriters\/[^/]+\.md$/.test(p))

@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.76.59",
+    "date": "2026-08-20",
+    "en": {
+      "title": "Ghostwriters become the single prose contract",
+      "summary": "Writing style, punctuation, voice, and prose guidance now live exclusively in the selected ghostwriter profile.",
+      "changes": [
+        "Removed the standalone Writing Style and Punctuation Style pages, routes, menu items, and prompt fallbacks.",
+        "Books missing a default profile now create and select ghostwriters/default.md automatically when opened.",
+        "Existing standalone style, punctuation, voice, and chapter-style files are removed during automatic provisioning instead of being maintained as legacy fallbacks.",
+        "Ghostwriter selection follows explicit, paragraph, chapter, then book precedence across writing, revision, evaluation, audit, custom action, and script workflows.",
+        "Ghostwriter profiles now validate required names and temperature range, and profiles still referenced by book content cannot be deleted.",
+        "Narrarium Core, MCP, repository validation, snapshots, CLI scaffolding, and documentation now use the same ghostwriter-only model."
+      ]
+    },
+    "it": {
+      "title": "Il ghostwriter diventa l'unico contratto della prosa",
+      "summary": "Stile di scrittura, punteggiatura, voce e indicazioni di prosa vivono ora esclusivamente nel profilo ghostwriter selezionato.",
+      "changes": [
+        "Rimosse le pagine, le route, le voci di menu e i fallback dei prompt dedicati a Stile di scrittura e Stile di punteggiatura.",
+        "I libri senza profilo predefinito ora creano e selezionano automaticamente ghostwriters/default.md quando vengono aperti.",
+        "I vecchi file separati di stile, punteggiatura, voce e stile del capitolo vengono rimossi durante il provisioning automatico invece di essere mantenuti come fallback legacy.",
+        "La selezione del ghostwriter segue la precedenza esplicita, paragrafo, capitolo e libro in scrittura, revisione, valutazione, audit, azioni personalizzate e script.",
+        "I profili ghostwriter ora validano nome obbligatorio e intervallo della temperatura; i profili ancora referenziati dal libro non possono essere eliminati.",
+        "Narrarium Core, MCP, validazione repository, snapshot, scaffolding CLI e documentazione usano ora lo stesso modello basato solo sui ghostwriter."
+      ]
+    }
+  },
+  {
     "version": "0.76.58",
     "date": "2026-08-20",
     "en": {

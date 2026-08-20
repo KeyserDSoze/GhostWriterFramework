@@ -154,7 +154,7 @@ export interface AuditSettings {
   includeLocations: boolean;
   includeItems: boolean;
   includeFactions: boolean;
-  includeWritingStyle: boolean;
+  includeGhostwriter: boolean;
   includeSummary: boolean;
   includePreviousContext: boolean;
   includeNextContext: boolean;
@@ -242,7 +242,7 @@ export const DEFAULT_AUDIT_SETTINGS: AuditSettings = {
   includeLocations: true,
   includeItems: true,
   includeFactions: true,
-  includeWritingStyle: true,
+  includeGhostwriter: true,
   includeSummary: true,
   includePreviousContext: true,
   includeNextContext: true,
@@ -299,7 +299,7 @@ export function resolveBookAuditSettings(book: BookEntry): AuditSettings {
     "includeLocations",
     "includeItems",
     "includeFactions",
-    "includeWritingStyle",
+    "includeGhostwriter",
     "includeSummary",
     "includePreviousContext",
     "includeNextContext",
@@ -445,7 +445,6 @@ export interface CustomActionContextInjection {
   includeBody: boolean;
   includeFrontmatter: boolean;
   includeContext: boolean;
-  includeWritingStyle: boolean;
   includeGhostwriter: boolean;
 }
 

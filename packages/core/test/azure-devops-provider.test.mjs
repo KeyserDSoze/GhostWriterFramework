@@ -63,7 +63,7 @@ test("AzureDevOpsRemoteProvider loads a Narrarium snapshot from repository markd
     if (url.includes("path=%2Fchapters%2F001-the-arrival%2Fchapter.md")) {
       return jsonResponse({
         path: "/chapters/001-the-arrival/chapter.md",
-        content: `---\ntype: chapter\nid: chapter:001-the-arrival\nnumber: 1\ntitle: The Arrival\nsummary: Lyra returns to the harbor.\npov: []\nstyle_refs: []\nprose_mode: []\ntags: []\ncanon: draft\n---\n\n# Purpose\n\nOpen the story under pressure.\n`,
+        content: `---\ntype: chapter\nid: chapter:001-the-arrival\nnumber: 1\ntitle: The Arrival\nsummary: Lyra returns to the harbor.\npov: []\nprose_mode: []\ntags: []\ncanon: draft\n---\n\n# Purpose\n\nOpen the story under pressure.\n`,
       });
     }
 

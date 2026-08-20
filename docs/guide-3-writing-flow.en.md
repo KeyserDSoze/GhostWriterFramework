@@ -16,7 +16,8 @@ They are all connected: from the script you generate/regenerate the draft; from 
 
 A **ghostwriter** is a writer with their own style (tone, voice, rhythm, vocabulary, influences, what to avoid, etc.). You create them in the book's Ghostwriter section and they are saved in the repository.
 
-- If you don't pick a ghostwriter, the book's **default writing style** is used (`guidelines/writing-style.md`).
+- Every book has a selected **default ghostwriter**, created automatically when missing.
+- The ghostwriter profile is the single prose contract and includes writing style and punctuation rules.
 - You can pick a ghostwriter when you generate script/draft/final; it ends up in the file's metadata.
 - The style can also have a **per-chapter** exception.
 

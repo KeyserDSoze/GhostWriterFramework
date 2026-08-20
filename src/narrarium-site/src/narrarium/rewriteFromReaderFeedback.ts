@@ -464,10 +464,7 @@ async function loadWritingContext(
   relevanceText: string,
 ): Promise<string> {
   const load = (path?: string) => path ? readOptional(context, path) : Promise.resolve(null);
-  const [globalStyle, chapterStyle, punctuation, totalResume, chapterResume] = await Promise.all([
-    load(context.structure.globalWritingStylePath),
-    load(chapter.writingStylePath),
-    load(context.structure.globalPunctuationStylePath),
+  const [totalResume, chapterResume] = await Promise.all([
     load("resumes/total.md"),
     load(`resumes/chapters/${chapter.slug}.md`),
   ]);
@@ -483,7 +480,7 @@ async function loadWritingContext(
     .slice(0, 24);
   const canon = await Promise.all(canonFiles.map(async (file) => ({ path: file.path, raw: file.content ?? await readOptional(context, file.path) })));
   const ghostwriterProfile = ghostwriterRaw && ghostwriterEntry ? parseGhostwriter(ghostwriterEntry.slug, ghostwriterRaw) : null;
-  const styleContext = composeGhostwriterStyleContext({ ghost: ghostwriterProfile, globalStyle: globalStyle ?? "", chapterStyle: chapterStyle ?? "", punctuationStyle: punctuation ?? "" });
+  const styleContext = composeGhostwriterStyleContext(ghostwriterProfile);
   return [
     styleContext,
     totalResume ? `BOOK CONTINUITY:\n${totalResume}` : "",

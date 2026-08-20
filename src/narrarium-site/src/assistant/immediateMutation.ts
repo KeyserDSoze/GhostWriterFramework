@@ -21,12 +21,15 @@ export async function captureImmediateMutation(input: {
   branch: string;
   path: string;
   remoteHeadSha?: string;
+  signal?: AbortSignal;
 }): Promise<ImmediateMutationSnapshot> {
+  input.signal?.throwIfAborted();
   const remoteHeadSha = input.remoteHeadSha ?? await resolveRepositoryHeadForMutation(input);
-  const current = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, input.path).catch((error) => {
+  const current = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, input.path, input.signal).catch((error) => {
     if (isGitHubFileNotFoundError(error)) return null;
     throw error;
   });
+  input.signal?.throwIfAborted();
   return {
     path: input.path,
     content: current?.content ?? null,
@@ -55,7 +58,7 @@ export async function commitImmediateMutations(input: {
   token: string;
   book: BookEntry;
   branch: string;
-  snapshots: Array<{ snapshot: ImmediateMutationSnapshot; content: string | null }>;
+  snapshots: Array<{ snapshot: ImmediateMutationSnapshot; content: string | null | undefined }>;
   message: string;
   signal?: AbortSignal;
 }): Promise<string> {
@@ -72,8 +75,15 @@ export async function commitImmediateMutations(input: {
     mutations,
     signal: input.signal,
   };
-  const result = mutations.some((mutation) => /^scripts\/.*\.md$/.test(mutation.path))
-    ? await commitCanonicalScriptMutation(mutationInput)
+  const writesScript = mutations.some((mutation) => mutation.content !== undefined && /^scripts\/.*\.md$/.test(mutation.path));
+  const result = writesScript
+    ? await commitCanonicalScriptMutation({
+        ...mutationInput,
+        mutations: mutations.map((mutation) => {
+          if (mutation.content === undefined) throw new Error("Script mutations cannot include validation-only guards.");
+          return { ...mutation, content: mutation.content };
+        }),
+      })
     : await commitAndPushTextFileMutation(mutationInput);
   return result.commitSha ?? input.snapshots[0].snapshot.remoteHeadSha;
 }

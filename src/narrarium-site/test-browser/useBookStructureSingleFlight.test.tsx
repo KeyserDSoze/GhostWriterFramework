@@ -12,8 +12,10 @@ const repository = vi.hoisted(() => ({
   pullRemoteChanges: vi.fn(),
   verifyAndRepairLocalRepository: vi.fn(),
 }));
+const ensureDefaultGhostwriter = vi.hoisted(() => vi.fn());
 
 vi.mock("@/repository/repositoryService", () => repository);
+vi.mock("@/narrarium/defaultGhostwriter", () => ({ ensureDefaultGhostwriter }));
 vi.mock("@/github/branchResolution", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/github/branchResolution")>();
   return { ...original, ensureAuthoritativePersonalBranch: vi.fn() };
@@ -81,6 +83,7 @@ beforeEach(() => {
   repository.getExistingLocalBookStructure.mockReset();
   repository.pullRemoteChanges.mockReset();
   repository.verifyAndRepairLocalRepository.mockReset();
+  ensureDefaultGhostwriter.mockReset().mockResolvedValue(false);
   useAuthStore.setState({
     user: userA,
   });
@@ -111,6 +114,7 @@ describe("useBookStructure shared operation coordinator", () => {
     expect(screen.getByTestId("consumer-19")).toHaveTextContent("Local book");
     expect(repository.getExistingLocalBookStructure).toHaveBeenCalledOnce();
     expect(repository.ensureLocalBookStructure).not.toHaveBeenCalled();
+    expect(ensureDefaultGhostwriter).toHaveBeenCalledOnce();
     expect(repository.fetchRemoteStatus).toHaveBeenCalledOnce();
   });
 
@@ -124,6 +128,17 @@ describe("useBookStructure shared operation coordinator", () => {
     expect(repository.getExistingLocalBookStructure).toHaveBeenCalledOnce();
     expect(repository.ensureLocalBookStructure).toHaveBeenCalledOnce();
     expect(repository.fetchRemoteStatus).toHaveBeenCalledOnce();
+  });
+
+  it("retries default ghostwriter provisioning without keeping the book loading", async () => {
+    repository.getExistingLocalBookStructure.mockResolvedValue({ meta: { cloneComplete: true }, structure: structure() });
+    ensureDefaultGhostwriter.mockRejectedValueOnce(new Error("transient")).mockResolvedValueOnce(false);
+
+    render(<Consumer index={0} />);
+
+    await waitFor(() => expect(screen.getByTestId("consumer-0")).toHaveTextContent("Local book"));
+    await waitFor(() => expect(ensureDefaultGhostwriter).toHaveBeenCalledTimes(2));
+    expect(useBooksStore.getState().loadingIds.has(book.id)).toBe(false);
   });
 
   it("does no repository work when the branch is already loaded or unrelated settings change", async () => {

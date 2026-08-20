@@ -27,8 +27,6 @@ const routeCases = [
   ["/app/books/book/reader", "reader"],
   ["/app/books/book/export", "book-export"],
   ["/app/books/book/ghostwriters", "book-ghostwriters"],
-  ["/app/books/book/writing-style", "book-writing-style"],
-  ["/app/books/book/punctuation-style", "book-punctuation-style"],
   ["/app/books/book/evaluation-style", "book-evaluation-style"],
   ["/app/books/book/simulated-readers", "book-simulated-readers"],
   ["/app/books/book/settings", "book-settings"],
@@ -39,7 +37,6 @@ const routeCases = [
   ["/app/books/book/chapters/001-start", "chapter"],
   ["/app/books/book/chapters/001-start/drafts", "chapter"],
   ["/app/books/book/chapters/001-start/scripts", "chapter"],
-  ["/app/books/book/chapters/001-start/writing-style", "chapter-writing-style"],
   ["/app/books/book/chapters/001-start/workspace/draft", "chapter-workspace"],
   ["/app/books/book/chapters/001-start/reader-evaluations", "chapter-reader-evaluations"],
   ["/app/books/book/chapters/001-start/audit", "chapter-audit"],
@@ -60,8 +57,7 @@ test("book route titles and summaries describe the actual page", () => {
   const cases = [
     ["/app/books/book/dashboard", "Book dashboard", "Dashboard"],
     ["/app/books/book/assets", "Book assets", "Assets"],
-    ["/app/books/book/writing-style", "Writing Style", "writing style"],
-    ["/app/books/book/punctuation-style", "Punctuation Style", "punctuation style"],
+    ["/app/books/book/ghostwriters", "Ghostwriters", "Ghostwriters"],
     ["/app/books/book/evaluation-style", "Evaluation Style", "evaluation style"],
   ];
   for (const [path, title, summary] of cases) {
@@ -79,7 +75,7 @@ test("research detail resolves only the selected real research document", () => 
 
 test("manifest distinguishes real files from conventional hypothetical paths", () => {
   const structure = {
-    plotPath: "plot.md", globalWritingStylePath: "writing-style.md", globalPunctuationStylePath: undefined, voicesPath: undefined,
+    plotPath: "plot.md", ghostwriters: [{ slug: "default", path: "ghostwriters/default.md", name: "Default" }],
     firstClassFiles: [{ path: "notes.md" }], readerPersonas: [], readerEvaluationFiles: [], auditFiles: [], researchFiles: [{ path: "research/rome.md" }], notesFiles: [], operationManifestFiles: [],
     chapters: [], characters: [], locations: [], factions: [], items: [], secrets: [], timelines: [],
   } as any;
@@ -87,6 +83,13 @@ test("manifest distinguishes real files from conventional hypothetical paths", (
   expect(manifest.find((file) => file.path === "notes.md")?.exists).toBe(true);
   expect(manifest.find((file) => file.path === "context.md")?.exists).toBe(false);
   expect(manifest.find((file) => file.path === "research/rome.md")?.exists).toBe(true);
+  expect(manifest.find((file) => file.path === "ghostwriters/default.md")?.role).toBe("ghostwriter");
+});
+
+test("removed writing and punctuation routes are no longer application contexts", () => {
+  expect(parseAppRoute("/app/books/book/writing-style").kind).toBe("other");
+  expect(parseAppRoute("/app/books/book/punctuation-style").kind).toBe("other");
+  expect(parseAppRoute("/app/books/book/chapters/001-start/writing-style").kind).toBe("other");
 });
 
 test("chapter and paragraph routes resolve the same complete resume chapter", async () => {

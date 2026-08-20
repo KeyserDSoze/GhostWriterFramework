@@ -10,6 +10,8 @@ test("new books include and select a complete default ghostwriter", () => {
   expect(book).toContain("ghostwriter: default");
   expect(ghostwriter).toContain("writing_style:");
   expect(ghostwriter).toContain("punctuation_style:");
+  expect(files.some((file) => file.path === "writing-style.md")).toBe(false);
+  expect(files.some((file) => file.path === "punctuation-style.md")).toBe(false);
 });
 
 test("ghostwriter writing and punctuation rules survive serialization and enter the prompt", () => {
@@ -33,14 +35,10 @@ test("ghostwriter precedence is explicit, paragraph, chapter, then book", () => 
   expect(resolveGhostwriterSlug({ ...source, paragraph: {}, chapter: {} })).toBe("book");
 });
 
-test("legacy style falls back independently for incomplete ghostwriter profiles", () => {
-  const legacy = { ...defaultGhostwriter("en"), writingStyle: "", punctuationStyle: "" };
-  const context = composeGhostwriterStyleContext({ ghost: legacy, globalStyle: "legacy prose", chapterStyle: "legacy chapter", punctuationStyle: "legacy punctuation" });
-  expect(context).toContain("legacy prose");
-  expect(context).toContain("legacy chapter");
-  expect(context).toContain("legacy punctuation");
-
-  const modern = composeGhostwriterStyleContext({ ghost: defaultGhostwriter("en"), globalStyle: "legacy prose", chapterStyle: "legacy chapter", punctuationStyle: "legacy punctuation" });
-  expect(modern).not.toContain("legacy prose");
-  expect(modern).not.toContain("legacy punctuation");
+test("only the selected ghostwriter defines prose and punctuation style", () => {
+  const ghostwriter = defaultGhostwriter("en");
+  const context = composeGhostwriterStyleContext(ghostwriter);
+  expect(context).toContain(ghostwriter.writingStyle);
+  expect(context).toContain(ghostwriter.punctuationStyle);
+  expect(composeGhostwriterStyleContext(null)).toBe("");
 });

@@ -431,7 +431,7 @@ function normalizeCustomAction(value: unknown): CustomAction | null {
   if (raw.targetTypes !== undefined && (!Array.isArray(raw.targetTypes) || raw.targetTypes.some((target) => typeof target !== "string" || !target.trim()))) return null;
   if (raw.injections !== undefined && (!raw.injections || typeof raw.injections !== "object" || Array.isArray(raw.injections))) return null;
   const injections = (raw.injections ?? {}) as Record<string, unknown>;
-  const injectionKeys = ["includeBody", "includeFrontmatter", "includeContext", "includeWritingStyle", "includeGhostwriter"] as const;
+  const injectionKeys = ["includeBody", "includeFrontmatter", "includeContext", "includeGhostwriter"] as const;
   if (injectionKeys.some((key) => injections[key] !== undefined && typeof injections[key] !== "boolean")) return null;
   return {
     id: raw.id,
@@ -444,7 +444,6 @@ function normalizeCustomAction(value: unknown): CustomAction | null {
       includeBody: (injections.includeBody as boolean | undefined) ?? true,
       includeFrontmatter: (injections.includeFrontmatter as boolean | undefined) ?? false,
       includeContext: (injections.includeContext as boolean | undefined) ?? true,
-      includeWritingStyle: (injections.includeWritingStyle as boolean | undefined) ?? true,
       includeGhostwriter: (injections.includeGhostwriter as boolean | undefined) ?? true,
     },
     outputMode: (raw.outputMode as CustomAction["outputMode"] | undefined) ?? "show",

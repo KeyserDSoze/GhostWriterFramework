@@ -1,42 +1,33 @@
-# Writing Style Guide
+# Ghostwriter Profiles
 
-Narrarium now uses a simpler writing-style model.
+Narrarium uses ghostwriters as its single prose-style model.
 
-## Primary file
+## Default profile
 
-The main always-on writing and review contract for a book lives in:
+Every book selects a default ghostwriter in `book.md`:
 
-- `guidelines/writing-style.md`
+```yaml
+ghostwriter: default
+```
 
-This file should contain everything the model needs while drafting or revising prose, including:
+The corresponding profile lives at `ghostwriters/default.md`. Narrarium creates and selects this profile automatically when it is missing.
 
-- narration rules
-- dialogue rules
+A ghostwriter contains the complete prose contract, including:
+
+- writing and punctuation style
+- voice and tone
 - person and tense expectations
-- scene rhythm
-- show vs tell balance
-- review constraints
-- what to preserve during revision
-- what to improve during revision
+- sentence rhythm and dialogue treatment
+- vocabulary and influences
+- strengths and patterns to avoid
 
-## Chapter-specific overrides
+## Overrides
 
-If a chapter needs a local exception or addendum, add one of these files:
-
-- `chapters/<slug>/writing-style.md`
-- `drafts/<slug>/writing-style.md`
-
-These chapter-local files are layered on top of the global `guidelines/writing-style.md`.
+Set `ghostwriter` in chapter or paragraph frontmatter to select another profile for that scope. Resolution order is explicit selection, paragraph, chapter, then book default.
 
 ## How writing context works
 
-`chapter_writing_context` and `paragraph_writing_context` now do this:
-
-1. read `guidelines/writing-style.md`
-2. read the chapter-specific `writing-style.md` if it exists in the final chapter or draft folder
-3. read the relevant point-in-time canon and draft context
-
-This means the writing style is always visible during both drafting and revision.
+`chapter_writing_context` and `paragraph_writing_context` resolve the selected profile from `ghostwriters/` and combine it with the relevant point-in-time canon, summaries and draft context.
 
 ## Review flow
 
@@ -48,16 +39,4 @@ For paragraph review:
 4. ask the user for confirmation
 5. apply with `update_paragraph` only after confirmation
 
-The same global and chapter-local writing-style files should guide both writing and review.
-
-## Legacy note
-
-Older repositories may still contain:
-
-- `guidelines/prose.md`
-- `guidelines/style.md`
-- `guidelines/voices.md`
-- `guidelines/chapter-rules.md`
-- `guidelines/styles/`
-
-Those are now considered legacy. New repositories should rely on `guidelines/writing-style.md` plus optional chapter-local `writing-style.md` files instead.
+The same selected ghostwriter guides drafting, revision and review. Standalone writing-style and punctuation-style files are not part of the active model.

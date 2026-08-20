@@ -1,5 +1,5 @@
 import { stringify } from "yaml";
-import { defaultEvaluationGuidelinesMarkdown, defaultWritingStyleBody, defaultWritingStyleTitle } from "@/narrarium/defaultGuidelines";
+import { defaultEvaluationGuidelinesMarkdown } from "@/narrarium/defaultGuidelines";
 import { builtinReaderPersonas, serializeReaderPersona } from "@/narrarium/readerPersona";
 import { defaultGhostwriter, serializeGhostwriter } from "@/narrarium/ghostwriter";
 
@@ -71,13 +71,6 @@ export function buildInitialBookFiles(input: InitialBookInput): InitialBookFile[
     {
       path: `ghostwriters/${initialGhostwriter.slug}.md`,
       content: serializeGhostwriter(initialGhostwriter),
-    },
-    {
-      path: "writing-style.md",
-      content: renderMarkdown(
-        { type: "guideline", id: "guideline:writing-style", title: defaultWritingStyleTitle(language), scope: "writing-style" },
-        defaultWritingStyleBody(language),
-      ),
     },
     {
       path: "guidelines/images.md",

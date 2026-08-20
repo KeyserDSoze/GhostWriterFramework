@@ -16,9 +16,7 @@ import { ParagraphPage } from "@/pages/ParagraphPage";
 import { ParagraphSplitPage } from "@/pages/ParagraphSplitPage";
 import { WorkspaceDocPage } from "@/pages/WorkspaceDocPage";
 import { GhostwritersPage } from "@/pages/GhostwritersPage";
-import { WritingStylePage } from "@/pages/WritingStylePage";
 import { EvaluationStylePage } from "@/pages/EvaluationStylePage";
-import { PunctuationStylePage } from "@/pages/PunctuationStylePage";
 import { ReaderPersonasPage } from "@/pages/ReaderPersonasPage";
 import { ReaderEvaluationsPage } from "@/pages/ReaderEvaluationsPage";
 import { PatchNotesPage } from "@/pages/PatchNotesPage";
@@ -84,15 +82,12 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/research", element: <DeepResearchPage /> },
       { path: "books/:bookId/research/:researchSlug", element: <DeepResearchPage /> },
       { path: "books/:bookId/ghostwriters", element: <GhostwritersPage /> },
-      { path: "books/:bookId/writing-style", element: <WritingStylePage /> },
       { path: "books/:bookId/evaluation-style", element: <EvaluationStylePage /> },
-      { path: "books/:bookId/punctuation-style", element: <PunctuationStylePage /> },
       { path: "books/:bookId/simulated-readers", element: <ReaderPersonasPage /> },
       { path: "books/:bookId/settings", element: <BookSettingsPage /> },
       { path: "books/:bookId/audit", element: <AuditPage /> },
       { path: "books/:bookId/canon/:section/:slug", element: <CanonEntityPage /> },
       { path: "books/:bookId/chapters/:chapterId/workspace/:workspaceKind", element: <WorkspaceDocPage /> },
-      { path: "books/:bookId/chapters/:chapterId/writing-style", element: <WritingStylePage /> },
       { path: "books/:bookId/chapters/:chapterId/drafts", element: <ChapterStageIndexPage stage="drafts" /> },
       { path: "books/:bookId/chapters/:chapterId/scripts", element: <ChapterStageIndexPage stage="scripts" /> },
       { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/workspace/:workspaceKind", element: <WorkspaceDocPage /> },

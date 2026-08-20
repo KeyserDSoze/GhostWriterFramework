@@ -64,6 +64,7 @@ export const bookSchema = z
     language: z.string().default("en"),
     genre: z.string().optional(),
     audience: z.string().optional(),
+    ghostwriter: z.string().min(1).optional(),
     ...pronunciationFields,
     canon: canonSchema.default("draft"),
   })
@@ -118,6 +119,28 @@ export const guidelineSchema = z
     id: z.string().min(1),
     title: z.string().min(1),
     scope: z.string().default("global"),
+  })
+  .passthrough();
+
+export const ghostwriterSchema = z
+  .object({
+    type: z.literal("ghostwriter"),
+    id: z.string().min(1),
+    name: z.string().min(1),
+    language: z.string().optional(),
+    tone: z.string().optional(),
+    voice: z.string().optional(),
+    pov_default: z.string().optional(),
+    tense_default: z.string().optional(),
+    sentence_rhythm: z.string().optional(),
+    dialogue_style: z.string().optional(),
+    vocabulary: z.string().optional(),
+    writing_style: z.string().optional(),
+    punctuation_style: z.string().optional(),
+    influences: z.array(z.string()).default([]),
+    strengths: z.array(z.string()).default([]),
+    avoid: z.array(z.string()).default([]),
+    temperature: z.number().min(0).max(2).default(0.8),
   })
   .passthrough();
 
@@ -263,7 +286,7 @@ export const chapterSchema = z
     ...pronunciationFields,
     summary: z.string().optional(),
     pov: z.array(z.string()).default([]),
-    style_refs: z.array(z.string()).default([]),
+    ghostwriter: z.string().min(1).optional(),
     narration_person: z.string().optional(),
     narration_tense: z.string().optional(),
     prose_mode: z.array(z.string()).default([]),
@@ -284,7 +307,7 @@ export const chapterDraftSchema = z
     ...pronunciationFields,
     summary: z.string().optional(),
     pov: z.array(z.string()).default([]),
-    style_refs: z.array(z.string()).default([]),
+    ghostwriter: z.string().min(1).optional(),
     narration_person: z.string().optional(),
     narration_tense: z.string().optional(),
     prose_mode: z.array(z.string()).default([]),
@@ -305,6 +328,7 @@ export const paragraphSchema = z
     ...pronunciationFields,
     summary: z.string().optional(),
     viewpoint: z.string().optional(),
+    ghostwriter: z.string().min(1).optional(),
     tags: z.array(z.string()).default([]),
     canon: canonSchema.default("draft"),
   })
@@ -321,6 +345,7 @@ export const paragraphDraftSchema = z
     ...pronunciationFields,
     summary: z.string().optional(),
     viewpoint: z.string().optional(),
+    ghostwriter: z.string().min(1).optional(),
     tags: z.array(z.string()).default([]),
     canon: canonSchema.default("draft"),
   })
@@ -385,6 +410,7 @@ export const anyKnownSchema = z.discriminatedUnion("type", [
   contextSchema,
   noteSchema,
   guidelineSchema,
+  ghostwriterSchema,
   characterSchema,
   itemSchema,
   locationSchema,
@@ -405,6 +431,7 @@ export type ContextFrontmatter = z.infer<typeof contextSchema>;
 export type WorkItemEntryFrontmatter = z.infer<typeof workItemEntrySchema>;
 export type NoteFrontmatter = z.infer<typeof noteSchema>;
 export type GuidelineFrontmatter = z.infer<typeof guidelineSchema>;
+export type GhostwriterFrontmatter = z.infer<typeof ghostwriterSchema>;
 export type CharacterFrontmatter = z.infer<typeof characterSchema>;
 export type ItemFrontmatter = z.infer<typeof itemSchema>;
 export type LocationFrontmatter = z.infer<typeof locationSchema>;
@@ -432,6 +459,7 @@ export const scriptSchema = z
     title: z.string().min(1),
     /** Where the scene takes place — free text, maps to a location canon slug when possible */
     location: z.string().optional(),
+    ghostwriter: z.string().min(1).optional(),
     secret_refs: z.array(z.string()).default([]),
     character_refs: z.array(z.string()).default([]),
     location_refs: z.array(z.string()).default([]),

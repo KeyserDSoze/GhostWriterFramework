@@ -502,9 +502,6 @@ export async function loadBookStructure(
       };
     });
 
-    const writingStylePath = folderPaths.find((p) =>
-      p.endsWith("writing-style.md")
-    );
     const draftPath = allPaths.includes(`drafts/${slug}/chapter.md`)
       ? `drafts/${slug}/chapter.md`
       : folderPaths.find((p) => p.endsWith("draft.md"));
@@ -516,7 +513,6 @@ export async function loadBookStructure(
       title: metaMap[`${folder}/chapter.md`]?.name ?? slugToTitle(slug),
       ghostwriter: metaMap[`${folder}/chapter.md`]?.ghostwriter,
       paragraphs,
-      writingStylePath,
       draftPath,
       auditPath: auditPathSet.has(buildChapterAuditPath(slug)) ? buildChapterAuditPath(slug) : undefined,
       imagePromptPath: allPaths.includes(imagePromptPath) ? imagePromptPath : undefined,
@@ -554,12 +550,6 @@ export async function loadBookStructure(
     items: filesUnder("items"),
     timelines: filesUnder("timelines"),
     secrets: filesUnder("secrets"),
-    globalWritingStylePath: allPaths.find((p) => p === "writing-style.md")
-      ?? allPaths.find((p) => p.match(/^guidelines\/(writing-style|style)\.md$/)),
-    globalPunctuationStylePath: allPaths.includes("punctuation-style.md") ? "punctuation-style.md" : undefined,
-    voicesPath: allPaths.includes("guidelines/voices.md")
-      ? "guidelines/voices.md"
-      : undefined,
     ghostwriters: allPaths
       .filter((p) => /^ghostwriters\/[^/]+\.md$/.test(p))
       .map((p) => {

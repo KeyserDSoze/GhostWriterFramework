@@ -75,7 +75,7 @@ export function BookDashboardPage() {
     { key: "chapter-images", label: t("dashboard.checkChapterImages"), done: count(structure.chapters, (chapter: Chapter) => Boolean(chapter.imagePath)), total: structure.chapters.length, weight: 8 },
     { key: "paragraph-images", label: t("dashboard.checkParagraphImages"), done: count(paragraphs, ({ paragraph }) => Boolean(paragraph.imagePath)), total: paragraphs.length, weight: 8 },
     { key: "export", label: t("dashboard.checkExportTarget"), done: profiles.length > 0 && hasDriveTarget ? 1 : 0, total: 1, weight: 8 },
-    { key: "style-plot", label: t("dashboard.checkStylePlot"), done: Number(Boolean(structure.globalWritingStylePath)) + Number(Boolean(structure.plotPath)), total: 2, weight: 7 },
+    { key: "style-plot", label: t("dashboard.checkStylePlot"), done: Number(Boolean(structure.ghostwriter && structure.ghostwriters.some((entry) => entry.slug === structure.ghostwriter))) + Number(Boolean(structure.plotPath)), total: 2, weight: 7 },
   ];
 
   const score = computeScore(checklist);

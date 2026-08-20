@@ -185,7 +185,7 @@ It also tunes the default `build` and `plan` agents for book work with higher re
 Generated book repos also point `instructions` to `.github/copilot-instructions.md`, so OpenCode and Copilot share the same repository-specific writing workflow.
 Generated book repos also include `context.md` for stable historical, geographic, social, and world-context notes that should stay visible while writing chapters and scenes.
 Generated book repos also include `ideas.md`, `story-design.md`, `notes.md`, and `promoted.md` so unstable ideas, reviewed notes, structural design, and promoted archive items stay separate. Chapter-local variants live under `drafts/<chapter>/` and are created when draft work starts.
-Generated book repos now use `guidelines/writing-style.md` as the single always-on writing and review guide. Optional chapter-specific `writing-style.md` files can live beside a chapter or chapter draft when that chapter needs a local override.
+Generated book repos select `ghostwriters/default.md` from `book.md`. A ghostwriter profile is the single prose contract, including its frontmatter writing and punctuation fields plus its markdown body; chapters, paragraphs, drafts, and scripts can select another profile with `ghostwriter` frontmatter.
 The Astro reader now exposes an author-facing `Workshop` area in full canon mode so you can inspect drafts, ideas, notes, story design, and promoted items alongside the published canon pages.
 Book repos also include `conversations/` as a portable place to keep exported writing chats.
 The generated `.opencode/plugins/conversation-export.js` plugin updates `conversations/RESUME.md`, `conversations/CONTINUATION.md`, and per-session exports automatically when OpenCode sessions go idle.
@@ -222,7 +222,7 @@ These are the main building blocks exposed by the local MCP server:
 - `list_related_canon`: find files that reference an id or concept
 - `sync_resume`: refresh chapter or total summaries from current files
 - `sync_all_resumes`: refresh all chapter resumes plus the total summary in one pass
-- `evaluate_chapter`: refresh a full chapter evaluation using all paragraph text, objective scores, editorial reading against the active writing-style files, canon coherence checks, a weighted verdict, a dedicated explanation of why that verdict landed there, and revision next steps
+- `evaluate_chapter`: refresh a full chapter evaluation using all paragraph text, objective scores, editorial reading against the selected ghostwriter profiles, canon coherence checks, a weighted verdict, a dedicated explanation of why that verdict landed there, and revision next steps
 - `evaluate_paragraph`: refresh one paragraph evaluation while still reading the whole chapter as context, with objective score, editorial score, canon coherence, a weighted verdict, and a dedicated explanation of why that verdict landed there
 - `evaluate_book`: refresh the full-book evaluation and optionally all chapter and paragraph evaluations with objective scores, editorial checks, canon coherence checks, a weighted verdict, and a dedicated explanation of why that verdict landed there
 - `wikipedia_search` and `wikipedia_page`: research factual or historical material
