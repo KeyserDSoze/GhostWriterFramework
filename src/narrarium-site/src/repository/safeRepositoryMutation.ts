@@ -11,7 +11,7 @@ import {
   sha256Text,
   type LocalTextFileMutation,
 } from "@/repository/localRepository";
-import { AmbiguousLocalPushError, pushLocalCommits, RemoteHeadMismatchError } from "@/repository/repositoryService";
+import { AmbiguousLocalPushError, pushLocalCommits, RemoteHeadMismatchError, RepositorySyncConflictError, syncFullRepository } from "@/repository/repositoryService";
 import { loadRemoteFileContentAtRef } from "@/github/githubClient";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
 import { reconcileRemoteMutation } from "@/repository/remoteMutationReconciliation";
@@ -21,6 +21,7 @@ import { captureRepositoryOperationScope } from "@/repository/repositoryOperatio
 import { createTrackedGitHubClient } from "@/repository/githubRequest";
 import { recordRepositoryWriteValidated } from "@/repository/tokenHealth";
 import { RepositoryByteMeter, utf8Bytes } from "@/repository/repositoryLimits";
+import { useRepositorySyncStore } from "@/store/repositorySyncStore";
 
 function currentAccountIdentity(): string | null {
   return accountIdentity(useAuthStore.getState().user);
@@ -61,12 +62,7 @@ export async function preflightRepositoryOperation(input: {
   input.signal?.throwIfAborted();
   if (dirty.length) throw new Error("The local working copy must be clean before starting this operation.");
   if (ahead.length) throw new Error("Push or discard existing local commits before starting this operation.");
-  const octokit = createTrackedGitHubClient(input.token, identity ? { accountIdentity: identity, owner: input.book.owner, repo: input.book.repo, branch: input.branch } : undefined);
-  const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}`, request: { signal: input.signal } });
-  input.signal?.throwIfAborted();
-  const remoteHeadSha = ref.data.object.sha;
-  if (remoteHeadSha !== meta.remoteHeadSha) throw new RepositoryConflictError("The remote branch changed. Pull and retry the operation.");
-  return { repoId: meta.id, remoteHeadSha, branch: input.branch };
+  return { repoId: meta.id, remoteHeadSha: meta.remoteHeadSha, branch: input.branch };
 }
 
 export async function resolveRepositoryHeadForMutation(input: { token: string; book: BookEntry; branch: string; signal?: AbortSignal }): Promise<string> {
@@ -177,7 +173,12 @@ export async function commitAndPushTextFileMutation(input: {
   const writes = input.mutations.filter((mutation) => mutation.content !== undefined);
   const snapshots = await Promise.all(writes.map(async (mutation) => ({ path: mutation.path, file: await getLocalFile(local.id, mutation.path, operationScope) ?? null })));
   input.signal?.throwIfAborted();
-  if (!writes.length) {
+  const desiredHashes = new Map(await Promise.all(writes.map(async (mutation) => [mutation.path, typeof mutation.content === "string" ? await sha256Text(mutation.content) : null] as const)));
+  const hasChanges = snapshots.some(({ path, file }) => {
+    const desiredHash = desiredHashes.get(path);
+    return desiredHash === null ? Boolean(file && file.status !== "deleted") : file?.status === "deleted" || file?.currentHash !== desiredHash;
+  });
+  if (!writes.length || !hasChanges) {
     try {
       await mutateLocalTextFilesAtomically(local.id, operationScope, input.mutations);
     } catch (error) {
@@ -233,8 +234,29 @@ export async function commitAndPushTextFileMutation(input: {
       if (error.cause instanceof DOMException && error.cause.name === "AbortError") throw error.cause;
       throw new RepositoryConflictError("The local push outcome could not be proven by generated-commit ancestry and revision parity.");
     }
+    if (error instanceof RemoteHeadMismatchError) {
+      try {
+        await syncFullRepository({
+          bookId: input.book.id,
+          token: input.token,
+          repoId: local.id,
+          owner: input.book.owner,
+          repo: input.book.repo,
+          branch: input.branch,
+          accountIdentity: identity!,
+        });
+      } catch (syncError) {
+        if (syncError instanceof RepositorySyncConflictError) useRepositorySyncStore.getState().setConflict({
+          error: syncError,
+          target: { bookId: input.book.id, repoId: local.id, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: identity! },
+        });
+        throw syncError;
+      }
+      const settled = await getLocalRepository(input.book.owner, input.book.repo, input.branch, operationScope);
+      if (!settled) throw new Error("The local working copy disappeared after repository sync.");
+      return { commitSha: settled.remoteHeadSha, mode: "local" };
+    }
     await restoreLocalFilesAndDeleteCommit(local.id, operationScope, localCommit.id, snapshots);
-    if (error instanceof RemoteHeadMismatchError) throw new RepositoryConflictError(error.message);
     throw error;
   }
   return { commitSha: pushed.commitSha, mode: "local" };

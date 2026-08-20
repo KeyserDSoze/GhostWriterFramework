@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.76.61",
+    "date": "2026-08-20",
+    "en": {
+      "title": "Repository sync resolves real file changes",
+      "summary": "Remote status and saves now reconcile file content safely instead of being blocked by stale fetch results or unrelated remote commits.",
+      "changes": [
+        "Prevented an older background fetch from restoring the Remote changed or Checking badge after a newer Narrarium push already synchronized the repository.",
+        "Immediate saves now preserve their local commit and automatically merge, commit, and push when remote changes affect different files.",
+        "When the same file changed differently in both places, Narrarium now shows a local-to-remote diff and asks whether to keep the local or remote version for each conflict.",
+        "Remote conflict choices create a recovery snapshot before replacing local work, while unrelated files continue to merge automatically.",
+        "Conflict choices are bound to the original book, repository, branch, account, local state, and remote blob; stale choices are rejected and refreshed instead of being applied to newer content.",
+        "Editor validation or save failures still stop synchronization, so unsaved in-memory work cannot be discarded by a repository action."
+      ]
+    },
+    "it": {
+      "title": "Il sync repository risolve le modifiche reali dei file",
+      "summary": "Lo stato remoto e i salvataggi ora riconciliano in sicurezza il contenuto dei file invece di bloccarsi per fetch obsoleti o commit remoti non correlati.",
+      "changes": [
+        "Impedito a un vecchio fetch in background di ripristinare il badge Remoto cambiato o In controllo dopo che un push Narrarium più recente ha già sincronizzato il repository.",
+        "I salvataggi immediati ora conservano il commit locale ed eseguono automaticamente merge, commit e push quando le modifiche remote riguardano file differenti.",
+        "Quando lo stesso file è cambiato in modo diverso in entrambi i luoghi, Narrarium mostra un diff da locale a remoto e chiede quale versione mantenere per ogni conflitto.",
+        "Le scelte remote creano uno snapshot di recupero prima di sostituire il lavoro locale, mentre i file indipendenti continuano a essere uniti automaticamente.",
+        "Le scelte dei conflitti sono vincolate a libro, repository, branch, account, stato locale e blob remoto originari; le scelte obsolete vengono rifiutate e aggiornate invece di essere applicate a contenuti più recenti.",
+        "Gli errori di validazione o salvataggio dell'editor continuano a fermare la sincronizzazione, così il lavoro non salvato in memoria non può essere scartato da un'azione repository."
+      ]
+    }
+  },
+  {
     "version": "0.76.60",
     "date": "2026-08-20",
     "en": {

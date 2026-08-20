@@ -124,6 +124,47 @@ export interface SyncResult {
   pushed: number;
 }
 
+export type RepositorySyncConflictResolution = "local" | "remote";
+
+export interface RepositorySyncConflict {
+  path: string;
+  kind: "text" | "binary";
+  localContent: string | null;
+  remoteContent: string | null;
+  localDeleted: boolean;
+  remoteDeleted: boolean;
+  localHash: string | null;
+  remoteSha: string | null;
+  localBaseSha: string | null;
+  localChanged: boolean;
+}
+
+export interface RepositorySyncConflictChoice {
+  choice: RepositorySyncConflictResolution;
+  expectedLocalHash: string | null;
+  expectedRemoteSha: string | null;
+  expectedLocalDeleted: boolean;
+  expectedRemoteDeleted: boolean;
+  expectedLocalBaseSha: string | null;
+  expectedLocalChanged: boolean;
+}
+
+export class RepositorySyncConflictError extends Error {
+  readonly code = "REPOSITORY_SYNC_CONFLICT";
+  constructor(readonly conflicts: RepositorySyncConflict[]) {
+    super(`Repository sync conflict: ${conflicts.map((conflict) => conflict.path).sort().join(", ")}`);
+    this.name = "RepositorySyncConflictError";
+  }
+}
+
+export class RepositorySyncChoiceStaleError extends Error {
+  readonly code = "REPOSITORY_SYNC_CHOICE_STALE";
+  constructor(readonly conflicts: RepositorySyncConflict[] = []) {
+    super("Repository conflict choices are stale because the local or remote files changed. Review the current state and sync again.");
+    this.name = "RepositorySyncChoiceStaleError";
+  }
+}
+
 interface RemoteChangeState {
   remoteHeadSha: string;
   changed: boolean;
@@ -633,17 +674,17 @@ export async function fetchRemoteStatus(input: ExactRepositoryTarget & { token: 
   await diagnostic({ meta, scope, operationId, operation: "fetch", stage: "start", outcome: "started", startedAt });
   let previous: Awaited<ReturnType<typeof markLocalRepositoryRemoteChecking>> | undefined;
   try {
-    previous = await markLocalRepositoryRemoteChecking(meta.id, scope);
+    previous = await markLocalRepositoryRemoteChecking(meta.id, scope, meta.remoteHeadSha);
     const octokit = trackedOctokit(input.token, input);
     const { remoteHeadSha, changed } = await resolveRemoteChangeState(octokit, meta, input.signal);
     input.signal?.throwIfAborted();
-    await markLocalRepositoryRemoteCheck(meta.id, scope, remoteHeadSha, changed);
+    const acceptedChanged = await markLocalRepositoryRemoteCheck(meta.id, scope, meta.remoteHeadSha, remoteHeadSha, changed);
     await diagnostic({ meta, scope, operationId, operation: "fetch", stage: "remote-read", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt) });
-    await addLocalRepoLog(meta.id, scope, "fetch", changed ? `Remote changed: ${remoteHeadSha.slice(0, 7)}` : "Remote up to date");
-    return { remoteHeadSha, changed };
+    await addLocalRepoLog(meta.id, scope, "fetch", acceptedChanged ? `Remote changed: ${remoteHeadSha.slice(0, 7)}` : "Remote up to date");
+    return { remoteHeadSha, changed: acceptedChanged };
   } catch (error) {
     const classified = classifyRepositoryError(error, "read");
-    await markLocalRepositoryRemoteFailure(meta.id, scope, classified.kind, previous).catch(() => undefined);
+    await markLocalRepositoryRemoteFailure(meta.id, scope, meta.remoteHeadSha, classified.kind, previous).catch(() => undefined);
     await diagnostic({ meta, scope, operationId, operation: "fetch", stage: "remote-read", outcome: classified.kind === "abort" ? "cancelled" : "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), error: classified });
     throw classified;
   }
@@ -721,12 +762,12 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
 
   let previous: Awaited<ReturnType<typeof markLocalRepositoryRemoteChecking>> | undefined;
   try {
-  previous = await markLocalRepositoryRemoteChecking(meta.id, scope);
+  previous = await markLocalRepositoryRemoteChecking(meta.id, scope, meta.remoteHeadSha);
   const octokit = trackedOctokit(input.token, input);
   const { remoteHeadSha, changed } = await resolveRemoteChangeState(octokit, meta, input.signal);
   input.signal?.throwIfAborted();
   if (remoteHeadSha === meta.remoteHeadSha && !dirty.length && !ahead.length) {
-    await markLocalRepositoryRemoteCheck(meta.id, scope, remoteHeadSha, false);
+    await markLocalRepositoryRemoteCheck(meta.id, scope, meta.remoteHeadSha, remoteHeadSha, false);
     await diagnostic({ meta, scope, operationId, operation: "pull", stage: "finalize", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt) });
     return { updated: 0, remoteHeadSha };
   }
@@ -776,7 +817,7 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
   return { updated, remoteHeadSha, ...(recoveryId ? { recoveryId } : {}) };
   } catch (error) {
     const classified = classifyRepositoryError(error, "compare");
-    await markLocalRepositoryRemoteFailure(meta.id, scope, classified.kind, previous).catch(() => undefined);
+    await markLocalRepositoryRemoteFailure(meta.id, scope, meta.remoteHeadSha, classified.kind, previous).catch(() => undefined);
     await diagnostic({ meta, scope, operationId, operation: "pull", stage: "merge", outcome: classified.kind === "abort" ? "cancelled" : "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), error: classified });
     throw error instanceof RepositoryOwnershipChangedError || classified.kind === "unknown" ? error : classified;
   }
@@ -966,7 +1007,7 @@ async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLoca
   return { commitSha: commit.data.sha, files: treeEntries.length, ...(settlement.skippedPaths.length ? { recoveryPaths: settlement.skippedPaths } : {}) };
 }
 
-export async function syncFullRepository(input: ExactRepositoryTarget & { token: string }): Promise<SyncResult> {
+export async function syncFullRepository(input: ExactRepositoryTarget & { token: string; conflictResolutions?: Record<string, RepositorySyncConflictChoice> }): Promise<SyncResult> {
   const scope = operationScope(input);
   const selected = await exactLocalRepository(input, scope);
   const operationId = crypto.randomUUID();
@@ -983,8 +1024,8 @@ export async function syncFullRepository(input: ExactRepositoryTarget & { token:
   }
 }
 
-async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactRepositoryTarget & { token: string }, scope: RepositoryOperationScope): Promise<SyncResult> {
-  const previous = await markLocalRepositoryRemoteChecking(meta.id, scope);
+async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactRepositoryTarget & { token: string; conflictResolutions?: Record<string, RepositorySyncConflictChoice> }, scope: RepositoryOperationScope): Promise<SyncResult> {
+  const previous = await markLocalRepositoryRemoteChecking(meta.id, scope, meta.remoteHeadSha);
   try {
   const pendingBeforeSync = await listUnpushedLocalCommits(meta.id);
   const octokit = trackedOctokit(input.token, input);
@@ -999,19 +1040,48 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
     const remoteByPath = new Map(remoteBlobEntries.map((entry) => [entry.path!, entry.sha!]));
     const localFiles = await listAllLocalFiles(meta.id);
     const localByPath = new Map(localFiles.map((file) => [file.path, file]));
-    const conflicts: string[] = [];
+    const conflicts: RepositorySyncConflict[] = [];
     const remoteBytes = new Map<string, Uint8Array>();
     const transferMeter = new RepositoryByteMeter("transfer", await repositoryTransferAllowance());
     const deletes: string[] = [];
     const writes: Array<{ path: string; sha: string; bytes: Uint8Array; kind: "text" | "binary" }> = [];
+    const seenResolutions = new Set<string>();
+    let staleChoices = false;
     for (const path of new Set([...localByPath.keys(), ...remoteByPath.keys()])) {
       const local = localByPath.get(path);
       const remoteSha = remoteByPath.get(path);
       const localChanged = Boolean(local && (local.status !== "clean" || local.committed));
       const remoteChangedFromBase = local ? remoteSha !== local.baseSha : remoteSha !== undefined;
+      const resolution = input.conflictResolutions?.[path];
+      if (resolution) {
+        seenResolutions.add(path);
+        const localDeleted = !local || local.status === "deleted";
+        const remoteDeleted = !remoteSha;
+        const resolutionStillMatches = resolution.expectedLocalHash === (local?.currentHash ?? null)
+          && resolution.expectedRemoteSha === (remoteSha ?? null)
+          && resolution.expectedLocalDeleted === localDeleted
+          && resolution.expectedRemoteDeleted === remoteDeleted
+          && resolution.expectedLocalBaseSha === (local?.baseSha ?? null)
+          && resolution.expectedLocalChanged === localChanged;
+        if (!resolutionStillMatches) staleChoices = true;
+        else if (resolution.choice === "local") {
+          if (localChanged) keptLocal += 1;
+          continue;
+        } else {
+          if (!remoteSha) deletes.push(path);
+          else {
+            const bytes = await fetchBlobBytesForRepository(input.token, meta.owner, meta.repo, path, remoteSha, transferMeter);
+            remoteBytes.set(path, bytes);
+            writes.push({ path, sha: remoteSha, bytes, kind: isTextPath(path) ? "text" : "binary" });
+          }
+          continue;
+        }
+      }
       if (localChanged && remoteChangedFromBase) {
-        if (remoteSha && local && local.status !== "deleted") {
-          const bytes = await fetchBlobBytesForRepository(input.token, meta.owner, meta.repo, path, remoteSha, transferMeter);
+        const bytes = remoteSha
+          ? await fetchBlobBytesForRepository(input.token, meta.owner, meta.repo, path, remoteSha, transferMeter)
+          : null;
+        if (remoteSha && bytes && local && local.status !== "deleted") {
           remoteBytes.set(path, bytes);
           const remoteHash = await sha256Bytes(bytes);
           if (remoteHash === local.currentHash) {
@@ -1022,7 +1092,19 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
           deletes.push(path);
           continue;
         }
-        conflicts.push(path);
+        const kind = local?.kind ?? (isTextPath(path) ? "text" : "binary");
+        conflicts.push({
+          path,
+          kind,
+          localContent: kind === "text" && local?.status !== "deleted" ? local?.text ?? "" : null,
+          remoteContent: kind === "text" && bytes ? new TextDecoder().decode(bytes) : null,
+          localDeleted: !local || local.status === "deleted",
+          remoteDeleted: !remoteSha,
+          localHash: local?.currentHash ?? null,
+          remoteSha: remoteSha ?? null,
+          localBaseSha: local?.baseSha ?? null,
+          localChanged,
+        });
         continue;
       }
       if (localChanged) {
@@ -1037,10 +1119,16 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
       const bytes = remoteBytes.get(path) ?? await fetchBlobBytesForRepository(input.token, meta.owner, meta.repo, path, remoteSha, transferMeter);
       writes.push({ path, sha: remoteSha, bytes, kind: isTextPath(path) ? "text" : "binary" });
     }
-    if (conflicts.length) throw new Error(`Repository sync conflict: ${conflicts.sort().join(", ")}`);
+    if (Object.keys(input.conflictResolutions ?? {}).some((path) => !seenResolutions.has(path))) staleChoices = true;
+    if (staleChoices) throw new RepositorySyncChoiceStaleError(conflicts);
+    if (conflicts.length) throw new RepositorySyncConflictError(conflicts);
     const recoveryBytes = pendingBeforeSync.length ? localFiles.reduce((sum, file) => sum + file.size, 0) + transferMeter.measuredBytes : 0;
     assertRepositoryAggregateBytes(transferMeter.measuredBytes + recoveryBytes, "transfer", await repositoryTransferAllowance());
-    syncPreflightIncludesRecovery = pendingBeforeSync.length > 0;
+    const resolvedRemoteConflict = Object.values(input.conflictResolutions ?? {}).some((resolution) => resolution.choice === "remote");
+    if (pendingBeforeSync.length > 0 || resolvedRemoteConflict) {
+      await createLocalRecoverySnapshot(meta.id, `Before conflict-aware full sync from ${meta.remoteHeadSha}`, scope);
+      syncPreflightIncludesRecovery = true;
+    }
     await applyRemoteMergeAtomically({
       repoId: meta.id,
       scope,
@@ -1052,9 +1140,10 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
     pulled = deletes.length + writes.length;
     await addLocalRepoLog(meta.id, scope, "pull", `Sync pulled ${pulled} remote files and kept ${keptLocal} non-conflicting local files`);
   } else {
+    if (Object.keys(input.conflictResolutions ?? {}).length) throw new RepositorySyncChoiceStaleError();
     await updateLocalRepositoryHead(meta.id, scope, remoteHeadSha);
     if (remoteHeadSha !== meta.remoteHeadSha) await addLocalRepoLog(meta.id, scope, "pull", `Remote head changed to ${remoteHeadSha.slice(0, 7)} with no file-content differences`);
-    else await markLocalRepositoryRemoteCheck(meta.id, scope, remoteHeadSha, false);
+    else await markLocalRepositoryRemoteCheck(meta.id, scope, meta.remoteHeadSha, remoteHeadSha, false);
   }
   // Do not mutate unpushed commits until every remote blob has been downloaded
   // and measured successfully. Limit rejection leaves local work byte-for-byte intact.
@@ -1093,8 +1182,8 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
   return { pulled, keptLocal, committed, pushed };
   } catch (error) {
     const classified = classifyRepositoryError(error, "compare");
-    await markLocalRepositoryRemoteFailure(meta.id, scope, classified.kind, previous).catch(() => undefined);
-    throw error instanceof RepositoryOwnershipChangedError || classified.kind === "unknown" ? error : classified;
+    await markLocalRepositoryRemoteFailure(meta.id, scope, meta.remoteHeadSha, classified.kind, previous).catch(() => undefined);
+    throw error instanceof RepositoryOwnershipChangedError || error instanceof RepositorySyncConflictError || error instanceof RepositorySyncChoiceStaleError || classified.kind === "unknown" ? error : classified;
   }
 }
 

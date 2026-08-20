@@ -51,13 +51,16 @@ import {
   restoreUnpushedCommitsAsDirty,
   restoreLocalRecoverySnapshot,
   listDirtyLocalFiles,
+  markLocalRepositoryRemoteChecking,
+  updateLocalRepositoryHead,
 } from "@/repository/localRepository";
 import { deleteLocalFile, putCleanLocalFile, putQuarantinedLocalRepository, writeLocalText } from "./helpers/localRepositorySeed";
-import { ensureLocalBookStructure, fetchRemoteStatus, invalidateRepositoryEnsureOperations, migrateLegacyLocalRepository, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
+import { ensureLocalBookStructure, fetchRemoteStatus, invalidateRepositoryEnsureOperations, migrateLegacyLocalRepository, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, RepositorySyncConflictError, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { useSettingsStore } from "@/store/settingsStore";
 import { REPOSITORY_TEXT_FILE_LIMIT_BYTES } from "@/repository/repositoryLimits";
+import { commitAndPushTextFileMutation } from "@/repository/safeRepositoryMutation";
 
 let repoId = "";
 const identity = "google:sub-writer";
@@ -134,6 +137,39 @@ test("pull verifies an unchanged remote head instead of leaving remote status ch
   await expect(getLocalRepositoryById(repoId, identity)).resolves.toMatchObject({ remoteStatus: "clean", remoteChanged: false, lastRemoteHead: "base-head" });
   await expect(fetchRemoteStatus({ ...target, token: "token", repoId })).resolves.toMatchObject({ changed: false, remoteHeadSha: "base-head" });
   await expect(getLocalRepositoryById(repoId, identity)).resolves.toMatchObject({ remoteStatus: "clean", remoteChanged: false });
+});
+
+test("a stale fetch cannot mark the repository changed after a newer push baseline is stored", async () => {
+  await setup();
+  const ref = gate<{ data: { object: { sha: string } } }>();
+  octokit.getRef.mockReturnValue(ref.promise);
+  octokit.getCommit.mockImplementation(async ({ commit_sha }: { commit_sha: string }) => ({ data: { tree: { sha: `${commit_sha}-tree` } } }));
+
+  const fetch = fetchRemoteStatus({ ...target, token: "token", repoId });
+  await vi.waitFor(() => expect(octokit.getRef).toHaveBeenCalledOnce());
+  await updateLocalRepositoryHead(repoId, captureRepositoryOperationScope(), "pushed-head");
+  ref.release({ data: { object: { sha: "pushed-head" } } });
+
+  await expect(fetch).resolves.toEqual({ remoteHeadSha: "pushed-head", changed: false });
+  await expect(getLocalRepositoryById(repoId, identity)).resolves.toMatchObject({
+    remoteHeadSha: "pushed-head",
+    remoteStatus: "clean",
+    remoteChanged: false,
+    lastRemoteHead: "pushed-head",
+  });
+});
+
+test("a fetch cannot enter checking after a newer push baseline is already stored", async () => {
+  await setup();
+  await updateLocalRepositoryHead(repoId, captureRepositoryOperationScope(), "pushed-head");
+
+  await markLocalRepositoryRemoteChecking(repoId, captureRepositoryOperationScope(), "base-head");
+
+  await expect(getLocalRepositoryById(repoId, identity)).resolves.toMatchObject({
+    remoteHeadSha: "pushed-head",
+    remoteStatus: "clean",
+    remoteChanged: false,
+  });
 });
 
 test("full sync applies nothing when the account switches during download", async () => {
@@ -654,10 +690,133 @@ test("sync detects a same-path conflict before applying unrelated remote files",
   ] } });
   octokit.getBlob.mockImplementation(async ({ file_sha }: { file_sha: string }) => ({ data: { encoding: "base64", content: btoa(file_sha === "plot-remote" ? "remote conflict" : "new other") } }));
 
-  await expect(syncFullRepository({ ...target, token: "token" })).rejects.toThrow("plot.md");
+  const operation = syncFullRepository({ ...target, token: "token" });
+  await expect(operation).rejects.toBeInstanceOf(RepositorySyncConflictError);
+  await expect(operation).rejects.toMatchObject({
+    conflicts: [{
+      path: "plot.md",
+      kind: "text",
+      localContent: "local",
+      remoteContent: "remote conflict",
+      localDeleted: false,
+      remoteDeleted: false,
+      localHash: expect.any(String),
+      remoteSha: "plot-remote",
+      localBaseSha: "plot-base",
+      localChanged: true,
+    }],
+  });
 
   expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "local", status: "modified" });
   expect(await getLocalFile(repoId, "other.md")).toMatchObject({ text: "old", baseSha: "other-base" });
+});
+
+test("sync applies an explicit remote conflict choice and snapshots discarded local work", async () => {
+  await setup();
+  await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "base", baseSha: "plot-base", size: 4 });
+  await writeLocalText(repoId, "plot.md", "local");
+  octokit.getRef.mockResolvedValue({ data: { object: { sha: "remote-head" } } });
+  octokit.getCommit.mockImplementation(async ({ commit_sha }: { commit_sha: string }) => ({ data: { tree: { sha: `${commit_sha}-tree` } } }));
+  octokit.getTree.mockResolvedValue({ data: { truncated: false, tree: [{ type: "blob", path: "plot.md", sha: "plot-remote" }] } });
+  octokit.getBlob.mockResolvedValue({ data: { encoding: "base64", content: btoa("remote") } });
+
+  const local = await getLocalFile(repoId, "plot.md");
+  await expect(syncFullRepository({ ...target, token: "token", conflictResolutions: { "plot.md": { choice: "remote", expectedLocalHash: local!.currentHash, expectedRemoteSha: "plot-remote", expectedLocalDeleted: false, expectedRemoteDeleted: false, expectedLocalBaseSha: "plot-base", expectedLocalChanged: true } } })).resolves.toMatchObject({ pulled: 1, committed: 0, pushed: 0 });
+
+  expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "remote", status: "clean", baseSha: "plot-remote" });
+  expect((await listLocalRecoverySnapshots(repoId, identity))[0].files.find((file) => file.path === "plot.md")?.text).toBe("local");
+});
+
+test("sync rejects a conflict choice when the displayed local or remote revision is stale", async () => {
+  await setup();
+  await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "base", baseSha: "plot-base", size: 4 });
+  await writeLocalText(repoId, "plot.md", "new local version");
+  octokit.getRef.mockResolvedValue({ data: { object: { sha: "remote-head" } } });
+  octokit.getCommit.mockImplementation(async ({ commit_sha }: { commit_sha: string }) => ({ data: { tree: { sha: `${commit_sha}-tree` } } }));
+  octokit.getTree.mockResolvedValue({ data: { truncated: false, tree: [{ type: "blob", path: "plot.md", sha: "new-remote-blob" }] } });
+  octokit.getBlob.mockResolvedValue({ data: { encoding: "base64", content: btoa("new remote version") } });
+
+  await expect(syncFullRepository({
+    ...target,
+    token: "token",
+    conflictResolutions: { "plot.md": { choice: "remote", expectedLocalHash: "old-local-hash", expectedRemoteSha: "old-remote-blob", expectedLocalDeleted: false, expectedRemoteDeleted: false, expectedLocalBaseSha: "plot-base", expectedLocalChanged: true } },
+  })).rejects.toMatchObject({ code: "REPOSITORY_SYNC_CHOICE_STALE", conflicts: [{ remoteSha: "new-remote-blob" }] });
+
+  expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "new local version", status: "modified" });
+});
+
+test("sync explicitly rejects a stale choice even when the path is no longer conflicted", async () => {
+  await setup();
+  await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "base", baseSha: "plot-base", size: 4 });
+  await writeLocalText(repoId, "plot.md", "local only");
+  octokit.getRef.mockResolvedValue({ data: { object: { sha: "metadata-only-head" } } });
+  octokit.getCommit.mockImplementation(async ({ commit_sha }: { commit_sha: string }) => ({ data: { tree: { sha: `${commit_sha}-tree` } } }));
+  octokit.getTree.mockResolvedValue({ data: { truncated: false, tree: [{ type: "blob", path: "plot.md", sha: "plot-base" }] } });
+
+  await expect(syncFullRepository({
+    ...target,
+    token: "token",
+    conflictResolutions: { "plot.md": { choice: "remote", expectedLocalHash: "old-local", expectedRemoteSha: "old-remote", expectedLocalDeleted: false, expectedRemoteDeleted: false, expectedLocalBaseSha: "plot-base", expectedLocalChanged: true } },
+  })).rejects.toMatchObject({ code: "REPOSITORY_SYNC_CHOICE_STALE" });
+
+  expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "local only", status: "modified" });
+});
+
+test("sync applies an explicit local conflict choice and pushes it on top of the remote head", async () => {
+  await setup();
+  await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "base", baseSha: "plot-base", size: 4 });
+  await writeLocalText(repoId, "plot.md", "local");
+  octokit.getRef
+    .mockResolvedValueOnce({ data: { object: { sha: "remote-head" } } })
+    .mockResolvedValueOnce({ data: { object: { sha: "remote-head" } } })
+    .mockResolvedValueOnce({ data: { object: { sha: "local-head" } } });
+  octokit.getCommit.mockImplementation(async ({ commit_sha }: { commit_sha: string }) => ({ data: { tree: { sha: `${commit_sha}-tree` } } }));
+  octokit.getTree.mockResolvedValue({ data: { truncated: false, tree: [{ type: "blob", path: "plot.md", sha: "plot-remote" }] } });
+  octokit.getBlob.mockResolvedValue({ data: { encoding: "base64", content: btoa("remote") } });
+  octokit.createBlob.mockResolvedValue({ data: { sha: "plot-local" } });
+  octokit.createTree.mockResolvedValue({ data: { sha: "local-tree" } });
+  octokit.createCommit.mockResolvedValue({ data: { sha: "local-head" } });
+  octokit.updateRef.mockResolvedValue({ data: {} });
+
+  const local = await getLocalFile(repoId, "plot.md");
+  await expect(syncFullRepository({ ...target, token: "token", conflictResolutions: { "plot.md": { choice: "local", expectedLocalHash: local!.currentHash, expectedRemoteSha: "plot-remote", expectedLocalDeleted: false, expectedRemoteDeleted: false, expectedLocalBaseSha: "plot-base", expectedLocalChanged: true } } })).resolves.toMatchObject({ keptLocal: 1, committed: 1, pushed: 1 });
+
+  expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "local", status: "clean", baseSha: "plot-local" });
+  expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
+});
+
+test("an immediate save automatically merges an unrelated remote file and pushes local work", async () => {
+  await setup();
+  const profile = await putCleanLocalFile({ repoId, path: "ghostwriters/default.md", kind: "text", text: "base profile", baseSha: "profile-base", size: 12 });
+  await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "old plot", baseSha: "plot-base", size: 8 });
+  octokit.getRef
+    .mockResolvedValueOnce({ data: { object: { sha: "remote-head" } } })
+    .mockResolvedValueOnce({ data: { object: { sha: "remote-head" } } })
+    .mockResolvedValueOnce({ data: { object: { sha: "remote-head" } } })
+    .mockResolvedValueOnce({ data: { object: { sha: "merged-head" } } });
+  octokit.getCommit.mockImplementation(async ({ commit_sha }: { commit_sha: string }) => ({ data: { tree: { sha: `${commit_sha}-tree` } } }));
+  octokit.getTree.mockResolvedValue({ data: { truncated: false, tree: [
+    { type: "blob", path: "ghostwriters/default.md", sha: "profile-base" },
+    { type: "blob", path: "plot.md", sha: "plot-remote" },
+  ] } });
+  octokit.getBlob.mockResolvedValue({ data: { encoding: "base64", content: btoa("remote plot") } });
+  octokit.createBlob.mockResolvedValue({ data: { sha: "profile-local" } });
+  octokit.createTree.mockResolvedValue({ data: { sha: "merged-tree" } });
+  octokit.createCommit.mockResolvedValue({ data: { sha: "merged-head" } });
+  octokit.updateRef.mockResolvedValue({ data: {} });
+
+  await expect(commitAndPushTextFileMutation({
+    token: "token",
+    book: { id: "book", owner: "owner", repo: "repo" } as any,
+    branch: "main",
+    expectedRemoteHeadSha: "base-head",
+    message: "Update ghostwriter",
+    mutations: [{ path: "ghostwriters/default.md", content: "local profile", expectedCurrentHash: profile.currentHash }],
+  })).resolves.toEqual({ commitSha: "merged-head", mode: "local" });
+
+  expect(await getLocalFile(repoId, "ghostwriters/default.md")).toMatchObject({ text: "local profile", status: "clean", baseSha: "profile-local" });
+  expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "remote plot", status: "clean", baseSha: "plot-remote" });
+  expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
 });
 
 test("truncated clone verification never deletes an omitted clean file", async () => {

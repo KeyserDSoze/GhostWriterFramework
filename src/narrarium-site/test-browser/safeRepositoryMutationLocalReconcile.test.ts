@@ -52,3 +52,20 @@ test("local push recovery rejects matching content without generated ancestry an
   expect(await getLocalFile(repoId, "plot.md", captureRepositoryOperationScope())).toMatchObject({ text: "old", status: "clean" });
   expect(git.getTree).not.toHaveBeenCalled();
 });
+
+test("a retry whose content already matches the synced file succeeds without another commit", async () => {
+  const file = await setup();
+  repository.pushLocalCommits.mockClear();
+
+  await expect(commitAndPushTextFileMutation({
+    token: "token",
+    book: { id: "book", owner: "owner", repo: "repo" } as any,
+    branch: "main",
+    expectedRemoteHeadSha: "source",
+    message: "Update",
+    mutations: [{ path: "plot.md", content: "old", expectedCurrentHash: file.currentHash }],
+  })).resolves.toEqual({ commitSha: "source", mode: "local" });
+
+  expect(repository.pushLocalCommits).not.toHaveBeenCalled();
+  expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
+});

@@ -2486,25 +2486,38 @@ export async function markLocalRepositoryCloneComplete(repoIdValue: string, scop
   });
 }
 
-export async function markLocalRepositoryRemoteCheck(repoIdValue: string, scope: RepositoryOperationScope, remoteHeadSha: string, changed: boolean): Promise<void> {
-  await updateLocalRepositoryMeta(repoIdValue, scope, (repo) => { const now = new Date().toISOString(); return { ...repo, remoteChanged: changed, remoteStatus: changed ? "changed" : "clean", remoteCheckedAt: now, remoteErrorKind: undefined, lastRemoteHead: remoteHeadSha, lastKnownChanged: changed, updatedAt: now, lastFetchAt: now, ...(changed ? {} : { remoteHeadSha }) }; });
+export async function markLocalRepositoryRemoteCheck(repoIdValue: string, scope: RepositoryOperationScope, expectedLocalHeadSha: string, remoteHeadSha: string, changed: boolean): Promise<boolean> {
+  let acceptedChanged = changed;
+  await updateLocalRepositoryMeta(repoIdValue, scope, (repo) => {
+    if (repo.remoteHeadSha !== expectedLocalHeadSha) {
+      acceptedChanged = false;
+      return repo;
+    }
+    const now = new Date().toISOString();
+    return { ...repo, remoteChanged: changed, remoteStatus: changed ? "changed" : "clean", remoteCheckedAt: now, remoteErrorKind: undefined, lastRemoteHead: remoteHeadSha, lastKnownChanged: changed, updatedAt: now, lastFetchAt: now, ...(changed ? {} : { remoteHeadSha }) };
+  });
+  return acceptedChanged;
 }
 
-export async function markLocalRepositoryRemoteChecking(repoIdValue: string, scope: RepositoryOperationScope): Promise<RemoteVerificationSnapshot> {
+export async function markLocalRepositoryRemoteChecking(repoIdValue: string, scope: RepositoryOperationScope, expectedLocalHeadSha: string): Promise<RemoteVerificationSnapshot> {
   let previous: RemoteVerificationSnapshot | undefined;
   await updateLocalRepositoryMeta(repoIdValue, scope, (repo) => {
     const status = effectiveRemoteStatus(repo);
     previous = { status: status === "checking" ? "unverified" : status, checkedAt: repo.remoteCheckedAt, errorKind: repo.remoteErrorKind };
+    if (repo.remoteHeadSha !== expectedLocalHeadSha) return repo;
     return { ...repo, remoteStatus: "checking", remoteErrorKind: undefined, updatedAt: new Date().toISOString(), ...(repo.remoteStatus ? {} : { lastKnownChanged: repo.remoteChanged ?? false }) };
   });
   return previous!;
 }
 
-export async function markLocalRepositoryRemoteFailure(repoIdValue: string, scope: RepositoryOperationScope, errorKind: RepositoryErrorKind, previous?: RemoteVerificationSnapshot): Promise<void> {
+export async function markLocalRepositoryRemoteFailure(repoIdValue: string, scope: RepositoryOperationScope, expectedLocalHeadSha: string, errorKind: RepositoryErrorKind, previous?: RemoteVerificationSnapshot): Promise<void> {
   const unavailable = errorKind === "service-unavailable" || errorKind === "network" || errorKind === "rate-limit" || errorKind === "abuse-limit";
-  await updateLocalRepositoryMeta(repoIdValue, scope, (repo) => errorKind === "abort" && previous
-    ? { ...repo, remoteStatus: previous.status, remoteCheckedAt: previous.checkedAt, remoteErrorKind: previous.errorKind, updatedAt: new Date().toISOString(), ...(repo.lastKnownChanged === undefined ? { lastKnownChanged: repo.remoteChanged ?? false } : {}) }
-    : { ...repo, remoteStatus: unavailable ? "unavailable" : "unverified", remoteCheckedAt: new Date().toISOString(), remoteErrorKind: errorKind, updatedAt: new Date().toISOString(), ...(repo.lastKnownChanged === undefined ? { lastKnownChanged: repo.remoteChanged ?? false } : {}) });
+  await updateLocalRepositoryMeta(repoIdValue, scope, (repo) => {
+    if (repo.remoteHeadSha !== expectedLocalHeadSha) return repo;
+    return errorKind === "abort" && previous
+      ? { ...repo, remoteStatus: previous.status, remoteCheckedAt: previous.checkedAt, remoteErrorKind: previous.errorKind, updatedAt: new Date().toISOString(), ...(repo.lastKnownChanged === undefined ? { lastKnownChanged: repo.remoteChanged ?? false } : {}) }
+      : { ...repo, remoteStatus: unavailable ? "unavailable" : "unverified", remoteCheckedAt: new Date().toISOString(), remoteErrorKind: errorKind, updatedAt: new Date().toISOString(), ...(repo.lastKnownChanged === undefined ? { lastKnownChanged: repo.remoteChanged ?? false } : {}) };
+  });
 }
 
 export function effectiveRemoteStatus(repo: LocalRepositoryMeta): RemoteVerificationStatus {

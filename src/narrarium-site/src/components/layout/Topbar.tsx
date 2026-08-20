@@ -18,7 +18,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
-import { triggerCurrentRepositorySync, useRegisterRepositorySync } from "@/store/repositorySyncStore";
+import { sameRepositorySyncTarget, triggerCurrentRepositorySync, useRegisterRepositorySync, useRepositorySyncStore } from "@/store/repositorySyncStore";
 import { speakText, type SpeechController } from "@/assistant/speech";
 import { useToast } from "@/components/ui/use-toast";
 import { ToastAction } from "@/components/ui/toast";
@@ -26,8 +26,9 @@ import { useSettings } from "@/drive/useSettings";
 import { parseAppRoute } from "@/assistant/context";
 import { effectiveRemoteStatus, getLocalRepositoryStatusSnapshot, listUnpushedLocalCommits } from "@/repository/localRepository";
 import { RepositoryStatusDialog } from "@/components/repository/RepositoryStatusDialog";
+import { RepositorySyncConflictDialog } from "@/components/repository/RepositorySyncConflictDialog";
 import { repositoryErrorDescription } from "@/repository/repositoryError";
-import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits, syncFullRepository } from "@/repository/repositoryService";
+import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits, RepositorySyncChoiceStaleError, RepositorySyncConflictError, syncFullRepository, type RepositorySyncConflictChoice, type RepositorySyncConflictResolution } from "@/repository/repositoryService";
 import { resolveBookToken } from "@/types/settings";
 import { emailToBranchName } from "@/github/githubClient";
 import { useTheme } from "./ThemeProvider";
@@ -39,6 +40,7 @@ import { useAppUpdateStore } from "@/store/appUpdateStore";
 import { activateAvailableUpdate } from "@/pwa";
 import { accountIdentity } from "@/auth/accountIdentity";
 import { KeyboardShortcutsDialog } from "@/components/layout/KeyboardShortcutsDialog";
+import { triggerCurrentSave } from "@/store/saveStore";
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -87,6 +89,8 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "behind" | "offline" | "none" }>({ label: "", tone: "none" });
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const syncConflict = useRepositorySyncStore((state) => state.conflict);
+  const setSyncConflict = useRepositorySyncStore((state) => state.setConflict);
   useEffect(() => {
     const openRepositoryStatus = () => setRepoDialogOpen(true);
     window.addEventListener("narrarium:open-repository-status", openRepositoryStatus);
@@ -253,13 +257,60 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     }
   }
 
+  async function runFullSync(conflictResolutions?: Record<string, RepositorySyncConflictChoice>): Promise<boolean> {
+    if (!repositoryTarget || !currentToken) return false;
+    setRepoActionBusy("sync");
+    try {
+      const result = await syncFullRepository({ ...repositoryTarget, token: currentToken, conflictResolutions });
+      setSyncConflict(null);
+      toast({ title: t("repoStatus.syncDone", { pulled: result.pulled, kept: result.keptLocal, committed: result.committed, pushed: result.pushed }) });
+      return true;
+    } catch (error) {
+      if (error instanceof RepositorySyncConflictError) {
+        setSyncConflict({ error, target: repositoryTarget });
+        return false;
+      }
+      if (error instanceof RepositorySyncChoiceStaleError) {
+        setSyncConflict(error.conflicts.length ? { error: new RepositorySyncConflictError(error.conflicts), target: repositoryTarget } : null);
+        toast({ title: t("repoStatus.conflictChoicesStale"), variant: "destructive" });
+        return false;
+      }
+      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(error, t), variant: "destructive" });
+      return false;
+    } finally {
+      setRepoActionBusy(null);
+    }
+  }
+
+  async function applyConflictChoices(resolutions: Record<string, RepositorySyncConflictResolution>) {
+    if (!syncConflict) return;
+    const sameTarget = repositoryTarget && sameRepositorySyncTarget(syncConflict.target, repositoryTarget);
+    if (!sameTarget) {
+      setSyncConflict(null);
+      toast({ title: t("repoStatus.conflictContextChanged"), variant: "destructive" });
+      return;
+    }
+    const boundResolutions = Object.fromEntries(syncConflict.error.conflicts.map((conflict) => [conflict.path, {
+      choice: resolutions[conflict.path],
+      expectedLocalHash: conflict.localHash,
+      expectedRemoteSha: conflict.remoteSha,
+      expectedLocalDeleted: conflict.localDeleted,
+      expectedRemoteDeleted: conflict.remoteDeleted,
+      expectedLocalBaseSha: conflict.localBaseSha,
+      expectedLocalChanged: conflict.localChanged,
+    }])) as Record<string, RepositorySyncConflictChoice>;
+    if (!await runFullSync(boundResolutions)) return;
+    if (Object.values(resolutions).includes("remote")) {
+      window.location.reload();
+      return;
+    }
+    await triggerCurrentSave();
+  }
+
   useRegisterRepositorySync({
     enabled: Boolean(currentBook && currentToken && navigator.onLine),
     busy: repoActionBusy === "sync",
-    onSync: () => runRepoAction("sync", async () => {
-      const result = await syncFullRepository({ ...repositoryTarget!, token: currentToken });
-      return t("repoStatus.syncDone", { pulled: result.pulled, kept: result.keptLocal, committed: result.committed, pushed: result.pushed });
-    }),
+    onSync: () => runFullSync(),
   });
 
   const visibleRepoStatus = currentBook && repoStatus.tone === "none"
@@ -468,6 +519,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         </DropdownMenu>
       </div>
       <RepositoryStatusDialog open={repoDialogOpen} onOpenChange={setRepoDialogOpen} book={currentBook} branch={currentBranch} settings={settings} />
+      <RepositorySyncConflictDialog conflicts={syncConflict?.error.conflicts ?? []} busy={repoActionBusy === "sync"} onCancel={() => setSyncConflict(null)} onApply={applyConflictChoices} />
       <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </header>
   );

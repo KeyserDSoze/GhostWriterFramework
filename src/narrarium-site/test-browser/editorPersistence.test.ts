@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { triggerCurrentSave, useSaveStore } from "@/store/saveStore";
-import { triggerCurrentRepositorySync, useRepositorySyncStore } from "@/store/repositorySyncStore";
+import { sameRepositorySyncTarget, triggerCurrentRepositorySync, useRepositorySyncStore } from "@/store/repositorySyncStore";
 import { buildBookExportArtifacts, epubModifiedTimestamp, normalizeMarkdownLineBreaks } from "@/export/bookExport";
 import { buildChapterDocuments } from "@/narrarium/canon";
 import { buildChapterDraftArtifactDocuments } from "@/narrarium/workspace";
@@ -9,7 +9,7 @@ import { DEFAULT_BOOK_EXPORT_SETTINGS } from "@/types/settings";
 
 beforeEach(() => {
   useSaveStore.setState({ current: null });
-  useRepositorySyncStore.setState({ current: null });
+  useRepositorySyncStore.setState({ current: null, conflict: null });
 });
 
 describe("editor persistence coordination", () => {
@@ -25,8 +25,8 @@ describe("editor persistence coordination", () => {
     await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
   });
 
-  it("aborts repository sync when the active save fails", async () => {
-    const sync = vi.fn();
+  it("never syncs when active editor validation or persistence fails", async () => {
+    const sync = vi.fn(() => true);
     useSaveStore.setState({ current: { dirty: true, save: () => false } });
     useRepositorySyncStore.setState({ current: { busy: false, sync } });
 
@@ -41,6 +41,14 @@ describe("editor persistence coordination", () => {
 
     await expect(triggerCurrentRepositorySync()).resolves.toBe(true);
     expect(order).toEqual(["save", "sync"]);
+  });
+
+  it("binds conflict choices to the original book, branch, and account", () => {
+    const target = { bookId: "book-a", owner: "owner", repo: "repo", branch: "main", accountIdentity: "google:a" };
+    expect(sameRepositorySyncTarget(target, { ...target })).toBe(true);
+    expect(sameRepositorySyncTarget(target, { ...target, bookId: "book-b" })).toBe(false);
+    expect(sameRepositorySyncTarget(target, { ...target, branch: "other" })).toBe(false);
+    expect(sameRepositorySyncTarget(target, { ...target, accountIdentity: "google:b" })).toBe(false);
   });
 });
 

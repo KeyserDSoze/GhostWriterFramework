@@ -8,13 +8,14 @@ import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
 import { buildLocalBookStructure, effectiveRemoteStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryDiagnostic, type LocalRepositoryFile, type LocalRepositoryMeta, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
-import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository, checkRepositoryTokenHealth } from "@/repository/repositoryService";
+import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, checkRepositoryTokenHealth } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 import { useAuthStore } from "@/store/authStore";
 import { accountIdentity } from "@/auth/accountIdentity";
 import { createMaintenanceBackupBundle, lookupRepositoryMaintenanceTarget, RepositoryMaintenanceError, type BackupReceipt, type RepositoryMaintenanceSnapshot } from "@/repository/repositoryMaintenance";
 import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { readTokenHealth, tokenExpirationWarning, type TokenHealth } from "@/repository/tokenHealth";
+import { triggerCurrentRepositorySync } from "@/store/repositorySyncStore";
 
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0 B";
@@ -285,10 +286,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                 setStructure(book.id, result.structure);
                 return result.meta.cloneComplete ? t("repoStatus.remoteUpToDate") : t("repoStatus.incomplete");
               })}>{busy === "recover-lifecycle" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.retryRecovery")}</Button>
-              <Button className="sm:col-span-3" disabled={networkDisabled} onClick={() => void run("sync", async () => {
-                 const result = await syncFullRepository({ ...await exactTarget(), token });
-                return t("repoStatus.syncDone", { pulled: result.pulled, kept: result.keptLocal, committed: result.committed, pushed: result.pushed });
-              })}>{busy === "sync" ? <RefreshCcw className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-1 h-4 w-4" />}{t("repoStatus.sync")}</Button>
+              <Button className="sm:col-span-3" disabled={networkDisabled} onClick={() => { onOpenChange(false); void triggerCurrentRepositorySync(); }}><RefreshCcw className="mr-1 h-4 w-4" />{t("repoStatus.sync")}</Button>
               <Button variant="outline" disabled={networkDisabled} onClick={() => void run("fetch", async () => {
                  const result = await fetchRemoteStatus({ ...await exactTarget(), token });
                 return result.changed ? t("repoStatus.remoteChanged") : t("repoStatus.remoteUpToDate");
