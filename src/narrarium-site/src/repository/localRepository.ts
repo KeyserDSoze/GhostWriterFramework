@@ -16,7 +16,7 @@ import { finalizeLegacyRewriteOperationMigration, inspectLegacyRewriteOperationM
 import { classifyRepositoryError, type RepositoryErrorKind } from "@/repository/repositoryError";
 import { RepositoryByteMeter, assertRepositoryFileBytes, utf8Bytes } from "@/repository/repositoryLimits";
 import { useAuthStore } from "@/store/authStore";
-import { assertRepositoryOperationScopeCurrent, captureRepositoryOperationScope, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
+import { assertRepositoryOperationScopeCurrent, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 const DB_NAME = "narrarium-local-repositories";
 const DB_VERSION = 13;
@@ -799,14 +799,6 @@ export async function reclaimExpiredRepositoryLifecycleLease(repoIdValue: string
   });
 }
 
-export async function putQuarantinedLocalRepository(meta: Omit<LocalRepositoryMeta, "id" | "updatedAt" | "localInstanceId"> & { localInstanceId?: string }): Promise<LocalRepositoryMeta> {
-  const now = new Date().toISOString();
-  const id = repoId(meta.owner, meta.repo, meta.branch, meta.accountScope ?? null);
-  const full = { ...meta, localInstanceId: meta.localInstanceId ?? crypto.randomUUID(), id, updatedAt: now };
-  await txStore("repositories", "readwrite", (store) => store.put(full), id);
-  return full;
-}
-
 export async function getLocalRepository(owner: string, repo: string, branch: string, scope: RepositoryOperationScope): Promise<LocalRepositoryMeta | null> {
   const scopedId = repoId(owner, repo, branch, scope.accountIdentity);
   const db = await openDb();
@@ -872,11 +864,67 @@ export async function adoptLegacyEmailScopedRepository(input: {
   const adoptionTarget: LegacyAdoptionTarget = { bookId: input.bookId, owner: input.owner, repo: input.repo, branch: input.branch, legacyIdentity: legacyScope, evidenceNonce: evidence.nonce, replaceDisposableTarget: targetDisposition === "replace" };
   if (!consumeLegacyAdoptionConsent(user, adoptionTarget, evidence)) throw new LegacyRepositoryMigrationRequiredError("LEGACY_REPOSITORY_ADOPTION_DECLINED", adoptionTarget);
   const journal: RepositoryMigrationJournal = { id: evidence.nonce, oldRepoId: oldId, newRepoId: newId, bookId: input.bookId, owner: input.owner, repo: input.repo, branch: input.branch, legacyAccountIdentity: legacyScope, immutableAccountIdentity: input.scope.accountIdentity, phase: "prepared", createdAt: new Date().toISOString(), replaceDisposableTarget: targetDisposition === "replace" };
-  await txStore("migrationJournals", "readwrite", (store) => store.add(journal), [oldId, newId]);
+  await persistRepositoryMigrationJournal(journal, input.scope);
   simulateRepositoryMigrationCrash("journal");
-  await prepareLegacyRewriteOperationMigration({ journalId: journal.id, oldRepoId: oldId, newRepoId: newId, legacyAccountIdentity: legacyScope, immutableAccountIdentity: input.scope.accountIdentity });
+  await prepareLegacyRewriteOperationMigration({ journalId: journal.id, oldRepoId: oldId, newRepoId: newId, legacyAccountIdentity: legacyScope, immutableAccountIdentity: input.scope.accountIdentity }, input.scope);
   simulateRepositoryMigrationCrash("rewrite-prepared");
   return completeRepositoryMigration(journal, input.scope);
+}
+
+async function persistRepositoryMigrationJournal(journal: RepositoryMigrationJournal, scope: RepositoryOperationScope): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = guardedWriteTransaction(db, ["repositories", "migrationJournals"], [journal.oldRepoId, journal.newRepoId]);
+    const repositories = tx.objectStore("repositories");
+    const legacyRequest = repositories.get(journal.oldRepoId);
+    const targetRequest = repositories.get(journal.newRepoId);
+    let legacy: LocalRepositoryMeta | undefined;
+    let target: LocalRepositoryMeta | undefined;
+    let loaded = 0;
+    let validationError: Error | null = null;
+    const apply = () => {
+      if (++loaded !== 2) return;
+      try { assertRepositoryOperationScopeCurrent(scope); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
+      if (!legacy || legacy.accountScope !== journal.legacyAccountIdentity || legacy.bookId !== journal.bookId || legacy.owner !== journal.owner || legacy.repo !== journal.repo || legacy.branch !== journal.branch
+        || (target && target.accountScope !== scope.accountIdentity)) {
+        validationError = new RepositoryOwnershipChangedError(); tx.abort(); return;
+      }
+      tx.objectStore("migrationJournals").add(journal);
+    };
+    legacyRequest.onsuccess = () => { legacy = legacyRequest.result as LocalRepositoryMeta | undefined; apply(); };
+    targetRequest.onsuccess = () => { target = targetRequest.result as LocalRepositoryMeta | undefined; apply(); };
+    legacyRequest.onerror = targetRequest.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? transactionError(tx));
+    tx.onabort = () => reject(validationError ?? transactionError(tx) ?? new Error("Repository migration journal transaction aborted."));
+  });
+}
+
+async function deleteRepositoryMigrationJournal(journal: RepositoryMigrationJournal, scope: RepositoryOperationScope): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = guardedWriteTransaction(db, ["repositories", "migrationJournals"], journal.newRepoId);
+    const repositoryRequest = tx.objectStore("repositories").get(journal.newRepoId);
+    const journalRequest = tx.objectStore("migrationJournals").get(journal.id);
+    let repository: LocalRepositoryMeta | undefined;
+    let currentJournal: RepositoryMigrationJournal | undefined;
+    let loaded = 0;
+    let validationError: Error | null = null;
+    const apply = () => {
+      if (++loaded !== 2) return;
+      try { validateRepositoryOperation(repository, scope); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
+      if (!currentJournal || currentJournal.newRepoId !== journal.newRepoId || currentJournal.immutableAccountIdentity !== scope.accountIdentity) { validationError = new RepositoryOwnershipChangedError(); tx.abort(); return; }
+      tx.objectStore("migrationJournals").delete(journal.id);
+    };
+    repositoryRequest.onsuccess = () => { repository = repositoryRequest.result as LocalRepositoryMeta | undefined; apply(); };
+    journalRequest.onsuccess = () => { currentJournal = journalRequest.result as RepositoryMigrationJournal | undefined; apply(); };
+    repositoryRequest.onerror = journalRequest.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? transactionError(tx));
+    tx.onabort = () => reject(validationError ?? transactionError(tx) ?? new Error("Repository migration journal cleanup was aborted."));
+  });
 }
 
 async function inspectCompetingImmutableRepository(newRepoId: string, immutableIdentity: string): Promise<"none" | "replace" | "preserve"> {
@@ -969,9 +1017,9 @@ async function completeRepositoryMigration(journal: RepositoryMigrationJournal, 
     tx.oncomplete = () => resolve(); tx.onerror = () => reject(validationError ?? tx.error); tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Repository migration was aborted."));
   });
   if (journal.phase === "prepared") simulateRepositoryMigrationCrash("primary-rekeyed");
-  await finalizeLegacyRewriteOperationMigration({ journalId: journal.id, oldRepoId: journal.oldRepoId, newRepoId: journal.newRepoId, immutableAccountIdentity: journal.immutableAccountIdentity });
+  await finalizeLegacyRewriteOperationMigration({ journalId: journal.id, oldRepoId: journal.oldRepoId, newRepoId: journal.newRepoId, immutableAccountIdentity: journal.immutableAccountIdentity }, scope);
   simulateRepositoryMigrationCrash("rewrite-finalized");
-  await txStore("migrationJournals", "readwrite", (store) => store.delete(journal.id), [journal.oldRepoId, journal.newRepoId]);
+  await deleteRepositoryMigrationJournal(journal, scope);
   const user = useAuthStore.getState().user;
   if (user) consumeLegacyAccountUpgradeEvidence(user, journal.immutableAccountIdentity, journal.id);
   const repository = await getLocalRepositoryById(journal.newRepoId, scope.accountIdentity);
@@ -984,17 +1032,16 @@ async function resumeRepositoryMigrationForTarget(oldRepoId: string, newRepoId: 
   const journal = journals.find((entry) => entry.oldRepoId === oldRepoId && entry.newRepoId === newRepoId);
   if (!journal) return null;
   if (journal.immutableAccountIdentity !== scope.accountIdentity) throw new LegacyRepositoryMigrationRequiredError("LEGACY_REPOSITORY_COPY_CONFLICT");
-  await prepareLegacyRewriteOperationMigration({ journalId: journal.id, oldRepoId: journal.oldRepoId, newRepoId: journal.newRepoId, legacyAccountIdentity: journal.legacyAccountIdentity, immutableAccountIdentity: journal.immutableAccountIdentity });
+  await prepareLegacyRewriteOperationMigration({ journalId: journal.id, oldRepoId: journal.oldRepoId, newRepoId: journal.newRepoId, legacyAccountIdentity: journal.legacyAccountIdentity, immutableAccountIdentity: journal.immutableAccountIdentity }, scope);
   return completeRepositoryMigration(journal, scope);
 }
 
-export async function resumeCurrentAccountRepositoryMigrations(): Promise<void> {
-  const identity = activeAccountScope();
-  if (!identity) return;
-  const scope = captureRepositoryOperationScope();
+export async function resumeCurrentAccountRepositoryMigrations(scope: RepositoryOperationScope): Promise<void> {
+  assertRepositoryOperationScopeCurrent(scope);
+  const identity = scope.accountIdentity;
   const journals = await txStore<RepositoryMigrationJournal[]>("migrationJournals", "readonly", (store) => store.getAll());
   for (const journal of journals.filter((entry) => entry.immutableAccountIdentity === identity)) {
-    await prepareLegacyRewriteOperationMigration({ journalId: journal.id, oldRepoId: journal.oldRepoId, newRepoId: journal.newRepoId, legacyAccountIdentity: journal.legacyAccountIdentity, immutableAccountIdentity: journal.immutableAccountIdentity });
+    await prepareLegacyRewriteOperationMigration({ journalId: journal.id, oldRepoId: journal.oldRepoId, newRepoId: journal.newRepoId, legacyAccountIdentity: journal.legacyAccountIdentity, immutableAccountIdentity: journal.immutableAccountIdentity }, scope);
     await completeRepositoryMigration(journal, scope);
   }
 }
@@ -1155,9 +1202,9 @@ export async function putCleanLocalFile(input: {
   blob?: Blob;
   baseSha?: string;
   size: number;
-}): Promise<LocalRepositoryFile> {
+}, scope: RepositoryOperationScope): Promise<LocalRepositoryFile> {
   const file = await prepareCleanLocalFile(input);
-  await txStore("files", "readwrite", (store) => store.put(file), input.repoId);
+  await putScopedLocalFile(input.repoId, scope, file);
   return file;
 }
 
@@ -1212,51 +1259,8 @@ export async function deleteLocalFileScoped(repoIdValue: string, path: string, s
   await mutateLocalTextFilesAtomically(repoIdValue, scope, [{ path, content: null }]);
 }
 
-export async function writeLocalText(repoIdValue: string, path: string, text: string): Promise<LocalRepositoryFile> {
-  const size = utf8Bytes(text);
-  assertRepositoryFileBytes("text", size);
-  const existing = await txStore<LocalRepositoryFile | undefined>("files", "readonly", (store) => store.get(fileKey(repoIdValue, path)));
-  const currentHash = await sha256Text(text);
-  const file: LocalRepositoryFile = {
-    key: fileKey(repoIdValue, path),
-    repoId: repoIdValue,
-    path,
-    kind: "text",
-    text,
-    baseSha: existing?.baseSha,
-    baseHash: existing?.baseHash,
-    currentHash,
-    status: statusAfterWrite(existing, currentHash),
-    committed: false,
-    size,
-    updatedAt: new Date().toISOString(),
-  };
-  await pausePrimaryFileWriteForTests();
-  await txStore("files", "readwrite", (store) => store.put(file), repoIdValue);
-  return file;
-}
-
-export async function writeLocalBinary(repoIdValue: string, path: string, bytes: Uint8Array): Promise<LocalRepositoryFile> {
-  assertRepositoryFileBytes("binary", bytes.byteLength);
-  const existing = await txStore<LocalRepositoryFile | undefined>("files", "readonly", (store) => store.get(fileKey(repoIdValue, path)));
-  const blob = new Blob([bytesToArrayBuffer(bytes)]);
-  const currentHash = await sha256Bytes(bytes);
-  const file: LocalRepositoryFile = {
-    key: fileKey(repoIdValue, path),
-    repoId: repoIdValue,
-    path,
-    kind: "binary",
-    blob,
-    baseSha: existing?.baseSha,
-    baseHash: existing?.baseHash,
-    currentHash,
-    status: statusAfterWrite(existing, currentHash),
-    committed: false,
-    size: bytes.byteLength,
-    updatedAt: new Date().toISOString(),
-  };
-  await txStore("files", "readwrite", (store) => store.put(file), repoIdValue);
-  return file;
+export async function writeLocalText(repoIdValue: string, path: string, text: string, scope: RepositoryOperationScope): Promise<LocalRepositoryFile> {
+  return writeLocalTextScoped(repoIdValue, path, text, scope);
 }
 
 export type LocalFileAtomicWrite =
@@ -1585,14 +1589,8 @@ function localFileMatchesCommitResult(file: LocalRepositoryFile | undefined, com
   return committedFile.status === "deleted" ? file.status === "deleted" : file.status === "clean";
 }
 
-export async function deleteLocalFile(repoIdValue: string, path: string): Promise<void> {
-  const existing = await txStore<LocalRepositoryFile | undefined>("files", "readonly", (store) => store.get(fileKey(repoIdValue, path)));
-  if (!existing) return;
-  if (existing.status === "new") {
-    await txStore("files", "readwrite", (store) => store.delete(fileKey(repoIdValue, path)), repoIdValue);
-    return;
-  }
-  await txStore("files", "readwrite", (store) => store.put({ ...existing, status: "deleted", committed: false, updatedAt: new Date().toISOString() }), repoIdValue);
+export async function deleteLocalFile(repoIdValue: string, path: string, scope: RepositoryOperationScope): Promise<void> {
+  return deleteLocalFileScoped(repoIdValue, path, scope);
 }
 
 export async function deleteLocalFileAtomically(repoIdValue: string, scope: RepositoryOperationScope, path: string, expectedCurrentHash?: string): Promise<void> {
@@ -1615,10 +1613,6 @@ export async function renameLocalTextFileAtomically(input: {
   const file = await getLocalFile(input.repoId, input.newPath, input.scope);
   if (!file) throw new Error(`Renamed file is unavailable: ${input.newPath}`);
   return file;
-}
-
-export async function removeLocalFileEntry(repoIdValue: string, path: string): Promise<void> {
-  await txStore("files", "readwrite", (store) => store.delete(fileKey(repoIdValue, path)), repoIdValue);
 }
 
 export async function localStatus(repoIdValue: string): Promise<LocalRepoStatus> {
@@ -1660,9 +1654,22 @@ export async function getLocalRepositoryStatusSnapshot(owner: string, repo: stri
   });
 }
 
-export async function addLocalRepoLog(repoIdValue: string, kind: LocalRepoLogKind, _message: string): Promise<void> {
+export async function addLocalRepoLog(repoIdValue: string, scope: RepositoryOperationScope, kind: LocalRepoLogKind, _message: string): Promise<void> {
   const entry: LocalRepoLogEntry = { id: crypto.randomUUID(), repoId: repoIdValue, kind, message: safeLegacyLogMessage(kind), createdAt: new Date().toISOString() };
-  await txStore("logs", "readwrite", (store) => store.put(entry), repoIdValue);
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = guardedWriteTransaction(db, ["repositories", "logs"], repoIdValue);
+    const request = tx.objectStore("repositories").get(repoIdValue);
+    let validationError: Error | null = null;
+    request.onsuccess = () => {
+      try { validateRepositoryOperation(request.result as LocalRepositoryMeta | undefined, scope); tx.objectStore("logs").put(entry); }
+      catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? transactionError(tx));
+    tx.onabort = () => reject(validationError ?? transactionError(tx) ?? new Error("Local repository log transaction aborted."));
+  });
 }
 
 export async function listLocalRepoLogs(repoIdValue: string, limit = 30): Promise<LocalRepoLogEntry[]> {
@@ -1732,10 +1739,17 @@ export async function recordRepositoryDiagnostic(input: {
   await new Promise<void>((resolve, reject) => {
     const tx = guardedWriteTransaction(db, ["repositories", "repositoryDiagnostics"], input.repoId);
     const diagnostics = tx.objectStore("repositoryDiagnostics");
-    diagnostics.put(record);
-    const request = diagnostics.index("localInstanceId").getAll(input.localInstanceId);
-    request.onsuccess = () => {
-      const rows = (request.result as LocalRepositoryDiagnostic[]).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+    let validationError: Error | null = null;
+    const repositoryRequest = tx.objectStore("repositories").get(input.repoId);
+    repositoryRequest.onsuccess = () => {
+      try {
+        const repository = validateRepositoryOperation(repositoryRequest.result as LocalRepositoryMeta | undefined, input.scope);
+        if (repository.localInstanceId !== input.localInstanceId) throw new RepositoryOwnershipChangedError("Repository diagnostic target was replaced.");
+      } catch (error) { validationError = error as Error; tx.abort(); return; }
+      diagnostics.put(record);
+      const rowsRequest = diagnostics.index("localInstanceId").getAll(input.localInstanceId);
+      rowsRequest.onsuccess = () => {
+      const rows = (rowsRequest.result as LocalRepositoryDiagnostic[]).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
       let bytes = rows.reduce((sum, row) => sum + diagnosticBytes(row), 0);
       for (const row of rows.slice(REPOSITORY_DIAGNOSTIC_MAX_RECORDS)) { diagnostics.delete(row.id); bytes -= diagnosticBytes(row); }
       for (const row of rows.slice(0, REPOSITORY_DIAGNOSTIC_MAX_RECORDS).reverse()) {
@@ -1743,11 +1757,13 @@ export async function recordRepositoryDiagnostic(input: {
         diagnostics.delete(row.id);
         bytes -= diagnosticBytes(row);
       }
+      };
+      rowsRequest.onerror = () => tx.abort();
     };
-    request.onerror = () => tx.abort();
+    repositoryRequest.onerror = () => tx.abort();
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(transactionError(tx));
-    tx.onabort = () => reject(transactionError(tx) ?? new Error("Repository diagnostic transaction aborted."));
+    tx.onerror = () => reject(validationError ?? transactionError(tx));
+    tx.onabort = () => reject(validationError ?? transactionError(tx) ?? new Error("Repository diagnostic transaction aborted."));
   });
   return record;
 }
@@ -1849,19 +1865,6 @@ function compareLocalCommitOrder(a: LocalCommit, b: LocalCommit): number {
   return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
 }
 
-export async function discardUnpushedLocalCommits(repoIdValue: string): Promise<void> {
-  const commits = await listUnpushedLocalCommits(repoIdValue);
-  if (!commits.length) return;
-  const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = guardedWriteTransaction(db, "commits", repoIdValue);
-    const store = tx.objectStore("commits");
-    for (const commit of commits) store.delete(commit.id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(transactionError(tx));
-  });
-}
-
 export async function restoreUnpushedCommitsAsDirty(repoIdValue: string, scope: RepositoryOperationScope): Promise<LocalCommit[]> {
   const commits = await listUnpushedLocalCommits(repoIdValue);
   if (!commits.length) return [];
@@ -1952,22 +1955,23 @@ export async function getLocalRecoverySnapshot(recoveryId: string, scope: string
   return recovery?.accountIdentity === scope && recovery.repository?.accountScope === scope ? recovery : null;
 }
 
-export async function deleteLocalRecoverySnapshot(recoveryId: string, scope: string): Promise<void> {
-  if (!isCurrentAccountScope(scope)) throw new Error("Recovery snapshot account identity is not current.");
+export async function deleteLocalRecoverySnapshot(recoveryId: string, scope: RepositoryOperationScope): Promise<void> {
+  assertRepositoryOperationScopeCurrent(scope);
   const expected = await txStore<LocalRepositoryRecovery | undefined>("recoveries", "readonly", (store) => store.get(recoveryId));
   if (!expected) throw new Error("Recovery snapshot is unavailable.");
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
-    const tx = guardedWriteTransaction(db, "recoveries", expected.repoId);
+    const tx = db.transaction("recoveries", "readwrite");
     const store = tx.objectStore("recoveries");
     let validationError: Error | null = null;
     const request = store.get(recoveryId);
     request.onsuccess = () => {
       const recovery = request.result as LocalRepositoryRecovery | undefined;
-      if (!isCurrentAccountScope(scope) || recovery?.accountIdentity !== scope || recovery.repository?.accountScope !== scope) {
-        validationError = new Error("Recovery snapshot is unavailable.");
-        tx.abort();
-        return;
+      try { assertRepositoryOperationScopeCurrent(scope); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
+      if (recovery?.accountIdentity !== scope.accountIdentity || recovery.repository?.accountScope !== scope.accountIdentity || recovery.repoId !== expected.repoId
+        || recovery.createdAt !== expected.createdAt || recovery.repository?.localInstanceId !== expected.repository?.localInstanceId) {
+        validationError = new Error("Recovery snapshot is unavailable."); tx.abort(); return;
       }
       store.delete(recoveryId);
     };

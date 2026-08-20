@@ -1,7 +1,8 @@
 import "fake-indexeddb/auto";
 import { beforeEach, expect, it } from "vitest";
 import { mutateTextFilesAtomically } from "@/github/githubClient";
-import { getLocalFile, putLocalRepository, writeLocalText } from "@/repository/localRepository";
+import { getLocalFile, putLocalRepository } from "@/repository/localRepository";
+import { writeLocalText } from "./helpers/localRepositorySeed";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { useAuthStore } from "@/store/authStore";
 

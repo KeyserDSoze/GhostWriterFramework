@@ -33,15 +33,12 @@ import {
   applyRemoteMergeAtomically,
   mutateLocalTextFilesAndCreateCommitAtomically,
   deleteLocalRecoverySnapshot,
-  deleteLocalFile,
   getLocalFile as getLocalFileScoped,
   getLocalRecoverySnapshot,
   getLocalRepositoryById,
   listLocalRecoverySnapshots,
   listUnpushedLocalCommits,
-  putCleanLocalFile,
   putLocalRepository,
-  putQuarantinedLocalRepository,
   removeLocalRepository,
   removeAbandonedLocalClone,
   releaseLocalRepositoryRepair,
@@ -54,8 +51,8 @@ import {
   restoreUnpushedCommitsAsDirty,
   restoreLocalRecoverySnapshot,
   listDirtyLocalFiles,
-  writeLocalText,
 } from "@/repository/localRepository";
+import { deleteLocalFile, putCleanLocalFile, putQuarantinedLocalRepository, writeLocalText } from "./helpers/localRepositorySeed";
 import { ensureLocalBookStructure, fetchRemoteStatus, invalidateRepositoryEnsureOperations, migrateLegacyLocalRepository, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
@@ -77,7 +74,7 @@ useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writ
 afterEach(async () => {
   vi.clearAllMocks();
   useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
-  if (repoId) for (const recovery of await listLocalRecoverySnapshots(repoId, identity)) await deleteLocalRecoverySnapshot(recovery.id, identity);
+  if (repoId) for (const recovery of await listLocalRecoverySnapshots(repoId, identity)) await deleteLocalRecoverySnapshot(recovery.id, captureRepositoryOperationScope());
   if (repoId) await removeLocalRepository(repoId, captureRepositoryOperationScope());
   repoId = "";
 });

@@ -6,10 +6,10 @@ import { RepositoryError } from "@/repository/repositoryError";
 import {
   buildLocalBookStructure,
   getLocalFile,
-  putCleanLocalFile,
   putLocalRepository,
   removeLocalRepository,
 } from "@/repository/localRepository";
+import { putCleanLocalFile } from "./helpers/localRepositorySeed";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { useAuthStore } from "@/store/authStore";
 import { collectReaderEntities, readerEntityBodyAllowed } from "@/pages/ReaderPreviewPage";

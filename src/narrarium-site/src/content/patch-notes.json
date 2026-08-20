@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.58",
+    "date": "2026-08-20",
+    "en": {
+      "title": "Account-scoped local repository mutations",
+      "summary": "Every production mutation of local repository files, logs, recoveries, diagnostics, and migration journals now requires an explicit account-and-generation operation scope.",
+      "changes": [
+        "Moved raw repository seeding and quarantine helpers into browser-test support so production code cannot import or call them.",
+        "Required RepositoryOperationScope for local text, binary, clean-file, delete, log, recovery, and migration mutation paths.",
+        "Validated repository identity and account generation inside the same IndexedDB transaction before logs, diagnostics, recovery deletion, and migration journals can commit.",
+        "Preserved orphan recovery cleanup after a working copy is removed while preventing stale or replacement records from being deleted.",
+        "Added static module-boundary checks and account-switch regressions that prevent guessed or stale repository IDs from mutating another account's data."
+      ]
+    },
+    "it": {
+      "title": "Mutazioni repository locali legate all'account",
+      "summary": "Ogni mutazione production di file locali, log, recovery, diagnostica e journal di migrazione richiede ora uno scope esplicito con account e generazione.",
+      "changes": [
+        "Spostati i seed raw e gli helper di quarantena repository nel supporto dei test browser, così il codice production non può importarli o chiamarli.",
+        "Reso obbligatorio RepositoryOperationScope per mutazioni locali di testo, binari, file clean, eliminazioni, log, recovery e migrazioni.",
+        "Identità repository e generazione account vengono validate nella stessa transazione IndexedDB prima del commit di log, diagnostica, eliminazione recovery e journal di migrazione.",
+        "Mantenuta la pulizia dei recovery orfani dopo la rimozione della working copy, impedendo però l'eliminazione di record obsoleti o sostituiti.",
+        "Aggiunti controlli statici dei confini dei moduli e regressioni sul cambio account che impediscono a repository ID indovinati o obsoleti di modificare dati di un altro account."
+      ]
+    }
+  },
+  {
     "version": "0.76.57",
     "date": "2026-08-20",
     "en": {

@@ -698,7 +698,9 @@ export async function finalizeLocalRewriteMaintenanceTombstone(_input: { repoId:
   });
 }
 
-export async function prepareLegacyRewriteOperationMigration(input: { journalId: string; oldRepoId: string; newRepoId: string; legacyAccountIdentity: string; immutableAccountIdentity: string }): Promise<void> {
+export async function prepareLegacyRewriteOperationMigration(input: { journalId: string; oldRepoId: string; newRepoId: string; legacyAccountIdentity: string; immutableAccountIdentity: string }, scope: RepositoryOperationScope): Promise<void> {
+  assertRepositoryOperationScopeCurrent(scope);
+  if (scope.accountIdentity !== input.immutableAccountIdentity) throw new RepositoryOwnershipChangedError();
   const sourceRepository = await currentRepository(input.oldRepoId);
   const targetRepository = sourceRepository ?? await currentRepository(input.newRepoId);
   if (targetRepository && targetRepository.accountScope !== input.legacyAccountIdentity && targetRepository.accountScope !== input.immutableAccountIdentity) throw new RewriteOperationRecoveryRequiredError("accountMismatch");
@@ -713,6 +715,7 @@ export async function prepareLegacyRewriteOperationMigration(input: { journalId:
     let loaded = 0;
     const apply = () => {
       if (++loaded !== 4) return;
+      try { assertRepositoryOperationScopeCurrent(scope); } catch (error) { tx.abort(); return; }
       if (oldTombstone.result || newTombstone.result) { tx.abort(); return; }
       const records = request.result as StoredRewriteOperation[];
       const completion = completionRequest.result as RewriteMigrationCompletion | undefined;
@@ -755,7 +758,9 @@ export async function inspectLegacyRewriteOperationMigration(input: { oldRepoId:
   return { legacyCount: legacy.length, targetCount: target.length, collisions: legacy.map((record) => record.operationId).filter((id) => targetIds.has(id)) };
 }
 
-export async function finalizeLegacyRewriteOperationMigration(input: { journalId: string; oldRepoId: string; newRepoId: string; immutableAccountIdentity: string }): Promise<void> {
+export async function finalizeLegacyRewriteOperationMigration(input: { journalId: string; oldRepoId: string; newRepoId: string; immutableAccountIdentity: string }, scope: RepositoryOperationScope): Promise<void> {
+  assertRepositoryOperationScopeCurrent(scope);
+  if (scope.accountIdentity !== input.immutableAccountIdentity) throw new RepositoryOwnershipChangedError();
   const targetRepository = await findPrimaryRepositoryForMigration(input.newRepoId, "", "", "");
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
@@ -770,6 +775,7 @@ export async function finalizeLegacyRewriteOperationMigration(input: { journalId
     let validationError: Error | null = null;
     const apply = () => {
       if (++loaded !== 4) return;
+      try { assertRepositoryOperationScopeCurrent(scope); } catch (error) { validationError = error as Error; tx.abort(); return; }
       if (oldTombstone.result || newTombstone.result) { tx.abort(); return; }
       const records = request.result as StoredRewriteOperation[];
       const copies = records.filter((record) => record.migrationJournalId === input.journalId);

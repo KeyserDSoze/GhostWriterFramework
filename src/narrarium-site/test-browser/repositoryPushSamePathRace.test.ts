@@ -18,11 +18,10 @@ import {
   listDirtyLocalFiles,
   listUnpushedLocalCommits,
   mutateLocalTextFilesAndCreateCommitAtomically,
-  putCleanLocalFile,
   putLocalRepository,
   removeLocalRepository,
-  writeLocalText,
 } from "@/repository/localRepository";
+import { putCleanLocalFile, writeLocalText } from "./helpers/localRepositorySeed";
 import { pushLocalCommits } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";

@@ -6,12 +6,11 @@ import {
   listUnpushedLocalCommits,
   markLocalCommitsPushed,
   mutateLocalTextFilesAndCreateCommitAtomically,
-  putCleanLocalFile,
   putLocalRepository,
   removeLocalRepository,
   restoreLocalFilesAndDeleteCommit,
-  writeLocalText,
 } from "@/repository/localRepository";
+import { putCleanLocalFile, writeLocalText } from "./helpers/localRepositorySeed";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 const getLocalFile = (repoIdValue: string, path: string) => getLocalFileScoped(repoIdValue, path, captureRepositoryOperationScope());

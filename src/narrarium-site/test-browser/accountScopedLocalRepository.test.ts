@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "fake-indexeddb/auto";
 import { useAuthStore } from "@/store/authStore";
-import { getLocalRepository, getLocalRepositoryById, makeRepoId, putLocalRepository, putQuarantinedLocalRepository, removeLocalRepository, writeLocalText } from "@/repository/localRepository";
+import { getLocalRepository, getLocalRepositoryById, makeRepoId, putLocalRepository, removeLocalRepository } from "@/repository/localRepository";
+import { putQuarantinedLocalRepository, writeLocalText } from "./helpers/localRepositorySeed";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { commitLocalChanges } from "@/repository/repositoryService";
 import { loadFileContent } from "@/github/githubClient";

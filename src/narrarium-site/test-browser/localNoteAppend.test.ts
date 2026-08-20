@@ -1,7 +1,8 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it } from "vitest";
 import { appendAssistantNote } from "@/assistant/service";
-import { getLocalFile, putCleanLocalFile, putLocalRepository, removeLocalRepository } from "@/repository/localRepository";
+import { getLocalFile, putLocalRepository, removeLocalRepository } from "@/repository/localRepository";
+import { putCleanLocalFile } from "./helpers/localRepositorySeed";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { useAuthStore } from "@/store/authStore";
 

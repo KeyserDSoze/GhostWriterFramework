@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, expect, test } from "vitest";
-import { claimLocalRepositoryRepair, createLocalCommit, createLocalRecoverySnapshot, deleteLocalFile, deleteLocalRecoverySnapshot, getLocalFile as getScopedFile, getLocalRepositoryById, listLocalRecoverySnapshots, pauseNextPrimaryFileWriteForTests, putCleanLocalFile, putLocalRepository, releaseLocalRepositoryRepair, removeLocalRepository, writeLocalText } from "@/repository/localRepository";
+import { claimLocalRepositoryRepair, createLocalCommit, createLocalRecoverySnapshot, deleteLocalRecoverySnapshot, getLocalFile as getScopedFile, getLocalRepositoryById, listLocalRecoverySnapshots, pauseNextPrimaryFileWriteForTests, putLocalRepository, releaseLocalRepositoryRepair, removeLocalRepository } from "@/repository/localRepository";
+import { deleteLocalFile, putCleanLocalFile, writeLocalText } from "./helpers/localRepositorySeed";
 import { crashNextMaintenanceRemovalForTests, createMaintenanceBackupBundle, lookupRepositoryMaintenanceTarget, RepositoryMaintenanceError, validateMaintenanceBackupBundle } from "@/repository/repositoryMaintenance";
 import { recloneLocalWorkingCopy, removeLocalWorkingCopy } from "@/repository/repositoryService";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
@@ -16,7 +17,7 @@ useAuthStore.setState({ user: { provider: "google", providerAccountId: "maintena
 
 afterEach(async () => {
   useAuthStore.setState({ user: { provider: "google", providerAccountId: "maintenance-writer", name: "Writer", email: "writer@example.com", picture: "" } });
-  if (repoId) for (const recovery of await listLocalRecoverySnapshots(repoId, identity)) await deleteLocalRecoverySnapshot(recovery.id, identity);
+  if (repoId) for (const recovery of await listLocalRecoverySnapshots(repoId, identity)) await deleteLocalRecoverySnapshot(recovery.id, captureRepositoryOperationScope());
   const db = await new Promise<IDBDatabase>((resolve, reject) => { const request = indexedDB.open("narrarium-local-repositories"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
   if (db.objectStoreNames.contains("migrationJournals")) await new Promise<void>((resolve, reject) => { const tx = db.transaction("migrationJournals", "readwrite"); tx.objectStore("migrationJournals").delete("failed"); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); });
   if (db.objectStoreNames.contains("removalJournals")) await new Promise<void>((resolve, reject) => { const tx = db.transaction("removalJournals", "readwrite"); tx.objectStore("removalJournals").clear(); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); });

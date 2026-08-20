@@ -10,7 +10,8 @@ vi.mock("@/repository/repositoryService", async (importOriginal) => ({
   pushLocalCommits: repository.pushLocalCommits,
 }));
 
-import { getLocalFile, listUnpushedLocalCommits, putCleanLocalFile, putLocalRepository, removeLocalRepository } from "@/repository/localRepository";
+import { getLocalFile, listUnpushedLocalCommits, putLocalRepository, removeLocalRepository } from "@/repository/localRepository";
+import { putCleanLocalFile } from "./helpers/localRepositorySeed";
 import { AmbiguousLocalPushError } from "@/repository/repositoryService";
 import { commitAndPushTextFileMutation, RepositoryConflictError } from "@/repository/safeRepositoryMutation";
 import { useAuthStore } from "@/store/authStore";

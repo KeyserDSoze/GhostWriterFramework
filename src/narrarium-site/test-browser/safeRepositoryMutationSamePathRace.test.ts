@@ -15,11 +15,10 @@ import {
   getLocalFile,
   listDirtyLocalFiles,
   listUnpushedLocalCommits,
-  putCleanLocalFile,
   putLocalRepository,
   removeLocalRepository,
-  writeLocalText,
 } from "@/repository/localRepository";
+import { putCleanLocalFile, writeLocalText } from "./helpers/localRepositorySeed";
 import { commitAndPushTextFileMutation } from "@/repository/safeRepositoryMutation";
 import { useAuthStore } from "@/store/authStore";
 

@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, expect, test } from "vitest";
-import { getLocalFile as getLocalFileScoped, putCleanLocalFile, putLocalRepository, removeLocalRepository } from "@/repository/localRepository";
+import { getLocalFile as getLocalFileScoped, putLocalRepository, removeLocalRepository } from "@/repository/localRepository";
+import { putCleanLocalFile } from "./helpers/localRepositorySeed";
 import { renameParagraphWithCompanions, reorderChaptersInBook, reorderParagraphsInChapter } from "@/github/githubClient";
 import { buildParagraphScriptArtifact } from "@/narrarium/workspace";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";

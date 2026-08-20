@@ -22,6 +22,7 @@ import { resetAssistantSessionIndex } from "@/assistant/sessionIndex";
 import { resumeCurrentAccountRepositoryMigrations } from "@/repository/localRepository";
 import { resetBookStructureLoadCoordinator } from "@/hooks/useBookStructure";
 import { clearTokenHealth } from "@/repository/tokenHealth";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 const ACCOUNT_SCOPE_KEY = "narrarium-account-scope-v1";
 let installed = false;
@@ -93,7 +94,7 @@ export function installAccountScopeIsolation(): void {
   else useSettingsStore.setState({ accountIdentity: activeIdentity });
   useLlmDebugStore.getState().setAccount(activeIdentity, storedIdentity, accountChanged);
   storeAccountScope(activeIdentity);
-  if (activeIdentity) void resumeCurrentAccountRepositoryMigrations().catch(() => undefined);
+  if (activeIdentity) void resumeCurrentAccountRepositoryMigrations(captureRepositoryOperationScope()).catch(() => undefined);
 
   useAuthStore.subscribe((state) => {
     const nextIdentity = accountIdentity(state.user) ?? state.interactiveRecoveryIdentity;
@@ -104,6 +105,6 @@ export function installAccountScopeIsolation(): void {
     resetAccountScopedState();
     useLlmDebugStore.getState().setAccount(nextIdentity, previousIdentity, true);
     storeAccountScope(nextIdentity);
-    if (nextIdentity) void resumeCurrentAccountRepositoryMigrations().catch(() => undefined);
+    if (nextIdentity) void resumeCurrentAccountRepositoryMigrations(captureRepositoryOperationScope()).catch(() => undefined);
   });
 }

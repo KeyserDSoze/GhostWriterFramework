@@ -340,7 +340,7 @@ async function ensureLocalBookStructureOnce(input: {
     expectedFileCount: blobs.length,
   }, scope, cloneOperationId);
   await diagnostic({ meta, scope, operationId: cloneOperationId, operation: "clone", stage: "start", outcome: "started", startedAt, fileCount: blobs.length });
-  if (persistent === false) await addLocalRepoLog(meta.id, "error", "Browser storage persistence was not granted; export backups regularly because the working copy may be evicted");
+  if (persistent === false) await addLocalRepoLog(meta.id, scope, "error", "Browser storage persistence was not granted; export backups regularly because the working copy may be evicted");
 
   let done = 0;
   const transferMeter = new RepositoryByteMeter("transfer", transferAllowance);
@@ -372,13 +372,13 @@ async function ensureLocalBookStructureOnce(input: {
     // marked incomplete so it is re-verified, rather than trusting a partial file set.
     await markLocalRepositoryRepairRequired(meta.id, scope, cloneOperationId);
     await diagnostic({ meta, scope, operationId: cloneOperationId, operation: "clone", stage: "finalize", outcome: "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), fileCount: blobs.length, error: new Error("Remote tree truncated") });
-    await addLocalRepoLog(meta.id, "error", `Remote tree truncated at ${blobs.length} files; clone left ready for repair`);
+    await addLocalRepoLog(meta.id, scope, "error", `Remote tree truncated at ${blobs.length} files; clone left ready for repair`);
   } else {
     input.onProgress?.({ done: blobs.length, total: blobs.length, phase: "finalizing" });
     await markLocalRepositoryCloneComplete(meta.id, scope, cloneOperationId, blobs.length, headSha);
     await diagnostic({ meta, scope, operationId: cloneOperationId, operation: "clone", stage: "finalize", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt), fileCount: blobs.length });
   }
-  await addLocalRepoLog(meta.id, "clone", `Cloned ${blobs.length} files from ${meta.branch}`);
+  await addLocalRepoLog(meta.id, scope, "clone", `Cloned ${blobs.length} files from ${meta.branch}`);
 
   const finalMeta = await getLocalRepository(input.book.owner, input.book.repo, resolvedBranch, scope) ?? meta;
   return { meta: finalMeta, structure: await buildLocalBookStructure(finalMeta), cloned: true };
@@ -459,7 +459,7 @@ export async function restoreLocalFilesToBase(input: {
   const restored = selected.length;
 
   if (restored) {
-    await addLocalRepoLog(input.repoId, "reset", `Restored ${restored} local file${restored === 1 ? "" : "s"} to the clean base state`);
+    await addLocalRepoLog(input.repoId, scope, "reset", `Restored ${restored} local file${restored === 1 ? "" : "s"} to the clean base state`);
   }
   return { restored };
 }
@@ -542,7 +542,7 @@ async function verifyAndRepairLocalRepositoryLeased(
     .filter((item) => item.type === "blob" && item.path && item.sha)
     .map((item) => ({ path: item.path!, sha: item.sha!, size: item.size ?? 0 }));
   if (tree.data.truncated) {
-    await addLocalRepoLog(meta.id, "error", "Repository verification stopped because the remote tree is truncated");
+    await addLocalRepoLog(meta.id, scope, "error", "Repository verification stopped because the remote tree is truncated");
     throw new Error("Remote tree is truncated; local clone repair stopped without deleting files.");
   }
 
@@ -591,7 +591,7 @@ async function verifyAndRepairLocalRepositoryLeased(
     deletePaths: unexpectedClean.map((file) => file.path),
     expectedFileCount: remoteBlobs.length,
   });
-  if (missing.length || unexpectedClean.length) await addLocalRepoLog(meta.id, "pull", `Repaired ${missing.length} missing and ${unexpectedClean.length} unexpected clean file(s) on ${meta.branch}`);
+  if (missing.length || unexpectedClean.length) await addLocalRepoLog(meta.id, scope, "pull", `Repaired ${missing.length} missing and ${unexpectedClean.length} unexpected clean file(s) on ${meta.branch}`);
 
   const updated = await getLocalRepository(meta.owner, meta.repo, meta.branch, scope) ?? meta;
   return { meta: updated, structure: await buildLocalBookStructure(updated), repaired: missing.length };
@@ -609,7 +609,7 @@ export async function commitLocalChanges(target: ExactRepositoryTarget, message:
   const meta = await exactLocalRepository(target, scope);
   const dirty = await listDirtyLocalFiles(meta.id);
   const commit = await createLocalCommit(meta.id, scope, message.trim() || autoCommitMessage(dirty.map((file) => file.path)));
-  await addLocalRepoLog(meta.id, "commit", `Committed ${commit.files.length} files: ${commit.message}`);
+  await addLocalRepoLog(meta.id, scope, "commit", `Committed ${commit.files.length} files: ${commit.message}`);
   return commit;
 }
 
@@ -639,7 +639,7 @@ export async function fetchRemoteStatus(input: ExactRepositoryTarget & { token: 
     input.signal?.throwIfAborted();
     await markLocalRepositoryRemoteCheck(meta.id, scope, remoteHeadSha, changed);
     await diagnostic({ meta, scope, operationId, operation: "fetch", stage: "remote-read", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt) });
-    await addLocalRepoLog(meta.id, "fetch", changed ? `Remote changed: ${remoteHeadSha.slice(0, 7)}` : "Remote up to date");
+    await addLocalRepoLog(meta.id, scope, "fetch", changed ? `Remote changed: ${remoteHeadSha.slice(0, 7)}` : "Remote up to date");
     return { remoteHeadSha, changed };
   } catch (error) {
     const classified = classifyRepositoryError(error, "read");
@@ -732,7 +732,7 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
   }
   if (!changed && !dirty.length && !ahead.length) {
     await updateLocalRepositoryHead(meta.id, scope, remoteHeadSha);
-    await addLocalRepoLog(meta.id, "pull", `Remote head changed to ${remoteHeadSha.slice(0, 7)} with no file-content differences`);
+    await addLocalRepoLog(meta.id, scope, "pull", `Remote head changed to ${remoteHeadSha.slice(0, 7)} with no file-content differences`);
     await diagnostic({ meta, scope, operationId, operation: "pull", stage: "finalize", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt) });
     return { updated: 0, remoteHeadSha };
   }
@@ -771,7 +771,7 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
     !destructive,
   );
   const recoveryId = recovery.id;
-    await addLocalRepoLog(meta.id, "pull", `Pulled ${updated} files from remote${recoveryId ? ` after recovery snapshot ${recoveryId}` : ""}`);
+    await addLocalRepoLog(meta.id, scope, "pull", `Pulled ${updated} files from remote${recoveryId ? ` after recovery snapshot ${recoveryId}` : ""}`);
     await diagnostic({ meta, scope, operationId, operation: "pull", stage: "finalize", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt), fileCount: updated });
   return { updated, remoteHeadSha, ...(recoveryId ? { recoveryId } : {}) };
   } catch (error) {
@@ -799,7 +799,7 @@ export async function restoreRepositoryRecovery(input: ExactRepositoryTarget & {
     });
   });
   const meta = recovery.repository;
-  await addLocalRepoLog(meta.id, "reset", `Restored recovery snapshot ${recovery.id}`);
+  await addLocalRepoLog(meta.id, scope, "reset", `Restored recovery snapshot ${recovery.id}`);
   return { recovery, structure: await buildLocalBookStructure(meta) };
 }
 
@@ -925,7 +925,7 @@ async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLoca
     // Nothing valid to push (e.g. only stale directory-deletions). Mark commits
     // pushed against the current remote head so the local state settles.
     const settlement = await markLocalCommitsPushed(meta.id, scope, commits.map((entry) => entry.id), remoteHeadSha, pushedShas);
-    await addLocalRepoLog(meta.id, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
+    await addLocalRepoLog(meta.id, scope, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
       ? `Push settled with newer local edits preserved for recovery: ${settlement.skippedPaths.join(", ")}`
       : `No pushable changes; settled local commits at ${remoteHeadSha.slice(0, 7)}`);
     return { commitSha: remoteHeadSha, files: 0, ...(settlement.skippedPaths.length ? { recoveryPaths: settlement.skippedPaths } : {}) };
@@ -951,7 +951,7 @@ async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLoca
     if (reconciled.landed && reconciled.headSha) {
       await recordRepositoryWriteValidated(tokenHealthTarget(input));
       const settlement = await markLocalCommitsPushed(meta.id, scope, commits.map((entry) => entry.id), reconciled.headSha, reconciled.blobShas ?? pushedShas);
-      await addLocalRepoLog(meta.id, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
+      await addLocalRepoLog(meta.id, scope, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
         ? `Push reconciled with newer local edits preserved for recovery: ${settlement.skippedPaths.join(", ")}`
         : `Push reconciled at ${reconciled.headSha.slice(0, 7)}`);
       return { commitSha: reconciled.headSha, files: treeEntries.length, ...(settlement.skippedPaths.length ? { recoveryPaths: settlement.skippedPaths } : {}) };
@@ -960,7 +960,7 @@ async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLoca
   }
   await recordRepositoryWriteValidated(tokenHealthTarget(input));
   const settlement = await markLocalCommitsPushed(meta.id, scope, commits.map((entry) => entry.id), commit.data.sha, pushedShas);
-  await addLocalRepoLog(meta.id, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
+  await addLocalRepoLog(meta.id, scope, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
     ? `Push completed with newer local edits preserved for recovery: ${settlement.skippedPaths.join(", ")}`
     : `Pushed ${treeEntries.length} files to ${commit.data.sha.slice(0, 7)} (local wins)`);
   return { commitSha: commit.data.sha, files: treeEntries.length, ...(settlement.skippedPaths.length ? { recoveryPaths: settlement.skippedPaths } : {}) };
@@ -1050,10 +1050,10 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
       writes: writes.map(({ path, sha, bytes, kind }) => ({ path, kind, text: kind === "text" ? new TextDecoder().decode(bytes) : undefined, blob: kind === "binary" ? new Blob([bytesToArrayBuffer(bytes)]) : undefined, baseSha: sha, size: bytes.byteLength })),
     });
     pulled = deletes.length + writes.length;
-    await addLocalRepoLog(meta.id, "pull", `Sync pulled ${pulled} remote files and kept ${keptLocal} non-conflicting local files`);
+    await addLocalRepoLog(meta.id, scope, "pull", `Sync pulled ${pulled} remote files and kept ${keptLocal} non-conflicting local files`);
   } else {
     await updateLocalRepositoryHead(meta.id, scope, remoteHeadSha);
-    if (remoteHeadSha !== meta.remoteHeadSha) await addLocalRepoLog(meta.id, "pull", `Remote head changed to ${remoteHeadSha.slice(0, 7)} with no file-content differences`);
+    if (remoteHeadSha !== meta.remoteHeadSha) await addLocalRepoLog(meta.id, scope, "pull", `Remote head changed to ${remoteHeadSha.slice(0, 7)} with no file-content differences`);
     else await markLocalRepositoryRemoteCheck(meta.id, scope, remoteHeadSha, false);
   }
   // Do not mutate unpushed commits until every remote blob has been downloaded
@@ -1077,7 +1077,7 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
       new Map(dirtyAfterMerge.map((file) => [file.path, file.currentHash])),
     );
     committed = commit.files.length;
-    await addLocalRepoLog(meta.id, "commit", `Sync auto-committed ${committed} files: ${commit.message}`);
+    await addLocalRepoLog(meta.id, scope, "commit", `Sync auto-committed ${committed} files: ${commit.message}`);
   }
   const ahead = await listUnpushedLocalCommits(meta.id);
   let pushed = 0;
@@ -1089,7 +1089,7 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
     const finalRef = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
     await updateLocalRepositoryHead(meta.id, scope, finalRef.data.object.sha);
   }
-  await addLocalRepoLog(meta.id, "push", `Full sync complete: pulled ${pulled}, kept local ${keptLocal}, committed ${committed}, pushed ${pushed}`);
+  await addLocalRepoLog(meta.id, scope, "push", `Full sync complete: pulled ${pulled}, kept local ${keptLocal}, committed ${committed}, pushed ${pushed}`);
   return { pulled, keptLocal, committed, pushed };
   } catch (error) {
     const classified = classifyRepositoryError(error, "compare");
@@ -1114,12 +1114,12 @@ export async function recloneLocalWorkingCopy(input: {
   onProgress?: (progress: LocalCloneProgress) => void;
 }): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
   if (!input.branch) throw new Error("An exact branch is required to re-clone a local working copy.");
-  operationScope({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity });
+  const scope = operationScope({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity });
   const existing = await lookupRepositoryMaintenanceTarget({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity });
   if (existing.removalPending) throw new RepositoryMaintenanceError("REMOVAL_PENDING");
   if (existing.repository) throw new RepositoryMaintenanceError("RECLONE_REQUIRES_REMOVAL");
   const result = await ensureLocalBookStructure(input);
-  await addLocalRepoLog(result.meta.id, "reset", "Recloned local working copy");
+  await addLocalRepoLog(result.meta.id, scope, "reset", "Recloned local working copy");
   return result;
 }
 
@@ -1183,7 +1183,7 @@ async function overwriteRemoteWithLocalLeased(meta: LocalRepositoryMeta, input: 
   const droppedPaths = new Set(allLocal.filter((f) => !files.includes(f)).map((f) => f.path));
 
   if (droppedPaths.size) {
-    await addLocalRepoLog(meta.id, "error", `Local-source repair blocked; recovery ${recovery.id} contains excluded paths: ${[...droppedPaths].sort().join(", ")}`);
+    await addLocalRepoLog(meta.id, scope, "error", `Local-source repair blocked; recovery ${recovery.id} contains excluded paths: ${[...droppedPaths].sort().join(", ")}`);
     throw new Error(`Local-source repair cannot continue until these malformed or colliding paths are resolved: ${[...droppedPaths].sort().join(", ")}. Recovery snapshot: ${recovery.id}`);
   }
 
@@ -1217,7 +1217,7 @@ async function overwriteRemoteWithLocalLeased(meta: LocalRepositoryMeta, input: 
     expectedCommitIds: commitsBeforePush.map((entry) => entry.id),
     pushedShas,
   });
-  await addLocalRepoLog(meta.id, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
+  await addLocalRepoLog(meta.id, scope, settlement.skippedPaths.length ? "error" : "push", settlement.skippedPaths.length
     ? `Resynced remote with newer local edits preserved: ${settlement.skippedPaths.join(", ")}; recovery ${recovery.id}`
     : `Resynced remote to match local (${files.length} files) at ${commit.data.sha.slice(0, 7)}; recovery ${recovery.id}`);
 

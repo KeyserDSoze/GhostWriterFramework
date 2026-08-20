@@ -4,7 +4,8 @@ import { afterEach, expect, test, vi } from "vitest";
 const git = vi.hoisted(() => ({ getRef: vi.fn(), getCommit: vi.fn(), getTree: vi.fn(), createBlob: vi.fn(), createTree: vi.fn(), createCommit: vi.fn(), updateRef: vi.fn() }));
 vi.mock("@octokit/rest", () => ({ Octokit: class { rest = { git, repos: {} }; } }));
 
-import { getLocalFile, listUnpushedLocalCommits, mutateLocalTextFilesAndCreateCommitAtomically, putCleanLocalFile, putLocalRepository, removeLocalRepository } from "@/repository/localRepository";
+import { getLocalFile, listUnpushedLocalCommits, mutateLocalTextFilesAndCreateCommitAtomically, putLocalRepository, removeLocalRepository } from "@/repository/localRepository";
+import { putCleanLocalFile } from "./helpers/localRepositorySeed";
 import { syncFullRepository } from "@/repository/repositoryService";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { useAuthStore } from "@/store/authStore";

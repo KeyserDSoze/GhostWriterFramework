@@ -20,6 +20,7 @@ let repoId = "";
 useAuthStore.setState({ user: { provider: "google", providerAccountId: "diagnostics-writer", name: "Writer", email: "writer@example.com", picture: "" } });
 
 afterEach(async () => {
+  useAuthStore.setState({ user: { provider: "google", providerAccountId: "diagnostics-writer", name: "Writer", email: "writer@example.com", picture: "" } });
   if (repoId) {
     const scope = captureRepositoryOperationScope();
     const repository = await getLocalRepositoryById(repoId, identity);
@@ -100,9 +101,16 @@ test("prunes diagnostics deterministically by record count and bytes", async () 
 
 test("legacy history is sanitized when written and read", async () => {
   const { meta } = await setup();
-  await addLocalRepoLog(meta.id, "error", "token=ghp_secret path=chapters/secret.md manuscript=private prose");
+  await addLocalRepoLog(meta.id, captureRepositoryOperationScope(), "error", "token=ghp_secret path=chapters/secret.md manuscript=private prose");
   const logs = await listLocalRepoLogs(meta.id);
   expect(logs[0].message).toBe("Repository operation failed.");
   expect(JSON.stringify(logs)).not.toContain("ghp_secret");
   expect(JSON.stringify(logs)).not.toContain("chapters/secret.md");
+});
+
+test("a stale account scope cannot append a repository log", async () => {
+  const { meta, scope } = await setup();
+  useAuthStore.setState({ user: { provider: "google", providerAccountId: "different-account", name: "Other", email: "other@example.com", picture: "" } });
+  await expect(addLocalRepoLog(meta.id, scope, "error", "stale write")).rejects.toMatchObject({ code: "REPOSITORY_OWNERSHIP_CHANGED" });
+  expect(await listLocalRepoLogs(meta.id)).toEqual([]);
 });
