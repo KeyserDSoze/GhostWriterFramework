@@ -5,10 +5,6 @@ import { loadFileContent, optionalBinaryFileContent } from "@/github/githubClien
 import { slugify } from "@/narrarium/canon";
 import { paragraphSeparator, presentMetadata } from "@/export/metadataPresentation";
 import { renderEpubMarkdownHtml } from "@/markdown/safeMarkdown";
-import liberationSerifRegular from "@/export/fonts/LiberationSerif-Regular.ttf?inline";
-import liberationSerifBold from "@/export/fonts/LiberationSerif-Bold.ttf?inline";
-import liberationSerifItalic from "@/export/fonts/LiberationSerif-Italic.ttf?inline";
-import liberationSerifBoldItalic from "@/export/fonts/LiberationSerif-BoldItalic.ttf?inline";
 
 const PARAGRAPH_BREAK_NEWLINES = 3;
 
@@ -480,6 +476,7 @@ async function buildDocxArtifact(snapshot: ExportBookSnapshot, scope: BookExport
 
 async function buildPdfArtifact(snapshot: ExportBookSnapshot, scope: BookExportScope, settings: BookExportSettings): Promise<BookExportArtifact> {
   const { jsPDF } = await import("jspdf");
+  const { registerPdfUnicodeFonts } = await import("@/export/pdfFonts");
   const doc = new jsPDF({ unit: "pt", format: settings.pageSize === "a4" ? "a4" : "letter" });
   const baseFont = "LiberationSerif";
   registerPdfUnicodeFonts(doc);
@@ -728,20 +725,6 @@ function escapeXml(value: string): string {
 
 function roundWordCount(value: number): number {
   return value > 500 ? Math.round(value / 100) * 100 : value;
-}
-
-function registerPdfUnicodeFonts(doc: import("jspdf").jsPDF): void {
-  const fonts = [
-    ["LiberationSerif-Regular.ttf", liberationSerifRegular, "normal"],
-    ["LiberationSerif-Bold.ttf", liberationSerifBold, "bold"],
-    ["LiberationSerif-Italic.ttf", liberationSerifItalic, "italic"],
-    ["LiberationSerif-BoldItalic.ttf", liberationSerifBoldItalic, "bolditalic"],
-  ] as const;
-  for (const [fileName, dataUrl, style] of fonts) {
-    const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-    doc.addFileToVFS(fileName, base64);
-    doc.addFont(fileName, "LiberationSerif", style);
-  }
 }
 
 function buildSynopsis(snapshot: ExportBookSnapshot, scope: BookExportScope): string {

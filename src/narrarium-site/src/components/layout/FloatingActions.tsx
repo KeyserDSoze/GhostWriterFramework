@@ -10,13 +10,15 @@ import { parseAppRoute } from "@/assistant/context";
 import { resolveBookToken } from "@/types/settings";
 import { useToast } from "@/components/ui/use-toast";
 import { AssetImageDialog } from "@/components/book/AssetImageDialog";
-import { BookExportDialog } from "@/components/book/BookExportDialog";
 import { CommitHistoryDialog } from "@/components/github/CommitHistoryDialog";
 import { PullRequestsDialog } from "@/components/github/PullRequestsDialog";
 import { createChapterDraftArtifacts, createChapterEvaluationArtifact, createChapterResumeArtifact, createParagraphDraftArtifact, createParagraphScriptArtifact } from "@/narrarium/workspace";
 import { useSaveStore } from "@/store/saveStore";
 import { usePageActionsStore } from "@/store/pageActionsStore";
 import { useContextualActions } from "@/hooks/useContextualActions";
+import { lazy, Suspense } from "react";
+
+const BookExportDialog = lazy(() => import("@/components/book/BookExportDialog").then((module) => ({ default: module.BookExportDialog })));
 
 const AUDIT_ACTION_IDS = new Set(["run-audit", "open-audit", "update-audit", "delete-audit"]);
 const DIRECT_CONTEXT_ACTION_IDS = new Set([...AUDIT_ACTION_IDS, "generate-draft-from-feedback", "feedback-rewrite-status", "restore-previous-drafts", "navigate-prev", "navigate-next", "navigate-next-view", "navigate-previous-view", "open-notes"]);
@@ -176,7 +178,7 @@ export function FloatingActions() {
                 <CommitHistoryDialog token={token} owner={book.owner} repo={book.repo} branch={branch} />
                 <PullRequestsDialog token={token} owner={book.owner} repo={book.repo} head={branch} base={structure?.defaultBranch ?? "main"} />
                 {structure && <AssetImageDialog book={book} branch={branch} token={token} kind="book" title={structure.title ?? book.name} textPath="book.md" resumePath="resumes/total.md" />}
-                {structure && <BookExportDialog book={book} structure={structure} branch={branch} token={token} />}
+                {structure && <Suspense fallback={null}><BookExportDialog book={book} structure={structure} branch={branch} token={token} /></Suspense>}
               </div>
             )}
             {rows.map((row, i) =>

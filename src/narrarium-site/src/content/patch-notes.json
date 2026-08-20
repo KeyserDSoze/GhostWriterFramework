@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.57",
+    "date": "2026-08-20",
+    "en": {
+      "title": "Export engine removed from initial loading",
+      "summary": "Narrarium now loads export orchestration, jsPDF, and Unicode PDF fonts only when export is requested, cutting the initial entry and network graph substantially.",
+      "changes": [
+        "Lazy-loaded the export dialog from floating actions and lazy-loaded the complete export route instead of importing either through the always-loaded shell and router graph.",
+        "Moved all four local Liberation Serif fonts into a dedicated PDF-only chunk loaded only for PDF and submission-package generation; DOCX and EPUB do not request jsPDF or PDF fonts.",
+        "Reduced the initial entry from about 4.21 MB raw / 1.63 MB gzip to 2.14 MB raw / 604 KB gzip.",
+        "Added a bundle report and regression budgets for both the entry and its complete static preload graph, currently 3.18 MB raw / 893 KB gzip.",
+        "Added content and preload checks preventing export implementation, jsPDF, or Liberation Serif from returning to public/login initial loading."
+      ]
+    },
+    "it": {
+      "title": "Motore export rimosso dal caricamento iniziale",
+      "summary": "Narrarium ora carica orchestrazione export, jsPDF e font PDF Unicode solo quando viene richiesto un export, riducendo sensibilmente entry e grafo di rete iniziali.",
+      "changes": [
+        "Caricato lazy il dialog export dalle azioni flottanti e caricata lazy l'intera route export, invece di importarli tramite shell e router sempre attivi.",
+        "Spostati tutti e quattro i font locali Liberation Serif in un chunk dedicato solo al PDF, caricato esclusivamente per PDF e submission package; DOCX ed EPUB non richiedono jsPDF o font PDF.",
+        "Ridotta l'entry iniziale da circa 4,21 MB raw / 1,63 MB gzip a 2,14 MB raw / 604 KB gzip.",
+        "Aggiunti report bundle e budget di regressione sia per l'entry sia per il grafo statico completo dei preload, oggi 3,18 MB raw / 893 KB gzip.",
+        "Aggiunti controlli su contenuto e preload che impediscono a implementazione export, jsPDF o Liberation Serif di rientrare nel caricamento iniziale pubblico/login."
+      ]
+    }
+  },
+  {
     "version": "0.76.56",
     "date": "2026-08-20",
     "en": {

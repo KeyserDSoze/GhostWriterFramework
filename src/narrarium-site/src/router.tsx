@@ -1,4 +1,5 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
+import { lazy, Suspense } from "react";
 import { Shell } from "@/components/layout/Shell";
 import { AuthGuard } from "@/components/auth/AuthGuard";
 import { LoginScreen } from "@/components/auth/LoginScreen";
@@ -8,7 +9,6 @@ import { BookPage } from "@/pages/BookPage";
 import { BookDashboardPage } from "@/pages/BookDashboardPage";
 import { AssetGalleryPage } from "@/pages/AssetGalleryPage";
 import { ReaderPreviewPage } from "@/pages/ReaderPreviewPage";
-import { BookExportPage } from "@/pages/BookExportPage";
 import { BookSettingsPage } from "@/pages/BookSettingsPage";
 import { CanonEntityPage } from "@/pages/CanonEntityPage";
 import { ChapterPage } from "@/pages/ChapterPage";
@@ -41,6 +41,8 @@ import {
   PrivacyPage,
   TermsPage,
 } from "@/pages/PublicPages";
+
+const BookExportPage = lazy(() => import("@/pages/BookExportPage").then((module) => ({ default: module.BookExportPage })));
 
 function routerBasename(): string {
   const base = import.meta.env.BASE_URL;
@@ -78,7 +80,7 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/dashboard", element: <BookDashboardPage /> },
       { path: "books/:bookId/assets", element: <AssetGalleryPage /> },
       { path: "books/:bookId/reader", element: <ReaderPreviewPage /> },
-      { path: "books/:bookId/export", element: <BookExportPage /> },
+      { path: "books/:bookId/export", element: <Suspense fallback={null}><BookExportPage /></Suspense> },
       { path: "books/:bookId/research", element: <DeepResearchPage /> },
       { path: "books/:bookId/research/:researchSlug", element: <DeepResearchPage /> },
       { path: "books/:bookId/ghostwriters", element: <GhostwritersPage /> },
