@@ -232,6 +232,14 @@ export function LoginScreen() {
             </p>
           )}
 
+          <div className="flex items-start gap-2 text-left">
+            <input id="remember-me" type="checkbox" className="mt-0.5 h-4 w-4 rounded border-input accent-primary" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} disabled={!!loadingProvider || recoveryRequest !== null} />
+            <div className="space-y-1">
+              <Label htmlFor="remember-me" className="cursor-pointer text-sm">{t("auth.rememberMe")}</Label>
+              <p className="text-xs text-muted-foreground">{t("auth.rememberMeHint")}</p>
+            </div>
+          </div>
+
           <Button
             className="w-full"
             onClick={() => login()}
@@ -265,14 +273,6 @@ export function LoginScreen() {
             )}
             {loadingProvider === "google" ? t("auth.signingInGoogle") : t("auth.google")}
           </Button>
-
-          <div className="flex items-start gap-2 text-left">
-            <input id="remember-me" type="checkbox" className="mt-0.5 h-4 w-4 rounded border-input accent-primary" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} disabled={!!loadingProvider || recoveryRequest !== null} />
-            <div className="space-y-1">
-              <Label htmlFor="remember-me" className="cursor-pointer text-sm">{t("auth.rememberMe")}</Label>
-              <p className="text-xs text-muted-foreground">{t("auth.rememberMeHint")}</p>
-            </div>
-          </div>
 
           <Button
             className="w-full bg-[#0078d4] text-white hover:bg-[#106ebe]"

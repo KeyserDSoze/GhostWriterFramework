@@ -1,5 +1,25 @@
 [
   {
+    "version": "0.76.64",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Clearer sign-in persistence choice",
+      "summary": "The device persistence option is now visibly shared by both Google and Microsoft sign-in.",
+      "changes": [
+        "Moved the Remember me option above both provider buttons so its scope is unambiguous.",
+        "Updated the label and help text to explicitly mention Google and Microsoft."
+      ]
+    },
+    "it": {
+      "title": "Scelta di persistenza più chiara",
+      "summary": "L'opzione di persistenza sul dispositivo ora mostra chiaramente di valere sia per Google sia per Microsoft.",
+      "changes": [
+        "Spostata l'opzione Ricordami sopra entrambi i pulsanti dei provider, così il suo ambito è inequivocabile.",
+        "Aggiornati il testo e l'aiuto contestuale per indicare esplicitamente Google e Microsoft."
+      ]
+    }
+  },
+  {
     "version": "0.76.63",
     "date": "2026-08-20",
     "en": {
