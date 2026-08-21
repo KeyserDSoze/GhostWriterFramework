@@ -21,7 +21,7 @@ async function trimRuntimeCache(cache) {
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(PRECACHE_NAME).then((cache) => cache.addAll((self.__NARRARIUM_PRECACHE__ || []).map(scopedUrl))),
+    caches.open(PRECACHE_NAME).then((cache) => cache.addAll([scopeUrl(), ...(self.__NARRARIUM_PRECACHE__ || []).map(scopedUrl)])),
   );
 });
 

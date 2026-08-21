@@ -73,7 +73,7 @@ test("service worker uses release caches, precaches the generated manifest, and 
   const source = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
   assert.match(source, /importScripts\("\.\/precache-manifest\.js"\)/);
   assert.match(source, /narrarium-precache-\$\{RELEASE\}/);
-  assert.match(source, /cache\.addAll\(\(self\.__NARRARIUM_PRECACHE__/);
+  assert.match(source, /cache\.addAll\(\[scopeUrl\(\), \.\.\.\(self\.__NARRARIUM_PRECACHE__/);
   assert.match(source, /key\.startsWith\(OWNED_CACHE_PREFIX\)/);
   assert.match(source, /MAX_RUNTIME_ENTRIES = 64/);
   assert.match(source, /request\.mode === "navigate"/);
