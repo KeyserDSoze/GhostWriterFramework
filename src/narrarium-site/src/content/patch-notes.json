@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.66",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Safe one-shot Google session recovery",
+      "summary": "Expired remembered Google sessions now receive one silent recovery attempt before returning to sign-in.",
+      "changes": [
+        "Restored a single Google prompt=none recovery attempt for remembered sessions.",
+        "A failed or timed-out Google recovery goes directly to login and cannot start an automatic popup loop.",
+        "Microsoft silent refresh retry behavior remains unchanged."
+      ]
+    },
+    "it": {
+      "title": "Ripristino Google sicuro a tentativo unico",
+      "summary": "Le sessioni Google ricordate e scadute ricevono ora un solo tentativo di ripristino silenzioso prima del ritorno alla login.",
+      "changes": [
+        "Ripristinato un singolo tentativo Google con prompt=none per le sessioni ricordate.",
+        "Un ripristino Google fallito o scaduto porta direttamente alla login e non può avviare loop automatici di popup.",
+        "Il comportamento di retry del silent refresh Microsoft resta invariato."
+      ]
+    }
+  },
+  {
     "version": "0.76.65",
     "date": "2026-08-21",
     "en": {

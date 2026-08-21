@@ -131,7 +131,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   function startSilentAuthTimeout(attempt: { nonce: number; identity: string }) {
     clearSilentAuthTimeout();
     silentAuthTimeoutRef.current = window.setTimeout(() => {
-      if (ownsAttempt(attempt)) giveUpSilent(attempt);
+      if (ownsAttempt(attempt)) giveUpSilent(attempt, user?.provider !== "google");
     }, SILENT_AUTH_TIMEOUT_MS);
   }
 
@@ -148,11 +148,11 @@ export function AuthGuard({ children }: AuthGuardProps) {
       if (!attempt || !silentAttemptActiveRef.current || !currentUser || !ownsAttempt(attempt) || !isAccountIdentityCurrent(attempt.identity, currentUser)) return;
       const response = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: `Bearer ${tokenResponse.access_token}` } });
       if (!ownsAttempt(attempt)) return;
-      if (!response.ok) { giveUpSilent(attempt); return; }
+      if (!response.ok) { giveUpSilent(attempt, false); return; }
       const profile = await response.json() as { sub?: string; email?: string };
       if (!ownsAttempt(attempt)) return;
       let providerAccountId: string;
-      try { providerAccountId = requireGoogleProviderAccountId(profile); } catch { giveUpSilent(attempt); return; }
+      try { providerAccountId = requireGoogleProviderAccountId(profile); } catch { giveUpSilent(attempt, false); return; }
       const verifiedUser = useAuthStore.getState().user;
       if (!verifiedUser || !ownsAttempt(attempt) || providerAccountId !== verifiedUser.providerAccountId || !profile.email || normalizedAccountEmail({ email: profile.email }) !== normalizedAccountEmail(verifiedUser)) { showInteractiveLogin(attempt); return; }
       if (!ownsAttempt(attempt)) return;
@@ -267,14 +267,15 @@ export function AuthGuard({ children }: AuthGuardProps) {
         setStatus("offline");
         return;
       }
-      // Google OAuth token flow may open a popup even with prompt=none once the
-      // provider session is stale. Do not launch or retry it automatically.
-      // Preserve remembered identity and require one explicit login click.
-      silentFallbackIdentityRef.current = identity;
-      cancelAttempt();
-      useUiStore.getState().setAuthActivity("idle");
-      invalidateToken();
-      setStatus("unauthenticated");
+      // Try Google once with prompt=none. If the provider session is stale,
+      // the timeout/error path sends the user to login without retrying.
+      const attemptKey = `google:${identity}:${accessToken ?? "missing"}:${accessTokenExpiry ?? 0}`;
+      if (lastAttemptKeyRef.current === attemptKey) return;
+      lastAttemptKeyRef.current = attemptKey;
+      setStatus("checking");
+      const attempt = beginAttempt(identity!);
+      startSilentAuthTimeout(attempt);
+      setSilentAttemptNonce((value) => value + 1);
     } else if (user?.provider === "microsoft") {
       if (navigator.onLine === false) {
         useUiStore.getState().setAuthActivity("offline");

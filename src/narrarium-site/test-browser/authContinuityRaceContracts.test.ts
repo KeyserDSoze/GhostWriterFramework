@@ -34,10 +34,12 @@ describe("auth continuity race contracts", () => {
     expect(refresh).toContain("registerCloudAccount(\"microsoft\"");
   });
 
-  it("never loops Google popups after the access token has expired", () => {
+  it("tries Google silent auth once, then falls back to login without looping", () => {
     const guard = source("src/components/auth/AuthGuard.tsx");
     const refresh = source("src/hooks/useTokenRefresh.ts");
-    expect(guard).toContain("Do not launch or retry it automatically");
+    expect(guard).toContain('const attemptKey = `google:${identity}:');
+    expect(guard).toContain("giveUpSilent(attempt, false)");
+    expect(guard).toContain("user?.provider !== \"google\"");
     expect(guard).toContain("setStatus(\"unauthenticated\")");
     expect(refresh).toContain("if (Date.now() >= accessTokenExpiry) return;");
     expect(refresh).toContain("if (googleAttemptRef.current?.key === key) return;");
