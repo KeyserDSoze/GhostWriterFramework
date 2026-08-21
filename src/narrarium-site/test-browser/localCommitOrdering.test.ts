@@ -36,7 +36,7 @@ async function putLegacyCommits(commits: Array<Record<string, unknown>>): Promis
   db.close();
 }
 
-test("identical timestamps retain transactional creation order after module reload", async () => {
+test("a second save rewrites the single aggregate pending commit", async () => {
   vi.spyOn(Date.prototype, "toISOString").mockReturnValue("2026-08-16T00:00:00.000Z");
   const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "ordered", branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: "2026-08-16T00:00:00.000Z", cloneComplete: true }, captureRepositoryOperationScope());
   repoId = repo.id;
@@ -45,14 +45,14 @@ test("identical timestamps retain transactional creation order after module relo
   const second = await mutateLocalTextFilesAndCreateCommitAtomically(repoId, captureRepositoryOperationScope(), "Second", [{ path: "plot.md", content: "second", expectedCurrentHash: first.files[0].hash }]);
 
   expect(first.createdAt).toBe(second.createdAt);
-  expect((await listUnpushedLocalCommits(repoId)).map((commit) => [commit.message, commit.order])).toEqual([["First", 1], ["Second", 2]]);
+  expect((await listUnpushedLocalCommits(repoId)).map((commit) => [commit.message, commit.order, commit.files.map((file) => file.path)])).toEqual([["Second", 2, ["plot.md"]]]);
 
   vi.resetModules();
   const reloaded = await import("@/repository/localRepository");
-  expect((await reloaded.listUnpushedLocalCommits(repoId)).map((commit) => [commit.message, commit.order])).toEqual([["First", 1], ["Second", 2]]);
+  expect((await reloaded.listUnpushedLocalCommits(repoId)).map((commit) => [commit.message, commit.order, commit.files.map((file) => file.path)])).toEqual([["Second", 2, ["plot.md"]]]);
 });
 
-test("legacy commits without an order use a stable total fallback before sequenced commits", async () => {
+test("a new aggregate commit replaces legacy pending commits", async () => {
   vi.spyOn(Date.prototype, "toISOString").mockReturnValue("2026-08-16T00:00:00.000Z");
   const repo = await putLocalRepository({ bookId: "book", owner: "owner", repo: "legacy", branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: "2026-08-16T00:00:00.000Z", cloneComplete: true }, captureRepositoryOperationScope());
   repoId = repo.id;
@@ -64,5 +64,5 @@ test("legacy commits without an order use a stable total fallback before sequenc
   const current = await mutateLocalTextFilesAndCreateCommitAtomically(repoId, captureRepositoryOperationScope(), "Sequenced", [{ path: "plot.md", content: "new", expectedCurrentHash: original.currentHash }]);
 
   expect(current.order).toBe(1);
-  expect((await listUnpushedLocalCommits(repoId)).map((commit) => commit.id)).toEqual(["legacy-a", "legacy-z", current.id]);
+  expect((await listUnpushedLocalCommits(repoId)).map((commit) => commit.id)).toEqual([current.id]);
 });
