@@ -20,17 +20,18 @@ import { FileDiff } from "@/components/diff/DiffView";
 import { fetchBlobBytesForRepository } from "@/repository/repositoryService";
 import { RepositoryByteMeter } from "@/repository/repositoryLimits";
 
-function PendingFileDiff({ file, token, owner, repo }: { file: LocalRepositoryFile; token: string; owner: string; repo: string }) {
+function PendingFileDiff({ file, token, owner, repo, expanded }: { file: LocalRepositoryFile; token: string; owner: string; repo: string; expanded: boolean }) {
   const [base, setBase] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    if (file.kind !== "text") return;
+    if (!expanded || file.kind !== "text") return;
     if (!file.baseSha) { setBase(""); return; }
     void fetchBlobBytesForRepository(token, owner, repo, file.path, file.baseSha, new RepositoryByteMeter("mutation"))
       .then((bytes) => { if (!cancelled) setBase(new TextDecoder().decode(bytes)); })
       .catch(() => { if (!cancelled) setBase(null); });
     return () => { cancelled = true; };
-  }, [file.baseSha, file.kind, file.path, owner, repo, token]);
+  }, [expanded, file.baseSha, file.kind, file.path, owner, repo, token]);
+  if (!expanded) return null;
   if (file.kind !== "text" || base === null) return <p className="text-xs text-muted-foreground">{file.kind === "text" ? "Diff non disponibile" : "File binario: diff non disponibile"}</p>;
   return <FileDiff previous={base} next={file.status === "deleted" ? "" : file.text ?? ""} className="max-h-64" />;
 }
@@ -85,6 +86,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const [message, setMessage] = useState("");
   const [selectedDraftPaths, setSelectedDraftPaths] = useState<string[]>([]);
   const [selectedRestorePaths, setSelectedRestorePaths] = useState<string[]>([]);
+  const [expandedDiffPaths, setExpandedDiffPaths] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [tokenHealth, setTokenHealth] = useState<TokenHealth | null>(null);
   const token = book ? resolveBookToken(book, settings) : "";
@@ -416,7 +418,8 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                           <span className="w-16 shrink-0 uppercase text-muted-foreground">{file.status}</span>
                           <span className="min-w-0 flex-1 break-all font-mono">{file.path}</span>
                           </label>
-                          <div className="mt-2"><PendingFileDiff file={file} token={token} owner={book?.owner ?? ""} repo={book?.repo ?? ""} /></div>
+                          <Button type="button" size="sm" variant="ghost" className="mt-1 h-7 px-2 text-xs" onClick={() => setExpandedDiffPaths((current) => current.includes(file.path) ? current.filter((path) => path !== file.path) : [...current, file.path])}>{expandedDiffPaths.includes(file.path) ? "Nascondi diff" : "Mostra diff"}</Button>
+                          <div className="mt-2"><PendingFileDiff file={file} token={token} owner={book?.owner ?? ""} repo={book?.repo ?? ""} expanded={expandedDiffPaths.includes(file.path)} /></div>
                         </div>
                       );
                     })}
