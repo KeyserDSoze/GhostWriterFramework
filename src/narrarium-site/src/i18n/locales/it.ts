@@ -253,6 +253,8 @@ const it = {
       "Impostazioni, PAT GitHub, configurazione libri e provider AI vengono salvati nel tuo Google Drive o OneDrive. Nessun dato viene salvato sui server Narrarium.",
     google: "Continua con Google",
     microsoft: "Continua con Microsoft",
+    rememberMe: "Ricordami su questo dispositivo",
+    rememberMeHint: "Mantiene la sessione tra schede e riavvii del browser. Puoi revocarla effettuando il logout.",
     signingInGoogle: "Connessione a Google in corso…",
     signingInMicrosoft: "Connessione a Microsoft in corso…",
     checkingSession: "Sto ripristinando la tua sessione…",

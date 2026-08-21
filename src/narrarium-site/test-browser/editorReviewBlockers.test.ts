@@ -37,6 +37,15 @@ describe("editor review dirty transitions", () => {
     expect(ghostwriters).toContain("min-w-0 truncate");
   });
 
+  it("offers explicit opt-in authentication persistence", () => {
+    const login = readFileSync(resolve(process.cwd(), "src/components/auth/LoginScreen.tsx"), "utf8");
+    const authStore = readFileSync(resolve(process.cwd(), "src/store/authStore.ts"), "utf8");
+    expect(login).toContain('id="remember-me"');
+    expect(login).toContain("setInteractiveAuth(accessToken, user, expiresIn, rememberMe)");
+    expect(authStore).toContain('localStorage.setItem(PERSISTENT_AUTH_STORAGE_KEY');
+    expect(authStore).toContain("writePersistentAuth(null)");
+  });
+
   it("keeps a duplicate dirty until its first save succeeds", async () => {
     let baseline = "";
     const duplicate = { id: "reader:copy", name: "Copy" };

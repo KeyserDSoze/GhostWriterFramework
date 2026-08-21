@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.63",
+    "date": "2026-08-20",
+    "en": {
+      "title": "Opt-in persistent sign-in",
+      "summary": "Users can now choose whether Narrarium keeps OAuth access on the device between tabs and browser restarts.",
+      "changes": [
+        "Added a Remember me on this device checkbox to the Google and Microsoft sign-in screen.",
+        "Unchecked sign-in keeps the previous session-only behavior using sessionStorage.",
+        "Checked sign-in stores the account-scoped provider token and expiry in localStorage so the session can be restored across tabs and browser or PWA restarts.",
+        "Logout removes persistent authentication, and expired persistent tokens are discarded automatically before use.",
+        "Silent provider refresh keeps the selected persistence mode without changing account isolation."
+      ]
+    },
+    "it": {
+      "title": "Login persistente facoltativo",
+      "summary": "Ora l'utente può scegliere se mantenere l'accesso OAuth sul dispositivo tra schede e riavvii del browser.",
+      "changes": [
+        "Aggiunta alla login Google e Microsoft la spunta Ricordami su questo dispositivo.",
+        "Senza spunta resta il comportamento precedente limitato alla sessione tramite sessionStorage.",
+        "Con la spunta il token e la scadenza del provider vengono salvati in localStorage con ambito account, così la sessione può essere ripristinata tra schede e riavvii del browser o della PWA.",
+        "Il logout rimuove l'autenticazione persistente e i token persistenti scaduti vengono eliminati automaticamente prima dell'uso.",
+        "Il refresh silenzioso mantiene la modalità di persistenza scelta senza modificare l'isolamento tra account."
+      ]
+    }
+  },
+  {
     "version": "0.76.62",
     "date": "2026-08-20",
     "en": {

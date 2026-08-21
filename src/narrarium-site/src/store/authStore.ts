@@ -5,6 +5,36 @@ import { clearAccountContinuity, continuityToUser, migrateLegacyAuthStorage, rea
 import { clearTokenHealth } from "../repository/tokenHealth.ts";
 
 const AUTH_STORAGE_KEY = VOLATILE_AUTH_STORAGE_KEY;
+const PERSISTENT_AUTH_STORAGE_KEY = "narrarium-auth-persistent-v1";
+
+interface PersistentAuthRecord {
+  accessToken: string;
+  accessTokenExpiry: number;
+  provider: AuthProvider;
+  providerAccountId: string;
+}
+
+function readPersistentAuth(): PersistentAuthRecord | null {
+  try {
+    const raw = localStorage.getItem(PERSISTENT_AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<PersistentAuthRecord>;
+    if (!value.accessToken || !value.accessTokenExpiry || value.accessTokenExpiry <= Date.now() || !value.provider || !value.providerAccountId) {
+      localStorage.removeItem(PERSISTENT_AUTH_STORAGE_KEY);
+      return null;
+    }
+    return value as PersistentAuthRecord;
+  } catch {
+    return null;
+  }
+}
+
+function writePersistentAuth(record: PersistentAuthRecord | null): void {
+  try {
+    if (record) localStorage.setItem(PERSISTENT_AUTH_STORAGE_KEY, JSON.stringify(record));
+    else localStorage.removeItem(PERSISTENT_AUTH_STORAGE_KEY);
+  } catch { /* Persistent login is optional and must not block authentication. */ }
+}
 
 function sessionAuthStorage(): Storage {
   migrateLegacyAuthStorage();
@@ -21,7 +51,8 @@ function sessionAuthStorage(): Storage {
 migrateLegacyAuthStorage();
 const initialSessionHint = readVolatileAuthHint();
 const initialSession = readBoundVolatileAuth();
-const selectedProvider = initialSession?.provider ?? initialSessionHint?.provider;
+const initialPersistent = readPersistentAuth();
+const selectedProvider = initialSession?.provider ?? initialPersistent?.provider ?? initialSessionHint?.provider;
 const initialContinuity = selectedProvider
   ? readAccountContinuity(selectedProvider)
   : readAccountContinuity();
@@ -47,13 +78,15 @@ interface AuthState {
   accessToken: string | null;
   /** Unix ms timestamp when the token expires (with 60s buffer) */
   accessTokenExpiry: number | null;
+  rememberMe: boolean;
   provider: AuthProvider | null;
   providerAccountId: string | null;
   user: AppUser | null;
   /** Keeps account-local state scoped during the identity-bound recovery login round trip. */
   interactiveRecoveryIdentity: string | null;
   setAuth: (accessToken: string, user: AppUser, expiresIn?: number) => void;
-  setInteractiveAuth: (accessToken: string, user: AppUser, expiresIn?: number) => void;
+  setInteractiveAuth: (accessToken: string, user: AppUser, expiresIn?: number, rememberMe?: boolean) => void;
+  setRememberMe: (rememberMe: boolean) => void;
   clearAuth: () => void;
   clearAuthForLegacyUpgrade: () => void;
   beginInteractiveRecoveryAuth: () => void;
@@ -66,35 +99,45 @@ interface AuthState {
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
-      accessToken: null,
-      accessTokenExpiry: null,
-      provider: initialSession?.provider ?? null,
-      providerAccountId: initialSession?.providerAccountId ?? null,
+      accessToken: initialSession?.accessToken ?? initialPersistent?.accessToken ?? null,
+      accessTokenExpiry: initialSession?.accessTokenExpiry ?? initialPersistent?.accessTokenExpiry ?? null,
+      rememberMe: Boolean(initialPersistent),
+      provider: initialSession?.provider ?? initialPersistent?.provider ?? null,
+      providerAccountId: initialSession?.providerAccountId ?? initialPersistent?.providerAccountId ?? null,
       user: initialContinuity ? continuityToUser(initialContinuity) : null,
       interactiveRecoveryIdentity: null,
       setAuth: (accessToken, user, expiresIn = 3600) =>
         set(() => {
           saveAccountContinuity(user);
+          const rememberMe = get().rememberMe;
+          const accessTokenExpiry = Date.now() + (expiresIn - 60) * 1000;
+          writePersistentAuth(rememberMe ? { accessToken, accessTokenExpiry, provider: user.provider, providerAccountId: user.providerAccountId! } : null);
           return {
             accessToken,
             user,
-            // subtract 60s buffer so we refresh before actual expiry
-            accessTokenExpiry: Date.now() + (expiresIn - 60) * 1000,
+            accessTokenExpiry,
             provider: user.provider,
             providerAccountId: user.providerAccountId ?? null,
             interactiveRecoveryIdentity: null,
           };
         }),
-      setInteractiveAuth: (accessToken, user, expiresIn = 3600) => {
+      setInteractiveAuth: (accessToken, user, expiresIn = 3600, rememberMe = false) => {
         finalizeInteractiveLegacyAccountUpgrade(user);
         saveAccountContinuity(user);
-        set({ accessToken, user, accessTokenExpiry: Date.now() + (expiresIn - 60) * 1000, provider: user.provider, providerAccountId: user.providerAccountId ?? null, interactiveRecoveryIdentity: null });
+        const accessTokenExpiry = Date.now() + (expiresIn - 60) * 1000;
+        writePersistentAuth(rememberMe ? { accessToken, accessTokenExpiry, provider: user.provider, providerAccountId: user.providerAccountId! } : null);
+        set({ accessToken, user, rememberMe, accessTokenExpiry, provider: user.provider, providerAccountId: user.providerAccountId ?? null, interactiveRecoveryIdentity: null });
+      },
+      setRememberMe: (rememberMe) => {
+        set({ rememberMe });
+        if (!rememberMe) writePersistentAuth(null);
       },
       clearAuth: () => {
         clearLegacyAccountUpgrade();
         clearTokenHealth();
         clearAccountContinuity();
-        set({ accessToken: null, user: null, accessTokenExpiry: null, provider: null, providerAccountId: null, interactiveRecoveryIdentity: null });
+        writePersistentAuth(null);
+        set({ accessToken: null, user: null, rememberMe: false, accessTokenExpiry: null, provider: null, providerAccountId: null, interactiveRecoveryIdentity: null });
         try { sessionStorage.removeItem(AUTH_STORAGE_KEY); } catch { /* Session storage may be unavailable during shutdown. */ }
       },
       clearAuthForLegacyUpgrade: () => set({ accessToken: null, accessTokenExpiry: null, provider: null, providerAccountId: null, user: null }),
@@ -123,6 +166,7 @@ export const useAuthStore = create<AuthState>()(
         accessTokenExpiry: state.accessTokenExpiry,
         provider: state.provider,
         providerAccountId: state.providerAccountId,
+        rememberMe: state.rememberMe,
       }),
     },
   ),

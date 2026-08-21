@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { BookOpen, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { useAuthStore, type GoogleUser } from "@/store/authStore";
 import { clearLegacyAccountUpgrade, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
 import { readAccountContinuity } from "@/auth/accountContinuity";
@@ -21,6 +22,7 @@ import { resolveUpdateAwareLoginReturnTo } from "@/pwaUpdateIntent";
 export function LoginScreen() {
   const { t } = useTranslation();
   const { setInteractiveAuth, clearInteractiveRecoveryAuth } = useAuthStore();
+  const [rememberMe, setRememberMe] = useState(false);
   const { load } = useSettings();
   const { instance } = useMsal();
   const navigate = useNavigate();
@@ -59,7 +61,7 @@ export function LoginScreen() {
     }
     registerCloudAccount(user.provider, accessToken, user.providerAccountId!);
     await confirmAndResumeCloudWrites(user.provider, accessToken);
-    setInteractiveAuth(accessToken, user, expiresIn);
+    setInteractiveAuth(accessToken, user, expiresIn, rememberMe);
     await load();
     if (recoveryRequest) {
       const match = /^\/app\/books\/([^/?#]+)/.exec(recoveryRequest.returnTo);
@@ -263,6 +265,14 @@ export function LoginScreen() {
             )}
             {loadingProvider === "google" ? t("auth.signingInGoogle") : t("auth.google")}
           </Button>
+
+          <div className="flex items-start gap-2 text-left">
+            <input id="remember-me" type="checkbox" className="mt-0.5 h-4 w-4 rounded border-input accent-primary" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} disabled={!!loadingProvider || recoveryRequest !== null} />
+            <div className="space-y-1">
+              <Label htmlFor="remember-me" className="cursor-pointer text-sm">{t("auth.rememberMe")}</Label>
+              <p className="text-xs text-muted-foreground">{t("auth.rememberMeHint")}</p>
+            </div>
+          </div>
 
           <Button
             className="w-full bg-[#0078d4] text-white hover:bg-[#106ebe]"
