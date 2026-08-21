@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.70",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Review and undo pending file changes",
+      "summary": "The repository publish screen now shows pending file diffs and lets you restore selected files before publishing.",
+      "changes": [
+        "Added plus/minus previews for pending text changes, including deleted files.",
+        "Added selection controls to restore one or more pending files to their clean base before Push.",
+        "Restores are folded back into the single aggregate pending commit before anything is published.",
+        "Sync remains the quick path for non-conflicting changes."
+      ]
+    },
+    "it": {
+      "title": "Revisione e annullamento delle modifiche pending",
+      "summary": "La schermata di pubblicazione mostra ora i diff dei file pending e permette di ripristinare file selezionati prima dell'invio.",
+      "changes": [
+        "Aggiunte anteprime con più e meno per le modifiche testuali pending, inclusi i file cancellati.",
+        "Aggiunti controlli per ripristinare uno o più file pending alla loro base pulita prima del Push.",
+        "I ripristini vengono reinseriti nella commit unica pending prima di qualsiasi pubblicazione.",
+        "Sync resta il percorso rapido per le modifiche non conflittuali."
+      ]
+    }
+  },
+  {
     "version": "0.76.69",
     "date": "2026-08-21",
     "en": {

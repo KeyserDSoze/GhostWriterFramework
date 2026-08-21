@@ -481,7 +481,7 @@ export async function restoreLocalFilesToBase(input: {
   if (!uniquePaths.length) return { restored: 0 };
 
   const selected = (await Promise.all(uniquePaths.map((path) => getLocalFileEntry(input.repoId, path, scope))))
-    .filter((file): file is LocalRepositoryFile => Boolean(file && !file.committed && file.status !== "clean"));
+     .filter((file): file is LocalRepositoryFile => Boolean(file && file.status !== "clean"));
   const remote = input.token ? trackedOctokit(input.token, input) : null;
   const deletes: string[] = [];
   const writes: Array<{ path: string; kind: "text"; text: string } | { path: string; kind: "binary"; bytes: Uint8Array }> = [];

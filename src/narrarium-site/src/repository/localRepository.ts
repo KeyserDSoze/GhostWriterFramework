@@ -1300,7 +1300,9 @@ export async function applyLocalFileChangesAtomically(
       baseSha: existing?.baseSha,
       baseHash: existing?.baseHash,
       currentHash,
-      status: statusAfterWrite(existing, currentHash),
+      // Keep restored files in the aggregate pass so an older pending
+      // deletion/update for the same path is replaced before push.
+      status: existing?.baseHash === currentHash ? "modified" : statusAfterWrite(existing, currentHash),
       committed: false,
       size: write.kind === "text" ? new TextEncoder().encode(write.text).byteLength : write.bytes.byteLength,
       updatedAt: now,

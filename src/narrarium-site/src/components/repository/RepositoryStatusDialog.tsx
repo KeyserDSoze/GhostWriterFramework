@@ -16,6 +16,24 @@ import { createMaintenanceBackupBundle, lookupRepositoryMaintenanceTarget, Repos
 import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { readTokenHealth, tokenExpirationWarning, type TokenHealth } from "@/repository/tokenHealth";
 import { triggerCurrentRepositorySync } from "@/store/repositorySyncStore";
+import { FileDiff } from "@/components/diff/DiffView";
+import { fetchBlobBytesForRepository } from "@/repository/repositoryService";
+import { RepositoryByteMeter } from "@/repository/repositoryLimits";
+
+function PendingFileDiff({ file, token, owner, repo }: { file: LocalRepositoryFile; token: string; owner: string; repo: string }) {
+  const [base, setBase] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (file.kind !== "text") return;
+    if (!file.baseSha) { setBase(""); return; }
+    void fetchBlobBytesForRepository(token, owner, repo, file.path, file.baseSha, new RepositoryByteMeter("mutation"))
+      .then((bytes) => { if (!cancelled) setBase(new TextDecoder().decode(bytes)); })
+      .catch(() => { if (!cancelled) setBase(null); });
+    return () => { cancelled = true; };
+  }, [file.baseSha, file.kind, file.path, owner, repo, token]);
+  if (file.kind !== "text" || base === null) return <p className="text-xs text-muted-foreground">{file.kind === "text" ? "Diff non disponibile" : "File binario: diff non disponibile"}</p>;
+  return <FileDiff previous={base} next={file.status === "deleted" ? "" : file.text ?? ""} className="max-h-64" />;
+}
 
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0 B";
@@ -66,6 +84,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const [logFilter, setLogFilter] = useState<"all" | LocalRepoLogKind>("all");
   const [message, setMessage] = useState("");
   const [selectedDraftPaths, setSelectedDraftPaths] = useState<string[]>([]);
+  const [selectedRestorePaths, setSelectedRestorePaths] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [tokenHealth, setTokenHealth] = useState<TokenHealth | null>(null);
   const token = book ? resolveBookToken(book, settings) : "";
@@ -88,6 +107,10 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
     const available = new Set(draftDirtyFiles.map((file) => file.path));
     setSelectedDraftPaths((current) => current.filter((path) => available.has(path)));
   }, [draftDirtyFiles]);
+  useEffect(() => {
+    const available = new Set(dirtyFiles.map((file) => file.path));
+    setSelectedRestorePaths((current) => current.filter((path) => available.has(path)));
+  }, [dirtyFiles]);
 
   async function currentRepo() {
     if (!book || !branch || !currentAccountIdentity) return null;
@@ -372,20 +395,29 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                       </div>
                     </div>
                   )}
-                  <div className="max-h-56 min-w-0 space-y-1 overflow-y-auto text-xs">
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" variant="outline" disabled={disabled || dirtyFiles.length === 0} onClick={() => setSelectedRestorePaths(dirtyFiles.map((file) => file.path))}>Seleziona tutti</Button>
+                    <Button type="button" size="sm" variant="outline" disabled={disabled || selectedRestorePaths.length === 0} onClick={() => setSelectedRestorePaths([])}>Deseleziona</Button>
+                    <Button type="button" size="sm" variant="outline" disabled={disabled || selectedRestorePaths.length === 0} onClick={() => void run("restore-files", async () => {
+                      const repo = await currentRepo();
+                      if (!repo || !book || !currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
+                      const result = await restoreLocalFilesToBase({ repoId: repo.id, bookId: book.id, owner: repo.owner, repo: repo.repo, branch: repo.branch, accountIdentity: currentAccountIdentity, paths: selectedRestorePaths, token: token || undefined });
+                      await commitLocalChanges({ ...await exactTarget() }, "Restore selected files");
+                      setSelectedRestorePaths([]);
+                      return `Ripristinati ${result.restored} file`;
+                    })}>Ripristina selezionati</Button>
+                  </div>
+                  <div className="max-h-[32rem] min-w-0 space-y-2 overflow-y-auto text-xs">
                     {dirtyFiles.map((file) => {
-                      const isDraft = file.path.startsWith("drafts/");
-                      const checked = selectedDraftPaths.includes(file.path);
                       return (
-                        <label key={file.path} className="flex min-w-0 items-start gap-2 rounded border px-2 py-1.5">
-                          {isDraft ? (
-                            <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={checked} onChange={(event) => setSelectedDraftPaths((current) => event.target.checked ? [...current, file.path] : current.filter((path) => path !== file.path))} aria-label={t("repoStatus.selectDraftToRestore", { path: file.path })} />
-                          ) : (
-                            <span className="h-4 w-4 shrink-0" aria-hidden="true" />
-                          )}
+                        <div key={file.path} className="min-w-0 rounded border px-2 py-2">
+                          <label className="flex min-w-0 items-start gap-2">
+                            <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={selectedRestorePaths.includes(file.path)} onChange={(event) => setSelectedRestorePaths((current) => event.target.checked ? [...current, file.path] : current.filter((path) => path !== file.path))} aria-label={`Seleziona ${file.path} per il ripristino`} />
                           <span className="w-16 shrink-0 uppercase text-muted-foreground">{file.status}</span>
                           <span className="min-w-0 flex-1 break-all font-mono">{file.path}</span>
-                        </label>
+                          </label>
+                          <div className="mt-2"><PendingFileDiff file={file} token={token} owner={book?.owner ?? ""} repo={book?.repo ?? ""} /></div>
+                        </div>
                       );
                     })}
                   </div>
