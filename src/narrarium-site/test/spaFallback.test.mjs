@@ -76,6 +76,7 @@ test("service worker uses release caches, precaches the generated manifest, and 
   assert.match(source, /cache\.addAll\(\[scopeUrl\(\), \.\.\.\(self\.__NARRARIUM_PRECACHE__/);
   assert.match(source, /key\.startsWith\(OWNED_CACHE_PREFIX\)/);
   assert.match(source, /MAX_RUNTIME_ENTRIES = 64/);
+  assert.match(source, /\["script", "style", "worker", "image", "font"\]\.includes\(request\.destination\)/);
   assert.match(source, /request\.mode === "navigate"/);
   assert.match(source, /caches\.match\(scopeUrl\(\)\)/);
 });

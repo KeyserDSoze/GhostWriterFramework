@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+test.use({ serviceWorkers: "block" });
+
 const ACCOUNT_IDENTITY = "google:e2e-google-user";
 const BOOK_ID = "book-jesus";
 const REPOSITORY_ID = `${ACCOUNT_IDENTITY}::keyserdsoze/jesus#test2`;

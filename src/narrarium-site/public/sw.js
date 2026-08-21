@@ -54,6 +54,8 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  if (!["script", "style", "worker", "image", "font"].includes(request.destination)) return;
+
   event.respondWith(
     caches.match(request, { ignoreSearch: true }).then(async (cached) => {
       if (cached) return cached;
