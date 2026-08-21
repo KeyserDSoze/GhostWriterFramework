@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.72",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Bounded recovery snapshots",
+      "summary": "Recovery snapshots now use deterministic per-repository retention and can be exported or deleted from repository status.",
+      "changes": [
+        "Recovery history is limited to 20 snapshots and 64 MiB per local repository.",
+        "Older snapshots are pruned deterministically before a new destructive recovery is stored.",
+        "A recovery that cannot fit within the retention limit aborts before the destructive replacement begins.",
+        "Repository status now provides restore, export, and delete actions for recovery snapshots."
+      ]
+    },
+    "it": {
+      "title": "Recovery snapshot con limiti",
+      "summary": "I recovery snapshot ora usano una retention deterministica per repository e possono essere esportati o eliminati dallo stato del repository.",
+      "changes": [
+        "La cronologia recovery è limitata a 20 snapshot e 64 MiB per repository locale.",
+        "Gli snapshot più vecchi vengono eliminati in modo deterministico prima di salvare un nuovo recovery distruttivo.",
+        "Se un recovery non può rientrare nei limiti, la sostituzione distruttiva viene interrotta prima di iniziare.",
+        "Lo stato del repository offre ora le azioni ripristina, esporta ed elimina per i recovery snapshot."
+      ]
+    }
+  },
+  {
     "version": "0.76.71",
     "date": "2026-08-21",
     "en": {

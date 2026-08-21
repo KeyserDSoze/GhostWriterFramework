@@ -1,7 +1,7 @@
 {
   "name": "narrarium-site",
   "private": true,
-  "version": "0.76.71",
+  "version": "0.76.72",
   "type": "module",
   "description": "GitHub Pages site and web app for Narrarium Framework.",
   "scripts": {

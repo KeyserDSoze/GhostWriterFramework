@@ -7,11 +7,12 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
-import { buildLocalBookStructure, effectiveRemoteStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryDiagnostic, type LocalRepositoryFile, type LocalRepositoryMeta, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
+import { buildLocalBookStructure, deleteLocalRecoverySnapshot, effectiveRemoteStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryDiagnostic, type LocalRepositoryFile, type LocalRepositoryMeta, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
 import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, checkRepositoryTokenHealth } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 import { useAuthStore } from "@/store/authStore";
 import { accountIdentity } from "@/auth/accountIdentity";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { createMaintenanceBackupBundle, lookupRepositoryMaintenanceTarget, RepositoryMaintenanceError, type BackupReceipt, type RepositoryMaintenanceSnapshot } from "@/repository/repositoryMaintenance";
 import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { readTokenHealth, tokenExpirationWarning, type TokenHealth } from "@/repository/tokenHealth";
@@ -265,6 +266,24 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
     }
   }
 
+  async function deleteRecovery(recovery: LocalRepositoryRecovery) {
+    if (!currentAccountIdentity || !window.confirm(`Eliminare il recovery del ${new Date(recovery.createdAt).toLocaleString()}?`)) return;
+    await run(`delete-recovery-${recovery.id}`, async () => {
+      await deleteLocalRecoverySnapshot(recovery.id, captureRepositoryOperationScope());
+      return "Recovery eliminato";
+    });
+  }
+
+  function exportRecovery(recovery: LocalRepositoryRecovery) {
+    const blob = new Blob([JSON.stringify(recovery, (_key, value) => value instanceof Blob ? { type: value.type, size: value.size } : value, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `narrarium-recovery-${new Date(recovery.createdAt).toISOString().replace(/[:.]/g, "-")}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90dvh] !w-[calc(100vw-1rem)] !max-w-2xl overflow-x-hidden overflow-y-auto p-4 sm:p-6">
@@ -332,7 +351,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                 {recoveries.map((recovery) => (
                   <div key={recovery.id} className="flex flex-col gap-2 rounded border p-2 text-xs sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0"><p>{new Date(recovery.createdAt).toLocaleString()}</p><p className="break-words text-muted-foreground">{recovery.reason}</p></div>
-                    <Button size="sm" variant="outline" disabled={!!busy || !operationalReady} onClick={() => void restoreRecovery(recovery)}>{busy === `recovery-${recovery.id}` ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.restoreRecovery")}</Button>
+                    <div className="flex flex-wrap gap-1"><Button size="sm" variant="outline" disabled={!!busy || !operationalReady} onClick={() => void restoreRecovery(recovery)}>{busy === `recovery-${recovery.id}` ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.restoreRecovery")}</Button><Button size="sm" variant="outline" disabled={!!busy} onClick={() => exportRecovery(recovery)}>Esporta</Button><Button size="sm" variant="outline" disabled={!!busy} onClick={() => void deleteRecovery(recovery)}>Elimina</Button></div>
                   </div>
                 ))}
               </div>

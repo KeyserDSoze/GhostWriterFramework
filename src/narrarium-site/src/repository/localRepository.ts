@@ -44,6 +44,8 @@ export interface RepositoryLifecycleLease {
 }
 
 const REPOSITORY_LEASE_MS = 30_000;
+export const MAX_RECOVERY_SNAPSHOTS_PER_REPOSITORY = 20;
+export const MAX_RECOVERY_SNAPSHOT_BYTES_PER_REPOSITORY = 64 * 1024 * 1024;
 const repositoryInstanceNonce = crypto.randomUUID();
 
 export interface LocalRepositoryMeta {
@@ -1924,13 +1926,15 @@ export async function createLocalRecoverySnapshot(repoIdValue: string, reason: s
     const repositoryRequest = tx.objectStore("repositories").get(repoIdValue);
     const filesRequest = tx.objectStore("files").index("repoId").getAll(repoIdValue);
     const commitsRequest = tx.objectStore("commits").index("repoId").getAll(repoIdValue);
+    const recoveriesRequest = tx.objectStore("recoveries").index("repoId").getAll(repoIdValue);
     let repository: LocalRepositoryMeta | undefined;
     let files: LocalRepositoryFile[] | undefined;
     let commits: LocalCommit[] | undefined;
+    let existingRecoveries: LocalRepositoryRecovery[] | undefined;
     let recovery: LocalRepositoryRecovery | undefined;
     let validationError: Error | null = null;
     const apply = () => {
-      if (!repository || !files || !commits || recovery) return;
+       if (!repository || !files || !commits || !existingRecoveries || recovery) return;
       recovery = {
         id: crypto.randomUUID(),
         repoId: repoIdValue,
@@ -1941,7 +1945,16 @@ export async function createLocalRecoverySnapshot(repoIdValue: string, reason: s
         files,
         commits: commits.filter((commit) => !commit.pushed).sort(compareLocalCommitOrder),
       };
-      tx.objectStore("recoveries").put(recovery);
+       const snapshotBytes = (entry: LocalRepositoryRecovery) => entry.files.reduce((total, file) => total + (file.text?.length ?? file.blob?.size ?? 0), 0) + entry.commits.reduce((total, commit) => total + commit.files.length * 128 + commit.message.length, 0);
+       const retained = [...existingRecoveries, recovery].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+       let total = retained.reduce((sum, entry) => sum + snapshotBytes(entry), 0);
+       while (retained.length > MAX_RECOVERY_SNAPSHOTS_PER_REPOSITORY || total > MAX_RECOVERY_SNAPSHOT_BYTES_PER_REPOSITORY) {
+         if (retained[0].id === recovery.id) throw new Error("Recovery snapshot exceeds the repository retention limit and cannot be safely stored.");
+         const removed = retained.shift()!;
+         total -= snapshotBytes(removed);
+         tx.objectStore("recoveries").delete(removed.id);
+       }
+       tx.objectStore("recoveries").put(recovery);
     };
     repositoryRequest.onsuccess = () => {
       repository = repositoryRequest.result as LocalRepositoryMeta | undefined;
@@ -1951,7 +1964,8 @@ export async function createLocalRecoverySnapshot(repoIdValue: string, reason: s
     };
     filesRequest.onsuccess = () => { files = filesRequest.result as LocalRepositoryFile[]; apply(); };
     commitsRequest.onsuccess = () => { commits = commitsRequest.result as LocalCommit[]; apply(); };
-    repositoryRequest.onerror = filesRequest.onerror = commitsRequest.onerror = () => tx.abort();
+    recoveriesRequest.onsuccess = () => { existingRecoveries = recoveriesRequest.result as LocalRepositoryRecovery[]; apply(); };
+    repositoryRequest.onerror = filesRequest.onerror = commitsRequest.onerror = recoveriesRequest.onerror = () => tx.abort();
     tx.oncomplete = () => resolve(recovery!);
     tx.onerror = () => reject(validationError ?? transactionError(tx));
     tx.onabort = () => reject(validationError ?? transactionError(tx) ?? new Error("Recovery snapshot transaction was aborted."));
