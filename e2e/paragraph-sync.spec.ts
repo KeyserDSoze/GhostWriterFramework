@@ -336,6 +336,17 @@ test("edits a locally cloned paragraph and full-syncs it to test2", async ({ pag
     await page.getByRole("menuitem", { name: "View status" }).click();
   }
   await expect(statusDialog.getByRole("heading", { name: "Repository status" })).toBeVisible();
+  await page.setViewportSize({ width: 375, height: 812 });
+  const forceConfirmation = statusDialog.getByRole("textbox", { name: "Type the FORCE RECLONE phrase shown above" });
+  const forceReclone = statusDialog.getByRole("button", { name: "Force re-clone from GitHub" });
+  await expect(statusDialog.getByText("FORCE RECLONE KeyserDSoze/Jesus#test2", { exact: true })).toBeVisible();
+  await expect(forceReclone).toBeDisabled();
+  await forceConfirmation.fill("FORCE RECLONE KeyserDSoze/Jesus#wrong");
+  await expect(forceReclone).toBeDisabled();
+  await forceConfirmation.fill("FORCE RECLONE KeyserDSoze/Jesus#test2");
+  await expect(forceReclone).toBeEnabled();
+  await forceConfirmation.clear();
+  await page.setViewportSize({ width: 1280, height: 720 });
   const fullSync = statusDialog.getByRole("button", { name: "Full sync" });
   await expect(fullSync).toBeEnabled();
   network.setPhase("sync");

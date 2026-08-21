@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.76",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Complete force re-clone recovery",
+      "summary": "Force re-clone now fully covers destructive cleanup, crash recovery, exact-target confirmation, and mobile access.",
+      "changes": [
+        "Force cleanup deletes local files, pending commits, recovery snapshots, rewrite operations, and repository metadata before cloning again.",
+        "Every removal-journal crash phase is covered by resumability tests, including final cleanup and completion replay.",
+        "Wrong confirmations and account identities fail closed without deleting the local repository.",
+        "The destructive confirmation panel remains available on mobile and when normal maintenance inspection fails."
+      ]
+    },
+    "it": {
+      "title": "Ripristino force re-clone completo",
+      "summary": "Force re-clone copre ora completamente cleanup distruttivo, ripresa dopo crash, conferma del target esatto e accesso mobile.",
+      "changes": [
+        "Il cleanup forzato elimina file locali, commit pending, recovery snapshot, rewrite operation e metadati prima del nuovo clone.",
+        "Ogni fase di crash del removal journal è coperta da test di ripresa, incluso cleanup finale e replay della completion.",
+        "Conferme e identità account errate falliscono in sicurezza senza eliminare il repository locale.",
+        "Il pannello di conferma distruttiva resta disponibile su mobile e quando la normale maintenance inspection fallisce."
+      ]
+    }
+  },
+  {
     "version": "0.76.75",
     "date": "2026-08-21",
     "en": {

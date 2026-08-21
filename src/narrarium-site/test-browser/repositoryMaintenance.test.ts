@@ -2,7 +2,7 @@ import "fake-indexeddb/auto";
 import { afterEach, expect, test } from "vitest";
 import { claimLocalRepositoryRepair, createLocalCommit, createLocalRecoverySnapshot, deleteLocalRecoverySnapshot, getLocalFile as getScopedFile, getLocalRepositoryById, listLocalRecoverySnapshots, pauseNextPrimaryFileWriteForTests, putLocalRepository, releaseLocalRepositoryRepair, removeLocalRepository } from "@/repository/localRepository";
 import { deleteLocalFile, putCleanLocalFile, writeLocalText } from "./helpers/localRepositorySeed";
-import { crashNextMaintenanceRemovalForTests, createMaintenanceBackupBundle, lookupRepositoryMaintenanceTarget, RepositoryMaintenanceError, validateMaintenanceBackupBundle } from "@/repository/repositoryMaintenance";
+import { crashNextMaintenanceRemovalForTests, createMaintenanceBackupBundle, forceRemoveRepositoryWithoutBackup, lookupRepositoryMaintenanceTarget, RepositoryMaintenanceError, validateMaintenanceBackupBundle } from "@/repository/repositoryMaintenance";
 import { recloneLocalWorkingCopy, removeLocalWorkingCopy } from "@/repository/repositoryService";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { useAuthStore } from "@/store/authStore";
@@ -413,3 +413,36 @@ test("reclone rejects a pending removal even after the repository row is gone", 
   await removeLocalWorkingCopy({ ...target, backupReceiptId: "", confirmation: "REMOVE owner/maintenance-repo" });
   repoId = "";
 });
+
+test("force removal requires the exact typed target and immutable account", async () => {
+  await setup(true, "complete");
+  await expect(forceRemoveRepositoryWithoutBackup(target, "FORCE RECLONE owner/other#main")).rejects.toMatchObject({ code: "CONFIRMATION_REQUIRED" });
+  useAuthStore.setState({ user: { provider: "google", providerAccountId: "other", name: "Other", email: "other@example.com", picture: "" } });
+  await expect(forceRemoveRepositoryWithoutBackup(target, "FORCE RECLONE owner/maintenance-repo#main")).rejects.toMatchObject({ code: "ACCOUNT_MISMATCH" });
+  useAuthStore.setState({ user: { provider: "google", providerAccountId: "maintenance-writer", name: "Writer", email: "writer@example.com", picture: "" } });
+  expect(await getLocalRepositoryById(repoId, identity)).toBeTruthy();
+});
+
+test("force removal deletes primary, recovery, and rewrite state without touching a remote", async () => {
+  const meta = await setup(true, "complete");
+  await writeLocalText(repoId, "drafts/unrecoverable.md", "discard me");
+  await createLocalCommit(repoId, captureRepositoryOperationScope(), "discard local work");
+  await createLocalRecoverySnapshot(repoId, "discard recovery", captureRepositoryOperationScope());
+  await saveLocalRewriteOperation(rewrite(meta.localInstanceId), captureRepositoryOperationScope());
+  await expect(forceRemoveRepositoryWithoutBackup(target, "FORCE RECLONE owner/maintenance-repo#main")).resolves.toEqual({ recoveriesPreserved: 0, rewriteOperationsRemoved: 1 });
+  expect(await getLocalRepositoryById(repoId, identity)).toBeNull();
+  expect(await listLocalRecoverySnapshots(repoId, identity)).toEqual([]);
+  repoId = "";
+});
+
+for (const phase of ["after-prepare", "before-rewrite-transaction", "after-rewrite-marker", "after-rewrite-phase-update", "after-rewrites", "after-primary", "after-primary-marker", "after-rewrite-finalize", "after-final-cleanup", "after-finalized"] as const) {
+  test(`force removal resumes safely after ${phase}`, async () => {
+    const meta = await setup(true, "complete");
+    await saveLocalRewriteOperation(rewrite(meta.localInstanceId), captureRepositoryOperationScope());
+    crashNextMaintenanceRemovalForTests(phase);
+    await expect(forceRemoveRepositoryWithoutBackup(target, "FORCE RECLONE owner/maintenance-repo#main")).rejects.toThrow("Simulated");
+    await expect(forceRemoveRepositoryWithoutBackup(target, "FORCE RECLONE owner/maintenance-repo#main")).resolves.toMatchObject({ recoveriesPreserved: 0, rewriteOperationsRemoved: 1 });
+    expect(await getLocalRepositoryById(repoId, identity)).toBeNull();
+    repoId = "";
+  });
+}

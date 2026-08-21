@@ -83,6 +83,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const [maintenanceError, setMaintenanceError] = useState<string | null>(null);
   const [backupReceipt, setBackupReceipt] = useState<BackupReceipt | null>(null);
   const [removeConfirmation, setRemoveConfirmation] = useState("");
+  const [forceConfirmation, setForceConfirmation] = useState("");
   const [logFilter, setLogFilter] = useState<"all" | LocalRepoLogKind>("all");
   const [message, setMessage] = useState("");
   const [selectedDraftPaths, setSelectedDraftPaths] = useState<string[]>([]);
@@ -253,9 +254,9 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
     if (!book || !token || !branch || !currentAccountIdentity) return;
     setBusy("force-reclone");
     try {
-      const result = await forceRecloneLocalWorkingCopy({ bookId: book.id, book, token, accountIdentity: currentAccountIdentity, branch, confirmation: removeConfirmation, onProgress: (p) => setCloneProgress(book.id, p) });
+      const result = await forceRecloneLocalWorkingCopy({ bookId: book.id, book, token, accountIdentity: currentAccountIdentity, branch, confirmation: forceConfirmation, onProgress: (p) => setCloneProgress(book.id, p) });
       setStructure(book.id, result.structure);
-      setRemoveConfirmation("");
+      setForceConfirmation("");
       toast({ title: t("repoStatus.recloneDone") });
       await refresh();
     } catch (err) {
@@ -381,9 +382,15 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
              </div>}
             <div className="grid gap-2 sm:grid-cols-2">
               <Button variant="outline" disabled={maintenanceNetworkDisabled} onClick={() => void recloneLocal()}>{busy === "reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.reclone")}</Button>
-              <Button variant="destructive" disabled={maintenanceNetworkDisabled || !branch || removeConfirmation !== `FORCE RECLONE ${book.owner}/${book.repo}#${branch}`} onClick={() => void forceReclone()}>{busy === "force-reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}Force re-clone</Button>
               <Button variant="destructive" disabled={disabled || !maintenance || (!maintenance.removalPending && !backupReceipt) || removeConfirmation !== `REMOVE ${book.owner}/${book.repo}`} onClick={() => void removeLocal()}>{busy === "remove-local" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}{maintenance?.removalPending ? t("repoStatus.resumeRemoval") : t("repoStatus.removePermanently")}</Button>
             </div>
+            {branch && <div className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs">
+              <p className="font-medium text-destructive">{t("repoStatus.forceRecloneTitle")}</p>
+              <p className="text-muted-foreground">{t("repoStatus.forceRecloneDescription")}</p>
+              <p className="break-all font-mono">FORCE RECLONE {book.owner}/{book.repo}#{branch}</p>
+              <Input value={forceConfirmation} onChange={(event) => setForceConfirmation(event.target.value)} aria-label={t("repoStatus.forceRecloneConfirmation")} placeholder={t("repoStatus.forceRecloneConfirmation")} disabled={!!busy} />
+              <Button className="w-full" variant="destructive" disabled={maintenanceNetworkDisabled || forceConfirmation !== `FORCE RECLONE ${book.owner}/${book.repo}#${branch}`} onClick={() => void forceReclone()}>{busy === "force-reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.forceReclone")}</Button>
+            </div>}
             {maintenance && (maintenance.repository || maintenance.removalPending) && <div className="space-y-2 rounded-xl border border-destructive/30 p-3 text-xs">
               <p className="font-medium">{t("repoStatus.removeSummary", { modified: maintenance.status.modified, new: maintenance.status.new, deleted: maintenance.status.deleted, commits: maintenance.unpushedCommits.length, recoveries: maintenance.recoveries.length, rewrites: maintenance.rewriteOperationCount, lifecycle: t(`repoStatus.lifecycleStates.${maintenance.lifecycle}`) })}</p>
               <p className="text-muted-foreground">{t("repoStatus.recoveryPreserved")}</p>

@@ -30,6 +30,10 @@ const en = {
     scriptsIndex: "Scripts",
   },
   repoStatus: {
+    forceReclone: "Force re-clone from GitHub",
+    forceRecloneTitle: "Destructive local recovery",
+    forceRecloneDescription: "Deletes all local files, commits, recovery snapshots, rewrite state, and repository metadata for this exact account and branch, then clones a fresh copy. GitHub is not modified.",
+    forceRecloneConfirmation: "Type the FORCE RECLONE phrase shown above",
     title: "Repository status",
     quickActions: "Git actions",
     sync: "Full sync",
