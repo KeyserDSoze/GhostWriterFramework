@@ -45,11 +45,13 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request)
-        .then((response) => response.status === 404
-          ? caches.match(request, { ignoreSearch: true }).then((cached) => cached || caches.match(scopeUrl()).then((fallback) => fallback || response))
-          : response)
-        .catch(() => caches.match(request, { ignoreSearch: true }).then((cached) => cached || caches.match(scopeUrl()))),
+      caches.open(PRECACHE_NAME).then(async (cache) => {
+        const cached = await cache.match(request, { ignoreSearch: true });
+        if (cached) return cached;
+        const shell = await cache.match(scopeUrl());
+        if (shell) return shell;
+        return fetch(request);
+      }),
     );
     return;
   }

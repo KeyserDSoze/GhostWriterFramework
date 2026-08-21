@@ -78,5 +78,6 @@ test("service worker uses release caches, precaches the generated manifest, and 
   assert.match(source, /MAX_RUNTIME_ENTRIES = 64/);
   assert.match(source, /\["script", "style", "worker", "image", "font"\]\.includes\(request\.destination\)/);
   assert.match(source, /request\.mode === "navigate"/);
-  assert.match(source, /caches\.match\(scopeUrl\(\)\)/);
+  assert.match(source, /caches\.open\(PRECACHE_NAME\)[\s\S]*cache\.match\(scopeUrl\(\)\)[\s\S]*return fetch\(request\)/);
+  assert.doesNotMatch(source, /request\.mode === "navigate"[\s\S]*fetch\(request\)[\s\S]*cache\.match\(scopeUrl\(\)\)/);
 });

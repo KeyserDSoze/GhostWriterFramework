@@ -14,10 +14,17 @@ test("public documentation route opens from the production preview", async ({ pa
 });
 
 test("installed application shell and lazy assets remain available offline", async ({ page, context }) => {
+  await page.addInitScript(() => { void caches.open("unrelated-origin-cache"); });
   await page.goto(".");
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
   await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller)).catch(() => false)).toBe(true);
   await expect.poll(() => page.evaluate(async () => (await caches.keys()).some((key) => key.startsWith("narrarium-precache-"))).catch(() => false)).toBe(true);
+  const releaseState = await page.evaluate(async () => ({
+    controllerVersion: new URL(navigator.serviceWorker.controller!.scriptURL).searchParams.get("v"),
+    cacheKeys: await caches.keys(),
+  }));
+  expect(releaseState.cacheKeys).toContain(`narrarium-precache-${releaseState.controllerVersion}`);
+  expect(releaseState.cacheKeys).toContain("unrelated-origin-cache");
   await page.waitForLoadState("domcontentloaded");
   await context.setOffline(true);
   try {

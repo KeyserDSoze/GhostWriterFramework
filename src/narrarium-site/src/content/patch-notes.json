@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.78",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Release-consistent PWA updates",
+      "summary": "Active Narrarium clients now remain entirely on their current release until the waiting update is explicitly activated.",
+      "changes": [
+        "Navigation HTML is served from the active release precache before any network request, preventing mixed-release HTML and JavaScript.",
+        "Waiting workers populate only their own versioned cache and do not mutate the active release cache.",
+        "Activation removes only obsolete Narrarium-owned caches while preserving unrelated origin caches.",
+        "Added browser verification that controller version, active precache, deferred navigation, and unrelated cache ownership remain consistent."
+      ]
+    },
+    "it": {
+      "title": "Aggiornamenti PWA coerenti per release",
+      "summary": "I client Narrarium attivi restano ora interamente sulla release corrente finché l'aggiornamento in attesa non viene attivato esplicitamente.",
+      "changes": [
+        "L'HTML di navigazione viene servito dalla precache della release attiva prima della rete, evitando combinazioni tra HTML e JavaScript di release diverse.",
+        "I worker in attesa popolano solo la propria cache versionata e non modificano la cache della release attiva.",
+        "L'attivazione elimina solo cache obsolete di Narrarium e preserva le cache non correlate della stessa origine.",
+        "Aggiunta verifica browser della coerenza tra versione controller, precache attiva, navigazione differita e ownership delle cache."
+      ]
+    }
+  },
+  {
     "version": "0.76.77",
     "date": "2026-08-21",
     "en": {
