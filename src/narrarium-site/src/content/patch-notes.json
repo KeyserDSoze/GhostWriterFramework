@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.74",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Explicit force re-clone recovery",
+      "summary": "Unrecoverable local repository states now have an explicit destructive escape path that starts a fresh clone without touching GitHub.",
+      "changes": [
+        "Added a Force re-clone action for the exact account, repository, book, and branch.",
+        "The action requires the typed FORCE RECLONE owner/repository#branch confirmation phrase.",
+        "It deletes only the local working copy and then starts a fresh clone with progress reporting.",
+        "The normal safe re-clone path remains unchanged and the remote repository is never modified by force cleanup."
+      ]
+    },
+    "it": {
+      "title": "Ripristino esplicito con force re-clone",
+      "summary": "Gli stati locali irrecuperabili hanno ora un percorso distruttivo esplicito per avviare un clone nuovo senza modificare GitHub.",
+      "changes": [
+        "Aggiunta l'azione Force re-clone per account, repository, libro e branch esatti.",
+        "L'azione richiede la frase di conferma digitata FORCE RECLONE owner/repository#branch.",
+        "Viene eliminata solo la working copy locale e viene avviato un clone nuovo con avanzamento visibile.",
+        "Il re-clone sicuro normale resta invariato e il repository remoto non viene modificato dal cleanup forzato."
+      ]
+    }
+  },
+  {
     "version": "0.76.73",
     "date": "2026-08-21",
     "en": {

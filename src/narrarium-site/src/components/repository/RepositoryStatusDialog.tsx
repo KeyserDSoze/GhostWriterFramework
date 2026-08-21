@@ -8,7 +8,7 @@ import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
 import { buildLocalBookStructure, deleteLocalRecoverySnapshot, effectiveRemoteStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryDiagnostic, type LocalRepositoryFile, type LocalRepositoryMeta, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
-import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, checkRepositoryTokenHealth } from "@/repository/repositoryService";
+import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, forceRecloneLocalWorkingCopy, overwriteRemoteWithLocal, pullRemoteChanges, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, checkRepositoryTokenHealth } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 import { useAuthStore } from "@/store/authStore";
 import { accountIdentity } from "@/auth/accountIdentity";
@@ -249,6 +249,20 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
     }
   }
 
+  async function forceReclone() {
+    if (!book || !token || !branch || !currentAccountIdentity) return;
+    setBusy("force-reclone");
+    try {
+      const result = await forceRecloneLocalWorkingCopy({ bookId: book.id, book, token, accountIdentity: currentAccountIdentity, branch, confirmation: removeConfirmation, onProgress: (p) => setCloneProgress(book.id, p) });
+      setStructure(book.id, result.structure);
+      setRemoveConfirmation("");
+      toast({ title: t("repoStatus.recloneDone") });
+      await refresh();
+    } catch (err) {
+      toast({ title: t("repoStatus.actionFailed"), description: maintenanceErrorText(err), variant: "destructive" });
+    } finally { setBusy(null); }
+  }
+
   async function restoreRecovery(recovery: LocalRepositoryRecovery) {
     if (!book || !branch) return;
     if (!window.confirm(t("repoStatus.restoreRecoveryConfirm", { date: new Date(recovery.createdAt).toLocaleString() }))) return;
@@ -367,6 +381,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
              </div>}
             <div className="grid gap-2 sm:grid-cols-2">
               <Button variant="outline" disabled={maintenanceNetworkDisabled} onClick={() => void recloneLocal()}>{busy === "reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.reclone")}</Button>
+              <Button variant="destructive" disabled={maintenanceNetworkDisabled || !removeConfirmation.startsWith("FORCE RECLONE ")} onClick={() => void forceReclone()}>{busy === "force-reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}Force re-clone</Button>
               <Button variant="destructive" disabled={disabled || !maintenance || (!maintenance.removalPending && !backupReceipt) || removeConfirmation !== `REMOVE ${book.owner}/${book.repo}`} onClick={() => void removeLocal()}>{busy === "remove-local" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}{maintenance?.removalPending ? t("repoStatus.resumeRemoval") : t("repoStatus.removePermanently")}</Button>
             </div>
             {maintenance && (maintenance.repository || maintenance.removalPending) && <div className="space-y-2 rounded-xl border border-destructive/30 p-3 text-xs">

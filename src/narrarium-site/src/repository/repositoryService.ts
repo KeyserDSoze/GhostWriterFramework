@@ -24,6 +24,7 @@ import {
   listAllLocalFiles,
   listDirtyLocalFiles,
   listUnpushedLocalCommits,
+  removeLocalRepository,
   recordRepositoryDiagnostic,
   type RepositoryDiagnosticOperation,
   type RepositoryDiagnosticStage,
@@ -1210,6 +1211,23 @@ export async function recloneLocalWorkingCopy(input: {
   const result = await ensureLocalBookStructure(input);
   await addLocalRepoLog(result.meta.id, scope, "reset", "Recloned local working copy");
   return result;
+}
+
+export async function forceRecloneLocalWorkingCopy(input: {
+  bookId: string;
+  book: BookEntry;
+  token: string;
+  accountIdentity: string;
+  branch: string;
+  confirmation: string;
+  onProgress?: (progress: LocalCloneProgress) => void;
+}): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
+  const expected = `FORCE RECLONE ${input.book.owner}/${input.book.repo}#${input.branch}`;
+  if (input.confirmation !== expected) throw new RepositoryMaintenanceError("CONFIRMATION_REQUIRED");
+  const scope = operationScope({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity });
+  const repoId = `${input.accountIdentity}::${input.book.owner}/${input.book.repo}#${input.branch}`.toLowerCase();
+  await removeLocalRepository(repoId, scope);
+  return ensureLocalBookStructure(input);
 }
 
 /**
