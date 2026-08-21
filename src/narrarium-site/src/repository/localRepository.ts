@@ -1387,10 +1387,11 @@ async function applyLocalTextFileMutations(
     const commitsStore = commitMessage === undefined ? null : tx.objectStore("commits");
     const repositoriesStore = tx.objectStore("repositories");
     const existing = new Map<string, LocalRepositoryFile | undefined>();
-    let pending = mutations.length + 1;
+    let pending = mutations.length + (commitMessage === undefined ? 1 : 2);
     let validationError: Error | null = null;
     let localCommit: LocalCommit | null = null;
     let commitOrder: number | undefined;
+    let pendingCommits: LocalCommit[] = [];
     const now = new Date().toISOString();
 
     const apply = () => {
@@ -1448,13 +1449,17 @@ async function applyLocalTextFileMutations(
           tx.abort();
           return;
         }
+        const filesByPath = new Map<string, LocalCommitFile>();
+        for (const previous of pendingCommits) for (const file of previous.files) filesByPath.set(file.path, file);
+        for (const file of commitFiles) filesByPath.set(file.path, file);
+        for (const previous of pendingCommits) commitsStore!.delete(previous.id);
         localCommit = {
           id: crypto.randomUUID(),
           repoId: repoIdValue,
           message: commitMessage,
           createdAt: now,
           order: commitOrder,
-          files: commitFiles,
+          files: [...filesByPath.values()].sort((a, b) => a.path.localeCompare(b.path)),
           pushed: false,
         };
         commitsStore!.put(localCommit);
@@ -1476,6 +1481,18 @@ async function applyLocalTextFileMutations(
       };
       request.onerror = () => {
         validationError = request.error ?? new Error("Failed to allocate local commit order.");
+        tx.abort();
+      };
+    }
+    if (commitsStore) {
+      const request = commitsStore.index("repoId").getAll(repoIdValue);
+      request.onsuccess = () => {
+        pendingCommits = (request.result as LocalCommit[]).filter((commit) => !commit.pushed);
+        pending -= 1;
+        if (pending === 0) apply();
+      };
+      request.onerror = () => {
+        validationError = request.error ?? new Error("Failed to read pending local commits.");
         tx.abort();
       };
     }

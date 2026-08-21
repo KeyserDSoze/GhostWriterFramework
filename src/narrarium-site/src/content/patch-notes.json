@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.69",
+    "date": "2026-08-21",
+    "en": {
+      "title": "One evolving local work commit",
+      "summary": "Each local save now rewrites the single pending work commit to include every unpublished file change.",
+      "changes": [
+        "Saving a second file replaces the previous pending local commit instead of creating a second pending commit.",
+        "The pending commit message and file list are regenerated from the complete unpublished work set.",
+        "Push and Sync publish the complete accumulated work state together."
+      ]
+    },
+    "it": {
+      "title": "Unica commit di lavoro locale aggiornata",
+      "summary": "Ogni salvataggio ora riscrive l'unica commit di lavoro in sospeso includendo tutte le modifiche locali non pubblicate.",
+      "changes": [
+        "Salvare un secondo file sostituisce la commit locale precedente invece di crearne una seconda in sospeso.",
+        "Il messaggio e l'elenco dei file della commit vengono rigenerati sull'insieme completo del lavoro non pubblicato.",
+        "Push e Sync pubblicano insieme tutto lo stato di lavoro accumulato."
+      ]
+    }
+  },
+  {
     "version": "0.76.68",
     "date": "2026-08-21",
     "en": {
