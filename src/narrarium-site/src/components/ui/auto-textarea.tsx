@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { handleTextIndent } from "@/editor/textIndent";
 
 export interface AutoTextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   minRows?: number;
@@ -7,7 +8,7 @@ export interface AutoTextareaProps extends React.TextareaHTMLAttributes<HTMLText
 }
 
 const AutoTextarea = React.forwardRef<HTMLTextAreaElement, AutoTextareaProps>(
-  ({ className, value, minRows = 3, maxHeight, onInput, ...props }, forwardedRef) => {
+    ({ className, value, minRows = 3, maxHeight, onInput, onKeyDown, ...props }, forwardedRef) => {
     const innerRef = React.useRef<HTMLTextAreaElement | null>(null);
 
     const setRef = (node: HTMLTextAreaElement | null) => {
@@ -37,6 +38,10 @@ const AutoTextarea = React.forwardRef<HTMLTextAreaElement, AutoTextareaProps>(
         onInput={(event) => {
           resize();
           onInput?.(event);
+        }}
+        onKeyDown={(event) => {
+          handleTextIndent(event);
+          onKeyDown?.(event);
         }}
         className={cn(
           "flex w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",

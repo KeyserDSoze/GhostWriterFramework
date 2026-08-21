@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.71",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Consistent editor indentation",
+      "summary": "Prose, Markdown, and script textareas now handle Tab and Shift+Tab consistently without changing ordinary form navigation.",
+      "changes": [
+        "Tab indents the current line or selected lines by two spaces.",
+        "Shift+Tab removes one indentation level from the current line or every selected line.",
+        "Selection and caret ranges are preserved, browser undo remains available, and Ctrl/Cmd+Tab is left untouched.",
+        "The behavior is shared by AutoTextarea-based prose and script editors."
+      ]
+    },
+    "it": {
+      "title": "Indentazione coerente negli editor",
+      "summary": "Le textarea di prosa, Markdown e script gestiscono ora Tab e Shift+Tab in modo coerente senza modificare la navigazione dei normali form.",
+      "changes": [
+        "Tab indenta la riga corrente o le righe selezionate di due spazi.",
+        "Shift+Tab rimuove un livello di indentazione dalla riga corrente o da tutte le righe selezionate.",
+        "Selezione e caret vengono preservati, l'undo del browser resta disponibile e Ctrl/Cmd+Tab non viene intercettato.",
+        "Il comportamento è condiviso dagli editor di prosa e script basati su AutoTextarea."
+      ]
+    }
+  },
+  {
     "version": "0.76.70",
     "date": "2026-08-21",
     "en": {
