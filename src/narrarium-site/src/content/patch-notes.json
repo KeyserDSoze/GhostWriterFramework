@@ -1,5 +1,25 @@
 [
   {
+    "version": "0.76.65",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Reliable refresh on the books page",
+      "summary": "Refreshing the main books route now keeps the Narrarium app shell instead of returning a hosting 404.",
+      "changes": [
+        "Added a static SPA entry point for /app/books so direct refreshes and bookmarked app links resolve correctly on GitHub Pages.",
+        "Kept the existing fallback behavior for nested application routes."
+      ]
+    },
+    "it": {
+      "title": "Refresh affidabile nella pagina dei libri",
+      "summary": "Aggiornare la rotta principale dei libri ora mantiene l'app Narrarium invece di restituire un 404 del servizio di hosting.",
+      "changes": [
+        "Aggiunto un punto di ingresso SPA statico per /app/books, così refresh diretti e link salvati all'app vengono risolti correttamente su GitHub Pages.",
+        "Mantenuto il comportamento di fallback esistente per le rotte applicative annidate."
+      ]
+    }
+  },
+  {
     "version": "0.76.64",
     "date": "2026-08-21",
     "en": {

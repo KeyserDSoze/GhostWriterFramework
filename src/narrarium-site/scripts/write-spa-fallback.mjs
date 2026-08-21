@@ -7,7 +7,7 @@ const distRoot = path.join(siteRoot, process.env.NARRARIUM_E2E_BUILD === "1" ? "
 
 await copyFile(path.join(distRoot, "index.html"), path.join(distRoot, "404.html"));
 
-for (const route of ["app", "app/patch-notes", "login"]) {
+for (const route of ["app", "app/books", "app/patch-notes", "login"]) {
   const routeRoot = path.join(distRoot, route);
   await mkdir(routeRoot, { recursive: true });
   await copyFile(path.join(distRoot, "index.html"), path.join(routeRoot, "index.html"));

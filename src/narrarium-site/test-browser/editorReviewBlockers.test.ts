@@ -46,6 +46,11 @@ describe("editor review dirty transitions", () => {
     expect(authStore).toContain("writePersistentAuth(null)");
   });
 
+  it("generates an entry point for the app books route", () => {
+    const fallback = readFileSync(resolve(process.cwd(), "scripts/write-spa-fallback.mjs"), "utf8");
+    expect(fallback).toContain('"app/books"');
+  });
+
   it("keeps a duplicate dirty until its first save succeeds", async () => {
     let baseline = "";
     const duplicate = { id: "reader:copy", name: "Copy" };
