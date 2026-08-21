@@ -8,7 +8,7 @@ import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
 import { resolveBookToken } from "@/types/settings";
 import { buildLocalBookStructure, effectiveRemoteStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryDiagnostic, type LocalRepositoryFile, type LocalRepositoryMeta, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
-import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, checkRepositoryTokenHealth } from "@/repository/repositoryService";
+import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, overwriteRemoteWithLocal, pullRemoteChanges, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, checkRepositoryTokenHealth } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 import { useAuthStore } from "@/store/authStore";
 import { accountIdentity } from "@/auth/accountIdentity";
@@ -298,11 +298,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                  const result = await pullRemoteChanges({ ...target, token, ...(destructive ? { mode: "remote-wins" as const, confirmed: true } : {}) });
                 return t("repoStatus.pullDone", { count: result.updated });
               })}>{busy === "pull" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <GitPullRequest className="mr-1 h-4 w-4" />}{t("repoStatus.pull")}</Button>
-              <Button variant="outline" disabled={networkDisabled || ahead === 0} onClick={() => void run("push", async () => {
-                if (!window.confirm(t("repoStatus.pushLocalWinsConfirm"))) return t("repoStatus.cancelled");
-                 const result = await pushLocalCommits({ ...await exactTarget(), token });
-                return t("repoStatus.pushDone", { count: result.files });
-              })}>{busy === "push" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-1 h-4 w-4" />}{t("repoStatus.push")}</Button>
+              <Button variant="outline" disabled={networkDisabled || ahead === 0} onClick={() => { onOpenChange(false); void triggerCurrentRepositorySync(); }}><UploadCloud className="mr-1 h-4 w-4" />{t("repoStatus.push")}</Button>
             </div>
             <Button variant="outline" className="w-full" disabled={disabled} onClick={() => void exportBackup()}>{busy === "backup" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}{t("repoStatus.exportBackup")}</Button>
             {recoveries.length > 0 && (

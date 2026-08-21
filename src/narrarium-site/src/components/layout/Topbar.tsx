@@ -28,7 +28,7 @@ import { effectiveRemoteStatus, getLocalRepositoryStatusSnapshot, listUnpushedLo
 import { RepositoryStatusDialog } from "@/components/repository/RepositoryStatusDialog";
 import { RepositorySyncConflictDialog } from "@/components/repository/RepositorySyncConflictDialog";
 import { repositoryErrorDescription } from "@/repository/repositoryError";
-import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, pushLocalCommits, RepositorySyncChoiceStaleError, RepositorySyncConflictError, syncFullRepository, type RepositorySyncConflictChoice, type RepositorySyncConflictResolution } from "@/repository/repositoryService";
+import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, RepositorySyncChoiceStaleError, RepositorySyncConflictError, syncFullRepository, type RepositorySyncConflictChoice, type RepositorySyncConflictResolution } from "@/repository/repositoryService";
 import { resolveBookToken } from "@/types/settings";
 import { emailToBranchName } from "@/github/githubClient";
 import { useTheme } from "./ThemeProvider";
@@ -394,7 +394,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
                 return t("repoStatus.pullDone", { count: result.updated });
               })}><GitPullRequest className="mr-2 h-4 w-4" />{t("repoStatus.pull")}</DropdownMenuItem>
               <DropdownMenuItem disabled={!repositoryTarget || !!repoActionBusy} onSelect={() => void runRepoAction("commit", async () => { await commitLocalChanges(repositoryTarget!, ""); return t("repoStatus.commitDone"); })}><GitCommit className="mr-2 h-4 w-4" />{t("repoStatus.commit")}</DropdownMenuItem>
-              <DropdownMenuItem disabled={!repositoryTarget || !currentToken || !!repoActionBusy} onSelect={() => void runRepoAction("push", async () => { const result = await pushLocalCommits({ ...repositoryTarget!, token: currentToken }); return t("repoStatus.pushDone", { count: result.files }); })}><UploadCloud className="mr-2 h-4 w-4" />{t("repoStatus.push")}</DropdownMenuItem>
+               <DropdownMenuItem disabled={!repositoryTarget || !currentToken || !!repoActionBusy} onSelect={() => void triggerCurrentRepositorySync()}><UploadCloud className="mr-2 h-4 w-4" />{t("repoStatus.push")}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}

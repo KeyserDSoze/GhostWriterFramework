@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.68",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Push uses conflict-safe sync",
+      "summary": "Explicit Push now checks remote divergence through the same review flow as Sync instead of failing with an unhelpful remote-changed message.",
+      "changes": [
+        "Push and Sync now use the same remote-head check and conflict review path.",
+        "When local and remote versions of the same file differ, the conflict dialog shows both sides and requires an explicit local or remote choice.",
+        "Push no longer silently treats the local copy as the winner."
+      ]
+    },
+    "it": {
+      "title": "Push con sincronizzazione sicura dai conflitti",
+      "summary": "Il Push esplicito ora controlla la divergenza remota usando lo stesso flusso di revisione del Sync, invece di fallire con un messaggio generico.",
+      "changes": [
+        "Push e Sync usano ora lo stesso controllo del remote e lo stesso percorso di revisione dei conflitti.",
+        "Quando le versioni locali e remote dello stesso file differiscono, il dialogo mostra entrambi i lati e richiede una scelta esplicita tra locale e remoto.",
+        "Il Push non considera più silenziosamente la copia locale come vincente."
+      ]
+    }
+  },
+  {
     "version": "0.76.67",
     "date": "2026-08-21",
     "en": {
