@@ -82,7 +82,7 @@ describe("AccountContinuity", () => {
     const envelope = JSON.parse(sessionStorage.getItem("narrarium-auth-session-v1")!);
     expect(envelope.state).toMatchObject({ accessToken: "session-token", provider: "google", providerAccountId: "google-sub" });
     expect(Object.keys(envelope).sort()).toEqual(["state", "version"]);
-    expect(Object.keys(envelope.state).sort()).toEqual(["accessToken", "accessTokenExpiry", "provider", "providerAccountId"]);
+    expect(Object.keys(envelope.state).sort()).toEqual(["accessToken", "accessTokenExpiry", "provider", "providerAccountId", "rememberMe"]);
     expect(JSON.stringify(envelope)).not.toContain("refreshToken");
   });
 
