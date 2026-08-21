@@ -24,7 +24,6 @@ import {
   listAllLocalFiles,
   listDirtyLocalFiles,
   listUnpushedLocalCommits,
-  removeLocalRepository,
   recordRepositoryDiagnostic,
   type RepositoryDiagnosticOperation,
   type RepositoryDiagnosticStage,
@@ -51,7 +50,7 @@ import {
   type LocalRepositoryRecovery,
   type RemoteTreeFile,
 } from "@/repository/localRepository";
-import { lookupRepositoryMaintenanceTarget, removeRepositoryWithBackupReceipt, RepositoryMaintenanceError } from "@/repository/repositoryMaintenance";
+import { forceRemoveRepositoryWithoutBackup, lookupRepositoryMaintenanceTarget, removeRepositoryWithBackupReceipt, RepositoryMaintenanceError } from "@/repository/repositoryMaintenance";
 import { reconcileRemoteMutation } from "@/repository/remoteMutationReconciliation";
 import { classifyRepositoryError, RepositoryError } from "@/repository/repositoryError";
 import { createTrackedGitHubClient } from "@/repository/githubRequest";
@@ -1224,9 +1223,8 @@ export async function forceRecloneLocalWorkingCopy(input: {
 }): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
   const expected = `FORCE RECLONE ${input.book.owner}/${input.book.repo}#${input.branch}`;
   if (input.confirmation !== expected) throw new RepositoryMaintenanceError("CONFIRMATION_REQUIRED");
-  const scope = operationScope({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity });
-  const repoId = `${input.accountIdentity}::${input.book.owner}/${input.book.repo}#${input.branch}`.toLowerCase();
-  await removeLocalRepository(repoId, scope);
+  operationScope({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity });
+  await forceRemoveRepositoryWithoutBackup({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity }, input.confirmation);
   return ensureLocalBookStructure(input);
 }
 

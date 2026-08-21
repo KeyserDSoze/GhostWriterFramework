@@ -482,4 +482,43 @@ export async function removeRepositoryWithBackupReceipt(target: RepositoryMainte
   return { recoveriesPreserved: journal.recoveriesPreserved, rewriteOperationsRemoved: journal.rewriteOperationsRemoved };
 }
 
+/** Prepare a destructive recovery journal without requiring a backup receipt.
+ * This is intentionally separate from the normal receipt-validated path.
+ */
+export async function forceRemoveRepositoryWithoutBackup(target: RepositoryMaintenanceTarget, confirmation: string): Promise<{ recoveriesPreserved: number; rewriteOperationsRemoved: number }> {
+  if (confirmation !== `FORCE RECLONE ${target.owner}/${target.repo}#${target.branch}`) throw new RepositoryMaintenanceError("CONFIRMATION_REQUIRED");
+  const scope = captureRepositoryOperationScope();
+  if (scope.accountIdentity !== target.accountIdentity) throw new RepositoryMaintenanceError("ACCOUNT_MISMATCH");
+  const repoId = scopedRepoId(target);
+  const existing = await existingRemovalJournal(repoId);
+  if (existing && (existing.accountIdentity !== target.accountIdentity || existing.bookId !== target.bookId || existing.owner !== target.owner || existing.repo !== target.repo || existing.branch !== target.branch)) throw new RepositoryMaintenanceError("TARGET_MISMATCH");
+  if (!existing) {
+    const rewrites = await listLocalRewriteOperationsForMaintenance(repoId, scope);
+    const rewriteRecords = await Promise.all(rewrites.map(async (operation) => ({ operationId: operation.operationId, hash: await sha256(stable(operation)), snapshot: stable(operation) })));
+    const db = await openPrimary();
+    const data = await new Promise<{ current: LocalRepositoryMeta | undefined; files: LocalRepositoryFile[]; commits: LocalCommit[]; recoveries: LocalRepositoryRecovery[]; migrations: MigrationJournalRow[] }>((resolve, reject) => {
+      const tx = db.transaction(["repositories", "files", "commits", "recoveries", "migrationJournals"], "readonly");
+      const requests = { current: tx.objectStore("repositories").get(repoId), files: tx.objectStore("files").index("repoId").getAll(repoId), commits: tx.objectStore("commits").index("repoId").getAll(repoId), recoveries: tx.objectStore("recoveries").index("repoId").getAll(repoId), migrations: tx.objectStore("migrationJournals").getAll() };
+      tx.oncomplete = () => resolve({ current: requests.current.result as LocalRepositoryMeta | undefined, files: requests.files.result as LocalRepositoryFile[], commits: requests.commits.result as LocalCommit[], recoveries: requests.recoveries.result as LocalRepositoryRecovery[], migrations: requests.migrations.result as MigrationJournalRow[] });
+      tx.onerror = () => reject(tx.error);
+    });
+    const current = data.current;
+        if (!current || current.id !== repoId || current.accountScope !== target.accountIdentity || current.bookId !== target.bookId || current.owner !== target.owner || current.repo !== target.repo || current.branch !== target.branch || current.accountScope !== scope.accountIdentity) {
+          db.close(); throw new RepositoryMaintenanceError(current ? "TARGET_MISMATCH" : "NOT_FOUND");
+        }
+        try { assertRepositoryOperationScopeCurrent(scope); } catch (error) { db.close(); throw error; }
+        const files = data.files;
+        const commits = data.commits;
+        const recoveries = data.recoveries.filter((recovery) => recovery.accountIdentity === target.accountIdentity && recovery.repoId === repoId && recovery.repository?.localInstanceId === current.localInstanceId);
+        const journalFailed = data.migrations.some((entry) => entry.newRepoId === repoId && entry.bookId === target.bookId && entry.immutableAccountIdentity === target.accountIdentity);
+        const primaryInput = { repository: current, lifecycle: lifecycle(current, journalFailed), files, commits, recoveries };
+        const primarySnapshot = primarySnapshotComponent(primaryInput);
+        const removalFence = (current.operationFence ?? 0) + 1;
+        const journal: RemovalJournal = { repoId, journalId: crypto.randomUUID(), accountIdentity: target.accountIdentity, bookId: target.bookId, owner: target.owner, repo: target.repo, branch: target.branch, localInstanceId: current.localInstanceId, snapshotDigest: await sha256(`${await sha256(primarySnapshot)}:${await rewriteSnapshotDigest(rewrites)}`), primaryDigest: await sha256(primarySnapshot), rewriteDigest: await rewriteSnapshotDigest(rewrites), rewriteSnapshot: rewriteSnapshotComponent(rewrites), rewriteCount: rewrites.length, rewriteRecords, receiptId: `force:${crypto.randomUUID()}`, observedFence: current.operationFence ?? 0, removalFence, recoveriesPreserved: recoveries.length, recoveryRecords: recoveryRecordsDigest(recoveries), rewriteOperationsRemoved: 0, primaryCounts: { files: files.length, commits: commits.length, recoveries: recoveries.length, rewrites: rewrites.length }, phase: "prepared", createdAt: new Date().toISOString() };
+    await new Promise<void>((resolve, reject) => { const tx = db.transaction(["repositories", "removalJournals", "maintenanceTombstones"], "readwrite"); tx.objectStore("repositories").put({ ...current, operationFence: removalFence, operationLease: undefined, updatedAt: new Date().toISOString() }); tx.objectStore("maintenanceTombstones").put({ repoId, journalId: journal.journalId, localInstanceId: current.localInstanceId, accountIdentity: target.accountIdentity, bookId: target.bookId, owner: target.owner, repo: target.repo, branch: target.branch, fence: removalFence, createdAt: journal.createdAt }); tx.objectStore("removalJournals").put(journal); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); });
+    db.close();
+  }
+  return removeRepositoryWithBackupReceipt(target, "");
+}
+
 export function maintenanceScope(target: RepositoryMaintenanceTarget): RepositoryOperationScope { const scope = captureRepositoryOperationScope(); if (scope.accountIdentity !== target.accountIdentity) throw new RepositoryOwnershipChangedError(); return scope; }

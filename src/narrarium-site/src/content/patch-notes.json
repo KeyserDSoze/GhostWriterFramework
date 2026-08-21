@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.75",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Journaled force re-clone cleanup",
+      "summary": "The destructive force re-clone path now uses the same resumable maintenance journal as normal local removal.",
+      "changes": [
+        "Force re-clone no longer bypasses rewrite-operation cleanup and removal journaling.",
+        "Exact account, book, owner, repository, branch, local instance, and fence validation is performed before cleanup.",
+        "Cleanup can resume from its journal phases after an interrupted browser operation before a fresh clone starts.",
+        "The remote GitHub repository remains untouched by the local force cleanup."
+      ]
+    },
+    "it": {
+      "title": "Cleanup force re-clone con journal",
+      "summary": "Il percorso distruttivo force re-clone usa ora lo stesso maintenance journal riprendibile della rimozione locale normale.",
+      "changes": [
+        "Force re-clone non aggira più il cleanup delle rewrite operation e il journal di rimozione.",
+        "Prima del cleanup vengono verificati account, libro, owner, repository, branch, local instance e fence esatti.",
+        "Dopo un'interruzione del browser il cleanup può riprendere dalle fasi registrate prima di avviare un clone nuovo.",
+        "Il repository GitHub remoto resta intatto durante il cleanup locale forzato."
+      ]
+    }
+  },
+  {
     "version": "0.76.74",
     "date": "2026-08-21",
     "en": {

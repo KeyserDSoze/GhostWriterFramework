@@ -381,7 +381,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
              </div>}
             <div className="grid gap-2 sm:grid-cols-2">
               <Button variant="outline" disabled={maintenanceNetworkDisabled} onClick={() => void recloneLocal()}>{busy === "reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.reclone")}</Button>
-              <Button variant="destructive" disabled={maintenanceNetworkDisabled || !removeConfirmation.startsWith("FORCE RECLONE ")} onClick={() => void forceReclone()}>{busy === "force-reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}Force re-clone</Button>
+              <Button variant="destructive" disabled={maintenanceNetworkDisabled || !branch || removeConfirmation !== `FORCE RECLONE ${book.owner}/${book.repo}#${branch}`} onClick={() => void forceReclone()}>{busy === "force-reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}Force re-clone</Button>
               <Button variant="destructive" disabled={disabled || !maintenance || (!maintenance.removalPending && !backupReceipt) || removeConfirmation !== `REMOVE ${book.owner}/${book.repo}`} onClick={() => void removeLocal()}>{busy === "remove-local" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}{maintenance?.removalPending ? t("repoStatus.resumeRemoval") : t("repoStatus.removePermanently")}</Button>
             </div>
             {maintenance && (maintenance.repository || maintenance.removalPending) && <div className="space-y-2 rounded-xl border border-destructive/30 p-3 text-xs">
