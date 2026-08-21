@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.77",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Complete offline application shell",
+      "summary": "Installed Narrarium clients now precache the complete versioned build so the shell and lazy features remain available offline.",
+      "changes": [
+        "The production build now generates a versioned manifest containing HTML entry points, JavaScript and CSS chunks, workers, and static assets.",
+        "The service worker precaches the complete manifest into a release-specific Narrarium cache.",
+        "Same-origin runtime caching is bounded to 64 entries and cleanup removes only obsolete Narrarium-owned caches.",
+        "Added real-browser coverage for service-worker installation and offline navigation."
+      ]
+    },
+    "it": {
+      "title": "Shell applicativa offline completa",
+      "summary": "I client Narrarium installati precaricano ora il build completo e versionato, mantenendo shell e funzionalità lazy disponibili offline.",
+      "changes": [
+        "Il build di produzione genera un manifest versionato con entry point HTML, chunk JavaScript e CSS, worker e asset statici.",
+        "Il service worker precarica l'intero manifest in una cache Narrarium specifica della release.",
+        "La runtime cache same-origin è limitata a 64 elementi e il cleanup rimuove solo cache obsolete appartenenti a Narrarium.",
+        "Aggiunta copertura real-browser per installazione del service worker e navigazione offline."
+      ]
+    }
+  },
+  {
     "version": "0.76.76",
     "date": "2026-08-21",
     "en": {

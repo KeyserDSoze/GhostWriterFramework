@@ -41,3 +41,39 @@ test("service-worker updates wire patch-note requests to the physical route inst
   assert.match(source, /browserLocation\.replace\(patchNotesPhysicalUrl\(baseUrl\)\)/);
   assert.doesNotMatch(source, /OPEN_PATCH_NOTES[\s\S]*location\.(?:replace|assign)\(import\.meta\.env\.BASE_URL\s*\|\|\s*["']\/["']\)/);
 });
+
+test("precache generation includes application entry points, chunks, styles, and workers", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "narrarium-precache-"));
+  try {
+    const scripts = path.join(root, "scripts");
+    const dist = path.join(root, "dist");
+    await mkdir(scripts);
+    await mkdir(path.join(dist, "assets"), { recursive: true });
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ version: "1.2.3" }));
+    await writeFile(path.join(dist, "index.html"), "index");
+    await writeFile(path.join(dist, "assets", "entry.js"), "entry");
+    await writeFile(path.join(dist, "assets", "style.css"), "style");
+    await writeFile(path.join(dist, "assets", "worker.js"), "worker");
+    const source = new URL("../scripts/generate-precache.mjs", import.meta.url);
+    const script = path.join(scripts, "generate-precache.mjs");
+    await writeFile(script, await readFile(source));
+
+    await run(script, root);
+
+    const manifest = await readFile(path.join(dist, "precache-manifest.js"), "utf8");
+    assert.match(manifest, /__NARRARIUM_RELEASE__="1\.2\.3"/);
+    for (const file of ["index.html", "assets/entry.js", "assets/style.css", "assets/worker.js"]) assert.match(manifest, new RegExp(file.replace(".", "\\.")));
+    assert.doesNotMatch(manifest, /precache-manifest\.js/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("service worker uses release caches, precaches the generated manifest, and preserves unrelated caches", async () => {
+  const source = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
+  assert.match(source, /importScripts\("\.\/precache-manifest\.js"\)/);
+  assert.match(source, /narrarium-precache-\$\{RELEASE\}/);
+  assert.match(source, /cache\.addAll\(\(self\.__NARRARIUM_PRECACHE__/);
+  assert.match(source, /key\.startsWith\(OWNED_CACHE_PREFIX\)/);
+  assert.match(source, /MAX_RUNTIME_ENTRIES = 64/);
+});
