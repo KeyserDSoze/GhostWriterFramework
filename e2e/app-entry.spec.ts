@@ -15,11 +15,10 @@ test("public documentation route opens from the production preview", async ({ pa
 
 test("installed application shell and lazy assets remain available offline", async ({ page, context }) => {
   await page.goto(".");
-  await page.evaluate(async () => {
-    await navigator.serviceWorker.ready;
-    if (!navigator.serviceWorker.controller) await new Promise<void>((resolve) => navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true }));
-  });
-  await expect.poll(() => page.evaluate(async () => (await caches.keys()).some((key) => key.startsWith("narrarium-precache-")))).toBe(true);
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+  await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller)).catch(() => false)).toBe(true);
+  await expect.poll(() => page.evaluate(async () => (await caches.keys()).some((key) => key.startsWith("narrarium-precache-"))).catch(() => false)).toBe(true);
+  await page.waitForLoadState("domcontentloaded");
   await context.setOffline(true);
   try {
     await page.goto("docs", { waitUntil: "domcontentloaded" });
