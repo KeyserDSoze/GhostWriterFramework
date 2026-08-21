@@ -74,6 +74,7 @@ export async function commitImmediateMutations(input: {
     message: input.message,
     mutations,
     signal: input.signal,
+    push: false,
   };
   const writesScript = mutations.some((mutation) => mutation.content !== undefined && /^scripts\/.*\.md$/.test(mutation.path));
   const result = writesScript

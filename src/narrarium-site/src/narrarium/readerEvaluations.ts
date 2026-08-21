@@ -370,7 +370,7 @@ export async function runReaderEvaluations(input: {
   ]);
   input.signal?.throwIfAborted();
   await assertReaderEvaluationTargetCurrent({ ...input, remoteHeadSha });
-  if (mutations.length) await commitAndPushTextFileMutation({ token: input.token, book: input.book, branch: input.branch, expectedRemoteHeadSha: remoteHeadSha, message: `Update reader evaluations: ${input.target.title}`, mutations, signal: input.signal });
+  if (mutations.length) await commitAndPushTextFileMutation({ token: input.token, book: input.book, branch: input.branch, expectedRemoteHeadSha: remoteHeadSha, message: `Update reader evaluations: ${input.target.title}`, mutations, signal: input.signal, push: false });
   for (const mutation of mutations) changedPaths.add(mutation.path);
   const completed = prepared.map((item) => item.record).filter((record) => record.status === "completed");
   const failed = prepared.map((item) => item.record).filter((record) => record.status !== "completed");

@@ -36,6 +36,7 @@ describe.each(["plot", "resume", "evaluation", "note", "reader", "structured fil
       message: "Update",
       mutations: [{ path: "target.md", content: "new", expectedCurrentHash: "source-hash" }],
       signal,
+      push: false,
     });
   });
 

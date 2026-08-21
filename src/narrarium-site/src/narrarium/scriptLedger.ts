@@ -75,6 +75,7 @@ export async function commitCanonicalScriptMutation(input: {
     message: input.message,
     mutations: planned.mutations,
     signal: input.signal,
+    push: false,
   });
   return { ...planned.result, ...committed };
 }

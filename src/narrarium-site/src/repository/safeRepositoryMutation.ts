@@ -145,9 +145,10 @@ async function mutateRemoteTextFiles(input: {
 }
 
 /**
- * Apply one optimistic multi-file text mutation and make it visible in Git.
- * Local repositories use one IndexedDB transaction followed by one safe push;
- * remote-only callers use one Git Trees commit.
+ * Apply one optimistic multi-file text mutation and record it locally.
+ * Local repositories accumulate commits in IndexedDB until an explicit push
+ * or sync. Remote-only callers still need one Git Trees commit because they
+ * have no local working copy in which to stage the mutation.
  */
 export async function commitAndPushTextFileMutation(input: {
   token: string;
@@ -157,6 +158,8 @@ export async function commitAndPushTextFileMutation(input: {
   message: string;
   mutations: RepositoryTextMutation[];
   signal?: AbortSignal;
+  /** Publish immediately only for the few callers that explicitly require it. */
+  push?: boolean;
 }): Promise<{ commitSha: string; mode: "local" | "remote" }> {
   const meter = new RepositoryByteMeter("mutation");
   for (const mutation of input.mutations) if (typeof mutation.content === "string") meter.add("text", utf8Bytes(mutation.content));
@@ -201,6 +204,7 @@ export async function commitAndPushTextFileMutation(input: {
     }
     throw error;
   }
+  if (input.push === false) return { commitSha: localCommit.id, mode: "local" };
   let pushed;
   let pushStarted = false;
   try {

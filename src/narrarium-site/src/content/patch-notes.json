@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.67",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Save locally, publish explicitly",
+      "summary": "Local repository saves now accumulate as unpublished commits instead of pushing immediately after every change.",
+      "changes": [
+        "Ghostwriter deletion and other local saves now update the working copy and create a local commit without publishing automatically.",
+        "Use Push or Sync from repository controls to send accumulated local commits online.",
+        "The existing explicit immediate-push API remains available for operations that opt into it."
+      ]
+    },
+    "it": {
+      "title": "Salvataggio locale, pubblicazione esplicita",
+      "summary": "I salvataggi sul repository locale ora accumulano commit non pubblicati invece di fare push dopo ogni modifica.",
+      "changes": [
+        "La cancellazione dei ghostwriter e gli altri salvataggi locali aggiornano la working copy e creano un commit locale senza pubblicarlo automaticamente.",
+        "Usa Push o Sync dai controlli del repository per mandare online i commit accumulati.",
+        "L'API esistente per il push immediato resta disponibile per le operazioni che la richiedono esplicitamente."
+      ]
+    }
+  },
+  {
     "version": "0.76.66",
     "date": "2026-08-21",
     "en": {
