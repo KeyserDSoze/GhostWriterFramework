@@ -9,6 +9,7 @@ import {
   migrateLegacyUpdateDestinationIntent,
   patchNotesPhysicalUrl,
 } from "@/pwaUpdateIntent";
+import { triggerCurrentSave } from "@/store/saveStore";
 
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -24,13 +25,15 @@ function reportWaitingWorker(worker: ServiceWorker, fallbackVersion: string) {
   useAppUpdateStore.getState().setAvailable(worker, workerVersion(worker, fallbackVersion));
 }
 
-export function activateAvailableUpdate(openPatchNotes: boolean) {
+export async function activateAvailableUpdate(openPatchNotes: boolean): Promise<boolean> {
   const { worker, version } = useAppUpdateStore.getState();
-  if (!worker) return;
+  if (!worker) return false;
+  if (!await triggerCurrentSave()) return false;
   const targetVersion = version ?? workerVersion(worker, APP_VERSION);
   if (openPatchNotes) createUpdateDestinationIntent(targetVersion);
   else clearUpdateDestinationIntentThrough(targetVersion);
   worker.postMessage({ type: "SKIP_WAITING" });
+  return true;
 }
 
 interface BrowserLocation {

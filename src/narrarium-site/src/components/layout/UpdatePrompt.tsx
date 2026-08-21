@@ -29,11 +29,11 @@ export function UpdatePrompt() {
           {version && <p className="font-mono text-xs text-primary">v{version}</p>}
         </div>
         <div className="relative flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
-          <Button variant="outline" onClick={() => activateAvailableUpdate(false)}>
+          <Button variant="outline" onClick={() => void activateAvailableUpdate(false)}>
             <RefreshCw className="mr-2 h-4 w-4" />
             {t("pwa.updateOnly")}
           </Button>
-          <Button onClick={() => activateAvailableUpdate(true)}>
+          <Button onClick={() => void activateAvailableUpdate(true)}>
             <Sparkles className="mr-2 h-4 w-4" />
             {t("pwa.updateAndViewChanges")}
           </Button>

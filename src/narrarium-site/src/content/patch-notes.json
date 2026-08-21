@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.73",
+    "date": "2026-08-21",
+    "en": {
+      "title": "Safe PWA updates with unsaved work",
+      "summary": "App updates now resolve dirty editor state before activating a new service worker.",
+      "changes": [
+        "Update activation saves the active editor state before sending SKIP_WAITING.",
+        "Cancelling or failing the save leaves the current app and update prompt usable without activating the new worker.",
+        "Successful update activation preserves the existing patch-notes navigation flow."
+      ]
+    },
+    "it": {
+      "title": "Aggiornamenti PWA sicuri con lavoro non salvato",
+      "summary": "Gli aggiornamenti dell'app risolvono ora lo stato sporco degli editor prima di attivare il nuovo service worker.",
+      "changes": [
+        "L'attivazione dell'aggiornamento salva lo stato dell'editor attivo prima di inviare SKIP_WAITING.",
+        "Se il salvataggio viene annullato o fallisce, l'app corrente e il prompt restano utilizzabili senza attivare il nuovo worker.",
+        "L'attivazione completata mantiene il flusso esistente di navigazione verso le patch note."
+      ]
+    }
+  },
+  {
     "version": "0.76.72",
     "date": "2026-08-21",
     "en": {

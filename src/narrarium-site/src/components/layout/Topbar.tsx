@@ -504,7 +504,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               {t("patchNotes.title")}
             </DropdownMenuItem>
             {updateWorker && (
-              <DropdownMenuItem className="font-semibold text-amber-700 focus:text-amber-800 dark:text-amber-300 dark:focus:text-amber-200" onSelect={() => activateAvailableUpdate(true)}>
+               <DropdownMenuItem className="font-semibold text-amber-700 focus:text-amber-800 dark:text-amber-300 dark:focus:text-amber-200" onSelect={() => void activateAvailableUpdate(true)}>
                 <CircleAlert className="mr-2 h-4 w-4" />
                 <span className="flex-1">{t("pwa.updateMenu")}</span>
                 {updateVersion && <span className="ml-2 font-mono text-[10px]">v{updateVersion}</span>}
