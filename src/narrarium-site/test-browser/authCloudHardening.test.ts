@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AccountInfo } from "@azure/msal-browser";
-import { findMicrosoftAccountIn } from "@/config/msal";
+import { findMicrosoftAccountIn, microsoftMsalInstance, MICROSOFT_REMEMBER_ME_KEY, persistentMsalInstance, sessionMsalInstance, setMicrosoftRememberMe } from "@/config/msal";
 import { ensureMicrosoftAppMarker, graphPath, verifyMicrosoftAppFolder } from "@/drive/microsoftAppFolder";
 import { useCostsStore } from "@/costs/costsStore";
 import { useClipboardStore } from "@/clipboard/clipboardStore";
@@ -15,6 +15,16 @@ function account(homeAccountId: string, email: string): AccountInfo {
 }
 
 describe("non-Copilot auth and cloud hardening", () => {
+  it("selects the MSAL cache from the Microsoft remember preference", () => {
+    localStorage.removeItem(MICROSOFT_REMEMBER_ME_KEY);
+    expect(microsoftMsalInstance(false)).toBe(sessionMsalInstance);
+    expect(microsoftMsalInstance(true)).toBe(persistentMsalInstance);
+    setMicrosoftRememberMe(true);
+    expect(microsoftMsalInstance()).toBe(persistentMsalInstance);
+    setMicrosoftRememberMe(false);
+    expect(microsoftMsalInstance()).toBe(sessionMsalInstance);
+  });
+
   it("never substitutes the active/sole Microsoft account for an expected immutable account", () => {
     const other = account("home-b", "b@example.com");
     expect(findMicrosoftAccountIn({ homeAccountId: "home-a", localAccountId: "local-home-a", email: "a@example.com" }, [other])).toBeNull();

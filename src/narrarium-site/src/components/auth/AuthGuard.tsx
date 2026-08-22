@@ -6,7 +6,7 @@ import { useMsal } from "@azure/msal-react";
 import { Loader2 } from "lucide-react";
 import { useAuthStore } from "@/store/authStore";
 import { useUiStore } from "@/store/uiStore";
-import { ensureMsalInitialized, findMicrosoftAccount, microsoftSilentRequest } from "@/config/msal";
+import { ensureMsalInitialized, findMicrosoftAccountIn, microsoftSilentRequest } from "@/config/msal";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 import { WanderingAuthGhost } from "@/components/auth/WanderingAuthGhost";
@@ -191,9 +191,9 @@ export function AuthGuard({ children }: AuthGuardProps) {
       const attempt = currentAttemptRef.current;
       if (!attempt) return;
       try {
-        await ensureMsalInitialized();
+        await ensureMsalInitialized(instance);
         if (!ownsAttempt(attempt)) return;
-        const account = user?.provider === "microsoft" ? findMicrosoftAccount(user) : null;
+        const account = user?.provider === "microsoft" ? findMicrosoftAccountIn(user, instance.getAllAccounts()) : null;
         if (!account?.homeAccountId?.trim() || !account.localAccountId?.trim()) {
           silentAttemptActiveRef.current = false;
           clearSilentAuthTimeout();

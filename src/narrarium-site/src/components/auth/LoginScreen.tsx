@@ -1,6 +1,5 @@
 import { useNavigate, useLocation } from "react-router-dom";
 import { useGoogleLogin } from "@react-oauth/google";
-import { useMsal } from "@azure/msal-react";
 import { useTranslation } from "react-i18next";
 import { BookOpen, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -11,7 +10,7 @@ import { clearLegacyAccountUpgrade, requireGoogleProviderAccountId } from "@/aut
 import { readAccountContinuity } from "@/auth/accountContinuity";
 import { useSettings } from "@/drive/useSettings";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
-import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftSilentRequest } from "@/config/msal";
+import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftMsalInstance, microsoftSilentRequest, setMicrosoftRememberMe } from "@/config/msal";
 import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { cloudDeletionReconnectState, registerCloudAccount, resumeCloudWrites } from "@/drive/cloudWriteBarrier";
@@ -24,7 +23,6 @@ export function LoginScreen() {
   const { setInteractiveAuth, clearInteractiveRecoveryAuth } = useAuthStore();
   const [rememberMe, setRememberMe] = useState(false);
   const { load } = useSettings();
-  const { instance } = useMsal();
   const navigate = useNavigate();
   const location = useLocation();
   const [loadingProvider, setLoadingProvider] = useState<"google" | "microsoft" | null>(null);
@@ -132,21 +130,26 @@ export function LoginScreen() {
     setLoadingProvider("microsoft");
     setError(null);
     try {
-      await ensureMsalInitialized();
-      const result = await instance.loginPopup({
+      // MSAL cache location is fixed when the provider is created. Persist the
+      // choice before login, then reload after success so the provider and
+      // silent-refresh hooks use the same cache instance.
+      setMicrosoftRememberMe(rememberMe);
+      const microsoftInstance = microsoftMsalInstance(rememberMe);
+      await ensureMsalInitialized(microsoftInstance);
+      const result = await microsoftInstance.loginPopup({
         scopes: MICROSOFT_SCOPES,
         prompt: "select_account",
       });
       if (!result.account?.homeAccountId?.trim() || !result.account.localAccountId?.trim()) {
         throw new Error("Microsoft did not provide immutable account identifiers.");
       }
-      instance.setActiveAccount(result.account);
+      microsoftInstance.setActiveAccount(result.account);
 
        let graphToken: string;
        let tokenExpiresOn = result.expiresOn;
        let silentAccountMismatch = false;
        try {
-         const silentResult = await instance.acquireTokenSilent(microsoftSilentRequest(result.account));
+          const silentResult = await microsoftInstance.acquireTokenSilent(microsoftSilentRequest(result.account));
          if (!silentResult.account
            || silentResult.account.homeAccountId !== result.account.homeAccountId
            || silentResult.account.localAccountId !== result.account.localAccountId) {
@@ -174,7 +177,6 @@ export function LoginScreen() {
       const name = profile.displayName ?? (email || t("login.microsoftUser"));
        const expiresAt = tokenExpiresOn?.getTime() ?? Date.now() + 3600_000;
       const expiresIn = Math.max(120, Math.round((expiresAt - Date.now()) / 1000));
-
       await finishLogin(
         graphToken,
         {
@@ -188,6 +190,7 @@ export function LoginScreen() {
         },
         expiresIn,
       );
+      window.location.reload();
     } catch (err) {
       setError(recoveryRequest ? t("auth.recoveryFailed") : err instanceof Error ? err.message : t("login.microsoftFailed"));
     } finally {

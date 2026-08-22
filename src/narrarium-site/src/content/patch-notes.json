@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.80",
+    "date": "2026-08-22",
+    "en": {
+      "title": "Complete provider-specific login persistence",
+      "summary": "Remember me now keeps Google and Microsoft login continuity isolated by provider while preserving session-only sign-in by default.",
+      "changes": [
+        "Microsoft selects sessionStorage or localStorage before MSAL login and keeps silent refresh on the matching cache.",
+        "Microsoft logout clears both MSAL caches and removes the persistent-login preference.",
+        "Google persistence remains independent, with account-scoped expiry and logout cleanup.",
+        "Added regression coverage for Microsoft cache selection and immutable account continuity."
+      ]
+    },
+    "it": {
+      "title": "Persistenza login isolata per provider",
+      "summary": "Ricordami mantiene ora la continuità di login Google e Microsoft isolata per provider, lasciando la sessione temporanea come comportamento predefinito.",
+      "changes": [
+        "Microsoft seleziona sessionStorage o localStorage prima del login MSAL e mantiene il silent refresh sulla cache corrispondente.",
+        "Il logout Microsoft elimina entrambe le cache MSAL e rimuove la preferenza di login persistente.",
+        "La persistenza Google resta indipendente, con scadenza e cleanup al logout per account.",
+        "Aggiunta copertura di regressione per la selezione della cache Microsoft e la continuità tramite identità immutabile."
+      ]
+    }
+  },
+  {
     "version": "0.76.79",
     "date": "2026-08-22",
     "en": {

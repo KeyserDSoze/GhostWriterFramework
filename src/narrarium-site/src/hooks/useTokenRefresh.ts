@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useGoogleLogin } from "@react-oauth/google";
 import { useMsal } from "@azure/msal-react";
 import { useAuthStore } from "@/store/authStore";
-import { findMicrosoftAccount, microsoftSilentRequest } from "@/config/msal";
+import { findMicrosoftAccountIn, microsoftSilentRequest } from "@/config/msal";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 import { accountIdentity, isAccountIdentityCurrent, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
@@ -77,7 +77,7 @@ export function useTokenRefresh() {
         catch { if (googleAttemptRef.current?.key === key) googleAttemptRef.current.active = false; }
         return;
       }
-      const account = findMicrosoftAccount(user);
+      const account = findMicrosoftAccountIn(user, instance.getAllAccounts());
       if (!account?.homeAccountId?.trim() || !account.localAccountId?.trim()) return; // keep current session; AuthGuard will prompt if truly needed
       instance.acquireTokenSilent({ ...microsoftSilentRequest(account), forceRefresh: true })
         .then((result) => {

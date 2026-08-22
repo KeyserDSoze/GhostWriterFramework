@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useGoogleLogin } from "@react-oauth/google";
+import { useMsal } from "@azure/msal-react";
 import { ArrowLeftRight, Check, Loader2, LogIn, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuthStore, type AuthProvider } from "@/store/authStore";
-import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftSilentRequest, msalInstance } from "@/config/msal";
+import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftSilentRequest } from "@/config/msal";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
 import {
@@ -41,6 +42,7 @@ const STEP_LABELS: Record<MigrationStepKind, string> = {
 };
 
 export function MigratePage() {
+  const { instance: msalInstance } = useMsal();
   const { t } = useTranslation();
   const { user, accessToken } = useAuthStore();
   const [target, setTarget] = useState<TargetAccount | null>(null);
@@ -100,7 +102,7 @@ export function MigratePage() {
     setConnecting(true);
     setError(null);
     try {
-      await ensureMsalInitialized();
+      await ensureMsalInitialized(msalInstance);
       const result = await msalInstance.loginPopup({ scopes: MICROSOFT_SCOPES, prompt: "select_account" });
       const account = result.account;
       if (!account?.homeAccountId?.trim() || !account.localAccountId?.trim()) throw new Error("Microsoft did not provide immutable account identifiers.");

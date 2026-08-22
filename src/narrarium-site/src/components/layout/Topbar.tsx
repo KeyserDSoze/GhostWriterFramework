@@ -1,5 +1,6 @@
 import { Activity, ArrowLeftRight, BookOpen, CircleAlert, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, History, Keyboard, Languages, LogOut, Menu, Moon, NotebookPen, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2, Wand2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useMsal } from "@azure/msal-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,7 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuthStore } from "@/store/authStore";
-import { ensureMsalInitialized, findMicrosoftAccount, msalInstance } from "@/config/msal";
+import { clearMicrosoftAuthCaches, ensureMsalInitialized, findMicrosoftAccountIn } from "@/config/msal";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -63,6 +64,7 @@ export function ownsCompletedSpeechController(current: SpeechController | null, 
 export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { t, i18n } = useTranslation();
   const { user, clearAuth } = useAuthStore();
+  const { instance } = useMsal();
   const { settings, patchSettings } = useSettingsStore();
   const { save, clearOfflineCache } = useSettings();
   const { theme, toggle: toggleTheme } = useTheme();
@@ -204,11 +206,13 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     navigate("/login");
     if (signedOutUser?.provider !== "microsoft") return;
     try {
-      await ensureMsalInitialized();
-      const account = findMicrosoftAccount(signedOutUser);
-      if (account) await msalInstance.logoutPopup({ account, postLogoutRedirectUri: window.location.href });
+      await ensureMsalInitialized(instance);
+      const account = findMicrosoftAccountIn(signedOutUser, instance.getAllAccounts());
+      if (account) await instance.logoutPopup({ account, postLogoutRedirectUri: window.location.href });
     } catch (error) {
       console.warn("Microsoft provider sign-out failed", error);
+    } finally {
+      await clearMicrosoftAuthCaches();
     }
   }
 
