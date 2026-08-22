@@ -11,7 +11,7 @@ import {
   sanitizeVolatileAuthStorage,
   saveAccountContinuity,
 } from "@/auth/accountContinuity";
-import { useAuthStore } from "@/store/authStore";
+import { PERSISTENT_AUTH_STORAGE_KEY, readPersistentAuth, useAuthStore } from "@/store/authStore";
 
 const google = { provider: "google" as const, providerAccountId: "google-sub", name: "Writer", email: "Writer@Example.com", picture: "" };
 const microsoft = { provider: "microsoft" as const, providerAccountId: "home-id", homeAccountId: "home-id", localAccountId: "local-id", name: "Writer", email: "writer@example.com", picture: "" };
@@ -20,7 +20,7 @@ beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   clearAccountContinuity();
-  useAuthStore.setState({ user: null, accessToken: null, accessTokenExpiry: null, interactiveRecoveryIdentity: null });
+  useAuthStore.setState({ user: null, accessToken: null, accessTokenExpiry: null, rememberMe: false, provider: null, providerAccountId: null, interactiveRecoveryIdentity: null });
 });
 
 describe("AccountContinuity", () => {
@@ -100,5 +100,30 @@ describe("AccountContinuity", () => {
     expect(continuityToUser(readAccountContinuity("microsoft")!)).toMatchObject({
       provider: "microsoft", providerAccountId: "home-id", homeAccountId: "home-id", localAccountId: "local-id",
     });
+  });
+
+  it("persists a bearer only after explicit remember-me opt-in and binds it to the immutable account", () => {
+    useAuthStore.getState().setInteractiveAuth("persistent-token", google, 3600, true);
+    expect(readPersistentAuth()).toMatchObject({ accessToken: "persistent-token", provider: "google", providerAccountId: "google-sub" });
+    expect(localStorage.getItem(PERSISTENT_AUTH_STORAGE_KEY)).not.toContain("refreshToken");
+    useAuthStore.getState().setInteractiveAuth("replacement-token", microsoft, 3600, true);
+    expect(readPersistentAuth()).toMatchObject({ accessToken: "replacement-token", provider: "microsoft", providerAccountId: "home-id" });
+    expect(localStorage.getItem(PERSISTENT_AUTH_STORAGE_KEY)).not.toContain("persistent-token");
+  });
+
+  it("keeps non-remembered auth session-scoped and removes persistent auth on logout", () => {
+    useAuthStore.getState().setInteractiveAuth("persistent-token", google, 3600, true);
+    useAuthStore.getState().setInteractiveAuth("session-only", google, 3600, false);
+    expect(localStorage.getItem(PERSISTENT_AUTH_STORAGE_KEY)).toBeNull();
+    expect(sessionStorage.getItem("narrarium-auth-session-v1")).toContain("session-only");
+    useAuthStore.getState().setInteractiveAuth("persistent-again", google, 3600, true);
+    useAuthStore.getState().clearAuth();
+    expect(localStorage.getItem(PERSISTENT_AUTH_STORAGE_KEY)).toBeNull();
+  });
+
+  it("rejects and removes expired persistent bearer records", () => {
+    localStorage.setItem(PERSISTENT_AUTH_STORAGE_KEY, JSON.stringify({ accessToken: "expired", accessTokenExpiry: Date.now() - 1, provider: "google", providerAccountId: "google-sub" }));
+    expect(readPersistentAuth()).toBeNull();
+    expect(localStorage.getItem(PERSISTENT_AUTH_STORAGE_KEY)).toBeNull();
   });
 });

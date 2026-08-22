@@ -11,6 +11,17 @@ Apri il sito e accedi con **Google** o **Microsoft**.
 
 La prima volta dovrai dare il consenso ai permessi su Drive (servono per salvare le tue impostazioni e le chat).
 
+### Ricordami su questo dispositivo
+
+L'opzione vale sia per Google sia per Microsoft:
+
+- Senza spunta, il token OAuth resta in `sessionStorage` e normalmente termina con la scheda del browser o la sessione PWA.
+- Con la spunta, Narrarium salva in `localStorage`, con ambito account, token, scadenza, provider e ID immutabile dell'account del provider. Una nuova scheda o un riavvio della PWA può così ripristinare la sessione finché il token è valido.
+- Narrarium non salva mai refresh token OAuth. I token persistenti scaduti vengono eliminati automaticamente.
+- Dopo la scadenza Google riceve un solo tentativo silenzioso `prompt=none`; se fallisce si torna alla login interattiva senza retry o loop di popup.
+- Microsoft usa l'acquisizione silenziosa supportata finché la cache account MSAL è disponibile; altrimenti torna alla login.
+- Il logout elimina token persistente e continuità dell'account. Non attivare questa opzione su dispositivi condivisi o non affidabili.
+
 ## 2. Crea un token GitHub (PAT)
 
 Il libro vive su GitHub, quindi serve un token con permesso di scrittura sui repository.

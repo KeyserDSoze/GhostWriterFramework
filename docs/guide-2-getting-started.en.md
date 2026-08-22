@@ -11,6 +11,17 @@ Open the site and sign in with **Google** or **Microsoft**.
 
 The first time you will be asked to grant Drive permissions (needed to save your settings and chats).
 
+### Remember me on this device
+
+The option applies to both Google and Microsoft:
+
+- When unchecked, the OAuth access token stays in `sessionStorage` and normally ends with the browser tab or PWA session.
+- When checked, Narrarium stores the access token, expiry, provider, and immutable provider account ID in account-scoped `localStorage`, so a new tab or PWA restart can restore the session while the token is still valid.
+- Narrarium never stores an OAuth refresh token. Expired persistent tokens are deleted automatically.
+- Google receives one silent `prompt=none` recovery attempt after expiry; failure returns to interactive sign-in without retry or popup loops.
+- Microsoft uses its supported silent acquisition while its MSAL account cache is available; otherwise it returns to sign-in.
+- Sign out removes the persistent token and remembered account continuity. Do not enable this option on a shared or untrusted device.
+
 ## 2. Create a GitHub token (PAT)
 
 The book lives on GitHub, so you need a token with write access to repositories.

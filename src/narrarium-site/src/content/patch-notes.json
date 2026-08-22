@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.79",
+    "date": "2026-08-22",
+    "en": {
+      "title": "Documented OAuth persistence policy",
+      "summary": "Narrarium now documents and tests its opt-in account-scoped OAuth persistence model across tabs and PWA restarts.",
+      "changes": [
+        "The getting-started guide explains session-only and Remember me behavior for Google and Microsoft.",
+        "A security reference documents XSS and shared-device risks, immutable account isolation, expiry, logout, revocation, and provider differences.",
+        "Regression tests cover explicit opt-in, provider/account replacement, session-only fallback, logout cleanup, and expired-token removal.",
+        "Narrarium remains a static client and never stores OAuth refresh tokens."
+      ]
+    },
+    "it": {
+      "title": "Policy di persistenza OAuth documentata",
+      "summary": "Narrarium documenta e verifica ora il modello OAuth persistente facoltativo e isolato per account tra schede e riavvii PWA.",
+      "changes": [
+        "La guida Primi passi spiega sessione temporanea e Ricordami per Google e Microsoft.",
+        "Un riferimento di sicurezza documenta rischi XSS e dispositivi condivisi, isolamento tramite identità immutabile, scadenza, logout, revoca e differenze tra provider.",
+        "I test coprono opt-in esplicito, sostituzione provider/account, fallback session-only, cleanup al logout e rimozione dei token scaduti.",
+        "Narrarium resta un client statico e non salva mai refresh token OAuth."
+      ]
+    }
+  },
+  {
     "version": "0.76.78",
     "date": "2026-08-21",
     "en": {

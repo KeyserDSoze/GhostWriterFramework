@@ -5,7 +5,7 @@ import { clearAccountContinuity, continuityToUser, migrateLegacyAuthStorage, rea
 import { clearTokenHealth } from "../repository/tokenHealth.ts";
 
 const AUTH_STORAGE_KEY = VOLATILE_AUTH_STORAGE_KEY;
-const PERSISTENT_AUTH_STORAGE_KEY = "narrarium-auth-persistent-v1";
+export const PERSISTENT_AUTH_STORAGE_KEY = "narrarium-auth-persistent-v1";
 
 interface PersistentAuthRecord {
   accessToken: string;
@@ -14,7 +14,7 @@ interface PersistentAuthRecord {
   providerAccountId: string;
 }
 
-function readPersistentAuth(): PersistentAuthRecord | null {
+export function readPersistentAuth(): PersistentAuthRecord | null {
   try {
     const raw = localStorage.getItem(PERSISTENT_AUTH_STORAGE_KEY);
     if (!raw) return null;
