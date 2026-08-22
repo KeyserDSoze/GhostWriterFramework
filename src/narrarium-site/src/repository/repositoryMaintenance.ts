@@ -179,7 +179,7 @@ export async function lookupRepositoryMaintenanceTarget(target: RepositoryMainte
   const exactId = scopedRepoId(target);
   if (target.repoId && target.repoId !== exactId) throw new RepositoryMaintenanceError("TARGET_MISMATCH");
   const db = await openPrimary();
-    const stores = ["repositories", "files", "commits", "logs", "repositoryDiagnostics", "recoveries", "migrationJournals", "removalJournals", "maintenanceTombstones", "maintenanceCompletions"].filter((name) => db.objectStoreNames.contains(name));
+    const stores = ["repositories", "files", "commits", "logs", "repositoryDiagnostics", "recoveries", "migrationJournals", "removalJournals", "maintenanceTombstones", "maintenanceCompletions", "mutationLeases"].filter((name) => db.objectStoreNames.contains(name));
   const result = await new Promise<Omit<RepositoryMaintenanceSnapshot, "diagnostics" | "rewriteOperations" | "rewriteOperationCount" | "hasUserWork" | "digest">>((resolve, reject) => {
     const tx = db.transaction(stores, "readonly");
     const repositories = tx.objectStore("repositories");
@@ -345,7 +345,7 @@ async function prepareRemoval(target: RepositoryMaintenanceTarget, receiptId: st
   const scope = captureRepositoryOperationScope();
   const db = await openPrimary();
   const journal = await new Promise<RemovalJournal>((resolve, reject) => {
-    const stores = ["repositories", "files", "commits", "recoveries", "logs", "repositoryDiagnostics", "migrationJournals", "maintenanceFences", "removalJournals", "maintenanceTombstones", "consumedBackupReceipts"];
+    const stores = ["repositories", "files", "commits", "recoveries", "logs", "repositoryDiagnostics", "migrationJournals", "maintenanceFences", "removalJournals", "maintenanceTombstones", "consumedBackupReceipts", "mutationLeases"];
     const tx = db.transaction(stores, "readwrite");
     const repositories = tx.objectStore("repositories");
     const requests = { repository: repositories.get(receipt.repoId), files: tx.objectStore("files").index("repoId").getAll(receipt.repoId), commits: tx.objectStore("commits").index("repoId").getAll(receipt.repoId), recoveries: tx.objectStore("recoveries").index("repoId").getAll(receipt.repoId), logs: tx.objectStore("logs").index("repoId").getAll(receipt.repoId), migrations: tx.objectStore("migrationJournals").getAll(), consumed: tx.objectStore("consumedBackupReceipts").get(receipt.receiptId), tombstone: tx.objectStore("maintenanceTombstones").get(receipt.repoId) };

@@ -19,7 +19,7 @@ import { useAuthStore } from "@/store/authStore";
 import { assertRepositoryOperationScopeCurrent, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 const DB_NAME = "narrarium-local-repositories";
-const DB_VERSION = 13;
+const DB_VERSION = 14;
 
 export type LocalFileStatus = "clean" | "modified" | "new" | "deleted";
 export type LocalFileKind = "text" | "binary";
@@ -46,7 +46,18 @@ export interface RepositoryLifecycleLease {
 const REPOSITORY_LEASE_MS = 30_000;
 export const MAX_RECOVERY_SNAPSHOTS_PER_REPOSITORY = 20;
 export const MAX_RECOVERY_SNAPSHOT_BYTES_PER_REPOSITORY = 64 * 1024 * 1024;
-const repositoryInstanceNonce = crypto.randomUUID();
+const repositoryInstanceNonce: string = crypto.randomUUID();
+
+export interface RepositoryMutationLease {
+  repoId: string;
+  ownerInstanceNonce: string;
+  acquiredAt: string;
+  heartbeatAt: string;
+  expiresAt: string;
+  fence: number;
+}
+
+const REPOSITORY_MUTATION_LEASE_MS = 15_000;
 
 export interface LocalRepositoryMeta {
   id: string;
@@ -375,6 +386,7 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains("consumedBackupReceipts")) db.createObjectStore("consumedBackupReceipts", { keyPath: "receiptId" });
       if (!db.objectStoreNames.contains("maintenanceTombstones")) db.createObjectStore("maintenanceTombstones", { keyPath: "repoId" });
       if (!db.objectStoreNames.contains("maintenanceCompletions")) db.createObjectStore("maintenanceCompletions", { keyPath: "repoId" });
+      if (!db.objectStoreNames.contains("mutationLeases")) db.createObjectStore("mutationLeases", { keyPath: "repoId" });
       if (event.oldVersion < 9 && db.objectStoreNames.contains("repositories")) {
         const cursor = request.transaction!.objectStore("repositories").openCursor();
         cursor.onsuccess = () => {
@@ -399,6 +411,76 @@ function openDb(): Promise<IDBDatabase> {
     throw error;
   });
   return dbPromise;
+}
+
+function mutationLeaseTransaction<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore, tx: IDBTransaction) => IDBRequest<T> | void): Promise<T | undefined> {
+  return openDb().then((db) => new Promise<T | undefined>((resolve, reject) => {
+    const tx = db.transaction("mutationLeases", mode);
+    const store = tx.objectStore("mutationLeases");
+    let result: T | undefined;
+    let failure: unknown;
+    try {
+      const request = run(store, tx);
+      if (request) request.addEventListener("success", () => { result = request.result; });
+      if (request) request.addEventListener("error", () => { failure = request.error; tx.abort(); });
+    } catch (error) { failure = error; tx.abort(); }
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = () => reject(failure ?? tx.error);
+    tx.onabort = () => reject(failure ?? tx.error ?? new Error("Repository mutation lease transaction aborted."));
+  }));
+}
+
+export async function acquireRepositoryMutationLease(repoId: string, ownerInstanceNonce = repositoryInstanceNonce): Promise<RepositoryMutationLease> {
+  for (;;) {
+    const now = Date.now();
+    let acquired: RepositoryMutationLease | undefined;
+    await mutationLeaseTransaction<RepositoryMutationLease>("readwrite", (store) => {
+      const request = store.get(repoId);
+      request.onsuccess = () => {
+        const current = request.result as RepositoryMutationLease | undefined;
+        if (current && Date.parse(current.expiresAt) > now && current.ownerInstanceNonce !== ownerInstanceNonce) return;
+        const next: RepositoryMutationLease = {
+          repoId,
+          ownerInstanceNonce,
+          acquiredAt: new Date(now).toISOString(),
+          heartbeatAt: new Date(now).toISOString(),
+          expiresAt: new Date(now + REPOSITORY_MUTATION_LEASE_MS).toISOString(),
+          fence: (current?.fence ?? 0) + 1,
+        };
+        acquired = next;
+        store.put(next);
+      };
+      return request;
+    }).catch(() => undefined);
+    if (acquired) return acquired;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+export async function heartbeatRepositoryMutationLease(lease: RepositoryMutationLease): Promise<void> {
+  const now = Date.now();
+  await mutationLeaseTransaction("readwrite", (store) => {
+    const request = store.get(lease.repoId);
+    request.onsuccess = () => {
+      const current = request.result as RepositoryMutationLease | undefined;
+      if (!current || current.fence !== lease.fence || current.ownerInstanceNonce !== lease.ownerInstanceNonce) return;
+      store.put({ ...current, heartbeatAt: new Date(now).toISOString(), expiresAt: new Date(now + REPOSITORY_MUTATION_LEASE_MS).toISOString() });
+    };
+    return request;
+  });
+}
+
+export async function releaseRepositoryMutationLease(lease: RepositoryMutationLease): Promise<void> {
+  await mutationLeaseTransaction("readwrite", (store) => {
+    const request = store.get(lease.repoId);
+    request.onsuccess = () => {
+      const current = request.result as RepositoryMutationLease | undefined;
+      if (current?.fence === lease.fence && current.ownerInstanceNonce === lease.ownerInstanceNonce) {
+        store.put({ ...current, expiresAt: new Date(0).toISOString() });
+      }
+    };
+    return request;
+  });
 }
 
 const maintenanceAbortErrors = new WeakMap<IDBTransaction, Error>();

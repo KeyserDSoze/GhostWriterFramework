@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.81",
+    "date": "2026-08-22",
+    "en": {
+      "title": "Fence repository mutations across tabs",
+      "summary": "Repository mutations now use a durable IndexedDB lease when Web Locks are unavailable, preventing concurrent tabs from interleaving multi-step work.",
+      "changes": [
+        "Push, pull, sync, maintenance, re-clone and overwrite operations acquire a repository-scoped lease with heartbeat and expiry.",
+        "Each lease advances a monotonic fence so stale owners cannot release a newer owner’s lease.",
+        "Lease rows are cleaned with repository maintenance while the fence remains durable for future ownership changes.",
+        "Added regression coverage for cross-context contention, stale release rejection, and repository mutation compatibility."
+      ]
+    },
+    "it": {
+      "title": "Mutazioni repository protette tra schede",
+      "summary": "Le mutazioni repository usano ora un lease durevole IndexedDB quando Web Locks non è disponibile, impedendo l'interleaving del lavoro tra schede concorrenti.",
+      "changes": [
+        "Le operazioni di push, pull, sync, manutenzione, re-clone e overwrite acquisiscono un lease per repository con heartbeat e scadenza.",
+        "Ogni lease incrementa un fence monotono così i proprietari stantii non possono rilasciare il lease di un proprietario più recente.",
+        "Le righe dei lease vengono eliminate insieme alla manutenzione del repository, mentre il fence resta durevole per i cambi di ownership futuri.",
+        "Aggiunta copertura di regressione per contesa tra contesti, rifiuto del rilascio stantio e compatibilità delle mutazioni repository."
+      ]
+    }
+  },
+  {
     "version": "0.76.80",
     "date": "2026-08-22",
     "en": {

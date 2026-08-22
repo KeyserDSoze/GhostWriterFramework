@@ -33,6 +33,9 @@ import {
   markLocalRepositoryCloneComplete,
   markLocalRepositoryRepairRequired,
   heartbeatRepositoryLifecycleLease,
+  acquireRepositoryMutationLease,
+  heartbeatRepositoryMutationLease,
+  releaseRepositoryMutationLease,
   markLocalCommitsPushed,
   putCleanLocalFileScoped,
   releaseLocalRepositoryRepair,
@@ -198,12 +201,20 @@ async function withRepositoryMutationLease<T>(repoId: string, run: () => Promise
   const queued = previous.then(() => current);
   repositoryMutationQueues.set(repoId, queued);
   await previous;
+  let durableLease: Awaited<ReturnType<typeof acquireRepositoryMutationLease>> | undefined;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
   try {
+    // Some pure service tests intentionally omit IndexedDB; Web Locks or the
+    // existing in-tab queue remain the available serialization boundary there.
+    if (typeof indexedDB !== "undefined") durableLease = await acquireRepositoryMutationLease(repoId);
+    heartbeat = setInterval(() => { void heartbeatRepositoryMutationLease(durableLease!); }, 5_000);
     if (typeof navigator !== "undefined" && navigator.locks) {
       return await navigator.locks.request(`narrarium-repository-${repoId}`, { mode: "exclusive" }, run);
     }
     return await run();
   } finally {
+    if (heartbeat !== undefined) clearInterval(heartbeat);
+    if (durableLease) await releaseRepositoryMutationLease(durableLease);
     release();
     if (repositoryMutationQueues.get(repoId) === queued) repositoryMutationQueues.delete(repoId);
   }
