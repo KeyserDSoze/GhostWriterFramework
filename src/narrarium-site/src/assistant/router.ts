@@ -58,7 +58,7 @@ function budgetForcedToolMessages(messages: LlmMessage[], candidate: TaskCandida
   return budgeted;
 }
 
-const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(["default", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit"]);
+const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(["default", "editor-actions", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit"]);
 
 function isChatTask(task: RoutingTaskKind): task is ChatCapability {
   return CHAT_CAPABILITIES_SET.has(task);
@@ -188,17 +188,18 @@ function dedupe(candidates: TaskCandidate[]): TaskCandidate[] {
 
 /** Router-configured targets (primary then fallbacks) for a task, mapped to candidates. */
 function routerCandidates(settings: AppSettings, task: RoutingTaskKind): TaskCandidate[] {
-  const route = settings.taskRouting?.[task];
+  const inheritedDefault = task === "editor-actions" && !settings.taskRouting?.[task];
+  const route = settings.taskRouting?.[task] ?? (inheritedDefault ? settings.taskRouting?.default : undefined);
   if (!route) return [];
   const targets: RoutingTarget[] = [...(route.primary ? [route.primary] : []), ...(route.fallbacks ?? [])];
   const mapped = targets.map((target) => isChatTask(task)
-    ? chatCandidateFromTarget(settings, target, task)
+    ? chatCandidateFromTarget(settings, target, inheritedDefault ? "default" : task)
     : mediaCandidateFromTarget(settings, target, task));
   return mapped.filter((c): c is TaskCandidate => Boolean(c));
 }
 
 function hasConfiguredRoute(settings: AppSettings, task: RoutingTaskKind): boolean {
-  const route = settings.taskRouting?.[task];
+  const route = settings.taskRouting?.[task] ?? (task === "editor-actions" ? settings.taskRouting?.default : undefined);
   return Boolean(route?.primary || route?.fallbacks?.length);
 }
 

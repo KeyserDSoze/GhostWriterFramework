@@ -119,7 +119,22 @@ export async function improveProse(
     { role: "system", content: `You are a prose editor. Preserve facts, names, and canon. Write in ${LANG(src)}.` },
     { role: "user", content: `${currentRequest(`${scope} Return the improved text.`)}\n\n${untrustedData("repository_content", [style, story, `FULL PARAGRAPH:\n${fullBody}`, `TEXT TO IMPROVE:\n${target}`].filter(Boolean).join("\n\n"))}` },
   ];
-  return (await completeTextRouted(src.settings, messages, "default", { accountScope: src.accountScope, label: "pipeline:improve-prose" })).trim();
+  return (await completeTextRouted(src.settings, messages, "editor-actions", { accountScope: src.accountScope, label: "pipeline:improve-prose" })).trim();
+}
+
+export async function regenerateImprovedProse(
+  src: PipelineSource,
+  fullBody: string,
+  originalText: string,
+  previousProposal: string,
+  ghostwriterSlug?: string,
+): Promise<string> {
+  const { style, story } = await buildContext(src, ghostwriterSlug);
+  const messages: LlmMessage[] = [
+    { role: "system", content: `You are a prose editor. This passage was already revised once, but the previous proposal was rejected. Produce a materially different improvement while preserving facts, names, canon, and the requested ghostwriter. Write in ${LANG(src)} and return only the replacement text.` },
+    { role: "user", content: `${currentRequest("Revise the target again. Do not repeat the rejected proposal. Return only the new replacement text.")}\n\n${untrustedData("repository_content", [style, story, `FULL PARAGRAPH:\n${fullBody}`, `ORIGINAL TARGET:\n${originalText}`, `REJECTED PREVIOUS PROPOSAL:\n${previousProposal}`].filter(Boolean).join("\n\n"))}` },
+  ];
+  return (await completeTextRouted(src.settings, messages, "editor-actions", { accountScope: src.accountScope, label: "pipeline:regenerate-improved-prose" })).trim();
 }
 
 export interface MergeDraftFinalResult {

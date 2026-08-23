@@ -54,6 +54,15 @@ describe("task routing settings", () => {
     expect(resolveEffectiveTaskCandidates({ ...base, fallbackDisclosure: { ...base.fallbackDisclosure, sameBoundaryOnly: true } }, "default").map((candidate) => candidate.integration?.id)).toEqual(["writing"]);
   });
 
+  it("uses the explicit editor route and falls back to the default route for existing settings", () => {
+    const primary = integration("primary", [{ id: "p", name: "primary", capabilities: ["default"] }]);
+    const fallback = integration("fallback", [{ id: "f", name: "fallback", capabilities: ["default"] }]);
+    const defaultRoute = { primary: { integrationId: "primary", model: "primary" }, fallbacks: [{ integrationId: "fallback", model: "fallback" }] };
+    const base = settings([primary, fallback], { taskRouting: { default: defaultRoute } });
+    expect(resolveTaskCandidates(base, "editor-actions").map((candidate) => candidate.integration?.id)).toEqual(["primary", "fallback"]);
+    expect(resolveTaskCandidates({ ...base, taskRouting: { ...base.taskRouting, "editor-actions": { primary: { integrationId: "fallback", model: "fallback" }, fallbacks: [] } } }, "editor-actions").map((candidate) => candidate.integration?.id)).toEqual(["fallback"]);
+  });
+
   it("drops stale cloud targets using model membership and media compatibility", () => {
     const ai = { ...integration("ai", [{ id: "chat", name: "chat", capabilities: ["default"] }]), modelTextToSpeech: "voice" };
     const migrated = migrateSettings({

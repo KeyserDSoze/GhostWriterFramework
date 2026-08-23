@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.83",
+    "date": "2026-08-23",
+    "en": {
+      "title": "Interactive editor improvements",
+      "summary": "Editor improvement actions now have dedicated AI routing and an interactive change review with selective acceptance and regeneration.",
+      "changes": [
+        "Added an Editor actions router task with its own primary and ordered fallback chain; existing Default chat routes remain the migration fallback.",
+        "Improvement previews are split into independent change blocks that can keep the original text or accept the proposal.",
+        "Apply all accepts the complete proposal, while Apply requires every change block to be explicitly decided.",
+        "Selected change blocks can be regenerated together using the full paragraph, ghostwriter, story context, original text, and rejected previous proposal."
+      ]
+    },
+    "it": {
+      "title": "Miglioramenti editor interattivi",
+      "summary": "Le azioni di miglioramento dell'editor hanno ora un routing AI dedicato e una revisione interattiva con accettazione e rigenerazione selettive.",
+      "changes": [
+        "Aggiunto il task router Azioni editor con catena primaria e fallback ordinati; le route Chat predefinito esistenti restano il fallback di migrazione.",
+        "Le anteprime di miglioramento sono divise in blocchi indipendenti che possono mantenere l'originale o accettare la proposta.",
+        "Applica tutto accetta l'intera proposta, mentre Applica richiede una decisione esplicita per ogni blocco.",
+        "I blocchi selezionati possono essere rigenerati insieme usando paragrafo completo, ghostwriter, contesto narrativo, testo originale e proposta precedente rifiutata."
+      ]
+    }
+  },
+  {
     "version": "0.76.82",
     "date": "2026-08-22",
     "en": {

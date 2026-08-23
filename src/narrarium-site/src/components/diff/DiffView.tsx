@@ -9,6 +9,13 @@ export interface DiffRow {
   text: string;
 }
 
+export interface DiffChangeChunk {
+  id: string;
+  oldStart: number;
+  oldText: string;
+  newText: string;
+}
+
 const MAX_DIFF_LINES = 4000;
 
 /**
@@ -46,6 +53,26 @@ export function computeLineDiff(previous: string, next: string): DiffRow[] {
 
   for (let k = reversed.length - 1; k >= 0; k--) rows.push(reversed[k]);
   return rows;
+}
+
+/** Group adjacent +/- rows so callers can accept or reject complete edits. */
+export function computeDiffChangeChunks(previous: string, next: string): DiffChangeChunk[] {
+  const rows = computeLineDiff(previous, next);
+  const chunks: DiffChangeChunk[] = [];
+  let pending: DiffRow[] = [];
+  const flush = () => {
+    if (!pending.length) return;
+    const removed = pending.filter((row) => row.type === "remove");
+    const added = pending.filter((row) => row.type === "add");
+    chunks.push({ id: `change-${chunks.length}`, oldStart: (removed[0]?.oldNumber ?? added[0]?.oldNumber ?? 1) - 1, oldText: removed.map((row) => row.text).join("\n"), newText: added.map((row) => row.text).join("\n") });
+    pending = [];
+  };
+  for (const row of rows) {
+    if (row.type === "add" || row.type === "remove") pending.push(row);
+    else flush();
+  }
+  flush();
+  return chunks;
 }
 
 function buildLcsTable(oldLines: string[], newLines: string[]): number[][] {

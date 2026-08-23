@@ -433,6 +433,7 @@ const it = {
     removeTargetConfirm: "Rimuovere questa destinazione routing?",
     task: {
       default: "Chat (predefinito)",
+      "editor-actions": "Azioni editor",
       copilot: "Copilot",
       "simple-tasks": "Task semplici",
       review: "Revisione",
@@ -1464,10 +1465,15 @@ const it = {
     ghostwriter: "Ghostwriter",
     defaultStyle: "Ghostwriter ereditato",
     regenerate: "Rigenera",
+    regenerateAll: "Rigenera tutto",
+    regenerateSelection: "Rigenera selezione",
     generate: "Genera",
     generateHint: "Premi Genera per creare l'anteprima. Puoi scegliere un ghostwriter prima di generare.",
     generating: "Generazione in corso…",
     apply: "Applica",
+    applyAll: "Applica tutto",
+    original: "Originale",
+    proposed: "Proposta",
     created: "Creato {{path}}",
     failed: "Operazione non riuscita"
   },
