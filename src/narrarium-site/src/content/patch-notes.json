@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.82",
+    "date": "2026-08-22",
+    "en": {
+      "title": "Make AI request history dismissible",
+      "summary": "The AI request history dialog now includes its standard close control so it can always be dismissed after reviewing a request.",
+      "changes": [
+        "Added the visible dialog close button to the AI Requests panel.",
+        "Backdrop and Escape dismissal continue to update the shared UI state.",
+        "The request history remains metadata-only and does not expose stored prompt content."
+      ]
+    },
+    "it": {
+      "title": "Modale richieste AI richiudibile",
+      "summary": "La modale della cronologia richieste AI mostra ora il controllo standard di chiusura e può sempre essere chiusa dopo aver controllato una richiesta.",
+      "changes": [
+        "Aggiunto il pulsante visibile di chiusura alla modale Richieste AI.",
+        "La chiusura tramite backdrop o tasto Escape continua ad aggiornare lo stato UI condiviso.",
+        "La cronologia resta composta solo da metadati e non espone il contenuto dei prompt salvati."
+      ]
+    }
+  },
+  {
     "version": "0.76.81",
     "date": "2026-08-22",
     "en": {

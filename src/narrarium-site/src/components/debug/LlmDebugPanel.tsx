@@ -33,7 +33,7 @@ export function LlmDebugPanel() {
   return (
     <>
       <Dialog open={debugOpen} onOpenChange={(next) => { setConfirmClear(false); setDebugOpen(next); }}>
-        <DialogContent hideCloseButton className="left-1/2 top-1/2 flex h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 flex-col p-0 sm:w-[920px]">
+        <DialogContent className="left-1/2 top-1/2 flex h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 flex-col p-0 sm:w-[920px]">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <div>
               <p className="font-semibold">{t("debug.title")}</p>
