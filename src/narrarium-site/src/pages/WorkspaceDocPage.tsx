@@ -325,7 +325,6 @@ export function WorkspaceDocPage() {
   const chapter = structure?.chapters.find((entry) => entry.slug === chapterId);
   const paragraph = chapter?.paragraphs.find((entry) => entry.number === paragraphNum);
   const token = book ? resolveBookToken(book, settings) : "";
-
   const [entries, setEntries] = useState<MetaEntry[]>([]);
   const [body, setBody] = useState("");
   const [sha, setSha] = useState("");
@@ -351,12 +350,17 @@ export function WorkspaceDocPage() {
   const [scriptGenLoading, setScriptGenLoading] = useState(false);
   const [paragraphEvaluations, setParagraphEvaluations] = useState<ParagraphEvaluationView[]>([]);
   const [loadingParagraphEvaluations, setLoadingParagraphEvaluations] = useState(false);
+  const explicitGhostwriter = (entries.find((e) => e.key === "ghostwriter")?.value as string) || "";
+  const effectiveGhostwriter = explicitGhostwriter || paragraph?.ghostwriter || chapter?.ghostwriter || structure?.ghostwriter || "";
+  const effectiveGhostwriterLabel = structure?.ghostwriters.find((entry) => entry.slug === effectiveGhostwriter)?.name || effectiveGhostwriter;
 
   const proseAssist = useProseAssist({
     textareaRef: bodyRef,
     getBody: () => body,
     setBody,
-    ghostwriter: (entries.find((e) => e.key === "ghostwriter")?.value as string) || "",
+    ghostwriter: effectiveGhostwriter,
+    ghostwriterLabel: effectiveGhostwriterLabel,
+    ghostwriterInherited: !explicitGhostwriter,
     buildSource: () => (book && structure && chapter && token ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: accountIdentity(useAuthStore.getState().user) } : null),
   });
   useRegisterProseEditor(bodyRef, {

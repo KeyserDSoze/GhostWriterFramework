@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.84",
+    "date": "2026-08-24",
+    "en": {
+      "title": "Show the effective editor ghostwriter",
+      "summary": "Improvement dialogs now identify the exact ghostwriter used and whether it was inherited or explicitly selected.",
+      "changes": [
+        "Editor improvement previews show the resolved ghostwriter name instead of only saying inherited.",
+        "The dialog marks the profile as inherited or selected so the active writing voice is unambiguous.",
+        "The label is localized in English and Italian across editor contexts."
+      ]
+    },
+    "it": {
+      "title": "Ghostwriter effettivo visibile nell'editor",
+      "summary": "Le modali di miglioramento mostrano ora il ghostwriter esatto utilizzato e indicano se è stato ereditato o selezionato esplicitamente.",
+      "changes": [
+        "Le anteprime di miglioramento mostrano il nome del ghostwriter risolto invece di indicare soltanto che è ereditato.",
+        "La modale segnala se il profilo è ereditato o selezionato, rendendo chiara la voce narrativa attiva.",
+        "L'etichetta è localizzata in italiano e inglese in tutti i contesti editor."
+      ]
+    }
+  },
+  {
     "version": "0.76.83",
     "date": "2026-08-23",
     "en": {

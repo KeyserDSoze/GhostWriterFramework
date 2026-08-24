@@ -24,6 +24,8 @@ export function useProseAssist(opts: {
   setBody: (next: string) => void;
   buildSource: () => PipelineSource | null;
   ghostwriter?: string;
+  ghostwriterLabel?: string;
+  ghostwriterInherited?: boolean;
   improveText?: (body: string, selection: string | null) => Promise<string>;
   summarizeText?: (body: string, selection: string | null) => Promise<string>;
   onSaveSummary?: (summary: string) => Promise<void>;
@@ -219,7 +221,8 @@ export function useProseAssist(opts: {
       <Dialog open={improveOpen} onOpenChange={(next) => { if (!next) setImproveOpen(false); }}>
         <DialogContent className="left-1/2 top-1/2 flex h-[88dvh] max-h-[88dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 flex-col p-0 sm:w-[820px]">
           <div className="border-b px-4 py-3">
-            <p className="font-semibold">{improveSelection ? t("ctx.improveSelection") : t("ctx.improveAll")}</p>
+              <p className="font-semibold">{improveSelection ? t("ctx.improveSelection") : t("ctx.improveAll")}</p>
+              <p className="text-xs text-muted-foreground">{opts.ghostwriterLabel ? `${t("pipeline.ghostwriter")}: ${opts.ghostwriterLabel}${opts.ghostwriterInherited ? ` (${t("pipeline.inherited")})` : ` (${t("pipeline.selected")})`}` : t("pipeline.defaultStyle")}</p>
           </div>
           <div className="min-h-0 flex-1 overflow-auto p-4">
             {improveLoading ? (

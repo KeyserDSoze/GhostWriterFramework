@@ -1464,6 +1464,8 @@ const en = {
     draftToFinalDesc: "Polish the draft into the final paragraph.",
     ghostwriter: "Ghostwriter",
     defaultStyle: "Inherited ghostwriter",
+    inherited: "inherited",
+    selected: "selected",
     regenerate: "Regenerate",
     regenerateAll: "Regenerate all",
     regenerateSelection: "Regenerate selection",

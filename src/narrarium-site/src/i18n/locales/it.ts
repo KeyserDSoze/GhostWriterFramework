@@ -1464,6 +1464,8 @@ const it = {
     draftToFinalDesc: "Rifinisci la bozza nel paragrafo definitivo.",
     ghostwriter: "Ghostwriter",
     defaultStyle: "Ghostwriter ereditato",
+    inherited: "ereditato",
+    selected: "selezionato",
     regenerate: "Rigenera",
     regenerateAll: "Rigenera tutto",
     regenerateSelection: "Rigenera selezione",
