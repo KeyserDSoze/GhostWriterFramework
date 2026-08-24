@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeDiffChangeChunks } from "@/components/diff/DiffView";
+import { computeDiffChangeChunks, mergeDiffChangeChunks } from "@/components/diff/DiffView";
 
 describe("interactive improve diff", () => {
   it("groups adjacent removed and added lines into independently decidable changes", () => {
@@ -13,5 +13,18 @@ describe("interactive improve diff", () => {
   it("represents pure insertion and deletion chunks", () => {
     expect(computeDiffChangeChunks("one\nthree", "one\ntwo\nthree")[0]).toMatchObject({ oldText: "", newText: "two" });
     expect(computeDiffChangeChunks("one\ntwo\nthree", "one\nthree")[0]).toMatchObject({ oldText: "two", newText: "" });
+  });
+
+  it("merges independent original and proposed decisions", () => {
+    const previous = "one\ntwo\nthree\nfour";
+    const chunks = computeDiffChangeChunks(previous, "one\nTWO\nthree\nFOUR");
+    expect(mergeDiffChangeChunks(previous, chunks, { "change-0": "proposed", "change-1": "original" })).toBe("one\nTWO\nthree\nfour");
+  });
+
+  it("accepts regenerated proposals when applying all", () => {
+    const previous = "one\ntwo\nthree";
+    const chunks = computeDiffChangeChunks(previous, "one\nTWO\nthree");
+    chunks[0].newText = "A better two";
+    expect(mergeDiffChangeChunks(previous, chunks, { "change-0": "pending" }, "proposed")).toBe("one\nA better two\nthree");
   });
 });

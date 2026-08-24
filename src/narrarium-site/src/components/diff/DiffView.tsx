@@ -16,6 +16,23 @@ export interface DiffChangeChunk {
   newText: string;
 }
 
+export type DiffChangeChoice = "original" | "proposed" | "pending";
+
+/** Rebuild the source text by applying one decision per change chunk. */
+export function mergeDiffChangeChunks(previous: string, chunks: DiffChangeChunk[], choices: Record<string, DiffChangeChoice>, pendingAs: Exclude<DiffChangeChoice, "pending"> = "original"): string {
+  const lines = previous.replace(/\r\n/g, "\n").split("\n");
+  let offset = 0;
+  for (const chunk of chunks) {
+    const choice = choices[chunk.id] === "pending" || !choices[chunk.id] ? pendingAs : choices[chunk.id];
+    const oldLines = chunk.oldText ? chunk.oldText.split("\n") : [];
+    const replacement = choice === "proposed" ? chunk.newText : chunk.oldText;
+    const replacementLines = replacement ? replacement.split("\n") : [];
+    lines.splice(chunk.oldStart + offset, oldLines.length, ...replacementLines);
+    offset += replacementLines.length - oldLines.length;
+  }
+  return lines.join("\n");
+}
+
 const MAX_DIFF_LINES = 4000;
 
 /**

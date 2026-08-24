@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { computeDiffChangeChunks, FileDiff, type DiffChangeChunk } from "@/components/diff/DiffView";
+import { computeDiffChangeChunks, FileDiff, mergeDiffChangeChunks, type DiffChangeChoice, type DiffChangeChunk } from "@/components/diff/DiffView";
 import { useToast } from "@/components/ui/use-toast";
-import { improveProse, regenerateImprovedProse, synonymsFor, type PipelineSource } from "@/narrarium/pipeline";
+import { improveProse, regenerateImprovedProse, regenerateImprovedProsePassages, synonymsFor, type PipelineSource } from "@/narrarium/pipeline";
 import { completeTextRouted } from "@/assistant/router";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 
@@ -37,7 +37,7 @@ export function useProseAssist(opts: {
   const [improveLoading, setImproveLoading] = useState(false);
   const [improveNew, setImproveNew] = useState("");
   const [improveSelection, setImproveSelection] = useState<string | null>(null);
-  const [improveChoices, setImproveChoices] = useState<Record<string, "original" | "proposed" | "pending">>({});
+  const [improveChoices, setImproveChoices] = useState<Record<string, DiffChangeChoice>>({});
   const [improveChunks, setImproveChunks] = useState<DiffChangeChunk[]>([]);
   const [regenerateSelected, setRegenerateSelected] = useState<Record<string, boolean>>({});
   const [range, setRange] = useState<{ start: number; end: number } | null>(null);
@@ -110,29 +110,26 @@ export function useProseAssist(opts: {
   }
 
   function applyImprove() {
+    const previous = improveSelection ?? opts.getBody();
+    const result = mergeDiffChangeChunks(previous, improveChunks, improveChoices, "proposed");
     const body = opts.getBody();
     if (improveSelection && range) {
       const { lead, trail } = splitEdges(body.slice(range.start, range.end));
-      opts.setBody(body.slice(0, range.start) + lead + improveNew.trim() + trail + body.slice(range.end));
+      opts.setBody(body.slice(0, range.start) + lead + result.trim() + trail + body.slice(range.end));
     } else {
-      opts.setBody(improveNew);
+      opts.setBody(result);
     }
     setImproveOpen(false);
   }
 
   function applySelectedImprove() {
     const previous = improveSelection ?? opts.getBody();
-    const lines = previous.replace(/\r\n/g, "\n").split("\n");
-    let offset = 0;
-    for (const chunk of improveChunks) {
-      const choice = improveChoices[chunk.id];
-      if (choice === "pending") continue;
-      const oldLines = chunk.oldText ? chunk.oldText.split("\n") : [];
-      const replacement = choice === "proposed" ? chunk.newText : chunk.oldText;
-      lines.splice(chunk.oldStart + offset, oldLines.length, ...(replacement ? replacement.split("\n") : []));
-      offset += (replacement ? replacement.split("\n").length : 0) - oldLines.length;
+    const unresolved = improveChunks.filter((chunk) => improveChoices[chunk.id] === "pending").length;
+    if (unresolved) {
+      toast({ title: t("pipeline.decisionsMissing"), description: t("pipeline.decisionsMissingDesc", { count: unresolved }), variant: "destructive" });
+      return;
     }
-    const result = lines.join("\n");
+    const result = mergeDiffChangeChunks(previous, improveChunks, improveChoices);
     if (improveSelection && range) {
       const { lead, trail } = splitEdges(opts.getBody().slice(range.start, range.end));
       opts.setBody(opts.getBody().slice(0, range.start) + lead + result.trim() + trail + opts.getBody().slice(range.end));
@@ -140,20 +137,39 @@ export function useProseAssist(opts: {
     setImproveOpen(false);
   }
 
-  async function regenerateChunks() {
-    const selected = improveChunks.filter((chunk) => regenerateSelected[chunk.id]);
+  async function regenerateChunks(ids?: string[]) {
+    const requested = new Set(ids ?? Object.entries(regenerateSelected).filter(([, selected]) => selected).map(([id]) => id));
+    const selected = improveChunks.filter((chunk) => requested.has(chunk.id));
     const src = opts.buildSource();
     if (!src || !selected.length) return;
     setImproveLoading(true);
     try {
-      const replacements = await Promise.all(selected.map(async (chunk) => ({
-        id: chunk.id,
-        text: await regenerateImprovedProse(src, opts.getBody(), chunk.oldText, chunk.newText, opts.ghostwriter),
-      })));
-      const replacementMap = new Map(replacements.map((entry) => [entry.id, entry.text]));
-      const nextChunks = improveChunks.map((chunk) => replacementMap.has(chunk.id) ? { ...chunk, newText: replacementMap.get(chunk.id)! } : chunk);
+      const replacementMap = selected.length === 1
+        ? { [selected[0].id]: await regenerateImprovedProse(src, opts.getBody(), selected[0].oldText, selected[0].newText, opts.ghostwriter) }
+        : await regenerateImprovedProsePassages(src, opts.getBody(), selected.map((chunk) => ({ id: chunk.id, originalText: chunk.oldText, previousProposal: chunk.newText })), opts.ghostwriter);
+      const nextChunks = improveChunks.map((chunk) => replacementMap[chunk.id] ? { ...chunk, newText: replacementMap[chunk.id] } : chunk);
       setImproveChunks(nextChunks);
-      setImproveChoices((current) => ({ ...current, ...Object.fromEntries(replacements.map((entry) => [entry.id, "pending"])) }));
+      setImproveChoices((current) => ({ ...current, ...Object.fromEntries(selected.map((entry) => [entry.id, "pending"])) }));
+      setRegenerateSelected({});
+    } catch (err) {
+      toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
+    } finally {
+      setImproveLoading(false);
+    }
+  }
+
+  async function regenerateAll() {
+    const src = opts.buildSource();
+    if (!src) return;
+    const previous = improveSelection ?? opts.getBody();
+    setImproveLoading(true);
+    try {
+      const rejectedProposal = mergeDiffChangeChunks(previous, improveChunks, improveChoices, "proposed");
+      const next = await regenerateImprovedProse(src, opts.getBody(), previous, rejectedProposal, opts.ghostwriter);
+      const chunks = computeDiffChangeChunks(previous, next);
+      setImproveNew(next);
+      setImproveChunks(chunks);
+      setImproveChoices(Object.fromEntries(chunks.map((chunk) => [chunk.id, "pending"])));
       setRegenerateSelected({});
     } catch (err) {
       toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
@@ -228,15 +244,15 @@ export function useProseAssist(opts: {
             {improveLoading ? (
               <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("pipeline.generating")}</div>
             ) : (
-              <InteractiveImproveDiff previous={improveSelection ?? opts.getBody()} next={improveNew} chunks={improveChunks} choices={improveChoices} regenerateSelected={regenerateSelected} onRegenerateSelected={(id, checked) => setRegenerateSelected((current) => ({ ...current, [id]: checked }))} onChoice={(id, choice) => setImproveChoices((current) => ({ ...current, [id]: choice }))} />
+              <InteractiveImproveDiff previous={improveSelection ?? opts.getBody()} next={improveNew} chunks={improveChunks} choices={improveChoices} regenerateSelected={regenerateSelected} onRegenerateSelected={(id, checked) => setRegenerateSelected((current) => ({ ...current, [id]: checked }))} onRegenerateOne={(id) => void regenerateChunks([id])} onChoice={(id, choice) => setImproveChoices((current) => ({ ...current, [id]: choice }))} />
             )}
           </div>
-          <div className="flex justify-end gap-2 border-t px-4 py-3">
+          <div className="flex flex-wrap justify-end gap-2 border-t px-4 py-3">
             <Button variant="ghost" onClick={() => setImproveOpen(false)}>{t("common.cancel")}</Button>
             <Button variant="outline" onClick={() => void regenerateChunks()} disabled={improveLoading || !Object.values(regenerateSelected).some(Boolean)}>{t("pipeline.regenerateSelection")}</Button>
-            <Button variant="outline" onClick={() => void runImprove(improveSelection)} disabled={improveLoading}>{t("pipeline.regenerateAll")}</Button>
+            <Button variant="outline" onClick={() => void regenerateAll()} disabled={improveLoading || !improveChunks.length}>{t("pipeline.regenerateAll")}</Button>
             <Button variant="outline" onClick={applyImprove} disabled={improveLoading || !improveNew.trim()}>{t("pipeline.applyAll")}</Button>
-            <Button onClick={applySelectedImprove} disabled={improveLoading || !improveNew.trim() || improveChunks.some((chunk) => improveChoices[chunk.id] === "pending")}>{t("pipeline.apply")}</Button>
+            <Button onClick={applySelectedImprove} disabled={improveLoading || !improveNew.trim()}>{t("pipeline.apply")}</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -292,17 +308,19 @@ export function useProseAssist(opts: {
   return { improve, summarize, synonym, dialogs };
 }
 
-function InteractiveImproveDiff({ previous, next, chunks, choices, regenerateSelected, onRegenerateSelected, onChoice }: { previous: string; next: string; chunks: DiffChangeChunk[]; choices: Record<string, "original" | "proposed" | "pending">; regenerateSelected: Record<string, boolean>; onRegenerateSelected: (id: string, checked: boolean) => void; onChoice: (id: string, choice: "original" | "proposed" | "pending") => void }) {
+function InteractiveImproveDiff({ previous, next, chunks, choices, regenerateSelected, onRegenerateSelected, onRegenerateOne, onChoice }: { previous: string; next: string; chunks: DiffChangeChunk[]; choices: Record<string, DiffChangeChoice>; regenerateSelected: Record<string, boolean>; onRegenerateSelected: (id: string, checked: boolean) => void; onRegenerateOne: (id: string) => void; onChoice: (id: string, choice: DiffChangeChoice) => void }) {
   const { t } = useTranslation();
   if (!chunks.length) return <FileDiff previous={previous} next={next} />;
   return <div className="space-y-2">{chunks.map((chunk) => (
     <div key={chunk.id} className="rounded-lg border p-3 text-sm">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1 text-xs text-muted-foreground"><input type="checkbox" checked={Boolean(regenerateSelected[chunk.id])} onChange={(event) => onRegenerateSelected(chunk.id, event.target.checked)} />{t("pipeline.regenerate")}</label>
+        <label className="flex items-center gap-1 text-xs text-muted-foreground"><input type="checkbox" checked={Boolean(regenerateSelected[chunk.id])} onChange={(event) => onRegenerateSelected(chunk.id, event.target.checked)} />{t("pipeline.selectForRegeneration")}</label>
         <Button size="sm" variant={choices[chunk.id] === "original" ? "default" : "outline"} onClick={() => onChoice(chunk.id, "original")}>{t("pipeline.original")}</Button>
         <Button size="sm" variant={choices[chunk.id] === "proposed" ? "default" : "outline"} onClick={() => onChoice(chunk.id, "proposed")}>{t("pipeline.proposed")}</Button>
+        <Button size="sm" variant="ghost" className="ml-auto" onClick={() => onRegenerateOne(chunk.id)}><RefreshCw className="mr-1 h-3.5 w-3.5" />{t("pipeline.regenerateThis")}</Button>
+        {choices[chunk.id] === "pending" && <span className="w-full text-xs font-medium text-amber-600 dark:text-amber-400">{t("pipeline.decisionPending")}</span>}
       </div>
-      <div className="grid gap-2 sm:grid-cols-2"><pre className="whitespace-pre-wrap rounded bg-red-500/10 p-2 text-red-700 dark:text-red-300">{chunk.oldText || "(nessun testo)"}</pre><pre className="whitespace-pre-wrap rounded bg-emerald-500/10 p-2 text-emerald-700 dark:text-emerald-300">{chunk.newText || "(rimosso)"}</pre></div>
+      <div className="grid gap-2 sm:grid-cols-2"><pre className="whitespace-pre-wrap rounded bg-red-500/10 p-2 text-red-700 dark:text-red-300">{chunk.oldText || t("pipeline.noText")}</pre><pre className="whitespace-pre-wrap rounded bg-emerald-500/10 p-2 text-emerald-700 dark:text-emerald-300">{chunk.newText || t("pipeline.removed")}</pre></div>
     </div>
   ))}</div>;
 }

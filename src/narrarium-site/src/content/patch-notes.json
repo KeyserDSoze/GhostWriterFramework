@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.85",
+    "date": "2026-08-24",
+    "en": {
+      "title": "Interactive prose improvement merge",
+      "summary": "Improvement previews now let authors decide, regenerate, and merge every changed passage independently.",
+      "changes": [
+        "Choose the original text or AI proposal independently for every changed passage, with unresolved decisions clearly marked.",
+        "Regenerate one passage from its card or select several passages and regenerate them together in one context-aware request.",
+        "Regenerate all now tells the editor that the previous proposal was rejected and includes the full paragraph, rejected text, story context, and effective ghostwriter.",
+        "Apply validates that every passage has a decision, while Apply all accepts every current proposal including selectively regenerated passages."
+      ]
+    },
+    "it": {
+      "title": "Merge interattivo dei miglioramenti",
+      "summary": "Le anteprime di miglioramento permettono ora di decidere, rigenerare e unire indipendentemente ogni passaggio modificato.",
+      "changes": [
+        "Scegli il testo originale o la proposta AI per ogni passaggio modificato, con le decisioni mancanti indicate chiaramente.",
+        "Rigenera un singolo passaggio dalla sua scheda oppure seleziona più passaggi e rigenerali insieme con un'unica richiesta contestuale.",
+        "Rigenera tutto comunica ora all'editor che la proposta precedente è stata rifiutata e include paragrafo completo, testo rifiutato, contesto narrativo e Ghostwriter effettivo.",
+        "Applica verifica che ogni passaggio abbia una decisione, mentre Applica tutto accetta tutte le proposte correnti, comprese quelle rigenerate selettivamente."
+      ]
+    }
+  },
+  {
     "version": "0.76.84",
     "date": "2026-08-24",
     "en": {

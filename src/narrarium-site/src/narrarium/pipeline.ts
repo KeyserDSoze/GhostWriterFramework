@@ -137,6 +137,56 @@ export async function regenerateImprovedProse(
   return (await completeTextRouted(src.settings, messages, "editor-actions", { accountScope: src.accountScope, label: "pipeline:regenerate-improved-prose" })).trim();
 }
 
+export interface ProseRegenerationTarget {
+  id: string;
+  originalText: string;
+  previousProposal: string;
+}
+
+const REGENERATE_PASSAGES_TOOL = {
+  name: "regenerate_passages",
+  description: "Return one materially different replacement for every requested prose passage.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    required: ["replacements"],
+    properties: {
+      replacements: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "text"],
+          properties: { id: { type: "string" }, text: { type: "string" } },
+        },
+      },
+    },
+  },
+} as const;
+
+/** Regenerate several rejected edits in one context-aware model request. */
+export async function regenerateImprovedProsePassages(src: PipelineSource, fullBody: string, targets: ProseRegenerationTarget[], ghostwriterSlug?: string): Promise<Record<string, string>> {
+  if (!targets.length) return {};
+  const { style, story } = await buildContext(src, ghostwriterSlug);
+  const requestedIds = new Set(targets.map((target) => target.id));
+  const result = await completeToolRouted<{ replacements: Array<{ id: string; text: string }> }>(src.settings, [
+    { role: "system", content: `You are a prose editor. These passages were already revised once, but every supplied proposal was rejected. Produce a materially different replacement for each passage while preserving facts, names, canon, continuity between passages, and the requested ghostwriter. Write in ${LANG(src)}. Return every requested id exactly once.` },
+    { role: "user", content: `${currentRequest("Revise all requested passages again. Do not repeat the rejected proposals.")}\n\n${untrustedData("repository_content", [style, story, `FULL PARAGRAPH:\n${fullBody}`, `PASSAGES TO REGENERATE:\n${JSON.stringify(targets, null, 2)}`].filter(Boolean).join("\n\n"))}` },
+  ], "editor-actions", REGENERATE_PASSAGES_TOOL, {
+    accountScope: src.accountScope,
+    label: "pipeline:regenerate-improved-prose-passages",
+    validate: (output) => {
+      const value = output as { replacements?: Array<{ id?: unknown; text?: unknown }> };
+      if (!Array.isArray(value?.replacements)) throw new Error("The model did not return prose replacements.");
+      const replacements = value.replacements.map((entry) => ({ id: String(entry.id ?? ""), text: String(entry.text ?? "").trim() }));
+      if (replacements.length !== targets.length || replacements.some((entry) => !requestedIds.has(entry.id) || !entry.text)) throw new Error("The model returned incomplete prose replacements.");
+      if (new Set(replacements.map((entry) => entry.id)).size !== targets.length) throw new Error("The model returned duplicate prose replacements.");
+      return { replacements };
+    },
+  });
+  return Object.fromEntries(result.output.replacements.map((entry) => [entry.id, entry.text]));
+}
+
 export interface MergeDraftFinalResult {
   /** The merged, improved prose body (no frontmatter). */
   text: string;
