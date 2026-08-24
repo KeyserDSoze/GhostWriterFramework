@@ -69,7 +69,7 @@ export function registerServiceWorker() {
   window.addEventListener("load", () => {
     const base = import.meta.env.BASE_URL || "/";
     const swUrl = `${base.replace(/\/$/, "")}/sw.js?v=${encodeURIComponent(APP_VERSION)}`;
-    void navigator.serviceWorker.register(swUrl, { scope: base }).then((registration) => {
+    void navigator.serviceWorker.register(swUrl, { scope: base, updateViaCache: "none" }).then((registration) => {
       let latestVersion = APP_VERSION;
       let lastVersionCheck = 0;
 
@@ -100,7 +100,7 @@ export function registerServiceWorker() {
           latestVersion = payload.version;
           await navigator.serviceWorker.register(
             `${base.replace(/\/$/, "")}/sw.js?v=${encodeURIComponent(latestVersion)}`,
-            { scope: base },
+            { scope: base, updateViaCache: "none" },
           );
         } catch {
           // Update checks are best-effort and must never interrupt the app.

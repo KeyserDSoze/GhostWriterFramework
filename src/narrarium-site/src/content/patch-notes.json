@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.87",
+    "date": "2026-08-24",
+    "en": {
+      "title": "Reliable PWA release updates",
+      "summary": "Narrarium now prevents an old precache manifest from mixing stale application assets into a newly detected release.",
+      "changes": [
+        "The service worker requests the precache manifest with the exact target release and rejects any release mismatch instead of activating an inconsistent cache.",
+        "Service-worker scripts, imported manifests, the application shell, and precached assets now bypass the browser HTTP cache during an update.",
+        "A stale installed PWA can detect this release, install one internally consistent asset set, and then expose the normal safe update prompt."
+      ]
+    },
+    "it": {
+      "title": "Aggiornamenti PWA affidabili",
+      "summary": "Narrarium impedisce ora a un vecchio manifest di precache di mescolare asset obsoleti dentro una nuova release rilevata.",
+      "changes": [
+        "Il service worker richiede il manifest di precache della versione esatta e rifiuta ogni mismatch invece di attivare una cache incoerente.",
+        "Script del service worker, manifest importato, shell dell'app e asset precache ignorano ora la cache HTTP durante un aggiornamento.",
+        "Una PWA installata e bloccata su asset vecchi può rilevare questa release, installare un insieme coerente di file e mostrare il normale aggiornamento sicuro."
+      ]
+    }
+  },
+  {
     "version": "0.76.86",
     "date": "2026-08-24",
     "en": {

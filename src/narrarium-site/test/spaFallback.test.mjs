@@ -71,13 +71,22 @@ test("precache generation includes application entry points, chunks, styles, and
 
 test("service worker uses release caches, precaches the generated manifest, and preserves unrelated caches", async () => {
   const source = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
-  assert.match(source, /importScripts\("\.\/precache-manifest\.js"\)/);
+  assert.match(source, /importScripts\(`\.\/precache-manifest\.js\?v=\$\{encodeURIComponent\(REQUESTED_RELEASE\)\}`\)/);
+  assert.match(source, /const RELEASE = REQUESTED_RELEASE/);
+  assert.match(source, /Precache release mismatch/);
   assert.match(source, /narrarium-precache-\$\{RELEASE\}/);
-  assert.match(source, /cache\.addAll\(\[scopeUrl\(\), \.\.\.\(self\.__NARRARIUM_PRECACHE__/);
+  assert.match(source, /new Request\(scopeUrl\(\), \{ cache: "reload" \}\)/);
   assert.match(source, /key\.startsWith\(OWNED_CACHE_PREFIX\)/);
   assert.match(source, /MAX_RUNTIME_ENTRIES = 64/);
   assert.match(source, /\["script", "style", "worker", "image", "font"\]\.includes\(request\.destination\)/);
   assert.match(source, /request\.mode === "navigate"/);
   assert.match(source, /caches\.open\(PRECACHE_NAME\)[\s\S]*cache\.match\(scopeUrl\(\)\)[\s\S]*return fetch\(request\)/);
   assert.doesNotMatch(source, /request\.mode === "navigate"[\s\S]*fetch\(request\)[\s\S]*cache\.match\(scopeUrl\(\)\)/);
+});
+
+test("service-worker registration bypasses the HTTP cache for root and imported script updates", async () => {
+  const source = await readFile(new URL("../src/pwa.ts", import.meta.url), "utf8");
+  assert.equal((source.match(/updateViaCache: "none"/g) ?? []).length, 2);
+  assert.match(source, /version\.json\?_=/);
+  assert.match(source, /fetch\(versionUrl, \{ cache: "no-store" \}\)/);
 });

@@ -1,6 +1,12 @@
-importScripts("./precache-manifest.js");
+const REQUESTED_RELEASE = new URL(self.location.href).searchParams.get("v") || "unknown";
+importScripts(`./precache-manifest.js?v=${encodeURIComponent(REQUESTED_RELEASE)}`);
 
-const RELEASE = self.__NARRARIUM_RELEASE__ || new URL(self.location.href).searchParams.get("v") || "unknown";
+// The registration URL is authoritative. A stale imported manifest must never
+// relabel an old asset set as the newly requested release.
+const RELEASE = REQUESTED_RELEASE;
+if (self.__NARRARIUM_RELEASE__ && self.__NARRARIUM_RELEASE__ !== RELEASE) {
+  throw new Error(`Precache release mismatch: requested ${RELEASE}, received ${self.__NARRARIUM_RELEASE__}.`);
+}
 const PRECACHE_NAME = `narrarium-precache-${RELEASE}`;
 const RUNTIME_NAME = `narrarium-runtime-${RELEASE}`;
 const OWNED_CACHE_PREFIX = "narrarium-";
@@ -21,7 +27,10 @@ async function trimRuntimeCache(cache) {
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(PRECACHE_NAME).then((cache) => cache.addAll([scopeUrl(), ...(self.__NARRARIUM_PRECACHE__ || []).map(scopedUrl)])),
+    caches.open(PRECACHE_NAME).then((cache) => cache.addAll([
+      new Request(scopeUrl(), { cache: "reload" }),
+      ...(self.__NARRARIUM_PRECACHE__ || []).map((path) => new Request(scopedUrl(path), { cache: "reload" })),
+    ])),
   );
 });
 
