@@ -159,7 +159,7 @@ test("a post-backup rewrite invalidates the receipt", async () => {
   await expect(removeLocalWorkingCopy({ ...target, backupReceiptId: receipt.receiptId, confirmation: "REMOVE owner/maintenance-repo" })).rejects.toMatchObject({ code: "BACKUP_STALE" });
 });
 
-for (const phase of ["after-prepare", "after-rewrites", "after-primary"] as const) {
+for (const phase of ["after-prepare", "after-rewrite-phase-update", "after-primary"] as const) {
   test(`removal resumes idempotently after ${phase}`, async () => {
     await setup(true, "complete");
     const { receipt } = await createMaintenanceBackupBundle(target);
@@ -185,7 +185,7 @@ test("a rewrite writer is blocked as soon as removal preparation is journaled", 
 test("a same-coordinate replacement cannot be deleted by a stale removal journal", async () => {
   const original = await setup(true, "complete");
   const { receipt } = await createMaintenanceBackupBundle(target);
-  crashNextMaintenanceRemovalForTests("after-rewrites");
+  crashNextMaintenanceRemovalForTests("after-rewrite-phase-update");
   await expect(removeLocalWorkingCopy({ ...target, backupReceiptId: receipt.receiptId, confirmation: "REMOVE owner/maintenance-repo" })).rejects.toThrow("Simulated");
   const db = await new Promise<IDBDatabase>((resolve, reject) => { const request = indexedDB.open("narrarium-local-repositories"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
   const replacementId = crypto.randomUUID();
@@ -255,12 +255,12 @@ test("a rewrite landing before rewrite fencing cancels removal rather than delet
   expect(await getLocalRepositoryById(repoId, identity)).toMatchObject({ localInstanceId: meta.localInstanceId });
 });
 
-test("crash before rewrite transaction restores repository without losing rewrites", async () => {
+test("crash after durable preparation preserves repository and rewrites", async () => {
   const meta = await setup(true, "complete");
   const operation = rewrite(meta.localInstanceId);
   await saveLocalRewriteOperation(operation, captureRepositoryOperationScope());
   const { receipt } = await createMaintenanceBackupBundle(target);
-  crashNextMaintenanceRemovalForTests("before-rewrite-transaction");
+  crashNextMaintenanceRemovalForTests("after-prepare");
   await expect(removeLocalWorkingCopy({ ...target, backupReceiptId: receipt.receiptId, confirmation: "REMOVE owner/maintenance-repo" })).rejects.toThrow("Simulated");
   const db = await new Promise<IDBDatabase>((resolve, reject) => { const request = indexedDB.open("narrarium-local-rewrite-operations"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
   const rows = await new Promise<Array<{ operationId: string }>>((resolve, reject) => { const tx = db.transaction("rewriteOperationsV3", "readonly"); const request = tx.objectStore("rewriteOperationsV3").getAll(); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
@@ -435,7 +435,7 @@ test("force removal deletes primary, recovery, and rewrite state without touchin
   repoId = "";
 });
 
-for (const phase of ["after-prepare", "before-rewrite-transaction", "after-rewrite-marker", "after-rewrite-phase-update", "after-rewrites", "after-primary", "after-primary-marker", "after-rewrite-finalize", "after-final-cleanup", "after-finalized"] as const) {
+for (const phase of ["after-prepare", "after-rewrite-marker", "after-rewrite-phase-update", "after-primary", "after-primary-marker", "after-rewrite-finalize", "after-primary-completion", "after-final-cleanup", "after-finalized"] as const) {
   test(`force removal resumes safely after ${phase}`, async () => {
     const meta = await setup(true, "complete");
     await saveLocalRewriteOperation(rewrite(meta.localInstanceId), captureRepositoryOperationScope());

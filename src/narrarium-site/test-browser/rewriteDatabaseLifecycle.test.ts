@@ -52,7 +52,13 @@ test("blocked old-tab upgrade settles, preserves records, and retries after clos
   expect(blocked).toHaveBeenCalledOnce();
 
   oldTab.close();
-  await expect(ensureLocalRewriteOperationStoreReady()).resolves.toBeUndefined();
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try { await ensureLocalRewriteOperationStoreReady(); break; }
+    catch (error) {
+      if (!(error instanceof RewriteOperationDatabaseBlockedError) || attempt === 9) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
   const upgraded = await new Promise<IDBDatabase>((resolve, reject) => { const request = indexedDB.open(DB_NAME); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
   expect(upgraded.version).toBe(7);
   expect(upgraded.objectStoreNames.contains("migrationCompletions")).toBe(true);

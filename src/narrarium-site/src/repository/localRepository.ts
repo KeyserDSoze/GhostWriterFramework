@@ -237,12 +237,14 @@ interface RepositoryMigrationJournal {
 
 type RepositoryMigrationCrashPhase = "journal" | "rewrite-prepared" | "primary-rekeyed" | "rewrite-finalized";
 let nextRepositoryMigrationCrash: RepositoryMigrationCrashPhase | null = null;
+const repositoryCrashInjectionEnabled = typeof __NARRARIUM_E2E_BUILD__ === "undefined" || __NARRARIUM_E2E_BUILD__;
 
 export function crashNextRepositoryMigrationForTests(phase: RepositoryMigrationCrashPhase): void {
-  nextRepositoryMigrationCrash = phase;
+  if (repositoryCrashInjectionEnabled) nextRepositoryMigrationCrash = phase;
 }
 
 function simulateRepositoryMigrationCrash(phase: RepositoryMigrationCrashPhase): void {
+  if (!repositoryCrashInjectionEnabled) return;
   if (nextRepositoryMigrationCrash !== phase) return;
   nextRepositoryMigrationCrash = null;
   throw new Error(`Simulated repository migration crash after ${phase}.`);
@@ -345,20 +347,26 @@ function slugToTitle(slug: string): string {
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
+let upgradeBlocked = false;
 
 function openDb(): Promise<IDBDatabase> {
-  dbPromise ??= new Promise<IDBDatabase>((resolve, reject) => {
+  if (dbPromise) return dbPromise;
+  if (upgradeBlocked) return Promise.reject(new Error("Local repository database upgrade is blocked by another tab. Close or reload other Narrarium tabs and retry."));
+  let blocked = false;
+  dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-    let blocked = false;
-    request.onerror = () => reject(request.error);
+    request.onerror = () => { if (blocked) upgradeBlocked = false; reject(request.error); };
     request.onblocked = () => {
       blocked = true;
+      upgradeBlocked = true;
+      dbPromise = null;
       reject(new Error("Local repository database upgrade is blocked by another tab. Close or reload other Narrarium tabs and retry."));
     };
     request.onsuccess = () => {
       const db = request.result;
       if (blocked) {
         db.close();
+        upgradeBlocked = false;
         return;
       }
       db.onversionchange = () => {
@@ -424,10 +432,27 @@ function openDb(): Promise<IDBDatabase> {
       }
     };
   }).catch((error) => {
-    dbPromise = null;
+    if (!blocked) dbPromise = null;
     throw error;
   });
   return dbPromise;
+}
+
+export async function inspectPrimaryRepositoryDatabaseForTests(): Promise<{ version: number; stores: string[]; records: Record<string, Array<Record<string, unknown>>> }> {
+  if (typeof __NARRARIUM_E2E_BUILD__ === "undefined" || !__NARRARIUM_E2E_BUILD__) throw new Error("Primary repository inspection is available only in E2E builds.");
+  const db = await openDb();
+  const stores = [...db.objectStoreNames];
+  const records = await new Promise<Record<string, Array<Record<string, unknown>>>>((resolve, reject) => {
+    const tx = db.transaction(stores, "readonly");
+    const output: Record<string, Array<Record<string, unknown>>> = {};
+    let pending = stores.length;
+    for (const storeName of stores) {
+      const read = tx.objectStore(storeName).getAll();
+      read.onsuccess = () => { output[storeName] = read.result as Array<Record<string, unknown>>; if (--pending === 0) resolve(output); };
+      read.onerror = () => reject(read.error);
+    }
+  });
+  return { version: db.version, stores, records };
 }
 
 function mutationLeaseTransaction<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore, tx: IDBTransaction) => IDBRequest<T> | void): Promise<T | undefined> {
@@ -502,6 +527,7 @@ export async function releaseRepositoryMutationLease(lease: RepositoryMutationLe
 
 const maintenanceAbortErrors = new WeakMap<IDBTransaction, Error>();
 let primaryFileWritePause: { entered: () => void; wait: Promise<void> } | null = null;
+let abortPrimaryFileWrite = false;
 
 export function pauseNextPrimaryFileWriteForTests(): { entered: Promise<void>; release: () => void } {
   let entered!: () => void;
@@ -510,6 +536,10 @@ export function pauseNextPrimaryFileWriteForTests(): { entered: Promise<void>; r
   const wait = new Promise<void>((resolve) => { release = resolve; });
   primaryFileWritePause = { entered, wait };
   return { entered: enteredPromise, release };
+}
+
+export function abortNextPrimaryFileWriteForTests(): void {
+  if (typeof __NARRARIUM_E2E_BUILD__ !== "undefined" && __NARRARIUM_E2E_BUILD__) abortPrimaryFileWrite = true;
 }
 
 async function pausePrimaryFileWriteForTests(): Promise<void> {
@@ -1348,7 +1378,7 @@ async function putScopedLocalFile(repoIdValue: string, scope: RepositoryOperatio
     const tx = guardedWriteTransaction(db, ["repositories", "files"], repoIdValue);
     let validationError: Error | null = null;
     const request = tx.objectStore("repositories").get(repoIdValue);
-    request.onsuccess = () => { try { cloneOperationId ? validateCloneOperation(request.result as LocalRepositoryMeta | undefined, scope, cloneOperationId) : validateRepositoryOperation(request.result as LocalRepositoryMeta | undefined, scope); tx.objectStore("files").put(file); } catch (error) { validationError = error as Error; tx.abort(); } };
+    request.onsuccess = () => { try { cloneOperationId ? validateCloneOperation(request.result as LocalRepositoryMeta | undefined, scope, cloneOperationId) : validateRepositoryOperation(request.result as LocalRepositoryMeta | undefined, scope); const shouldAbort = typeof __NARRARIUM_E2E_BUILD__ !== "undefined" && __NARRARIUM_E2E_BUILD__ && abortPrimaryFileWrite; abortPrimaryFileWrite = false; if (shouldAbort) { validationError = new DOMException("Injected abort during local file write.", "AbortError"); tx.abort(); return; } tx.objectStore("files").put(file); } catch (error) { validationError = error as Error; tx.abort(); } };
     request.onerror = () => tx.abort();
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(validationError ?? transactionError(tx));
@@ -1417,13 +1447,18 @@ export async function applyLocalFileChangesAtomically(
     let pending = expectedCurrentHashes.size + 1;
     let validationError: Error | null = null;
     const apply = () => {
-      for (const path of deletes) {
-        const existing = originalsByPath.get(path);
-        if (!existing) continue;
-        if (existing.status === "new") store.delete(existing.key);
-        else store.put({ ...existing, status: "deleted", committed: false, updatedAt: now });
+      try {
+        for (const path of deletes) {
+          const existing = originalsByPath.get(path);
+          if (!existing) continue;
+          if (existing.status === "new") store.delete(existing.key);
+          else store.put({ ...existing, status: "deleted", committed: false, updatedAt: now });
+        }
+        for (const file of prepared) store.put(file);
+      } catch (error) {
+        validationError = error as Error;
+        tx.abort();
       }
-      for (const file of prepared) store.put(file);
     };
     const repositoryRequest = tx.objectStore("repositories").get(repoIdValue);
     repositoryRequest.onsuccess = () => {

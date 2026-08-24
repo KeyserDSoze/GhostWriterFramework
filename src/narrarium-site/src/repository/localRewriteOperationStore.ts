@@ -148,6 +148,7 @@ export interface LocalRewriteOperationQuery {
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
+let upgradeBlocked = false;
 
 function repoKey(owner: string, repo: string, branch: string): string {
   return `${owner}/${repo}#${branch}`.toLowerCase();
@@ -160,18 +161,22 @@ function targetKey(scope: RewriteOperationManifest["scope"], chapterSlug: string
 }
 
 function openDb(): Promise<IDBDatabase> {
-  dbPromise ??= new Promise<IDBDatabase>((resolve, reject) => {
+  if (dbPromise) return dbPromise;
+  if (upgradeBlocked) return Promise.reject(new RewriteOperationDatabaseBlockedError());
+  let blocked = false;
+  dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-    let blocked = false;
     request.onblocked = () => {
       blocked = true;
+      upgradeBlocked = true;
+      dbPromise = null;
       if (typeof window !== "undefined") window.dispatchEvent(new Event(LOCAL_REWRITE_DATABASE_BLOCKED_EVENT));
       reject(new RewriteOperationDatabaseBlockedError());
     };
-    request.onerror = () => reject(request.error);
+    request.onerror = () => { if (blocked) upgradeBlocked = false; reject(request.error); };
     request.onsuccess = () => {
       const db = request.result;
-      if (blocked) { db.close(); return; }
+      if (blocked) { db.close(); upgradeBlocked = false; return; }
       db.onversionchange = () => { db.close(); dbPromise = null; };
       resolve(db);
     };
@@ -207,7 +212,7 @@ function openDb(): Promise<IDBDatabase> {
       throw error;
     }
   }).catch((error) => {
-    dbPromise = null;
+    if (!blocked) dbPromise = null;
     throw error;
   });
   return dbPromise;
@@ -217,9 +222,27 @@ export async function ensureLocalRewriteOperationStoreReady(): Promise<void> {
   await openDb();
 }
 
+export async function inspectRewriteOperationDatabaseForTests(): Promise<{ version: number; stores: string[]; records: Record<string, Array<Record<string, unknown>>> }> {
+  if (typeof __NARRARIUM_E2E_BUILD__ === "undefined" || !__NARRARIUM_E2E_BUILD__) throw new Error("Rewrite operation inspection is available only in E2E builds.");
+  const db = await openDb();
+  const stores = [...db.objectStoreNames];
+  const records = await new Promise<Record<string, Array<Record<string, unknown>>>>((resolve, reject) => {
+    const tx = db.transaction(stores, "readonly");
+    const output: Record<string, Array<Record<string, unknown>>> = {};
+    let pending = stores.length;
+    for (const storeName of stores) {
+      const read = tx.objectStore(storeName).getAll();
+      read.onsuccess = () => { output[storeName] = read.result as Array<Record<string, unknown>>; if (--pending === 0) resolve(output); };
+      read.onerror = () => reject(read.error);
+    }
+  });
+  return { version: db.version, stores, records };
+}
+
 export async function closeLocalRewriteOperationStoreForTests(): Promise<void> {
   const pending = dbPromise;
   dbPromise = null;
+  upgradeBlocked = false;
   if (pending) await pending.then((db) => db.close()).catch(() => undefined);
 }
 

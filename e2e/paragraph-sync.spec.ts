@@ -119,12 +119,23 @@ function installDeterministicNetworkMocks(page: Page): { events: RequestEvent[];
       await route.fulfill({ json: { ref: "refs/heads/test2", node_id: "e2e-ref", url: request.url(), object: { type: "commit", sha: remoteHead, url: "https://api.github.com/e2e-commit" } } });
       return;
     }
+    if (method === "GET" && /\/repos\/KeyserDSoze\/Jesus$/i.test(path)) {
+      await route.fulfill({ json: { id: 1, name: "Jesus", full_name: "KeyserDSoze/Jesus", default_branch: "main" } });
+      return;
+    }
     if (method === "GET" && /\/git\/commits\//.test(path)) {
       await route.fulfill({ json: { sha: remoteHead, tree: { sha: "tree-test2" } } });
       return;
     }
     if (method === "GET" && /\/git\/trees\//.test(path)) {
       await route.fulfill({ json: { sha: "tree-test2", truncated: false, tree: remoteTree } });
+      return;
+    }
+    if (method === "GET" && /\/git\/blobs\/blob-(\d+)$/.test(path)) {
+      const index = Number(/\/git\/blobs\/blob-(\d+)$/.exec(path)?.[1] ?? -1);
+      const file = seededFiles[index];
+      if (!file) { await route.fulfill({ status: 404, json: { message: "Unknown deterministic blob" } }); return; }
+      await route.fulfill({ contentType: "application/octet-stream", body: file.content });
       return;
     }
     if (method === "GET" && /\/contents\/resumes\/chapters\/001-the-arrival\.md$/.test(path)) {
@@ -390,4 +401,38 @@ test("edits a locally cloned paragraph and full-syncs it to test2", async ({ pag
       console.log("Repository status dialog", await page.getByRole("dialog").allTextContents().catch(() => []));
     }
   }
+});
+
+test("recovers an evicted browser working copy with an explicit verified outcome", async ({ page }) => {
+  const network = installDeterministicNetworkMocks(page);
+  await installSeed(page);
+  await page.goto(".");
+  await page.waitForFunction((repositoryId) => new Promise<boolean>((resolve) => {
+    const request = indexedDB.open("narrarium-local-repositories");
+    request.onsuccess = () => {
+      const db = request.result;
+      const read = db.transaction("repositories", "readonly").objectStore("repositories").get(repositoryId);
+      read.onsuccess = () => { db.close(); resolve(Boolean(read.result)); };
+      read.onerror = () => { db.close(); resolve(false); };
+    };
+    request.onerror = () => resolve(false);
+  }), REPOSITORY_ID);
+  await page.goto(`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001`);
+  await expect(page.getByRole("button", { name: "Edit paragraph" })).toBeVisible();
+
+  await page.evaluate(async () => {
+    await Promise.all(["narrarium-local-repositories", "narrarium-local-rewrite-operations"].map((name) => new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(name);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+      request.onblocked = () => reject(new Error(`${name} eviction was blocked.`));
+    })));
+  });
+  await page.reload();
+
+  await expect(page.getByRole("status").filter({ hasText: "Local working copy downloaded and verified." })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "Edit paragraph" })).toBeVisible();
+  expect(network.blobDownloads).toHaveLength(seededFiles.length);
+  expect(await readLocalFile(page)).toMatchObject({ text: expect.stringContaining(INITIAL_BODY), status: "clean", committed: false });
+  expect(network.unexpected).toEqual([]);
 });

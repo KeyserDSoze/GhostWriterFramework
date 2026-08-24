@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.90",
+    "date": "2026-08-24",
+    "en": {
+      "title": "Real-browser IndexedDB recovery matrix",
+      "summary": "Narrarium now verifies every shipped repository and rewrite database generation plus failure recovery in real Chromium IndexedDB.",
+      "changes": [
+        "Chromium directly upgrades repository schemas 1, 2, 3, 4, 6, 7, 12, 13, and 14 and rewrite schemas 1, 2, 3, and 7, preserving files, commits, recoveries, diagnostics, journals, and rewrite records.",
+        "Multi-page tests cover blocked upgrades, retry after the blocking page closes, and automatic connection closure on versionchange.",
+        "Injected transaction abort and quota failures prove that the original local file remains unchanged.",
+        "Every maintenance-removal and legacy-identity migration crash point resumes after a real page reload.",
+        "A simulated browser-storage eviction downloads and verifies a fresh working copy and gives the author an explicit completion notification."
+      ]
+    },
+    "it": {
+      "title": "Matrice IndexedDB real-browser",
+      "summary": "Narrarium verifica ora ogni generazione pubblicata dei database repository e rewrite, insieme al recupero dagli errori, nel vero IndexedDB di Chromium.",
+      "changes": [
+        "Chromium aggiorna direttamente gli schemi repository 1, 2, 3, 4, 6, 7, 12, 13 e 14 e gli schemi rewrite 1, 2, 3 e 7, conservando file, commit, recovery, diagnostica, journal e operazioni di riscrittura.",
+        "I test multi-pagina coprono upgrade bloccati, retry dopo la chiusura della pagina bloccante e chiusura automatica delle connessioni su versionchange.",
+        "Abort transazionali ed errori quota iniettati dimostrano che il file locale originale resta invariato.",
+        "Ogni crash point della rimozione manutentiva e della migrazione identità legacy riprende dopo un vero reload della pagina.",
+        "Una simulazione di eviction dello storage scarica e verifica una nuova working copy e mostra all'autore un esito esplicito."
+      ]
+    }
+  },
+  {
     "version": "0.76.89",
     "date": "2026-08-24",
     "en": {

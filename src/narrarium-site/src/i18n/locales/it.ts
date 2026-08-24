@@ -74,6 +74,7 @@ const it = {
     reclone: "Reclona locale",
     recloneConfirm: "Reclonare elimina la working copy locale e la ricrea dal remoto. Il remoto sarà la fonte di verità. Continuare?",
     recloneDone: "Working copy locale riclonata.",
+    cloneRestored: "Working copy locale scaricata e verificata.",
     removeLocal: "Rimuovi locale",
     removeLocalConfirm: "Rimuovere la working copy locale cancella i dati IndexedDB di questo libro da questo dispositivo. Il repository GitHub non viene toccato. Continuare?",
     removeLocalDone: "Working copy locale rimossa.",

@@ -129,9 +129,10 @@ export interface MaintenanceBackupManifest {
 
 interface MigrationJournalRow { oldRepoId: string; newRepoId: string; bookId: string; immutableAccountIdentity: string; }
 
-let crashPhase: "after-prepare" | "before-rewrite-transaction" | "after-rewrite-marker" | "after-rewrite-phase-update" | "after-rewrites" | "after-primary" | "after-rewrite-finalize" | "after-primary-marker" | "after-final-cleanup" | "after-finalized" | null = null;
-export function crashNextMaintenanceRemovalForTests(phase: typeof crashPhase): void { crashPhase = phase; }
-function simulateCrash(phase: Exclude<typeof crashPhase, null>): void { if (crashPhase === phase) { crashPhase = null; throw new Error(`Simulated maintenance removal crash ${phase}.`); } }
+let crashPhase: "after-prepare" | "after-rewrite-marker" | "after-rewrite-phase-update" | "after-primary" | "after-rewrite-finalize" | "after-primary-marker" | "after-primary-completion" | "after-final-cleanup" | "after-finalized" | null = null;
+const maintenanceCrashInjectionEnabled = typeof __NARRARIUM_E2E_BUILD__ === "undefined" || __NARRARIUM_E2E_BUILD__;
+export function crashNextMaintenanceRemovalForTests(phase: typeof crashPhase): void { if (maintenanceCrashInjectionEnabled) crashPhase = phase; }
+function simulateCrash(phase: Exclude<typeof crashPhase, null>): void { if (maintenanceCrashInjectionEnabled && crashPhase === phase) { crashPhase = null; throw new Error(`Simulated maintenance removal crash ${phase}.`); } }
 
 function scopedRepoId(target: RepositoryMaintenanceTarget): string { return `${target.accountIdentity}::${target.owner}/${target.repo}#${target.branch}`.toLowerCase(); }
 function lifecycle(repository: LocalRepositoryMeta, journalFailed: boolean): MaintenanceLifecycle {
@@ -442,12 +443,10 @@ export async function removeRepositoryWithBackupReceipt(target: RepositoryMainte
   journal ??= await prepareRemoval(target, receiptId); simulateCrash("after-prepare");
   if (journal.phase === "prepared") {
     try {
-      simulateCrash("before-rewrite-transaction");
       const removed = await fenceAndRemoveLocalRewriteOperationsForMaintenance({ repoId, localInstanceId: journal.localInstanceId, journalId: journal.journalId, accountIdentity: journal.accountIdentity, expectedSnapshot: journal.rewriteSnapshot, expectedDigest: journal.rewriteDigest, expectedRecords: journal.rewriteRecords }, scope);
       simulateCrash("after-rewrite-marker");
       journal = await updateJournal(journal, "rewrites-fenced", removed);
       simulateCrash("after-rewrite-phase-update");
-      simulateCrash("after-rewrites");
     } catch (error) {
       if (error instanceof Error && error.message === "REWRITE_BACKUP_STALE") { await cancelPreparedRemoval(journal); sessionStorage.removeItem(`${RECEIPT_PREFIX}${journal.receiptId}`); throw new RepositoryMaintenanceError("BACKUP_STALE"); }
       throw error;
@@ -468,7 +467,7 @@ export async function removeRepositoryWithBackupReceipt(target: RepositoryMainte
   });
   db.close();
   journal = await updateJournal(journal, "finalized");
-  simulateCrash("after-rewrite-finalize");
+  simulateCrash("after-primary-completion");
   const cleanupDb = await openPrimary(); await new Promise<void>((resolve, reject) => { const tx = cleanupDb.transaction(["removalJournals", "maintenanceTombstones"], "readwrite"); tx.objectStore("maintenanceTombstones").delete(repoId); tx.objectStore("removalJournals").delete(repoId); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); }); cleanupDb.close();
   simulateCrash("after-final-cleanup");
   const finalizedDb = await openPrimary();

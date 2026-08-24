@@ -152,7 +152,7 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
         nextStructure = local.structure;
       }
     } else {
-      nextStructure = (await ensureLocalBookStructure({
+      const ensured = await ensureLocalBookStructure({
         bookId,
         book,
         token: tokenValue,
@@ -161,7 +161,9 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
         onProgress: (progress) => {
           if (ownsOperation()) useBooksStore.getState().setCloneProgress(bookId, progress);
         },
-      })).structure;
+      });
+      nextStructure = ensured.structure;
+      if (ensured.cloned && ownsOperation()) toast({ title: i18n.t("repoStatus.cloneRestored") });
     }
     if (nextStructure.loadedBranch !== authoritativeBranch) {
       throw new Error(`Loaded branch ${nextStructure.loadedBranch} does not match authoritative branch ${authoritativeBranch}.`);

@@ -7,7 +7,7 @@ if (process.env.NARRARIUM_E2E_BUILD === "1") process.exit(0);
 
 const siteRoot = fileURLToPath(new URL("..", import.meta.url));
 const distRoot = path.join(siteRoot, "dist");
-const forbidden = ["e2e-google-token", "e2e-google-user", "E2E builds use a deterministic local identity", "NARRARIUM_E2E_BUILD", "VITE_E2E"];
+const forbidden = ["e2e-google-token", "e2e-google-user", "E2E builds use a deterministic local identity", "NARRARIUM_E2E_BUILD", "VITE_E2E", "__narrariumE2e", "E2eStorageUpgradeResult", "Simulated repository migration crash", "Simulated maintenance removal crash"];
 const INITIAL_ENTRY_RAW_BUDGET = 2_300_000;
 const INITIAL_ENTRY_GZIP_BUDGET = 700_000;
 const INITIAL_GRAPH_RAW_BUDGET = 3_400_000;
