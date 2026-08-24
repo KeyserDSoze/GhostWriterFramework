@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.76.89",
+    "date": "2026-08-24",
+    "en": {
+      "title": "GitHub Pages deep-link contract",
+      "summary": "Narrarium now explicitly documents how clean dynamic book URLs behave while the application remains entirely on GitHub Pages.",
+      "changes": [
+        "Browser refresh continues to retain the exact book, chapter, paragraph, or canon location through the shared SPA shell and React Router.",
+        "Finite application entry points remain physical HTTP 200 routes, while unbounded dynamic paths intentionally use GitHub Pages' 404 shell response.",
+        "Hash routing was rejected so existing clean shared URLs, PWA navigation, and OAuth fragment handling remain unchanged."
+      ]
+    },
+    "it": {
+      "title": "Contratto deep link su GitHub Pages",
+      "summary": "Narrarium documenta ora esplicitamente il comportamento degli URL dinamici puliti mantenendo l'applicazione interamente su GitHub Pages.",
+      "changes": [
+        "Il refresh del browser continua a conservare l'esatta posizione di libro, capitolo, paragrafo o canone tramite la shell SPA condivisa e React Router.",
+        "Gli ingressi finiti dell'app restano route fisiche HTTP 200, mentre i percorsi dinamici illimitati usano intenzionalmente la risposta shell 404 di GitHub Pages.",
+        "L'hash routing è stato escluso per non modificare URL condivisi puliti, navigazione PWA e gestione dei frammenti OAuth."
+      ]
+    }
+  },
+  {
     "version": "0.76.88",
     "date": "2026-08-24",
     "en": {

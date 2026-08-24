@@ -35,6 +35,14 @@ test("SPA fallback emits physical 200 entry points for update and patch-note rou
   }
 });
 
+test("GitHub Pages dynamic deep-link behavior is documented as an accepted hosting contract", async () => {
+  const contract = await readFile(new URL("../../../docs/deployment-routing.md", import.meta.url), "utf8");
+  assert.match(contract, /GitHub Pages returns the shared `404\.html` application shell/);
+  assert.match(contract, /initial origin status is therefore 404/);
+  assert.match(contract, /explicitly chosen to remain entirely on GitHub Pages/);
+  assert.match(contract, /server-side SPA fallback/);
+});
+
 test("service-worker updates wire patch-note requests to the physical route instead of public home", async () => {
   const source = await readFile(new URL("../src/pwa.ts", import.meta.url), "utf8");
   assert.match(source, /controllerchange[\s\S]*handleServiceWorkerControllerChange/);
