@@ -31,8 +31,8 @@ const en = {
   },
   repoStatus: {
     forceReclone: "Force re-clone from GitHub",
-    forceRecloneTitle: "Destructive local recovery",
-    forceRecloneDescription: "Deletes all local files, commits, recovery snapshots, rewrite state, and repository metadata for this exact account and branch, then clones a fresh copy. GitHub is not modified.",
+    forceRecloneTitle: "Confirmed local replacement",
+    forceRecloneDescription: "Downloads and verifies a fresh copy before swapping. Only after the download completes does it atomically replace the local tree, preserving the previous work in a recovery. GitHub is not modified.",
     forceRecloneConfirmation: "Type the FORCE RECLONE phrase shown above",
     title: "Repository status",
     quickActions: "Git actions",

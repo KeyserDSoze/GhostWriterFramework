@@ -46,6 +46,23 @@ export interface RepositoryLifecycleLease {
 const REPOSITORY_LEASE_MS = 30_000;
 export const MAX_RECOVERY_SNAPSHOTS_PER_REPOSITORY = 20;
 export const MAX_RECOVERY_SNAPSHOT_BYTES_PER_REPOSITORY = 64 * 1024 * 1024;
+
+function recoverySnapshotBytes(entry: LocalRepositoryRecovery): number {
+  return entry.files.reduce((total, file) => total + (file.text?.length ?? file.blob?.size ?? 0), 0)
+    + entry.commits.reduce((total, commit) => total + commit.files.length * 128 + commit.message.length, 0);
+}
+
+function retainRecoverySnapshot(store: IDBObjectStore, existing: LocalRepositoryRecovery[], recovery: LocalRepositoryRecovery): void {
+  const retained = [...existing, recovery].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  let total = retained.reduce((sum, entry) => sum + recoverySnapshotBytes(entry), 0);
+  while (retained.length > MAX_RECOVERY_SNAPSHOTS_PER_REPOSITORY || total > MAX_RECOVERY_SNAPSHOT_BYTES_PER_REPOSITORY) {
+    if (retained[0].id === recovery.id) throw new Error("Recovery snapshot exceeds the repository retention limit and cannot be safely stored.");
+    const removed = retained.shift()!;
+    total -= recoverySnapshotBytes(removed);
+    store.delete(removed.id);
+  }
+  store.put(recovery);
+}
 const repositoryInstanceNonce: string = crypto.randomUUID();
 
 export interface RepositoryMutationLease {
@@ -2027,16 +2044,7 @@ export async function createLocalRecoverySnapshot(repoIdValue: string, reason: s
         files,
         commits: commits.filter((commit) => !commit.pushed).sort(compareLocalCommitOrder),
       };
-       const snapshotBytes = (entry: LocalRepositoryRecovery) => entry.files.reduce((total, file) => total + (file.text?.length ?? file.blob?.size ?? 0), 0) + entry.commits.reduce((total, commit) => total + commit.files.length * 128 + commit.message.length, 0);
-       const retained = [...existingRecoveries, recovery].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
-       let total = retained.reduce((sum, entry) => sum + snapshotBytes(entry), 0);
-       while (retained.length > MAX_RECOVERY_SNAPSHOTS_PER_REPOSITORY || total > MAX_RECOVERY_SNAPSHOT_BYTES_PER_REPOSITORY) {
-         if (retained[0].id === recovery.id) throw new Error("Recovery snapshot exceeds the repository retention limit and cannot be safely stored.");
-         const removed = retained.shift()!;
-         total -= snapshotBytes(removed);
-         tx.objectStore("recoveries").delete(removed.id);
-       }
-       tx.objectStore("recoveries").put(recovery);
+        retainRecoverySnapshot(tx.objectStore("recoveries"), existingRecoveries, recovery);
     };
     repositoryRequest.onsuccess = () => {
       repository = repositoryRequest.result as LocalRepositoryMeta | undefined;
@@ -2231,10 +2239,11 @@ export async function replaceLocalTreeAtomically(
     let repository: LocalRepositoryMeta | undefined;
     let recovery: LocalRepositoryRecovery | undefined;
     let loaded = 0;
+    let existingRecoveries: LocalRepositoryRecovery[] = [];
     let validationError: Error | null = null;
     const apply = () => {
       loaded += 1;
-      if (loaded !== 3) return;
+      if (loaded !== 4) return;
       recovery = {
         id: crypto.randomUUID(),
         repoId: repoIdValue,
@@ -2245,7 +2254,8 @@ export async function replaceLocalTreeAtomically(
         files: expectedFiles,
         commits: currentCommits,
       };
-      recoveries.put(recovery);
+      try { retainRecoverySnapshot(recoveries, existingRecoveries, recovery); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
       repositories.put({ ...repository!, remoteHeadSha, remoteChanged: false, remoteStatus: "clean", remoteCheckedAt: now, remoteErrorKind: undefined, lastRemoteHead: remoteHeadSha, lastKnownChanged: false, cloneComplete: true, expectedFileCount: prepared.length, updatedAt: now, lastFetchAt: now });
       for (const file of prepared) files.put(file);
     };
@@ -2298,6 +2308,9 @@ export async function replaceLocalTreeAtomically(
       apply();
     };
     currentCommitsRequest.onerror = () => tx.abort();
+    const recoveriesRequest = recoveries.index("repoId").getAll(repoIdValue);
+    recoveriesRequest.onsuccess = () => { existingRecoveries = recoveriesRequest.result as LocalRepositoryRecovery[]; apply(); };
+    recoveriesRequest.onerror = () => tx.abort();
     tx.oncomplete = () => resolve(recovery!);
     tx.onerror = () => reject(validationError ?? tx.error);
     tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Remote tree replacement was aborted."));

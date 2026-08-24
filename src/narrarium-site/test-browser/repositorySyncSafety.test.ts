@@ -55,7 +55,7 @@ import {
   updateLocalRepositoryHead,
 } from "@/repository/localRepository";
 import { deleteLocalFile, putCleanLocalFile, putQuarantinedLocalRepository, writeLocalText } from "./helpers/localRepositorySeed";
-import { ensureLocalBookStructure, fetchRemoteStatus, invalidateRepositoryEnsureOperations, migrateLegacyLocalRepository, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, RepositorySyncConflictError, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
+import { ensureLocalBookStructure, fetchRemoteStatus, forceRecloneLocalWorkingCopy, invalidateRepositoryEnsureOperations, migrateLegacyLocalRepository, overwriteRemoteWithLocal, pullRemoteChanges, pushLocalCommits, recloneLocalWorkingCopy, RepositorySyncConflictError, restoreLocalFilesToBase, restoreRepositoryRecovery, syncFullRepository, verifyAndRepairLocalRepository } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -999,6 +999,22 @@ test("local-source settlement preserves a newer same-path edit dirty and keeps r
   expect(await listLocalRecoverySnapshots(repoId, identity)).toHaveLength(1);
 });
 
+test("reclone preserves discarded local work in a recovery and swaps the remote tree atomically", async () => {
+  await setup();
+  await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "original", baseSha: "old-blob", size: 8 });
+  await writeLocalText(repoId, "plot.md", "local rewrite");
+  octokit.getRef.mockResolvedValue({ data: { object: { sha: "new-head" } } });
+  octokit.getTree.mockResolvedValue({ data: { truncated: false, tree: [{ type: "blob", path: "plot.md", sha: "new-blob", size: 10 }] } });
+  octokit.getBlob.mockResolvedValue({ data: { encoding: "base64", content: btoa("remote text") } });
+
+  await expect(recloneLocalWorkingCopy({ bookId: "book", book: { id: "book", owner: "owner", repo: "repo" } as any, token: "token", accountIdentity: identity, branch: "main" })).resolves.toMatchObject({ cloned: true, meta: { remoteHeadSha: "new-head" } });
+
+  expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "remote text", baseSha: "new-blob", status: "clean" });
+  const recoveries = await listLocalRecoverySnapshots(repoId, identity);
+  expect(recoveries).toHaveLength(1);
+  expect(recoveries[0].files).toEqual([expect.objectContaining({ path: "plot.md", text: "local rewrite", status: "modified" })]);
+});
+
 test("local-source settlement preserves a newer same-path commit as pushable", async () => {
   await setup();
   await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "old", baseSha: "old-blob", size: 3 });
@@ -1056,7 +1072,7 @@ test("selected file restore applies nothing when a later base blob download fail
   expect(await getLocalFile(repoId, "b.md")).toMatchObject({ text: "local-b", status: "modified" });
 });
 
-test("reclone refuses non-atomic replacement and preserves the existing copy", async () => {
+test("reclone waits for an active push and atomically replaces the settled working copy", async () => {
   await setup();
   await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "base", baseSha: "base-blob", size: 4 });
   await writeLocalText(repoId, "plot.md", "pushed");
@@ -1074,10 +1090,37 @@ test("reclone refuses non-atomic replacement and preserves the existing copy", a
 
   const push = pushLocalCommits({ ...target, token: "token", repoId });
   const reclone = recloneLocalWorkingCopy({ bookId: "book", book: { id: "book", owner: "owner", repo: "repo" } as any, token: "token", accountIdentity: identity, branch: "main" });
-  const recloneExpectation = expect(reclone).rejects.toMatchObject({ code: "RECLONE_REQUIRES_REMOVAL" });
 
   await expect(push).resolves.toMatchObject({ commitSha: "pushed-head" });
-  await recloneExpectation;
+  await expect(reclone).resolves.toMatchObject({ cloned: true, meta: { remoteHeadSha: "pushed-head" } });
   expect(octokit.getRepo).not.toHaveBeenCalled();
   expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "pushed", baseSha: "pushed-blob", status: "clean" });
+  expect(await listLocalRecoverySnapshots(repoId, identity)).toEqual([]);
+});
+
+test("reclone keeps the original working copy when a staged blob download fails", async () => {
+  await setup();
+  await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "original", baseSha: "old-blob", size: 8 });
+  await writeLocalText(repoId, "plot.md", "unsaved local work");
+  octokit.getRef.mockResolvedValue({ data: { object: { sha: "new-head" } } });
+  octokit.getTree.mockResolvedValue({ data: { truncated: false, tree: [{ type: "blob", path: "plot.md", sha: "new-blob", size: 8 }] } });
+  octokit.getBlob.mockRejectedValue(new Error("blob download failed"));
+
+  await expect(recloneLocalWorkingCopy({ bookId: "book", book: { id: "book", owner: "owner", repo: "repo" } as any, token: "token", accountIdentity: identity, branch: "main" })).rejects.toThrow("blob download failed");
+
+  expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "unsaved local work", status: "modified" });
+  expect(await listLocalRecoverySnapshots(repoId, identity)).toEqual([]);
+});
+
+test("force reclone also stages before swapping instead of deleting the original first", async () => {
+  await setup();
+  await putCleanLocalFile({ repoId, path: "plot.md", kind: "text", text: "original", baseSha: "old-blob", size: 8 });
+  await writeLocalText(repoId, "plot.md", "critical local work");
+  octokit.getRef.mockResolvedValue({ data: { object: { sha: "new-head" } } });
+  octokit.getTree.mockResolvedValue({ data: { truncated: false, tree: [{ type: "blob", path: "plot.md", sha: "new-blob", size: 8 }] } });
+  octokit.getBlob.mockRejectedValue(new Error("network failed"));
+
+  await expect(forceRecloneLocalWorkingCopy({ bookId: "book", book: { id: "book", owner: "owner", repo: "repo" } as any, token: "token", accountIdentity: identity, branch: "main", confirmation: "FORCE RECLONE owner/repo#main" })).rejects.toThrow("network failed");
+
+  expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "critical local work", status: "modified" });
 });

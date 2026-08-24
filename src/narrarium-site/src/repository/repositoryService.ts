@@ -53,7 +53,7 @@ import {
   type LocalRepositoryRecovery,
   type RemoteTreeFile,
 } from "@/repository/localRepository";
-import { forceRemoveRepositoryWithoutBackup, lookupRepositoryMaintenanceTarget, removeRepositoryWithBackupReceipt, RepositoryMaintenanceError } from "@/repository/repositoryMaintenance";
+import { lookupRepositoryMaintenanceTarget, removeRepositoryWithBackupReceipt, RepositoryMaintenanceError } from "@/repository/repositoryMaintenance";
 import { reconcileRemoteMutation } from "@/repository/remoteMutationReconciliation";
 import { classifyRepositoryError, RepositoryError } from "@/repository/repositoryError";
 import { createTrackedGitHubClient } from "@/repository/githubRequest";
@@ -744,6 +744,7 @@ export async function pullRemoteChanges(input: ExactRepositoryTarget & {
   mode?: "safe" | "remote-wins";
   confirmed?: boolean;
   signal?: AbortSignal;
+  onProgress?: (progress: LocalCloneProgress) => void;
 }): Promise<{ updated: number; remoteHeadSha: string; recoveryId?: string }> {
   const scope = operationScope(input);
   const selected = await exactLocalRepository(input, scope);
@@ -755,6 +756,7 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
   mode?: "safe" | "remote-wins";
   confirmed?: boolean;
   signal?: AbortSignal;
+  onProgress?: (progress: LocalCloneProgress) => void;
 }, scope: RepositoryOperationScope): Promise<{ updated: number; remoteHeadSha: string; recoveryId?: string }> {
   const operationId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
@@ -796,6 +798,7 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
   const prepared: RemoteTreeFile[] = [];
   const transferMeter = new RepositoryByteMeter("transfer", await repositoryTransferAllowance());
   let updated = localFiles.filter((file) => !remoteByPath.has(file.path)).length;
+  input.onProgress?.({ done: 0, total: remoteByPath.size, phase: "cloning" });
   for (const [path, blobSha] of remoteByPath) {
     input.signal?.throwIfAborted();
     const local = localFiles.find((file) => file.path === path);
@@ -808,6 +811,7 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
     }
     const kind = isTextPath(path) ? "text" as const : "binary" as const;
     prepared.push({ path, kind, text: kind === "text" ? new TextDecoder().decode(bytes) : undefined, blob: kind === "binary" ? new Blob([bytesToArrayBuffer(bytes)]) : undefined, baseSha: blobSha, size: bytes.byteLength });
+    input.onProgress?.({ done: prepared.length, total: remoteByPath.size, path, phase: "cloning" });
   }
   input.signal?.throwIfAborted();
   const pullRecoveryBytes = localFiles.reduce((sum, file) => sum + file.size, 0);
@@ -1212,13 +1216,21 @@ export async function recloneLocalWorkingCopy(input: {
   accountIdentity: string;
   branch?: string;
   onProgress?: (progress: LocalCloneProgress) => void;
+  signal?: AbortSignal;
 }): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
   if (!input.branch) throw new Error("An exact branch is required to re-clone a local working copy.");
   const scope = operationScope({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity });
   const existing = await lookupRepositoryMaintenanceTarget({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity });
   if (existing.removalPending) throw new RepositoryMaintenanceError("REMOVAL_PENDING");
-  if (existing.repository) throw new RepositoryMaintenanceError("RECLONE_REQUIRES_REMOVAL");
-  const result = await ensureLocalBookStructure(input);
+  if (!existing.repository) {
+    const result = await ensureLocalBookStructure(input);
+    await addLocalRepoLog(result.meta.id, scope, "reset", "Recloned local working copy");
+    return result;
+  }
+  await pullRemoteChanges({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity, repoId: existing.repository.id, token: input.token, mode: "remote-wins", confirmed: true, signal: input.signal, onProgress: input.onProgress });
+  const meta = await getLocalRepositoryById(existing.repository.id, input.accountIdentity);
+  if (!meta) throw new RepositoryOwnershipChangedError("The local repository disappeared during re-clone.");
+  const result = { meta, structure: await buildLocalBookStructure(meta), cloned: true };
   await addLocalRepoLog(result.meta.id, scope, "reset", "Recloned local working copy");
   return result;
 }
@@ -1231,12 +1243,11 @@ export async function forceRecloneLocalWorkingCopy(input: {
   branch: string;
   confirmation: string;
   onProgress?: (progress: LocalCloneProgress) => void;
+  signal?: AbortSignal;
 }): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
   const expected = `FORCE RECLONE ${input.book.owner}/${input.book.repo}#${input.branch}`;
   if (input.confirmation !== expected) throw new RepositoryMaintenanceError("CONFIRMATION_REQUIRED");
-  operationScope({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity });
-  await forceRemoveRepositoryWithoutBackup({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity }, input.confirmation);
-  return ensureLocalBookStructure(input);
+  return recloneLocalWorkingCopy(input);
 }
 
 /**

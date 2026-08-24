@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.86",
+    "date": "2026-08-24",
+    "en": {
+      "title": "Atomic, recoverable repository re-clone",
+      "summary": "Re-cloning now downloads and verifies the complete remote tree before atomically replacing the local working copy.",
+      "changes": [
+        "Normal and confirmed force re-clone keep the current repository operational until the complete GitHub tree has downloaded and passed validation.",
+        "Network, blob, cancellation, account-scope, storage, or concurrent-mutation failures leave local files, commits, recoveries, and rewrite operations untouched.",
+        "A successful replacement creates a recovery containing discarded local files and unpushed commits in the same IndexedDB transaction as the tree swap.",
+        "Re-clones are serialized with pushes and other repository mutations, report download progress, and enforce the existing bounded recovery retention policy."
+      ]
+    },
+    "it": {
+      "title": "Re-clone atomico e recuperabile",
+      "summary": "Il re-clone scarica e verifica ora l'intero albero remoto prima di sostituire atomicamente la copia di lavoro locale.",
+      "changes": [
+        "Il re-clone normale e quello forzato confermato mantengono operativo il repository corrente finché l'intero albero GitHub non è stato scaricato e verificato.",
+        "Errori di rete, blob, annullamento, account, spazio o mutazioni concorrenti lasciano intatti file locali, commit, recovery e operazioni di riscrittura.",
+        "Una sostituzione riuscita crea una recovery con file locali scartati e commit non pubblicati nella stessa transazione IndexedDB dello swap.",
+        "I re-clone sono serializzati con push e altre mutazioni, mostrano il progresso del download e rispettano i limiti esistenti di conservazione delle recovery."
+      ]
+    }
+  },
+  {
     "version": "0.76.85",
     "date": "2026-08-24",
     "en": {
