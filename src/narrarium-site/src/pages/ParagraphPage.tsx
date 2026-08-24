@@ -12,7 +12,6 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { FileDiff } from "@/components/diff/DiffView";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useToast } from "@/components/ui/use-toast";
@@ -27,8 +26,9 @@ import { resolveBookExportSettings, resolveBookToken, type ReaderSettings } from
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
-import { improveProse, synonymsFor, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
+import { synonymsFor, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
+import { useProseAssist } from "@/components/editor/useProseAssist";
 import { useMergeDraftFinal } from "@/components/editor/useMergeDraftFinal";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { useRegisterPageActions } from "@/store/pageActionsStore";
@@ -194,13 +194,8 @@ export function ParagraphPage() {
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
 
-  // Improve
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const selectionRef = useRef<{ start: number; end: number } | null>(null);
-  const [improveOpen, setImproveOpen] = useState(false);
-  const [improveLoading, setImproveLoading] = useState(false);
-  const [improveNew, setImproveNew] = useState("");
-  const [improveSelection, setImproveSelection] = useState<string | null>(null);
 
   // Synonyms
   const [synonymOpen, setSynonymOpen] = useState(false);
@@ -221,6 +216,17 @@ export function ParagraphPage() {
     const v = entries.find((e) => e.key === "ghostwriter")?.value;
     return typeof v === "string" ? v : "";
   })();
+  const effectiveGhostwriter = currentGhostwriter || paragraph?.ghostwriter || chapter?.ghostwriter || structure?.ghostwriter || "";
+  const effectiveGhostwriterLabel = structure?.ghostwriters.find((entry) => entry.slug === effectiveGhostwriter)?.name || effectiveGhostwriter;
+  const proseAssist = useProseAssist({
+    textareaRef: bodyRef,
+    getBody: () => body,
+    setBody,
+    buildSource: () => (book && structure && chapter && token ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: accountIdentity(useAuthStore.getState().user) } : null),
+    ghostwriter: effectiveGhostwriter,
+    ghostwriterLabel: effectiveGhostwriterLabel,
+    ghostwriterInherited: !currentGhostwriter,
+  });
   const draftBodyRef = useRef("");
   const draftPath = paragraph?.draftPath ?? (chapter && paragraph ? `${chapter.path}/drafts/${(paragraph.path.split("/").pop() ?? "").replace(/\.md$/i, "")}.md` : "");
   const merge = useMergeDraftFinal({
@@ -261,7 +267,7 @@ export function ParagraphPage() {
 
   useRegisterPageSave({ dirty: isDirty, enabled: Boolean(paragraph && book), onSave: () => handleSave() });
   useRegisterPageActions([
-    { id: "improve-paragraph", label: t("paragraph.improveAll"), icon: <Wand2 className="h-4 w-4" />, run: () => void startImprove() },
+    { id: "improve-paragraph", label: t("paragraph.improveAll"), icon: <Wand2 className="h-4 w-4" />, run: () => proseAssist.improve(null) },
     { id: "merge-draft-final", label: t("merge.button"), icon: <Wand2 className="h-4 w-4" />, run: () => void runMerge(), disabled: merge.busy },
     { id: paragraph?.auditPath ? "open-audit" : "run-audit", label: t(paragraph?.auditPath ? "audit.actions.open" : "audit.actions.run"), icon: <ShieldAlert className="h-4 w-4" />, run: () => navigate(auditActionHref) },
   ], Boolean(paragraph && book && token));
@@ -559,56 +565,6 @@ export function ParagraphPage() {
     );
   }
 
-  async function startImprove() {
-    if (!book || !token || !structure || !chapter) return;
-    const node = bodyRef.current;
-    let selection: string | null = null;
-    if (node && node.selectionEnd > node.selectionStart) {
-      selectionRef.current = { start: node.selectionStart, end: node.selectionEnd };
-      selection = body.slice(node.selectionStart, node.selectionEnd);
-    } else {
-      selectionRef.current = null;
-    }
-    setImproveSelection(selection);
-    setImproveNew("");
-    setImproveOpen(true);
-    setImproveLoading(true);
-    try {
-      const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: accountIdentity(useAuthStore.getState().user) };
-      setImproveNew(await improveProse(src, body, selection, currentGhostwriter));
-    } catch (err) {
-      toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
-      setImproveOpen(false);
-    } finally {
-      setImproveLoading(false);
-    }
-  }
-
-  function applyImprove() {
-    if (improveSelection && selectionRef.current) {
-      const { start, end } = selectionRef.current;
-      const { lead, trail } = splitEdges(body.slice(start, end));
-      setBody(body.slice(0, start) + lead + improveNew.trim() + trail + body.slice(end));
-    } else {
-      setBody(improveNew);
-    }
-    setImproveOpen(false);
-  }
-
-  async function regenerateImprove() {
-    if (!book || !token || !structure || !chapter) return;
-    setImproveNew("");
-    setImproveLoading(true);
-    try {
-      const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: accountIdentity(useAuthStore.getState().user) };
-      setImproveNew(await improveProse(src, body, improveSelection, currentGhostwriter));
-    } catch (err) {
-      toast({ title: t("pipeline.failed"), description: String(err), variant: "destructive" });
-    } finally {
-      setImproveLoading(false);
-    }
-  }
-
   function captureSelectionRef() {
     const node = bodyRef.current;
     if (node && node.selectionEnd > node.selectionStart) {
@@ -657,7 +613,7 @@ export function ParagraphPage() {
   }
 
   const readonlyEntries = entries.filter((e) => READONLY_KEYS.has(e.key));
-  proseHandlersRef.current = { improve: () => void startImprove(), synonym: (s) => void openSynonyms(s), merge: () => void runMerge() };
+  proseHandlersRef.current = { improve: proseAssist.improve, synonym: (s) => void openSynonyms(s), merge: () => void runMerge() };
   const editableEntries = entries.filter(
     (e) => !READONLY_KEYS.has(e.key) && e.key !== "title" && e.key !== "ghostwriter",
   );
@@ -902,26 +858,7 @@ export function ParagraphPage() {
 
       <p className="text-[11px] text-muted-foreground truncate">{paragraph.path}</p>
 
-      <Dialog open={improveOpen} onOpenChange={(next) => { if (!next) setImproveOpen(false); }}>
-        <DialogContent className="left-1/2 top-1/2 flex h-[88dvh] max-h-[88dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 flex-col p-0 sm:w-[820px]">
-          <div className="border-b px-4 py-3">
-            <p className="font-semibold">{improveSelection ? t("paragraph.improveSelection") : t("paragraph.improveAll")}</p>
-            <p className="text-xs text-muted-foreground">{currentGhostwriter ? t("paragraph.improveWith", { name: currentGhostwriter }) : t("pipeline.defaultStyle")}</p>
-          </div>
-          <div className="min-h-0 flex-1 overflow-auto p-4">
-            {improveLoading ? (
-              <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("pipeline.generating")}</div>
-            ) : (
-              <FileDiff previous={improveSelection ?? body} next={improveNew} />
-            )}
-          </div>
-          <div className="flex justify-end gap-2 border-t px-4 py-3">
-            <Button variant="ghost" onClick={() => setImproveOpen(false)}>{t("common.cancel")}</Button>
-            <Button variant="outline" onClick={() => void regenerateImprove()} disabled={improveLoading}>{t("pipeline.regenerate")}</Button>
-            <Button onClick={applyImprove} disabled={improveLoading || !improveNew.trim()}>{t("pipeline.apply")}</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {proseAssist.dialogs}
 
       <Dialog open={synonymOpen} onOpenChange={(next) => { if (!next) setSynonymOpen(false); }}>
         <DialogContent className="sm:max-w-md">

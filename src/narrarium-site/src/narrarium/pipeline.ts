@@ -36,6 +36,9 @@ async function tryLoad(src: PipelineSource, path?: string): Promise<string> {
 }
 
 async function evaluationGuidelines(src: PipelineSource): Promise<string> {
+  if (!src.structure.firstClassFiles?.some((file) => file.path === EVALUATION_GUIDELINES_PATH)) {
+    return defaultEvaluationGuidelinesMarkdown(src.structure.language ?? src.settings.ui.language);
+  }
   try {
     return await loadFileContent(src.token, src.owner, src.repo, EVALUATION_GUIDELINES_PATH, src.branch);
   } catch {

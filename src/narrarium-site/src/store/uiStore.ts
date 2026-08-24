@@ -52,6 +52,8 @@ export const useUiStore = create<UiState>()(
     }),
     {
       name: "narrarium-ui-state",
+      version: 1,
+      migrate: (persisted) => persisted as UiState,
       partialize: (state) => ({ dossierColumnHidden: state.dossierColumnHidden }),
     },
   ),

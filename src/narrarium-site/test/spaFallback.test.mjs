@@ -90,3 +90,11 @@ test("service-worker registration bypasses the HTTP cache for root and imported 
   assert.match(source, /version\.json\?_=/);
   assert.match(source, /fetch\(versionUrl, \{ cache: "no-store" \}\)/);
 });
+
+test("the paragraph overview uses the shared interactive prose-assist dialog", async () => {
+  const source = await readFile(new URL("../src/pages/ParagraphPage.tsx", import.meta.url), "utf8");
+  assert.match(source, /useProseAssist\(\{/);
+  assert.match(source, /\{proseAssist\.dialogs\}/);
+  assert.doesNotMatch(source, /<FileDiff previous=\{improveSelection/);
+  assert.doesNotMatch(source, /function regenerateImprove\(/);
+});

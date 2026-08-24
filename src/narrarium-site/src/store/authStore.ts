@@ -159,6 +159,8 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: AUTH_STORAGE_KEY,
+      version: 1,
+      migrate: (persisted) => persisted as AuthState,
       storage: createJSONStorage(sessionAuthStorage),
       // Only this tab's volatile bearer is persisted. Identity continuity is durable separately.
       partialize: (state) => ({

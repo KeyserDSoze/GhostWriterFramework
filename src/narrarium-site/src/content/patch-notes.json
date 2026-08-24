@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.88",
+    "date": "2026-08-24",
+    "en": {
+      "title": "Interactive improvement on paragraph overview",
+      "summary": "The paragraph overview now uses the same complete interactive improvement merge as the workspace editor.",
+      "changes": [
+        "Improve selection and improve all on the paragraph overview now show per-change original/proposal decisions, single and multi-selection regeneration, Apply, and Apply all.",
+        "The paragraph overview resolves and displays the effective ghostwriter name with its inherited or selected status.",
+        "The duplicate legacy improvement dialog was removed so both paragraph editing routes share one implementation.",
+        "Persisted UI, authentication, and settings stores now migrate older saved state explicitly instead of logging a Zustand migration warning.",
+        "Books without evaluation-guidelines.md use the built-in defaults without issuing an avoidable GitHub 404 request."
+      ]
+    },
+    "it": {
+      "title": "Miglioramento interattivo nella panoramica paragrafo",
+      "summary": "La panoramica paragrafo usa ora lo stesso merge interattivo completo dell'editor workspace.",
+      "changes": [
+        "Migliora selezione e migliora tutto nella panoramica mostrano ora decisioni originale/proposta per blocco, rigenerazione singola e multipla, Applica e Applica tutto.",
+        "La panoramica paragrafo risolve e mostra il nome del Ghostwriter effettivo indicando se è ereditato o selezionato.",
+        "La modale legacy duplicata è stata rimossa, così entrambe le route di modifica del paragrafo condividono una sola implementazione.",
+        "Gli store persistenti di UI, autenticazione e impostazioni migrano esplicitamente lo stato salvato precedente senza più mostrare il warning Zustand.",
+        "I libri senza evaluation-guidelines.md usano i valori predefiniti integrati senza eseguire una richiesta GitHub 404 evitabile."
+      ]
+    }
+  },
+  {
     "version": "0.76.87",
     "date": "2026-08-24",
     "en": {

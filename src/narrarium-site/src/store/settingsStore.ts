@@ -79,6 +79,8 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: "narrarium-settings-cache",
+      version: 1,
+      migrate: (persisted) => persisted as SettingsState,
       partialize: (state) => ({
         driveFileId: state.driveFileId,
         cloudRevision: state.cloudRevision,
