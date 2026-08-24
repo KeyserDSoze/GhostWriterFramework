@@ -5,6 +5,7 @@ import { crashNextMaintenanceRemovalForTests, forceRemoveRepositoryWithoutBackup
 import { beginStrandedLegacyRecovery, getLegacyAccountUpgradeEvidence, legacyEmailAccountIdentity } from "@/auth/accountIdentity";
 import { createLegacyAdoptionConsent } from "@/auth/legacyAdoptionConsent";
 import { useAuthStore } from "@/store/authStore";
+import { installAccountScopeIsolation } from "@/auth/accountScope";
 
 export interface E2eStorageUpgradeResult {
   repository: Awaited<ReturnType<typeof getLocalRepositoryById>>;
@@ -21,6 +22,7 @@ export interface E2eStorageUpgradeResult {
 
 export function installE2eBridge(): void {
   if (!__NARRARIUM_E2E_BUILD__ || import.meta.env.VITE_E2E !== "true") return;
+  installAccountScopeIsolation();
   window.__narrariumE2e = {
     upgradeStorage: async (repoId, accountIdentity) => {
       const repository = await getLocalRepositoryById(repoId, accountIdentity);

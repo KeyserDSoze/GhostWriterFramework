@@ -1,46 +1,6 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
-import { lazy, Suspense } from "react";
-import { Shell } from "@/components/layout/Shell";
-import { AuthGuard } from "@/components/auth/AuthGuard";
-import { LoginScreen } from "@/components/auth/LoginScreen";
-import { BooksPage } from "@/pages/BooksPage";
-import { AddBookPage } from "@/pages/AddBookPage";
-import { BookPage } from "@/pages/BookPage";
-import { BookDashboardPage } from "@/pages/BookDashboardPage";
-import { AssetGalleryPage } from "@/pages/AssetGalleryPage";
-import { ReaderPreviewPage } from "@/pages/ReaderPreviewPage";
-import { BookSettingsPage } from "@/pages/BookSettingsPage";
-import { CanonEntityPage } from "@/pages/CanonEntityPage";
-import { ChapterPage } from "@/pages/ChapterPage";
-import { ParagraphPage } from "@/pages/ParagraphPage";
-import { ParagraphSplitPage } from "@/pages/ParagraphSplitPage";
-import { WorkspaceDocPage } from "@/pages/WorkspaceDocPage";
-import { GhostwritersPage } from "@/pages/GhostwritersPage";
-import { EvaluationStylePage } from "@/pages/EvaluationStylePage";
-import { ReaderPersonasPage } from "@/pages/ReaderPersonasPage";
-import { ReaderEvaluationsPage } from "@/pages/ReaderEvaluationsPage";
-import { PatchNotesPage } from "@/pages/PatchNotesPage";
-import { ChapterStageIndexPage } from "@/pages/ChapterStageIndexPage";
-import { SettingsPage } from "@/pages/SettingsPage";
-import { MigratePage } from "@/pages/MigratePage";
-import { CostsPage } from "@/pages/CostsPage";
-import { CustomActionsPage } from "@/pages/CustomActionsPage";
-import { ReaderSettingsPage } from "@/pages/ReaderSettingsPage";
-import { DeepResearchPage } from "@/pages/DeepResearchPage";
-import { AppDocsIndexPage, AppDocPage } from "@/pages/AppDocsPage";
-import { AssistantChatsPage } from "@/pages/AssistantChatsPage";
-import { AuditPage } from "@/pages/AuditPage";
-import {
-  DocPage,
-  DocsIndexPage,
-  HomePage,
-  McpPage,
-  NotFoundPage,
-  PrivacyPage,
-  TermsPage,
-} from "@/pages/PublicPages";
-
-const BookExportPage = lazy(() => import("@/pages/BookExportPage").then((module) => ({ default: module.BookExportPage })));
+import type { ComponentType } from "react";
+import { RouteErrorFallback } from "@/components/layout/RouteErrorFallback";
 
 function routerBasename(): string {
   const base = import.meta.env.BASE_URL;
@@ -48,77 +8,68 @@ function routerBasename(): string {
   return base.replace(/\/$/, "");
 }
 
+const component = <T extends Record<string, unknown>, K extends keyof T>(loader: () => Promise<T>, name: K) => async () => {
+  const RouteComponent = (await loader())[name] as ComponentType;
+  return { Component: () => <><span className="sr-only" data-route-ready={String(name)} /><RouteComponent /></> };
+};
+const routeError = <RouteErrorFallback />;
+
 export const router = createBrowserRouter([
-  { path: "/", element: <HomePage /> },
-  { path: "/docs", element: <DocsIndexPage /> },
-  { path: "/docs/*", element: <DocPage /> },
-  { path: "/mcp", element: <McpPage /> },
-  { path: "/privacy", element: <PrivacyPage /> },
-  { path: "/terms", element: <TermsPage /> },
-  {
-    path: "/login",
-    element: <LoginScreen />,
-  },
+  { path: "/", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicBasics"), "HomePage") },
+  { path: "/docs", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicDocs"), "DocsIndexPage") },
+  { path: "/docs/*", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicDocs"), "DocPage") },
+  { path: "/mcp", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicDocs"), "McpPage") },
+  { path: "/privacy", lazy: component(() => import("@/pages/public/PublicBasics"), "PrivacyPage") },
+  { path: "/terms", lazy: component(() => import("@/pages/public/PublicBasics"), "TermsPage") },
+  { errorElement: routeError, lazy: component(() => import("@/routes/AuthProvidersRoute"), "AuthProvidersRoute"), children: [
+    { path: "/login", lazy: component(() => import("@/components/auth/LoginScreen"), "LoginScreen") },
+    { path: "/app", lazy: component(() => import("@/routes/AppShellRoute"), "AppShellRoute"), children: [
+      { index: true, element: <Navigate to="books" replace /> },
+      { path: "books", lazy: component(() => import("@/pages/BooksPage"), "BooksPage") },
+      { path: "books/add", lazy: component(() => import("@/pages/AddBookPage"), "AddBookPage") },
+      { path: "chats", lazy: component(() => import("@/pages/AssistantChatsPage"), "AssistantChatsPage") },
+      { path: "patch-notes", lazy: component(() => import("@/pages/PatchNotesPage"), "PatchNotesPage") },
+      { path: "books/:bookId", lazy: component(() => import("@/pages/BookPage"), "BookPage") },
+      { path: "books/:bookId/dashboard", lazy: component(() => import("@/pages/BookDashboardPage"), "BookDashboardPage") },
+      { path: "books/:bookId/assets", lazy: component(() => import("@/pages/AssetGalleryPage"), "AssetGalleryPage") },
+      { path: "books/:bookId/reader", lazy: component(() => import("@/pages/ReaderPreviewPage"), "ReaderPreviewPage") },
+      { path: "books/:bookId/export", lazy: component(() => import("@/pages/BookExportPage"), "BookExportPage") },
+      { path: "books/:bookId/research", lazy: component(() => import("@/pages/DeepResearchPage"), "DeepResearchPage") },
+      { path: "books/:bookId/research/:researchSlug", lazy: component(() => import("@/pages/DeepResearchPage"), "DeepResearchPage") },
+      { path: "books/:bookId/ghostwriters", lazy: component(() => import("@/pages/GhostwritersPage"), "GhostwritersPage") },
+      { path: "books/:bookId/evaluation-style", lazy: component(() => import("@/pages/EvaluationStylePage"), "EvaluationStylePage") },
+      { path: "books/:bookId/simulated-readers", lazy: component(() => import("@/pages/ReaderPersonasPage"), "ReaderPersonasPage") },
+      { path: "books/:bookId/settings", lazy: component(() => import("@/pages/BookSettingsPage"), "BookSettingsPage") },
+      { path: "books/:bookId/audit", lazy: component(() => import("@/pages/AuditPage"), "AuditPage") },
+      { path: "books/:bookId/canon/:section/:slug", lazy: component(() => import("@/pages/CanonEntityPage"), "CanonEntityPage") },
+      { path: "books/:bookId/chapters/:chapterId/workspace/:workspaceKind", lazy: component(() => import("@/pages/WorkspaceDocPage"), "WorkspaceDocPage") },
+      { path: "books/:bookId/chapters/:chapterId/drafts", lazy: component(() => import("@/routes/StageRoutes"), "DraftStageRoute") },
+      { path: "books/:bookId/chapters/:chapterId/scripts", lazy: component(() => import("@/routes/StageRoutes"), "ScriptStageRoute") },
+      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/workspace/:workspaceKind", lazy: component(() => import("@/pages/WorkspaceDocPage"), "WorkspaceDocPage") },
+      { path: "books/:bookId/chapters/:chapterId/reader-evaluations", lazy: component(() => import("@/pages/ReaderEvaluationsPage"), "ReaderEvaluationsPage") },
+      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/reader-evaluations", lazy: component(() => import("@/pages/ReaderEvaluationsPage"), "ReaderEvaluationsPage") },
+      { path: "books/:bookId/chapters/:chapterId/audit", lazy: component(() => import("@/pages/AuditPage"), "AuditPage") },
+      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/audit", lazy: component(() => import("@/pages/AuditPage"), "AuditPage") },
+      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/split", lazy: component(() => import("@/pages/ParagraphSplitPage"), "ParagraphSplitPage") },
+      { path: "books/:bookId/chapters/:chapterId", lazy: component(() => import("@/pages/ChapterPage"), "ChapterPage") },
+      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum", lazy: component(() => import("@/pages/ParagraphPage"), "ParagraphPage") },
+      { path: "settings", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
+      { path: "settings/ai-router", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
+      { path: "settings/deep-search", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
+      { path: "settings/tools", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
+      { path: "settings/github", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
+      { path: "settings/speech", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
+      { path: "settings/repository", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
+      { path: "reader-settings", lazy: component(() => import("@/pages/ReaderSettingsPage"), "ReaderSettingsPage") },
+      { path: "custom-actions", lazy: component(() => import("@/pages/CustomActionsPage"), "CustomActionsPage") },
+      { path: "migrate", lazy: component(() => import("@/pages/MigratePage"), "MigratePage") },
+      { path: "costs", lazy: component(() => import("@/pages/CostsPage"), "CostsPage") },
+      { path: "docs", lazy: component(() => import("@/pages/AppDocsPage"), "AppDocsIndexPage") },
+      { path: "docs/*", lazy: component(() => import("@/pages/AppDocsPage"), "AppDocPage") },
+      { path: "*", lazy: component(() => import("@/pages/AppNotFoundPage"), "AppNotFoundPage") },
+    ] },
+  ] },
   { path: "/bms", element: <Navigate to="/app" replace /> },
   { path: "/bms/*", element: <Navigate to="/app" replace /> },
-  {
-    path: "/app",
-    element: (
-      <AuthGuard>
-        <Shell />
-      </AuthGuard>
-    ),
-    children: [
-      { index: true, element: <Navigate to="books" replace /> },
-      { path: "books", element: <BooksPage /> },
-      { path: "books/add", element: <AddBookPage /> },
-      { path: "chats", element: <AssistantChatsPage /> },
-      { path: "patch-notes", element: <PatchNotesPage /> },
-      { path: "books/:bookId", element: <BookPage /> },
-      { path: "books/:bookId/dashboard", element: <BookDashboardPage /> },
-      { path: "books/:bookId/assets", element: <AssetGalleryPage /> },
-      { path: "books/:bookId/reader", element: <ReaderPreviewPage /> },
-      { path: "books/:bookId/export", element: <Suspense fallback={null}><BookExportPage /></Suspense> },
-      { path: "books/:bookId/research", element: <DeepResearchPage /> },
-      { path: "books/:bookId/research/:researchSlug", element: <DeepResearchPage /> },
-      { path: "books/:bookId/ghostwriters", element: <GhostwritersPage /> },
-      { path: "books/:bookId/evaluation-style", element: <EvaluationStylePage /> },
-      { path: "books/:bookId/simulated-readers", element: <ReaderPersonasPage /> },
-      { path: "books/:bookId/settings", element: <BookSettingsPage /> },
-      { path: "books/:bookId/audit", element: <AuditPage /> },
-      { path: "books/:bookId/canon/:section/:slug", element: <CanonEntityPage /> },
-      { path: "books/:bookId/chapters/:chapterId/workspace/:workspaceKind", element: <WorkspaceDocPage /> },
-      { path: "books/:bookId/chapters/:chapterId/drafts", element: <ChapterStageIndexPage stage="drafts" /> },
-      { path: "books/:bookId/chapters/:chapterId/scripts", element: <ChapterStageIndexPage stage="scripts" /> },
-      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/workspace/:workspaceKind", element: <WorkspaceDocPage /> },
-      { path: "books/:bookId/chapters/:chapterId/reader-evaluations", element: <ReaderEvaluationsPage /> },
-      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/reader-evaluations", element: <ReaderEvaluationsPage /> },
-      { path: "books/:bookId/chapters/:chapterId/audit", element: <AuditPage /> },
-      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/audit", element: <AuditPage /> },
-      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/split", element: <ParagraphSplitPage /> },
-      {
-        path: "books/:bookId/chapters/:chapterId",
-        element: <ChapterPage />,
-      },
-      {
-        path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum",
-        element: <ParagraphPage />,
-      },
-      { path: "settings", element: <SettingsPage /> },
-      { path: "settings/ai-router", element: <SettingsPage /> },
-      { path: "settings/deep-search", element: <SettingsPage /> },
-      { path: "settings/tools", element: <SettingsPage /> },
-      { path: "settings/github", element: <SettingsPage /> },
-      { path: "settings/speech", element: <SettingsPage /> },
-      { path: "settings/repository", element: <SettingsPage /> },
-      { path: "reader-settings", element: <ReaderSettingsPage /> },
-      { path: "custom-actions", element: <CustomActionsPage /> },
-      { path: "migrate", element: <MigratePage /> },
-      { path: "costs", element: <CostsPage /> },
-      { path: "docs", element: <AppDocsIndexPage /> },
-      { path: "docs/*", element: <AppDocPage /> },
-      { path: "*", element: <NotFoundPage /> },
-    ],
-  },
-  { path: "*", element: <NotFoundPage /> },
+  { path: "*", lazy: component(() => import("@/pages/public/PublicBasics"), "NotFoundPage") },
 ], { basename: routerBasename() });

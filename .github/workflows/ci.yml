@@ -37,6 +37,14 @@ jobs:
           SITE_BASE: /
         run: npm run test:e2e:build
 
+      - name: Verify GitHub Pages basename routing
+        run: npm run test:e2e:basename
+
+      - name: Rebuild root-scope E2E site
+        env:
+          SITE_BASE: /
+        run: npm run test:e2e:build
+
       - name: Run E2E smoke tests
         env:
           SITE_BASE: /

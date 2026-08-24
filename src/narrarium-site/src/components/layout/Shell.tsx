@@ -30,6 +30,8 @@ import { useNavigationHistoryStore, type NavigationHistoryEntry } from "@/store/
 import { FeedbackRewriteWorkflowDialog } from "@/components/book/FeedbackRewriteWorkflowDialog";
 import { useDirtyNavigationGuard } from "@/hooks/useDirtyNavigationGuard";
 import { useRewriteDatabaseBlockedNotification } from "@/hooks/useRewriteDatabaseBlockedNotification";
+import { useAssistantStore } from "@/assistant/store";
+import { AssistantLauncher } from "@/components/assistant/AssistantLauncher";
 
 const AssistantPanel = lazy(() =>
   import("@/components/assistant/AssistantPanel").then((module) => ({ default: module.AssistantPanel })),
@@ -46,6 +48,7 @@ export function Shell() {
   const [quickOpen, setQuickOpen] = useState(false);
   const notesOpen = useUiStore((s) => s.notesOpen);
   const setNotesOpen = useUiStore((s) => s.setNotesOpen);
+  const assistantOpen = useAssistantStore((s) => s.open);
 
   useTokenRefresh();
   useCostsSync();
@@ -146,9 +149,8 @@ export function Shell() {
       <GenerateDiffDialog />
       <FeedbackRewriteWorkflowDialog />
       <OnboardingDialog />
-      <Suspense fallback={null}>
-        <AssistantPanel />
-      </Suspense>
+      <AssistantLauncher />
+      {assistantOpen && <Suspense fallback={<span className="sr-only" role="status">{t("common.loading")}</span>}><AssistantPanel /></Suspense>}
 
       <Dialog open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
         <DialogContent className="left-0 top-0 h-[100dvh] max-w-none translate-x-0 translate-y-0 rounded-none border-r p-0 data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:left-0 sm:top-0 sm:max-w-sm sm:translate-x-0 sm:translate-y-0 sm:rounded-none">

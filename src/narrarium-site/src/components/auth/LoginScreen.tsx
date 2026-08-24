@@ -8,21 +8,18 @@ import { Label } from "@/components/ui/label";
 import { useAuthStore, type GoogleUser } from "@/store/authStore";
 import { clearLegacyAccountUpgrade, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
 import { readAccountContinuity } from "@/auth/accountContinuity";
-import { useSettings } from "@/drive/useSettings";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftMsalInstance, microsoftSilentRequest, setMicrosoftRememberMe } from "@/config/msal";
 import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { cloudDeletionReconnectState, registerCloudAccount, resumeCloudWrites } from "@/drive/cloudWriteBarrier";
 import { clearLegacyRecoveryLoginRequest, consumeLegacyRecoveryLoginRequest, matchesLegacyRecoveryLoginRequest, normalizeAppReturnTo, readLegacyRecoveryLoginRequest } from "@/auth/legacyRecoveryLogin";
-import { retryBookStructureLoad } from "@/hooks/useBookStructure";
 import { resolveUpdateAwareLoginReturnTo } from "@/pwaUpdateIntent";
 
 export function LoginScreen() {
   const { t } = useTranslation();
   const { setInteractiveAuth, clearInteractiveRecoveryAuth } = useAuthStore();
   const [rememberMe, setRememberMe] = useState(false);
-  const { load } = useSettings();
   const navigate = useNavigate();
   const location = useLocation();
   const [loadingProvider, setLoadingProvider] = useState<"google" | "microsoft" | null>(null);
@@ -60,14 +57,9 @@ export function LoginScreen() {
     registerCloudAccount(user.provider, accessToken, user.providerAccountId!);
     await confirmAndResumeCloudWrites(user.provider, accessToken);
     setInteractiveAuth(accessToken, user, expiresIn, rememberMe);
-    await load();
     if (recoveryRequest) {
-      const match = /^\/app\/books\/([^/?#]+)/.exec(recoveryRequest.returnTo);
-      if (match) {
-        let bookId = match[1];
-        try { bookId = decodeURIComponent(bookId); } catch { /* The validated route remains internal; an undecodable ID simply cannot match a book. */ }
-        retryBookStructureLoad(bookId);
-      }
+      const { resetBookStructureLoadCoordinator } = await import("@/hooks/useBookStructure");
+      resetBookStructureLoadCoordinator();
       consumeLegacyRecoveryLoginRequest(recoveryRequest);
     }
     returnToApp();

@@ -62,7 +62,6 @@ import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useAuthStore } from "@/store/authStore";
-import { useUiStore } from "@/store/uiStore";
 import { useFeedbackRewriteWorkflowStore } from "@/store/feedbackRewriteWorkflowStore";
 import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
@@ -173,7 +172,6 @@ export function AssistantPanel() {
   const { structures, workingBranches, clearBook } = useBooksStore();
   const { save } = useSettings();
   const { user, accessToken } = useAuthStore();
-  const floatingHidden = useUiStore((s) => s.floatingHidden);
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -230,6 +228,8 @@ export function AssistantPanel() {
   const {
     open,
     setOpen,
+    launchMode,
+    consumeLaunchMode,
     sessions,
     setSessions,
     currentSession,
@@ -1355,6 +1355,13 @@ export function AssistantPanel() {
     beginMediaOperation();
     setOpen(true);
   }
+
+  useEffect(() => {
+    if (!launchMode) return;
+    if (launchMode === "voice") openAssistantVoice();
+    else openAssistantChat();
+    consumeLaunchMode();
+  }, [consumeLaunchMode, launchMode]);
 
   async function sendPrompt(prompt: string, options?: { spokenMode?: boolean; signal?: AbortSignal; attachmentTarget?: AttachmentImportTarget }): Promise<AssistantMessage | null> {
     const accountScope = accountIdentity(user);
@@ -2906,17 +2913,6 @@ export function AssistantPanel() {
 
   return (
     <>
-      {!floatingHidden && (
-        <div className="fixed bottom-4 right-4 z-40 flex overflow-hidden rounded-full shadow-lg lg:bottom-6 lg:right-6">
-          <button type="button" className="flex items-center gap-2 bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90" onClick={openAssistantChat}>
-            <Bot className="h-4 w-4" />{t("assistant.floatingButton")}
-          </button>
-          <span className="w-px self-stretch bg-primary-foreground/20" />
-          <button type="button" className="flex items-center justify-center bg-primary px-3 py-2.5 text-primary-foreground transition hover:bg-primary/90" title={t("assistant.liveVoice")} onClick={openAssistantVoice}>
-            <Ghost className="h-5 w-5" />
-          </button>
-        </div>
-      )}
       <Dialog open={syncOpen} onOpenChange={setSyncOpen}><DialogContent hideCloseButton className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[920px]"><DialogTitle className="sr-only">{t("assistant.syncTitle")}</DialogTitle><DialogDescription className="sr-only">{t("assistant.syncSubtitle")}</DialogDescription>{syncPanel}</DialogContent></Dialog>
       <Dialog open={Boolean(pendingDiffRevert)} onOpenChange={(next) => { if (!next && !busy) setPendingDiffRevert(null); }}><DialogContent><DialogTitle>{t("assistant.revertConfirmTitle")}</DialogTitle><DialogDescription>{t("assistant.revertConfirmDescription")}</DialogDescription>{pendingDiffRevert && <div className="space-y-2 text-sm"><p className="break-all font-mono font-medium">{pendingDiffRevert.file.filename}</p><p>{t("assistant.revertSource", { branch: pendingDiffRevert.sourceBranch })}</p><p>{t("assistant.revertDestination", { branch: pendingDiffRevert.destinationBranch })}</p><div className="flex justify-end gap-2 pt-3"><Button variant="outline" onClick={() => setPendingDiffRevert(null)} disabled={busy}>{t("assistant.cancel")}</Button><Button variant="destructive" onClick={() => void confirmDiffFileRevert()} disabled={busy}>{t("assistant.confirmRevert")}</Button></div></div>}</DialogContent></Dialog>
       <Dialog open={open} onOpenChange={(next) => { if (!next) closeAssistant(); else setOpen(true); }}><DialogContent hideCloseButton bare onPointerDownOutside={(event) => event.preventDefault()} onInteractOutside={(event) => event.preventDefault()} onEscapeKeyDown={(event) => { event.preventDefault(); if (!hasOpenFloatingLayer()) closeAssistant(); }} className={voiceMode || fullScreen || isMobile ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 overflow-hidden" : "bottom-6 right-6 h-[80dvh] max-h-[calc(100dvh-3rem)] w-[420px] max-w-[calc(100vw-3rem)] overflow-hidden"}><DialogTitle className="sr-only">{voiceMode ? t("assistant.liveVoice") : t("assistant.title")}</DialogTitle><DialogDescription className="sr-only">{voiceMode ? t("assistant.voiceDialogDescription") : t("assistant.copilotDialogDescription")}</DialogDescription><div role="status" aria-live="polite" aria-atomic="true" className="sr-only">{requestStatus}</div>{voiceMode ? liveVoicePanel : panel}</DialogContent></Dialog>

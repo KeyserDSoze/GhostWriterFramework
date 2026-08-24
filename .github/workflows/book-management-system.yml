@@ -74,6 +74,18 @@ jobs:
           VITE_GITHUB_MODELS_BASE: ${{ vars.VITE_GITHUB_MODELS_BASE }}
         run: npm run test:e2e:build
 
+      - name: Verify GitHub Pages basename routing
+        run: npm run test:e2e:basename
+
+      - name: Rebuild root-scope E2E site
+        env:
+          SITE_BASE: /
+          SITE_URL: https://narrarium.net
+          MCP_PUBLIC_URL: https://narrarium.space/mcp
+          MCP_HEALTH_URL: https://narrarium.space/health
+          VITE_GITHUB_MODELS_BASE: ${{ vars.VITE_GITHUB_MODELS_BASE }}
+        run: npm run test:e2e:build
+
       - name: Execute Narrarium site E2E tests
         env:
           SITE_BASE: /

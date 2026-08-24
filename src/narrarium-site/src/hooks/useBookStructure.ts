@@ -19,6 +19,7 @@ let loadEpoch = 0;
 
 export function resetBookStructureLoadCoordinator(): number {
   loadEpoch += 1;
+  useBooksStore.setState({ structureLoadEpoch: loadEpoch });
   invalidateRepositoryEnsureOperations(loadEpoch, accountIdentity(useAuthStore.getState().user) ?? undefined);
   for (const operation of operations.values()) operation.controller.abort();
   operations.clear();

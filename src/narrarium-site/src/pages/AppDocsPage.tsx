@@ -1,6 +1,6 @@
 import { useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { DocsIndexContent } from "@/pages/PublicPages";
+import { DocsIndexContent } from "@/pages/public/PublicDocs";
 import { getDocBySlug, localizedDoc, normalizeDocLang } from "@/lib/docs";
 import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
 

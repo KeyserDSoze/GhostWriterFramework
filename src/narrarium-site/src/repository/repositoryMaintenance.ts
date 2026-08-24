@@ -1,4 +1,4 @@
-import JSZip from "jszip";
+import type JSZip from "jszip";
 import { legacyEmailAccountIdentity } from "@/auth/accountIdentity";
 import { useAuthStore } from "@/store/authStore";
 import { assertRepositoryOperationScopeCurrent, captureRepositoryOperationScope, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
@@ -240,6 +240,7 @@ async function addFileContent(zip: JSZip, root: string, files: LocalRepositoryFi
 export async function createMaintenanceBackupBundle(target: RepositoryMaintenanceTarget): Promise<{ blob: Blob; receipt: BackupReceipt; manifest: MaintenanceBackupManifest }> {
   const snapshot = await lookupRepositoryMaintenanceTarget(target);
   if (!snapshot.repository || !snapshot.lifecycle) throw new RepositoryMaintenanceError("NOT_FOUND");
+  const { default: JSZip } = await import("jszip");
   const accountIdentityHash = await sha256(target.accountIdentity);
   const zip = new JSZip();
   const files = await addFileContent(zip, "content/repository", snapshot.files);
@@ -262,6 +263,7 @@ function sessionNonce(): string { const key = `${RECEIPT_PREFIX}session`; let no
 function loadReceipt(receiptId: string): BackupReceipt | null { try { const raw = sessionStorage.getItem(`${RECEIPT_PREFIX}${receiptId}`); return raw ? JSON.parse(raw) as BackupReceipt : null; } catch { return null; } }
 
 export async function validateMaintenanceBackupBundle(blob: Blob): Promise<MaintenanceBackupManifest> {
+  const { default: JSZip } = await import("jszip");
   const zip = await JSZip.loadAsync(blob);
   const raw = await zip.file("manifest.json")?.async("string");
   if (!raw) throw new Error("Maintenance backup manifest is missing.");

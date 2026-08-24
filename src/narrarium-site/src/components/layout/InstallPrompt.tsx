@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Download, Share, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cacheAppShellPwaAssets } from "@/pwa";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -45,7 +46,7 @@ export function InstallPrompt() {
     window.addEventListener("appinstalled", onInstalled);
 
     // iOS Safari has no beforeinstallprompt → show a short "Add to Home Screen" hint.
-    if (isIos()) setIosHint(true);
+    if (isIos()) { setIosHint(true); void cacheAppShellPwaAssets(); }
 
     return () => {
       window.removeEventListener("beforeinstallprompt", onBeforeInstall);
@@ -62,8 +63,9 @@ export function InstallPrompt() {
   async function install() {
     if (!deferred) return;
     try {
+      const warmup = cacheAppShellPwaAssets();
       await deferred.prompt();
-      await deferred.userChoice;
+      await Promise.all([deferred.userChoice, warmup]);
     } catch { /* ignore */ }
     dismiss();
   }

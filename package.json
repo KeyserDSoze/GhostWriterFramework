@@ -26,8 +26,9 @@
     "sync:script-ledger": "npm run build -w narrarium --silent && node scripts/sync-script-ledger.mjs",
     "dev:mcp": "npm run dev -w narrarium-mcp-server",
     "dev:site": "npm run dev -w narrarium-astro-reader",
-    "test:e2e": "playwright test --config=playwright.config.ts e2e/app-entry.spec.ts e2e/paragraph-sync.spec.ts e2e/indexeddb-upgrades.spec.ts",
+    "test:e2e": "playwright test --config=playwright.config.ts e2e/app-entry.spec.ts e2e/route-splitting.spec.ts e2e/paragraph-sync.spec.ts e2e/indexeddb-upgrades.spec.ts",
     "test:e2e:build": "NARRARIUM_E2E_BUILD=1 VITE_E2E=true npm run bms:build",
+    "test:e2e:basename": "SITE_BASE=/GhostWriterFramework/ NARRARIUM_E2E_BUILD=1 VITE_E2E=true npm run bms:build && SITE_BASE=/GhostWriterFramework/ playwright test --config=playwright.config.ts e2e/route-splitting.spec.ts e2e/paragraph-sync.spec.ts --grep 'public home|public docs|login loads|finite public routes|route families'",
     "e2e:install": "playwright install chromium",
     "test": "npm run test -w narrarium && npm run test -w narrarium-sdk && npm run test -w narrarium-mcp-server && npm run test -w create-narrarium-book && npm run test -w narrarium-astro-reader && npm run test -w narrarium-site",
     "validate": "npm run validate -w narrarium --if-present && npm run validate -w narrarium-sdk --if-present"

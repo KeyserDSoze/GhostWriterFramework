@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.91",
+    "date": "2026-08-24",
+    "en": {
+      "title": "Faster route-by-route loading",
+      "summary": "Narrarium now loads public pages, login, the authenticated shell, and individual writing features as separate route graphs.",
+      "changes": [
+        "The initial entry dropped from about 2.21 MB raw / 624 KB gzip to about 389 KB / 125 KB, while the initial graph dropped from 3.24 MB / 914 KB to about 597 KB / 193 KB.",
+        "Home and documentation no longer request OAuth, AI, GitHub, repository, ZIP, editor, or export chunks; login loads OAuth without the application feature graph.",
+        "Every authenticated page is route-lazy with visible accessible loading and error fallbacks, including direct navigation and refresh coverage.",
+        "Repository backup ZIP support and the Copilot panel now load only when the author invokes them.",
+        "The PWA installs a compact public shell first, warms the authenticated start shell only for app users or installation, and caches other feature chunks after use."
+      ]
+    },
+    "it": {
+      "title": "Caricamento più rapido route per route",
+      "summary": "Narrarium carica ora pagine pubbliche, login, shell autenticata e singole funzioni di scrittura come grafi di route separati.",
+      "changes": [
+        "L'entry iniziale scende da circa 2,21 MB raw / 624 KB gzip a circa 389 KB / 125 KB, mentre il grafo iniziale passa da 3,24 MB / 914 KB a circa 597 KB / 193 KB.",
+        "Home e documentazione non richiedono più chunk OAuth, AI, GitHub, repository, ZIP, editor o export; il login carica OAuth senza il grafo funzionale dell'app.",
+        "Ogni pagina autenticata è lazy per route con fallback di caricamento ed errore visibili e accessibili, coperti anche su navigazione diretta e refresh.",
+        "Il supporto ZIP dei backup repository e il pannello Copilot vengono caricati soltanto quando l'autore li usa.",
+        "La PWA installa prima una shell pubblica compatta, prepara la shell autenticata soltanto per utenti dell'app o durante l'installazione e mette in cache le altre funzioni dopo l'uso."
+      ]
+    }
+  },
+  {
     "version": "0.76.90",
     "date": "2026-08-24",
     "en": {

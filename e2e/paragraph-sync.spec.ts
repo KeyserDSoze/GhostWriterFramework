@@ -11,6 +11,9 @@ const INITIAL_HEAD = "head-test2";
 const UPDATED_HEAD = "head-test2-after-edit";
 const INITIAL_BODY = "The gate stood open beneath a sky the color of old steel.";
 const EDITED_BODY = `${INITIAL_BODY}\n\nE2E edit: the gate remembered every name.`;
+const configuredBase = process.env.SITE_BASE ?? "/";
+const basePath = `${configuredBase.startsWith("/") ? configuredBase : `/${configuredBase}`}`.replace(/\/?$/, "/");
+const baseURL = `http://127.0.0.1:4173${basePath}`;
 
 const paragraphContent = `---
 type: paragraph
@@ -104,6 +107,10 @@ function installDeterministicNetworkMocks(page: Page): { events: RequestEvent[];
       await route.fulfill({ json: { files: [] } });
       return;
     }
+    if (url.pathname === "/drive/v3/files" && url.searchParams.get("q")?.includes("'e2e-folder' in parents")) {
+      await route.fulfill({ json: { files: [], nextPageToken: null } });
+      return;
+    }
     unexpected.push({ method: request.method(), url: request.url(), status: 500 });
     await route.fulfill({ status: 500, json: { error: "Unexpected Google request in deterministic E2E" } });
   });
@@ -121,6 +128,14 @@ function installDeterministicNetworkMocks(page: Page): { events: RequestEvent[];
     }
     if (method === "GET" && /\/repos\/KeyserDSoze\/Jesus$/i.test(path)) {
       await route.fulfill({ json: { id: 1, name: "Jesus", full_name: "KeyserDSoze/Jesus", default_branch: "main" } });
+      return;
+    }
+    if (method === "GET" && path === "/user/repos") {
+      await route.fulfill({ json: [{ id: 1, name: "Jesus", full_name: "KeyserDSoze/Jesus", owner: { login: "KeyserDSoze" }, default_branch: "main", private: false, permissions: { pull: true, push: true, admin: true } }] });
+      return;
+    }
+    if (method === "GET" && /\/repos\/KeyserDSoze\/Jesus\/branches$/i.test(path)) {
+      await route.fulfill({ json: [{ name: "main", commit: { sha: "head-main" }, protected: true }, { name: "test2", commit: { sha: remoteHead }, protected: false }] });
       return;
     }
     if (method === "GET" && /\/git\/commits\//.test(path)) {
@@ -143,6 +158,10 @@ function installDeterministicNetworkMocks(page: Page): { events: RequestEvent[];
       return;
     }
     if (method === "GET" && /\/contents\/evaluations\/chapters\/001-the-arrival\.md$/.test(path)) {
+      await route.fulfill({ status: 404, json: { message: "Not Found" } });
+      return;
+    }
+    if (method === "GET" && /\/contents\//.test(path)) {
       await route.fulfill({ status: 404, json: { message: "Not Found" } });
       return;
     }
@@ -420,6 +439,9 @@ test("recovers an evicted browser working copy with an explicit verified outcome
   await page.goto(`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001`);
   await expect(page.getByRole("button", { name: "Edit paragraph" })).toBeVisible();
 
+  await page.route("**/__e2e-storage-eviction", (route) => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Storage eviction</title>" }));
+  await page.goto("__e2e-storage-eviction");
+  await page.unroute("**/__e2e-storage-eviction");
   await page.evaluate(async () => {
     await Promise.all(["narrarium-local-repositories", "narrarium-local-rewrite-operations"].map((name) => new Promise<void>((resolve, reject) => {
       const request = indexedDB.deleteDatabase(name);
@@ -428,11 +450,96 @@ test("recovers an evicted browser working copy with an explicit verified outcome
       request.onblocked = () => reject(new Error(`${name} eviction was blocked.`));
     })));
   });
-  await page.reload();
+  await page.goto(`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001`);
 
   await expect(page.getByRole("status").filter({ hasText: "Local working copy downloaded and verified." })).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole("button", { name: "Edit paragraph" })).toBeVisible();
   expect(network.blobDownloads).toHaveLength(seededFiles.length);
   expect(await readLocalFile(page)).toMatchObject({ text: expect.stringContaining(INITIAL_BODY), status: "clean", committed: false });
+  expect(network.unexpected).toEqual([]);
+});
+
+test("authenticated route families survive direct navigation and refresh", async ({ browser }) => {
+  const routes: Array<[string, string]> = [
+    ["app", "BooksPage"],
+    ["app/books", "BooksPage"],
+    ["app/books/add", "AddBookPage"],
+    ["app/chats", "AssistantChatsPage"],
+    ["app/patch-notes", "PatchNotesPage"],
+    [`app/books/${BOOK_ID}`, "BookPage"],
+    [`app/books/${BOOK_ID}/dashboard`, "BookDashboardPage"],
+    [`app/books/${BOOK_ID}/assets`, "AssetGalleryPage"],
+    [`app/books/${BOOK_ID}/reader`, "ReaderPreviewPage"],
+    [`app/books/${BOOK_ID}/export`, "BookExportPage"],
+    [`app/books/${BOOK_ID}/research`, "DeepResearchPage"],
+    [`app/books/${BOOK_ID}/research/example-research`, "DeepResearchPage"],
+    [`app/books/${BOOK_ID}/ghostwriters`, "GhostwritersPage"],
+    [`app/books/${BOOK_ID}/evaluation-style`, "EvaluationStylePage"],
+    [`app/books/${BOOK_ID}/simulated-readers`, "ReaderPersonasPage"],
+    [`app/books/${BOOK_ID}/settings`, "BookSettingsPage"],
+    [`app/books/${BOOK_ID}/audit`, "AuditPage"],
+    [`app/books/${BOOK_ID}/canon/characters/example-character`, "CanonEntityPage"],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival/workspace/draft`, "WorkspaceDocPage"],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival/drafts`, "DraftStageRoute"],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival/scripts`, "ScriptStageRoute"],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001/workspace/draft`, "WorkspaceDocPage"],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival/reader-evaluations`, "ReaderEvaluationsPage"],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001/reader-evaluations`, "ReaderEvaluationsPage"],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival/audit`, "AuditPage"],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001/audit`, "AuditPage"],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001/split`, "ParagraphSplitPage"],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival`, "ChapterPage"],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001`, "ParagraphPage"],
+    ["app/settings", "SettingsPage"],
+    ["app/settings/ai-router", "SettingsPage"],
+    ["app/settings/deep-search", "SettingsPage"],
+    ["app/settings/tools", "SettingsPage"],
+    ["app/settings/github", "SettingsPage"],
+    ["app/settings/speech", "SettingsPage"],
+    ["app/settings/repository", "SettingsPage"],
+    ["app/reader-settings", "ReaderSettingsPage"],
+    ["app/custom-actions", "CustomActionsPage"],
+    ["app/migrate", "MigratePage"],
+    ["app/costs", "CostsPage"],
+    ["app/docs", "AppDocsIndexPage"],
+    ["app/docs/guide-1-how-it-works", "AppDocPage"],
+    ["app/not-a-real-route", "AppNotFoundPage"],
+  ];
+  for (const [route, componentName] of routes) {
+    const context = await browser.newContext({ baseURL, serviceWorkers: "block" });
+    const routePage = await context.newPage();
+    const network = installDeterministicNetworkMocks(routePage);
+    await installSeed(routePage);
+    await routePage.goto(route);
+    await expect(routePage.locator(`[data-route-ready="${componentName}"]`), route).toBeAttached({ timeout: 15000 });
+    await expect(routePage.getByRole("alert").filter({ hasText: "Load failed" })).toHaveCount(0);
+    expect(network.unexpected, route).toEqual([]);
+    await context.close();
+  }
+  for (const route of ["app/books", `app/books/${BOOK_ID}`, `app/books/${BOOK_ID}/chapters/001-the-arrival`, `app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001`, "app/settings", "app/docs"]) {
+    const context = await browser.newContext({ baseURL, serviceWorkers: "block" });
+    const routePage = await context.newPage();
+    const network = installDeterministicNetworkMocks(routePage);
+    await installSeed(routePage);
+    await routePage.goto(route);
+    await routePage.reload();
+    await expect(routePage.locator("[data-route-ready]").last()).toBeAttached({ timeout: 15000 });
+    await expect(routePage.getByRole("alert").filter({ hasText: "Load failed" })).toHaveCount(0);
+    expect(network.unexpected, route).toEqual([]);
+    await context.close();
+  }
+});
+
+test("loads the Copilot panel only after its launcher is used", async ({ page }) => {
+  const network = installDeterministicNetworkMocks(page);
+  await installSeed(page);
+  const scripts: string[] = [];
+  page.on("response", (response) => { if (/AssistantPanel-[^/]+\.js$/.test(response.url())) scripts.push(response.url()); });
+  await page.goto("app/books");
+  await expect(page.getByRole("button", { name: "Copilot" })).toBeVisible();
+  expect(scripts).toEqual([]);
+  await page.getByRole("button", { name: "Copilot" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  expect(scripts).toHaveLength(1);
   expect(network.unexpected).toEqual([]);
 });

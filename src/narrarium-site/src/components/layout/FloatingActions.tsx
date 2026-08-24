@@ -177,7 +177,7 @@ export function FloatingActions() {
                 <CommitHistoryDialog token={token} owner={book.owner} repo={book.repo} branch={branch} />
                 <PullRequestsDialog token={token} owner={book.owner} repo={book.repo} head={branch} base={structure?.defaultBranch ?? "main"} />
                 {structure && <AssetImageDialog book={book} branch={branch} token={token} kind="book" title={structure.title ?? book.name} textPath="book.md" resumePath="resumes/total.md" />}
-                {structure && <Suspense fallback={null}><BookExportDialog book={book} structure={structure} branch={branch} token={token} /></Suspense>}
+                {structure && <Suspense fallback={<span className="px-2 py-1 text-xs text-muted-foreground" role="status">{t("common.loading")}</span>}><BookExportDialog book={book} structure={structure} branch={branch} token={token} /></Suspense>}
               </div>
             )}
             {rows.map((row, i) =>

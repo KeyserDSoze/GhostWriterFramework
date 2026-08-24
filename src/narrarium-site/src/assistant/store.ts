@@ -255,12 +255,15 @@ export interface AssistantSession extends AssistantSessionMeta {
 
 interface AssistantState {
   open: boolean;
+  launchMode: "chat" | "voice" | null;
   busy: boolean;
   sessions: AssistantSessionMeta[];
   sessionAccountIdentity: string | null;
   sessionsLoading: boolean;
   currentSession: AssistantSession | null;
   setOpen: (open: boolean) => void;
+  launch: (mode: "chat" | "voice") => void;
+  consumeLaunchMode: () => void;
   setBusy: (busy: boolean) => void;
   setSessions: (sessions: AssistantSessionMeta[]) => void;
   setSessionAccountIdentity: (identity: string | null) => void;
@@ -275,12 +278,15 @@ interface AssistantState {
 
 export const useAssistantStore = create<AssistantState>((set) => ({
   open: false,
+  launchMode: null,
   busy: false,
   sessions: [],
   sessionAccountIdentity: null,
   sessionsLoading: false,
   currentSession: null,
   setOpen: (open) => set({ open }),
+  launch: (launchMode) => set({ open: true, launchMode }),
+  consumeLaunchMode: () => set({ launchMode: null }),
   setBusy: (busy) => set({ busy }),
   setSessions: (sessions) => set({ sessions }),
   setSessionAccountIdentity: (identity) => set((state) => state.sessionAccountIdentity === identity

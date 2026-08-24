@@ -44,6 +44,11 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("message", (event) => {
   if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
+  if (event.data?.type === "CACHE_APP_SHELL_ASSETS") {
+    event.waitUntil(caches.open(PRECACHE_NAME)
+      .then((cache) => Promise.allSettled((self.__NARRARIUM_APP_SHELL_ASSETS__ || []).map((path) => cache.add(new Request(scopedUrl(path), { cache: "reload" })))))
+      .then((results) => event.ports[0]?.postMessage({ failed: results.filter((result) => result.status === "rejected").length })));
+  }
 });
 
 self.addEventListener("fetch", (event) => {
@@ -55,7 +60,7 @@ self.addEventListener("fetch", (event) => {
   if (request.mode === "navigate") {
     event.respondWith(
       caches.open(PRECACHE_NAME).then(async (cache) => {
-        const cached = await cache.match(request, { ignoreSearch: true });
+        const cached = await cache.match(request, { ignoreSearch: true, ignoreVary: true });
         if (cached) return cached;
         const shell = await cache.match(scopeUrl());
         if (shell) return shell;
@@ -65,10 +70,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (!["script", "style", "worker", "image", "font"].includes(request.destination)) return;
+  const assetRoot = new URL("assets/", scopeUrl()).pathname;
+  if (!url.pathname.startsWith(assetRoot) && !["worker", "image", "font"].includes(request.destination)) return;
 
   event.respondWith(
-    caches.match(request, { ignoreSearch: true }).then(async (cached) => {
+    caches.match(request, { ignoreSearch: true, ignoreVary: true }).then(async (cached) => {
       if (cached) return cached;
       const response = await fetch(request);
       if (response.ok) {

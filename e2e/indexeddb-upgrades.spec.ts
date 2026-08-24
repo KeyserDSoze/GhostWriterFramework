@@ -1,6 +1,9 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
 test.use({ serviceWorkers: "block" });
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => { window.__NARRARIUM_ENABLE_E2E_BRIDGE__ = true; });
+});
 
 const ACCOUNT_IDENTITY = "google:e2e-google-user";
 const REPO_ID = `${ACCOUNT_IDENTITY}::owner/historical#main`;
@@ -594,6 +597,7 @@ for (const phase of ["journal", "rewrite-prepared", "primary-rekeyed", "rewrite-
     expect(message).toBe(`Simulated repository migration crash after ${phase}.`);
     await page.reload();
     await page.waitForFunction(() => Boolean(window.__narrariumE2e));
+    await expect.poll(async () => page.evaluate(() => window.__narrariumE2e!.resumeLegacyMigrations().then(() => true).catch(() => false))).toBe(true);
     await expect.poll(async () => page.evaluate(({ repoId, accountIdentity }) => window.__narrariumE2e!.inspectRepository(repoId, accountIdentity).then((state) => Boolean(state.repository)), { repoId: ids.newRepoId, accountIdentity: ACCOUNT_IDENTITY })).toBe(true);
     const current = await page.evaluate(({ repoId, accountIdentity }) => window.__narrariumE2e!.inspectRepository(repoId, accountIdentity), { repoId: ids.newRepoId, accountIdentity: ACCOUNT_IDENTITY });
     const legacy = await page.evaluate(({ repoId, accountIdentity }) => window.__narrariumE2e!.inspectRepository(repoId, accountIdentity), { repoId: ids.oldRepoId, accountIdentity: ACCOUNT_IDENTITY });

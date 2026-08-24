@@ -36,6 +36,19 @@ export async function activateAvailableUpdate(openPatchNotes: boolean): Promise<
   return true;
 }
 
+export async function cacheAppShellPwaAssets(): Promise<boolean> {
+  if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return false;
+  const registration = await navigator.serviceWorker.ready;
+  if (!registration.active) return false;
+  const channel = new MessageChannel();
+  const result = new Promise<boolean>((resolve) => {
+    const timer = window.setTimeout(() => resolve(false), 120_000);
+    channel.port1.onmessage = (event) => { window.clearTimeout(timer); resolve(event.data?.failed === 0); };
+  });
+  registration.active.postMessage({ type: "CACHE_APP_SHELL_ASSETS" }, [channel.port2]);
+  return result;
+}
+
 interface BrowserLocation {
   replace(url: string): void;
   reload(): void;

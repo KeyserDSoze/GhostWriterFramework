@@ -4,6 +4,7 @@ declare const __APP_VERSION__: string;
 declare const __NARRARIUM_E2E_BUILD__: boolean;
 
 interface Window {
+  __NARRARIUM_ENABLE_E2E_BRIDGE__?: boolean;
   __narrariumE2e?: {
     upgradeStorage(repoId: string, accountIdentity: string): Promise<import("./e2eBridge").E2eStorageUpgradeResult>;
     closeRewriteStorage(): Promise<void>;

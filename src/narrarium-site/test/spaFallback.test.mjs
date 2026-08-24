@@ -57,11 +57,27 @@ test("precache generation includes application entry points, chunks, styles, and
     const dist = path.join(root, "dist");
     await mkdir(scripts);
     await mkdir(path.join(dist, "assets"), { recursive: true });
+    await mkdir(path.join(dist, ".vite"), { recursive: true });
     await writeFile(path.join(root, "package.json"), JSON.stringify({ version: "1.2.3" }));
     await writeFile(path.join(dist, "index.html"), "index");
     await writeFile(path.join(dist, "assets", "entry.js"), "entry");
     await writeFile(path.join(dist, "assets", "style.css"), "style");
     await writeFile(path.join(dist, "assets", "worker.js"), "worker");
+    await writeFile(path.join(dist, ".vite", "manifest.json"), JSON.stringify({
+      "src/main.tsx": { file: "assets/entry.js", src: "src/main.tsx", isEntry: true, imports: ["framework"] },
+      framework: { file: "assets/framework.js" },
+      "src/pages/public/PublicBasics.tsx": { file: "assets/home.js", src: "src/pages/public/PublicBasics.tsx", isDynamicEntry: true, imports: ["framework"] },
+      "src/pages/public/PublicDocs.tsx": { file: "assets/docs.js", src: "src/pages/public/PublicDocs.tsx", isDynamicEntry: true, imports: ["framework"] },
+      "src/routes/AuthProvidersRoute.tsx": { file: "assets/auth.js", name: "AuthProvidersRoute", src: "src/routes/AuthProvidersRoute.tsx", isDynamicEntry: true, imports: ["framework"] },
+      "src/routes/AppShellRoute.tsx": { file: "assets/app-shell.js", name: "AppShellRoute", src: "src/routes/AppShellRoute.tsx", isDynamicEntry: true, imports: ["framework"] },
+      "src/pages/BooksPage.tsx": { file: "assets/books.js", name: "BooksPage", src: "src/pages/BooksPage.tsx", isDynamicEntry: true, imports: ["framework"] },
+    }));
+    await writeFile(path.join(dist, "assets", "framework.js"), "framework");
+    await writeFile(path.join(dist, "assets", "home.js"), "home");
+    await writeFile(path.join(dist, "assets", "docs.js"), "docs");
+    await writeFile(path.join(dist, "assets", "auth.js"), "auth");
+    await writeFile(path.join(dist, "assets", "app-shell.js"), "app-shell");
+    await writeFile(path.join(dist, "assets", "books.js"), "books");
     const source = new URL("../scripts/generate-precache.mjs", import.meta.url);
     const script = path.join(scripts, "generate-precache.mjs");
     await writeFile(script, await readFile(source));
@@ -70,7 +86,10 @@ test("precache generation includes application entry points, chunks, styles, and
 
     const manifest = await readFile(path.join(dist, "precache-manifest.js"), "utf8");
     assert.match(manifest, /__NARRARIUM_RELEASE__="1\.2\.3"/);
-    for (const file of ["index.html", "assets/entry.js", "assets/style.css", "assets/worker.js"]) assert.match(manifest, new RegExp(file.replace(".", "\\.")));
+    for (const file of ["index.html", "assets/entry.js", "assets/framework.js", "assets/home.js", "assets/docs.js"]) assert.match(manifest, new RegExp(file.replace(".", "\\.")));
+    assert.match(manifest, /__NARRARIUM_OPTIONAL_ASSETS__/);
+    for (const file of ["assets/auth.js", "assets/app-shell.js", "assets/books.js"]) assert.match(manifest, new RegExp(file.replace(".", "\\.")));
+    assert.match(manifest, /assets\/worker\.js/);
     assert.doesNotMatch(manifest, /precache-manifest\.js/);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -79,6 +98,7 @@ test("precache generation includes application entry points, chunks, styles, and
 
 test("service worker uses release caches, precaches the generated manifest, and preserves unrelated caches", async () => {
   const source = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
+  assert.doesNotThrow(() => new Function(source));
   assert.match(source, /importScripts\(`\.\/precache-manifest\.js\?v=\$\{encodeURIComponent\(REQUESTED_RELEASE\)\}`\)/);
   assert.match(source, /const RELEASE = REQUESTED_RELEASE/);
   assert.match(source, /Precache release mismatch/);
@@ -86,7 +106,11 @@ test("service worker uses release caches, precaches the generated manifest, and 
   assert.match(source, /new Request\(scopeUrl\(\), \{ cache: "reload" \}\)/);
   assert.match(source, /key\.startsWith\(OWNED_CACHE_PREFIX\)/);
   assert.match(source, /MAX_RUNTIME_ENTRIES = 64/);
-  assert.match(source, /\["script", "style", "worker", "image", "font"\]\.includes\(request\.destination\)/);
+  assert.match(source, /new URL\("assets\/", scopeUrl\(\)\)\.pathname/);
+  assert.match(source, /url\.pathname\.startsWith\(assetRoot\)/);
+  assert.match(source, /ignoreVary: true/);
+  assert.match(source, /CACHE_APP_SHELL_ASSETS/);
+  assert.match(source, /Promise\.allSettled/);
   assert.match(source, /request\.mode === "navigate"/);
   assert.match(source, /caches\.open\(PRECACHE_NAME\)[\s\S]*cache\.match\(scopeUrl\(\)\)[\s\S]*return fetch\(request\)/);
   assert.doesNotMatch(source, /request\.mode === "navigate"[\s\S]*fetch\(request\)[\s\S]*cache\.match\(scopeUrl\(\)\)/);
@@ -105,4 +129,24 @@ test("the paragraph overview uses the shared interactive prose-assist dialog", a
   assert.match(source, /\{proseAssist\.dialogs\}/);
   assert.doesNotMatch(source, /<FileDiff previous=\{improveSelection/);
   assert.doesNotMatch(source, /function regenerateImprove\(/);
+});
+
+test("route splitting keeps accessible loading and error fallbacks", async () => {
+  const router = await readFile(new URL("../src/router.tsx", import.meta.url), "utf8");
+  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const loading = await readFile(new URL("../src/components/layout/RouteLoadingFallback.tsx", import.meta.url), "utf8");
+  const error = await readFile(new URL("../src/components/layout/RouteErrorFallback.tsx", import.meta.url), "utf8");
+  assert.match(router, /lazy:\s*component\(/);
+  assert.match(router, /errorElement:\s*routeError/);
+  assert.match(app, /fallbackElement=\{<RouteLoadingFallback/);
+  assert.match(loading, /role="status"/);
+  assert.match(loading, /aria-busy="true"/);
+  assert.match(error, /role="alert"/);
+});
+
+test("repository maintenance loads JSZip only inside backup operations", async () => {
+  const source = await readFile(new URL("../src/repository/repositoryMaintenance.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /^import JSZip from "jszip";/m);
+  assert.match(source, /import type JSZip from "jszip"/);
+  assert.equal((source.match(/await import\("jszip"\)/g) ?? []).length, 2);
 });
