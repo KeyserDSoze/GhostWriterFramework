@@ -1,10 +1,14 @@
-import { mcpTools, type DocEntry, type DocGroup, type DocLang, type DocTranslation } from "./generated-docs";
+import type { DocEntry, DocGroup, DocLang, DocTranslation } from "./generated-docs";
 import { appDocEntries } from "@/lib/appDocs";
 import i18n from "@/i18n";
 
 export type { DocEntry, DocGroup, DocLang, DocTranslation };
 
 const GROUPS: DocGroup[] = ["guides", "overview", "reference", "packages"];
+
+export function withGeneratedDocs(generated: DocEntry[]): DocEntry[] {
+  return [...appDocEntries, ...generated.filter((entry) => !appDocEntries.some((appEntry) => appEntry.slug === entry.slug))];
+}
 
 export function normalizeDocLang(lang: string | undefined): DocLang {
   return lang?.split("-")[0] === "it" ? "it" : "en";
@@ -20,20 +24,16 @@ export function localizedDoc(entry: DocEntry, lang: DocLang): DocTranslation {
   };
 }
 
-export function getDocGroups(): Array<{ key: DocGroup; label: string; docs: DocEntry[] }> {
+export function getDocGroups(entries: DocEntry[] = appDocEntries): Array<{ key: DocGroup; label: string; docs: DocEntry[] }> {
   return GROUPS.map((key) => ({
     key,
     label: groupLabel(key),
-    docs: appDocEntries.filter((entry) => entry.group === key),
+    docs: entries.filter((entry) => entry.group === key),
   })).filter((group) => group.docs.length > 0);
 }
 
-export function getDocBySlug(slug: string | undefined): DocEntry | undefined {
-  return appDocEntries.find((entry) => entry.slug === slug);
-}
-
-export function getMcpTools() {
-  return mcpTools;
+export function getDocBySlug(slug: string | undefined, entries: DocEntry[] = appDocEntries): DocEntry | undefined {
+  return entries.find((entry) => entry.slug === slug);
 }
 
 function groupLabel(group: DocGroup): string {

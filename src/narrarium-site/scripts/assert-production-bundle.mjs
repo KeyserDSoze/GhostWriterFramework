@@ -104,7 +104,7 @@ for (const [name, source] of Object.entries(routeSources)) {
 report.current.routes = routeGraphs;
 report.budgets.routes = {
   home: { rawBytes: 730_000, gzipBytes: 240_000 },
-  docs: { rawBytes: 850_000, gzipBytes: 280_000 },
+  docs: { rawBytes: 1_250_000, gzipBytes: 340_000 },
   login: { rawBytes: 960_000, gzipBytes: 295_000 },
   appShell: { rawBytes: 2_850_000, gzipBytes: 850_000 },
 };

@@ -1,4 +1,4 @@
-import { exportEpub, pathExists } from "narrarium";
+import { exportEpub, listChapters, pathExists } from "narrarium";
 import path from "node:path";
 import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,6 +25,11 @@ export const GET = async () => {
     const ready = await pathExists(path.join(root, "book.md"));
     if (!ready) {
         return new Response("Book not found", { status: 404 });
+    }
+    if ((await listChapters(root)).length === 0) {
+        return new Response(new Uint8Array(), {
+            headers: { "Content-Type": "application/octet-stream" },
+        });
     }
     const password = getReaderPassword();
     const tempId = randomBytes(8).toString("hex");

@@ -29,7 +29,8 @@ function addManifestEntry(key, target = shellModuleAssets) {
   for (const dependency of entry.imports ?? []) addManifestEntry(dependency, target);
 }
 for (const source of sourceKeys) {
-  const key = Object.keys(manifest).find((candidate) => candidate === source || manifest[candidate].src === source || (source === "index.html" && manifest[candidate].isEntry));
+  const expectedName = path.basename(source, path.extname(source));
+  const key = Object.keys(manifest).find((candidate) => candidate === source || manifest[candidate].src === source || (source === "index.html" ? manifest[candidate].isEntry : manifest[candidate].name === expectedName));
   if (!key) throw new Error(`Precache manifest entry not found for ${source}.`);
   addManifestEntry(key);
 }

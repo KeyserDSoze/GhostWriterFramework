@@ -1,8 +1,11 @@
 import { useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { DocsIndexContent } from "@/pages/public/PublicDocs";
-import { getDocBySlug, localizedDoc, normalizeDocLang } from "@/lib/docs";
+import { getDocBySlug, localizedDoc, normalizeDocLang, withGeneratedDocs } from "@/lib/docs";
+import { docEntries } from "@/lib/generated-docs";
 import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
+
+const docs = withGeneratedDocs(docEntries);
 
 export function AppDocsIndexPage() {
   const { t } = useTranslation();
@@ -18,10 +21,9 @@ export function AppDocsIndexPage() {
 }
 
 export function AppDocPage() {
-  const params = useParams();
-  const slug = params["*"]?.replace(/^\/+|\/+$/g, "") || undefined;
+  const slug = useParams().docSlug;
   const { i18n, t } = useTranslation();
-  const doc = getDocBySlug(slug);
+  const doc = getDocBySlug(slug, docs);
   if (!doc) return <div className="rounded-2xl border border-dashed p-6 text-sm text-muted-foreground">{t("public.notFoundText")}</div>;
   const localized = localizedDoc(doc, normalizeDocLang(i18n.language));
   return (

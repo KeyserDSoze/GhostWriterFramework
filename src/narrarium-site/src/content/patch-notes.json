@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.94",
+    "date": "2026-08-25",
+    "en": {
+      "title": "Documentation deep links restored",
+      "summary": "Public and signed-in documentation links once again resolve their requested page after the React Router 7 migration.",
+      "changes": [
+        "Direct links to generated documentation pages now pass an explicit document slug instead of relying on the removed wildcard parameter behavior.",
+        "Repository-generated reference and package pages are now included alongside the curated application guides instead of appearing in the bundle without being addressable.",
+        "The same fix applies to documentation opened inside the authenticated application.",
+        "Fresh reader projects without chapters now complete their first Astro build while keeping the EPUB endpoint reserved for future chapters.",
+        "Root and GitHub Pages basename E2E tests now assert the actual requested document title, not only that the lazy route component loaded."
+      ]
+    },
+    "it": {
+      "title": "Deep link della documentazione ripristinati",
+      "summary": "I link alla documentazione pubblica e autenticata risolvono nuovamente la pagina richiesta dopo la migrazione a React Router 7.",
+      "changes": [
+        "I link diretti alle pagine di documentazione generate passano ora uno slug documento esplicito invece di dipendere dal comportamento rimosso dei parametri wildcard.",
+        "Le pagine reference e package generate dal repository sono ora incluse insieme alle guide curate dell'app invece di essere presenti nel bundle senza poter essere aperte.",
+        "La stessa correzione si applica alla documentazione aperta all'interno dell'applicazione autenticata.",
+        "I nuovi progetti reader senza capitoli completano ora la prima build Astro mantenendo l'endpoint EPUB riservato ai capitoli futuri.",
+        "I test E2E root e basename GitHub Pages verificano ora il titolo reale del documento richiesto, non soltanto il caricamento del componente lazy della route."
+      ]
+    }
+  },
+  {
     "version": "0.76.93",
     "date": "2026-08-25",
     "en": {

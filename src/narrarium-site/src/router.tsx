@@ -23,7 +23,7 @@ export const router = createBrowserRouter([
   { Component: RootRoute, HydrateFallback: RouteLoadingFallback, children: [
   { path: "/", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicBasics"), "HomePage") },
   { path: "/docs", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicDocs"), "DocsIndexPage") },
-  { path: "/docs/*", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicDocs"), "DocPage") },
+  { path: "/docs/:docSlug", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicDocs"), "DocPage") },
   { path: "/mcp", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicDocs"), "McpPage") },
   { path: "/privacy", lazy: component(() => import("@/pages/public/PublicBasics"), "PrivacyPage") },
   { path: "/terms", lazy: component(() => import("@/pages/public/PublicBasics"), "TermsPage") },
@@ -71,7 +71,7 @@ export const router = createBrowserRouter([
       { path: "migrate", lazy: component(() => import("@/pages/MigratePage"), "MigratePage") },
       { path: "costs", lazy: component(() => import("@/pages/CostsPage"), "CostsPage") },
       { path: "docs", lazy: component(() => import("@/pages/AppDocsPage"), "AppDocsIndexPage") },
-      { path: "docs/*", lazy: component(() => import("@/pages/AppDocsPage"), "AppDocPage") },
+      { path: "docs/:docSlug", lazy: component(() => import("@/pages/AppDocsPage"), "AppDocPage") },
       { path: "*", lazy: component(() => import("@/pages/AppNotFoundPage"), "AppNotFoundPage") },
     ] },
   ] },

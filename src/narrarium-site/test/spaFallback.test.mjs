@@ -63,7 +63,9 @@ test("precache generation includes application entry points, chunks, styles, and
     await writeFile(path.join(dist, "assets", "entry.js"), "entry");
     await writeFile(path.join(dist, "assets", "style.css"), "style");
     await writeFile(path.join(dist, "assets", "worker.js"), "worker");
+    await writeFile(path.join(dist, "assets", "docx-index.js"), "docx");
     await writeFile(path.join(dist, ".vite", "manifest.json"), JSON.stringify({
+      "../../node_modules/docx/dist/index.mjs": { file: "assets/docx-index.js", name: "index", isDynamicEntry: true },
       "src/main.tsx": { file: "assets/entry.js", src: "src/main.tsx", isEntry: true, imports: ["framework"] },
       framework: { file: "assets/framework.js" },
       "src/pages/public/PublicBasics.tsx": { file: "assets/home.js", src: "src/pages/public/PublicBasics.tsx", isDynamicEntry: true, imports: ["framework"] },
@@ -85,8 +87,10 @@ test("precache generation includes application entry points, chunks, styles, and
     await run(script, root);
 
     const manifest = await readFile(path.join(dist, "precache-manifest.js"), "utf8");
+    const precache = JSON.parse(/__NARRARIUM_PRECACHE__=(\[[^;]+\])/.exec(manifest)?.[1] ?? "[]");
     assert.match(manifest, /__NARRARIUM_RELEASE__="1\.2\.3"/);
     for (const file of ["index.html", "assets/entry.js", "assets/framework.js", "assets/home.js", "assets/docs.js"]) assert.match(manifest, new RegExp(file.replace(".", "\\.")));
+    assert.doesNotMatch(precache.join("\n"), /docx-index/);
     assert.match(manifest, /__NARRARIUM_OPTIONAL_ASSETS__/);
     for (const file of ["assets/auth.js", "assets/app-shell.js", "assets/books.js"]) assert.match(manifest, new RegExp(file.replace(".", "\\.")));
     assert.match(manifest, /assets\/worker\.js/);

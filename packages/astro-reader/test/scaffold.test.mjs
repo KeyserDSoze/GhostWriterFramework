@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { scaffoldReaderSite } from "../cli-dist/scaffold.js";
+import { GET as getEncryptedEpub } from "../cli-dist/pages/epub.enc.js";
 import { exportReaderEpub } from "../scripts/book-dev-utils.mjs";
 
 test("reader scaffold includes canon index pages and configurable core dependency", async () => {
@@ -87,10 +88,21 @@ test("reader EPUB export skips cleanly when a book has no chapters yet", async (
     await writeFile(path.join(bookRoot, "book.md"), "---\ntype: book\nid: book\ntitle: Empty Book\nlanguage: en\n---\n", "utf8");
 
     const exportState = await exportReaderEpub("../book", readerRoot);
+    const previousBookRoot = process.env.NARRARIUM_BOOK_ROOT;
+    let endpointResponse;
+    try {
+      process.env.NARRARIUM_BOOK_ROOT = bookRoot;
+      endpointResponse = await getEncryptedEpub();
+    } finally {
+      if (previousBookRoot === undefined) delete process.env.NARRARIUM_BOOK_ROOT;
+      else process.env.NARRARIUM_BOOK_ROOT = previousBookRoot;
+    }
 
     assert.equal(exportState.result.skipped, true);
     assert.equal(exportState.result.reason, "no-chapters");
     assert.match(exportState.validation.detail, /no chapters yet/i);
+    assert.equal(endpointResponse.status, 200);
+    assert.equal((await endpointResponse.arrayBuffer()).byteLength, 0);
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
   }

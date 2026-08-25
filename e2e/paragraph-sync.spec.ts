@@ -511,7 +511,7 @@ test("authenticated route families survive direct navigation and refresh", async
     ["app/migrate", "MigratePage"],
     ["app/costs", "CostsPage"],
     ["app/docs", "AppDocsIndexPage"],
-    ["app/docs/guide-1-how-it-works", "AppDocPage"],
+    ["app/docs/dependency-security", "AppDocPage"],
     ["app/not-a-real-route", "AppNotFoundPage"],
   ];
   for (const [route, componentName] of routes) {
@@ -521,6 +521,7 @@ test("authenticated route families survive direct navigation and refresh", async
     await installSeed(routePage);
     await routePage.goto(route);
     await expect(routePage.locator(`[data-route-ready="${componentName}"]`), route).toBeAttached({ timeout: 15000 });
+    if (route === "app/docs/dependency-security") await expect(routePage.getByRole("heading", { name: "Dependency security policy" }).first()).toBeVisible();
     await expect(routePage.getByRole("alert").filter({ hasText: "Load failed" })).toHaveCount(0);
     expect(network.unexpected, route).toEqual([]);
     await context.close();
