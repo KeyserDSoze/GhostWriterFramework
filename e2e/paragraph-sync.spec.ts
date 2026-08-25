@@ -49,14 +49,17 @@ function requestPath(event: RequestEvent): string {
   return decodeURIComponent(new URL(event.url).pathname);
 }
 
-function installDeterministicNetworkMocks(page: Page): { events: RequestEvent[]; headRequests: string[]; headRequestsByPhase: Record<RequestPhase, string[]>; blobDownloads: string[]; unexpected: UnexpectedRequest[]; setPhase: (phase: RequestPhase) => void } {
+function installDeterministicNetworkMocks(page: Page): { events: RequestEvent[]; headRequests: string[]; headRequestsByPhase: Record<RequestPhase, string[]>; blobDownloads: string[]; contentDownloads: string[]; unexpected: UnexpectedRequest[]; setPhase: (phase: RequestPhase) => void; setSettingsStalled: (stalled: boolean) => void } {
   const events: RequestEvent[] = [];
   const headRequests: string[] = [];
   const headRequestsByPhase: Record<RequestPhase, string[]> = { opening: [], sync: [], reload: [] };
   const blobDownloads: string[] = [];
+  const contentDownloads: string[] = [];
   const unexpected: UnexpectedRequest[] = [];
   let phase: RequestPhase = "opening";
   let remoteHead = INITIAL_HEAD;
+  let settingsStalled = false;
+  const stalledSettings = new Promise<never>(() => undefined);
 
   page.on("request", (request) => {
     const url = request.url();
@@ -69,6 +72,7 @@ function installDeterministicNetworkMocks(page: Page): { events: RequestEvent[];
         headRequestsByPhase[phase].push(url);
       }
       if (request.method() === "GET" && /\/git\/blobs\//.test(path)) blobDownloads.push(url);
+      if (request.method() === "GET" && /\/contents\//.test(path)) contentDownloads.push(url);
     }
   });
 
@@ -83,20 +87,25 @@ function installDeterministicNetworkMocks(page: Page): { events: RequestEvent[];
       await route.fulfill({ json: { user: { permissionId: "e2e-google-user", emailAddress: "e2e@example.test" } } });
       return;
     }
+    if (url.pathname === "/drive/v3/files/root") {
+      await route.fulfill({ json: { id: "e2e-root" } });
+      return;
+    }
     if (url.pathname === "/drive/v3/files" && url.searchParams.get("q")?.includes("mimeType=")) {
-      await route.fulfill({ json: { files: [{ id: "e2e-folder", name: "Narrarium", createdTime: "2024-01-01T00:00:00.000Z", appProperties: { narrariumAppFolder: "v1" } }] } });
+      await route.fulfill({ json: { files: [{ id: "e2e-folder", name: "Narrarium", createdTime: "2024-01-01T00:00:00.000Z", mimeType: "application/vnd.google-apps.folder", parents: ["e2e-root"], ownedByMe: true, trashed: false, appProperties: { narrariumAppFolder: "v1" } }] } });
       return;
     }
     if (url.pathname === "/drive/v3/files" && url.searchParams.get("q")?.includes("settings.json")) {
-      await route.fulfill({ json: { files: [{ id: "e2e-settings", createdTime: "2024-01-01T00:00:00.000Z" }] } });
+      await route.fulfill({ json: { files: [{ id: "e2e-settings", name: "settings.json", parents: ["e2e-folder"], trashed: false, ownedByMe: true, mimeType: "application/json", createdTime: "2024-01-01T00:00:00.000Z" }] } });
       return;
     }
     if (url.pathname === "/drive/v3/files/e2e-settings" && url.searchParams.has("alt")) {
+      if (settingsStalled) await stalledSettings;
       await route.fulfill({ json: { version: 2, defaultGitHubToken: "e2e-github-token", extraGitHubTokens: [], repository: { autoFetchOnOpen: true, autoFetchIntervalMinutes: 0, autoPullWhenClean: false }, ui: { language: "en", theme: "light" }, books: [{ id: BOOK_ID, owner: "KeyserDSoze", repo: "Jesus", name: "Jesus", tokenIndex: null, bookToken: "e2e-github-token", activeBranch: "test2", addedAt: "2024-01-01T00:00:00.000Z" }] } });
       return;
     }
     if (url.pathname === "/drive/v3/files/e2e-settings") {
-      await route.fulfill({ json: { id: "e2e-settings", version: "1", modifiedTime: "2024-01-01T00:00:00.000Z" } });
+      await route.fulfill({ json: { id: "e2e-settings", name: "settings.json", parents: ["e2e-folder"], trashed: false, ownedByMe: true, mimeType: "application/json", version: "1", modifiedTime: "2024-01-01T00:00:00.000Z" } });
       return;
     }
     if (url.pathname === "/drive/v3/files" && url.searchParams.get("q")?.includes("costs.json")) {
@@ -186,7 +195,7 @@ function installDeterministicNetworkMocks(page: Page): { events: RequestEvent[];
     await route.fulfill({ status: 500, json: { message: `Unexpected GitHub request: ${method} ${path}` } });
   });
 
-  return { events, headRequests, headRequestsByPhase, blobDownloads, unexpected, setPhase: (next) => { phase = next; } };
+  return { events, headRequests, headRequestsByPhase, blobDownloads, contentDownloads, unexpected, setPhase: (next) => { phase = next; }, setSettingsStalled: (stalled) => { settingsStalled = stalled; } };
 }
 
 async function installSeed(page: Page): Promise<void> {
@@ -541,5 +550,30 @@ test("loads the Copilot panel only after its launcher is used", async ({ page })
   await page.getByRole("button", { name: "Copilot" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   expect(scripts).toHaveLength(1);
+  expect(network.unexpected).toEqual([]);
+});
+
+test("refreshes from cached settings and IndexedDB while the cloud settings request is stalled", async ({ page }) => {
+  const network = installDeterministicNetworkMocks(page);
+  await installSeed(page);
+  await page.goto("app/books");
+  await expect(page.locator('[data-route-ready="BooksPage"]')).toBeAttached();
+  network.setSettingsStalled(true);
+  await page.evaluate(() => {
+    for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = sessionStorage.key(index);
+      if (key?.startsWith("narrarium-settings-credentials-v1:")) sessionStorage.removeItem(key);
+    }
+  });
+  network.blobDownloads.length = 0;
+  network.contentDownloads.length = 0;
+  const startedAt = Date.now();
+  await page.goto(`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("button", { name: "Edit paragraph" })).toBeVisible({ timeout: 2_000 });
+  await page.getByRole("button", { name: "Edit paragraph" }).click();
+  await expect(page.getByRole("textbox", { name: "Start writing…" })).toHaveValue(`${INITIAL_BODY}\n`, { timeout: 2_000 });
+  expect(Date.now() - startedAt).toBeLessThan(2_000);
+  expect(network.blobDownloads).toEqual([]);
+  expect(network.contentDownloads).toEqual([]);
   expect(network.unexpected).toEqual([]);
 });

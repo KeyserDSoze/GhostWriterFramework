@@ -13,7 +13,7 @@ import { LlmDebugPanel } from "@/components/debug/LlmDebugPanel";
 import { GenerateDiffDialog } from "@/components/book/GenerateDiffDialog";
 import { SessionStatusPill } from "@/components/layout/SessionStatusPill";
 import { OnboardingDialog } from "@/components/layout/OnboardingDialog";
-import { useSettings } from "@/drive/useSettings";
+import { invalidateSettingsLoadCoordinator, useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
@@ -32,6 +32,7 @@ import { useDirtyNavigationGuard } from "@/hooks/useDirtyNavigationGuard";
 import { useRewriteDatabaseBlockedNotification } from "@/hooks/useRewriteDatabaseBlockedNotification";
 import { useAssistantStore } from "@/assistant/store";
 import { AssistantLauncher } from "@/components/assistant/AssistantLauncher";
+import { useAuthStore } from "@/store/authStore";
 
 const AssistantPanel = lazy(() =>
   import("@/components/assistant/AssistantPanel").then((module) => ({ default: module.AssistantPanel })),
@@ -49,6 +50,7 @@ export function Shell() {
   const notesOpen = useUiStore((s) => s.notesOpen);
   const setNotesOpen = useUiStore((s) => s.setNotesOpen);
   const assistantOpen = useAssistantStore((s) => s.open);
+  const accessToken = useAuthStore((s) => s.accessToken);
 
   useTokenRefresh();
   useCostsSync();
@@ -98,7 +100,19 @@ export function Shell() {
   }, [location.pathname, navigate]);
 
   useEffect(() => {
+    invalidateSettingsLoadCoordinator();
     void load();
+  }, [accessToken, load]);
+
+  useEffect(() => {
+    const reconcileOnline = () => { invalidateSettingsLoadCoordinator(); useSettingsStore.getState().setCloudReconciled(false); void load(); };
+    const hydrateOffline = () => { invalidateSettingsLoadCoordinator(); void load(); };
+    window.addEventListener("online", reconcileOnline);
+    window.addEventListener("offline", hydrateOffline);
+    return () => {
+      window.removeEventListener("online", reconcileOnline);
+      window.removeEventListener("offline", hydrateOffline);
+    };
   }, [load]);
 
   useEffect(() => {

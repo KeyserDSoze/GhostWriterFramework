@@ -248,7 +248,7 @@ async function diagnostic(input: {
   }).catch(() => undefined);
 }
 
-async function exactLocalRepository(target: ExactRepositoryTarget, scope = operationScope(target)): Promise<LocalRepositoryMeta> {
+async function exactLocalRepository(target: ExactRepositoryTarget, scope = operationScope(target), options: { allowIncomplete?: boolean } = {}): Promise<LocalRepositoryMeta> {
   assertRepositoryOperationScopeCurrent(scope);
   if (!target.accountIdentity || !isAccountIdentityCurrent(target.accountIdentity, useAuthStore.getState().user)) {
     throw new Error("Local repository account identity is not current.");
@@ -258,6 +258,7 @@ async function exactLocalRepository(target: ExactRepositoryTarget, scope = opera
     : await getLocalRepository(target.owner, target.repo, target.branch, scope);
   if (!meta) throw new Error("Local repository is not ready.");
   if (meta.accountScope !== target.accountIdentity) throw new Error("Local repository account identity does not match.");
+  if (meta.cloneComplete !== true && !options.allowIncomplete) throw new Error("Local repository is incomplete and requires repair.");
   if (meta.bookId !== target.bookId || meta.owner !== target.owner || meta.repo !== target.repo || meta.branch !== target.branch) {
     throw new Error("The selected local repository does not match the requested book and branch.");
   }
@@ -425,6 +426,7 @@ async function ensureLocalBookStructureOnce(input: {
     await markLocalRepositoryRepairRequired(meta.id, scope, cloneOperationId);
     await diagnostic({ meta, scope, operationId: cloneOperationId, operation: "clone", stage: "finalize", outcome: "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), fileCount: blobs.length, error: new Error("Remote tree truncated") });
     await addLocalRepoLog(meta.id, scope, "error", `Remote tree truncated at ${blobs.length} files; clone left ready for repair`);
+    throw new Error("Remote tree is truncated; local clone remains repair-required and was not opened.");
   } else {
     input.onProgress?.({ done: blobs.length, total: blobs.length, phase: "finalizing" });
     await markLocalRepositoryCloneComplete(meta.id, scope, cloneOperationId, blobs.length, headSha);
@@ -441,7 +443,7 @@ export async function migrateLegacyLocalRepository(input: { meta: LocalRepositor
   assertRepositoryOperationScopeCurrent(scope);
   const migrationOperationId = crypto.randomUUID();
   const target = { ...input.meta, repoId: input.meta.id, accountIdentity: input.accountIdentity };
-  const selected = await exactLocalRepository(target, scope);
+  const selected = await exactLocalRepository(target, scope, { allowIncomplete: true });
   return withRepositoryMutationLease(selected.id, async () => {
     const claimed = await claimLegacyLocalRepositoryMigration(selected.id, scope, migrationOperationId);
     try {
@@ -533,7 +535,7 @@ export async function verifyAndRepairLocalRepository(input: {
   assertRepositoryOperationScopeCurrent(scope);
   const repairOperationId = crypto.randomUUID();
   const target = { ...meta, repoId: meta.id, accountIdentity: input.accountIdentity };
-  const selected = await exactLocalRepository(target, scope);
+  const selected = await exactLocalRepository(target, scope, { allowIncomplete: true });
   return withRepositoryMutationLease(selected.id, async () => {
     const claimed = await claimLocalRepositoryRepair(selected.id, scope, repairOperationId);
     const startedAt = new Date().toISOString();
@@ -649,10 +651,11 @@ async function verifyAndRepairLocalRepositoryLeased(
   return { meta: updated, structure: await buildLocalBookStructure(updated), repaired: missing.length };
 }
 
-export async function getExistingLocalBookStructure(bookId: string, owner: string, repo: string, branch: string, accountIdentity: string): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure } | null> {
+export async function getExistingLocalBookStructure(bookId: string, owner: string, repo: string, branch: string, accountIdentity: string, options: { includeIncomplete?: boolean } = {}): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure } | null> {
   const scope = operationScope({ bookId, owner, repo, branch, accountIdentity });
   const meta = await getLocalRepository(owner, repo, branch, scope);
   if (meta && meta.bookId !== bookId) return null;
+  if (meta?.cloneComplete !== true && !options.includeIncomplete) return null;
   return meta ? { meta, structure: await buildLocalBookStructure(meta) } : null;
 }
 
@@ -840,7 +843,7 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
 
 export async function restoreRepositoryRecovery(input: ExactRepositoryTarget & { recoveryId: string }): Promise<{ recovery: LocalRepositoryRecovery; structure: BookStructure }> {
   const scope = operationScope(input);
-  const target = await exactLocalRepository(input, scope);
+  const target = await exactLocalRepository(input, scope, { allowIncomplete: true });
   const snapshot = await getLocalRecoverySnapshot(input.recoveryId, input.accountIdentity);
   assertRepositoryOperationScopeCurrent(scope);
   if (!snapshot?.repository) throw new Error("Recovery snapshot is unavailable or uses an unsupported legacy format.");
@@ -848,8 +851,9 @@ export async function restoreRepositoryRecovery(input: ExactRepositoryTarget & {
   if (snapshotMeta.bookId !== input.bookId || snapshotMeta.owner !== input.owner || snapshotMeta.repo !== input.repo || snapshotMeta.branch !== input.branch || snapshotMeta.id !== snapshot.repoId) {
     throw new Error("Recovery snapshot does not match the requested book and branch.");
   }
+  if (snapshotMeta.cloneComplete !== true) throw new Error("The recovery snapshot is incomplete and cannot replace the working copy.");
   const recovery = await withRepositoryMutationLease(target.id, async () => {
-    const current = await exactLocalRepository(input, scope);
+    const current = await exactLocalRepository(input, scope, { allowIncomplete: true });
     return restoreLocalRecoverySnapshot(input.recoveryId, scope, {
       repoId: current.id, bookId: current.bookId, owner: current.owner, repo: current.repo, branch: current.branch,
     });
@@ -1227,9 +1231,17 @@ export async function recloneLocalWorkingCopy(input: {
     await addLocalRepoLog(result.meta.id, scope, "reset", "Recloned local working copy");
     return result;
   }
+  if (existing.repository.cloneComplete !== true) {
+    const recovered = await ensureLocalBookStructure(input);
+    if (recovered.meta.cloneComplete !== true) throw new Error("The local working copy remains incomplete after recovery.");
+    await addLocalRepoLog(recovered.meta.id, scope, "reset", "Recovered incomplete local working copy");
+    return { ...recovered, cloned: true };
+  }
   await pullRemoteChanges({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: input.accountIdentity, repoId: existing.repository.id, token: input.token, mode: "remote-wins", confirmed: true, signal: input.signal, onProgress: input.onProgress });
-  const meta = await getLocalRepositoryById(existing.repository.id, input.accountIdentity);
+  let meta = await getLocalRepositoryById(existing.repository.id, input.accountIdentity);
   if (!meta) throw new RepositoryOwnershipChangedError("The local repository disappeared during re-clone.");
+  if (meta.cloneComplete !== true) meta = (await verifyAndRepairLocalRepository({ meta, token: input.token, accountIdentity: input.accountIdentity, onProgress: input.onProgress, scope })).meta;
+  if (meta.cloneComplete !== true) throw new Error("The local working copy remains incomplete after re-clone.");
   const result = { meta, structure: await buildLocalBookStructure(meta), cloned: true };
   await addLocalRepoLog(result.meta.id, scope, "reset", "Recloned local working copy");
   return result;

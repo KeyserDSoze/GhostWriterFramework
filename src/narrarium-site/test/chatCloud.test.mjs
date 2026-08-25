@@ -144,7 +144,8 @@ function googleSetup(url, init = {}) {
   const parsed = new URL(String(url));
   const query = parsed.searchParams.get("q") ?? "";
   if (parsed.pathname.endsWith("/about")) return response({ user: { permissionId: "chat-tests" } });
-  if (query.includes("appProperties has")) return response({ files: [{ id: "app", name: "Narrarium", appProperties: { narrariumAppFolder: "v1" } }] });
+  if (parsed.pathname.endsWith("/files/root")) return response({ id: "root-id" });
+  if (query.includes("appProperties has")) return response({ files: [{ id: "app", name: "Narrarium", mimeType: "application/vnd.google-apps.folder", parents: ["root-id"], ownedByMe: true, trashed: false, appProperties: { narrariumAppFolder: "v1" } }] });
   if (query.includes("mimeType='application/vnd.google-apps.folder'") && query.includes("name='chats'")) return response({ files: [{ id: "chats" }] });
   return null;
 }

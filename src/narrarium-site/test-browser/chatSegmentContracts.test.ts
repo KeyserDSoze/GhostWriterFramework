@@ -104,7 +104,8 @@ describe("assistant cloud segment provider contract", () => {
       if (init.method === "DELETE") { deletes.push(value); return new Response(null, { status: 204 }); }
       if (provider === "microsoft" && value.includes("?$select=")) return new Response(JSON.stringify({ eTag: "r1" }), { status: 200 });
       if (provider === "google" && value.includes("/about")) return new Response(JSON.stringify({ user: { permissionId: "segments" } }), { status: 200 });
-      if (provider === "google" && new URL(value).searchParams.get("q")?.includes("appProperties has")) return new Response(JSON.stringify({ files: [{ id: "app", name: "Narrarium", appProperties: { narrariumAppFolder: "v1" } }] }), { status: 200 });
+      if (provider === "google" && new URL(value).pathname.endsWith("/files/root")) return Response.json({ id: "root-id" });
+      if (provider === "google" && new URL(value).searchParams.get("q")?.includes("appProperties has")) return new Response(JSON.stringify({ files: [{ id: "app", name: "Narrarium", mimeType: "application/vnd.google-apps.folder", parents: ["root-id"], ownedByMe: true, trashed: false, appProperties: { narrariumAppFolder: "v1" } }] }), { status: 200 });
       if (provider === "google" && value.includes("name%3D%27chat-segments%27")) return new Response(JSON.stringify({ files: [{ id: "segments" }] }), { status: 200 });
       if (provider === "google" && value.includes("narrariumChatSegmentSession")) return new Response(JSON.stringify({ files: [{ id: "segment-file", name: "segment.json" }] }), { status: 200 });
       return new Response(JSON.stringify({ ...createEmptyAssistantSession("Book"), id: "session-1" }), { status: 200, headers: { ETag: "r1" } });
@@ -126,7 +127,8 @@ describe("assistant cloud segment provider contract", () => {
       const value = String(url);
       const query = new URL(value).searchParams.get("q") ?? "";
       if (value.includes("/about")) return new Response(JSON.stringify({ user: { permissionId: "account" } }), { status: 200 });
-      if (query.includes("narrariumAppFolder")) return new Response(JSON.stringify({ files: [{ id: "app", name: "Narrarium", appProperties: { narrariumAppFolder: "v1" } }] }), { status: 200 });
+      if (new URL(value).pathname.endsWith("/files/root")) return Response.json({ id: "root-id" });
+      if (query.includes("narrariumAppFolder")) return new Response(JSON.stringify({ files: [{ id: "app", name: "Narrarium", mimeType: "application/vnd.google-apps.folder", parents: ["root-id"], ownedByMe: true, trashed: false, appProperties: { narrariumAppFolder: "v1" } }] }), { status: 200 });
       if (query.includes("name='chat-segments'")) return new Response(JSON.stringify({ files: [{ id: "segments" }] }), { status: 200 });
       if (query.includes("name='chats'")) return new Response(JSON.stringify({ files: [{ id: "chats" }] }), { status: 200 });
       if (query.includes("narrariumChatSegmentSession")) {
@@ -169,7 +171,8 @@ describe("assistant cloud segment provider contract", () => {
       const value = String(url);
       const query = new URL(value).searchParams.get("q") ?? "";
       if (value.includes("/about")) return new Response(JSON.stringify({ user: { permissionId: "account" } }), { status: 200 });
-      if (query.includes("narrariumAppFolder")) return new Response(JSON.stringify({ files: [{ id: "app", name: "Narrarium", appProperties: { narrariumAppFolder: "v1" } }] }), { status: 200 });
+      if (new URL(value).pathname.endsWith("/files/root")) return Response.json({ id: "root-id" });
+      if (query.includes("narrariumAppFolder")) return new Response(JSON.stringify({ files: [{ id: "app", name: "Narrarium", mimeType: "application/vnd.google-apps.folder", parents: ["root-id"], ownedByMe: true, trashed: false, appProperties: { narrariumAppFolder: "v1" } }] }), { status: 200 });
       if (query.includes("name='chats'")) return new Response(JSON.stringify({ files: [{ id: "chats" }] }), { status: 200 });
       if (query.includes("'chats' in parents")) return new Response(JSON.stringify({ files: [] }), { status: 200 });
       if (query.includes("name='chat-segments'")) return new Response(JSON.stringify({ files: [{ id: "segments" }] }), { status: 200 });

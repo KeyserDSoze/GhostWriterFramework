@@ -256,7 +256,7 @@ export function SettingsPage() {
           <fieldset className="space-y-4" disabled={offline}>
             <div className="grid gap-2">
               <Label htmlFor="default-token">{t("settings.defaultGithubToken")}</Label>
-              <Input id="default-token" type="password" placeholder="github_pat_..." value={defaultToken} onChange={(e) => setDefaultToken(e.target.value)} autoComplete="off" />
+              <Input id="default-token" type="password" placeholder="github_pat_..." value={defaultToken} onChange={(e) => { setDefaultToken(e.target.value); patchSettings({ defaultGitHubToken: e.target.value }); }} autoComplete="off" />
               <p className="text-xs text-muted-foreground">{t("settingsExtra.patRecommended")}</p>
             </div>
             <Separator />

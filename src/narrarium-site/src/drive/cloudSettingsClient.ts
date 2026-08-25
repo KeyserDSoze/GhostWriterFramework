@@ -1,9 +1,9 @@
 import { CHAT_CAPABILITIES, DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel, type CustomAction, type RoutingTarget } from "@/types/settings";
 import type { AuthProvider } from "@/store/authStore";
 import { BROWSER_ROUTING_ID, sanitizeTaskRouting } from "@/assistant/router";
-import { ensureGoogleAppFolder } from "@/drive/googleAppFolder";
-import { beginCloudWrite, fencedCloudMutation } from "@/drive/cloudWriteBarrier";
-import { ensureMicrosoftAppMarker, graphPath, ONE_DRIVE_APP_FOLDER } from "@/drive/microsoftAppFolder";
+import { ensureGoogleAppFolder, listVerifiedGoogleAppFolders, selectCanonicalGoogleAppFolder } from "@/drive/googleAppFolder";
+import { assertCloudReadAllowed, beginCloudWrite, fencedCloudMutation } from "@/drive/cloudWriteBarrier";
+import { ensureMicrosoftAppMarker, graphPath, ONE_DRIVE_APP_FOLDER, verifyMicrosoftAppFolder } from "@/drive/microsoftAppFolder";
 
 export class TokenExpiredError extends Error {
   constructor() {
@@ -22,18 +22,24 @@ export interface CloudSettingsHandle { settings: AppSettings; fileId: string; re
 export async function loadCloudSettings(
   provider: AuthProvider,
   accessToken: string,
+  knownFileId?: string | null,
 ): Promise<CloudSettingsHandle> {
+  if (knownFileId) {
+    await assertCloudReadAllowed(provider, accessToken);
+    const direct = await (provider === "microsoft" ? loadMicrosoftSettingsById(accessToken, knownFileId) : loadGoogleSettingsById(accessToken, knownFileId));
+    if (direct) return direct;
+  }
   const release = await beginCloudWrite(provider, accessToken);
   try {
     return await (provider === "microsoft" ? loadMicrosoftSettings(accessToken) : loadGoogleSettings(accessToken));
-  } finally { release(); }
+  } finally { await release(); }
 }
 
 export async function loadCloudSettingsForMigration(provider: AuthProvider, accessToken: string): Promise<CloudSettingsHandle> {
   const release = await beginCloudWrite(provider, accessToken);
   try {
     return await (provider === "microsoft" ? loadMicrosoftSettings(accessToken, true) : loadGoogleSettings(accessToken, true));
-  } finally { release(); }
+  } finally { await release(); }
 }
 
 export async function saveCloudSettings(
@@ -48,7 +54,7 @@ export async function saveCloudSettings(
       ? saveMicrosoftSettings(accessToken, settings, expected)
       : saveGoogleSettings(accessToken, settings, expected));
   } finally {
-    endWrite();
+    await endWrite();
   }
 }
 
@@ -65,18 +71,20 @@ async function googleFindSettingsFile(accessToken: string, folderId: string): Pr
   const query = new URLSearchParams({
     q: `name='${SETTINGS_FILE_NAME}' and '${folderId}' in parents and trashed=false`,
     spaces: "drive",
-    fields: "files(id,createdTime)",
+    fields: "files(id,name,parents,trashed,ownedByMe,mimeType,createdTime)",
   });
   const response = await fetch(`${GOOGLE_DRIVE_API}/files?${query}`, {
     headers: authHeaders(accessToken),
   });
   assertOk(response, "Google Drive settings lookup");
-  const data = (await response.json()) as { files?: Array<{ id: string; createdTime?: string }> };
-  const file = [...(data.files ?? [])].sort((a, b) => (a.createdTime ?? "").localeCompare(b.createdTime ?? "") || a.id.localeCompare(b.id))[0];
+  const data = (await response.json()) as { files?: Array<GoogleFileMetadata & { createdTime?: string }> };
+  const file = [...(data.files ?? [])]
+    .filter((entry) => entry.name === SETTINGS_FILE_NAME && entry.parents?.length === 1 && entry.parents[0] === folderId && entry.trashed === false && entry.ownedByMe === true && entry.mimeType === MIME_JSON)
+    .sort((a, b) => (a.createdTime ?? "").localeCompare(b.createdTime ?? "") || a.id.localeCompare(b.id))[0];
   return file ? { id: file.id } : null;
 }
 
-interface GoogleFileMetadata { id: string; version: string; modifiedTime?: string; md5Checksum?: string }
+interface GoogleFileMetadata { id: string; name?: string; parents?: string[]; trashed?: boolean; ownedByMe?: boolean; mimeType?: string; version: string; modifiedTime?: string; md5Checksum?: string }
 
 function googleRevisionToken(metadata: GoogleFileMetadata): string {
   if (typeof metadata.id !== "string" || !metadata.id || typeof metadata.version !== "string" || !metadata.version.trim()) {
@@ -85,13 +93,41 @@ function googleRevisionToken(metadata: GoogleFileMetadata): string {
   return `gdrive:${btoa(JSON.stringify([metadata.id, metadata.version])).replace(/=+$/, "")}`;
 }
 
-async function googleFileRevision(accessToken: string, fileId: string): Promise<{ metadata: GoogleFileMetadata; revision: string }> {
-  const fields = "id,version,modifiedTime,md5Checksum";
+async function googleFileRevision(accessToken: string, fileId: string, folderId: string): Promise<{ metadata: GoogleFileMetadata; revision: string }> {
+  const fields = "id,name,parents,trashed,ownedByMe,mimeType,version,modifiedTime,md5Checksum";
   const response = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=${fields}`, { headers: authHeaders(accessToken) });
   assertOk(response, "Google Drive settings revision");
   const metadata = await response.json() as GoogleFileMetadata;
   if (metadata.id !== fileId) throw new Error("Google Drive returned metadata for a different settings file.");
+  if (metadata.name !== SETTINGS_FILE_NAME || metadata.parents?.length !== 1 || metadata.parents[0] !== folderId || metadata.trashed !== false || metadata.ownedByMe !== true || metadata.mimeType !== MIME_JSON) throw new Error("Google Drive settings identity is invalid.");
   return { metadata, revision: googleRevisionToken(metadata) };
+}
+
+async function loadGoogleSettingsById(accessToken: string, fileId: string, strict = false): Promise<CloudSettingsHandle | null> {
+  const folder = selectCanonicalGoogleAppFolder(await listVerifiedGoogleAppFolders(accessToken));
+  if (!folder) return null;
+  const fields = "id,name,parents,trashed,ownedByMe,mimeType,version,modifiedTime,md5Checksum";
+  const beforeResponse = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=${fields}`, { headers: authHeaders(accessToken) });
+  if (beforeResponse.status === 404) return null;
+  assertOk(beforeResponse, "Google Drive settings revision");
+  const beforeMetadata = await beforeResponse.json() as GoogleFileMetadata;
+  if (beforeMetadata.id !== fileId) throw new Error("Google Drive returned metadata for a different settings file.");
+  if (beforeMetadata.name !== SETTINGS_FILE_NAME || beforeMetadata.trashed !== false || beforeMetadata.ownedByMe !== true || beforeMetadata.mimeType !== MIME_JSON || beforeMetadata.parents?.length !== 1 || beforeMetadata.parents[0] !== folder.id) return null;
+  const beforeRevision = googleRevisionToken(beforeMetadata);
+  const response = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media`, { headers: authHeaders(accessToken) });
+  assertOk(response, "Google Drive settings download");
+  const raw = await response.json();
+  const afterResponse = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=${fields}`, { headers: authHeaders(accessToken) });
+  assertOk(afterResponse, "Google Drive settings revision");
+  const afterMetadata = await afterResponse.json() as GoogleFileMetadata;
+  if (afterMetadata.id !== fileId || afterMetadata.name !== SETTINGS_FILE_NAME || afterMetadata.trashed !== false || afterMetadata.ownedByMe !== true || afterMetadata.mimeType !== MIME_JSON || afterMetadata.parents?.length !== 1 || afterMetadata.parents[0] !== folder.id) throw new Error("Google Drive settings identity changed while they were downloading. Reload and retry.");
+  const afterRevision = googleRevisionToken(afterMetadata);
+  if (afterRevision !== beforeRevision) throw new Error("Google Drive settings changed while they were downloading. Reload and retry.");
+  const afterFolder = selectCanonicalGoogleAppFolder(await listVerifiedGoogleAppFolders(accessToken));
+  if (!afterFolder || afterFolder.id !== folder.id) throw new Error("Google Drive app folder identity changed while settings were downloading. Reload and retry.");
+  await assertCloudReadAllowed("google", accessToken);
+  if (strict && !isValidSettingsSource(raw)) throw new Error("Source settings are malformed.");
+  return { ...migrateSettingsWithDiagnostics(raw), fileId, revision: afterRevision };
 }
 
 async function loadGoogleSettings(accessToken: string, strict = false): Promise<CloudSettingsHandle> {
@@ -103,17 +139,7 @@ async function loadGoogleSettings(accessToken: string, strict = false): Promise<
     return { settings: DEFAULT_SETTINGS, ...created, diagnostics: [] };
   }
 
-  const before = await googleFileRevision(accessToken, file.id);
-  const response = await fetch(`${GOOGLE_DRIVE_API}/files/${file.id}?alt=media`, {
-    headers: authHeaders(accessToken),
-  });
-  assertOk(response, "Google Drive settings download");
-  const raw = await response.json();
-  const after = await googleFileRevision(accessToken, file.id);
-  if (after.revision !== before.revision) throw new Error("Google Drive settings changed while they were downloading. Reload and retry.");
-  if (strict && !isValidSettingsSource(raw)) throw new Error("Source settings are malformed.");
-  const migrated = migrateSettingsWithDiagnostics(raw);
-  return { ...migrated, fileId: file.id, revision: after.revision };
+  return (await loadGoogleSettingsById(accessToken, file.id, strict))!;
 }
 
 async function saveGoogleSettings(accessToken: string, settings: AppSettings, expected?: { fileId: string | null; revision: string | null }): Promise<{ fileId: string; revision: string }> {
@@ -123,7 +149,7 @@ async function saveGoogleSettings(accessToken: string, settings: AppSettings, ex
 
   if (file) {
     if (!expected?.fileId || expected.fileId !== file.id || !expected.revision) throw new Error("Cloud settings changed or were not loaded. Reload before saving.");
-    const before = await googleFileRevision(accessToken, file.id);
+    const before = await googleFileRevision(accessToken, file.id, folderId);
     if (before.revision !== expected.revision) throw new Error("Cloud settings changed since they were loaded. Reload before saving.");
     let response: Response;
     try {
@@ -133,16 +159,16 @@ async function saveGoogleSettings(accessToken: string, settings: AppSettings, ex
         body: json,
       });
     } catch (error) {
-      const reconciled = await reconcileAmbiguousGoogleUpdate(accessToken, file.id, before.revision, settings);
+      const reconciled = await reconcileAmbiguousGoogleUpdate(accessToken, file.id, folderId, before.revision, settings);
       if (reconciled) return { fileId: file.id, revision: reconciled };
       throw error;
     }
     if (!response.ok && response.status !== 401) {
-      const reconciled = await reconcileAmbiguousGoogleUpdate(accessToken, file.id, before.revision, settings);
+      const reconciled = await reconcileAmbiguousGoogleUpdate(accessToken, file.id, folderId, before.revision, settings);
       if (reconciled) return { fileId: file.id, revision: reconciled };
     }
     assertOk(response, "Google Drive settings update");
-    const after = await googleFileRevision(accessToken, file.id);
+    const after = await googleFileRevision(accessToken, file.id, folderId);
     if (after.revision === before.revision) throw new Error("Google Drive settings update did not advance the file version.");
     return { fileId: file.id, revision: after.revision };
   }
@@ -167,17 +193,17 @@ async function saveGoogleSettings(accessToken: string, settings: AppSettings, ex
     await fencedCloudMutation("google", accessToken, `${GOOGLE_DRIVE_API}/files/${data.id}`, { method: "DELETE", headers: authHeaders(accessToken) });
     if (!same) throw new Error("A concurrent Google settings creation contains different data. Reload before saving.");
   }
-  const { revision } = await googleFileRevision(accessToken, canonical.id);
+  const { revision } = await googleFileRevision(accessToken, canonical.id, folderId);
   return { fileId: canonical.id, revision };
 }
 
-async function reconcileAmbiguousGoogleUpdate(accessToken: string, fileId: string, previousRevision: string, settings: AppSettings): Promise<string | null> {
-  const beforeDownload = await googleFileRevision(accessToken, fileId);
+async function reconcileAmbiguousGoogleUpdate(accessToken: string, fileId: string, folderId: string, previousRevision: string, settings: AppSettings): Promise<string | null> {
+  const beforeDownload = await googleFileRevision(accessToken, fileId, folderId);
   if (beforeDownload.revision === previousRevision) return null;
   const content = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media`, { headers: authHeaders(accessToken) });
   assertOk(content, "Google Drive ambiguous settings update reconciliation");
   const matches = JSON.stringify(await content.json()) === JSON.stringify(settings);
-  const afterDownload = await googleFileRevision(accessToken, fileId);
+  const afterDownload = await googleFileRevision(accessToken, fileId, folderId);
   return matches && afterDownload.revision === beforeDownload.revision ? afterDownload.revision : null;
 }
 
@@ -233,6 +259,29 @@ async function loadMicrosoftSettings(accessToken: string, strict = false): Promi
   if (strict && !isValidSettingsSource(raw)) throw new Error("Source settings are malformed.");
   const migrated = migrateSettingsWithDiagnostics(raw);
   return { ...migrated, fileId: metaData.id, revision };
+}
+
+async function loadMicrosoftSettingsById(accessToken: string, fileId: string, strict = false): Promise<CloudSettingsHandle | null> {
+  const folder = await verifyMicrosoftAppFolder(accessToken);
+  const child = folder?.children.find((entry) => entry.id === fileId);
+  if (!folder || child?.name !== SETTINGS_FILE_NAME || !child.file || child.folder) return null;
+  const meta = await fetch(`${GRAPH_DRIVE_API}/items/${encodeURIComponent(fileId)}?$select=id,name,eTag,file,parentReference`, { headers: authHeaders(accessToken) });
+  if (meta.status === 404) return null;
+  assertOk(meta, "OneDrive settings lookup");
+  const metaData = await meta.json() as MicrosoftDriveItem & { name?: string; file?: object; parentReference?: { id?: string } };
+  const revision = microsoftRevision(metaData, meta);
+  if (metaData.id !== fileId || metaData.name !== SETTINGS_FILE_NAME || !metaData.file || metaData.parentReference?.id !== folder.id || !revision) return null;
+  const file = await fetch(`${GRAPH_DRIVE_API}/items/${encodeURIComponent(fileId)}/content`, { headers: authHeaders(accessToken) });
+  assertOk(file, "OneDrive settings download");
+  const raw = await file.json();
+  const after = await microsoftMetadataRevision(accessToken, fileId, "");
+  if (after.fileId !== fileId || after.revision !== revision) throw new Error("OneDrive settings changed while they were downloading. Reload and retry.");
+  const afterFolder = await verifyMicrosoftAppFolder(accessToken);
+  const afterChild = afterFolder?.children.find((entry) => entry.id === fileId);
+  if (!afterFolder || afterFolder.id !== folder.id || afterChild?.name !== SETTINGS_FILE_NAME || !afterChild.file || afterChild.folder) throw new Error("OneDrive settings identity changed while they were downloading. Reload and retry.");
+  await assertCloudReadAllowed("microsoft", accessToken);
+  if (strict && !isValidSettingsSource(raw)) throw new Error("Source settings are malformed.");
+  return { ...migrateSettingsWithDiagnostics(raw), fileId, revision: after.revision };
 }
 
 interface MicrosoftDriveItem { id?: string; eTag?: string; "@odata.etag"?: string }

@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.76.92",
+    "date": "2026-08-25",
+    "en": {
+      "title": "Fast local refresh without cloud waits",
+      "summary": "Narrarium now opens verified local books immediately from account-safe settings cache and IndexedDB while cloud settings reconcile in the background.",
+      "changes": [
+        "A verified complete working copy opens from IndexedDB before GitHub credentials or cloud settings finish loading; normal refreshes no longer re-download or compare every book file.",
+        "Cloud settings loads are single-flight and owner-fenced across account, token and connectivity changes, while unsaved settings become an explicit conflict instead of being overwritten.",
+        "Cloud write leases are fully released before operations complete, and costs or clipboard synchronization waits until settings reconciliation finishes.",
+        "Incomplete, interrupted or truncated repository clones remain repair-only and can never be published to the editor or used as a remote mutation fallback.",
+        "PWA shell warming is no longer repeated on every app entry, no longer blocks installation, and has a bounded 15-second background timeout."
+      ]
+    },
+    "it": {
+      "title": "Refresh locale rapido senza attese cloud",
+      "summary": "Narrarium apre subito i libri locali verificati dalla cache impostazioni legata all'account e da IndexedDB, mentre le impostazioni cloud vengono riconciliate in background.",
+      "changes": [
+        "Una working copy completa e verificata si apre da IndexedDB prima che credenziali GitHub o impostazioni cloud finiscano il caricamento; il refresh normale non riscarica né confronta tutti i file del libro.",
+        "I caricamenti impostazioni cloud sono single-flight e vincolati ad account, token e stato di connessione; gli edit non salvati diventano un conflitto esplicito invece di essere sovrascritti.",
+        "I lease di scrittura cloud vengono rilasciati completamente prima che le operazioni terminino, mentre sincronizzazione costi e appunti aspetta la riconciliazione delle impostazioni.",
+        "Le clone repository incomplete, interrotte o con tree troncato restano utilizzabili solo per il repair e non possono essere pubblicate nell'editor né usate come fallback per mutazioni remote.",
+        "La preparazione PWA della shell non viene più ripetuta a ogni ingresso nell'app, non blocca l'installazione e usa un timeout background massimo di 15 secondi."
+      ]
+    }
+  },
+  {
     "version": "0.76.91",
     "date": "2026-08-24",
     "en": {

@@ -10,7 +10,7 @@ if (self.__NARRARIUM_RELEASE__ && self.__NARRARIUM_RELEASE__ !== RELEASE) {
 const PRECACHE_NAME = `narrarium-precache-${RELEASE}`;
 const RUNTIME_NAME = `narrarium-runtime-${RELEASE}`;
 const OWNED_CACHE_PREFIX = "narrarium-";
-const MAX_RUNTIME_ENTRIES = 64;
+const MAX_RUNTIME_ENTRIES = 192;
 
 function scopeUrl() {
   return new URL(self.registration.scope).href;

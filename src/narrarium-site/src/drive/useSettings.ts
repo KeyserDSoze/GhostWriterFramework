@@ -5,8 +5,16 @@ import { loadCloudSettings, saveCloudSettings, TokenExpiredError } from "./cloud
 import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
 import { useToast } from "@/components/ui/use-toast";
 import { useTranslation } from "react-i18next";
-import { cacheOfflineSettings, cacheSettings, clearSettingsCache, loadCachedSettingsForHydration, reconcileCachedSettings } from "@/drive/settingsCache";
+import { cacheOfflineSettings, cacheSettings, changedSettingsKeys, clearSettingsCache, loadCachedSettingsForHydration, reconcileCachedSettings } from "@/drive/settingsCache";
 import { CLOUD_SETTINGS_SOURCE_SCHEMA_VERSION } from "@/store/settingsStore";
+
+const activeSettingsLoads = new Map<string, Promise<void>>();
+let settingsLoadEpoch = 0;
+
+export function invalidateSettingsLoadCoordinator(): void {
+  settingsLoadEpoch += 1;
+  activeSettingsLoads.clear();
+}
 
 /** Hook that provides load/save helpers for Google Drive or OneDrive settings. */
 export function useSettings() {
@@ -20,6 +28,7 @@ export function useSettings() {
     setCloudRevision,
     setLastSynced,
     setCloudLoaded,
+    setCloudReconciled,
     setOfflineConflict,
   } = useSettingsStore();
 
@@ -28,61 +37,92 @@ export function useSettings() {
     const { accessToken, user, invalidateToken } = useAuthStore.getState();
     if (!user) {
       setCloudLoaded(false);
+      setCloudReconciled(false);
       return;
     }
     const expectedIdentity = accountIdentity(user);
     if (!expectedIdentity) return;
     const accountGeneration = useSettingsStore.getState().accountGeneration;
-    const ownsLoad = () => isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)
-      && useSettingsStore.getState().accountGeneration === accountGeneration;
-    if (navigator.onLine === false) {
+    const onlineMode = navigator.onLine === false ? "offline" : "online";
+    const loadEpoch = settingsLoadEpoch;
+    const loadKey = `${loadEpoch}:${accountGeneration}:${expectedIdentity}:${accessToken ?? ""}:${onlineMode}`;
+    const active = activeSettingsLoads.get(loadKey);
+    if (active) return active;
+    const ownsLoad = () => settingsLoadEpoch === loadEpoch
+      && useAuthStore.getState().accessToken === accessToken
+      && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)
+      && useSettingsStore.getState().accountGeneration === accountGeneration
+      && (navigator.onLine === false ? "offline" : "online") === onlineMode;
+    const operation = (async () => {
+      setCloudReconciled(false);
       const cached = loadCachedSettingsForHydration(expectedIdentity);
-      if (cached) replaceSettingsFromTrustedLoad(cached.settings, { accountGeneration, accountIdentity: cached.accountIdentity, source: cached.source });
-      else setCloudLoaded(false);
-      setSyncStatus(cached ? "idle" : "error");
-      return;
-    }
-    if (!accessToken) {
-      setCloudLoaded(false);
-      return;
-    }
-    setSyncStatus("loading");
-    try {
-      const result = await loadCloudSettings(user.provider, accessToken);
+      if (cached && !useSettingsStore.getState().cloudLoaded) replaceSettingsFromTrustedLoad(cached.settings, { accountGeneration, accountIdentity: cached.accountIdentity, source: cached.source });
+      const hydratedSettings = useSettingsStore.getState().settings;
+      if (navigator.onLine === false) {
+        if (cached) setCloudReconciled(true);
+        else setCloudLoaded(false);
+        setSyncStatus(cached ? "idle" : "error");
+        return;
+      }
+      if (!accessToken) {
+        setCloudLoaded(false);
+        setCloudReconciled(false);
+        return;
+      }
+      setSyncStatus("loading");
+      try {
+      const result = await loadCloudSettings(user.provider, accessToken, useSettingsStore.getState().driveFileId);
       if (!ownsLoad()) return;
+      const inFlightChangedKeys = changedSettingsKeys(hydratedSettings, useSettingsStore.getState().settings);
+      if (inFlightChangedKeys.length) {
+        setDriveFileId(result.fileId);
+        setCloudRevision(result.revision);
+        setOfflineConflict({ cloudSettings: result.settings, cloudRevision: result.revision, fileId: result.fileId, changedKeys: inFlightChangedKeys });
+        setCloudLoaded(true);
+        setCloudReconciled(true);
+        setSyncStatus("idle");
+        return;
+      }
       const reconciliation = reconcileCachedSettings(expectedIdentity, result.settings, result.revision);
       setDriveFileId(result.fileId);
       setCloudRevision(result.revision);
-      replaceSettingsFromTrustedLoad(reconciliation.settings, { accountGeneration, accountIdentity: expectedIdentity, source: { kind: "cloud", schemaVersion: CLOUD_SETTINGS_SOURCE_SCHEMA_VERSION } });
       if (reconciliation.kind === "conflict") {
+        replaceSettingsFromTrustedLoad(reconciliation.settings, { accountGeneration, accountIdentity: expectedIdentity, source: { kind: "cloud", schemaVersion: CLOUD_SETTINGS_SOURCE_SCHEMA_VERSION } });
         setOfflineConflict({ cloudSettings: result.settings, cloudRevision: result.revision, fileId: result.fileId, changedKeys: reconciliation.changedKeys });
       } else if (reconciliation.kind === "merged") {
         const saved = await saveCloudSettings(user.provider, accessToken, reconciliation.settings, { fileId: result.fileId, revision: result.revision });
         if (!ownsLoad()) return;
+        replaceSettingsFromTrustedLoad(reconciliation.settings, { accountGeneration, accountIdentity: expectedIdentity, source: { kind: "cloud", schemaVersion: CLOUD_SETTINGS_SOURCE_SCHEMA_VERSION } });
         setDriveFileId(saved.fileId);
         setCloudRevision(saved.revision);
         setOfflineConflict(null);
         cacheSettings(expectedIdentity, reconciliation.settings, saved.revision);
       } else {
+        replaceSettingsFromTrustedLoad(result.settings, { accountGeneration, accountIdentity: expectedIdentity, source: { kind: "cloud", schemaVersion: CLOUD_SETTINGS_SOURCE_SCHEMA_VERSION } });
         setOfflineConflict(null);
         cacheSettings(expectedIdentity, result.settings, result.revision);
       }
       if (result.diagnostics.length) toast({ title: t("settingsRepair.title"), description: result.diagnostics.join("\n"), variant: "destructive" });
       setLastSynced(new Date().toISOString());
       setCloudLoaded(true);
+      setCloudReconciled(true);
       setSyncStatus("idle");
-    } catch (err) {
-      if (!ownsLoad()) return;
-      if (err instanceof TokenExpiredError) {
-        const current = useAuthStore.getState();
-        if (current.accessToken === accessToken && current.user?.provider === user.provider) invalidateToken();
+      } catch (err) {
+        if (!ownsLoad()) return;
+        if (err instanceof TokenExpiredError) {
+          const current = useAuthStore.getState();
+          if (current.accessToken === accessToken && current.user?.provider === user.provider) invalidateToken();
+          setSyncStatus("error");
+          return;
+        }
+        console.error("Drive load error:", err);
         setSyncStatus("error");
-        return;
       }
-      console.error("Drive load error:", err);
-      setSyncStatus("error");
-    }
-  }, [replaceSettingsFromTrustedLoad, setCloudLoaded, setCloudRevision, setDriveFileId, setLastSynced, setOfflineConflict, setSyncStatus, t, toast]);
+    })();
+    activeSettingsLoads.set(loadKey, operation);
+    try { await operation; }
+    finally { if (activeSettingsLoads.get(loadKey) === operation) activeSettingsLoads.delete(loadKey); }
+  }, [replaceSettingsFromTrustedLoad, setCloudLoaded, setCloudReconciled, setCloudRevision, setDriveFileId, setLastSynced, setOfflineConflict, setSyncStatus, t, toast]);
 
   const save = useCallback(async (): Promise<boolean> => {
     // Read token at call time to avoid stale closure
@@ -91,6 +131,10 @@ export function useSettings() {
     const expectedIdentity = accountIdentity(user);
     if (!expectedIdentity) throw new Error("Cannot save settings without an immutable account identity.");
     const ownsSave = () => isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user);
+    if (!useSettingsStore.getState().cloudReconciled) {
+      throw new Error("Cloud settings are still reconciling. Retry after synchronization completes.");
+    }
+    if (useSettingsStore.getState().offlineConflict) throw new Error("Resolve the settings conflict before saving.");
     if (navigator.onLine === false) {
       cacheOfflineSettings(expectedIdentity, useSettingsStore.getState().settings);
       setCloudLoaded(true);
@@ -137,6 +181,7 @@ export function useSettings() {
     const conflict = state.offlineConflict;
     const identity = accountIdentity(user);
     if (!accessToken || !user || !identity || !conflict || navigator.onLine === false) return;
+    if (choice === "local" && !state.cloudReconciled) throw new Error("Cloud settings are still reconciling. Retry after synchronization completes.");
     const accountGeneration = state.accountGeneration;
     const ownsResolution = () => isAccountIdentityCurrent(identity, useAuthStore.getState().user)
       && useSettingsStore.getState().accountGeneration === accountGeneration;

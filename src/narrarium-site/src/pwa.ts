@@ -36,17 +36,26 @@ export async function activateAvailableUpdate(openPatchNotes: boolean): Promise<
   return true;
 }
 
-export async function cacheAppShellPwaAssets(): Promise<boolean> {
-  if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return false;
-  const registration = await navigator.serviceWorker.ready;
-  if (!registration.active) return false;
-  const channel = new MessageChannel();
-  const result = new Promise<boolean>((resolve) => {
-    const timer = window.setTimeout(() => resolve(false), 120_000);
-    channel.port1.onmessage = (event) => { window.clearTimeout(timer); resolve(event.data?.failed === 0); };
+let appShellCachePromise: Promise<boolean> | null = null;
+let appShellCached = false;
+
+export function cacheAppShellPwaAssets(): Promise<boolean> {
+  if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return Promise.resolve(false);
+  if (appShellCached) return Promise.resolve(true);
+  if (appShellCachePromise) return appShellCachePromise;
+  appShellCachePromise = new Promise<boolean>((resolve) => {
+    let channel: MessageChannel | null = null;
+    let finished = false;
+    const finish = (result: boolean) => { if (finished) return; finished = true; channel?.port1.close(); appShellCachePromise = null; appShellCached = result; resolve(result); };
+    const timer = window.setTimeout(() => finish(false), 15_000);
+    void navigator.serviceWorker.ready.then((registration) => {
+      if (finished || !registration.active) { window.clearTimeout(timer); finish(false); return; }
+      channel = new MessageChannel();
+      channel.port1.onmessage = (event) => { window.clearTimeout(timer); finish(event.data?.failed === 0); };
+      registration.active.postMessage({ type: "CACHE_APP_SHELL_ASSETS" }, [channel.port2]);
+    }).catch(() => { window.clearTimeout(timer); finish(false); });
   });
-  registration.active.postMessage({ type: "CACHE_APP_SHELL_ASSETS" }, [channel.port2]);
-  return result;
+  return appShellCachePromise;
 }
 
 interface BrowserLocation {

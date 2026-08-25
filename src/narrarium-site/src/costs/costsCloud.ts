@@ -24,7 +24,7 @@ export interface CostsHandle {
 export async function loadCosts(provider: AuthProvider, accessToken: string): Promise<CostsHandle> {
   const release = await beginCloudWrite(provider, accessToken);
   try { return await (provider === "microsoft" ? loadMicrosoftCosts(accessToken) : loadGoogleCosts(accessToken)); }
-  finally { release(); }
+  finally { await release(); }
 }
 
 function assertOk(response: Response, context: string, allow404 = false): void {
@@ -52,7 +52,7 @@ export async function saveCosts(provider: AuthProvider, accessToken: string, han
     const driveFileId = await saveGoogleCosts(accessToken, file, handle.driveFileId);
     return { file, driveFileId };
   } finally {
-    endWrite();
+    await endWrite();
   }
 }
 

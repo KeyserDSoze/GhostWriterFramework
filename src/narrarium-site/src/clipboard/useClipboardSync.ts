@@ -3,6 +3,7 @@ import { useAuthStore } from "@/store/authStore";
 import { useClipboardStore, type ClipboardEntry } from "@/clipboard/clipboardStore";
 import { loadAppJson, saveAppJson } from "@/drive/jsonFile";
 import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
+import { useSettingsStore } from "@/store/settingsStore";
 
 const FILE = "clipboard.json";
 
@@ -22,11 +23,12 @@ export function useClipboardSync() {
   const { user, accessToken } = useAuthStore();
   const dirty = useClipboardStore((s) => s.dirty);
   const revision = useClipboardStore((s) => s.revision);
+  const cloudReconciled = useSettingsStore((s) => s.cloudReconciled);
   const loadedIdentityRef = useRef<string | null>(null);
   const driveIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    if (!user || !accessToken) {
+    if (!user || !accessToken || !cloudReconciled) {
       loadedIdentityRef.current = null;
       driveIdRef.current = undefined;
       return;
@@ -42,13 +44,14 @@ export function useClipboardSync() {
       }
       loadedIdentityRef.current = expectedIdentity;
     }).catch(() => undefined);
-  }, [user, accessToken]);
+  }, [user, accessToken, cloudReconciled]);
 
   useEffect(() => {
     if (!user || !accessToken || !dirty) return;
     const expectedIdentity = accountIdentity(user);
     if (loadedIdentityRef.current !== expectedIdentity) return;
     const timer = setTimeout(() => {
+      if (!useSettingsStore.getState().cloudReconciled) return;
       const snapshot = useClipboardStore.getState();
       void saveAppJson(user.provider, accessToken, FILE, snapshot.items, driveIdRef.current)
         .then((handle) => {
@@ -59,5 +62,5 @@ export function useClipboardSync() {
         .catch(() => undefined);
     }, 5000);
     return () => clearTimeout(timer);
-  }, [dirty, revision, user, accessToken]);
+  }, [dirty, revision, user, accessToken, cloudReconciled]);
 }

@@ -282,7 +282,7 @@ export function registeredCloudAccount(provider: AuthProvider, token: string): s
   return value?.startsWith(`${provider}:`) ? value.slice(provider.length + 1) : null;
 }
 
-export async function acquireCloudWriteLease(provider: AuthProvider, token: string, signal?: AbortSignal): Promise<() => void> {
+export async function acquireCloudWriteLease(provider: AuthProvider, token: string, signal?: AbortSignal): Promise<() => Promise<void>> {
   const id = key(provider, token);
   if (signal?.aborted) throw abortError(signal);
   if (await loadAuthoritativeTombstone(id)) throw suspendedError();
@@ -307,13 +307,18 @@ export async function acquireCloudWriteLease(provider: AuthProvider, token: stri
     throw suspendedError();
   }
   let released = false;
-  return () => {
+  return async () => {
     if (released) return;
     released = true;
-    void releaseDurable().catch(() => undefined).finally(releaseQueue);
+    try { await releaseDurable(); }
+    finally { releaseQueue(); }
   };
 }
 export const beginCloudWrite = acquireCloudWriteLease;
+
+export async function assertCloudReadAllowed(provider: AuthProvider, token: string): Promise<void> {
+  if (await loadAuthoritativeTombstone(key(provider, token))) throw suspendedError();
+}
 
 export async function assertCloudWriteAllowed(provider: AuthProvider, token: string): Promise<void> {
   const id = key(provider, token);

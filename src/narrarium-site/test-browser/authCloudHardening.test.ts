@@ -145,6 +145,14 @@ describe("non-Copilot auth and cloud hardening", () => {
     useSaveStore.setState({ current: null });
   });
 
+  it("does not run a clean page save before activating an app update", async () => {
+    const save = vi.fn(() => true);
+    useSaveStore.setState({ current: { dirty: false, save } });
+    await expect(triggerCurrentSave()).resolves.toBe(true);
+    expect(save).not.toHaveBeenCalled();
+    useSaveStore.setState({ current: null });
+  });
+
   it("serializes deterministic independent durable lease owners without Web Locks", async () => {
     const id = `two-context-${crypto.randomUUID()}`;
     const first = await acquireDurableCloudLeaseForTests(id);
@@ -152,11 +160,12 @@ describe("non-Copilot auth and cloud hardening", () => {
     const secondPromise = acquireDurableCloudLeaseForTests(id).then((release) => { secondAcquired = true; return release; });
     await new Promise((resolve) => setTimeout(resolve, 75));
     expect(secondAcquired).toBe(false);
-    first();
+    await first();
     const second = await secondPromise;
     expect(secondAcquired).toBe(true);
-    second();
+    await second();
   });
+
 
   it("rejects stale reconnect generations and stale writer fences", async () => {
     const token = `fence-${crypto.randomUUID()}`;
@@ -170,7 +179,7 @@ describe("non-Copilot auth and cloud hardening", () => {
     const release = await acquireCloudWriteLease("google", token);
     await invalidateActiveCloudFenceForTests("google", token);
     await expect(assertCloudWriteAllowed("google", token)).rejects.toThrow(/stale/);
-    release();
+    await release();
   });
 
   it("aborts an in-flight provider fetch when heartbeat ownership is lost", async () => {
@@ -187,7 +196,7 @@ describe("non-Copilot auth and cloud hardening", () => {
     await started;
     failActiveCloudHeartbeatForTests("google", token);
     await expect(pending).rejects.toThrow(/heartbeat failed/);
-    release();
+    await release();
     vi.unstubAllGlobals();
   });
 
@@ -213,7 +222,7 @@ describe("non-Copilot auth and cloud hardening", () => {
     await expect(acquireCloudWriteLease("google", token)).rejects.toThrow(/suspended/);
     await expect(resumeCloudWrites("google", token, deletion.generation)).resolves.toBe(true);
     const release = await acquireCloudWriteLease("google", token);
-    release();
+    await release();
   });
 
   it("retries idempotently after a crash following durable resume", async () => {
@@ -232,7 +241,7 @@ describe("non-Copilot auth and cloud hardening", () => {
     await expect(observed).resolves.toMatchObject({ id: `google:${identity}`, tombstone: null });
     await expect(resumeCloudWrites("google", token, deletion.generation)).resolves.toBe(true);
     const release = await acquireCloudWriteLease("google", token);
-    release();
+    await release();
     observer.close();
   });
 
@@ -323,7 +332,8 @@ describe("non-Copilot auth and cloud hardening", () => {
     let deletes = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.includes("/drive/v3/files?") && init?.method !== "DELETE") return Response.json({ files: deletes ? [] : [{ id: "folder-1", name: "Narrarium", appProperties: { narrariumAppFolder: "v1" } }] });
+      if (url.includes("/drive/v3/files/root?")) return Response.json({ id: "root-id" });
+      if (url.includes("/drive/v3/files?") && init?.method !== "DELETE") return Response.json({ files: deletes ? [] : [{ id: "folder-1", name: "Narrarium", mimeType: "application/vnd.google-apps.folder", parents: ["root-id"], ownedByMe: true, trashed: false, appProperties: { narrariumAppFolder: "v1" } }] });
       if (url.endsWith("/drive/v3/files/folder-1") && init?.method === "DELETE") return new Response(null, { status: deletes++ ? 404 : 204 });
       if (url.includes("/drive/v3/about?")) return Response.json({ user: { permissionId: "permission-1" } });
       throw new Error(`Unexpected request ${url}`);
@@ -446,6 +456,7 @@ describe("non-Copilot auth and cloud hardening", () => {
     registerCloudAccount("google", token, `google-empty-${crypto.randomUUID()}`);
     const deletion = await suspendCloudWrites("google", token);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/drive/v3/files/root?")) return Response.json({ id: "root-id" });
       if (String(input).includes("/drive/v3/files?")) return Response.json({ files: [] });
       throw new Error(`Unexpected request ${String(input)}`);
     }));
@@ -455,7 +466,7 @@ describe("non-Copilot auth and cloud hardening", () => {
     await expect(cloudDeletionReconnectState("google", token)).resolves.toMatchObject({ state: "nothing-to-delete", generation: deletion.operationId, reason: expect.stringContaining("Google") });
     await expect(resumeCloudWrites("google", token, deletion.operationId)).resolves.toBe(true);
     const release = await acquireCloudWriteLease("google", token);
-    release();
+    await release();
     vi.unstubAllGlobals();
   });
 
@@ -473,7 +484,7 @@ describe("non-Copilot auth and cloud hardening", () => {
     await expect(cloudDeletionReconnectState("microsoft", token)).resolves.toMatchObject({ state: "nothing-to-delete", generation: deletion.operationId, reason: expect.stringContaining("Microsoft") });
     await expect(resumeCloudWrites("microsoft", token, deletion.operationId)).resolves.toBe(true);
     const release = await acquireCloudWriteLease("microsoft", token);
-    release();
+    await release();
     vi.unstubAllGlobals();
   });
 
@@ -500,7 +511,8 @@ describe("non-Copilot auth and cloud hardening", () => {
     let fetches = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       fetches += 1;
-      if (String(input).includes("/drive/v3/files?") && init?.method !== "DELETE") return Response.json({ files: [{ id: "completed-google", name: "Narrarium", appProperties: { narrariumAppFolder: "v1" } }] });
+      if (String(input).includes("/drive/v3/files/root?")) return Response.json({ id: "root-id" });
+      if (String(input).includes("/drive/v3/files?") && init?.method !== "DELETE") return Response.json({ files: [{ id: "completed-google", name: "Narrarium", mimeType: "application/vnd.google-apps.folder", parents: ["root-id"], ownedByMe: true, trashed: false, appProperties: { narrariumAppFolder: "v1" } }] });
       if (String(input).endsWith("/files/completed-google") && init?.method === "DELETE") return new Response(null, { status: 204 });
       throw new Error(`Unexpected request ${String(input)}`);
     }));
@@ -586,5 +598,5 @@ describe("non-Copilot auth and cloud hardening", () => {
 
 async function withMicrosoftLease(token: string, run: () => Promise<void>): Promise<void> {
   const release = await acquireCloudWriteLease("microsoft", token);
-  try { await run(); } finally { release(); }
+  try { await run(); } finally { await release(); }
 }

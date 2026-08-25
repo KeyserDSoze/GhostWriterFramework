@@ -27,7 +27,7 @@ it("drains a slow write in another module context before deletion takes ownershi
 
   finishWrite();
   await expect(write).resolves.toMatchObject({ status: 204 });
-  releaseA();
+  await releaseA();
   const deletion = await deletionPromise;
   expect(deletionOwned).toBe(true);
   await tabB.completeCloudDeletionNothingToDelete(deletion, "Test cleanup after drained write.");

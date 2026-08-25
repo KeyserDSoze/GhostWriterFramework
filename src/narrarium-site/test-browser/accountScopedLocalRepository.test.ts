@@ -56,7 +56,7 @@ describe("account-scoped local repositories", () => {
     useAuthStore.setState({ user: null });
     const unscoped = await putQuarantinedLocalRepository({ bookId: "book", owner: "scope-owner", repo: repoName, branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString() });
     useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-a", name: "A", email: "a@example.com", picture: "" } });
-    const scoped = await putLocalRepository({ bookId: "book", owner: "scope-owner", repo: repoName, branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString() }, captureRepositoryOperationScope());
+    const scoped = await putLocalRepository({ bookId: "book", owner: "scope-owner", repo: repoName, branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString(), cloneComplete: true }, captureRepositoryOperationScope());
 
     expect(await getLocalRepositoryById(unscoped.id, "google:sub-a")).toBeNull();
     expect(await getLocalRepositoryById(scoped.id, "google:sub-b")).toBeNull();
@@ -65,7 +65,7 @@ describe("account-scoped local repositories", () => {
 
   it("rejects unscoped and foreign repo IDs from service mutations", async () => {
     const repoName = crypto.randomUUID();
-    const base = { bookId: "book", owner: "scope-owner", repo: repoName, branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString() };
+    const base = { bookId: "book", owner: "scope-owner", repo: repoName, branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString(), cloneComplete: true };
     useAuthStore.setState({ user: null });
     const unscoped = await putQuarantinedLocalRepository(base);
     useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-a", name: "A", email: "a@example.com", picture: "" } });

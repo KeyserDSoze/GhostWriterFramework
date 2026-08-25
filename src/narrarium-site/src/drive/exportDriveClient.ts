@@ -119,7 +119,7 @@ export async function createGoogleDriveFolder(accessToken: string, parentId: str
   assertOk(response, "Google Drive folder create", "google", accessToken);
   const data = (await response.json()) as { id: string; name: string };
   return { id: data.id, name: data.name };
-  } finally { release(); }
+  } finally { await release(); }
 }
 
 /** Create a new subfolder inside a OneDrive folder path. Returns the new folder path. */
@@ -136,7 +136,7 @@ export async function createMicrosoftDriveFolder(accessToken: string, parentPath
   assertOk(response, "OneDrive folder create", "microsoft", accessToken);
   const data = (await response.json()) as { name: string };
   return normalized ? `${normalized}/${data.name}` : data.name;
-  } finally { release(); }
+  } finally { await release(); }
 }
 
 export async function uploadGoogleDriveFile(
@@ -176,7 +176,7 @@ export async function uploadGoogleDriveFile(
   assertOk(renamed, "Google Drive export allocation rename", "google", accessToken);
   const result = (await renamed.json()) as UploadedDriveFile;
   return result;
-  } finally { release(); }
+  } finally { await release(); }
 }
 
 async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string): Promise<void> {
@@ -227,7 +227,7 @@ export async function uploadMicrosoftDriveFile(
   assertOk(response, "OneDrive export upload", "microsoft", accessToken);
   const data = (await response.json()) as { id: string; name: string; webUrl?: string };
   return { id: data.id, name: data.name, webViewLink: data.webUrl };
-  } finally { release(); }
+  } finally { await release(); }
 }
 
 export async function uploadDriveFile(

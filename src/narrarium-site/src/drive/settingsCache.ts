@@ -228,6 +228,15 @@ function changedSafeKeys(base: SafeSettingsProjection, next: SafeSettingsProject
   return SAFE_SETTINGS_KEYS.filter((key) => JSON.stringify(base[key]) !== JSON.stringify(next[key]));
 }
 
+export function changedSafeSettingsKeys(base: AppSettings, next: AppSettings): SafeSettingsKey[] {
+  return changedSafeKeys(projectSafeSettings(base), projectSafeSettings(next));
+}
+
+export function changedSettingsKeys(base: AppSettings, next: AppSettings): string[] {
+  return [...new Set([...Object.keys(base), ...Object.keys(next)])]
+    .filter((key) => JSON.stringify(base[key as keyof AppSettings]) !== JSON.stringify(next[key as keyof AppSettings]));
+}
+
 function mergeSafe(settings: AppSettings, values: Partial<SafeSettingsProjection>, keys: SafeSettingsKey[]): AppSettings {
   const patch = Object.fromEntries(keys.map((key) => [key, values[key]]));
   return migrateSettings({ ...settings, ...patch });

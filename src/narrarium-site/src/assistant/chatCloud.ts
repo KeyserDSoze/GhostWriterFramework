@@ -125,7 +125,7 @@ export async function saveAssistantSession(provider: AuthProvider, accessToken: 
     if (!publicationStarted || isKnownPrimaryPublicationFailure(error)) await cleanupCreatedSegments(provider, accessToken, normalized.id, createdSegments).catch(() => undefined);
     throw error;
   } finally {
-    endWrite();
+    await endWrite();
   }
 }
 
@@ -150,7 +150,7 @@ export async function deleteAssistantSession(provider: AuthProvider, accessToken
       try { await deleteAssistantSegments(provider, accessToken, sessionId, signal); } catch { /* Orphans remain account-scoped and are reclaimed by a later delete/maintenance pass. */ }
     }
   } finally {
-    release();
+    await release();
   }
 }
 
@@ -759,7 +759,7 @@ export async function maintainAssistantSessionSegments(provider: AuthProvider, a
     if (provider === "microsoft") await reclaimMicrosoftOrphanSegments(accessToken, reachable, options.signal);
     else await reclaimGoogleOrphanSegments(accessToken, reachable, options.signal);
   } finally {
-    release();
+    await release();
   }
 }
 

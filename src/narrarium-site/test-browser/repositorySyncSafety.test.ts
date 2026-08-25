@@ -36,6 +36,7 @@ import {
   getLocalFile as getLocalFileScoped,
   getLocalRecoverySnapshot,
   getLocalRepositoryById,
+  makeRepoId,
   listLocalRecoverySnapshots,
   listUnpushedLocalCommits,
   putLocalRepository,
@@ -311,8 +312,8 @@ test("truncated initial clone transitions to repair-required and later repairs s
   octokit.getBlob.mockResolvedValue({ data: { encoding: "base64", content: btoa("book") } });
   const input = { bookId: "book", book: { id: "book", owner: "owner", repo: "repairable" } as any, token: "token", accountIdentity: identity, branch: "main" };
 
-  const cloned = await ensureLocalBookStructure(input);
-  repoId = cloned.meta.id;
+  repoId = makeRepoId("owner", "repairable", "main", identity);
+  await expect(ensureLocalBookStructure(input)).rejects.toThrow("truncated");
   const repairable = await getLocalRepositoryById(repoId, identity);
   expect(repairable).toMatchObject({ cloneComplete: false, cloneStatus: "repair-required" });
   expect(repairable?.cloneOperationId).toBeUndefined();

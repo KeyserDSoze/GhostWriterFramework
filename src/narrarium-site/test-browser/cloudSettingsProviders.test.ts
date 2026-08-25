@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthProvider } from "@/store/authStore";
 import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 
-vi.mock("@/drive/googleAppFolder", () => ({ ensureGoogleAppFolder: vi.fn(async () => "folder-id") }));
+vi.mock("@/drive/googleAppFolder", () => ({
+  ensureGoogleAppFolder: vi.fn(async () => "folder-id"),
+  listVerifiedGoogleAppFolders: vi.fn(async () => [{ id: "folder-id", name: "Narrarium", mimeType: "application/vnd.google-apps.folder", parents: ["root"], ownedByMe: true, trashed: false }]),
+  selectCanonicalGoogleAppFolder: vi.fn((folders: Array<{ id: string; name: string }>) => folders[0] ?? null),
+}));
 
 import { loadCloudSettings, loadCloudSettingsForMigration, saveCloudSettings } from "@/drive/cloudSettingsClient";
 import { DEFAULT_SETTINGS } from "@/types/settings";
@@ -26,13 +30,17 @@ const malformedNested = {
   customActions: [{ id: "good", name: "Good", prompt: "Run" }, { id: "bad", name: 1, prompt: "Run" }],
 };
 
+function googleSettingsEntry(version = "123") {
+  return { id: "settings-id", name: "settings.json", parents: ["folder-id"], trashed: false, ownedByMe: true, mimeType: "application/json", version, createdTime: "2026-01-01T00:00:00Z", modifiedTime: "2026-01-01T00:00:00Z", md5Checksum: "abc" };
+}
+
 function providerFetch(provider: AuthProvider, payload: unknown) {
   return vi.fn(async (input: string | URL) => {
     const url = String(input);
     if (provider === "google") {
-      if (url.includes("/files?") && url.includes("createdTime")) return Response.json({ files: [{ id: "settings-id", createdTime: "2026-01-01T00:00:00Z" }] });
+      if (url.includes("/files?") && url.includes("createdTime")) return Response.json({ files: [googleSettingsEntry()] });
       if (url.includes("/files/settings-id?alt=media")) return Response.json(payload);
-      if (url.endsWith("/files/settings-id?fields=id,version,modifiedTime,md5Checksum")) return Response.json({ id: "settings-id", version: "123", modifiedTime: "2026-01-01T00:00:00Z", md5Checksum: "abc" });
+      if (url.endsWith("/files/settings-id?fields=id,name,parents,trashed,ownedByMe,mimeType,version,modifiedTime,md5Checksum")) return Response.json(googleSettingsEntry());
     } else {
       if (url.includes("graph.microsoft.com/v1.0/me?$select=id")) return Response.json({ id: "graph-user-test" });
       if (url.endsWith("/root:/Apps")) return Response.json({ id: "apps", folder: {} });
@@ -79,8 +87,8 @@ describe.each<AuthProvider>(["google", "microsoft"])("%s cloud settings historic
     let revisionRead = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
       const url = String(input);
-      if (url.includes("/files?") && url.includes("createdTime")) return Response.json({ files: [{ id: "settings-id", createdTime: "2026-01-01T00:00:00Z" }] });
-      if (url.endsWith("/files/settings-id?fields=id,version,modifiedTime,md5Checksum")) return Response.json({ id: "settings-id", version: String(++revisionRead) });
+       if (url.includes("/files?") && url.includes("createdTime")) return Response.json({ files: [googleSettingsEntry()] });
+       if (url.endsWith("/files/settings-id?fields=id,name,parents,trashed,ownedByMe,mimeType,version,modifiedTime,md5Checksum")) return Response.json(googleSettingsEntry(String(++revisionRead)));
       if (url.includes("/files/settings-id?alt=media")) return Response.json(historicalV1);
       throw new Error(`Unexpected request ${url}`);
     }));
@@ -118,8 +126,8 @@ describe("cloud settings provider revisions", () => {
     let patched = false;
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.includes("/files?") && url.includes("createdTime")) return Response.json({ files: [{ id: "settings-id" }] });
-      if (url.endsWith("/files/settings-id?fields=id,version,modifiedTime,md5Checksum")) return Response.json({ id: "settings-id", version: "new-version" });
+      if (url.includes("/files?") && url.includes("createdTime")) return Response.json({ files: [googleSettingsEntry()] });
+      if (url.endsWith("/files/settings-id?fields=id,name,parents,trashed,ownedByMe,mimeType,version,modifiedTime,md5Checksum")) return Response.json(googleSettingsEntry("new-version"));
       if (init?.method === "PATCH") patched = true;
       throw new Error(`Unexpected request ${url}`);
     }));
@@ -132,8 +140,8 @@ describe("cloud settings provider revisions", () => {
     let metadataRead = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.includes("/files?") && url.includes("createdTime")) return Response.json({ files: [{ id: "settings-id" }] });
-      if (url.endsWith("/files/settings-id?fields=id,version,modifiedTime,md5Checksum")) return Response.json({ id: "settings-id", version: String(++metadataRead) });
+      if (url.includes("/files?") && url.includes("createdTime")) return Response.json({ files: [googleSettingsEntry()] });
+      if (url.endsWith("/files/settings-id?fields=id,name,parents,trashed,ownedByMe,mimeType,version,modifiedTime,md5Checksum")) return Response.json(googleSettingsEntry(String(++metadataRead)));
       if (init?.method === "PATCH") {
         expect(new Headers(init.headers).has("If-Match")).toBe(false);
         return Response.json({ id: "settings-id" });
@@ -149,8 +157,8 @@ describe("cloud settings provider revisions", () => {
     let metadataRead = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.includes("/files?") && url.includes("createdTime")) return Response.json({ files: [{ id: "settings-id" }] });
-      if (url.endsWith("/files/settings-id?fields=id,version,modifiedTime,md5Checksum")) return Response.json({ id: "settings-id", version: metadataRead++ === 0 ? "1" : "2" });
+      if (url.includes("/files?") && url.includes("createdTime")) return Response.json({ files: [googleSettingsEntry()] });
+      if (url.endsWith("/files/settings-id?fields=id,name,parents,trashed,ownedByMe,mimeType,version,modifiedTime,md5Checksum")) return Response.json(googleSettingsEntry(metadataRead++ === 0 ? "1" : "2"));
       if (init?.method === "PATCH") throw new TypeError("network disconnected after commit");
       if (url.endsWith("/files/settings-id?alt=media")) return Response.json(DEFAULT_SETTINGS);
       throw new Error(`Unexpected request ${url}`);

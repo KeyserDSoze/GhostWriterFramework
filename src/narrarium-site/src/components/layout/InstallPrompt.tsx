@@ -46,7 +46,7 @@ export function InstallPrompt() {
     window.addEventListener("appinstalled", onInstalled);
 
     // iOS Safari has no beforeinstallprompt → show a short "Add to Home Screen" hint.
-    if (isIos()) { setIosHint(true); void cacheAppShellPwaAssets(); }
+    if (isIos()) setIosHint(true);
 
     return () => {
       window.removeEventListener("beforeinstallprompt", onBeforeInstall);
@@ -63,9 +63,9 @@ export function InstallPrompt() {
   async function install() {
     if (!deferred) return;
     try {
-      const warmup = cacheAppShellPwaAssets();
+      void cacheAppShellPwaAssets();
       await deferred.prompt();
-      await Promise.all([deferred.userChoice, warmup]);
+      await deferred.userChoice;
     } catch { /* ignore */ }
     dismiss();
   }

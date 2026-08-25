@@ -105,7 +105,7 @@ test("service worker uses release caches, precaches the generated manifest, and 
   assert.match(source, /narrarium-precache-\$\{RELEASE\}/);
   assert.match(source, /new Request\(scopeUrl\(\), \{ cache: "reload" \}\)/);
   assert.match(source, /key\.startsWith\(OWNED_CACHE_PREFIX\)/);
-  assert.match(source, /MAX_RUNTIME_ENTRIES = 64/);
+  assert.match(source, /MAX_RUNTIME_ENTRIES = 192/);
   assert.match(source, /new URL\("assets\/", scopeUrl\(\)\)\.pathname/);
   assert.match(source, /url\.pathname\.startsWith\(assetRoot\)/);
   assert.match(source, /ignoreVary: true/);
@@ -149,4 +149,9 @@ test("repository maintenance loads JSZip only inside backup operations", async (
   assert.doesNotMatch(source, /^import JSZip from "jszip";/m);
   assert.match(source, /import type JSZip from "jszip"/);
   assert.equal((source.match(/await import\("jszip"\)/g) ?? []).length, 2);
+});
+
+test("authenticated startup does not warm the app shell again after route assets loaded", async () => {
+  const route = await readFile(new URL("../src/routes/AppShellRoute.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(route, /cacheAppShellPwaAssets/);
 });

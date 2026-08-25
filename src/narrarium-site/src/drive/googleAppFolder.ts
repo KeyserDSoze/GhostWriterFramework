@@ -10,10 +10,14 @@ export interface VerifiedGoogleAppFolder {
   name: string;
   createdTime?: string;
   mimeType?: string;
+  parents?: string[];
+  ownedByMe?: boolean;
+  trashed?: boolean;
 }
 
 let activeEnsure: { token: string; promise: Promise<string> } | null = null;
 let activeAccount: { token: string; promise: Promise<string> } | null = null;
+let activeRoot: { token: string; promise: Promise<string> } | null = null;
 
 function headers(token: string) {
   return { Authorization: `Bearer ${token}` };
@@ -75,35 +79,57 @@ async function googleAccountKey(token: string): Promise<string> {
   return promise;
 }
 
+async function googleRootId(token: string): Promise<string> {
+  if (activeRoot?.token !== token) {
+    const promise = fetch(`${GOOGLE_DRIVE_API}/files/root?fields=id`, { headers: headers(token) })
+      .then(async (response) => { assertOk(response, "Google Drive root folder lookup"); const value = await response.json() as { id?: string }; if (!value.id) throw new Error("Google Drive root folder identity is unavailable."); return value.id; })
+      .finally(() => { if (activeRoot?.promise === promise) activeRoot = null; });
+    activeRoot = { token, promise };
+  }
+  return activeRoot.promise;
+}
+
 export async function listVerifiedGoogleAppFolders(token: string): Promise<VerifiedGoogleAppFolder[]> {
+  const rootId = await googleRootId(token);
   const marker = `appProperties has { key='${MARKER_KEY}' and value='${MARKER_VALUE}' }`;
   const params = new URLSearchParams({
     q: `mimeType='${FOLDER_MIME}' and trashed=false and ${marker}`,
     spaces: "drive",
-    fields: "files(id,name,createdTime,appProperties)",
+    fields: "files(id,name,createdTime,mimeType,parents,ownedByMe,trashed,appProperties)",
     orderBy: "createdTime,name",
   });
   const response = await fetch(`${GOOGLE_DRIVE_API}/files?${params}`, { headers: headers(token) });
   assertOk(response, "Google verified app folder lookup");
   const data = await response.json() as { files?: Array<VerifiedGoogleAppFolder & { appProperties?: Record<string, string> }> };
-  return (data.files ?? []).filter((folder) => isMarked(folder.appProperties));
+  return (data.files ?? []).filter((folder) => isMarked(folder.appProperties)
+    && folder.name === APP_FOLDER_NAME
+    && folder.mimeType === FOLDER_MIME
+    && folder.ownedByMe === true
+    && folder.trashed === false
+    && folder.parents?.length === 1
+    && folder.parents[0] === rootId);
 }
 
 async function findLegacyFolder(token: string): Promise<VerifiedGoogleAppFolder | null> {
+  const rootId = await googleRootId(token);
   const params = new URLSearchParams({
     q: `name='${APP_FOLDER_NAME}' and mimeType='${FOLDER_MIME}' and 'root' in parents and trashed=false`,
     spaces: "drive",
-    fields: "files(id,name,createdTime)",
+    fields: "files(id,name,createdTime,mimeType,parents,ownedByMe,trashed)",
     orderBy: "createdTime,name",
   });
   const response = await fetch(`${GOOGLE_DRIVE_API}/files?${params}`, { headers: headers(token) });
   assertOk(response, "Google legacy app folder lookup");
-  const candidates = (await response.json() as { files?: VerifiedGoogleAppFolder[] }).files ?? [];
+  const candidates = ((await response.json() as { files?: VerifiedGoogleAppFolder[] }).files ?? [])
+    .sort((left, right) => (left.createdTime ?? "\uffff").localeCompare(right.createdTime ?? "\uffff") || left.id.localeCompare(right.id));
   for (const folder of candidates) {
-    const childParams = new URLSearchParams({ q: `name='settings.json' and '${folder.id}' in parents and trashed=false`, spaces: "drive", fields: "files(id)" });
+    if (folder.name !== APP_FOLDER_NAME || folder.mimeType !== FOLDER_MIME || folder.ownedByMe !== true || folder.trashed !== false || folder.parents?.length !== 1 || folder.parents[0] !== rootId) continue;
+    const childParams = new URLSearchParams({ q: `name='settings.json' and '${folder.id}' in parents and trashed=false`, spaces: "drive", fields: "files(id,name,parents,trashed,ownedByMe,mimeType,createdTime)", orderBy: "createdTime,name" });
     const childResponse = await fetch(`${GOOGLE_DRIVE_API}/files?${childParams}`, { headers: headers(token) });
     assertOk(childResponse, "Google legacy settings lookup");
-    const settingsId = (await childResponse.json() as { files?: Array<{ id: string }> }).files?.[0]?.id;
+    const settingsId = ((await childResponse.json() as { files?: Array<{ id: string; name?: string; parents?: string[]; trashed?: boolean; ownedByMe?: boolean; mimeType?: string; createdTime?: string }> }).files ?? [])
+      .filter((file) => file.name === "settings.json" && file.parents?.length === 1 && file.parents[0] === folder.id && file.trashed === false && file.ownedByMe === true && file.mimeType === "application/json")
+      .sort((left, right) => (left.createdTime ?? "\uffff").localeCompare(right.createdTime ?? "\uffff") || left.id.localeCompare(right.id))[0]?.id;
     if (!settingsId) continue;
     const content = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(settingsId)}?alt=media`, { headers: headers(token) });
     if (!content.ok) continue;
@@ -114,7 +140,9 @@ async function findLegacyFolder(token: string): Promise<VerifiedGoogleAppFolder 
       body: JSON.stringify({ appProperties: { [MARKER_KEY]: MARKER_VALUE } }),
     });
     assertOk(marked, "Google legacy app folder marker");
-    return folder;
+    const verified = await listVerifiedGoogleAppFolders(token);
+    const adopted = verified.find((candidate) => candidate.id === folder.id);
+    if (adopted) return adopted;
   }
   return null;
 }
@@ -203,5 +231,6 @@ export async function clearPersistedGoogleAppFolder(token: string, ids: string[]
 export function resetGoogleAppFolderCacheForTests(): void {
   activeEnsure = null;
   activeAccount = null;
+  activeRoot = null;
 }
 import { cloudDeletionTargetJournal, completeCloudDeletion, completeCloudDeletionNothingToDelete, fencedCloudDeletionMutation, fencedCloudMutation, journalCloudDeletionTargets, type CloudDeletionHandle } from "./cloudWriteBarrier.ts";

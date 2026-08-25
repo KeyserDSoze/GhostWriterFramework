@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { AppSettings, DEFAULT_SETTINGS } from "@/types/settings";
-import type { SafeSettingsKey } from "@/drive/settingsCache";
 import { SETTINGS_CACHE_SCHEMA_VERSION, assertOfflineSettingsReplacementAllowed } from "@/drive/settingsCache";
 
 export const CLOUD_SETTINGS_SOURCE_SCHEMA_VERSION = 1;
@@ -23,9 +22,10 @@ interface SettingsState {
   cloudRevision: string | null;
   lastSynced: string | null;
   cloudLoaded: boolean;
+  cloudReconciled: boolean;
   accountGeneration: number;
   accountIdentity: string | null;
-  offlineConflict: { cloudSettings: AppSettings; cloudRevision: string; fileId: string; changedKeys: SafeSettingsKey[] } | null;
+  offlineConflict: { cloudSettings: AppSettings; cloudRevision: string; fileId: string; changedKeys: string[] } | null;
 
   setSettings: (settings: AppSettings) => void;
   replaceSettingsFromTrustedLoad: (settings: AppSettings, load: TrustedSettingsLoad) => void;
@@ -35,6 +35,7 @@ interface SettingsState {
   setCloudRevision: (revision: string | null) => void;
   setLastSynced: (iso: string) => void;
   setCloudLoaded: (loaded: boolean) => void;
+  setCloudReconciled: (reconciled: boolean) => void;
   setOfflineConflict: (conflict: SettingsState["offlineConflict"]) => void;
 }
 
@@ -47,6 +48,7 @@ export const useSettingsStore = create<SettingsState>()(
       cloudRevision: null,
       lastSynced: null,
       cloudLoaded: false,
+      cloudReconciled: false,
       accountGeneration: 0,
       accountIdentity: null,
       offlineConflict: null,
@@ -75,6 +77,7 @@ export const useSettingsStore = create<SettingsState>()(
       setCloudRevision: (cloudRevision) => set({ cloudRevision }),
       setLastSynced: (lastSynced) => set({ lastSynced }),
       setCloudLoaded: (cloudLoaded) => set({ cloudLoaded }),
+      setCloudReconciled: (cloudReconciled) => set({ cloudReconciled }),
       setOfflineConflict: (offlineConflict) => set({ offlineConflict }),
     }),
     {

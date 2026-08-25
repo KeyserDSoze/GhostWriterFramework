@@ -21,7 +21,7 @@ export interface JsonHandle<T> {
 export async function loadAppJson<T>(provider: AuthProvider, token: string, fileName: string): Promise<JsonHandle<T>> {
   const release = await beginCloudWrite(provider, token);
   try { return await (provider === "microsoft" ? loadMs<T>(token, fileName) : loadGoogle<T>(token, fileName)); }
-  finally { release(); }
+  finally { await release(); }
 }
 
 function assertOk(response: Response, context: string): void {
@@ -38,7 +38,7 @@ export async function saveAppJson<T>(provider: AuthProvider, token: string, file
     const id = await saveGoogle(token, fileName, data, driveFileId);
     return { data, driveFileId: id };
   } finally {
-    endWrite();
+    await endWrite();
   }
 }
 

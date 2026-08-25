@@ -133,6 +133,7 @@ async function localRepoId(owner: string, repo: string, branch: string | undefin
   if (!branch) return null;
   let local: Awaited<ReturnType<typeof getLocalRepository>>;
   try { local = await getLocalRepository(owner, repo, branch, scope); } catch (error) { throw classifyRepositoryError(error, "read"); }
+  if (local && local.cloneComplete !== true) throw new RepositoryError("Local working copy is incomplete and requires repair.", "conflict", "read", 409);
   return local?.id ?? null;
 }
 

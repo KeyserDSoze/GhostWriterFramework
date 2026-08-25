@@ -4,6 +4,7 @@ import { useCostsStore } from "@/costs/costsStore";
 import { loadCosts, saveCosts } from "@/costs/costsCloud";
 import { emptyBucket, type BookUsage, type CostsFile, type UsageBucket } from "@/costs/model";
 import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
+import { useSettingsStore } from "@/store/settingsStore";
 
 function maxBucket(x: UsageBucket, y: UsageBucket): UsageBucket {
   return {
@@ -55,12 +56,13 @@ export function useCostsSync() {
   const { user, accessToken } = useAuthStore();
   const dirty = useCostsStore((s) => s.dirty);
   const revision = useCostsStore((s) => s.revision);
+  const cloudReconciled = useSettingsStore((s) => s.cloudReconciled);
   const loadedIdentityRef = useRef<string | null>(null);
   const savingRef = useRef(false);
 
   // Initial load + merge with local cache.
   useEffect(() => {
-    if (!user || !accessToken) {
+    if (!user || !accessToken || !cloudReconciled) {
       loadedIdentityRef.current = null;
       return;
     }
@@ -73,7 +75,7 @@ export function useCostsSync() {
       useCostsStore.getState().setFile(merged, handle.driveFileId);
       loadedIdentityRef.current = expectedIdentity;
     }).catch(() => undefined);
-  }, [user, accessToken]);
+  }, [user, accessToken, cloudReconciled]);
 
   // Debounced save when dirty.
   useEffect(() => {
@@ -81,6 +83,7 @@ export function useCostsSync() {
     const expectedIdentity = accountIdentity(user);
     if (loadedIdentityRef.current !== expectedIdentity) return;
     const timer = setTimeout(() => {
+      if (!useSettingsStore.getState().cloudReconciled) return;
       if (savingRef.current) return;
       savingRef.current = true;
       const { file, driveFileId, revision: savedRevision } = useCostsStore.getState();
@@ -98,5 +101,5 @@ export function useCostsSync() {
         });
     }, 4000);
     return () => clearTimeout(timer);
-  }, [dirty, revision, user, accessToken]);
+  }, [dirty, revision, user, accessToken, cloudReconciled]);
 }

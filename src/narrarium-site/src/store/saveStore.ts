@@ -23,7 +23,7 @@ let activeSave: Promise<boolean> | null = null;
 /** Trigger the active page's save action (used by Ctrl+S and the context menu). */
 export async function triggerCurrentSave(): Promise<boolean> {
   const current = useSaveStore.getState().current;
-  if (!current) return true;
+  if (!current || !current.dirty) return true;
   if (activeSave) return activeSave;
   activeSave = Promise.resolve(current.save())
     .then((result) => result === true)

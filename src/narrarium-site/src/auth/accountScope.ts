@@ -50,7 +50,7 @@ export function resetAccountScopedState(): void {
   useFeedbackRewriteWorkflowStore.getState().abortController?.abort();
   resetAssistantSessionIndex(null);
   useAssistantStore.setState({ open: false, launchMode: null, busy: false, sessions: [], currentSession: null });
-  useSettingsStore.setState((state) => ({ settings: DEFAULT_SETTINGS, syncStatus: "idle", driveFileId: null, cloudRevision: null, lastSynced: null, cloudLoaded: false, offlineConflict: null, accountGeneration: state.accountGeneration + 1, accountIdentity: accountIdentity(useAuthStore.getState().user) }));
+  useSettingsStore.setState((state) => ({ settings: DEFAULT_SETTINGS, syncStatus: "idle", driveFileId: null, cloudRevision: null, lastSynced: null, cloudLoaded: false, cloudReconciled: false, offlineConflict: null, accountGeneration: state.accountGeneration + 1, accountIdentity: accountIdentity(useAuthStore.getState().user) }));
   useBooksStore.setState({ structures: {}, loadingIds: new Set(), activeStructureOperations: {}, errors: {}, workingBranches: {}, cloneProgress: {}, structureGenerations: {}, structureLoadEpoch });
   useCostsStore.getState().setFile(emptyCostsFile(), undefined);
   useClipboardStore.getState().setItems([]);

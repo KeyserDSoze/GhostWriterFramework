@@ -33,7 +33,7 @@ const identity = "google:sub-writer";
 beforeEach(() => {
   vi.clearAllMocks();
   useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
-  local.getLocalRepositoryById.mockResolvedValue({ id: "repo-id", bookId: "book", owner: "owner", repo: "repo", branch: "main", accountScope: identity });
+  local.getLocalRepositoryById.mockResolvedValue({ id: "repo-id", bookId: "book", owner: "owner", repo: "repo", branch: "main", accountScope: identity, cloneComplete: true });
   local.listDirtyLocalFiles.mockResolvedValue([]);
   local.listUnpushedLocalCommits.mockResolvedValue([{ id: "local-commit", message: "Update", files: [{ path: "plot.md", status: "modified", kind: "text", hash: "new-hash" }] }]);
   local.listAllLocalFiles.mockResolvedValue([{ path: "plot.md", kind: "text", text: "new", currentHash: "new-hash", status: "clean", committed: true }]);

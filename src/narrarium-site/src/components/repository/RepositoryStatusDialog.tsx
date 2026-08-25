@@ -164,7 +164,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   async function refreshBookStructure() {
     if (!book) return;
     const repo = await currentRepo().catch(() => null);
-    if (!repo) return;
+    if (!repo || repo.cloneComplete !== true) return;
     setStructure(book.id, await buildLocalBookStructure(repo));
   }
 
@@ -341,8 +341,9 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
             <div className="grid gap-2 sm:grid-cols-3">
               <Button variant="outline" className="sm:col-span-3" disabled={maintenanceNetworkDisabled} onClick={() => void run("recover-lifecycle", async () => {
                 if (!book || !branch || !currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
-                const result = await ensureLocalBookStructure({ bookId: book.id, book, token, accountIdentity: currentAccountIdentity, branch, onProgress: (p) => setCloneProgress(book.id, p) });
-                setStructure(book.id, result.structure);
+                 const result = await ensureLocalBookStructure({ bookId: book.id, book, token, accountIdentity: currentAccountIdentity, branch, onProgress: (p) => setCloneProgress(book.id, p) });
+                 if (result.meta.cloneComplete !== true) throw new Error(t("repoStatus.incomplete"));
+                 setStructure(book.id, result.structure);
                 return result.meta.cloneComplete ? t("repoStatus.remoteUpToDate") : t("repoStatus.incomplete");
               })}>{busy === "recover-lifecycle" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.retryRecovery")}</Button>
               <Button className="sm:col-span-3" disabled={networkDisabled} onClick={() => { onOpenChange(false); void triggerCurrentRepositorySync(); }}><RefreshCcw className="mr-1 h-4 w-4" />{t("repoStatus.sync")}</Button>
