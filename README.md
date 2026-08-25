@@ -29,6 +29,8 @@ This keeps the actual writing artifacts in your filesystem instead of hiding the
 
 If you just want to use Narrarium, start from the published packages:
 
+The reader toolchain requires Node.js 22.12 or newer.
+
 ```bash
 npx create-narrarium-book my-book --title "My Book" --language en
 cd my-book

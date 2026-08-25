@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.76.93",
+    "date": "2026-08-25",
+    "en": {
+      "title": "Zero-advisory dependency baseline",
+      "summary": "Narrarium removes unused browser packages and updates its app, reader, and MCP dependency chains to a zero-advisory audited baseline.",
+      "changes": [
+        "Azure OpenAI remains available through the supported OpenAI client while the unused legacy Azure SDK and its vulnerable transitive chain are removed.",
+        "Unused Mammoth and Radix UI packages are removed, and file discovery used only by the web build no longer ships in the browser app dependency set.",
+        "The static reader and local MCP server use updated Astro and MCP SDK releases that clear their vulnerable parser, image, URI, and HTTP adapter chains.",
+        "New and upgraded reader projects use the audited Astro 7 baseline and require Node.js 22.12 or newer.",
+        "Client navigation now uses React Router 7 with the same clean BrowserRouter URLs, GitHub Pages basename handling, lazy route loading, and accessible hydration fallback.",
+        "Automated release and CI checks reject known advisories, removed dependencies, stale chunk rules, and security-sensitive version regressions."
+      ]
+    },
+    "it": {
+      "title": "Baseline dipendenze senza advisory",
+      "summary": "Narrarium rimuove pacchetti browser inutilizzati e aggiorna le catene dell'app, del reader e del server MCP a una baseline verificata senza advisory.",
+      "changes": [
+        "Azure OpenAI resta disponibile tramite il client OpenAI supportato, mentre il vecchio SDK Azure inutilizzato e la sua catena transitiva vulnerabile vengono rimossi.",
+        "I pacchetti Mammoth e Radix UI inutilizzati vengono rimossi e la ricerca file usata soltanto dalla build web non fa più parte delle dipendenze dell'app browser.",
+        "Il reader statico e il server MCP locale usano versioni aggiornate di Astro e dell'SDK MCP che eliminano le catene vulnerabili di parser, immagini, URI e adattatori HTTP.",
+        "I progetti reader nuovi e aggiornati usano la baseline verificata Astro 7 e richiedono Node.js 22.12 o successivo.",
+        "La navigazione client usa ora React Router 7 mantenendo URL BrowserRouter puliti, gestione del basename GitHub Pages, caricamento lazy delle route e fallback di hydration accessibile.",
+        "I controlli automatici di release e CI rifiutano advisory note, dipendenze rimosse, regole chunk obsolete e regressioni delle versioni sensibili alla sicurezza."
+      ]
+    }
+  },
+  {
     "version": "0.76.92",
     "date": "2026-08-25",
     "en": {

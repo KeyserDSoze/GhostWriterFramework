@@ -37,9 +37,11 @@ test("reader scaffold includes canon index pages and configurable core dependenc
     const timelinePage = await readFile(path.join(rootPath, "src", "pages", "timeline", "index.astro"), "utf8");
 
     assert.equal(result.coreDependency, "file:../../packages/core");
+    assert.equal(packageJson.engines.node, ">=22.12.0");
     assert.equal(packageJson.dependencies.narrarium, "file:../../packages/core");
+    assert.equal(packageJson.dependencies.astro, "^7.2.6");
     assert.equal(packageJson.dependencies.chokidar, "^4.0.3");
-    assert.equal(packageJson.dependencies["js-yaml"], "^3.14.2");
+    assert.equal(packageJson.dependencies["js-yaml"], undefined);
     assert.equal(packageJson.scripts.dev, "node ./scripts/dev.mjs");
     assert.equal(packageJson.scripts["export:epub"], "node ./scripts/export-epub.mjs");
     assert.equal(packageJson.scripts.doctor, "node ./scripts/doctor.mjs");

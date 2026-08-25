@@ -46,6 +46,9 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
         name: packageName,
         private: true,
         type: "module",
+        engines: {
+          node: ">=22.12.0",
+        },
         scripts: {
           "export:epub": "node ./scripts/export-epub.mjs",
           doctor: "node ./scripts/doctor.mjs",
@@ -55,9 +58,8 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
         },
         dependencies: {
           "narrarium": coreDependency,
-          astro: "^5.14.1",
+          astro: "^7.2.6",
           chokidar: "^4.0.3",
-          "js-yaml": "^3.14.2",
           marked: "^16.3.0",
         },
         devDependencies: {

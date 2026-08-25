@@ -1,6 +1,7 @@
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter, Navigate, Outlet } from "react-router-dom";
 import type { ComponentType } from "react";
 import { RouteErrorFallback } from "@/components/layout/RouteErrorFallback";
+import { RouteLoadingFallback } from "@/components/layout/RouteLoadingFallback";
 
 function routerBasename(): string {
   const base = import.meta.env.BASE_URL;
@@ -14,7 +15,12 @@ const component = <T extends Record<string, unknown>, K extends keyof T>(loader:
 };
 const routeError = <RouteErrorFallback />;
 
+function RootRoute() {
+  return <Outlet />;
+}
+
 export const router = createBrowserRouter([
+  { Component: RootRoute, HydrateFallback: RouteLoadingFallback, children: [
   { path: "/", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicBasics"), "HomePage") },
   { path: "/docs", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicDocs"), "DocsIndexPage") },
   { path: "/docs/*", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicDocs"), "DocPage") },
@@ -72,4 +78,5 @@ export const router = createBrowserRouter([
   { path: "/bms", element: <Navigate to="/app" replace /> },
   { path: "/bms/*", element: <Navigate to="/app" replace /> },
   { path: "*", lazy: component(() => import("@/pages/public/PublicBasics"), "NotFoundPage") },
+  ] },
 ], { basename: routerBasename() });

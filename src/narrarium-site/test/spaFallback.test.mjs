@@ -138,7 +138,8 @@ test("route splitting keeps accessible loading and error fallbacks", async () =>
   const error = await readFile(new URL("../src/components/layout/RouteErrorFallback.tsx", import.meta.url), "utf8");
   assert.match(router, /lazy:\s*component\(/);
   assert.match(router, /errorElement:\s*routeError/);
-  assert.match(app, /fallbackElement=\{<RouteLoadingFallback/);
+  assert.doesNotMatch(app, /fallbackElement=/);
+  assert.match(router, /HydrateFallback:\s*RouteLoadingFallback/);
   assert.match(loading, /role="status"/);
   assert.match(loading, /aria-busy="true"/);
   assert.match(error, /role="alert"/);

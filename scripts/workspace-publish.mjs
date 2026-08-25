@@ -42,11 +42,15 @@ export function writeGithubOutputs(values) {
   appendFileSync(process.env.GITHUB_OUTPUT, `${lines.join("\n")}\n`);
 }
 
+export function parsePublishedVersion(output) {
+  const parsed = JSON.parse(output);
+  return Array.isArray(parsed) ? parsed[0] : parsed;
+}
+
 async function isPublished(name, version) {
   try {
     const output = runNpm(["view", `${name}@${version}`, "version", "--json"], workspaceRoot, true);
-    const normalized = output.trim().replace(/^"|"$/g, "");
-    return normalized === version;
+    return parsePublishedVersion(output) === version;
   } catch {
     return false;
   }

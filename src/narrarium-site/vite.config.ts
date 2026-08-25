@@ -60,10 +60,8 @@ export default defineConfig({
           if (!id.includes("node_modules")) return undefined;
           if (/node_modules\/(?:react|react-dom|react-router|react-router-dom|scheduler|@remix-run)\//.test(id)) return "framework-vendor";
           if (id.includes("@octokit")) return "github-vendor";
-          if (id.includes("pdfjs-dist")) return "pdf-vendor";
           if (id.includes("jszip")) return "zip-vendor";
-          if (id.includes("mammoth")) return "docx-vendor";
-          if (id.includes("openai") || id.includes("@azure/openai")) return "ai-vendor";
+          if (/node_modules\/openai\//.test(id)) return "ai-vendor";
           return undefined;
         },
       },

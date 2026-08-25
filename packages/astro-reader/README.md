@@ -2,6 +2,8 @@
 
 Astro reader and reader scaffolding CLI for Narrarium book repositories.
 
+Requires Node.js 22.12 or newer.
+
 ## Install
 
 ```bash

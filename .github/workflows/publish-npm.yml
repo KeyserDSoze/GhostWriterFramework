@@ -55,7 +55,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.plan.outputs.has_changes == 'true'
-        run: npm ci
+        run: npx --yes npm@12.0.2 ci
 
       - name: Release checks
         if: steps.plan.outputs.has_changes == 'true'
