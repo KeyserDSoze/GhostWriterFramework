@@ -1,8 +1,8 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
-import { marked } from "marked";
 import { parseNarrariumMarkdownDocument } from "narrarium";
 import { getBookRoot } from "./book.js";
+import { renderReaderMarkdown } from "./markdown.js";
 
 export interface EvaluationData {
   id: string;
@@ -23,7 +23,7 @@ export async function loadChapterEvaluation(chapterSlug: string): Promise<Evalua
 
   const doc = parseNarrariumMarkdownDocument(`evaluations/chapters/${chapterSlug}.md`, raw);
   const fm = doc.frontmatter as Record<string, unknown>;
-  const htmlContent = await marked.parse(doc.body ?? "");
+  const htmlContent = renderReaderMarkdown(doc.body ?? "");
 
   return {
     id: String(fm.id ?? `evaluation:chapter:${chapterSlug}`),
@@ -56,7 +56,7 @@ export async function loadParagraphEvaluation(
     raw,
   );
   const fm = doc.frontmatter as Record<string, unknown>;
-  const htmlContent = await marked.parse(doc.body ?? "");
+  const htmlContent = renderReaderMarkdown(doc.body ?? "");
 
   return {
     id: String(fm.id ?? `evaluation:paragraph:${chapterSlug}:${paragraphSlug}`),

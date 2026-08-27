@@ -158,7 +158,6 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   import { buildCanonHrefIndex, normalizeCanonEntityHref } from "../lib/canon-mentions.js";
 
   const themeStorageKey = "narrarium-reader-theme";
-  const canonModeStorageKey = "narrarium-reader-canon";
   const progressStorageKey = "narrarium-reader-progress";
   const bookmarkStorageKey = "narrarium-reader-bookmark";
   const preferencesStorageKey = "narrarium-reader-preferences";
@@ -171,6 +170,13 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   const chapterEntries = chapterDataElement ? JSON.parse(chapterDataElement.textContent || "[]") : [];
   const currentPageChapterRaw = document.body.dataset.readerChapterNumber;
   const currentPageChapterNumber = currentPageChapterRaw ? Number(currentPageChapterRaw) : Number.NaN;
+
+  type ModalElement = HTMLElement & {
+    _narrariumModalState?: {
+      inertNodes: Array<{ node: Element; hadInert: boolean }>;
+      previouslyFocused: HTMLElement | null;
+    };
+  };
 
   // glossaryEntries is populated after content decryption (or immediately when
   // there is no password protection). Declared as let so _loadGlossaryAndInit
@@ -322,8 +328,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     fontFamilyInput?.addEventListener("change", updatePreferences);
 
     toggle.addEventListener("click", () => {
-      overlay.hidden = false;
-      document.body.classList.add("has-overlay");
+      openModalOverlay(overlay, toggle, "[data-reader-close]");
     });
 
     overlay.addEventListener("click", (event) => {
@@ -343,10 +348,69 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
 
   function closeReaderOverlay() {
     const overlay = document.querySelector("[data-reader-overlay]");
-    if (!overlay) return;
-    overlay.hidden = true;
-    document.body.classList.remove("has-overlay");
+    if (!(overlay instanceof HTMLElement) || overlay.hidden) return;
+    closeModalOverlay(overlay);
   }
+
+  function openModalOverlay(overlay: Element, trigger: Element | null, initialSelector: string) {
+    const modal = overlay as ModalElement;
+    if (!(modal instanceof HTMLElement)) return;
+    modal.hidden = false;
+    modal.dataset.modalTriggerId = trigger instanceof HTMLElement ? (trigger.id || "") : "";
+    if (trigger instanceof HTMLElement && !trigger.id) {
+      trigger.id = `reader-modal-trigger-${Math.random().toString(36).slice(2)}`;
+      modal.dataset.modalTriggerId = trigger.id;
+    }
+    document.body.classList.add("has-overlay");
+    const modalState = modal._narrariumModalState = {
+      inertNodes: [],
+      previouslyFocused: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+    };
+    Array.from(document.body.children).forEach((node) => {
+      if (node === modal || node.matches("[data-narrarium-modal-layer]")) return;
+      modalState.inertNodes.push({ node, hadInert: node.hasAttribute("inert") });
+      node.setAttribute("inert", "");
+    });
+    const initial = modal.querySelector(initialSelector);
+    if (initial instanceof HTMLElement) initial.focus();
+    else modal.querySelector("button, input, select, textarea, a")?.focus();
+  }
+
+  function closeModalOverlay(overlay: Element) {
+    const modal = overlay as ModalElement;
+    if (!(modal instanceof HTMLElement) || modal.hidden) return;
+    const triggerId = modal.dataset.modalTriggerId;
+    const modalState = modal._narrariumModalState;
+    modal.hidden = true;
+    delete modal.dataset.modalTriggerId;
+    document.body.classList.remove("has-overlay");
+    for (const { node, hadInert } of modalState?.inertNodes || []) {
+      if (hadInert) node.setAttribute("inert", "");
+      else node.removeAttribute("inert");
+    }
+    delete modal._narrariumModalState;
+    if (triggerId) document.getElementById(triggerId)?.focus();
+    else modalState?.previouslyFocused?.focus();
+  }
+
+  document.addEventListener("keydown", (event) => {
+    const overlay = document.querySelector("[data-canon-overlay]:not([hidden]), [data-reader-overlay]:not([hidden]), [data-search-overlay]:not([hidden])");
+    if (!(overlay instanceof HTMLElement)) return;
+    if (event.key === "Tab") {
+      const focusable = [...overlay.querySelectorAll("button, input, select, textarea, a[href]")]
+        .filter((node) => node instanceof HTMLElement && !node.hasAttribute("disabled") && !node.hidden);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  });
 
   function initializeReadingProgress() {
     const continueLink = document.querySelector("[data-continue-link]");
@@ -585,8 +649,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
           image: Boolean(revealed && entry.imageSrc),
         });
 
-        overlay.hidden = false;
-        document.body.classList.add("has-overlay");
+        openModalOverlay(overlay, trigger, "[data-canon-close]");
         return;
       }
 
@@ -610,9 +673,8 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
 
   function closeCanonOverlay() {
     const overlay = document.querySelector("[data-canon-overlay]");
-    if (!overlay) return;
-    overlay.hidden = true;
-    document.body.classList.remove("has-overlay");
+    if (!(overlay instanceof HTMLElement) || overlay.hidden) return;
+    closeModalOverlay(overlay);
   }
 
   function syncCanonTabs(overlay, availability) {
@@ -1385,12 +1447,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
     if (!overlay || !toggle) return;
 
     toggle.addEventListener("click", () => {
-      overlay.hidden = false;
-      document.body.classList.add("has-overlay");
-      const input = overlay.querySelector("[data-search-input]");
-      if (input instanceof HTMLElement) {
-        setTimeout(() => input.focus(), 50);
-      }
+        openModalOverlay(overlay, toggle, "[data-search-input]");
     });
 
     overlay.addEventListener("click", (event) => {
@@ -1413,32 +1470,26 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
         !(document.activeElement instanceof HTMLTextAreaElement)
       ) {
         event.preventDefault();
-        overlay.hidden = false;
-        document.body.classList.add("has-overlay");
-        const input = overlay.querySelector("[data-search-input]");
-        if (input instanceof HTMLElement) {
-          setTimeout(() => input.focus(), 50);
-        }
+        openModalOverlay(overlay, toggle, "[data-search-input]");
       }
     });
   }
 
   function closeSearchOverlay() {
     const overlay = document.querySelector("[data-search-overlay]");
-    if (!overlay) return;
-    overlay.hidden = true;
-    document.body.classList.remove("has-overlay");
+    if (!(overlay instanceof HTMLElement) || overlay.hidden) return;
+    closeModalOverlay(overlay);
   }
 
   function initializeCanonModeToggle() {
     const select = document.querySelector("[data-reader-canon-mode]");
     if (!select) return;
-    const savedMode = readStorage(canonModeStorageKey);
-    const fullCanon = savedMode !== null ? savedMode === "full" : document.body.dataset.fullCanon === "true";
-    document.body.dataset.fullCanon = fullCanon ? "true" : "false";
+    const fullCanon = document.body.dataset.fullCanon === "true";
     select.value = fullCanon ? "full" : "public";
     select.addEventListener("change", () => {
-      writeStorage(canonModeStorageKey, select.value);
+      document.cookie = select.value === "full"
+        ? "narrarium-canon=full; Path=/; SameSite=Lax"
+        : "narrarium-canon=public; Path=/; SameSite=Lax";
       window.location.reload();
     });
   }

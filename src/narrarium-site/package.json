@@ -1,7 +1,7 @@
 {
   "name": "narrarium-site",
   "private": true,
-  "version": "0.76.94",
+  "version": "0.76.95",
   "type": "module",
   "description": "GitHub Pages site and web app for Narrarium Framework.",
   "scripts": {
@@ -41,7 +41,7 @@
     "jszip": "^3.10.1",
     "lucide-react": "^0.511.0",
     "marked": "^16.3.0",
-    "narrarium": "0.1.57",
+    "narrarium": "0.1.58",
     "openai": "^4.86.3",
     "pdfjs-dist": "^6.2.108",
     "react": "^18.3.1",

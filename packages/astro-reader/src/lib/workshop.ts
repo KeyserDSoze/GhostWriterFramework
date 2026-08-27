@@ -1,13 +1,14 @@
 import path from "node:path";
 import { readFile, readdir } from "node:fs/promises";
-import { marked } from "marked";
 import { parseNarrariumMarkdownDocument, pathExists, readChapterDraft } from "narrarium";
 import { getBookRoot } from "./book.js";
+import { renderReaderMarkdown } from "./markdown.js";
 
 export type WorkshopEntry = {
   id: string;
   title: string;
   body: string;
+  bodyHtml: string;
   status: string;
   tags: string[];
   sourceKind?: string;
@@ -26,8 +27,9 @@ export type WorkshopDraftChapter = {
   slug: string;
   title: string;
   summary: string;
+  summaryHtml: string;
   bodyHtml: string;
-  paragraphs: Array<{ slug: string; title: string; summary: string }>;
+  paragraphs: Array<{ slug: string; title: string; summary: string; summaryHtml: string }>;
   ideas: WorkshopDocument | null;
   notes: WorkshopDocument | null;
   promoted: WorkshopDocument | null;
@@ -96,11 +98,16 @@ async function listDraftChapters(root: string): Promise<WorkshopDraftChapter[]> 
         slug,
         title: chapter.metadata.title,
         summary: chapter.metadata.summary ?? "Draft chapter in progress.",
+        summaryHtml: await toHtml(chapter.metadata.summary ?? "Draft chapter in progress."),
         bodyHtml: await toHtml(chapter.body || "No chapter draft body yet."),
-        paragraphs: chapter.paragraphs.map((paragraph) => ({
-          slug: path.basename(paragraph.path, ".md"),
-          title: paragraph.metadata.title,
-          summary: paragraph.metadata.summary ?? "Draft scene.",
+        paragraphs: await Promise.all(chapter.paragraphs.map(async (paragraph) => {
+          const summary = paragraph.metadata.summary ?? "Draft scene.";
+          return {
+            slug: path.basename(paragraph.path, ".md"),
+            title: paragraph.metadata.title,
+            summary,
+            summaryHtml: await toHtml(summary),
+          };
         })),
         ideas,
         notes,
@@ -129,16 +136,16 @@ async function readWorkshopDocument(root: string, relativePath: string): Promise
     title,
     bucket,
     bodyHtml: await toHtml(document.body || "No content yet."),
-    entries: readWorkshopEntries(frontmatter),
+    entries: await readWorkshopEntries(frontmatter),
   };
 }
 
-function readWorkshopEntries(frontmatter: Record<string, unknown>): WorkshopEntry[] {
+async function readWorkshopEntries(frontmatter: Record<string, unknown>): Promise<WorkshopEntry[]> {
   if (!Array.isArray(frontmatter.entries)) {
     return [];
   }
 
-  return frontmatter.entries
+  const entries = frontmatter.entries
     .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object"))
     .map((entry) => ({
       id: typeof entry.id === "string" ? entry.id : "",
@@ -151,9 +158,13 @@ function readWorkshopEntries(frontmatter: Record<string, unknown>): WorkshopEntr
     }))
     .filter((entry) => entry.id.length > 0)
     .sort((left, right) => left.title.localeCompare(right.title));
+
+  return Promise.all(entries.map(async (entry) => ({
+    ...entry,
+    bodyHtml: await toHtml(entry.body || "No details yet."),
+  })));
 }
 
 async function toHtml(markdown: string): Promise<string> {
-  const rendered = await marked.parse(markdown);
-  return typeof rendered === "string" ? rendered : String(rendered);
+  return renderReaderMarkdown(markdown);
 }

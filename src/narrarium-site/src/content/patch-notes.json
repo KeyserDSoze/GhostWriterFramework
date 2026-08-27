@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.76.95",
+    "date": "2026-08-27",
+    "en": {
+      "title": "Safer reader publishing and consistent writing tools",
+      "summary": "Reader content is sanitized and protected consistently, canon access respects reveal thresholds, and writing tools now preserve repository identity and continuity.",
+      "changes": [
+        "Reader Markdown removes executable HTML, unsafe protocols, and unmanaged images before content is rendered or encrypted.",
+        "Password-protected workshop, timeline, evaluation, glossary, and search content is encrypted with the same verified canary flow as chapter prose.",
+        "Public canon pages keep dossier bodies, images, links, and story mentions hidden until their configured reveal chapter.",
+        "Paragraph title saves use the canonical slug algorithm, so unchanged punctuation and accented titles no longer trigger unexpected renames.",
+        "Reader development mode persists public or full canon selection through the request-safe server cookie, while Reader overlays now trap keyboard focus and restore it on close.",
+        "Core repository writes reject path escapes and structural identity overrides, report existing path mismatches, and keep story-state invalidation aligned with final mutations."
+      ]
+    },
+    "it": {
+      "title": "Pubblicazione Reader più sicura e strumenti di scrittura coerenti",
+      "summary": "Il contenuto Reader viene sanitizzato e protetto in modo uniforme, l'accesso al canon rispetta le soglie di reveal e gli strumenti di scrittura preservano identità e continuità del repository.",
+      "changes": [
+        "Il Markdown del Reader rimuove HTML eseguibile, protocolli non sicuri e immagini non gestite prima del rendering o della cifratura.",
+        "Workshop, timeline, evaluation, glossary e ricerca protetti da password vengono cifrati con lo stesso flusso canary verificato della prosa dei capitoli.",
+        "Le pagine canon pubbliche mantengono nascosti body, immagini, link e menzioni narrative fino al capitolo di reveal configurato.",
+        "I salvataggi dei titoli dei paragrafi usano l'algoritmo slug canonico, evitando rename inattesi con punteggiatura e titoli accentati invariati.",
+        "La modalità sviluppo del Reader persiste la selezione public o full tramite cookie server-side request-safe, mentre gli overlay ora confinano il focus da tastiera e lo ripristinano alla chiusura.",
+        "Le scritture Core rifiutano escape dai path e override delle identità strutturali, segnalano mismatch già esistenti e mantengono allineata l'invalidazione dello story state alle mutazioni finali."
+      ]
+    }
+  },
+  {
     "version": "0.76.94",
     "date": "2026-08-25",
     "en": {

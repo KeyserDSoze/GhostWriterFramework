@@ -1,14 +1,15 @@
 ---
-import { marked } from "marked";
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import AssetFigure from "../../components/AssetFigure.astro";
+import EncryptedHtml from "../../components/EncryptedHtml.astro";
 import { loadTimelinePageData } from "../../lib/book";
 import { buildPublicCanonIndexCards, publicTimelineNotice } from "../../lib/public-canon";
 import { isFullCanonMode } from "../../lib/reader-mode";
+import { renderReaderMarkdown } from "../../lib/markdown";
 
 const { ready, main, events } = await loadTimelinePageData();
 const showFullTimeline = isFullCanonMode();
-const mainHtml = showFullTimeline && main?.body ? await marked.parse(main.body) : "";
+const mainHtml = showFullTimeline && main?.body ? renderReaderMarkdown(main.body) : "";
 const cards = await buildPublicCanonIndexCards("timeline-event", events);
 const timelineNotice = publicTimelineNotice();
 ---
@@ -26,7 +27,7 @@ const timelineNotice = publicTimelineNotice();
 
       {showFullTimeline && main && (
         <section class="section">
-          <article class="scene prose" set:html={mainHtml} />
+          <article class="scene prose"><EncryptedHtml html={mainHtml} /></article>
         </section>
       )}
 

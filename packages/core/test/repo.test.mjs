@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import {
   buildChapterWritingContext,
   buildParagraphWritingContext,
@@ -12,6 +12,7 @@ import {
   createChapterDraft,
   createChapterFromDraft,
   createCharacterProfile,
+  createEntity,
   createItemProfile,
   createLocationProfile,
   createParagraph,
@@ -35,9 +36,15 @@ import {
   parseScriptBody,
   prepareParagraphEvaluation,
   readChapter,
+  readChapterDraft,
+  readStoryStateStatus,
   readEntity,
   readScriptLedger,
   readTimelineMain,
+  paragraphFilename,
+  chapterSlug,
+  slugify,
+  searchBook,
   reviseChapter,
   reviewDialogueActionBeats,
   reviseParagraph,
@@ -50,6 +57,9 @@ import {
   syncTotalResume,
   promoteBookWorkItem,
   promoteChapterDraftWorkItem,
+  readAsset,
+  renderSafeMarkdownHtml,
+  renderEpubMarkdownHtml,
   upgradeBookRepo,
   updateBookNotes,
   updateChapterDraftNotes,
@@ -59,6 +69,8 @@ import {
   updateParagraph,
   validateBook,
   writeWikipediaResearchSnapshot,
+  assertContainedPath,
+  assertSafePathSegment,
 } from "../dist/index.js";
 
 test("core book workflow supports canon indexes and structural updates", async () => {
@@ -328,6 +340,199 @@ test("core book workflow supports canon indexes and structural updates", async (
     assert.ok(!doctorCodes.includes("stale-story-state-chapter"));
   } finally {
     await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("safe Markdown rendering removes raw HTML and unsafe links while preserving text", () => {
+  const html = renderSafeMarkdownHtml([
+    "<script>alert('xss')</script>",
+    "",
+    "[unsafe](javascript:alert('xss')) [safe](/chapters/001-opening/)",
+    "",
+    "![outside](../outside.png)",
+  ].join("\n"));
+
+  assert.doesNotMatch(html, /script|javascript:|<img/i);
+  assert.match(html, /unsafe/);
+  assert.match(html, /<a href=\"\/chapters\/001-opening\/\">safe<\/a>/);
+  assert.doesNotMatch(html, /outside\.png/);
+  assert.match(renderEpubMarkdownHtml("[scene](#scene-1) [repository](chapters/001-opening/)"), /href=\"#scene-1\"/);
+  assert.doesNotMatch(renderEpubMarkdownHtml("[repository](chapters/001-opening/)"), /href=/);
+});
+
+test("creation APIs reject structural frontmatter overrides", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-structural-frontmatter-"));
+
+  try {
+    await initializeBookRepo(rootPath, { title: "Structural Frontmatter", language: "en" });
+    const item = await createItemProfile(rootPath, {
+      name: "The Key",
+      appearance: "A brass key.",
+      purpose: "Opens the archive.",
+      functionInBook: "A plot device.",
+      slug: "the-key",
+      frontmatter: { custom_field: "allowed" },
+    });
+    assert.equal(item.frontmatter.type, "item");
+    assert.equal(item.frontmatter.id, "item:the-key");
+    assert.equal(item.frontmatter.name, "The Key");
+    assert.equal(item.frontmatter.custom_field, "allowed");
+    await assert.rejects(() => createItemProfile(rootPath, {
+      name: "Bad Item", appearance: "A thing.", purpose: "A purpose.", functionInBook: "A function.",
+      frontmatter: { id: "item:wrong" },
+    }), /protected frontmatter key: id/);
+    await assert.rejects(() => createChapter(rootPath, {
+      number: 1, title: "Opening", frontmatter: { number: 99 },
+    }), /protected frontmatter key: number/);
+    const chapter = await createChapter(rootPath, { number: 1, title: "Opening" });
+    await assert.rejects(() => createParagraph(rootPath, {
+      chapter: "001-opening", number: 1, title: "The Door", frontmatter: { chapter: "chapter:wrong" },
+    }), /protected frontmatter key: chapter/);
+    await createParagraph(rootPath, { chapter: "001-opening", number: 1, title: "The Door" });
+    await assert.rejects(() => createChapterDraft(rootPath, {
+      number: 2, title: "Draft", frontmatter: { title: "Wrong Title" },
+    }), /protected frontmatter key: title/);
+    const draft = await createChapterDraft(rootPath, { number: 2, title: "Draft" });
+    assert.equal(chapter.chapterId, "chapter:001-opening");
+    assert.equal((await readChapter(rootPath, "001-opening")).metadata.number, 1);
+    assert.equal((await readChapter(rootPath, "001-opening")).paragraphs[0].metadata.number, 1);
+    assert.equal((await readChapterDraft(rootPath, "002-draft")).metadata.number, 2);
+    assert.equal(draft.draftId, "draft:chapter:002-draft");
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("validation reports repository path and identity mismatches", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-identity-validation-"));
+
+  try {
+    await initializeBookRepo(rootPath, { title: "Identity Validation", language: "en" });
+    await createChapter(rootPath, { number: 1, title: "Opening" });
+    await writeFile(
+      path.join(rootPath, "chapters", "001-opening", "broken.md"),
+      "---\ntype: paragraph\nid: paragraph:001-opening:other\nchapter: chapter:001-opening\nnumber: 1\ntitle: Broken\n---\nBroken\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(rootPath, "items", "brass-key.md"),
+      "---\ntype: item\nid: item:different\nname: Brass Key\n---\n",
+      "utf8",
+    );
+
+    const validation = await validateBook(rootPath);
+    assert.equal(validation.valid, false);
+    assert.ok(validation.errors.some((error) => error.path === "chapters/001-opening/broken.md" && /does not match its path/.test(error.message)));
+    assert.ok(validation.errors.some((error) => error.path === "items/brass-key.md" && /does not match its filename/.test(error.message)));
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("story-state invalidation covers final mutations but not draft support changes", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-story-state-reasons-"));
+
+  try {
+    await initializeBookRepo(rootPath, { title: "Story State Reasons", language: "en" });
+    await createChapter(rootPath, { number: 1, title: "Opening" });
+    await syncStoryState(rootPath);
+    assert.equal((await readStoryStateStatus(rootPath)).dirty, false);
+
+    await createParagraph(rootPath, { chapter: "001-opening", number: 1, title: "Scene" });
+    let status = await readStoryStateStatus(rootPath);
+    assert.equal(status.reason, "paragraph-created");
+    assert.deepEqual(status.changedPaths, ["chapters/001-opening/001-scene.md"]);
+
+    await syncStoryState(rootPath);
+    await updateChapter(rootPath, { chapter: "001-opening", appendBody: "A final change." });
+    status = await readStoryStateStatus(rootPath);
+    assert.equal(status.reason, "chapter-updated");
+    assert.deepEqual(status.changedPaths, ["chapters/001-opening/chapter.md"]);
+
+    await syncStoryState(rootPath);
+    await createChapterDraft(rootPath, { number: 2, title: "Draft" });
+    status = await readStoryStateStatus(rootPath);
+    assert.equal(status.dirty, false);
+    assert.equal(status.reason, undefined);
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test("canonical slug helpers keep punctuation and Unicode behavior aligned", () => {
+  const cases = [
+    ["Don't Stop", "don-t-stop", "001-don-t-stop"],
+    ["L'amour", "l-amour", "002-l-amour"],
+    ["Crème brûlée", "creme-brulee", "003-creme-brulee"],
+    ["A   long---title", "a-long-title", "004-a-long-title"],
+    ["A thousand", "a-thousand", "1000-a-thousand"],
+  ];
+
+  for (const [title, expectedSlug, expectedFilename] of cases) {
+    assert.equal(slugify(title), expectedSlug);
+    const number = Number(expectedFilename.match(/^\d+/)?.[0]);
+    assert.equal(paragraphFilename(number, title), `${expectedFilename}.md`);
+    assert.equal(chapterSlug(number, title), expectedFilename);
+  }
+});
+
+test("repository-derived paths reject traversal, Windows separators, and symlink escapes", async () => {
+  const rootPath = await mkdtemp(path.join(os.tmpdir(), "narrarium-path-boundary-"));
+  const outsidePath = path.join(path.dirname(rootPath), `narrarium-path-boundary-outside-${path.basename(rootPath)}`);
+
+  try {
+    await initializeBookRepo(rootPath, { title: "Path Boundary", language: "en" });
+    await writeFile(outsidePath, "outside", "utf8");
+
+    assert.equal(await assertContainedPath(rootPath, "characters/inside.md"), path.join(rootPath, "characters", "inside.md"));
+    assert.equal(assertSafePathSegment("001-opening"), "001-opening");
+    assert.throws(() => assertSafePathSegment("..\\outside"), /repository-safe path segment/);
+    await assert.rejects(() => assertContainedPath(rootPath, "characters/../outside.md"), /repository-relative path/);
+    await assert.rejects(() => assertContainedPath(rootPath, "C:/outside.md"), /repository-relative path/);
+
+    await assert.rejects(
+      () => createEntity(rootPath, "item", { slug: "../../escaped", frontmatter: { name: "Escaped" } }),
+      /repository-safe path segment/,
+    );
+    await assert.rejects(
+      () => createParagraphDraft(rootPath, { chapter: "../../escaped-draft", number: 1, title: "Outside" }),
+      /repository-safe path segment/,
+    );
+    await assert.rejects(() => createScript(rootPath, { chapter: "../../escaped-script", number: 1, title: "Safe", body: "script" }), /repository-safe path segment/);
+    await assert.rejects(() => searchBook(rootPath, "outside", { scopes: ["../outside"] }), /repository-relative path/);
+
+    await rm(path.join(rootPath, "items"), { recursive: true, force: true });
+    await symlink(path.dirname(outsidePath), path.join(rootPath, "items"), "dir");
+    await assert.rejects(
+      () => createEntity(rootPath, "item", { slug: "linked", frontmatter: { name: "Linked" } }),
+      /repository root/,
+    );
+    await rm(path.join(rootPath, "items"), { force: true });
+    await mkdir(path.join(rootPath, "items"), { recursive: true });
+
+    await symlink(path.join(path.dirname(rootPath), "narrarium-path-boundary-missing"), path.join(rootPath, "characters", "dangling"));
+    await assert.rejects(
+      () => createEntity(rootPath, "character", { slug: "dangling/profile", frontmatter: { name: "Dangling" } }),
+      /repository-safe path segment/,
+    );
+    await assert.rejects(() => assertContainedPath(rootPath, "characters/dangling"), /repository root/);
+    await rm(path.join(rootPath, "characters", "dangling"), { force: true });
+
+    await mkdir(path.join(rootPath, "assets", "book"), { recursive: true });
+    const externalAssetPath = path.join(path.dirname(rootPath), `narrarium-external-asset-${path.basename(rootPath)}.png`);
+    await writeFile(externalAssetPath, "external asset", "utf8");
+    await writeFile(
+      path.join(rootPath, "assets", "book", "cover.md"),
+      `---\ntype: asset\nid: asset:book:cover\nsubject: book\nasset_kind: cover\npath: ${path.relative(rootPath, externalAssetPath).split(path.sep).join("/")}\n---\n`,
+      "utf8",
+    );
+    await assert.rejects(() => readAsset(rootPath, "book", "cover"), /repository-relative path/);
+    const doctor = await doctorBook(rootPath);
+    assert.ok(doctor.issues.some((issue) => issue.code === "asset-path-outside-root"));
+    await rm(externalAssetPath, { force: true });
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+    await rm(outsidePath, { force: true });
   }
 });
 

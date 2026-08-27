@@ -1,4 +1,5 @@
 import YAML from "yaml";
+import { marked, Renderer } from "marked";
 
 function frontmatterBlock(frontmatter: Record<string, unknown>): string {
   const yaml = YAML.stringify(frontmatter)
@@ -12,6 +13,51 @@ export function renderMarkdown(
   body: string,
 ): string {
   return `${frontmatterBlock(frontmatter)}\n${body.trim()}\n`;
+}
+
+/** Render repository-authored Markdown without allowing raw HTML or unsafe URLs. */
+export function renderSafeMarkdownHtml(markdown: string): string {
+  return renderMarkdownHtml(markdown, () => true);
+}
+
+/** Render Markdown for EPUB content, where only in-document fragment links are packaged. */
+export function renderEpubMarkdownHtml(markdown: string): string {
+  return renderMarkdownHtml(markdown, (href) => href.startsWith("#"));
+}
+
+function renderMarkdownHtml(markdown: string, allowLink: (href: string) => boolean): string {
+  const renderer = new Renderer();
+  renderer.html = () => "";
+  renderer.link = function ({ href, tokens }) {
+    const safeHref = safeMarkdownUrl(href);
+    const text = this.parser.parseInline(tokens);
+    return safeHref && allowLink(safeHref) ? `<a href="${escapeHtmlAttribute(safeHref)}">${text}</a>` : text;
+  };
+  renderer.image = ({ text }) => escapeHtml(text);
+
+  return marked.parse(markdown, { async: false, renderer }) as string;
+}
+
+function safeMarkdownUrl(value: string): string | null {
+  const normalized = value.replace(/[\u0000-\u0020\u007f]+/g, "").trim();
+  if (!normalized || /^(?:javascript|data|vbscript|file):/i.test(normalized) || normalized.startsWith("//")) {
+    return null;
+  }
+
+  return /^(?:https?:|mailto:|#|\/|\.{0,2}(?:\/|$)|[^\s:]+(?:[/?#]|$))/i.test(normalized) ? normalized : null;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return escapeHtml(value);
 }
 
 export function defaultBodyForType(type: string): string {

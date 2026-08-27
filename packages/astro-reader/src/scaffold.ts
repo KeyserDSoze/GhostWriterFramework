@@ -60,7 +60,6 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
           "narrarium": coreDependency,
           astro: "^7.2.6",
           chokidar: "^4.0.3",
-          marked: "^16.3.0",
         },
         devDependencies: {
           "@types/node": "^24.6.0",

@@ -14,7 +14,7 @@ Narrarium is prepared to publish as five public npm packages.
 
 - The public package line started at `0.1.0`.
 
-Keep the five packages aligned unless there is a strong reason to split versions later.
+The five public packages use independent versions. Each package version is published and checked separately; dependency ranges must still resolve to the workspace versions in publication order.
 
 ## Release order
 
@@ -59,7 +59,7 @@ To enable npm publishing from GitHub:
 
 On pushes to `main`, the publish workflow checks npm first and only publishes workspace packages whose local version is not already present in the registry.
 When unpublished versions are detected, it runs the full release checks and then publishes packages in dependency order.
-On GitHub Release events it also verifies that the release tag matches the workspace version.
+On GitHub Release events it verifies an unambiguous package tag such as `vnarrarium@0.1.57` or `vcreate-narrarium-book@0.1.58`, checks the tagged package's workspace dependency ranges, and checks that dependencies occur earlier in the publication order. The old ambiguous `v0.1.58` form is rejected.
 
 If GitHub Actions fails with `EOTP`, npm is rejecting the token for write operations with 2FA enabled. In that case either:
 

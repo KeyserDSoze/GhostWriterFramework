@@ -2,6 +2,7 @@ export type WorkshopEntry = {
     id: string;
     title: string;
     body: string;
+    bodyHtml: string;
     status: string;
     tags: string[];
     sourceKind?: string;
@@ -18,11 +19,13 @@ export type WorkshopDraftChapter = {
     slug: string;
     title: string;
     summary: string;
+    summaryHtml: string;
     bodyHtml: string;
     paragraphs: Array<{
         slug: string;
         title: string;
         summary: string;
+        summaryHtml: string;
     }>;
     ideas: WorkshopDocument | null;
     notes: WorkshopDocument | null;

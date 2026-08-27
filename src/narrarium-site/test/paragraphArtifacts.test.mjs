@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveParagraphArtifactPaths } from "../src/narrarium/paragraphArtifacts.ts";
+import { paragraphSlug, slugify } from "../../../packages/core/src/slug.ts";
 
 const target = (path, title) => {
   const [, chapterSlug, filename] = path.split("/");
@@ -74,4 +75,10 @@ test("does not assign a stale duplicate to an unresolved paragraph with the same
 
   assert.equal(result.get(first.path), exact);
   assert.equal(result.has(second.path), false);
+});
+
+test("site slug helpers use the canonical apostrophe and accent behavior", () => {
+  assert.equal(slugify("Don't Stop"), "don-t-stop");
+  assert.equal(slugify("L'amour"), "l-amour");
+  assert.equal(paragraphSlug(4, "Crème brûlée"), "004-creme-brulee");
 });

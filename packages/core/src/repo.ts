@@ -4,7 +4,6 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import fg from "fast-glob";
 import matter from "./frontmatter.js";
-import { marked } from "marked";
 import {
   AUDIT_BOOK_FILE,
   AUDIT_CHAPTERS_DIRECTORY,
@@ -83,7 +82,7 @@ import {
   type WorkItemEntryFrontmatter,
 } from "./schemas.js";
 import { skillTemplate } from "./skill-template.js";
-import { defaultBodyForType, renderMarkdown } from "./templates.js";
+import { defaultBodyForType, renderEpubMarkdownHtml, renderMarkdown } from "./templates.js";
 import { buildScriptLedgerDocument as buildScriptLedgerDocumentFromFiles } from "./script-ledger.js";
 import {
   CLAUDE_WEB_SEARCH_AGENT,
@@ -101,11 +100,14 @@ import {
 } from "./deep-research-templates.js";
 import {
   chapterSlug,
+  assertContainedPath,
+  assertSafePathSegment,
   excerptAround,
   formatOrdinal,
   normalizeChapterReference,
   paragraphFilename,
   pathExists,
+  resolveContainedPath,
   slugify,
   toPosixPath,
 } from "./utils.js";
@@ -953,6 +955,17 @@ type RenameResult = {
   movedAssetPaths: string[];
 };
 
+export type StoryMutationReason =
+  | "entity-created"
+  | "entity-updated"
+  | "entity-renamed"
+  | "chapter-created"
+  | "chapter-updated"
+  | "chapter-renamed"
+  | "paragraph-created"
+  | "paragraph-updated"
+  | "paragraph-renamed";
+
 type ParsedAssetSubject =
   | { type: "book"; subject: "book" }
   | { type: EntityType; subject: string; slug: string }
@@ -974,7 +987,8 @@ export async function initializeBookRepo(
   await mkdir(root, { recursive: true });
 
   for (const directory of BOOK_DIRECTORIES) {
-    await mkdir(path.join(root, directory), { recursive: true });
+    const directoryPath = await assertContainedPath(root, directory, "Book directory path");
+    await mkdir(directoryPath, { recursive: true });
   }
 
   await ensureFile(
@@ -1301,10 +1315,10 @@ export async function upgradeBookRepo(
 
   const selectedGhostwriter = book.frontmatter.ghostwriter;
   const selectedProfileExists = selectedGhostwriter
-    ? await pathExists(path.join(root, GHOSTWRITERS_DIRECTORY, `${selectedGhostwriter}.md`))
+    ? await pathExists(await assertContainedPath(root, path.join(GHOSTWRITERS_DIRECTORY, `${selectedGhostwriter}.md`), "Ghostwriter file path"))
     : false;
   if (!selectedProfileExists) {
-    const bookPath = path.join(root, BOOK_FILE);
+    const bookPath = await assertContainedPath(root, BOOK_FILE, "Book file path");
     const currentBook = await readMarkdownFile(bookPath, bookSchema);
     await writeFile(
       bookPath,
@@ -1315,7 +1329,7 @@ export async function upgradeBookRepo(
   }
 
   for (const file of getManagedBookScaffoldFiles(options?.createSkills ?? true)) {
-    const filePath = path.join(root, file.relativePath);
+    const filePath = await assertContainedPath(root, file.relativePath, "Managed scaffold path");
     const existingContent = await readFile(filePath, "utf8").catch(() => null);
 
     if (existingContent === file.content) {
@@ -1327,7 +1341,7 @@ export async function upgradeBookRepo(
     updated.push(toPosixPath(file.relativePath));
   }
 
-  const opencodeConfigPath = path.join(root, "opencode.jsonc");
+  const opencodeConfigPath = await assertContainedPath(root, "opencode.jsonc", "OpenCode config path");
   const existingOpencodeConfig = await readFile(opencodeConfigPath, "utf8").catch(() => null);
   if (existingOpencodeConfig) {
     const patched = ensureOpencodeInstructionEntry(existingOpencodeConfig);
@@ -1372,9 +1386,11 @@ async function removeLegacyStyleFiles(root: string): Promise<string[]> {
     "chapters/*/writing-style.md",
     "drafts/*/writing-style.md",
   ], { cwd: root, absolute: true, onlyFiles: true });
+  await Promise.all(files.map((filePath) => assertContainedPath(root, path.relative(root, filePath), "Legacy style file path")));
   const removed = files.map((filePath) => toPosixPath(path.relative(root, filePath))).sort();
   await Promise.all(files.map((filePath) => rm(filePath, { force: true })));
-  await rm(path.join(root, "guidelines", "styles"), { recursive: true, force: true });
+  const stylesDirectory = await assertContainedPath(root, path.join("guidelines", "styles"), "Legacy styles directory");
+  await rm(stylesDirectory, { recursive: true, force: true });
   return removed;
 }
 
@@ -1389,6 +1405,7 @@ async function migrateLegacyStoryMarkdownLinks(rootPath: string): Promise<string
   const migrated: string[] = [];
 
   for (const filePath of files) {
+    await assertContainedPath(root, path.relative(root, filePath), "Related canon file path");
     const raw = await readFile(filePath, "utf8");
     const parsed = matter(raw);
     const normalizedBody = normalizeStoryMarkdownBody(String(parsed.content ?? ""));
@@ -1411,6 +1428,7 @@ export async function createEntity(
   const root = path.resolve(rootPath);
   const schema = entitySchemaMap[kind];
   const providedFrontmatter = input.frontmatter ?? {};
+  assertNoForbiddenCreationKeys(providedFrontmatter, ["type", "id", "canon"]);
   const label =
     typeof providedFrontmatter.name === "string"
       ? providedFrontmatter.name
@@ -1422,19 +1440,22 @@ export async function createEntity(
     throw new Error(`A name or title is required for ${kind}.`);
   }
 
-  const slug = input.slug ?? slugify(label ?? "entry");
+  const slug = input.slug
+    ? assertSafePathSegment(input.slug, `${kind} slug`)
+    : slugify(label ?? "entry");
+  if (!slug) throw new Error(`A valid name or title is required for ${kind}.`);
   const directory = ENTITY_TYPE_TO_DIRECTORY[kind];
-  const filePath = path.join(root, directory, `${slug}.md`);
+  const filePath = await assertContainedPath(root, path.join(directory, `${slug}.md`), `${kind} file path`);
 
   if (!input.overwrite && (await pathExists(filePath))) {
     throw new Error(`File already exists: ${filePath}`);
   }
 
   const rawFrontmatter = {
+    ...providedFrontmatter,
     type: kind,
     id: `${kind}:${slug}`,
     canon: DEFAULT_CANON,
-    ...providedFrontmatter,
   };
 
   const frontmatter = schema.parse(rawFrontmatter);
@@ -1442,6 +1463,10 @@ export async function createEntity(
 
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, renderMarkdown(frontmatter, body), "utf8");
+  await markStoryStateDirty(root, {
+    changedPaths: [toPosixPath(path.relative(root, filePath))],
+    reason: storyMutationReason("entity", "created"),
+  });
 
   return { filePath, frontmatter };
 }
@@ -1450,14 +1475,14 @@ export async function createCharacterProfile(
   rootPath: string,
   input: CreateCharacterProfileInput,
 ): Promise<{ filePath: string; frontmatter: CharacterFrontmatter }> {
+  assertNoForbiddenCreationKeys(input.frontmatter, ["type", "id", "name", "canon"]);
   const sources = uniqueValues(input.sources ?? []);
   const result = await createEntity(rootPath, "character", {
     slug: input.slug,
     overwrite: input.overwrite,
     body: input.body ?? buildCharacterBody(input),
     frontmatter: {
-      name: input.name,
-      ...buildHiddenCanonFrontmatter(input),
+       ...buildHiddenCanonFrontmatter(input),
       ...buildPronunciationFrontmatter(input),
       aliases: input.aliases ?? [],
       former_names: input.formerNames ?? [],
@@ -1484,10 +1509,11 @@ export async function createCharacterProfile(
       factions: input.factions ?? [],
       home_location: input.homeLocation,
       introduced_in: input.introducedIn,
-      timeline_ages: input.timelineAges ?? {},
-      historical: input.historical ?? false,
-      sources,
-      ...input.frontmatter,
+       timeline_ages: input.timelineAges ?? {},
+       historical: input.historical ?? false,
+       sources,
+        ...input.frontmatter,
+        name: input.name,
     },
   });
 
@@ -1501,14 +1527,14 @@ export async function createItemProfile(
   rootPath: string,
   input: CreateItemProfileInput,
 ): Promise<{ filePath: string; frontmatter: ItemFrontmatter }> {
+  assertNoForbiddenCreationKeys(input.frontmatter, ["type", "id", "name", "canon"]);
   const sources = uniqueValues(input.sources ?? []);
   const result = await createEntity(rootPath, "item", {
     slug: input.slug,
     overwrite: input.overwrite,
     body: input.body ?? buildItemBody(input),
     frontmatter: {
-      name: input.name,
-      ...buildHiddenCanonFrontmatter(input),
+       ...buildHiddenCanonFrontmatter(input),
       ...buildPronunciationFrontmatter(input),
       item_kind: input.itemKind,
       appearance: input.appearance,
@@ -1519,10 +1545,11 @@ export async function createItemProfile(
       powers: input.powers ?? [],
       limitations: input.limitations ?? [],
       owner: input.owner,
-      introduced_in: input.introducedIn,
-      historical: input.historical ?? false,
-      sources,
-      ...input.frontmatter,
+       introduced_in: input.introducedIn,
+       historical: input.historical ?? false,
+       sources,
+        ...input.frontmatter,
+        name: input.name,
     },
   });
 
@@ -1536,14 +1563,14 @@ export async function createLocationProfile(
   rootPath: string,
   input: CreateLocationProfileInput,
 ): Promise<{ filePath: string; frontmatter: LocationFrontmatter }> {
+  assertNoForbiddenCreationKeys(input.frontmatter, ["type", "id", "name", "canon"]);
   const sources = uniqueValues(input.sources ?? []);
   const result = await createEntity(rootPath, "location", {
     slug: input.slug,
     overwrite: input.overwrite,
     body: input.body ?? buildLocationBody(input),
     frontmatter: {
-      name: input.name,
-      ...buildHiddenCanonFrontmatter(input),
+       ...buildHiddenCanonFrontmatter(input),
       ...buildPronunciationFrontmatter(input),
       location_kind: input.locationKind,
       region: input.region,
@@ -1553,10 +1580,11 @@ export async function createLocationProfile(
       risks: input.risks ?? [],
       factions_present: input.factionsPresent ?? [],
       based_on_real_place: input.basedOnRealPlace ?? false,
-      timeline_ref: input.timelineRef,
-      historical: input.historical ?? false,
-      sources,
-      ...input.frontmatter,
+       timeline_ref: input.timelineRef,
+       historical: input.historical ?? false,
+       sources,
+        ...input.frontmatter,
+        name: input.name,
     },
   });
 
@@ -1570,14 +1598,14 @@ export async function createFactionProfile(
   rootPath: string,
   input: CreateFactionProfileInput,
 ): Promise<{ filePath: string; frontmatter: FactionFrontmatter }> {
+  assertNoForbiddenCreationKeys(input.frontmatter, ["type", "id", "name", "canon"]);
   const sources = uniqueValues(input.sources ?? []);
   const result = await createEntity(rootPath, "faction", {
     slug: input.slug,
     overwrite: input.overwrite,
     body: input.body ?? buildFactionBody(input),
     frontmatter: {
-      name: input.name,
-      ...buildHiddenCanonFrontmatter(input),
+       ...buildHiddenCanonFrontmatter(input),
       ...buildPronunciationFrontmatter(input),
       faction_kind: input.factionKind,
       mission: input.mission,
@@ -1589,10 +1617,11 @@ export async function createFactionProfile(
       allies: input.allies ?? [],
       enemies: input.enemies ?? [],
       methods: input.methods ?? [],
-      base_location: input.baseLocation,
-      historical: input.historical ?? false,
-      sources,
-      ...input.frontmatter,
+       base_location: input.baseLocation,
+       historical: input.historical ?? false,
+       sources,
+        ...input.frontmatter,
+        name: input.name,
     },
   });
 
@@ -1606,14 +1635,14 @@ export async function createSecretProfile(
   rootPath: string,
   input: CreateSecretProfileInput,
 ): Promise<{ filePath: string; frontmatter: SecretFrontmatter }> {
+  assertNoForbiddenCreationKeys(input.frontmatter, ["type", "id", "title", "canon"]);
   const sources = uniqueValues(input.sources ?? []);
   const result = await createEntity(rootPath, "secret", {
     slug: input.slug,
     overwrite: input.overwrite,
     body: input.body ?? buildSecretBody(input),
     frontmatter: {
-      title: input.title,
-      ...buildHiddenCanonFrontmatter(input),
+       ...buildHiddenCanonFrontmatter(input),
       ...buildPronunciationFrontmatter(input),
       secret_kind: input.secretKind,
       function_in_book: input.functionInBook,
@@ -1623,9 +1652,10 @@ export async function createSecretProfile(
       reveal_strategy: input.revealStrategy,
       holders: input.holders ?? [],
       timeline_ref: input.timelineRef,
-      historical: input.historical ?? false,
-      sources,
-      ...input.frontmatter,
+       historical: input.historical ?? false,
+       sources,
+        ...input.frontmatter,
+        title: input.title,
     },
   });
 
@@ -1639,23 +1669,24 @@ export async function createTimelineEventProfile(
   rootPath: string,
   input: CreateTimelineEventProfileInput,
 ): Promise<{ filePath: string; frontmatter: TimelineEventFrontmatter }> {
+  assertNoForbiddenCreationKeys(input.frontmatter, ["type", "id", "title", "canon"]);
   const sources = uniqueValues(input.sources ?? []);
   const result = await createEntity(rootPath, "timeline-event", {
     slug: input.slug,
     overwrite: input.overwrite,
     body: input.body ?? buildTimelineEventBody(input),
     frontmatter: {
-      title: input.title,
-      ...buildHiddenCanonFrontmatter(input),
+       ...buildHiddenCanonFrontmatter(input),
       ...buildPronunciationFrontmatter(input),
       date: input.date,
       participants: input.participants ?? [],
       significance: input.significance,
       function_in_book: input.functionInBook,
       consequences: input.consequences ?? [],
-      historical: input.historical ?? false,
-      sources,
-      ...input.frontmatter,
+       historical: input.historical ?? false,
+       sources,
+        ...input.frontmatter,
+        title: input.title,
     },
   });
 
@@ -1675,12 +1706,13 @@ export async function createChapter(
     overwrite?: boolean;
   },
 ): Promise<{ folderPath: string; chapterFilePath: string; chapterId: string }> {
+  assertNoForbiddenCreationKeys(options.frontmatter, ["type", "id", "number", "title", "canon"]);
   const root = path.resolve(rootPath);
   const slug = chapterSlug(options.number, options.title);
-  const folderPath = path.join(root, "chapters", slug);
-  const chapterFilePath = path.join(folderPath, "chapter.md");
-  const resumeFilePath = path.join(root, "resumes/chapters", `${slug}.md`);
-  const evaluationFilePath = path.join(root, "evaluations/chapters", `${slug}.md`);
+  const folderPath = await assertContainedPath(root, path.join("chapters", slug), "Chapter directory");
+  const chapterFilePath = await assertContainedPath(root, path.join("chapters", slug, "chapter.md"), "Chapter file path");
+  const resumeFilePath = await assertContainedPath(root, path.join("resumes/chapters", `${slug}.md`), "Chapter resume path");
+  const evaluationFilePath = await assertContainedPath(root, path.join("evaluations/chapters", `${slug}.md`), "Chapter evaluation path");
 
   if (!options.overwrite && (await pathExists(chapterFilePath))) {
     throw new Error(`Chapter already exists: ${chapterFilePath}`);
@@ -1689,14 +1721,13 @@ export async function createChapter(
   await mkdir(folderPath, { recursive: true });
 
   const frontmatter = chapterSchema.parse({
+    canon: DEFAULT_CANON,
+    ...options.frontmatter,
     type: "chapter",
     id: `chapter:${slug}`,
     number: options.number,
     title: options.title,
-    canon: DEFAULT_CANON,
-    ...options.frontmatter,
   });
-
   await writeFile(
     chapterFilePath,
     renderMarkdown(frontmatter, normalizeStoryMarkdownBody(options.body ?? defaultBodyForType("chapter"))),
@@ -1733,7 +1764,7 @@ export async function createChapter(
 
   await markStoryStateDirty(root, {
     changedPaths: [toPosixPath(path.relative(root, chapterFilePath))],
-    reason: "chapter-created",
+    reason: storyMutationReason("chapter", "created"),
   });
 
   return {
@@ -1747,10 +1778,11 @@ export async function createChapterDraft(
   rootPath: string,
   options: CreateChapterDraftInput,
 ): Promise<{ folderPath: string; draftFilePath: string; draftId: string; chapterId: string; notesFilePath: string; ideasFilePath: string; promotedFilePath: string }> {
+  assertNoForbiddenCreationKeys(options.frontmatter, ["type", "id", "chapter", "number", "title", "canon"]);
   const root = path.resolve(rootPath);
   const slug = chapterSlug(options.number, options.title);
-  const folderPath = path.join(root, "drafts", slug);
-  const draftFilePath = path.join(folderPath, "chapter.md");
+  const folderPath = await assertContainedPath(root, path.join("drafts", slug), "Chapter draft directory");
+  const draftFilePath = await assertContainedPath(root, path.join("drafts", slug, "chapter.md"), "Chapter draft path");
 
   if (!options.overwrite && (await pathExists(draftFilePath))) {
     throw new Error(`Chapter draft already exists: ${draftFilePath}`);
@@ -1759,15 +1791,14 @@ export async function createChapterDraft(
   await mkdir(folderPath, { recursive: true });
 
   const frontmatter = chapterDraftSchema.parse({
+    canon: DEFAULT_CANON,
+    ...options.frontmatter,
     type: "chapter-draft",
     id: `draft:chapter:${slug}`,
     chapter: `chapter:${slug}`,
     number: options.number,
     title: options.title,
-    canon: DEFAULT_CANON,
-    ...options.frontmatter,
   });
-
   await writeFile(
     draftFilePath,
     renderMarkdown(frontmatter, normalizeStoryMarkdownBody(options.body ?? defaultBodyForType("chapter-draft"))),
@@ -1796,16 +1827,17 @@ export async function createParagraph(
     overwrite?: boolean;
   },
 ): Promise<{ filePath: string; paragraphId: string }> {
+  assertNoForbiddenCreationKeys(options.frontmatter, ["type", "id", "chapter", "number", "title", "canon"]);
   const root = path.resolve(rootPath);
   const chapter = normalizeChapterReference(options.chapter);
-  const folderPath = path.join(root, "chapters", chapter);
+  const folderPath = await assertContainedPath(root, path.join("chapters", chapter), "Chapter directory");
 
   if (!(await pathExists(folderPath))) {
     throw new Error(`Chapter folder does not exist: ${folderPath}`);
   }
 
   const fileName = paragraphFilename(options.number, options.title);
-  const filePath = path.join(folderPath, fileName);
+  const filePath = await assertContainedPath(root, path.join("chapters", chapter, fileName), "Paragraph file path");
 
   if (!options.overwrite && (await pathExists(filePath))) {
     throw new Error(`Paragraph already exists: ${filePath}`);
@@ -1813,15 +1845,14 @@ export async function createParagraph(
 
   const slug = fileName.replace(/\.md$/i, "");
   const frontmatter = paragraphSchema.parse({
+    canon: DEFAULT_CANON,
+    ...options.frontmatter,
     type: "paragraph",
     id: `paragraph:${chapter}:${slug}`,
     chapter: `chapter:${chapter}`,
     number: options.number,
     title: options.title,
-    canon: DEFAULT_CANON,
-    ...options.frontmatter,
   });
-
   await writeFile(
     filePath,
     renderMarkdown(frontmatter, normalizeStoryMarkdownBody(options.body ?? defaultBodyForType("paragraph"))),
@@ -1830,7 +1861,7 @@ export async function createParagraph(
 
   await markStoryStateDirty(root, {
     changedPaths: [toPosixPath(path.relative(root, filePath))],
-    reason: "paragraph-created",
+    reason: storyMutationReason("paragraph", "created"),
   });
 
   return { filePath, paragraphId: `paragraph:${chapter}:${slug}` };
@@ -1840,14 +1871,15 @@ export async function createParagraphDraft(
   rootPath: string,
   options: CreateParagraphDraftInput,
 ): Promise<{ filePath: string; draftId: string; paragraphId: string; notesFilePath: string; ideasFilePath: string; promotedFilePath: string }> {
+  assertNoForbiddenCreationKeys(options.frontmatter, ["type", "id", "paragraph", "chapter", "number", "title", "canon"]);
   const root = path.resolve(rootPath);
   const chapter = normalizeChapterReference(options.chapter);
-  const folderPath = path.join(root, "drafts", chapter);
+  const folderPath = await assertContainedPath(root, path.join("drafts", chapter), "Chapter draft directory");
 
   await mkdir(folderPath, { recursive: true });
 
   const fileName = paragraphFilename(options.number, options.title);
-  const filePath = path.join(folderPath, fileName);
+  const filePath = await assertContainedPath(root, path.join("drafts", chapter, fileName), "Paragraph draft path");
 
   if (!options.overwrite && (await pathExists(filePath))) {
     throw new Error(`Paragraph draft already exists: ${filePath}`);
@@ -1855,14 +1887,14 @@ export async function createParagraphDraft(
 
   const slug = fileName.replace(/\.md$/i, "");
   const frontmatter = paragraphDraftSchema.parse({
+    canon: DEFAULT_CANON,
+    ...options.frontmatter,
     type: "paragraph-draft",
     id: `draft:paragraph:${chapter}:${slug}`,
     paragraph: `paragraph:${chapter}:${slug}`,
     chapter: `chapter:${chapter}`,
     number: options.number,
     title: options.title,
-    canon: DEFAULT_CANON,
-    ...options.frontmatter,
   });
 
   await writeFile(
@@ -2073,8 +2105,10 @@ export async function createAssetPrompt(
   rootPath: string,
   options: CreateAssetPromptInput,
 ): Promise<{ filePath: string; imagePath: string; assetId: string }> {
+  assertNoForbiddenCreationKeys(options.frontmatter, ["type", "id", "subject", "asset_kind", "path", "canon"]);
   const root = path.resolve(rootPath);
   const prepared = prepareAssetTarget(root, options.subject, options.assetKind, options.extension);
+  await assertPreparedAssetTarget(root, prepared);
 
   if (!options.overwrite && (await pathExists(prepared.markdownFilePath))) {
     throw new Error(`Asset prompt already exists: ${prepared.markdownFilePath}`);
@@ -2098,6 +2132,7 @@ export async function createAssetPrompt(
     canon: DEFAULT_CANON,
     ...options.frontmatter,
   });
+  await assertContainedPath(root, frontmatter.path, "Asset image path");
 
   await writeFile(
     prepared.markdownFilePath,
@@ -2125,13 +2160,14 @@ export async function readAsset(
 } | null> {
   const root = path.resolve(rootPath);
   const prepared = prepareAssetTarget(root, subject, assetKind);
+  await assertPreparedAssetTarget(root, prepared);
 
   if (!(await pathExists(prepared.markdownFilePath))) {
     return null;
   }
 
   const document = await readMarkdownFile(prepared.markdownFilePath, assetSchema);
-  const imagePath = path.join(root, document.frontmatter.path);
+  const imagePath = await assertContainedPath(root, document.frontmatter.path, "Asset image path");
   return {
     path: prepared.markdownFilePath,
     metadata: document.frontmatter,
@@ -2145,6 +2181,7 @@ export async function registerAsset(
   rootPath: string,
   options: RegisterAssetInput,
 ): Promise<{ filePath: string; imagePath: string; assetId: string }> {
+  assertNoForbiddenCreationKeys(options.frontmatter, ["type", "id", "subject", "asset_kind", "path", "canon"]);
   const root = path.resolve(rootPath);
   const sourceFilePath = path.resolve(options.sourceFilePath);
 
@@ -2153,6 +2190,7 @@ export async function registerAsset(
   }
 
   const prepared = prepareAssetTarget(root, options.subject, options.assetKind, options.extension ?? path.extname(sourceFilePath));
+  await assertPreparedAssetTarget(root, prepared);
 
   if (!options.overwrite && ((await pathExists(prepared.markdownFilePath)) || (await pathExists(prepared.imageFilePath)))) {
     throw new Error(`Asset already exists at ${prepared.imageFilePath}`);
@@ -2177,6 +2215,7 @@ export async function registerAsset(
     canon: DEFAULT_CANON,
     ...options.frontmatter,
   });
+  await assertContainedPath(root, frontmatter.path, "Asset image path");
 
   await writeFile(
     prepared.markdownFilePath,
@@ -2202,6 +2241,7 @@ export async function renameEntity(
 ): Promise<RenameResult> {
   const root = path.resolve(rootPath);
   const oldFilePath = resolveEntityFilePath(root, options.kind, options.slugOrId);
+  await assertContainedPath(root, path.relative(root, oldFilePath), `${options.kind} file path`);
 
   if (!(await pathExists(oldFilePath))) {
     throw new Error(`Entity does not exist: ${oldFilePath}`);
@@ -2211,7 +2251,7 @@ export async function renameEntity(
   const parsed = matter(raw);
   const oldSlug = path.basename(oldFilePath, ".md");
   const nextSlug = normalizeRenameSlug(options.newSlug ?? options.newNameOrTitle);
-  const newFilePath = path.join(root, ENTITY_TYPE_TO_DIRECTORY[options.kind], `${nextSlug}.md`);
+  const newFilePath = await assertContainedPath(root, path.join(ENTITY_TYPE_TO_DIRECTORY[options.kind], `${nextSlug}.md`), `${options.kind} destination path`);
   const labelKey = getEntityLabelKey(options.kind);
   const oldId = `${options.kind}:${oldSlug}`;
   const newId = `${options.kind}:${nextSlug}`;
@@ -2253,6 +2293,11 @@ export async function renameEntity(
     [assetDirectoryPrefix(oldId), assetDirectoryPrefix(newId)],
   ]);
 
+  await markStoryStateDirty(root, {
+    changedPaths: [toPosixPath(path.relative(root, newFilePath))],
+    reason: storyMutationReason("entity", "renamed"),
+  });
+
   return {
     oldPath: oldFilePath,
     newPath: newFilePath,
@@ -2261,7 +2306,9 @@ export async function renameEntity(
   };
 }
 
-async function movePathIfPresent(source: string, destination: string, label: string): Promise<boolean> {
+async function movePathIfPresent(root: string, source: string, destination: string, label: string): Promise<boolean> {
+  await assertContainedPath(root, path.relative(root, source), `${label} source path`);
+  await assertContainedPath(root, path.relative(root, destination), `${label} destination path`);
   if (source === destination || !(await pathExists(source))) return false;
   if (await pathExists(destination)) throw new Error(`${label} already exists at destination: ${destination}`);
   await mkdir(path.dirname(destination), { recursive: true });
@@ -2279,6 +2326,7 @@ export async function renameChapter(
 ): Promise<RenameResult> {
   const root = path.resolve(rootPath);
   const oldFilePath = resolveChapterMetadataFilePath(root, options.chapter);
+  await assertContainedPath(root, path.relative(root, oldFilePath), "Chapter file path");
 
   if (!(await pathExists(oldFilePath))) {
     throw new Error(`Chapter does not exist: ${oldFilePath}`);
@@ -2290,11 +2338,17 @@ export async function renameChapter(
   const current = chapterSchema.parse(parsed.data);
   const nextNumber = options.newNumber ?? current.number;
   const newChapterSlug = chapterSlug(nextNumber, options.newTitle);
-  const oldFolderPath = path.join(root, "chapters", oldChapterSlug);
-  const newFolderPath = path.join(root, "chapters", newChapterSlug);
-  const newFilePath = path.join(newFolderPath, "chapter.md");
-  const oldAuditFolderPath = path.join(root, AUDIT_CHAPTERS_DIRECTORY, oldChapterSlug);
-  const newAuditFolderPath = path.join(root, AUDIT_CHAPTERS_DIRECTORY, newChapterSlug);
+  const oldFolderPath = await assertContainedPath(root, path.join("chapters", oldChapterSlug), "Chapter directory");
+  const newFolderPath = await assertContainedPath(root, path.join("chapters", newChapterSlug), "Chapter destination directory");
+  const newFilePath = await assertContainedPath(root, path.join("chapters", newChapterSlug, "chapter.md"), "Chapter destination path");
+  const oldAuditFolderPath = await assertContainedPath(root, path.join(AUDIT_CHAPTERS_DIRECTORY, oldChapterSlug), "Chapter audit source path");
+  const newAuditFolderPath = await assertContainedPath(root, path.join(AUDIT_CHAPTERS_DIRECTORY, newChapterSlug), "Chapter audit destination path");
+  await assertContainedPath(root, path.relative(root, oldAuditFolderPath), "Chapter audit source path");
+  await assertContainedPath(root, path.relative(root, newAuditFolderPath), "Chapter audit destination path");
+  await assertContainedPath(root, path.relative(root, path.join(root, "resumes", "chapters", `${oldChapterSlug}.md`)), "Chapter resume source path");
+  await assertContainedPath(root, path.relative(root, path.join(root, "resumes", "chapters", `${newChapterSlug}.md`)), "Chapter resume destination path");
+  await assertContainedPath(root, path.relative(root, path.join(root, "evaluations", "chapters", `${oldChapterSlug}.md`)), "Chapter evaluation source path");
+  await assertContainedPath(root, path.relative(root, path.join(root, "evaluations", "chapters", `${newChapterSlug}.md`)), "Chapter evaluation destination path");
 
   if (oldFolderPath !== newFolderPath && (await pathExists(newFolderPath))) {
     throw new Error(`Chapter already exists at destination: ${newFolderPath}`);
@@ -2328,8 +2382,9 @@ export async function renameChapter(
     [path.join(root, REWRITE_FROM_READER_FEEDBACK_ROOT, "chapters", oldChapterSlug), path.join(root, REWRITE_FROM_READER_FEEDBACK_ROOT, "chapters", newChapterSlug), "Chapter rewrite operations"],
     [path.join(root, REWRITE_FROM_READER_FEEDBACK_ROOT, "paragraphs", oldChapterSlug), path.join(root, REWRITE_FROM_READER_FEEDBACK_ROOT, "paragraphs", newChapterSlug), "Paragraph rewrite operations"],
   ];
-  for (const [source, destination, label] of chapterScopedMoves) await movePathIfPresent(source, destination, label);
+  for (const [source, destination, label] of chapterScopedMoves) await movePathIfPresent(root, source, destination, label);
   await movePathIfPresent(
+    root,
     path.join(root, "evaluations", "readers", "summaries", "chapters", `${oldChapterSlug}.md`),
     path.join(root, "evaluations", "readers", "summaries", "chapters", `${newChapterSlug}.md`),
     "Chapter reader summary",
@@ -2345,6 +2400,8 @@ export async function renameChapter(
 
   const oldResumePath = path.join(root, "resumes", "chapters", `${oldChapterSlug}.md`);
   const newResumePath = path.join(root, "resumes", "chapters", `${newChapterSlug}.md`);
+  await assertContainedPath(root, path.relative(root, oldResumePath), "Chapter resume source path");
+  await assertContainedPath(root, path.relative(root, newResumePath), "Chapter resume destination path");
   if (await pathExists(oldResumePath)) {
     if (oldResumePath !== newResumePath && (await pathExists(newResumePath))) {
       throw new Error(`Resume already exists at destination: ${newResumePath}`);
@@ -2371,6 +2428,8 @@ export async function renameChapter(
 
   const oldEvaluationPath = path.join(root, "evaluations", "chapters", `${oldChapterSlug}.md`);
   const newEvaluationPath = path.join(root, "evaluations", "chapters", `${newChapterSlug}.md`);
+  await assertContainedPath(root, path.relative(root, oldEvaluationPath), "Chapter evaluation source path");
+  await assertContainedPath(root, path.relative(root, newEvaluationPath), "Chapter evaluation destination path");
   if (await pathExists(oldEvaluationPath)) {
     if (oldEvaluationPath !== newEvaluationPath && (await pathExists(newEvaluationPath))) {
       throw new Error(`Evaluation already exists at destination: ${newEvaluationPath}`);
@@ -2415,7 +2474,7 @@ export async function renameChapter(
 
   await markStoryStateDirty(root, {
     changedPaths: [toPosixPath(path.relative(root, newFilePath))],
-    reason: "chapter-renamed",
+    reason: storyMutationReason("chapter", "renamed"),
   });
 
   return {
@@ -2438,6 +2497,7 @@ export async function renameParagraph(
   const root = path.resolve(rootPath);
   const chapterSlugValue = normalizeChapterReference(options.chapter);
   const oldFilePath = await resolveParagraphFilePath(root, chapterSlugValue, options.paragraph);
+  await assertContainedPath(root, path.relative(root, oldFilePath), "Paragraph file path");
 
   if (!(await pathExists(oldFilePath))) {
     throw new Error(`Paragraph does not exist: ${oldFilePath}`);
@@ -2449,9 +2509,11 @@ export async function renameParagraph(
   const oldParagraphSlug = path.basename(oldFilePath, ".md");
   const nextNumber = options.newNumber ?? current.number;
   const newParagraphSlug = paragraphFilename(nextNumber, options.newTitle).replace(/\.md$/i, "");
-  const newFilePath = path.join(root, "chapters", chapterSlugValue, `${newParagraphSlug}.md`);
-  const oldAuditPath = path.join(root, AUDIT_CHAPTERS_DIRECTORY, chapterSlugValue, "paragraphs", `${oldParagraphSlug}.md`);
-  const newAuditPath = path.join(root, AUDIT_CHAPTERS_DIRECTORY, chapterSlugValue, "paragraphs", `${newParagraphSlug}.md`);
+  const newFilePath = await assertContainedPath(root, path.join("chapters", chapterSlugValue, `${newParagraphSlug}.md`), "Paragraph destination path");
+  const oldAuditPath = await assertContainedPath(root, path.join(AUDIT_CHAPTERS_DIRECTORY, chapterSlugValue, "paragraphs", `${oldParagraphSlug}.md`), "Paragraph audit source path");
+  const newAuditPath = await assertContainedPath(root, path.join(AUDIT_CHAPTERS_DIRECTORY, chapterSlugValue, "paragraphs", `${newParagraphSlug}.md`), "Paragraph audit destination path");
+  await assertContainedPath(root, path.relative(root, oldAuditPath), "Paragraph audit source path");
+  await assertContainedPath(root, path.relative(root, newAuditPath), "Paragraph audit destination path");
 
   if (oldFilePath !== newFilePath && (await pathExists(newFilePath))) {
     throw new Error(`Paragraph already exists at destination: ${newFilePath}`);
@@ -2477,13 +2539,15 @@ export async function renameParagraph(
     [path.join(root, "evaluations", "readers", "selections", chapterSlugValue, oldParagraphSlug), path.join(root, "evaluations", "readers", "selections", chapterSlugValue, newParagraphSlug), "Selection reader evaluations"],
     [path.join(root, REWRITE_FROM_READER_FEEDBACK_ROOT, "paragraphs", chapterSlugValue, oldParagraphSlug), path.join(root, REWRITE_FROM_READER_FEEDBACK_ROOT, "paragraphs", chapterSlugValue, newParagraphSlug), "Paragraph rewrite operations"],
   ];
-  for (const [source, destination, label] of paragraphScopedMoves) await movePathIfPresent(source, destination, label);
+  for (const [source, destination, label] of paragraphScopedMoves) await movePathIfPresent(root, source, destination, label);
   await movePathIfPresent(
+    root,
     path.join(root, "evaluations", "readers", "summaries", "paragraphs", chapterSlugValue, `${oldParagraphSlug}.md`),
     path.join(root, "evaluations", "readers", "summaries", "paragraphs", chapterSlugValue, `${newParagraphSlug}.md`),
     "Paragraph reader summary",
   );
   await movePathIfPresent(
+    root,
     path.join(root, "evaluations", "readers", "summaries", "selections", chapterSlugValue, `${oldParagraphSlug}.md`),
     path.join(root, "evaluations", "readers", "summaries", "selections", chapterSlugValue, `${newParagraphSlug}.md`),
     "Selection reader summary",
@@ -2495,7 +2559,7 @@ export async function renameParagraph(
   );
   for (const source of chapterOperationSnapshots) {
     const destination = path.join(path.dirname(source), path.basename(source).replace(`${oldParagraphSlug}-`, `${newParagraphSlug}-`));
-    await movePathIfPresent(source, destination, "Chapter operation snapshot");
+    await movePathIfPresent(root, source, destination, "Chapter operation snapshot");
   }
 
   const validated = paragraphSchema.parse({
@@ -2510,6 +2574,8 @@ export async function renameParagraph(
   const newParagraphId = `paragraph:${chapterSlugValue}:${newParagraphSlug}`;
   const oldEvaluationPath = path.join(root, "evaluations", "paragraphs", chapterSlugValue, `${oldParagraphSlug}.md`);
   const newEvaluationPath = path.join(root, "evaluations", "paragraphs", chapterSlugValue, `${newParagraphSlug}.md`);
+  await assertContainedPath(root, path.relative(root, oldEvaluationPath), "Paragraph evaluation source path");
+  await assertContainedPath(root, path.relative(root, newEvaluationPath), "Paragraph evaluation destination path");
 
   if (await pathExists(oldEvaluationPath)) {
     await mkdir(path.dirname(newEvaluationPath), { recursive: true });
@@ -2554,7 +2620,7 @@ export async function renameParagraph(
 
   await markStoryStateDirty(root, {
     changedPaths: [toPosixPath(path.relative(root, newFilePath))],
-    reason: "paragraph-renamed",
+    reason: storyMutationReason("paragraph", "renamed"),
   });
 
   return {
@@ -2568,7 +2634,8 @@ export async function renameParagraph(
 export async function readBook(
   rootPath: string,
 ): Promise<MarkdownDocument<BookFrontmatter> | null> {
-  const bookPath = path.join(path.resolve(rootPath), BOOK_FILE);
+  const root = path.resolve(rootPath);
+  const bookPath = await assertContainedPath(root, BOOK_FILE, "Book file path");
   if (!(await pathExists(bookPath))) return null;
   return readMarkdownFile(bookPath, bookSchema);
 }
@@ -2576,16 +2643,17 @@ export async function readBook(
 export async function readPlot(
   rootPath: string,
 ): Promise<MarkdownDocument<PlotFrontmatter> | null> {
-  const plotPath = path.join(path.resolve(rootPath), PLOT_FILE);
+  const root = path.resolve(rootPath);
+  const plotPath = await assertContainedPath(root, PLOT_FILE, "Plot file path");
   if (!(await pathExists(plotPath))) return null;
   return readMarkdownFile(plotPath, plotSchema);
 }
 
 export async function listChapters(
   rootPath: string,
-): Promise<Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>> {
+  ): Promise<Array<{ slug: string; path: string; metadata: ChapterFrontmatter }>> {
   const root = path.resolve(rootPath);
-  const chaptersRoot = path.join(root, "chapters");
+  const chaptersRoot = await assertContainedPath(root, "chapters", "Chapters directory");
 
   if (!(await pathExists(chaptersRoot))) return [];
 
@@ -2595,6 +2663,7 @@ export async function listChapters(
 
   for (const entry of chapterDirectories) {
     const chapterPath = path.join(chaptersRoot, entry.name, "chapter.md");
+    await assertContainedPath(root, path.relative(root, chapterPath), "Chapter file path");
     if (!(await pathExists(chapterPath))) continue;
     const document = await readMarkdownFile(chapterPath, chapterSchema);
     results.push({ slug: entry.name, path: chapterPath, metadata: document.frontmatter });
@@ -2613,8 +2682,8 @@ export async function readChapter(
 }> {
   const root = path.resolve(rootPath);
   const chapterSlug = normalizeChapterReference(chapter);
-  const folder = path.join(root, "chapters", chapterSlug);
-  const chapterFile = path.join(folder, "chapter.md");
+  const folder = await assertContainedPath(root, path.join("chapters", chapterSlug), "Chapter directory");
+  const chapterFile = await assertContainedPath(root, path.join("chapters", chapterSlug, "chapter.md"), "Chapter file path");
 
   if (!(await pathExists(chapterFile))) {
     throw new Error(`Missing chapter metadata file: ${chapterFile}`);
@@ -2626,6 +2695,7 @@ export async function readChapter(
   const paragraphs: Array<{ path: string; metadata: ParagraphFrontmatter; body: string }> = [];
 
   for (const filePath of paragraphFiles) {
+    await assertContainedPath(root, path.relative(root, filePath), "Paragraph file path");
     const paragraphDocument = await readMarkdownFile(filePath, paragraphSchema);
     paragraphs.push({
       path: filePath,
@@ -2653,8 +2723,8 @@ export async function readChapterDraft(
 }> {
   const root = path.resolve(rootPath);
   const chapterSlug = normalizeChapterReference(chapter);
-  const folder = path.join(root, "drafts", chapterSlug);
-  const chapterFile = path.join(folder, "chapter.md");
+  const folder = await assertContainedPath(root, path.join("drafts", chapterSlug), "Chapter draft directory");
+  const chapterFile = await assertContainedPath(root, path.join("drafts", chapterSlug, "chapter.md"), "Chapter draft path");
 
   if (!(await pathExists(chapterFile))) {
     throw new Error(`Missing chapter draft metadata file: ${chapterFile}`);
@@ -2666,6 +2736,7 @@ export async function readChapterDraft(
   const paragraphs: Array<{ path: string; metadata: ParagraphDraftFrontmatter; body: string }> = [];
 
   for (const filePath of paragraphFiles) {
+    await assertContainedPath(root, path.relative(root, filePath), "Paragraph draft path");
     const paragraphDocument = await readMarkdownFile(filePath, paragraphDraftSchema);
     paragraphs.push({
       path: filePath,
@@ -2757,13 +2828,13 @@ export async function buildChapterWritingContext(
     2400,
   );
 
-  const contextDocument = await readLooseMarkdownIfExists(path.join(root, CONTEXT_FILE));
+  const contextDocument = await readLooseMarkdownIfExists(path.join(root, CONTEXT_FILE), root, "Book context path");
   addContextSection(sections, files, root, contextDocument, "Stable book context", 1400);
 
-  const storyDesign = await readLooseMarkdownIfExists(path.join(root, STORY_DESIGN_FILE));
+  const storyDesign = await readLooseMarkdownIfExists(path.join(root, STORY_DESIGN_FILE), root, "Story design path");
   addContextSection(sections, files, root, storyDesign, "Story design", 1300);
 
-  const bookNotes = await readLooseMarkdownIfExists(path.join(root, NOTES_FILE));
+  const bookNotes = await readLooseMarkdownIfExists(path.join(root, NOTES_FILE), root, "Book notes path");
   addWorkItemSection(sections, files, root, bookNotes, "Book notes", 8, "No active book notes yet.");
 
   const plot = await readPlot(root);
@@ -2777,7 +2848,7 @@ export async function buildChapterWritingContext(
     previousChapters.length > 0 ? "No earlier chapter plot beats are summarized yet." : "No earlier chapters exist yet.",
   );
 
-  const totalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE));
+  const totalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE), root, "Total resume path");
   addScopedChapterContextSection(
     sections,
     files,
@@ -2789,12 +2860,12 @@ export async function buildChapterWritingContext(
   );
 
   if (previousChapter) {
-    const stateSnapshot = await readLooseMarkdownIfExists(path.join(root, "state", "chapters", `${previousChapter.slug}.md`));
+    const stateSnapshot = await readLooseMarkdownIfExists(path.join(root, "state", "chapters", `${previousChapter.slug}.md`), root, "Chapter state path");
     addContextSection(sections, files, root, stateSnapshot, "Structured story state before this chapter", 1050);
   }
 
   if (throughParagraphNumber === undefined) {
-    const chapterResume = await readLooseMarkdownIfExists(path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`));
+    const chapterResume = await readLooseMarkdownIfExists(path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`), root, "Chapter resume path");
     addContextSection(sections, files, root, chapterResume, "Current chapter resume", 900);
   }
 
@@ -2852,7 +2923,7 @@ export async function buildChapterWritingContext(
     );
   }
 
-  const chapterDraftNotes = await readLooseMarkdownIfExists(path.join(root, chapterDraftNotesRelativePath(chapterSlugValue)));
+  const chapterDraftNotes = await readLooseMarkdownIfExists(path.join(root, chapterDraftNotesRelativePath(chapterSlugValue)), root, "Chapter draft notes path");
   addWorkItemSection(sections, files, root, chapterDraftNotes, "Chapter draft notes", 8, "No active chapter draft notes yet.");
 
   return {
@@ -2976,8 +3047,8 @@ export async function buildResumeBookContext(
     throw new Error("resume_book_context requires a chapter when paragraph is provided.");
   }
 
-  const continuation = await readLooseMarkdownIfExists(path.join(root, "conversations", "CONTINUATION.md"));
-  const resume = await readLooseMarkdownIfExists(path.join(root, "conversations", "RESUME.md"));
+  const continuation = await readLooseMarkdownIfExists(path.join(root, "conversations", "CONTINUATION.md"), root, "Conversation continuation path");
+  const resume = await readLooseMarkdownIfExists(path.join(root, "conversations", "RESUME.md"), root, "Conversation resume path");
 
   if (targetChapter) {
     const targetContext = targetParagraph
@@ -2989,15 +3060,15 @@ export async function buildResumeBookContext(
     }
   } else {
     const ghostwriter = await resolveGhostwriter(root);
-    const contextDocument = await readLooseMarkdownIfExists(path.join(root, CONTEXT_FILE));
-    const storyDesign = await readLooseMarkdownIfExists(path.join(root, STORY_DESIGN_FILE));
-    const bookNotes = await readLooseMarkdownIfExists(path.join(root, NOTES_FILE));
+    const contextDocument = await readLooseMarkdownIfExists(path.join(root, CONTEXT_FILE), root, "Book context path");
+    const storyDesign = await readLooseMarkdownIfExists(path.join(root, STORY_DESIGN_FILE), root, "Story design path");
+    const bookNotes = await readLooseMarkdownIfExists(path.join(root, NOTES_FILE), root, "Book notes path");
     const plot = await readPlot(root);
-    const totalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE));
-    const storyStateCurrent = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_CURRENT_FILE));
+    const totalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE), root, "Total resume path");
+    const storyStateCurrent = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_CURRENT_FILE), root, "Current story state path");
     const storyStateStatus = await readStoryStateStatus(root);
     const storyStateStatusDocument = storyStateStatus.dirty
-      ? await readLooseMarkdownIfExists(path.join(root, STORY_STATE_STATUS_FILE))
+      ? await readLooseMarkdownIfExists(path.join(root, STORY_STATE_STATUS_FILE), root, "Story state status path")
       : null;
 
     addContextSection(
@@ -3072,7 +3143,7 @@ async function resolveGhostwriter(
   if (!slug) throw new Error("No ghostwriter is selected. Set ghostwriter in book.md or the current chapter/paragraph frontmatter.");
   if (slugify(slug) !== slug) throw new Error(`Invalid ghostwriter slug: ${slug}`);
 
-  const filePath = path.join(root, GHOSTWRITERS_DIRECTORY, `${slug}.md`);
+  const filePath = await assertContainedPath(root, path.join(GHOSTWRITERS_DIRECTORY, `${slug}.md`), "Ghostwriter file path");
   if (!(await pathExists(filePath))) throw new Error(`Selected ghostwriter does not exist: ${toPosixPath(path.relative(root, filePath))}`);
   const document = await readMarkdownFile(filePath, ghostwriterSchema);
   return { ...document, slug };
@@ -3224,9 +3295,10 @@ export async function listEntities(
 ): Promise<CanonEntityDocument[]> {
   const root = path.resolve(rootPath);
   const directory = ENTITY_TYPE_TO_DIRECTORY[kind];
+  const entityRoot = await assertContainedPath(root, directory, `${kind} directory`);
   const schema = entitySchemaMap[kind] as { parse: (value: unknown) => Record<string, unknown> };
   const files = await fg("*.md", {
-    cwd: path.join(root, directory),
+    cwd: entityRoot,
     absolute: true,
     onlyFiles: true,
   });
@@ -3234,6 +3306,7 @@ export async function listEntities(
   const results: CanonEntityDocument[] = [];
 
   for (const filePath of files) {
+    await assertContainedPath(root, path.relative(root, filePath), `${kind} file path`);
     const document = await readMarkdownFile(filePath, schema);
     results.push({
       slug: path.basename(filePath, ".md"),
@@ -3257,6 +3330,7 @@ export async function readEntity(
 ): Promise<CanonEntityDocument> {
   const root = path.resolve(rootPath);
   const filePath = resolveEntityFilePath(root, kind, slugOrId);
+  await assertContainedPath(root, path.relative(root, filePath), `${kind} file path`);
   const schema = entitySchemaMap[kind] as { parse: (value: unknown) => Record<string, unknown> };
 
   if (!(await pathExists(filePath))) {
@@ -3276,7 +3350,7 @@ export async function readTimelineMain(
   rootPath: string,
 ): Promise<{ metadata: Record<string, unknown>; body: string } | null> {
   const root = path.resolve(rootPath);
-  const filePath = path.join(root, TIMELINE_MAIN_FILE);
+  const filePath = await assertContainedPath(root, TIMELINE_MAIN_FILE, "Timeline file path");
 
   if (!(await pathExists(filePath))) {
     return null;
@@ -3297,7 +3371,12 @@ export async function searchBook(
 ): Promise<SearchHit[]> {
   const root = path.resolve(rootPath);
   const limit = options?.limit ?? 10;
-  const requestedScopes = options?.scopes?.map((scope) => `${scope.replace(/\/$/, "")}/**/*.md`) ?? [];
+  const requestedScopes = options?.scopes
+    ? await Promise.all(options.scopes.map(async (scope) => {
+      const resolvedScope = await assertContainedPath(root, scope.replace(/\/$/, ""), "Search scope");
+      return `${toPosixPath(path.relative(root, resolvedScope))}/**/*.md`;
+    }))
+    : [];
   const patterns = requestedScopes.length > 0 ? requestedScopes : CONTENT_GLOB;
 
   const files = await fg(patterns, {
@@ -3311,6 +3390,7 @@ export async function searchBook(
   const hits: SearchHit[] = [];
 
   for (const filePath of files) {
+    await assertContainedPath(root, path.relative(root, filePath), "Search result path");
     const raw = await readFile(filePath, "utf8");
     const parsed = matter(raw);
     const relativePath = toPosixPath(path.relative(root, filePath));
@@ -3495,7 +3575,7 @@ export async function reviseParagraph(
     chapterTitle: chapterData.metadata.title,
   });
   const continuityImpact = classifyRevisionContinuityImpact(suggestedStateChanges);
-  const chapterResumePath = path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`);
+  const chapterResumePath = await assertContainedPath(root, path.join("resumes", "chapters", `${chapterSlugValue}.md`), "Chapter resume path");
   const storyStateStatus = await readStoryStateStatus(root);
   const sources = uniqueValues(
     [
@@ -3576,7 +3656,7 @@ export async function reviewDialogueActionBeats(
   const allowMissingActionAdds = options.allowMissingActionAdds ?? true;
   const allowSaidFallback = options.allowSaidFallback ?? true;
   const includeTicSuggestions = options.includeTicSuggestions ?? true;
-  const chapterResumePath = path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`);
+  const chapterResumePath = await assertContainedPath(root, path.join("resumes", "chapters", `${chapterSlugValue}.md`), "Chapter resume path");
   const storyStateStatus = await readStoryStateStatus(root);
   const revisionGhostwriter = await resolveChapterGhostwriter(root, chapterSlugValue, paragraphDocument.frontmatter.ghostwriter);
   const bookLanguage = normalizeBookLanguage((await readBook(root))?.frontmatter.language);
@@ -3785,7 +3865,7 @@ export async function reviseChapter(
   const preserveFacts = options.preserveFacts ?? true;
   const chapters = await listChapters(root);
   const targets = await buildQueryCanonTargets(root, chapters);
-  const chapterResumePath = path.join(root, "resumes", "chapters", `${chapterSlugValue}.md`);
+  const chapterResumePath = await assertContainedPath(root, path.join("resumes", "chapters", `${chapterSlugValue}.md`), "Chapter resume path");
   const storyStateStatus = await readStoryStateStatus(root);
   const revisionGhostwriter = await resolveChapterGhostwriter(root, chapterSlugValue);
   const paragraphGhostwriters = await Promise.all(
@@ -4588,6 +4668,7 @@ export async function updateEntity(
 ): Promise<{ filePath: string; frontmatter: Record<string, unknown> }> {
   const root = path.resolve(rootPath);
   const filePath = resolveEntityFilePath(root, options.kind, options.slugOrId);
+  await assertContainedPath(root, path.relative(root, filePath), `${options.kind} file path`);
 
   if (!(await pathExists(filePath))) {
     throw new Error(`Entity does not exist: ${filePath}`);
@@ -4611,7 +4692,7 @@ export async function updateEntity(
   await writeFile(filePath, renderMarkdown(validated, normalizeStoryMarkdownBody(nextBody)), "utf8");
   await markStoryStateDirty(root, {
     changedPaths: [toPosixPath(path.relative(root, filePath))],
-    reason: "chapter-updated",
+    reason: storyMutationReason("entity", "updated"),
   });
   return { filePath, frontmatter: validated };
 }
@@ -4627,6 +4708,7 @@ export async function updateChapter(
 ): Promise<{ filePath: string; frontmatter: ChapterFrontmatter }> {
   const root = path.resolve(rootPath);
   const filePath = resolveChapterMetadataFilePath(root, options.chapter);
+  await assertContainedPath(root, path.relative(root, filePath), "Chapter file path");
 
   if (!(await pathExists(filePath))) {
     throw new Error(`Chapter does not exist: ${filePath}`);
@@ -4651,7 +4733,7 @@ export async function updateChapter(
   await writeFile(filePath, renderMarkdown(validated, normalizeStoryMarkdownBody(nextBody)), "utf8");
   await markStoryStateDirty(root, {
     changedPaths: [toPosixPath(path.relative(root, filePath))],
-    reason: "paragraph-updated",
+    reason: storyMutationReason("chapter", "updated"),
   });
   return { filePath, frontmatter: validated };
 }
@@ -4667,6 +4749,7 @@ export async function updateChapterDraft(
 ): Promise<{ filePath: string; frontmatter: ChapterDraftFrontmatter }> {
   const root = path.resolve(rootPath);
   const filePath = resolveChapterDraftMetadataFilePath(root, options.chapter);
+  await assertContainedPath(root, path.relative(root, filePath), "Chapter draft path");
 
   if (!(await pathExists(filePath))) {
     throw new Error(`Chapter draft does not exist: ${filePath}`);
@@ -4689,10 +4772,6 @@ export async function updateChapterDraft(
         : String(parsed.content ?? "").trim();
 
   await writeFile(filePath, renderMarkdown(validated, normalizeStoryMarkdownBody(nextBody)), "utf8");
-  await markStoryStateDirty(root, {
-    changedPaths: [toPosixPath(path.relative(root, filePath))],
-    reason: "chapter-updated",
-  });
   return { filePath, frontmatter: validated };
 }
 
@@ -4708,6 +4787,7 @@ export async function updateParagraph(
 ): Promise<{ filePath: string; frontmatter: ParagraphFrontmatter }> {
   const root = path.resolve(rootPath);
   const filePath = await resolveParagraphFilePath(root, options.chapter, options.paragraph);
+  await assertContainedPath(root, path.relative(root, filePath), "Paragraph file path");
 
   if (!(await pathExists(filePath))) {
     throw new Error(`Paragraph does not exist: ${filePath}`);
@@ -4730,6 +4810,10 @@ export async function updateParagraph(
         : String(parsed.content ?? "").trim();
 
   await writeFile(filePath, renderMarkdown(validated, normalizeStoryMarkdownBody(nextBody)), "utf8");
+  await markStoryStateDirty(root, {
+    changedPaths: [toPosixPath(path.relative(root, filePath))],
+    reason: storyMutationReason("paragraph", "updated"),
+  });
   return { filePath, frontmatter: validated };
 }
 
@@ -4745,6 +4829,7 @@ export async function updateParagraphDraft(
 ): Promise<{ filePath: string; frontmatter: ParagraphDraftFrontmatter }> {
   const root = path.resolve(rootPath);
   const filePath = await resolveParagraphDraftFilePath(root, options.chapter, options.paragraph);
+  await assertContainedPath(root, path.relative(root, filePath), "Paragraph draft path");
 
   if (!(await pathExists(filePath))) {
     throw new Error(`Paragraph draft does not exist: ${filePath}`);
@@ -4787,6 +4872,7 @@ export async function listRelatedCanon(
   const hits: RelatedCanonHit[] = [];
 
   for (const filePath of files) {
+    await assertContainedPath(root, path.relative(root, filePath), "Related canon file path");
     const raw = await readFile(filePath, "utf8");
     const parsed = matter(raw);
     const frontmatter = parsed.data as Record<string, unknown>;
@@ -4837,7 +4923,7 @@ async function buildChapterResumeDocument(
   chapterSlug: string,
 ): Promise<{ filePath: string; content: string }> {
   const chapterData = await readChapter(root, chapterSlug);
-  const filePath = path.join(root, "resumes", "chapters", `${chapterSlug}.md`);
+  const filePath = await assertContainedPath(root, path.join("resumes", "chapters", `${chapterSlug}.md`), "Chapter resume path");
   const summary = chapterData.metadata.summary ?? summarizeText(chapterData.body, 220);
   const existingResume = await readLooseMarkdownIfExists(filePath);
   const stateChanges = normalizeStoryStateChanges(existingResume?.frontmatter.state_changes);
@@ -4887,10 +4973,10 @@ async function buildTotalResumeDocument(
   root: string,
 ): Promise<{ filePath: string; content: string; chapterCount: number }> {
   const chapters = await listChapters(root);
-  const filePath = path.join(root, TOTAL_RESUME_FILE);
+  const filePath = await assertContainedPath(root, TOTAL_RESUME_FILE, "Total resume path");
   const chapterSummaries: Array<{ number: number; title: string; summary: string }> = [];
   const storyStateStatus = await readStoryStateStatus(root);
-  const currentStoryState = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_CURRENT_FILE));
+  const currentStoryState = await readLooseMarkdownIfExists(await assertContainedPath(root, STORY_STATE_CURRENT_FILE, "Current story state path"));
   const throughChapter =
     typeof currentStoryState?.frontmatter.through_chapter === "string" && currentStoryState.frontmatter.through_chapter.trim()
       ? currentStoryState.frontmatter.through_chapter.trim()
@@ -4941,7 +5027,7 @@ async function buildPlotDocument(
   const chapters = await listChapters(root);
   const secrets = await listEntities(root, "secret");
   const timelineEvents = await listEntities(root, "timeline-event");
-  const filePath = path.join(root, PLOT_FILE);
+  const filePath = await assertContainedPath(root, PLOT_FILE, "Plot file path");
 
   const chapterSections: string[] = [];
   for (const chapter of chapters) {
@@ -5028,7 +5114,7 @@ export async function readStoryStateStatus(
   rootPath: string,
 ): Promise<StoryStateStatus & { filePath: string }> {
   const root = path.resolve(rootPath);
-  const filePath = path.join(root, STORY_STATE_STATUS_FILE);
+  const filePath = await assertContainedPath(root, STORY_STATE_STATUS_FILE, "Story state status path");
   const document = await readLooseMarkdownIfExists(filePath);
   return {
     filePath,
@@ -5044,7 +5130,7 @@ async function buildStoryStateTimeline(
   let snapshot = createEmptyStoryStateSnapshot();
 
   for (const chapter of chapters) {
-    const resumePath = path.join(root, "resumes", "chapters", `${chapter.slug}.md`);
+    const resumePath = await assertContainedPath(root, path.join("resumes", "chapters", `${chapter.slug}.md`), "Chapter resume path");
     const resume = await readLooseMarkdownIfExists(resumePath);
     const stateChanges = normalizeStoryStateChanges(resume?.frontmatter.state_changes);
     snapshot = applyStoryStateChanges(snapshot, stateChanges);
@@ -5054,7 +5140,7 @@ async function buildStoryStateTimeline(
       chapterNumber: chapter.metadata.number,
       chapterTitle: chapter.metadata.title,
       resumePath,
-      chapterPath: path.join(root, "chapters", chapter.slug, "chapter.md"),
+      chapterPath: await assertContainedPath(root, path.join("chapters", chapter.slug, "chapter.md"), "Chapter file path"),
       snapshot,
       stateChanges,
     });
@@ -5078,7 +5164,7 @@ async function buildStoryStateDocuments(
   const { entries, current, chapterCount } = await buildStoryStateTimeline(root);
   const chapterFiles: Array<{ filePath: string; content: string }> = [];
   for (const [index, entry] of entries.entries()) {
-    const filePath = path.join(root, "state", "chapters", `${entry.chapterSlug}.md`);
+    const filePath = await assertContainedPath(root, path.join("state", "chapters", `${entry.chapterSlug}.md`), "Story state chapter path");
 
     chapterFiles.push({
       filePath,
@@ -5103,7 +5189,7 @@ async function buildStoryStateDocuments(
   }
 
   return {
-    currentFilePath: path.join(root, STORY_STATE_CURRENT_FILE),
+    currentFilePath: await assertContainedPath(root, STORY_STATE_CURRENT_FILE, "Current story state path"),
     currentContent: buildCurrentStoryStateMarkdown(current, {
       throughChapter: entries.at(-1) ? `chapter:${entries.at(-1)?.chapterSlug}` : undefined,
       chapterCount,
@@ -5206,7 +5292,7 @@ export async function syncParagraphEvaluation(
   const chapterSlug = normalizeChapterReference(chapter);
   const draft = await buildChapterEvaluationDraft(root, chapterSlug);
   const paragraphInsight = findParagraphInsight(draft.paragraphInsights, paragraph);
-  const filePath = path.join(root, "evaluations", "paragraphs", chapterSlug, `${paragraphInsight.slug}.md`);
+  const filePath = await assertContainedPath(root, path.join("evaluations", "paragraphs", chapterSlug, `${paragraphInsight.slug}.md`), "Paragraph evaluation path");
   const content = renderParagraphEvaluationContent(root, draft, paragraphInsight);
 
   await mkdir(path.dirname(filePath), { recursive: true });
@@ -5344,7 +5430,7 @@ export async function writeParagraphEvaluationFromLlm(
     .filter(Boolean)
     .map((line) => (line.startsWith("-") ? line : `- ${line}`));
 
-  const filePath = path.join(root, "evaluations", "paragraphs", chapterSlug, `${enrichedInsight.slug}.md`);
+  const filePath = await assertContainedPath(root, path.join("evaluations", "paragraphs", chapterSlug, `${enrichedInsight.slug}.md`), "Paragraph evaluation path");
   const content = renderParagraphEvaluationContent(root, draft, enrichedInsight, { verdictExplanationLines });
 
   await mkdir(path.dirname(filePath), { recursive: true });
@@ -5358,7 +5444,7 @@ export async function syncChapterEvaluation(
 ): Promise<{ filePath: string; content: string }> {
   const root = path.resolve(rootPath);
   const chapterSlug = normalizeChapterReference(chapter);
-  const filePath = path.join(root, "evaluations", "chapters", `${chapterSlug}.md`);
+  const filePath = await assertContainedPath(root, path.join("evaluations", "chapters", `${chapterSlug}.md`), "Chapter evaluation path");
   const draft = await buildChapterEvaluationDraft(root, chapterSlug);
   const content = renderChapterEvaluationContent(root, draft);
 
@@ -5366,13 +5452,12 @@ export async function syncChapterEvaluation(
   await writeFile(filePath, content, "utf8");
 
   for (const paragraphInsight of draft.paragraphInsights) {
-    const paragraphFilePath = path.join(
-      root,
+    const paragraphFilePath = await assertContainedPath(root, path.join(
       "evaluations",
       "paragraphs",
       chapterSlug,
       `${paragraphInsight.slug}.md`,
-    );
+    ), "Paragraph evaluation path");
     const paragraphContent = renderParagraphEvaluationContent(root, draft, paragraphInsight);
     await mkdir(path.dirname(paragraphFilePath), { recursive: true });
     await writeFile(paragraphFilePath, paragraphContent, "utf8");
@@ -5455,9 +5540,9 @@ export async function evaluateBook(
       const result = await syncChapterEvaluation(root, chapter.slug);
       chapterEvaluationFiles.push(result.filePath);
       paragraphEvaluationFiles.push(
-        ...draft.paragraphInsights.map((paragraphInsight) =>
-          path.join(root, "evaluations", "paragraphs", chapter.slug, `${paragraphInsight.slug}.md`),
-        ),
+        ...await Promise.all(draft.paragraphInsights.map((paragraphInsight) =>
+          assertContainedPath(root, path.join("evaluations", "paragraphs", chapter.slug, `${paragraphInsight.slug}.md`), "Paragraph evaluation path"),
+        )),
       );
     }
   }
@@ -5467,7 +5552,7 @@ export async function evaluateBook(
   const missingPov = chapterBreakdowns.filter((chapter) => !chapter.hasPov);
   const missingParagraphSummaries = chapterBreakdowns.filter((chapter) => chapter.missingParagraphSummaries > 0);
   const missingParagraphViewpoints = chapterBreakdowns.filter((chapter) => chapter.missingParagraphViewpoints > 0);
-  const filePath = path.join(root, TOTAL_EVALUATION_FILE);
+  const filePath = await assertContainedPath(root, TOTAL_EVALUATION_FILE, "Total evaluation path");
   const averageReadability = averageScore(chapterBreakdowns.map((chapter) => chapter.readabilityScore));
   const averageBeauty = averageScore(chapterBreakdowns.map((chapter) => chapter.beautyScore));
   const averageStyleAlignment = averageScore(chapterBreakdowns.map((chapter) => chapter.styleAlignmentScore));
@@ -5767,6 +5852,7 @@ async function resolveEvaluationStyleContext(
 }
 
 async function listGuidelines(root: string): Promise<GuidelineDocument[]> {
+  await assertContainedPath(root, "guidelines", "Guidelines directory");
   const files = await fg("guidelines/**/*.md", {
     cwd: root,
     absolute: true,
@@ -5776,6 +5862,7 @@ async function listGuidelines(root: string): Promise<GuidelineDocument[]> {
 
   const results: GuidelineDocument[] = [];
   for (const filePath of files) {
+    await assertContainedPath(root, path.relative(root, filePath), "Guideline file path");
     const document = await readMarkdownFile(filePath, guidelineSchema);
     results.push({
       ...document,
@@ -7179,6 +7266,7 @@ export async function validateBook(rootPath: string): Promise<{
   }
 
   for (const filePath of files) {
+    await assertContainedPath(root, path.relative(root, filePath), "Validated repository file path");
     try {
       await validateFile(root, filePath);
     } catch (error) {
@@ -7190,6 +7278,7 @@ export async function validateBook(rootPath: string): Promise<{
   }
 
   for (const filePath of files) {
+    await assertContainedPath(root, path.relative(root, filePath), "Doctor repository file path");
     const relativePath = toPosixPath(path.relative(root, filePath));
     if (relativePath.startsWith(`${GHOSTWRITERS_DIRECTORY}/`)) continue;
     const raw = await readFile(filePath, "utf8").catch(() => null);
@@ -7259,6 +7348,7 @@ export async function doctorBook(rootPath: string): Promise<{
   const secretReferences = await buildEntityReferenceLookup(root, "secret");
 
   for (const filePath of contentFiles) {
+    await assertContainedPath(root, path.relative(root, filePath), "Doctor repository file path");
     const relativePath = toPosixPath(path.relative(root, filePath));
     const raw = await readFile(filePath, "utf8");
     const parsed = matter(raw);
@@ -7320,6 +7410,7 @@ export async function doctorBook(rootPath: string): Promise<{
   }
 
   for (const filePath of contentFiles) {
+    await assertContainedPath(root, path.relative(root, filePath), "Doctor repository file path");
     const relativePath = toPosixPath(path.relative(root, filePath));
     if (!relativePath.startsWith(`${AUDIT_DIRECTORY}/`)) continue;
 
@@ -7410,7 +7501,7 @@ export async function doctorBook(rootPath: string): Promise<{
     }
   }
 
-  const currentScriptLedger = await readLooseMarkdownIfExists(path.join(root, SCRIPT_LEDGER_FILE));
+  const currentScriptLedger = await readLooseMarkdownIfExists(path.join(root, SCRIPT_LEDGER_FILE), root, "Script ledger path");
   const expectedScriptLedger = await buildScriptLedgerDocument(root, {
     generatedAt: normalizeOptionalDateishString(currentScriptLedger?.frontmatter.generated_at) ?? new Date(0).toISOString(),
   }).catch(() => null);
@@ -7423,7 +7514,7 @@ export async function doctorBook(rootPath: string): Promise<{
     });
   } else if (
     expectedScriptLedger &&
-    normalizeComparableMarkdown(await readFile(path.join(root, SCRIPT_LEDGER_FILE), "utf8")) !== normalizeComparableMarkdown(expectedScriptLedger.content)
+    normalizeComparableMarkdown(await readFile(await assertContainedPath(root, SCRIPT_LEDGER_FILE, "Script ledger path"), "utf8")) !== normalizeComparableMarkdown(expectedScriptLedger.content)
   ) {
     addDoctorIssue(issues, seen, {
       severity: "warning",
@@ -7450,10 +7541,21 @@ export async function doctorBook(rootPath: string): Promise<{
   });
 
   for (const filePath of assetFiles) {
+    await assertContainedPath(root, path.relative(root, filePath), "Asset metadata path");
     const relativePath = toPosixPath(path.relative(root, filePath));
     const document = await readMarkdownFile(filePath, assetSchema);
-    const imagePath = path.join(root, document.frontmatter.path);
-    const imageExists = await pathExists(imagePath);
+    let imagePath: string | null = null;
+    try {
+      imagePath = await assertContainedPath(root, document.frontmatter.path, "Asset image path");
+    } catch (error) {
+      addDoctorIssue(issues, seen, {
+        severity: "error",
+        code: "asset-path-outside-root",
+        path: relativePath,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const imageExists = imagePath ? await pathExists(imagePath) : false;
 
     if (!imageExists) {
       addDoctorIssue(issues, seen, {
@@ -7485,7 +7587,7 @@ export async function doctorBook(rootPath: string): Promise<{
     });
   } else if (
     expectedPlot &&
-    normalizeComparableMarkdown(await readFile(path.join(root, PLOT_FILE), "utf8")) !== normalizeComparableMarkdown(expectedPlot.content)
+    normalizeComparableMarkdown(await readFile(await assertContainedPath(root, PLOT_FILE, "Plot file path"), "utf8")) !== normalizeComparableMarkdown(expectedPlot.content)
   ) {
     addDoctorIssue(issues, seen, {
       severity: "warning",
@@ -7496,7 +7598,7 @@ export async function doctorBook(rootPath: string): Promise<{
   }
 
   const expectedTotalResume = await buildTotalResumeDocument(root).catch(() => null);
-  const currentTotalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE));
+  const currentTotalResume = await readLooseMarkdownIfExists(path.join(root, TOTAL_RESUME_FILE), root, "Total resume path");
   if (!currentTotalResume) {
     addDoctorIssue(issues, seen, {
       severity: "warning",
@@ -7506,7 +7608,7 @@ export async function doctorBook(rootPath: string): Promise<{
     });
   } else if (
     expectedTotalResume &&
-    normalizeComparableMarkdown(await readFile(path.join(root, TOTAL_RESUME_FILE), "utf8")) !== normalizeComparableMarkdown(expectedTotalResume.content)
+    normalizeComparableMarkdown(await readFile(await assertContainedPath(root, TOTAL_RESUME_FILE, "Total resume path"), "utf8")) !== normalizeComparableMarkdown(expectedTotalResume.content)
   ) {
     addDoctorIssue(issues, seen, {
       severity: "warning",
@@ -7519,7 +7621,7 @@ export async function doctorBook(rootPath: string): Promise<{
   for (const chapter of chapters) {
     const relativePath = toPosixPath(path.join("resumes", "chapters", `${chapter.slug}.md`));
     const expectedChapterResume = await buildChapterResumeDocument(root, chapter.slug).catch(() => null);
-    const currentChapterResume = await readLooseMarkdownIfExists(path.join(root, relativePath));
+    const currentChapterResume = await readLooseMarkdownIfExists(path.join(root, relativePath), root, "Chapter resume path");
 
     if (!currentChapterResume) {
       addDoctorIssue(issues, seen, {
@@ -7533,7 +7635,7 @@ export async function doctorBook(rootPath: string): Promise<{
 
     if (
       expectedChapterResume &&
-      normalizeComparableMarkdown(await readFile(path.join(root, relativePath), "utf8")) !== normalizeComparableMarkdown(expectedChapterResume.content)
+      normalizeComparableMarkdown(await readFile(await assertContainedPath(root, relativePath, "Chapter resume path"), "utf8")) !== normalizeComparableMarkdown(expectedChapterResume.content)
     ) {
       addDoctorIssue(issues, seen, {
         severity: "warning",
@@ -7544,8 +7646,8 @@ export async function doctorBook(rootPath: string): Promise<{
     }
   }
 
-  const currentStoryState = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_CURRENT_FILE));
-  const storyStateStatusDocument = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_STATUS_FILE));
+  const currentStoryState = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_CURRENT_FILE), root, "Current story state path");
+  const storyStateStatusDocument = await readLooseMarkdownIfExists(path.join(root, STORY_STATE_STATUS_FILE), root, "Story state status path");
   const storyStateStatus = await readStoryStateStatus(root);
 
   if (!storyStateStatusDocument) {
@@ -7592,7 +7694,7 @@ export async function doctorBook(rootPath: string): Promise<{
 
     for (const chapterSnapshot of expectedStoryState?.chapterFiles ?? []) {
       const relativePath = toPosixPath(path.relative(root, chapterSnapshot.filePath));
-      const currentChapterState = await readLooseMarkdownIfExists(chapterSnapshot.filePath);
+       const currentChapterState = await readLooseMarkdownIfExists(chapterSnapshot.filePath, root, "Story state chapter path");
 
       if (!currentChapterState) {
         addDoctorIssue(issues, seen, {
@@ -7605,7 +7707,7 @@ export async function doctorBook(rootPath: string): Promise<{
       }
 
       if (
-        normalizeComparableMarkdown(await readFile(chapterSnapshot.filePath, "utf8")) !==
+        normalizeComparableMarkdown(await readFile(await assertContainedPath(root, path.relative(root, chapterSnapshot.filePath), "Story state chapter path"), "utf8")) !==
         normalizeComparableMarkdown(chapterSnapshot.content)
       ) {
         addDoctorIssue(issues, seen, {
@@ -7693,14 +7795,14 @@ export async function exportEpub(
           const paragraphSummary = typeof paragraph.metadata.summary === "string" && paragraph.metadata.summary.trim()
             ? `<p><em>${escapeHtml(paragraph.metadata.summary)}</em></p>`
             : "";
-          return `<section id="scene-${index + 1}"><h2>${escapeHtml(paragraph.metadata.title)}</h2>${paragraphSummary}${marked.parse(paragraph.body)}${paragraphImageHtml}</section>`;
+          return `<section id="scene-${index + 1}"><h2>${escapeHtml(paragraph.metadata.title)}</h2>${paragraphSummary}${renderEpubMarkdownHtml(paragraph.body)}${paragraphImageHtml}</section>`;
         }),
       )
     ).join("\n");
     const chapterSummary = typeof chapterData.metadata.summary === "string" && chapterData.metadata.summary.trim()
       ? `<p><em>${escapeHtml(chapterData.metadata.summary)}</em></p>`
       : "";
-    const chapterHtml = `<article><h1>${escapeHtml(chapterData.metadata.title)}</h1>${chapterSummary}${marked.parse(chapterData.body)}${chapterImageHtml}${sceneIndexHtml}${paragraphsHtml}</article>`;
+    const chapterHtml = `<article><h1>${escapeHtml(chapterData.metadata.title)}</h1>${chapterSummary}${renderEpubMarkdownHtml(chapterData.body)}${chapterImageHtml}${sceneIndexHtml}${paragraphsHtml}</article>`;
     content.push({ title: chapterData.metadata.title, content: chapterHtml });
   }
 
@@ -8082,7 +8184,7 @@ function applyArrayRecordChanges(
 
 async function markStoryStateDirty(
   rootPath: string,
-  options: { changedPaths: string[]; reason: string },
+  options: { changedPaths: string[]; reason: StoryMutationReason },
 ): Promise<void> {
   const root = path.resolve(rootPath);
   const current = await readStoryStateStatus(root);
@@ -8096,6 +8198,13 @@ async function markStoryStateDirty(
 
   await mkdir(path.dirname(current.filePath), { recursive: true });
   await writeFile(current.filePath, buildStoryStateStatusMarkdown(nextStatus), "utf8");
+}
+
+function storyMutationReason(
+  kind: "entity" | "chapter" | "paragraph",
+  operation: "created" | "updated" | "renamed",
+): StoryMutationReason {
+  return `${kind}-${operation}` as StoryMutationReason;
 }
 
 async function buildQueryCanonTargets(
@@ -9236,7 +9345,7 @@ async function findFirstCanonMention(
       }
     }
 
-    const resume = await readLooseMarkdownIfExists(chapter.resumePath);
+    const resume = await readLooseMarkdownIfExists(chapter.resumePath, root, "Chapter resume path");
     if (resume && documentMatchesQueryCanonTerms(JSON.stringify(resume.frontmatter), resume.body, terms)) {
       return {
         chapterNumber: chapter.chapterNumber,
@@ -10237,8 +10346,11 @@ export async function writeWikipediaResearchSnapshot(
   },
 ): Promise<string> {
   const root = path.resolve(rootPath);
-  const slug = options.slug ?? slugify(options.title);
-  const filePath = path.join(root, "research", "wikipedia", `${slug}.md`);
+  const slug = options.slug
+    ? assertSafePathSegment(options.slug, "Research snapshot slug")
+    : slugify(options.title);
+  if (!slug) throw new Error("Research snapshot title must produce a non-empty slug.");
+  const filePath = await assertContainedPath(root, path.join("research", "wikipedia", `${slug}.md`), "Research snapshot path");
   const secondaryLangLabel = options.secondaryLang ? options.secondaryLang.toUpperCase() : "IT";
   const language = options.secondarySummary ? `en+${(options.secondaryLang ?? "it").toLowerCase()}` : "en";
 
@@ -10314,7 +10426,7 @@ export async function findWikipediaResearchSnapshot(
   // Primary: flat research/wikipedia/{slug}.md
   if (await pathExists(researchRoot)) {
     for (const candidateSlug of candidateSlugs) {
-      const candidatePath = path.join(researchRoot, `${candidateSlug}.md`);
+      const candidatePath = await assertContainedPath(root, path.join("research", "wikipedia", `${candidateSlug}.md`), "Research snapshot path");
       if (await pathExists(candidatePath)) {
         const document = await readMarkdownFile(candidatePath, researchNoteSchema);
         return {
@@ -10329,11 +10441,12 @@ export async function findWikipediaResearchSnapshot(
       }
     }
 
-    const files = await fg("*.md", { cwd: researchRoot, absolute: true, onlyFiles: true });
+  const files = await fg("*.md", { cwd: researchRoot, absolute: true, onlyFiles: true });
     const normalizedTitle = options.title.trim().toLowerCase();
 
-    for (const filePath of files) {
-      const document = await readMarkdownFile(filePath, researchNoteSchema).catch(() => null);
+  for (const filePath of files) {
+    await assertContainedPath(root, path.relative(root, filePath), "Research snapshot path");
+    const document = await readMarkdownFile(filePath, researchNoteSchema).catch(() => null);
       if (!document) continue;
 
       if (document.frontmatter.title.trim().toLowerCase() === normalizedTitle) {
@@ -10359,7 +10472,7 @@ async function ensureFile(
   content: string,
   created: string[],
 ): Promise<void> {
-  const filePath = path.join(root, relativePath);
+  const filePath = await assertContainedPath(root, relativePath, "Scaffold file path");
   if (await pathExists(filePath)) return;
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, content, "utf8");
@@ -10379,7 +10492,15 @@ async function readMarkdownFile<T>(
   };
 }
 
-async function readLooseMarkdownIfExists(filePath: string): Promise<MarkdownDocument<Record<string, unknown>> | null> {
+async function readLooseMarkdownIfExists(
+  filePath: string,
+  root?: string,
+  label = "Markdown file path",
+): Promise<MarkdownDocument<Record<string, unknown>> | null> {
+  if (root) {
+    await assertContainedPath(root, path.relative(root, filePath), label);
+  }
+
   if (!(await pathExists(filePath))) {
     return null;
   }
@@ -10437,7 +10558,8 @@ async function validateFile(root: string, filePath: string): Promise<void> {
   }
 
   if (relativePath.startsWith("assets/")) {
-    assetSchema.parse(data);
+    const asset = assetSchema.parse(data);
+    await assertContainedPath(root, asset.path, "Asset image path");
     return;
   }
 
@@ -10447,16 +10569,19 @@ async function validateFile(root: string, filePath: string): Promise<void> {
 
   if (relativePath.startsWith("chapters/") && path.basename(filePath) === "chapter.md") {
     chapterSchema.parse(data);
+    assertChapterIdentityMatchesPath(relativePath, data);
     return;
   }
 
   if (relativePath.startsWith("chapters/")) {
     paragraphSchema.parse(data);
+    assertParagraphIdentityMatchesPath(relativePath, data);
     return;
   }
 
   if (relativePath.startsWith("drafts/") && path.basename(filePath) === "chapter.md") {
     chapterDraftSchema.parse(data);
+    assertChapterDraftIdentityMatchesPath(relativePath, data);
     return;
   }
 
@@ -10467,6 +10592,7 @@ async function validateFile(root: string, filePath: string): Promise<void> {
 
   if (relativePath.startsWith("drafts/")) {
     paragraphDraftSchema.parse(data);
+    assertParagraphDraftIdentityMatchesPath(relativePath, data);
     return;
   }
 
@@ -10482,6 +10608,11 @@ async function validateFile(root: string, filePath: string): Promise<void> {
   if (entityEntry) {
     const [type] = entityEntry;
     entitySchemaMap[type as EntityType].parse(data);
+    const fileSlug = path.basename(filePath, ".md");
+    const expectedId = `${type}:${fileSlug}`;
+    if (data.id !== expectedId) {
+      throw new Error(`Entity id does not match its filename; run an entity migration for ${relativePath}. Expected ${expectedId}.`);
+    }
     return;
   }
 
@@ -10522,6 +10653,11 @@ function prepareAssetTarget(root: string, subject: string, assetKindInput?: stri
   };
 }
 
+async function assertPreparedAssetTarget(root: string, prepared: ReturnType<typeof prepareAssetTarget>): Promise<void> {
+  await assertContainedPath(root, path.relative(root, prepared.markdownFilePath), "Asset metadata path");
+  await assertContainedPath(root, path.relative(root, prepared.imageFilePath), "Asset image path");
+}
+
 function parseAssetSubject(subject: string): ParsedAssetSubject {
   const normalized = subject.trim();
 
@@ -10542,12 +10678,14 @@ function parseAssetSubject(subject: string): ParsedAssetSubject {
     if (!chapterPart || !paragraphPart) {
       throw new Error(`Invalid paragraph subject: ${subject}`);
     }
+    const safeChapter = assertSafePathSegment(chapterPart, "Asset chapter slug");
+    const safeParagraph = assertSafePathSegment(paragraphPart, "Asset paragraph slug");
 
     return {
       type: "paragraph",
-      subject: `paragraph:${chapterPart}:${paragraphPart}`,
-      chapterSlug: chapterPart,
-      paragraphSlug: paragraphPart,
+      subject: `paragraph:${safeChapter}:${safeParagraph}`,
+      chapterSlug: safeChapter,
+      paragraphSlug: safeParagraph,
     };
   }
 
@@ -10555,11 +10693,12 @@ function parseAssetSubject(subject: string): ParsedAssetSubject {
   if (!entityKind) {
     throw new Error(`Unsupported asset subject: ${subject}`);
   }
+  const slug = assertSafePathSegment(normalized.slice(`${entityKind}:`.length), `${entityKind} asset slug`);
 
   return {
     type: entityKind,
     subject: normalized,
-    slug: normalized.slice(`${entityKind}:`.length),
+    slug,
   };
 }
 
@@ -10608,7 +10747,7 @@ function normalizeAssetKind(value: string): string {
 
 function normalizeAssetExtension(value: string): string {
   const normalized = value.replace(/^\./, "").trim().toLowerCase();
-  if (!normalized) {
+  if (!normalized || !/^[a-z0-9]+$/.test(normalized)) {
     throw new Error("Asset extension cannot be empty.");
   }
   return normalized;
@@ -10629,6 +10768,8 @@ function getEntityLabelKey(kind: EntityType): "name" | "title" {
 async function moveAssetDirectoryIfPresent(root: string, oldSubject: string, newSubject: string): Promise<string[]> {
   const oldDirectory = resolveAssetDirectory(root, parseAssetSubject(oldSubject));
   const newDirectory = resolveAssetDirectory(root, parseAssetSubject(newSubject));
+  await assertContainedPath(root, path.relative(root, oldDirectory), "Asset source directory");
+  await assertContainedPath(root, path.relative(root, newDirectory), "Asset destination directory");
 
   if (oldDirectory === newDirectory || !(await pathExists(oldDirectory))) {
     return [];
@@ -10661,6 +10802,7 @@ async function replaceReferencesInMarkdownFiles(root: string, replacements: Arra
   let updatedCount = 0;
 
   for (const filePath of files) {
+    await assertContainedPath(root, path.relative(root, filePath), "Markdown file path");
     const original = await readFile(filePath, "utf8");
     let next = original;
 
@@ -10677,35 +10819,37 @@ async function replaceReferencesInMarkdownFiles(root: string, replacements: Arra
 }
 
 function resolveEntityFilePath(root: string, kind: EntityType, slugOrId: string): string {
-  const slug = slugOrId.includes(":") ? slugOrId.slice(slugOrId.indexOf(":") + 1) : slugOrId;
-  return path.join(root, ENTITY_TYPE_TO_DIRECTORY[kind], `${slug}.md`);
+  const rawSlug = slugOrId.includes(":") ? slugOrId.slice(slugOrId.indexOf(":") + 1) : slugOrId;
+  const slug = assertSafePathSegment(rawSlug, `${kind} slug`);
+  return resolveContainedPath(root, path.join(ENTITY_TYPE_TO_DIRECTORY[kind], `${slug}.md`), `${kind} file path`);
 }
 
 function resolveChapterMetadataFilePath(root: string, chapter: string): string {
   const chapterSlug = normalizeChapterReference(chapter);
-  return path.join(root, "chapters", chapterSlug, "chapter.md");
+  return resolveContainedPath(root, path.join("chapters", chapterSlug, "chapter.md"), "Chapter file path");
 }
 
 function resolveChapterDraftMetadataFilePath(root: string, chapter: string): string {
   const chapterSlug = normalizeChapterReference(chapter);
-  return path.join(root, "drafts", chapterSlug, "chapter.md");
+  return resolveContainedPath(root, path.join("drafts", chapterSlug, "chapter.md"), "Chapter draft path");
 }
 
 async function resolveParagraphFilePath(root: string, chapter: string, paragraph: string): Promise<string> {
   const chapterSlug = normalizeChapterReference(chapter);
-  const chapterFolder = path.join(root, "chapters", chapterSlug);
+  const chapterFolder = resolveContainedPath(root, path.join("chapters", chapterSlug), "Chapter directory");
   const normalized = paragraph
     .replace(/^paragraph:[^:]+:/, "")
     .replace(/\.md$/i, "")
     .trim();
+  const paragraphSlug = assertSafePathSegment(normalized, "Paragraph slug");
 
-  const directPath = path.join(chapterFolder, `${normalized}.md`);
+  const directPath = resolveContainedPath(root, path.join("chapters", chapterSlug, `${paragraphSlug}.md`), "Paragraph file path");
   if (await pathExists(directPath)) {
     return directPath;
   }
 
   const files = await fg("*.md", { cwd: chapterFolder, absolute: true, onlyFiles: true });
-  const filePath = files.find((candidate) => path.basename(candidate, ".md") === normalized);
+  const filePath = files.find((candidate) => path.basename(candidate, ".md") === paragraphSlug);
   if (filePath) {
     return filePath;
   }
@@ -10715,20 +10859,21 @@ async function resolveParagraphFilePath(root: string, chapter: string, paragraph
 
 async function resolveParagraphDraftFilePath(root: string, chapter: string, paragraph: string): Promise<string> {
   const chapterSlug = normalizeChapterReference(chapter);
-  const chapterFolder = path.join(root, "drafts", chapterSlug);
+  const chapterFolder = resolveContainedPath(root, path.join("drafts", chapterSlug), "Chapter draft directory");
   const normalized = paragraph
     .replace(/^paragraph:[^:]+:/, "")
     .replace(/^draft:paragraph:[^:]+:/, "")
     .replace(/\.md$/i, "")
     .trim();
+  const paragraphSlug = assertSafePathSegment(normalized, "Paragraph draft slug");
 
-  const directPath = path.join(chapterFolder, `${normalized}.md`);
+  const directPath = resolveContainedPath(root, path.join("drafts", chapterSlug, `${paragraphSlug}.md`), "Paragraph draft path");
   if (await pathExists(directPath)) {
     return directPath;
   }
 
   const files = await fg("*.md", { cwd: chapterFolder, absolute: true, onlyFiles: true });
-  const filePath = files.find((candidate) => path.basename(candidate, ".md") === normalized);
+  const filePath = files.find((candidate) => path.basename(candidate, ".md") === paragraphSlug);
   if (filePath) {
     return filePath;
   }
@@ -10747,6 +10892,54 @@ function assertNoForbiddenPatchKeys(
       throw new Error(`Cannot patch protected frontmatter key: ${key}`);
     }
   }
+}
+
+function assertNoForbiddenCreationKeys(
+  frontmatter: Record<string, unknown> | undefined,
+  forbiddenKeys: string[],
+): void {
+  assertNoForbiddenPatchKeys(frontmatter, forbiddenKeys);
+}
+
+function assertChapterIdentityMatchesPath(relativePath: string, data: Record<string, unknown>): void {
+  const chapterSlug = relativePath.split("/")[1];
+  const expectedId = chapterSlug ? `chapter:${chapterSlug}` : undefined;
+  const expectedNumber = chapterSlug ? pathNumberFromSlug(chapterSlug) : undefined;
+  if (chapterSlug && (data.id !== expectedId || data.number !== expectedNumber)) {
+    throw new Error(`Chapter frontmatter identity does not match its path; run a chapter migration for ${relativePath}.`);
+  }
+}
+
+function assertChapterDraftIdentityMatchesPath(relativePath: string, data: Record<string, unknown>): void {
+  const chapterSlug = relativePath.split("/")[1];
+  const expectedId = chapterSlug ? `draft:chapter:${chapterSlug}` : undefined;
+  const expectedNumber = chapterSlug ? pathNumberFromSlug(chapterSlug) : undefined;
+  if (chapterSlug && (data.id !== expectedId || data.chapter !== `chapter:${chapterSlug}` || data.number !== expectedNumber)) {
+    throw new Error(`Chapter draft frontmatter identity does not match its path; run a chapter draft migration for ${relativePath}.`);
+  }
+}
+
+function assertParagraphIdentityMatchesPath(relativePath: string, data: Record<string, unknown>): void {
+  const [, chapterSlug, paragraphFile] = relativePath.split("/");
+  const paragraphSlug = paragraphFile?.replace(/\.md$/i, "");
+  const expectedNumber = paragraphSlug ? pathNumberFromSlug(paragraphSlug) : undefined;
+  if (chapterSlug && paragraphSlug && (data.id !== `paragraph:${chapterSlug}:${paragraphSlug}` || data.chapter !== `chapter:${chapterSlug}` || data.number !== expectedNumber)) {
+    throw new Error(`Paragraph frontmatter identity does not match its path; run a paragraph migration for ${relativePath}.`);
+  }
+}
+
+function assertParagraphDraftIdentityMatchesPath(relativePath: string, data: Record<string, unknown>): void {
+  const [, chapterSlug, paragraphFile] = relativePath.split("/");
+  const paragraphSlug = paragraphFile?.replace(/\.md$/i, "");
+  const expectedNumber = paragraphSlug ? pathNumberFromSlug(paragraphSlug) : undefined;
+  if (chapterSlug && paragraphSlug && (data.id !== `draft:paragraph:${chapterSlug}:${paragraphSlug}` || data.paragraph !== `paragraph:${chapterSlug}:${paragraphSlug}` || data.chapter !== `chapter:${chapterSlug}` || data.number !== expectedNumber)) {
+    throw new Error(`Paragraph draft frontmatter identity does not match its path; run a paragraph draft migration for ${relativePath}.`);
+  }
+}
+
+function pathNumberFromSlug(slug: string): number | undefined {
+  const match = /^(\d+)-/.exec(slug);
+  return match ? Number(match[1]) : undefined;
 }
 
 function buildCharacterBody(input: CreateCharacterProfileInput): string {
@@ -12535,7 +12728,7 @@ async function ensureChapterDraftWorkspaceFiles(root: string, chapterSlugValue: 
 
 async function ensureChapterDraftWorkspaceFile(root: string, chapterSlugValue: string, bucket: WorkItemBucket): Promise<string> {
   const relativePath = chapterDraftWorkspaceRelativePath(chapterSlugValue, bucket);
-  const absolutePath = path.join(root, relativePath);
+  const absolutePath = await assertContainedPath(root, relativePath, "Chapter draft workspace path");
 
   await mkdir(path.dirname(absolutePath), { recursive: true });
   if (!(await pathExists(absolutePath))) {
@@ -12576,7 +12769,7 @@ async function updateNoteDocument(
     frontmatterPatch?: Record<string, unknown>;
   },
 ): Promise<{ filePath: string; frontmatter: NoteFrontmatter }> {
-  const filePath = path.join(root, options.relativePath);
+  const filePath = await assertContainedPath(root, options.relativePath, "Note file path");
   await mkdir(path.dirname(filePath), { recursive: true });
 
   const existingRaw = await readFile(filePath, "utf8").catch(() => null);
@@ -12612,7 +12805,7 @@ async function upsertWorkItemInNoteDocument(
     status?: WorkItemEntryFrontmatter["status"];
   },
 ): Promise<{ filePath: string; frontmatter: NoteFrontmatter; entry: WorkItemEntryFrontmatter }> {
-  const filePath = path.join(root, options.relativePath);
+  const filePath = await assertContainedPath(root, options.relativePath, "Work item file path");
   await mkdir(path.dirname(filePath), { recursive: true });
 
   const existingRaw = await readFile(filePath, "utf8").catch(() => null);
@@ -12666,7 +12859,6 @@ async function promoteWorkItem(
     chapterSlugValue?: string;
   },
 ): Promise<{ sourceFilePath: string; promotedFilePath: string; promotedEntry: WorkItemEntryFrontmatter; targetFilePath?: string }> {
-  const sourceFilePath = path.join(root, options.sourceRelativePath);
   const source = await readOrCreateNoteDocument(root, {
     relativePath: options.sourceRelativePath,
     baseFrontmatter: options.sourceBaseFrontmatter,
@@ -12684,7 +12876,7 @@ async function promoteWorkItem(
     ...source.frontmatter,
     entries: sourceEntries,
   });
-  await writeFile(sourceFilePath, renderMarkdown(sourceFrontmatter, source.body), "utf8");
+  await writeFile(source.filePath, renderMarkdown(sourceFrontmatter, source.body), "utf8");
 
   let targetFilePath: string | undefined;
   if (options.target === "notes") {
@@ -12745,7 +12937,7 @@ async function promoteWorkItem(
     ...promoted.frontmatter,
     entries: promoted.frontmatter.entries.map((entryItem) => (entryItem.id === promotedEntry.id ? promotedEntry : entryItem)),
   });
-  const promotedFilePath = path.join(root, options.promotedRelativePath);
+  const promotedFilePath = promoted.filePath;
   await writeFile(promotedFilePath, renderMarkdown(promotedFrontmatter, (await readOrCreateNoteDocument(root, {
     relativePath: options.promotedRelativePath,
     baseFrontmatter: options.promotedBaseFrontmatter,
@@ -12753,7 +12945,7 @@ async function promoteWorkItem(
   })).body), "utf8");
 
   return {
-    sourceFilePath,
+    sourceFilePath: source.filePath,
     promotedFilePath,
     promotedEntry,
     targetFilePath,
@@ -12764,7 +12956,7 @@ async function readOrCreateNoteDocument(
   root: string,
   options: { relativePath: string; baseFrontmatter: Record<string, unknown>; defaultBody: string },
 ): Promise<{ filePath: string; frontmatter: NoteFrontmatter; body: string }> {
-  const filePath = path.join(root, options.relativePath);
+  const filePath = await assertContainedPath(root, options.relativePath, "Note file path");
   await mkdir(path.dirname(filePath), { recursive: true });
   const existingRaw = await readFile(filePath, "utf8").catch(() => null);
   const parsed = existingRaw ? matter(existingRaw) : { data: {}, content: options.defaultBody };
@@ -13182,8 +13374,9 @@ async function listLatestConversationExports(
 
   const ranked = await Promise.all(
     files.map(async (filePath) => {
+      await assertContainedPath(root, path.relative(root, filePath), "Conversation export path");
       const info = await stat(filePath);
-      const document = await readLooseMarkdownIfExists(filePath);
+      const document = await readLooseMarkdownIfExists(filePath, root, "Conversation export path");
       return {
         filePath,
         mtimeMs: info.mtimeMs,
@@ -13543,14 +13736,16 @@ export async function createPersona(
   rootPath: string,
   input: CreatePersonaInput,
 ): Promise<{ filePath: string; frontmatter: PersonaFrontmatter }> {
-  const slug = input.slug ?? slugify(input.name);
-  const filePath = path.join(rootPath, PERSONAS_DIRECTORY, `${slug}.md`);
+  const slug = input.slug ? assertSafePathSegment(input.slug, "Persona slug") : slugify(input.name);
+  if (!slug) throw new Error("Persona name must produce a non-empty slug.");
+  const root = path.resolve(rootPath);
+  const filePath = await assertContainedPath(root, path.join(PERSONAS_DIRECTORY, `${slug}.md`), "Persona file path");
 
   if (!input.overwrite && await pathExists(filePath)) {
     throw new Error(`Persona already exists at ${filePath}. Use overwrite: true to replace it.`);
   }
 
-  await mkdir(path.join(rootPath, PERSONAS_DIRECTORY), { recursive: true });
+  await mkdir(path.join(root, PERSONAS_DIRECTORY), { recursive: true });
 
   const frontmatter: Record<string, unknown> = {
     type: "persona",
@@ -13578,7 +13773,8 @@ export async function createPersona(
 }
 
 export async function loadPersonas(rootPath: string): Promise<Array<{ filePath: string; frontmatter: PersonaFrontmatter; body: string }>> {
-  const dir = path.join(rootPath, PERSONAS_DIRECTORY);
+  const root = path.resolve(rootPath);
+  const dir = await assertContainedPath(root, PERSONAS_DIRECTORY, "Personas directory");
   const exists = await pathExists(dir);
   if (!exists) return [];
 
@@ -13603,7 +13799,7 @@ export async function seedDefaultPersonas(rootPath: string, language?: string): 
   const created: string[] = [];
   for (const persona of DEFAULT_PERSONAS) {
     const slug = persona.slug ?? slugify(persona.name);
-    const filePath = path.join(rootPath, PERSONAS_DIRECTORY, `${slug}.md`);
+    const filePath = await assertContainedPath(rootPath, path.join(PERSONAS_DIRECTORY, `${slug}.md`), "Persona file path");
     if (await pathExists(filePath)) continue;
     const result = await createPersona(rootPath, { ...persona, language, overwrite: false });
     created.push(result.filePath);
@@ -13616,20 +13812,21 @@ export async function writePersonasReview(
   chapterSlug: string,
   input: PersonaReviewInput,
 ): Promise<{ filePath: string }> {
-  const filePath = path.join(rootPath, "evaluations", "chapters", chapterSlug, PERSONAS_REVIEW_FILENAME);
+  const normalizedChapterSlug = normalizeChapterReference(chapterSlug);
+  const filePath = await assertContainedPath(rootPath, path.join("evaluations", "chapters", normalizedChapterSlug, PERSONAS_REVIEW_FILENAME), "Personas review path");
   await mkdir(path.dirname(filePath), { recursive: true });
 
   const now = new Date().toISOString().slice(0, 10);
   const lines: string[] = [
     `---`,
     `type: personas-review`,
-    `id: "personas-review:${chapterSlug}"`,
-    `chapter: "${chapterSlug}"`,
+    `id: "personas-review:${normalizedChapterSlug}"`,
+    `chapter: "${normalizedChapterSlug}"`,
     `updated_at: "${now}"`,
     `persona_count: ${input.reviews.length}`,
     `---`,
     ``,
-    `# Personas Review — ${chapterSlug}`,
+    `# Personas Review — ${normalizedChapterSlug}`,
     ``,
     `*${input.reviews.length} reader persona${input.reviews.length === 1 ? "" : "s"} reviewed this chapter on ${now}.*`,
     ``,
@@ -14102,7 +14299,9 @@ type CanonicalSecretInfo = {
 
 /** Resolve the script file path for a given chapter + paragraph slug. */
 function scriptFilePath(rootPath: string, chapter: string, paragraphSlug: string): string {
-  return path.join(rootPath, SCRIPTS_DIRECTORY, chapter, `${paragraphSlug}.md`);
+  const safeChapter = assertSafePathSegment(chapter, "Script chapter slug");
+  const safeParagraph = assertSafePathSegment(paragraphSlug, "Script paragraph slug");
+  return resolveContainedPath(rootPath, path.join(SCRIPTS_DIRECTORY, safeChapter, `${safeParagraph}.md`), "Script file path");
 }
 
 /** Create a new script file in scripts/<chapter>/<paragraph>.md */
@@ -14154,7 +14353,7 @@ export async function updateScript(
 ): Promise<{ filePath: string }> {
   const root = path.resolve(rootPath);
   const chapter = normalizeChapterReference(input.chapter);
-  const paragraphSlug = input.paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim();
+  const paragraphSlug = assertSafePathSegment(input.paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim(), "Script paragraph slug");
   const filePath = scriptFilePath(root, chapter, paragraphSlug);
 
   if (!(await pathExists(filePath))) {
@@ -14188,7 +14387,7 @@ export async function readScript(
 ): Promise<ScriptFile> {
   const root = path.resolve(rootPath);
   const chapterSlugNorm = normalizeChapterReference(chapter);
-  const paragraphSlug = paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim();
+  const paragraphSlug = assertSafePathSegment(paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim(), "Script paragraph slug");
   const filePath = scriptFilePath(root, chapterSlugNorm, paragraphSlug);
 
   if (!(await pathExists(filePath))) {
@@ -14539,7 +14738,7 @@ export async function buildScriptLedger(
   });
   const sources = await Promise.all(sourcePaths.map(async (sourcePath) => ({
     path: toPosixPath(sourcePath),
-    content: await readFile(path.join(root, sourcePath), "utf8"),
+    content: await readFile(await assertContainedPath(root, sourcePath, "Script source path"), "utf8"),
   })));
   if (sourcePaths.length >= 0) return buildScriptLedgerDocumentFromFiles(sources, options).ledger;
 
@@ -14735,7 +14934,7 @@ export async function readScriptLedger(
   rootPath: string,
 ): Promise<{ filePath: string; content: string; ledger: ScriptLedger | null } | null> {
   const root = path.resolve(rootPath);
-  const filePath = path.join(root, SCRIPT_LEDGER_FILE);
+  const filePath = await assertContainedPath(root, SCRIPT_LEDGER_FILE, "Script ledger path");
   if (!(await pathExists(filePath))) return null;
   const content = await readFile(filePath, "utf8");
   const ledger = parseScriptLedgerJson(content);
@@ -14774,12 +14973,10 @@ export async function scriptToParagraphContext(
   const canonicalSecrets = await buildCanonicalSecretLookup(root);
 
   const chapterSlugNorm = normalizeChapterReference(chapter);
-  const paragraphSlug = paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim();
-  const paraPath = path.join(root, "chapters", chapterSlugNorm, `${paragraphSlug}.md`);
-  const paraRaw = await readFile(paraPath, "utf8").catch(() => null);
-  const existingParagraphBody = paraRaw ? String(matter(paraRaw).content ?? "").trim() : undefined;
+  const paragraphSlug = assertSafePathSegment(paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim(), "Paragraph slug");
   const paragraphFinal = await readParagraph(root, chapterSlugNorm, paragraphSlug).catch(() => null);
   const paragraphDraft = await readParagraphDraft(root, chapterSlugNorm, paragraphSlug).catch(() => null);
+  const existingParagraphBody = paragraphFinal?.body;
   const selectedGhostwriter = await resolveGhostwriter(root, {
     explicit: script.frontmatter.ghostwriter,
     paragraph: paragraphFinal?.metadata.ghostwriter,
@@ -14895,7 +15092,7 @@ async function buildScriptLedgerDocument(
 ): Promise<{ filePath: string; content: string; ledger: ScriptLedger }> {
   const root = path.resolve(rootPath);
   const ledger = await buildScriptLedger(root, { generatedAt: options.generatedAt });
-  const filePath = path.join(root, SCRIPT_LEDGER_FILE);
+  const filePath = await assertContainedPath(root, SCRIPT_LEDGER_FILE, "Script ledger path");
   const content = renderMarkdown(
     {
       type: "script-ledger",
@@ -15085,7 +15282,8 @@ async function readParagraphBodyIfExists(
   chapterSlugValue: string,
   paragraphSlug: string,
 ): Promise<{ path: string; body: string } | null> {
-  const filePath = path.join(root, "chapters", chapterSlugValue, `${paragraphSlug}.md`);
+  const safeParagraphSlug = assertSafePathSegment(paragraphSlug, "Paragraph slug");
+  const filePath = await assertContainedPath(root, path.join("chapters", chapterSlugValue, `${safeParagraphSlug}.md`), "Paragraph file path");
   if (!(await pathExists(filePath))) return null;
   const raw = await readFile(filePath, "utf8");
   const parsed = matter(raw);

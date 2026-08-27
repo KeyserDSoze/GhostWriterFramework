@@ -1,8 +1,8 @@
-import { marked } from "marked";
 import { loadAssetFigure } from "./assets.js";
 import { loadRelatedCanonLinks, loadStoryMentionLinks } from "./canon.js";
 import { isFullCanonMode } from "./reader-mode.js";
 import { formatChapterThreshold, getSpoilerAccess, loadChapterOrder } from "./spoilers.js";
+import { renderReaderMarkdown } from "./markdown.js";
 export async function buildPublicCanonIndexCards(kind, entities) {
     const chapterOrder = await loadChapterOrder();
     const fullMode = isFullCanonMode();
@@ -65,7 +65,7 @@ export async function buildCanonPageView(kind, entity) {
             description: teaserSummary(kind, entity.metadata, access),
             metaEntries: teaserMetaEntries(kind, entity.metadata, access),
             figure: access.revealedFrom === null ? await loadAssetFigure(entityId, title) : null,
-            html: entity.body ? await marked.parse(entity.body) : undefined,
+            html: access.isRevealed && entity.body ? renderReaderMarkdown(entity.body) : undefined,
             relatedLinks: [],
             storyLinks: [],
             notice: access.revealedFrom !== null
@@ -81,7 +81,7 @@ export async function buildCanonPageView(kind, entity) {
         description: fullSummary(kind, entity.metadata),
         metaEntries,
         figure: await loadAssetFigure(entityId, title),
-        html: entity.body ? await marked.parse(entity.body) : undefined,
+        html: entity.body ? renderReaderMarkdown(entity.body) : undefined,
         relatedLinks: await loadRelatedCanonLinks(entityId, [entity.metadata.refs, ...metaEntries.map(([, value]) => value)]),
         storyLinks: await loadStoryMentionLinks(entityId),
     };

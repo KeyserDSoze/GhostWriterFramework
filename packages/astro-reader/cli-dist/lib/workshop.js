@@ -1,8 +1,8 @@
 import path from "node:path";
 import { readFile, readdir } from "node:fs/promises";
-import { marked } from "marked";
 import { parseNarrariumMarkdownDocument, pathExists, readChapterDraft } from "narrarium";
 import { getBookRoot } from "./book.js";
+import { renderReaderMarkdown } from "./markdown.js";
 export async function loadWorkshopPageData() {
     const root = getBookRoot();
     const ready = await pathExists(path.join(root, "book.md"));
@@ -57,11 +57,16 @@ async function listDraftChapters(root) {
             slug,
             title: chapter.metadata.title,
             summary: chapter.metadata.summary ?? "Draft chapter in progress.",
+            summaryHtml: await toHtml(chapter.metadata.summary ?? "Draft chapter in progress."),
             bodyHtml: await toHtml(chapter.body || "No chapter draft body yet."),
-            paragraphs: chapter.paragraphs.map((paragraph) => ({
-                slug: path.basename(paragraph.path, ".md"),
-                title: paragraph.metadata.title,
-                summary: paragraph.metadata.summary ?? "Draft scene.",
+            paragraphs: await Promise.all(chapter.paragraphs.map(async (paragraph) => {
+                const summary = paragraph.metadata.summary ?? "Draft scene.";
+                return {
+                    slug: path.basename(paragraph.path, ".md"),
+                    title: paragraph.metadata.title,
+                    summary,
+                    summaryHtml: await toHtml(summary),
+                };
             })),
             ideas,
             notes,
@@ -85,14 +90,14 @@ async function readWorkshopDocument(root, relativePath) {
         title,
         bucket,
         bodyHtml: await toHtml(document.body || "No content yet."),
-        entries: readWorkshopEntries(frontmatter),
+        entries: await readWorkshopEntries(frontmatter),
     };
 }
-function readWorkshopEntries(frontmatter) {
+async function readWorkshopEntries(frontmatter) {
     if (!Array.isArray(frontmatter.entries)) {
         return [];
     }
-    return frontmatter.entries
+    const entries = frontmatter.entries
         .filter((entry) => Boolean(entry && typeof entry === "object"))
         .map((entry) => ({
         id: typeof entry.id === "string" ? entry.id : "",
@@ -105,9 +110,12 @@ function readWorkshopEntries(frontmatter) {
     }))
         .filter((entry) => entry.id.length > 0)
         .sort((left, right) => left.title.localeCompare(right.title));
+    return Promise.all(entries.map(async (entry) => ({
+        ...entry,
+        bodyHtml: await toHtml(entry.body || "No details yet."),
+    })));
 }
 async function toHtml(markdown) {
-    const rendered = await marked.parse(markdown);
-    return typeof rendered === "string" ? rendered : String(rendered);
+    return renderReaderMarkdown(markdown);
 }
 //# sourceMappingURL=workshop.js.map

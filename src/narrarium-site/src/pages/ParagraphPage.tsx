@@ -36,6 +36,7 @@ import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
 import { presentMetadata } from "@/export/metadataPresentation";
 import { useAuthStore } from "@/store/authStore";
 import { accountIdentity } from "@/auth/accountIdentity";
+import { paragraphSlug } from "@/narrarium/canon";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
 
@@ -89,17 +90,6 @@ function parseScalarMetaValue(value: string): unknown {
     }
   }
   return value;
-}
-
-/** Title string → URL-safe slug (strips non-ASCII, collapses spaces/hyphens). */
-function titleToSlug(title: string): string {
-  return title
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // strip combining accents
-    .toLowerCase()
-    .replace(/['']/g, "")            // remove apostrophes
-    .replace(/[^a-z0-9]+/g, "-")    // non-alphanumeric → hyphen
-    .replace(/^-|-$/g, "");          // trim
 }
 
 /** Split selection into leading whitespace, core, trailing whitespace so a replacement keeps surrounding spaces. */
@@ -433,13 +423,13 @@ export function ParagraphPage() {
     setSaving(true);
     try {
       const currentTitle = titleValue;
-      const newSlug = titleToSlug(currentTitle);
+      const newSlug = paragraphSlug(Number(paragraph.number), currentTitle);
       const oldFilename = paragraph.path.split("/").pop()!;
-      const oldSlug = oldFilename.match(/^\d{3}-(.+)\.md$/)?.[1] ?? "";
+      const oldSlug = oldFilename.replace(/\.md$/i, "");
       const slotNum = paragraph.number;
 
       const needsRename = newSlug && oldSlug && newSlug !== oldSlug;
-      const newFilename = `${slotNum}-${newSlug}.md`;
+      const newFilename = `${newSlug}.md`;
       const newPath = needsRename
         ? `${paragraph.path.replace(/[^/]+$/, "")}${newFilename}`
         : paragraph.path;
@@ -448,7 +438,7 @@ export function ParagraphPage() {
       let finalEntries = entries;
       if (needsRename) {
         const chapterSlug = chapterId ?? "";
-        const newId = `paragraph:${chapterSlug}:${slotNum}-${newSlug}`;
+        const newId = `paragraph:${chapterSlug}:${newSlug}`;
         finalEntries = entries.map((e) =>
           e.key === "id" ? { ...e, value: newId } : e,
         );

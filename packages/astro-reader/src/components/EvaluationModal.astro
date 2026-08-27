@@ -1,4 +1,6 @@
 ---
+import EncryptedHtml from "./EncryptedHtml.astro";
+
 interface Props {
   dialogId: string;
   title: string;
@@ -22,7 +24,7 @@ const { dialogId, title, htmlContent } = Astro.props;
       </button>
     </div>
     <div class="eval-dialog__body prose">
-      <Fragment set:html={htmlContent} />
+      <EncryptedHtml html={htmlContent} />
     </div>
   </div>
 </dialog>

@@ -68,16 +68,6 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
   </head>
     <body class:list={[isChapterPage && "page-chapter"]} data-reader-chapter-number={currentChapterNumber} data-full-canon={fullCanonMode ? "true" : "false"} data-crypto-salt={cryptoSalt ?? undefined} data-canary-iv={canary?.iv ?? undefined} data-canary-ct={canary?.ct ?? undefined}>
     <script is:inline>
-      (() => {
-        try {
-          const saved = localStorage.getItem("narrarium-reader-canon");
-          if (saved !== null) {
-            document.body.dataset.fullCanon = saved === "full" ? "true" : "false";
-          }
-        } catch {}
-      })();
-    </script>
-    <script is:inline>
       (function () {
         /* ── Content-ready promise ────────────────────────────────────────────
            Resolved values:

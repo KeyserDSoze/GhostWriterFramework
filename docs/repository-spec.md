@@ -291,7 +291,7 @@ This avoids forcing every continuity fact into a single prose summary while stil
 
 Story-state sync is intentionally manual.
 
-After final chapter or paragraph mutations Narrarium does this automatically:
+After final entity, chapter, or paragraph mutations Narrarium does this automatically:
 
 - refreshes `plot.md`
 - refreshes `resumes/chapters/*.md`
@@ -299,6 +299,8 @@ After final chapter or paragraph mutations Narrarium does this automatically:
 - marks `state/status.md` as dirty
 
 It does **not** automatically rebuild `state/current.md`. The author decides when continuity is stable enough.
+
+Draft files, scripts, notes, and evaluations are working support material and do not mark story state dirty. They are not part of the canonical continuity snapshot until promoted into final canon or final prose.
 
 When ready, run:
 

@@ -37,6 +37,7 @@ import {
   queryCanon,
   readStoryStateStatus,
   readAsset,
+  readParagraph,
   registerAsset,
   renameChapter,
   renameEntity,
@@ -3873,15 +3874,16 @@ The tool returns a suggested script body. Review and refine it, then call \`crea
   async ({ rootPath, chapter, paragraph }) => {
     const chapterSlugNorm = chapter.replace(/^chapter:/, "");
     const paragraphSlugNorm = paragraph.replace(/^paragraph:[^:]+:/, "").replace(/\.md$/i, "").trim();
-    const paraPath = path.join(rootPath, "chapters", chapterSlugNorm, `${paragraphSlugNorm}.md`);
-
-    const raw = await readFile(paraPath, "utf8").catch(() => null);
-    if (!raw) {
+    let source;
+    try {
+      source = await readParagraph(rootPath, chapterSlugNorm, paragraphSlugNorm);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith("Paragraph does not exist:")) throw error;
+      const paraPath = path.join(rootPath, "chapters", chapterSlugNorm, `${paragraphSlugNorm}.md`);
       return textResponse(`No paragraph found at ${paraPath}. Write the paragraph first, then call paragraph_to_script.`);
     }
 
-    // Strip YAML frontmatter (between first pair of --- delimiters)
-    const body = raw.replace(/^---[\s\S]*?---\s*/m, "").trim();
+    const body = source.body;
     const scriptBody = paragraphToScriptBody(body);
 
     return textResponse(

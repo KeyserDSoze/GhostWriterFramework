@@ -1,27 +1,27 @@
 import { stringify } from "yaml";
 import { createFile, mutateTextFilesAtomically } from "@/github/githubClient";
 import { validateCanonExtraFrontmatter } from "@/narrarium/canonFrontmatter";
+import {
+  chapterSlug as coreChapterSlug,
+  formatOrdinal as coreFormatOrdinal,
+  paragraphSlug as coreParagraphSlug,
+  slugify as coreSlugify,
+} from "narrarium/slug";
 
 export function slugify(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-{2,}/g, "-")
-    .toLowerCase();
+  return coreSlugify(value);
 }
 
 export function formatOrdinal(value: number, width = 3): string {
-  return String(value).padStart(width, "0");
+  return coreFormatOrdinal(value, width);
 }
 
 export function chapterSlug(number: number, title: string): string {
-  return `${formatOrdinal(number)}-${slugify(title)}`;
+  return coreChapterSlug(number, title);
 }
 
 export function paragraphSlug(number: number, title: string): string {
-  return `${formatOrdinal(number)}-${slugify(title)}`;
+  return coreParagraphSlug(number, title);
 }
 
 export type EntityKind =

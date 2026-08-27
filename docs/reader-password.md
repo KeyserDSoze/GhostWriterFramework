@@ -5,14 +5,16 @@ When enabled, all prose is encrypted before the static site is generated.
 Visitors must enter the correct password in the browser before any text is revealed.
 The password never leaves the browser — all decryption runs client-side via the Web Crypto API.
 
+Protected content includes chapter and scene bodies, canon dossier bodies and popup notes, workshop documents and draft summaries, timeline prose, evaluation bodies, and glossary/search data. Titles, navigation labels, structural metadata, threshold hints, and asset bytes remain available to the static page so routes can be discovered and rendered. Public mode still applies spoiler thresholds independently of password encryption.
+
 ## How it works
 
 1. At build time, `NARRARIUM_READER_PASSWORD` is read from the environment.
 2. A 16-byte random salt is generated once for the entire build (module-level singleton).
 3. Every prose block is encrypted with AES-256-GCM using a PBKDF2-derived key (100 000 iterations, SHA-256, 32-byte key).
 4. The ciphertext and IV are embedded in the HTML as `data-enc-iv` / `data-enc-ct` attributes.
-5. The PBKDF2 salt and a SHA-256 hash of the password are embedded in `<body>` for the client.
-6. The client runs a fast SHA-256 pre-check on the entered password, then derives the AES key via PBKDF2 and decrypts all content in place.
+5. The PBKDF2 salt and an AES-GCM canary ciphertext are embedded in `<body>` for the client; the password itself is never embedded.
+6. The client derives the AES key via PBKDF2 and verifies it by decrypting the canary before decrypting all content in place.
 7. The derived AES key is stored in `localStorage` so the reader auto-decrypts on subsequent page loads.
 
 ## Local development
@@ -87,6 +89,7 @@ For readers scaffolded with an earlier version, add the line manually.
 ## Security notes
 
 - The salt is public and embedded in the HTML — its purpose is to prevent rainbow tables, not to hide the encryption parameters.
+- The canary is public ciphertext. It verifies the derived key through AES-GCM authentication and does not provide a fast password-validation oracle.
 - Security comes entirely from the password entropy. Use a strong, randomly generated password.
 - Content on pages that have never been visited will not be cached by the browser, but the derived AES key is stored in `localStorage`. Clearing site data removes it.
 - There is no server-side component. This feature is designed for static hosting (GitHub Pages, Netlify, Vercel, etc.).

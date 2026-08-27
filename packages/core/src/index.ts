@@ -5,6 +5,7 @@ export * from "./book-snapshot.js";
 export * from "./github-provider.js";
 export * from "./schemas.js";
 export * from "./skill-template.js";
+export * from "./slug.js";
 export * from "./templates.js";
 export * from "./utils.js";
 export * from "./repo.js";

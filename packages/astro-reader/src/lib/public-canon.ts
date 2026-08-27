@@ -1,9 +1,9 @@
 import type { EntityType } from "narrarium";
-import { marked } from "marked";
 import { loadAssetFigure, type ReaderFigure } from "./assets.js";
 import { loadRelatedCanonLinks, loadStoryMentionLinks, type CanonLink } from "./canon.js";
 import { isFullCanonMode } from "./reader-mode.js";
 import { formatChapterThreshold, getSpoilerAccess, loadChapterOrder } from "./spoilers.js";
+import { renderReaderMarkdown } from "./markdown.js";
 
 type CanonEntityDocument = {
   slug: string;
@@ -109,7 +109,7 @@ export async function buildCanonPageView(kind: EntityType, entity: CanonEntityDo
       description: teaserSummary(kind, entity.metadata, access),
       metaEntries: teaserMetaEntries(kind, entity.metadata, access),
       figure: access.revealedFrom === null ? await loadAssetFigure(entityId, title) : null,
-      html: entity.body ? await marked.parse(entity.body) : undefined,
+      html: access.isRevealed && entity.body ? renderReaderMarkdown(entity.body) : undefined,
       relatedLinks: [],
       storyLinks: [],
       notice:
@@ -128,7 +128,7 @@ export async function buildCanonPageView(kind: EntityType, entity: CanonEntityDo
     description: fullSummary(kind, entity.metadata),
     metaEntries,
     figure: await loadAssetFigure(entityId, title),
-    html: entity.body ? await marked.parse(entity.body) : undefined,
+    html: entity.body ? renderReaderMarkdown(entity.body) : undefined,
     relatedLinks: await loadRelatedCanonLinks(entityId, [entity.metadata.refs, ...metaEntries.map(([, value]) => value)]),
     storyLinks: await loadStoryMentionLinks(entityId),
   };

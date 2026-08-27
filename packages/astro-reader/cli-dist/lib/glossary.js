@@ -1,9 +1,9 @@
 import { listEntities, listRelatedCanon, readEntity, toPosixPath } from "narrarium";
-import { marked } from "marked";
 import { loadAssetFigure } from "./assets.js";
 import { getBookRoot } from "./book.js";
 import { isFullCanonMode } from "./reader-mode.js";
 import { formatChapterThreshold, getSpoilerAccess, loadChapterOrder } from "./spoilers.js";
+import { renderReaderMarkdown } from "./markdown.js";
 const entityKinds = ["character", "location", "faction", "item", "secret", "timeline-event"];
 const glossaryPromises = new Map();
 export async function loadCanonGlossary(chapterNumber) {
@@ -49,7 +49,7 @@ async function buildCanonGlossary(chapterNumber) {
                 meta: metaFor(kind, fullEntry.metadata, access, fullMode),
                 metadataEntries: metadataEntriesFor(kind, fullEntry.metadata, access, fullMode),
                 mentions: mentionLinksFor(related, chapterOrder, chapterNumber, fullMode),
-                bodyHtml: fullMode || access.isRevealed ? (fullEntry.body ? await marked.parse(fullEntry.body) : undefined) : undefined,
+                bodyHtml: fullMode || access.isRevealed ? (fullEntry.body ? renderReaderMarkdown(fullEntry.body) : undefined) : undefined,
                 imageSrc: fullMode || access.isRevealed ? figure?.src : undefined,
                 imageAlt: fullMode || access.isRevealed ? figure?.alt : undefined,
                 visibleFrom: access.visibleFrom,

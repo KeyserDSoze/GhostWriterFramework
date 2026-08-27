@@ -1,5 +1,6 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
+import EncryptedHtml from "../../components/EncryptedHtml.astro";
 import { isFullCanonMode } from "../../lib/reader-mode";
 import { loadWorkshopPageData } from "../../lib/workshop";
 
@@ -45,7 +46,7 @@ const globalDocuments = global
               {document ? (
                 <>
                   <div class="chip-row"><span class="chip">{document.entries.length} entries</span></div>
-                  <div class="prose" set:html={document.bodyHtml}></div>
+                  <div class="prose"><EncryptedHtml html={document.bodyHtml} /></div>
                   {document.entries.length > 0 && (
                     <div class="workspace-entry-list">
                       {document.entries.map((entry) => (
@@ -58,7 +59,7 @@ const globalDocuments = global
                             {entry.promotedTo && <span class="chip">to {entry.promotedTo}</span>}
                           </div>
                           <h4>{entry.title}</h4>
-                          <p>{entry.body || "No details yet."}</p>
+                          <EncryptedHtml html={entry.bodyHtml} />
                         </article>
                       ))}
                     </div>
@@ -78,14 +79,14 @@ const globalDocuments = global
               <article class="chapter-card workspace-card">
                 <div class="chapter-number">Draft</div>
                 <h3 class="chapter-title">{chapter.title}</h3>
-                <div class="chapter-meta">{chapter.summary}</div>
+                <div class="chapter-meta"><EncryptedHtml html={chapter.summaryHtml} /></div>
                 <div class="chip-row">
                   <span class="chip">{chapter.paragraphs.length} scenes</span>
                   <span class="chip">{chapter.ideas?.entries.length ?? 0} ideas</span>
                   <span class="chip">{chapter.notes?.entries.length ?? 0} notes</span>
                   <span class="chip">{chapter.promoted?.entries.length ?? 0} promoted</span>
                 </div>
-                <div class="prose" set:html={chapter.bodyHtml}></div>
+                <div class="prose"><EncryptedHtml html={chapter.bodyHtml} /></div>
                 {chapter.paragraphs.length > 0 && (
                   <div class="workspace-subsection">
                     <h4>Draft Scenes</h4>
@@ -93,7 +94,7 @@ const globalDocuments = global
                       {chapter.paragraphs.map((paragraph) => (
                         <article class="workspace-entry">
                           <h5>{paragraph.title}</h5>
-                          <p>{paragraph.summary}</p>
+                          <EncryptedHtml html={paragraph.summaryHtml} />
                         </article>
                       ))}
                     </div>
@@ -105,7 +106,7 @@ const globalDocuments = global
                     document && (
                       <div class="workspace-subsection">
                         <h4>{index === 0 ? "Ideas" : index === 1 ? "Notes" : "Promoted"}</h4>
-                        <div class="prose" set:html={document.bodyHtml}></div>
+                        <div class="prose"><EncryptedHtml html={document.bodyHtml} /></div>
                         {document.entries.length > 0 && (
                           <div class="workspace-entry-list">
                             {document.entries.map((entry) => (
@@ -118,7 +119,7 @@ const globalDocuments = global
                                   {entry.promotedTo && <span class="chip">to {entry.promotedTo}</span>}
                                 </div>
                                 <h5>{entry.title}</h5>
-                                <p>{entry.body || "No details yet."}</p>
+                                <EncryptedHtml html={entry.bodyHtml} />
                               </article>
                             ))}
                           </div>
