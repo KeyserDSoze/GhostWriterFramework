@@ -41,7 +41,12 @@ const shellAssets = [
   "app/books/index.html",
   "app/patch-notes/index.html",
   "login/index.html",
+  "docs/index.html",
+  "mcp/index.html",
+  "privacy/index.html",
+  "terms/index.html",
   "site.webmanifest",
+  ...assets.filter((asset) => /^(?:docs|mcp|privacy|terms)\/(?:.*\/)?index\.html$/.test(asset)),
   ...assets.filter((asset) => /^(?:favicon|apple-touch-icon|android-chrome-)/.test(asset)),
   ...shellModuleAssets,
 ].filter((asset, index, list) => assets.includes(asset) && list.indexOf(asset) === index);

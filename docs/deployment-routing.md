@@ -4,7 +4,7 @@ Narrarium is hosted on GitHub Pages and uses React Router's browser-history URLs
 
 ## Supported contract
 
-- Finite entry points such as `/`, `/app/`, `/app/books/`, `/app/patch-notes/`, and `/login/` have physical HTML files and return HTTP 200.
+- Finite entry points such as `/`, `/app/`, `/app/books/`, `/app/patch-notes/`, `/login/`, `/docs/`, and every published `/docs/<slug>/` page have physical HTML files and return HTTP 200.
 - Repository-derived deep links such as `/app/books/<book-id>/chapters/<chapter-id>` are unbounded and cannot have physical files generated ahead of time.
 - GitHub Pages returns the shared `404.html` application shell for those dynamic paths. The initial origin status is therefore 404, but the shell keeps the original URL and React Router opens the requested book location.
 - Once the PWA controls the page, its service worker serves the cached application shell for navigation requests, including dynamic deep links.

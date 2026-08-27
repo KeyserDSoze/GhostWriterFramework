@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.97",
+    "date": "2026-08-27",
+    "en": {
+      "title": "Public documentation links return directly",
+      "summary": "GitHub Pages now serves physical application shells for the public documentation index and every generated documentation page, so bookmarked docs links no longer begin with a hosting 404.",
+      "changes": [
+        "Published physical entry points for `/docs/`, `/mcp/`, `/privacy/`, and `/terms/` alongside the existing app and login routes.",
+        "Generated one static `/docs/<slug>/` entry point for every curated and repository-generated public documentation page.",
+        "Included the documentation entry points in the service-worker precache so direct links remain available after PWA activation.",
+        "Added regression coverage that checks the generated documentation routes and their precache entries before deployment."
+      ]
+    },
+    "it": {
+      "title": "I link pubblici alla documentazione rispondono direttamente",
+      "summary": "GitHub Pages ora serve shell applicative fisiche per l'indice pubblico della documentazione e per ogni pagina generata, così i link salvati ai docs non iniziano più con un 404 dell'hosting.",
+      "changes": [
+        "Pubblicati entry point fisici per `/docs/`, `/mcp/`, `/privacy/` e `/terms/` insieme alle route app e login esistenti.",
+        "Generato un entry point statico `/docs/<slug>/` per ogni pagina pubblica curata o generata dal repository.",
+        "Incluse le entry della documentazione nel precache del service worker, così i link diretti restano disponibili dopo l'attivazione della PWA.",
+        "Aggiunta copertura di regressione che verifica le route documentali generate e le relative entry nel precache prima del deploy."
+      ]
+    }
+  },
+  {
     "version": "0.76.96",
     "date": "2026-08-27",
     "en": {

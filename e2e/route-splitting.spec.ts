@@ -41,7 +41,8 @@ test("login loads OAuth without AI, GitHub, ZIP, editor, or repository chunks", 
 
 test("all finite public routes render after direct navigation", async ({ page }) => {
   for (const [route, componentName, heading] of [["privacy", "PrivacyPage"], ["terms", "TermsPage"], ["mcp", "McpPage"], ["docs/dependency-security", "DocPage", "Dependency security policy"]]) {
-    await page.goto(route);
+    const response = await page.goto(route);
+    expect(response?.status()).toBe(200);
     await expect(page.locator(`[data-route-ready="${componentName}"]`)).toBeAttached();
     if (heading) await expect(page.getByRole("heading", { name: heading }).first()).toBeVisible();
     await expect(page.locator("body")).not.toBeEmpty();

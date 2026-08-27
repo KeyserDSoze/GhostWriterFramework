@@ -22,8 +22,9 @@ async function waitForServiceWorker(page: Page, context: BrowserContext): Promis
 }
 
 test("public documentation route opens from the production preview", async ({ page }) => {
-  await page.goto("docs");
+  const response = await page.goto("docs");
 
+  expect(response?.status()).toBe(200);
   await expect(page).toHaveURL(new RegExp(`${basePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\/docs\/?$`));
   await expect(page.getByRole("heading", { name: "Narrarium docs" })).toBeVisible();
 });
@@ -42,7 +43,7 @@ test("installed application shell and lazy assets remain available offline", asy
   expect(releaseState.cacheKeys).toContain(`narrarium-precache-${releaseState.controllerVersion}`);
   expect(releaseState.cacheKeys).toContain("unrelated-origin-cache");
   expect(releaseState.cachedUrls.some((url) => /\/assets\/PublicDocs-[^/]+\.js$/.test(url))).toBe(true);
-  expect(releaseState.cachedUrls.filter((url) => /AuthProviders|LoginScreen|msal|ai-vendor|github|zip|repository|AppShell|Assistant|BookExport|pdfFonts|jspdf/i.test(url))).toEqual([]);
+  expect(releaseState.cachedUrls.filter((url) => /\/assets\/(?:AuthProviders|LoginScreen|msal|ai-vendor|github|zip|repository|AppShell|Assistant|BookExport|pdfFonts|jspdf)/i.test(url))).toEqual([]);
   await page.waitForLoadState("domcontentloaded");
   await context.setOffline(true);
   try {

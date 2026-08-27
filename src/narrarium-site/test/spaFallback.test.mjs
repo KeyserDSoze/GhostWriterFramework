@@ -13,21 +13,34 @@ function run(script, cwd) {
   });
 }
 
-test("SPA fallback emits physical 200 entry points for update and patch-note routes", async () => {
+test("SPA fallback emits physical 200 entry points for finite public routes", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "narrarium-spa-fallback-"));
   try {
     const scripts = path.join(root, "scripts");
     const dist = path.join(root, "dist");
     await mkdir(scripts);
     await mkdir(dist);
+    await mkdir(path.join(root, "src", "lib"), { recursive: true });
     const source = new URL("../scripts/write-spa-fallback.mjs", import.meta.url);
     const script = path.join(scripts, "write-spa-fallback.mjs");
     await writeFile(script, await readFile(source));
+    await writeFile(path.join(root, "src", "lib", "public-doc-routes.json"), JSON.stringify(["overview", "reader-password"]));
     await writeFile(path.join(dist, "index.html"), "<!doctype html><title>Narrarium</title>");
 
     await run(script, root);
 
-    for (const file of ["404.html", "app/index.html", "app/patch-notes/index.html", "login/index.html"]) {
+    for (const file of [
+      "404.html",
+      "app/index.html",
+      "app/patch-notes/index.html",
+      "login/index.html",
+      "docs/index.html",
+      "docs/overview/index.html",
+      "docs/reader-password/index.html",
+      "mcp/index.html",
+      "privacy/index.html",
+      "terms/index.html",
+    ]) {
       assert.equal(await readFile(path.join(dist, file), "utf8"), "<!doctype html><title>Narrarium</title>");
     }
   } finally {
@@ -57,9 +70,12 @@ test("precache generation includes application entry points, chunks, styles, and
     const dist = path.join(root, "dist");
     await mkdir(scripts);
     await mkdir(path.join(dist, "assets"), { recursive: true });
+    await mkdir(path.join(dist, "docs", "reader-password"), { recursive: true });
     await mkdir(path.join(dist, ".vite"), { recursive: true });
     await writeFile(path.join(root, "package.json"), JSON.stringify({ version: "1.2.3" }));
     await writeFile(path.join(dist, "index.html"), "index");
+    await writeFile(path.join(dist, "docs", "index.html"), "docs");
+    await writeFile(path.join(dist, "docs", "reader-password", "index.html"), "reader-password");
     await writeFile(path.join(dist, "assets", "entry.js"), "entry");
     await writeFile(path.join(dist, "assets", "style.css"), "style");
     await writeFile(path.join(dist, "assets", "worker.js"), "worker");
@@ -89,7 +105,7 @@ test("precache generation includes application entry points, chunks, styles, and
     const manifest = await readFile(path.join(dist, "precache-manifest.js"), "utf8");
     const precache = JSON.parse(/__NARRARIUM_PRECACHE__=(\[[^;]+\])/.exec(manifest)?.[1] ?? "[]");
     assert.match(manifest, /__NARRARIUM_RELEASE__="1\.2\.3"/);
-    for (const file of ["index.html", "assets/entry.js", "assets/framework.js", "assets/home.js", "assets/docs.js"]) assert.match(manifest, new RegExp(file.replace(".", "\\.")));
+    for (const file of ["index.html", "docs/index.html", "docs/reader-password/index.html", "assets/entry.js", "assets/framework.js", "assets/home.js", "assets/docs.js"]) assert.match(manifest, new RegExp(file.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")));
     assert.doesNotMatch(precache.join("\n"), /docx-index/);
     assert.match(manifest, /__NARRARIUM_OPTIONAL_ASSETS__/);
     for (const file of ["assets/auth.js", "assets/app-shell.js", "assets/books.js"]) assert.match(manifest, new RegExp(file.replace(".", "\\.")));
