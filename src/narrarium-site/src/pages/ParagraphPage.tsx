@@ -36,7 +36,7 @@ import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
 import { presentMetadata } from "@/export/metadataPresentation";
 import { useAuthStore } from "@/store/authStore";
 import { accountIdentity } from "@/auth/accountIdentity";
-import { paragraphSlug } from "@/narrarium/canon";
+import { paragraphRenameTarget } from "@/narrarium/paragraphSave";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
 
@@ -423,16 +423,14 @@ export function ParagraphPage() {
     setSaving(true);
     try {
       const currentTitle = titleValue;
-      const newSlug = paragraphSlug(Number(paragraph.number), currentTitle);
-      const oldFilename = paragraph.path.split("/").pop()!;
-      const oldSlug = oldFilename.replace(/\.md$/i, "");
+      const savedTitleEntry = savedEntries.find((entry) => entry.key === "title");
+      const savedTitle = typeof savedTitleEntry?.value === "string" ? savedTitleEntry.value : "";
+      const renameTarget = paragraphRenameTarget(paragraph.path, Number(paragraph.number), currentTitle, savedTitle);
+      const newSlug = renameTarget?.slug ?? "";
       const slotNum = paragraph.number;
 
-      const needsRename = newSlug && oldSlug && newSlug !== oldSlug;
-      const newFilename = `${newSlug}.md`;
-      const newPath = needsRename
-        ? `${paragraph.path.replace(/[^/]+$/, "")}${newFilename}`
-        : paragraph.path;
+      const needsRename = Boolean(renameTarget);
+      const newPath = renameTarget?.path ?? paragraph.path;
 
       // Auto-update id if slug changes
       let finalEntries = entries;

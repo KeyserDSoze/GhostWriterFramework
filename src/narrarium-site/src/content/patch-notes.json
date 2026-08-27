@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.76.96",
+    "date": "2026-08-27",
+    "en": {
+      "title": "Legacy paragraph paths preserved on no-op saves",
+      "summary": "Opening and saving an existing paragraph no longer turns a legacy filename into a deletion when its title metadata is absent or unchanged.",
+      "changes": [
+        "Paragraph saves keep the current repository path when there is no non-empty title change.",
+        "A real title change still uses the canonical numbered slug algorithm and moves the matching companions deliberately.",
+        "The synchronization flow now preserves locally edited legacy paragraphs as modified files instead of marking them deleted.",
+        "Added regression coverage for legacy paths, unchanged titles, and canonical titles containing punctuation."
+      ]
+    },
+    "it": {
+      "title": "I path legacy dei paragrafi restano invariati nei salvataggi senza modifiche",
+      "summary": "Aprire e salvare un paragrafo esistente non trasforma più un filename legacy in una cancellazione quando i metadati del titolo mancano o non sono cambiati.",
+      "changes": [
+        "Il salvataggio del paragrafo mantiene il path corrente quando non esiste una modifica reale a un titolo non vuoto.",
+        "Una modifica effettiva del titolo usa ancora l'algoritmo slug numerato canonico e sposta deliberatamente i companion corrispondenti.",
+        "Il flusso di sincronizzazione conserva ora i paragrafi legacy modificati localmente come file modificati invece di marcarli come cancellati.",
+        "Aggiunta copertura di regressione per path legacy, titoli invariati e titoli canonici con punteggiatura."
+      ]
+    }
+  },
+  {
     "version": "0.76.95",
     "date": "2026-08-27",
     "en": {

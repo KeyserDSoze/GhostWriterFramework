@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveParagraphArtifactPaths } from "../src/narrarium/paragraphArtifacts.ts";
 import { paragraphSlug, slugify } from "../../../packages/core/src/slug.ts";
+import { paragraphRenameTarget } from "../src/narrarium/paragraphSave.ts";
 
 const target = (path, title) => {
   const [, chapterSlug, filename] = path.split("/");
@@ -81,4 +82,13 @@ test("site slug helpers use the canonical apostrophe and accent behavior", () =>
   assert.equal(slugify("Don't Stop"), "don-t-stop");
   assert.equal(slugify("L'amour"), "l-amour");
   assert.equal(paragraphSlug(4, "Crème brûlée"), "004-creme-brulee");
+});
+
+test("paragraph saves preserve legacy paths until the title actually changes", () => {
+  assert.equal(paragraphRenameTarget("chapters/001-arrival/001-legacy-name.md", 1, "", ""), null);
+  assert.equal(paragraphRenameTarget("chapters/001-arrival/001-legacy-name.md", 1, "Legacy Name", "Legacy Name"), null);
+  assert.deepEqual(
+    paragraphRenameTarget("chapters/001-arrival/001-legacy-name.md", 1, "Don't Stop", "Legacy Name"),
+    { slug: "001-don-t-stop", path: "chapters/001-arrival/001-don-t-stop.md" },
+  );
 });
