@@ -55,6 +55,10 @@ export default defineConfig({
     manifest: true,
     chunkSizeWarningLimit: 600,
     rollupOptions: {
+      input: {
+        index: path.resolve(__dirname, "index.html"),
+        "msal-popup": path.resolve(__dirname, "msal-popup.html"),
+      },
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return undefined;

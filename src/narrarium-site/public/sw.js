@@ -57,6 +57,12 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
+  const microsoftPopupPath = new URL("msal-popup.html", scopeUrl()).pathname;
+  if (request.mode === "navigate" && url.pathname === microsoftPopupPath) {
+    event.respondWith(fetch(request, { cache: "no-store" }));
+    return;
+  }
+
   if (request.mode === "navigate") {
     event.respondWith(
       caches.open(PRECACHE_NAME).then(async (cache) => {

@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.77.5",
+    "date": "2026-08-31",
+    "en": {
+      "title": "Microsoft popup login completion",
+      "summary": "OneDrive sign-in now hands the Microsoft response back to Narrarium and closes the authentication popup instead of waiting until timeout.",
+      "changes": [
+        "Added the official MSAL redirect bridge to the dedicated Microsoft callback page so it broadcasts the authentication response to the main Narrarium window and closes itself.",
+        "Excluded the Microsoft callback navigation from the PWA app-shell fallback, ensuring the popup receives the small callback document instead of loading the complete Narrarium SPA.",
+        "Added build and service-worker regression coverage for the callback entrypoint, bridge invocation, and network-only routing."
+      ]
+    },
+    "it": {
+      "title": "Completamento del login Microsoft tramite popup",
+      "summary": "Il login OneDrive ora restituisce la risposta Microsoft a Narrarium e chiude il popup di autenticazione invece di attendere fino al timeout.",
+      "changes": [
+        "Aggiunto il redirect bridge ufficiale MSAL alla pagina callback Microsoft dedicata, così trasmette la risposta di autenticazione alla finestra principale di Narrarium e si chiude.",
+        "Esclusa la navigazione del callback Microsoft dal fallback app-shell della PWA, assicurando che il popup riceva il piccolo documento callback invece di caricare l'intera SPA Narrarium.",
+        "Aggiunta copertura di regressione per build e service worker relativa all'entrypoint callback, all'esecuzione del bridge e al routing solo rete."
+      ]
+    }
+  },
+  {
     "version": "0.77.4",
     "date": "2026-08-31",
     "en": {

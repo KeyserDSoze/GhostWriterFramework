@@ -61,12 +61,6 @@ describe("Copilot critical paths", () => {
     expect(resumableMigrationSteps(["settings", "costs"], [{ step: "settings", ok: true, verified: true }])).toEqual(["costs"]);
   });
 
-  it("keeps the Microsoft popup callback routable when hosting falls back to the SPA", async () => {
-    const router = await import("@/router");
-    const hasCallback = (routes: readonly { path?: string; children?: readonly { path?: string; children?: readonly unknown[] }[] }[]): boolean => routes.some((route) => route.path === "/msal-popup.html" || (route.children ? hasCallback(route.children) : false));
-    expect(hasCallback(router.router.routes)).toBe(true);
-  });
-
   it("registers and governs multi-file edit dispatch", () => {
     ensureBuiltinCopilotToolsRegistered();
     const tool = copilotToolRegistry.get("multi-file-edit");

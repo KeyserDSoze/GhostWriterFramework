@@ -131,9 +131,22 @@ test("service worker uses release caches, precaches the generated manifest, and 
   assert.match(source, /ignoreVary: true/);
   assert.match(source, /CACHE_APP_SHELL_ASSETS/);
   assert.match(source, /Promise\.allSettled/);
+  assert.match(source, /url\.pathname === microsoftPopupPath/);
+  assert.match(source, /fetch\(request, \{ cache: "no-store" \}\)/);
+  assert.ok(source.indexOf("url.pathname === microsoftPopupPath") < source.indexOf('if (request.mode === "navigate") {\n    event.respondWith(\n      caches.open'));
   assert.match(source, /request\.mode === "navigate"/);
   assert.match(source, /caches\.open\(PRECACHE_NAME\)[\s\S]*cache\.match\(scopeUrl\(\)\)[\s\S]*return fetch\(request\)/);
   assert.doesNotMatch(source, /request\.mode === "navigate"[\s\S]*fetch\(request\)[\s\S]*cache\.match\(scopeUrl\(\)\)/);
+});
+
+test("Microsoft popup callback runs the MSAL redirect bridge outside the SPA", async () => {
+  const callback = await readFile(new URL("../msal-popup.html", import.meta.url), "utf8");
+  const bridge = await readFile(new URL("../src/msalPopup.ts", import.meta.url), "utf8");
+  const vite = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
+  assert.match(callback, /src="\/src\/msalPopup\.ts"/);
+  assert.match(bridge, /@azure\/msal-browser\/redirect-bridge/);
+  assert.match(bridge, /broadcastResponseToMainFrame\(\)/);
+  assert.match(vite, /"msal-popup": path\.resolve\(__dirname, "msal-popup\.html"\)/);
 });
 
 test("service-worker registration bypasses the HTTP cache for root and imported script updates", async () => {
