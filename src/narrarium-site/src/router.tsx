@@ -27,6 +27,7 @@ export const router = createBrowserRouter([
   { path: "/mcp", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicDocs"), "McpPage") },
   { path: "/privacy", lazy: component(() => import("@/pages/public/PublicBasics"), "PrivacyPage") },
   { path: "/terms", lazy: component(() => import("@/pages/public/PublicBasics"), "TermsPage") },
+  { path: "/msal-popup.html", lazy: component(() => import("@/pages/MicrosoftAuthPopupPage"), "MicrosoftAuthPopupPage") },
   { errorElement: routeError, lazy: component(() => import("@/routes/AuthProvidersRoute"), "AuthProvidersRoute"), children: [
     { path: "/login", lazy: component(() => import("@/components/auth/LoginScreen"), "LoginScreen") },
     { path: "/auth/github/callback", lazy: component(() => import("@/pages/GitHubOAuthCallbackPage"), "GitHubOAuthCallbackPage") },
