@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.77.2",
+    "date": "2026-08-31",
+    "en": {
+      "title": "Reliable Microsoft popup sign-in and quieter sync status",
+      "summary": "Microsoft sign-in now returns through a dedicated callback page, while the account status indicator appears only when synchronization needs attention.",
+      "changes": [
+        "OneDrive and Microsoft sign-in use a static callback page instead of booting the full SPA inside the authentication popup.",
+        "The global sync indicator no longer covers page headings after every successful save; it remains visible for active sync, pending changes, offline state, or required reauthentication.",
+        "Added regression coverage for the Microsoft callback URI and verified the production build."
+      ]
+    },
+    "it": {
+      "title": "Login Microsoft più affidabile e stato sync meno invasivo",
+      "summary": "Il login Microsoft ora torna attraverso una pagina callback dedicata, mentre l'indicatore dello stato account appare solo quando la sincronizzazione richiede attenzione.",
+      "changes": [
+        "Il login OneDrive e Microsoft usa una pagina callback statica invece di avviare l'intera SPA dentro al popup di autenticazione.",
+        "L'indicatore globale del sync non copre più i titoli dopo ogni salvataggio riuscito; resta visibile durante il sync, con modifiche in attesa, offline o quando è necessario riautenticarsi.",
+        "Aggiunta copertura di regressione per l'URI callback Microsoft e verificata la build di produzione."
+      ]
+    }
+  },
+  {
     "version": "0.77.1",
     "date": "2026-08-31",
     "en": {

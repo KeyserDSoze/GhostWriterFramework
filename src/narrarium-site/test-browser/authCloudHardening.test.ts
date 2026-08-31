@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AccountInfo } from "@azure/msal-browser";
-import { findMicrosoftAccountIn, microsoftMsalInstance, MICROSOFT_REMEMBER_ME_KEY, persistentMsalInstance, sessionMsalInstance, setMicrosoftRememberMe } from "@/config/msal";
+import { findMicrosoftAccountIn, microsoftMsalInstance, MICROSOFT_REMEMBER_ME_KEY, microsoftSilentRequest, persistentMsalInstance, sessionMsalInstance, setMicrosoftRememberMe } from "@/config/msal";
 import { ensureMicrosoftAppMarker, graphPath, verifyMicrosoftAppFolder } from "@/drive/microsoftAppFolder";
 import { useCostsStore } from "@/costs/costsStore";
 import { useClipboardStore } from "@/clipboard/clipboardStore";
@@ -15,6 +15,10 @@ function account(homeAccountId: string, email: string): AccountInfo {
 }
 
 describe("non-Copilot auth and cloud hardening", () => {
+  it("uses a static callback page for Microsoft popup and silent authentication", () => {
+    expect(microsoftSilentRequest(account("home-test", "test@example.com")).redirectUri).toMatch(/\/msal-popup\.html$/);
+  });
+
   it("selects the MSAL cache from the Microsoft remember preference", () => {
     localStorage.removeItem(MICROSOFT_REMEMBER_ME_KEY);
     expect(microsoftMsalInstance(false)).toBe(sessionMsalInstance);

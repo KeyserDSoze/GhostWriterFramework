@@ -14,6 +14,7 @@ export function SessionStatusPill() {
   const pending = replicas.some((connection) => ["dirty", "error", "offline", "ahead", "behind", "diverged"].includes(connection?.replica.status ?? ""));
 
   const offline = activity === "offline";
+  if (!offline && !syncing && !needsAuth && !pending) return null;
   const label = syncing
     ? "Saved locally · Syncing"
     : needsAuth
