@@ -6,6 +6,7 @@ import { crashNextMaintenanceRemovalForTests, createMaintenanceBackupBundle, for
 import { recloneLocalWorkingCopy, removeLocalWorkingCopy } from "@/repository/repositoryService";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { useAuthStore } from "@/store/authStore";
+import { useSettingsStore } from "@/store/settingsStore";
 import { pauseNextRewriteWriteForTests, saveLocalRewriteOperation } from "@/repository/localRewriteOperationStore";
 import type { RewriteOperationManifest } from "@/narrarium/rewriteFromReaderFeedback";
 
@@ -101,6 +102,43 @@ test("maintenance lookup exposes an interrupted migration journal", async () => 
   });
   db.close();
   await expect(lookupRepositoryMaintenanceTarget(target)).resolves.toMatchObject({ lifecycle: "journal-failed" });
+});
+
+test("maintenance lookup uses the retained repository id after workspace migration", async () => {
+  const workspaceIdentity = "workspace:maintenance-workspace";
+  useSettingsStore.setState({ accountIdentity: workspaceIdentity });
+  const db = await new Promise<IDBDatabase>((resolve, reject) => { const request = indexedDB.open("narrarium-local-repositories"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+  const migratedId = `${identity}::${target.owner}/${target.repo}#${target.branch}`;
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readwrite");
+    tx.objectStore("repositories").put({ id: migratedId, localInstanceId: crypto.randomUUID(), bookId: target.bookId, repositoryKind: "book", remoteKind: "github", owner: target.owner, repo: target.repo, branch: target.branch, defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), cloneComplete: true, accountScope: workspaceIdentity });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+  await expect(lookupRepositoryMaintenanceTarget({ ...target, accountIdentity: workspaceIdentity })).resolves.toMatchObject({ target: { repoId: migratedId }, repository: { id: migratedId } });
+  const cleanup = await new Promise<IDBDatabase>((resolve, reject) => { const request = indexedDB.open("narrarium-local-repositories"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+  await new Promise<void>((resolve, reject) => { const tx = cleanup.transaction("repositories", "readwrite"); tx.objectStore("repositories").delete(migratedId); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); });
+  cleanup.close();
+  useSettingsStore.setState({ accountIdentity: null });
+});
+
+test("maintenance removal resolves the retained repository id when the caller omits it", async () => {
+  const workspaceIdentity = "workspace:maintenance-removal";
+  useSettingsStore.setState({ accountIdentity: workspaceIdentity });
+  const db = await new Promise<IDBDatabase>((resolve, reject) => { const request = indexedDB.open("narrarium-local-repositories"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+  const migratedId = `${identity}::${target.owner}/${target.repo}#${target.branch}`;
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("repositories", "readwrite");
+    tx.objectStore("repositories").put({ id: migratedId, localInstanceId: crypto.randomUUID(), bookId: target.bookId, repositoryKind: "book", remoteKind: "github", owner: target.owner, repo: target.repo, branch: target.branch, defaultBranch: "main", remoteHeadSha: "head", clonedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), cloneComplete: true, accountScope: workspaceIdentity });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+  const migratedTarget = { ...target, accountIdentity: workspaceIdentity };
+  const { receipt } = await createMaintenanceBackupBundle(migratedTarget);
+  await expect(removeLocalWorkingCopy({ ...migratedTarget, backupReceiptId: receipt.receiptId, confirmation: "REMOVE owner/maintenance-repo" })).resolves.toEqual({ recoveriesPreserved: 0, rewriteOperationsRemoved: 0 });
+  useSettingsStore.setState({ accountIdentity: null });
 });
 
 test("removal fences an active lifecycle owner so it cannot settle", async () => {

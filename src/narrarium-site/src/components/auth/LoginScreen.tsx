@@ -57,6 +57,12 @@ export function LoginScreen() {
     registerCloudAccount(user.provider, accessToken, user.providerAccountId!);
     await confirmAndResumeCloudWrites(user.provider, accessToken);
     setInteractiveAuth(accessToken, user, expiresIn, rememberMe);
+    const { migrateConnectedProviderRepositories } = await import("@/auth/accountScope");
+    const migration = await migrateConnectedProviderRepositories();
+    if (migration.error) {
+      setError(t("auth.loginFailed"));
+      return false;
+    }
     if (recoveryRequest) {
       const { resetBookStructureLoadCoordinator } = await import("@/hooks/useBookStructure");
       resetBookStructureLoadCoordinator();

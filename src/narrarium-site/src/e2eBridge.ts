@@ -1,10 +1,7 @@
-import { abortNextPrimaryFileWriteForTests, adoptLegacyEmailScopedRepository, applyLocalFileChangesAtomically, crashNextRepositoryMigrationForTests, getLocalFile, getLocalRepositoryById, inspectPrimaryRepositoryDatabaseForTests, listAllLocalFiles, listLocalRecoverySnapshots, listUnpushedLocalCommits, resumeCurrentAccountRepositoryMigrations, writeLocalText } from "@/repository/localRepository";
+import { abortNextPrimaryFileWriteForTests, applyLocalFileChangesAtomically, getLocalFile, getLocalRepositoryById, inspectPrimaryRepositoryDatabaseForTests, listAllLocalFiles, listLocalRecoverySnapshots, listUnpushedLocalCommits, writeLocalText } from "@/repository/localRepository";
 import { closeLocalRewriteOperationStoreForTests, ensureLocalRewriteOperationStoreReady, inspectRewriteOperationDatabaseForTests } from "@/repository/localRewriteOperationStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { crashNextMaintenanceRemovalForTests, forceRemoveRepositoryWithoutBackup, type RepositoryMaintenanceTarget } from "@/repository/repositoryMaintenance";
-import { beginStrandedLegacyRecovery, getLegacyAccountUpgradeEvidence, legacyEmailAccountIdentity } from "@/auth/accountIdentity";
-import { createLegacyAdoptionConsent } from "@/auth/legacyAdoptionConsent";
-import { useAuthStore } from "@/store/authStore";
 import { installAccountScopeIsolation } from "@/auth/accountScope";
 
 export interface E2eStorageUpgradeResult {
@@ -20,9 +17,9 @@ export interface E2eStorageUpgradeResult {
   rewriteRecords: Record<string, Array<Record<string, unknown>>>;
 }
 
-export function installE2eBridge(): void {
+export async function installE2eBridge(): Promise<void> {
   if (!__NARRARIUM_E2E_BUILD__ || import.meta.env.VITE_E2E !== "true") return;
-  installAccountScopeIsolation();
+  await installAccountScopeIsolation();
   window.__narrariumE2e = {
     upgradeStorage: async (repoId, accountIdentity) => {
       const repository = await getLocalRepositoryById(repoId, accountIdentity);
@@ -69,23 +66,7 @@ export function installE2eBridge(): void {
     },
     resumeForceRemoval: (target) => forceRemoveRepositoryWithoutBackup(target, `FORCE RECLONE ${target.owner}/${target.repo}#${target.branch}`),
     inspectRepository: async (repoId, accountIdentity) => ({ repository: await getLocalRepositoryById(repoId, accountIdentity), files: await listAllLocalFiles(repoId) }),
-    crashLegacyMigration: async (target, phase) => {
-      const user = useAuthStore.getState().user;
-      if (!user?.providerAccountId) throw new Error("E2E immutable user is unavailable.");
-      const legacyIdentity = legacyEmailAccountIdentity(user);
-      beginStrandedLegacyRecovery(user, legacyIdentity);
-      useAuthStore.getState().setInteractiveAuth("e2e-google-token", user);
-      const scope = captureRepositoryOperationScope();
-      const evidence = getLegacyAccountUpgradeEvidence(user, scope.accountIdentity);
-      if (!evidence) throw new Error("E2E legacy migration evidence is unavailable.");
-      createLegacyAdoptionConsent(user, { ...target, legacyIdentity, evidenceNonce: evidence.nonce, replaceDisposableTarget: false });
-      crashNextRepositoryMigrationForTests(phase);
-      try { await adoptLegacyEmailScopedRepository({ ...target, scope }); return null; }
-      catch (cause) { return cause instanceof Error ? cause.message : String(cause); }
-    },
-    resumeLegacyMigrations: () => resumeCurrentAccountRepositoryMigrations(captureRepositoryOperationScope()),
   };
 }
 
 export type E2eRepositoryMaintenanceTarget = RepositoryMaintenanceTarget;
-export type E2eRepositoryMigrationTarget = { bookId: string; owner: string; repo: string; branch: string };

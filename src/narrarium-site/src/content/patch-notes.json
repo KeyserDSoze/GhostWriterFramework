@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.77.1",
+    "date": "2026-08-31",
+    "en": {
+      "title": "Safer local workspace upgrades",
+      "summary": "Existing provider-scoped working copies now finish their local-workspace upgrade before the editor opens, preserving rewrite history and maintenance controls.",
+      "changes": [
+        "Workspace startup waits for repository ownership migration before loading book routes, preventing local files and rewrite records from being observed halfway through the upgrade.",
+        "Interrupted migrations repair exact matching rewrite records with the retained repository instance identity instead of leaving valid operations quarantined.",
+        "Repository status, backup, removal, and re-clone controls now resolve migrated working copies by their retained repository ID even when it predates the local workspace.",
+        "Updated Chromium coverage to exercise local-first settings, deterministic workspace ownership, IndexedDB upgrades, crash recovery, and GitHub Pages basename routing."
+      ]
+    },
+    "it": {
+      "title": "Aggiornamenti più sicuri del workspace locale",
+      "summary": "Le working copy esistenti legate a un provider ora completano l'aggiornamento al workspace locale prima dell'apertura dell'editor, preservando cronologia delle riscritture e controlli di manutenzione.",
+      "changes": [
+        "All'avvio il workspace attende la migrazione della proprietà delle repository prima di caricare le route dei libri, evitando di osservare file locali e riscritture a metà aggiornamento.",
+        "Le migrazioni interrotte riparano le riscritture corrispondenti esatte con l'identità dell'istanza repository conservata invece di lasciare in quarantena operazioni valide.",
+        "I controlli di stato, backup, rimozione e nuova clonazione ora risolvono le working copy migrate tramite il loro ID repository conservato anche quando precede il workspace locale.",
+        "Aggiornata la copertura Chromium per impostazioni local-first, proprietà deterministica del workspace, upgrade IndexedDB, recovery dopo crash e routing GitHub Pages con basename."
+      ]
+    }
+  },
+  {
     "version": "0.77.0",
     "date": "2026-08-31",
     "en": {

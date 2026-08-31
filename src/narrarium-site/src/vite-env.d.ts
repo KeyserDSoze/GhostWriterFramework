@@ -18,7 +18,5 @@ interface Window {
     crashForceRemoval(target: import("./e2eBridge").E2eRepositoryMaintenanceTarget, phase: Parameters<typeof import("./repository/repositoryMaintenance").crashNextMaintenanceRemovalForTests>[0]): Promise<string | null>;
     resumeForceRemoval(target: import("./e2eBridge").E2eRepositoryMaintenanceTarget): ReturnType<typeof import("./repository/repositoryMaintenance").forceRemoveRepositoryWithoutBackup>;
     inspectRepository(repoId: string, accountIdentity: string): Promise<{ repository: unknown; files: unknown[] }>;
-    crashLegacyMigration(target: import("./e2eBridge").E2eRepositoryMigrationTarget, phase: Parameters<typeof import("./repository/localRepository").crashNextRepositoryMigrationForTests>[0]): Promise<string | null>;
-    resumeLegacyMigrations(): ReturnType<typeof import("./repository/localRepository").resumeCurrentAccountRepositoryMigrations>;
   };
 }

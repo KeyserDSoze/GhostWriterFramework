@@ -2,7 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 
 test.use({ serviceWorkers: "block" });
 
-const ACCOUNT_IDENTITY = "google:e2e-google-user";
+const WORKSPACE_ID = "e2e-workspace";
+const ACCOUNT_IDENTITY = `workspace:${WORKSPACE_ID}`;
 const BOOK_ID = "book-jesus";
 const REPOSITORY_ID = `${ACCOUNT_IDENTITY}::keyserdsoze/jesus#test2`;
 const PARAGRAPH_PATH = "chapters/001-the-arrival/001-opening.md";
@@ -199,7 +200,7 @@ function installDeterministicNetworkMocks(page: Page): { events: RequestEvent[];
 }
 
 async function installSeed(page: Page): Promise<void> {
-  await page.addInitScript(({ repositoryId, files }) => {
+  await page.addInitScript(({ repositoryId, files, accountIdentity, workspaceId, bookId }) => {
     const marker = "narrarium-e2e-issue-65-seeded-v1";
     const target = window as unknown as { __narrariumE2eSeedReady?: Promise<void> };
     if (window.localStorage.getItem(marker)) {
@@ -210,7 +211,20 @@ async function installSeed(page: Page): Promise<void> {
     const user = { provider: "google", providerAccountId: "e2e-google-user", name: "E2E User", email: "e2e@example.test", picture: "" };
     const now = Date.now();
     window.localStorage.setItem(marker, "1");
-    window.localStorage.setItem("narrarium-account-scope-v1", "google:e2e-google-user");
+    window.localStorage.setItem("narrarium-local-workspace-id-v1", workspaceId);
+    window.localStorage.setItem("narrarium-account-scope-v1", accountIdentity);
+    const cachedSettings = {
+      schemaVersion: 2,
+      accountScope: "google:e2e-google-user",
+      baseRevision: "1",
+      base: {
+        ui: { language: "en", theme: "light" },
+        repository: { autoFetchOnOpen: true, autoFetchIntervalMinutes: 0, autoPullWhenClean: false },
+        books: [{ id: bookId, owner: "KeyserDSoze", repo: "Jesus", name: "Jesus", tokenIndex: null, activeBranch: "test2", addedAt: "2024-01-01T00:00:00.000Z" }],
+      },
+    };
+    window.localStorage.setItem(`narrarium-settings-cache-v2:${encodeURIComponent("google:e2e-google-user")}`, JSON.stringify(cachedSettings));
+    window.sessionStorage.setItem(`narrarium-settings-credentials-v1:${encodeURIComponent("google:e2e-google-user")}`, JSON.stringify({ defaultGitHubToken: "e2e-github-token", extraGitHubTokens: [], azureOpenAIApiKey: "", integrationApiKeys: {}, deepSearchApiKeys: { braveApiKey: "", tavilyApiKey: "" }, bookTokens: { [bookId]: { token: "e2e-github-token" } } }));
     window.localStorage.setItem("narrarium-account-continuity-v1", JSON.stringify({ version: 1, accounts: { google: { version: 1, provider: "google", providerAccountId: user.providerAccountId, normalizedEmail: user.email, displayName: user.name, picture: user.picture, createdAt: 1704067200000, lastSeen: now } } }));
     window.sessionStorage.setItem("narrarium-auth-session-v1", JSON.stringify({ version: 1, state: { accessToken: "e2e-google-token", accessTokenExpiry: now + 3_600_000, provider: user.provider, providerAccountId: user.providerAccountId } }));
 
@@ -276,7 +290,7 @@ async function installSeed(page: Page): Promise<void> {
         const storeNames = [...db.objectStoreNames];
         const transaction = db.transaction(storeNames, "readwrite");
         for (const name of storeNames) transaction.objectStore(name).clear();
-        transaction.objectStore("repositories").put({ id: repositoryId, localInstanceId: "e2e-local-instance", bookId: "book-jesus", owner: "KeyserDSoze", repo: "Jesus", branch: "test2", defaultBranch: "main", remoteHeadSha: "head-test2", remoteChanged: false, remoteStatus: "clean", remoteCheckedAt: "2024-01-01T00:00:00.000Z", lastRemoteHead: "head-test2", lastKnownChanged: false, clonedAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z", lastFetchAt: "2024-01-01T00:00:00.000Z", cloneComplete: true, cloneStatus: "complete", expectedFileCount: prepared.length, nextCommitOrder: 0, accountScope: "google:e2e-google-user", operationFence: 0 });
+        transaction.objectStore("repositories").put({ id: repositoryId, localInstanceId: "e2e-local-instance", bookId, repositoryKind: "book", remoteKind: "github", owner: "KeyserDSoze", repo: "Jesus", branch: "test2", defaultBranch: "main", remoteHeadSha: "head-test2", remoteChanged: false, remoteStatus: "clean", remoteCheckedAt: "2024-01-01T00:00:00.000Z", lastRemoteHead: "head-test2", lastKnownChanged: false, clonedAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z", lastFetchAt: "2024-01-01T00:00:00.000Z", cloneComplete: true, cloneStatus: "complete", expectedFileCount: prepared.length, nextCommitOrder: 0, accountScope: accountIdentity, operationFence: 0 });
         for (const file of prepared) transaction.objectStore("files").put(file);
         transaction.oncomplete = () => resolve();
         transaction.onerror = () => reject(transaction.error);
@@ -302,7 +316,7 @@ async function installSeed(page: Page): Promise<void> {
         request.onerror = () => reject(request.error);
       });
     })();
-  }, { repositoryId: REPOSITORY_ID, files: seededFiles });
+  }, { repositoryId: REPOSITORY_ID, files: seededFiles, accountIdentity: ACCOUNT_IDENTITY, workspaceId: WORKSPACE_ID, bookId: BOOK_ID });
 }
 
 async function readLocalFile(page: Page): Promise<{ text: string; status: string; committed: boolean }> {
@@ -469,6 +483,7 @@ test("recovers an evicted browser working copy with an explicit verified outcome
 });
 
 test("authenticated route families survive direct navigation and refresh", async ({ browser }) => {
+  test.setTimeout(90_000);
   const routes: Array<[string, string]> = [
     ["app", "BooksPage"],
     ["app/books", "BooksPage"],

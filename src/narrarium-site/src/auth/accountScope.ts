@@ -27,6 +27,8 @@ import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 const ACCOUNT_SCOPE_KEY = "narrarium-account-scope-v1";
 let installed = false;
+export interface AccountScopeInstallationResult { error?: Error }
+let installation: Promise<AccountScopeInstallationResult> | null = null;
 
 function storeAccountScope(identity: string | null): void {
   try {
@@ -84,8 +86,8 @@ export function resetAccountScopedState(): void {
   useUiStore.setState({ debugOpen: false, actionsOpen: false, dossierSearchOpen: false, notesOpen: false, authActivity: "idle" });
 }
 
-export function installAccountScopeIsolation(): void {
-  if (installed) return;
+export function installAccountScopeIsolation(): Promise<AccountScopeInstallationResult> {
+  if (installed) return installation ?? Promise.resolve({});
   installed = true;
   const activeIdentity = localWorkspaceScope();
   setFallbackAcknowledgementAccountScope(activeIdentity);
@@ -94,7 +96,20 @@ export function installAccountScopeIsolation(): void {
   useLlmDebugStore.getState().setAccount(activeIdentity, storedIdentity, false);
   storeAccountScope(activeIdentity);
   const scope = captureRepositoryOperationScope();
-  void migrateCurrentProviderRepositoriesToWorkspace(scope)
+  installation = migrateCurrentProviderRepositoriesToWorkspace(scope)
     .then(() => resumeCurrentAccountRepositoryMigrations(scope))
-    .catch(() => undefined);
+    .then(() => ({}))
+    .catch((cause) => ({ error: cause instanceof Error ? cause : new Error(String(cause)) }));
+  return installation;
+}
+
+export async function migrateConnectedProviderRepositories(): Promise<AccountScopeInstallationResult> {
+  const scope = captureRepositoryOperationScope();
+  try {
+    await migrateCurrentProviderRepositoriesToWorkspace(scope);
+    await resumeCurrentAccountRepositoryMigrations(scope);
+    return {};
+  } catch (cause) {
+    return { error: cause instanceof Error ? cause : new Error(String(cause)) };
+  }
 }

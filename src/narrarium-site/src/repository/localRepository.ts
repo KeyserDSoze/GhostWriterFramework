@@ -1230,7 +1230,11 @@ export async function migrateCurrentProviderRepositoriesToWorkspace(scope: Repos
   if (!user) return 0;
   const legacyIdentities = [...new Set([accountIdentity(user), legacyEmailAccountIdentity(user)].filter((value): value is string => Boolean(value)))];
   const db = await openDb();
-  const migratedRepoIds: string[] = [];
+  const pendingJournals = await txStore<RepositoryMigrationJournal[]>("migrationJournals", "readonly", (store) => store.getAll());
+  const workspaceJournals = pendingJournals.filter((journal) => journal.immutableAccountIdentity === scope.accountIdentity || legacyIdentities.includes(journal.immutableAccountIdentity));
+  const protectedLegacySources = new Set(workspaceJournals.filter((journal) => journal.phase === "prepared").map((journal) => journal.oldRepoId));
+  const migratedRepositories: Array<{ repoId: string; localInstanceId: string; bookId: string; owner: string; repo: string; branch: string }> = [];
+  let migratedCount = 0;
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(["repositories", "recoveries", "migrationJournals"], "readwrite");
     const repositories = tx.objectStore("repositories");
@@ -1238,30 +1242,37 @@ export async function migrateCurrentProviderRepositoriesToWorkspace(scope: Repos
     const journals = tx.objectStore("migrationJournals");
     let validationError: Error | null = null;
     const request = repositories.openCursor();
-    const journalRequest = journals.openCursor();
-    journalRequest.onsuccess = () => {
-      const cursor = journalRequest.result;
-      if (!cursor) return;
-      const journal = cursor.value as RepositoryMigrationJournal;
-      if (legacyIdentities.includes(journal.immutableAccountIdentity)) cursor.update({ ...journal, immutableAccountIdentity: scope.accountIdentity });
-      cursor.continue();
-    };
+    for (const journal of workspaceJournals) if (journal.immutableAccountIdentity !== scope.accountIdentity) journals.put({ ...journal, immutableAccountIdentity: scope.accountIdentity });
     request.onsuccess = () => {
       const cursor = request.result;
       if (!cursor) return;
       try { assertRepositoryOperationScopeCurrent(scope); }
       catch (error) { validationError = error as Error; tx.abort(); return; }
       const repository = cursor.value as LocalRepositoryMeta;
-      if (repository.accountScope && legacyIdentities.includes(repository.accountScope)) {
+      const legacyOwned = Boolean(repository.accountScope && legacyIdentities.includes(repository.accountScope));
+      const interruptedMigration = repository.accountScope === scope.accountIdentity
+        && legacyIdentities.some((identity) => repository.id.startsWith(`${identity}::`));
+      if ((legacyOwned || interruptedMigration) && !protectedLegacySources.has(repository.id)) {
         const previousScope = repository.accountScope;
-        migratedRepoIds.push(repository.id);
-        cursor.update({ ...repository, repositoryKind: repository.repositoryKind ?? "book", remoteKind: repository.remoteKind ?? (repository.owner && repository.repo ? "github" : "none"), accountScope: scope.accountIdentity, updatedAt: new Date().toISOString() });
+        const localInstanceId = repository.localInstanceId ?? crypto.randomUUID();
+        migratedRepositories.push({ repoId: repository.id, localInstanceId, bookId: repository.bookId, owner: repository.owner, repo: repository.repo, branch: repository.branch });
+        if (legacyOwned) {
+          migratedCount += 1;
+          cursor.update({ ...repository, localInstanceId, repositoryKind: repository.repositoryKind ?? "book", remoteKind: repository.remoteKind ?? (repository.owner && repository.repo ? "github" : "none"), accountScope: scope.accountIdentity, updatedAt: new Date().toISOString() });
+        }
         const recoveryRequest = recoveries.index("repoId").openCursor(IDBKeyRange.only(repository.id));
         recoveryRequest.onsuccess = () => {
           const recoveryCursor = recoveryRequest.result;
           if (!recoveryCursor) return;
           const recovery = recoveryCursor.value as LocalRepositoryRecovery;
-          if (recovery.accountIdentity === previousScope || recovery.repository?.accountScope === previousScope) recoveryCursor.update({ ...recovery, accountIdentity: scope.accountIdentity, repository: { ...recovery.repository, accountScope: scope.accountIdentity, repositoryKind: recovery.repository.repositoryKind ?? "book", remoteKind: recovery.repository.remoteKind ?? (recovery.repository.owner && recovery.repository.repo ? "github" : "none") } });
+          const recoverableScope = recovery.accountIdentity === previousScope || recovery.repository?.accountScope === previousScope
+            || (recovery.accountIdentity !== undefined && legacyIdentities.includes(recovery.accountIdentity))
+            || (recovery.repository?.accountScope !== undefined && legacyIdentities.includes(recovery.repository.accountScope));
+          const exactRepository = recovery.repoId === repository.id && recovery.repository?.id === repository.id
+            && recovery.repository.bookId === repository.bookId && recovery.repository.owner === repository.owner
+            && recovery.repository.repo === repository.repo && recovery.repository.branch === repository.branch;
+          const matchingInstance = recovery.repository?.localInstanceId === undefined || recovery.repository.localInstanceId === localInstanceId;
+          if (recoverableScope && exactRepository && matchingInstance) recoveryCursor.update({ ...recovery, accountIdentity: scope.accountIdentity, repository: { ...recovery.repository, localInstanceId, accountScope: scope.accountIdentity, repositoryKind: recovery.repository.repositoryKind ?? "book", remoteKind: recovery.repository.remoteKind ?? (recovery.repository.owner && recovery.repository.repo ? "github" : "none") } });
           recoveryCursor.continue();
         };
       }
@@ -1272,8 +1283,8 @@ export async function migrateCurrentProviderRepositoriesToWorkspace(scope: Repos
     tx.onerror = () => reject(validationError ?? tx.error);
     tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Repository workspace migration was aborted."));
   });
-  await migrateRewriteOperationsToWorkspace(migratedRepoIds, legacyIdentities, scope.accountIdentity);
-  return migratedRepoIds.length;
+  await migrateRewriteOperationsToWorkspace(migratedRepositories, legacyIdentities, scope.accountIdentity);
+  return migratedCount;
 }
 
 export async function getLocalRepositoryById(repoIdValue: string, scope: string): Promise<LocalRepositoryMeta | null> {

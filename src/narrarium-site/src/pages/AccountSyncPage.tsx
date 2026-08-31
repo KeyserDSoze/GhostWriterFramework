@@ -18,6 +18,7 @@ import type { AccountSyncBackendKind } from "@/account/types";
 import { useSettingsStore } from "@/store/settingsStore";
 import { deleteAllNarrariumLocalData, getFullDeviceSafetyReport } from "@/account/dataSafety";
 import { useAuthStore } from "@/store/authStore";
+import { migrateConnectedProviderRepositories } from "@/auth/accountScope";
 
 export function AccountSyncPage() {
   const italian = useSettingsStore((state) => state.settings.ui.language) === "it";
@@ -55,6 +56,8 @@ export function AccountSyncPage() {
           rememberMe,
         });
         useAuthStore.getState().setInteractiveAuth(response.access_token, { provider: "google", providerAccountId: profile.sub, name: profile.name || profile.email || "Google", email: profile.email ?? "", picture: profile.picture ?? "" }, "expires_in" in response ? Number(response.expires_in) : 3_600, rememberMe);
+        const migration = await migrateConnectedProviderRepositories();
+        if (migration.error) throw migration.error;
       } catch (cause) { setError(String(cause)); }
       finally { setBusy(null); }
     },
@@ -83,6 +86,8 @@ export function AccountSyncPage() {
         rememberMe,
       });
       useAuthStore.getState().setInteractiveAuth(result.accessToken, { provider: "microsoft", providerAccountId: login.account.homeAccountId, name: profile.displayName || profile.mail || "Microsoft", email: profile.mail ?? profile.userPrincipalName ?? "", picture: "", homeAccountId: login.account.homeAccountId, localAccountId: login.account.localAccountId }, Math.max(120, Math.round(((result.expiresOn?.getTime() ?? Date.now() + 3_600_000) - Date.now()) / 1_000)), rememberMe);
+      const migration = await migrateConnectedProviderRepositories();
+      if (migration.error) throw migration.error;
     } catch (cause) { setError(String(cause)); }
     finally { setBusy(null); }
   }

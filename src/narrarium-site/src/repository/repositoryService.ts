@@ -55,7 +55,7 @@ import {
   type LocalRepositoryRecovery,
   type RemoteTreeFile,
 } from "@/repository/localRepository";
-import { lookupRepositoryMaintenanceTarget, removeRepositoryWithBackupReceipt, RepositoryMaintenanceError } from "@/repository/repositoryMaintenance";
+import { lookupRepositoryMaintenanceTarget, removeRepositoryWithBackupReceipt, RepositoryMaintenanceError, resolveRepositoryMaintenanceTarget } from "@/repository/repositoryMaintenance";
 import { reconcileRemoteMutation } from "@/repository/remoteMutationReconciliation";
 import { classifyRepositoryError, RepositoryError } from "@/repository/repositoryError";
 import { createTrackedGitHubClient } from "@/repository/githubRequest";
@@ -1318,7 +1318,8 @@ export async function removeLocalWorkingCopy(target: ExactRepositoryTarget & { b
   operationScope(target);
   if (target.confirmation !== `REMOVE ${target.owner}/${target.repo}`) throw new RepositoryMaintenanceError("CONFIRMATION_REQUIRED");
   invalidateRepositoryEnsureOperations(repositoryEnsureEpoch + 1, target.accountIdentity);
-  return withRepositoryMutationLease(target.repoId ?? `${target.accountIdentity}::${target.owner}/${target.repo}#${target.branch}`.toLowerCase(), () => removeRepositoryWithBackupReceipt(target, target.backupReceiptId));
+  const exact = await resolveRepositoryMaintenanceTarget(target);
+  return withRepositoryMutationLease(exact.repoId!, () => removeRepositoryWithBackupReceipt(exact, target.backupReceiptId));
 }
 
 export async function recloneLocalWorkingCopy(input: {

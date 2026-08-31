@@ -5,7 +5,8 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => { window.__NARRARIUM_ENABLE_E2E_BRIDGE__ = true; });
 });
 
-const ACCOUNT_IDENTITY = "google:e2e-google-user";
+const WORKSPACE_ID = "e2e-indexeddb-workspace";
+const ACCOUNT_IDENTITY = `workspace:${WORKSPACE_ID}`;
 const REPO_ID = `${ACCOUNT_IDENTITY}::owner/historical#main`;
 const PRIMARY_VERSIONS = [1, 2, 3, 4, 6, 7, 12, 13, 14] as const;
 const REWRITE_VERSIONS = [1, 2, 3, 7] as const;
@@ -97,12 +98,6 @@ function storeCounts(records: Record<string, unknown[]>): Record<string, number>
   return Object.fromEntries(Object.entries(records).map(([store, rows]) => [store, rows.length]));
 }
 
-function stableSnapshot(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableSnapshot).join(",")}]`;
-  return `{${Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${stableSnapshot(item)}`).join(",")}}`;
-}
-
 async function openFixturePage(page: Page): Promise<void> {
   await page.route("**/__e2e-indexeddb-fixture", (route) => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>IndexedDB fixture</title>" }));
   await page.goto("__e2e-indexeddb-fixture");
@@ -111,7 +106,7 @@ async function openFixturePage(page: Page): Promise<void> {
 
 async function seedHistoricalStorage(page: Page, primaryVersion: number, rewriteVersion: number, sequential = false): Promise<void> {
   await openFixturePage(page);
-  await page.evaluate(async ({ primaryVersion, rewriteVersion, sequential, accountIdentity, repoId }) => {
+  await page.evaluate(async ({ primaryVersion, rewriteVersion, sequential, accountIdentity, repoId, workspaceId }) => {
     const deleteDatabase = (name: string) => new Promise<void>((resolve, reject) => {
       const request = indexedDB.deleteDatabase(name);
       request.onsuccess = () => resolve();
@@ -270,58 +265,17 @@ async function seedHistoricalStorage(page: Page, primaryVersion: number, rewrite
 
     const user = { provider: "google", providerAccountId: "e2e-google-user", name: "E2E User", email: "e2e@example.test", picture: "" };
     const nowMs = Date.now();
+    localStorage.setItem("narrarium-local-workspace-id-v1", workspaceId);
     localStorage.setItem("narrarium-account-scope-v1", accountIdentity);
     localStorage.setItem("narrarium-account-continuity-v1", JSON.stringify({ version: 1, accounts: { google: { version: 1, provider: "google", providerAccountId: user.providerAccountId, normalizedEmail: user.email, displayName: user.name, picture: user.picture, createdAt: 1704067200000, lastSeen: nowMs } } }));
     sessionStorage.setItem("narrarium-auth-session-v1", JSON.stringify({ version: 1, state: { accessToken: "e2e-google-token", accessTokenExpiry: nowMs + 3_600_000, provider: user.provider, providerAccountId: user.providerAccountId } }));
-  }, { primaryVersion, rewriteVersion, sequential, accountIdentity: ACCOUNT_IDENTITY, repoId: REPO_ID });
+  }, { primaryVersion, rewriteVersion, sequential, accountIdentity: ACCOUNT_IDENTITY, repoId: REPO_ID, workspaceId: WORKSPACE_ID });
 }
 
 async function runProductionUpgrade(page: Page) {
   await page.goto(".");
   await page.waitForFunction(() => Boolean(window.__narrariumE2e));
   return page.evaluate(({ repoId, accountIdentity }) => window.__narrariumE2e!.upgradeStorage(repoId, accountIdentity), { repoId: REPO_ID, accountIdentity: ACCOUNT_IDENTITY });
-}
-
-async function seedLegacyMigrationStorage(page: Page): Promise<{ oldRepoId: string; newRepoId: string }> {
-  await seedHistoricalStorage(page, 14, 7);
-  const oldRepoId = "google:e2e@example.test::owner/historical#main";
-  await page.evaluate(async ({ oldRepoId, newRepoId, legacyIdentity }) => {
-    const open = (name: string) => new Promise<IDBDatabase>((resolve, reject) => { const request = indexedDB.open(name); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
-    const done = (tx: IDBTransaction) => new Promise<void>((resolve, reject) => { tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error); });
-    const primary = await open("narrarium-local-repositories");
-    const stores = ["repositories", "files", "commits", "logs", "recoveries"];
-    const tx = primary.transaction(stores, "readwrite");
-    const repositories = tx.objectStore("repositories");
-    const repositoryRequest = repositories.get(newRepoId);
-    const fileRequest = tx.objectStore("files").index("repoId").getAll(newRepoId);
-    const commitRequest = tx.objectStore("commits").index("repoId").getAll(newRepoId);
-    const logRequest = tx.objectStore("logs").index("repoId").getAll(newRepoId);
-    const recoveryRequest = tx.objectStore("recoveries").index("repoId").getAll(newRepoId);
-    repositoryRequest.onsuccess = () => {
-      repositories.delete(newRepoId);
-      repositories.put({ ...repositoryRequest.result, id: oldRepoId, accountScope: legacyIdentity });
-    };
-    fileRequest.onsuccess = () => { for (const row of fileRequest.result) { tx.objectStore("files").delete(row.key); tx.objectStore("files").put({ ...row, key: `${oldRepoId}::${row.path}`, repoId: oldRepoId }); } };
-    commitRequest.onsuccess = () => { for (const row of commitRequest.result) tx.objectStore("commits").put({ ...row, repoId: oldRepoId }); };
-    logRequest.onsuccess = () => { for (const row of logRequest.result) tx.objectStore("logs").put({ ...row, repoId: oldRepoId }); };
-    recoveryRequest.onsuccess = () => { for (const row of recoveryRequest.result) tx.objectStore("recoveries").put({ ...row, repoId: oldRepoId, accountIdentity: legacyIdentity, repository: { ...row.repository, id: oldRepoId, accountScope: legacyIdentity } }); };
-    await done(tx);
-    primary.close();
-
-    const rewrite = await open("narrarium-local-rewrite-operations");
-    const rewriteTx = rewrite.transaction("rewriteOperationsV3", "readwrite");
-    const rewriteStore = rewriteTx.objectStore("rewriteOperationsV3");
-    const read = rewriteStore.getAll();
-    read.onsuccess = () => {
-      for (const row of read.result) {
-        rewriteStore.delete(row.storageId);
-        rewriteStore.put({ ...row, storageId: `${encodeURIComponent(oldRepoId)}::${row.operationId}`, repoId: oldRepoId, accountIdentity: legacyIdentity });
-      }
-    };
-    await done(rewriteTx);
-    rewrite.close();
-  }, { oldRepoId, newRepoId: REPO_ID, legacyIdentity: "google:e2e@example.test" });
-  return { oldRepoId, newRepoId: REPO_ID };
 }
 
 async function holdDatabase(context: BrowserContext, name: string, version: number): Promise<{ page: Page; close: () => Promise<void> }> {
@@ -584,45 +538,5 @@ for (const phase of REMOVAL_CRASH_PHASES) {
     }
     expect(storeCounts(finalState.primaryRecords)).toEqual({ commits: 0, consumedBackupReceipts: 1, files: 0, logs: 0, maintenanceCompletions: 1 + targetCompletions.length, maintenanceFences: 1, maintenanceTombstones: 1, migrationJournals: 1, mutationLeases: 1, recoveries: 0, removalJournals: 1, repositories: 0, repositoryDiagnostics: 0 });
     expect(storeCounts(finalState.rewriteRecords)).toEqual({ maintenanceCompletions: rewriteCompletions.length, maintenanceTombstones: 0, migrationCompletions: 0, rewriteOperationsV3: 0 });
-  });
-}
-
-for (const phase of ["journal", "rewrite-prepared", "primary-rekeyed", "rewrite-finalized"] as const) {
-  test(`legacy identity migration resumes after a real reload at ${phase}`, async ({ page }) => {
-    const ids = await seedLegacyMigrationStorage(page);
-    await page.goto(".");
-    await page.waitForFunction(() => Boolean(window.__narrariumE2e));
-    const target = { bookId: "historical-book", owner: "owner", repo: "historical", branch: "main" };
-    const message = await page.evaluate(({ target, phase }) => window.__narrariumE2e!.crashLegacyMigration(target, phase), { target, phase });
-    expect(message).toBe(`Simulated repository migration crash after ${phase}.`);
-    await page.reload();
-    await page.waitForFunction(() => Boolean(window.__narrariumE2e));
-    await expect.poll(async () => page.evaluate(() => window.__narrariumE2e!.resumeLegacyMigrations().then(() => true).catch(() => false))).toBe(true);
-    await expect.poll(async () => page.evaluate(({ repoId, accountIdentity }) => window.__narrariumE2e!.inspectRepository(repoId, accountIdentity).then((state) => Boolean(state.repository)), { repoId: ids.newRepoId, accountIdentity: ACCOUNT_IDENTITY })).toBe(true);
-    const current = await page.evaluate(({ repoId, accountIdentity }) => window.__narrariumE2e!.inspectRepository(repoId, accountIdentity), { repoId: ids.newRepoId, accountIdentity: ACCOUNT_IDENTITY });
-    const legacy = await page.evaluate(({ repoId, accountIdentity }) => window.__narrariumE2e!.inspectRepository(repoId, accountIdentity), { repoId: ids.oldRepoId, accountIdentity: ACCOUNT_IDENTITY });
-    expectExactKeys(current.repository as Record<string, unknown>, ["id", "localInstanceId", "bookId", "owner", "repo", "branch", "defaultBranch", "remoteHeadSha", "clonedAt", "updatedAt", "cloneComplete", "accountScope"]);
-    expectIsoTimestamp((current.repository as Record<string, unknown>).updatedAt);
-    expect({ ...(current.repository as Record<string, unknown>), updatedAt: "<timestamp>" }).toEqual({ ...expectedPrimaryRepository(14), updatedAt: "<timestamp>" });
-    expect(current.files).toEqual([expectedPrimaryFile(14)]);
-    expect(legacy).toEqual({ repository: null, files: [] });
-    const upgraded = await page.evaluate(({ repoId, accountIdentity }) => window.__narrariumE2e!.upgradeStorage(repoId, accountIdentity), { repoId: ids.newRepoId, accountIdentity: ACCOUNT_IDENTITY });
-    expect(upgraded.rewriteRecords.rewriteOperationsV3).toEqual([expectedRewriteRecord(7)]);
-    expect(upgraded.commits).toEqual([HISTORICAL_COMMIT]);
-    expect(upgraded.recoveries).toEqual([{ id: "historical-recovery", repoId: ids.newRepoId, accountIdentity: ACCOUNT_IDENTITY, reason: "Historical recovery", createdAt: HISTORICAL_NOW, repository: expectedPrimaryRepository(14), files: [expectedPrimaryFile(14)], commits: [HISTORICAL_COMMIT] }]);
-    expect(upgraded.primaryRecords.logs).toEqual([{ id: "historical-log", repoId: ids.newRepoId, kind: "sync", message: "Repository sync operation recorded.", createdAt: HISTORICAL_NOW }]);
-    expect(upgraded.primaryRecords.migrationJournals.filter((entry) => entry.oldRepoId === ids.oldRepoId || entry.newRepoId === ids.newRepoId)).toEqual([]);
-    expect(upgraded.primaryRecords.migrationJournals).toEqual([FOREIGN_MIGRATION]);
-    expect(upgraded.rewriteRecords.migrationCompletions).toHaveLength(1);
-    expectExactKeys(upgraded.rewriteRecords.migrationCompletions[0], ["markerId", "journalId", "oldRepoId", "newRepoId", "immutableAccountIdentity", "finalizedRecords", "completedAt"]);
-    const migrationCompletion = upgraded.rewriteRecords.migrationCompletions[0];
-    expectUuid(migrationCompletion.journalId);
-    expect(migrationCompletion.markerId).toBe(`migration::${migrationCompletion.journalId}::${ids.oldRepoId}::${ids.newRepoId}`);
-    const finalizedSnapshot = (migrationCompletion.finalizedRecords as Array<{ hash: unknown }>)[0].hash;
-    expect(finalizedSnapshot).toBe(stableSnapshot(expectedRewriteRecord(7)));
-    expectIsoTimestamp(migrationCompletion.completedAt);
-    expect({ ...migrationCompletion, markerId: "<marker>", journalId: "<journal>", finalizedRecords: [{ operationId: "historical-rewrite", hash: "<snapshot>" }], completedAt: "<timestamp>" }).toEqual({ markerId: "<marker>", journalId: "<journal>", oldRepoId: ids.oldRepoId, newRepoId: ids.newRepoId, immutableAccountIdentity: ACCOUNT_IDENTITY, finalizedRecords: [{ operationId: "historical-rewrite", hash: "<snapshot>" }], completedAt: "<timestamp>" });
-    expect(storeCounts(upgraded.primaryRecords)).toEqual({ commits: 1, consumedBackupReceipts: 1, files: 1, logs: 1, maintenanceCompletions: 1, maintenanceFences: 1, maintenanceTombstones: 1, migrationJournals: 1, mutationLeases: 1, recoveries: 1, removalJournals: 1, repositories: 1, repositoryDiagnostics: 1 });
-    expect(storeCounts(upgraded.rewriteRecords)).toEqual({ maintenanceCompletions: 0, maintenanceTombstones: 0, migrationCompletions: 1, rewriteOperationsV3: 1 });
   });
 }

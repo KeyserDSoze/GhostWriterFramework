@@ -147,21 +147,60 @@ export interface LocalRewriteOperationQuery {
   paragraphSlug?: string;
 }
 
-export async function migrateRewriteOperationsToWorkspace(repoIds: string[], legacyIdentities: string[], workspaceIdentity: string): Promise<void> {
-  if (!repoIds.length || !legacyIdentities.length) return;
+interface WorkspaceRepositoryMigrationTarget {
+  repoId: string;
+  localInstanceId: string;
+  bookId: string;
+  owner: string;
+  repo: string;
+  branch: string;
+}
+
+export async function migrateRewriteOperationsToWorkspace(repositories: WorkspaceRepositoryMigrationTarget[], legacyIdentities: string[], workspaceIdentity: string): Promise<void> {
+  if (!repositories.length || !legacyIdentities.length) return;
   const db = await openDb();
-  const tx = db.transaction(STORE_NAME, "readwrite");
+  const tx = db.transaction([STORE_NAME, MIGRATION_COMPLETION_STORE_NAME], "readwrite");
   const store = tx.objectStore(STORE_NAME);
-  const allowedRepos = new Set(repoIds);
+  const completions = tx.objectStore(MIGRATION_COMPLETION_STORE_NAME);
+  const repositoriesById = new Map(repositories.map((repository) => [repository.repoId, repository]));
   const allowedIdentities = new Set(legacyIdentities);
-  const request = store.openCursor();
-  request.onsuccess = () => {
-    const cursor = request.result;
-    if (!cursor) return;
-    const record = cursor.value as StoredRewriteOperation;
-    if (allowedRepos.has(record.repoId) && record.accountIdentity && allowedIdentities.has(record.accountIdentity)) cursor.update({ ...record, accountIdentity: workspaceIdentity });
-    cursor.continue();
+  allowedIdentities.add(workspaceIdentity);
+  const request = store.getAll();
+  const completionRequest = completions.getAll();
+  let loaded = 0;
+  const apply = () => {
+    if (++loaded !== 2) return;
+    const records = request.result as StoredRewriteOperation[];
+    const migratedRecords = new Map<string, StoredRewriteOperation>();
+    for (const record of records) {
+      const repository = repositoriesById.get(record.repoId);
+      const exactRepository = repository
+        && repository.bookId === record.bookId
+        && repository.owner === record.owner
+        && repository.repo === record.repo
+        && repository.branch === record.branch;
+      if (!exactRepository || !record.accountIdentity || !allowedIdentities.has(record.accountIdentity)
+        || (record.localInstanceId !== undefined && record.localInstanceId !== repository.localInstanceId)) continue;
+      const { legacyUnresolved: _legacyUnresolved, quarantineReason: _quarantineReason, ...current } = record;
+      const migrated = { ...current, accountIdentity: workspaceIdentity, localInstanceId: repository.localInstanceId };
+      migratedRecords.set(record.storageId, migrated);
+      store.put(migrated);
+    }
+    for (const completion of completionRequest.result as RewriteMigrationCompletion[]) {
+      if (!allowedIdentities.has(completion.immutableAccountIdentity) || completion.immutableAccountIdentity === workspaceIdentity) continue;
+      const repository = repositoriesById.get(completion.newRepoId);
+      if (!repository) continue;
+      const original = records
+        .filter((record) => record.repoId === completion.newRepoId && !record.migrationJournalId)
+      const exactPriorEvidence = original.length === completion.finalizedRecords.length
+        && original.every((record) => completion.finalizedRecords.some((entry) => entry.operationId === record.operationId && entry.hash === stableRewriteSnapshot(record)));
+      const finalized = original.map((record) => migratedRecords.get(record.storageId)).filter((record): record is StoredRewriteOperation => Boolean(record));
+      if (!exactPriorEvidence || finalized.length !== original.length) continue;
+      completions.put({ ...completion, immutableAccountIdentity: workspaceIdentity, finalizedRecords: finalized.map((record) => ({ operationId: record.operationId, hash: stableRewriteSnapshot(record) })) });
+    }
   };
+  request.onsuccess = completionRequest.onsuccess = apply;
+  request.onerror = completionRequest.onerror = () => tx.abort();
   await new Promise<void>((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);

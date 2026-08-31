@@ -135,6 +135,38 @@ export function crashNextMaintenanceRemovalForTests(phase: typeof crashPhase): v
 function simulateCrash(phase: Exclude<typeof crashPhase, null>): void { if (maintenanceCrashInjectionEnabled && crashPhase === phase) { crashPhase = null; throw new Error(`Simulated maintenance removal crash ${phase}.`); } }
 
 function scopedRepoId(target: RepositoryMaintenanceTarget): string { return `${target.accountIdentity}::${target.owner}/${target.repo}#${target.branch}`.toLowerCase(); }
+function targetRepoId(target: RepositoryMaintenanceTarget): string { return target.repoId ?? scopedRepoId(target); }
+async function resolveMaintenanceRepoId(target: RepositoryMaintenanceTarget): Promise<string> {
+  if (target.repoId) return target.repoId;
+  const derived = scopedRepoId(target);
+  const db = await openPrimary();
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      const stores = ["repositories", "removalJournals", "maintenanceTombstones", "maintenanceCompletions"].filter((name) => db.objectStoreNames.contains(name));
+      const tx = db.transaction(stores, "readonly");
+      const store = tx.objectStore("repositories");
+      const exact = store.get(derived);
+      const candidates = store.index("remote").getAll(IDBKeyRange.only([target.owner, target.repo, target.branch]));
+      const removals = stores.includes("removalJournals") ? tx.objectStore("removalJournals").getAll() : null;
+      const tombstones = stores.includes("maintenanceTombstones") ? tx.objectStore("maintenanceTombstones").getAll() : null;
+      const completions = stores.includes("maintenanceCompletions") ? tx.objectStore("maintenanceCompletions").getAll() : null;
+      tx.oncomplete = () => {
+        const exactRepository = exact.result as LocalRepositoryMeta | undefined;
+        const matching = (candidates.result as LocalRepositoryMeta[]).filter((candidate) => candidate.accountScope === target.accountIdentity && candidate.bookId === target.bookId);
+        const lifecycleRows = [removals, tombstones, completions].flatMap((request) => request?.result as Array<{ repoId?: string; accountIdentity?: string; bookId?: string; owner?: string; repo?: string; branch?: string }> | undefined ?? []);
+        const lifecycleIds = [...new Set(lifecycleRows.filter((row) => row.accountIdentity === target.accountIdentity && row.bookId === target.bookId && row.owner === target.owner && row.repo === target.repo && row.branch === target.branch && row.repoId).map((row) => row.repoId!))];
+        const candidateIds = [...new Set(matching.map((candidate) => candidate.id))];
+        const resolvedIds = exactRepository ? [exactRepository.id] : candidateIds.length ? candidateIds : lifecycleIds;
+        if (resolvedIds.length > 1) { reject(new RepositoryMaintenanceError("TARGET_MISMATCH")); return; }
+        resolve(resolvedIds[0] ?? derived);
+      };
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new Error("Repository maintenance target lookup was aborted."));
+    });
+  } finally {
+    db.close();
+  }
+}
 function lifecycle(repository: LocalRepositoryMeta, journalFailed: boolean): MaintenanceLifecycle {
   if (journalFailed) return "journal-failed";
   if (repository.cloneStatus === "cloning") return "cloning";
@@ -174,11 +206,17 @@ function recoverySnapshotComponent(recovery: LocalRepositoryRecovery): string { 
 function recoveryRecordsDigest(recoveries: LocalRepositoryRecovery[]): Array<{ id: string; digest: string }> { return recoveries.map((recovery) => ({ id: recovery.id, digest: recoverySnapshotComponent(recovery) })); }
 async function openPrimary(): Promise<IDBDatabase> { return new Promise((resolve, reject) => { const request = indexedDB.open(DB_NAME); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
 
+export async function resolveRepositoryMaintenanceTarget(target: RepositoryMaintenanceTarget): Promise<RepositoryMaintenanceTarget> {
+  const scope = captureRepositoryOperationScope();
+  if (!target.accountIdentity || scope.accountIdentity !== target.accountIdentity) throw new RepositoryMaintenanceError("ACCOUNT_MISMATCH");
+  return { ...target, repoId: await resolveMaintenanceRepoId(target) };
+}
+
 export async function lookupRepositoryMaintenanceTarget(target: RepositoryMaintenanceTarget): Promise<RepositoryMaintenanceSnapshot> {
   const scope = captureRepositoryOperationScope();
   if (!target.accountIdentity || scope.accountIdentity !== target.accountIdentity) throw new RepositoryMaintenanceError("ACCOUNT_MISMATCH");
-  const exactId = scopedRepoId(target);
-  if (target.repoId && target.repoId !== exactId) throw new RepositoryMaintenanceError("TARGET_MISMATCH");
+  target = await resolveRepositoryMaintenanceTarget(target);
+  const exactId = target.repoId!;
   const db = await openPrimary();
     const stores = ["repositories", "files", "commits", "logs", "repositoryDiagnostics", "recoveries", "migrationJournals", "removalJournals", "maintenanceTombstones", "maintenanceCompletions", "mutationLeases"].filter((name) => db.objectStoreNames.contains(name));
   const result = await new Promise<Omit<RepositoryMaintenanceSnapshot, "diagnostics" | "rewriteOperations" | "rewriteOperationCount" | "hasUserWork" | "digest">>((resolve, reject) => {
@@ -197,7 +235,8 @@ export async function lookupRepositoryMaintenanceTarget(target: RepositoryMainte
         if (removals.some((candidate) => candidate.repoId === exactId && (candidate.accountIdentity !== target.accountIdentity || candidate.bookId !== target.bookId || candidate.owner !== target.owner || candidate.repo !== target.repo || candidate.branch !== target.branch))) { reject(new RepositoryMaintenanceError("TARGET_MISMATCH")); return; }
         if (tombstone && (tombstone.accountIdentity !== target.accountIdentity || tombstone.bookId !== target.bookId || tombstone.owner !== target.owner || tombstone.repo !== target.repo || tombstone.branch !== target.branch)) { reject(new RepositoryMaintenanceError("TARGET_MISMATCH")); return; }
         if (completion && (!completionMatchesTarget(completion, target) || !completionEvidenceIsExact(completion))) { reject(new RepositoryMaintenanceError("TARGET_MISMATCH")); return; }
-       if (repository && (repository.id !== exactId || repository.accountScope !== target.accountIdentity || repository.bookId !== target.bookId || repository.owner !== target.owner || repository.repo !== target.repo || repository.branch !== target.branch || (removal && removal.localInstanceId !== repository.localInstanceId))) { reject(new RepositoryMaintenanceError("TARGET_MISMATCH")); return; }
+        if (repository && (repository.id !== exactId || repository.accountScope !== target.accountIdentity || repository.bookId !== target.bookId || repository.owner !== target.owner || repository.repo !== target.repo || repository.branch !== target.branch || (removal && removal.localInstanceId !== repository.localInstanceId))) { reject(new RepositoryMaintenanceError("TARGET_MISMATCH")); return; }
+        if (!repository && !removal && !completion && ((requests.files.result as LocalRepositoryFile[]).length || (requests.commits.result as LocalCommit[]).length || (requests.logs.result as LocalRepoLogEntry[]).length)) { reject(new RepositoryMaintenanceError("TARGET_MISMATCH")); return; }
       const files = (requests.files.result as LocalRepositoryFile[]).sort((a, b) => a.path.localeCompare(b.path));
       const commits = (requests.commits.result as LocalCommit[]).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     const logs = (requests.logs.result as LocalRepoLogEntry[]).map((entry) => ({ ...entry, message: `Repository ${entry.kind} operation recorded.` })).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -217,6 +256,9 @@ export async function lookupRepositoryMaintenanceTarget(target: RepositoryMainte
   db.close();
   assertRepositoryOperationScopeCurrent(scope);
   const rewriteOperations = await listLocalRewriteOperationsForMaintenance(exactId, scope);
+  const rewriteInstanceId = result.repository?.localInstanceId ?? (result.removalPending ? (await existingRemovalJournal(exactId))?.localInstanceId : undefined) ?? (await existingRemovalCompletion(exactId))?.localInstanceId;
+  if (rewriteOperations.some((operation) => operation.bookId !== target.bookId || operation.owner !== target.owner || operation.repo !== target.repo || operation.branch !== target.branch || (rewriteInstanceId && operation.localInstanceId !== rewriteInstanceId))
+    || (!result.repository && !result.removalPending && rewriteOperations.length)) throw new RepositoryMaintenanceError("TARGET_MISMATCH");
   const rewriteTombstone = await getRewriteMaintenanceTombstone(exactId, target.accountIdentity);
   const primaryCompletion = await existingRemovalCompletion(exactId);
   const hasUserWork = result.status.dirty > 0 || result.unpushedCommits.length > 0 || result.recoveries.length > 0 || rewriteOperations.length > 0;
@@ -293,7 +335,7 @@ async function existingRemovalCompletion(repoId: string): Promise<RemovalComplet
 }
 
 function completionMatchesTarget(completion: RemovalCompletion, target: RepositoryMaintenanceTarget): boolean {
-  return completion.repoId === scopedRepoId(target) && completion.accountIdentity === target.accountIdentity && completion.bookId === target.bookId && completion.owner === target.owner && completion.repo === target.repo && completion.branch === target.branch;
+  return completion.repoId === targetRepoId(target) && completion.accountIdentity === target.accountIdentity && completion.bookId === target.bookId && completion.owner === target.owner && completion.repo === target.repo && completion.branch === target.branch;
 }
 
 function completionEvidenceIsExact(completion: RemovalCompletion): boolean {
@@ -344,7 +386,7 @@ async function allRecoveryRows(repoId: string): Promise<LocalRepositoryRecovery[
 async function prepareRemoval(target: RepositoryMaintenanceTarget, receiptId: string): Promise<RemovalJournal> {
   const receipt = loadReceipt(receiptId);
   if (!receipt || receipt.sessionNonce !== sessionNonce() || Date.now() - Date.parse(receipt.createdAt) > RECEIPT_TTL_MS) throw new RepositoryMaintenanceError("BACKUP_REQUIRED");
-  if (receipt.accountIdentity !== target.accountIdentity || receipt.repoId !== scopedRepoId(target)) throw new RepositoryMaintenanceError("BACKUP_STALE");
+  if (receipt.accountIdentity !== target.accountIdentity || receipt.repoId !== targetRepoId(target)) throw new RepositoryMaintenanceError("BACKUP_STALE");
   const scope = captureRepositoryOperationScope();
   const db = await openPrimary();
   const journal = await new Promise<RemovalJournal>((resolve, reject) => {
@@ -395,7 +437,8 @@ async function deletePrimary(journal: RemovalJournal, scope: RepositoryOperation
 
 export async function removeRepositoryWithBackupReceipt(target: RepositoryMaintenanceTarget, receiptId: string): Promise<{ recoveriesPreserved: number; rewriteOperationsRemoved: number }> {
   const scope = captureRepositoryOperationScope(); if (scope.accountIdentity !== target.accountIdentity) throw new RepositoryMaintenanceError("ACCOUNT_MISMATCH");
-  const repoId = scopedRepoId(target);
+  const repoId = await resolveMaintenanceRepoId(target);
+  target = { ...target, repoId };
   const completed = await existingRemovalCompletion(repoId);
   if (completed) {
     if (!completionMatchesTarget(completed, target) || !completionEvidenceIsExact(completed)) throw new RepositoryMaintenanceError("TARGET_MISMATCH");
@@ -492,7 +535,8 @@ export async function forceRemoveRepositoryWithoutBackup(target: RepositoryMaint
   if (confirmation !== `FORCE RECLONE ${target.owner}/${target.repo}#${target.branch}`) throw new RepositoryMaintenanceError("CONFIRMATION_REQUIRED");
   const scope = captureRepositoryOperationScope();
   if (scope.accountIdentity !== target.accountIdentity) throw new RepositoryMaintenanceError("ACCOUNT_MISMATCH");
-  const repoId = scopedRepoId(target);
+  const repoId = await resolveMaintenanceRepoId(target);
+  target = { ...target, repoId };
   if (await existingRemovalCompletion(repoId)) return removeRepositoryWithBackupReceipt(target, "");
   const existing = await existingRemovalJournal(repoId);
   if (existing && (existing.accountIdentity !== target.accountIdentity || existing.bookId !== target.bookId || existing.owner !== target.owner || existing.repo !== target.repo || existing.branch !== target.branch)) throw new RepositoryMaintenanceError("TARGET_MISMATCH");
