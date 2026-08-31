@@ -63,6 +63,7 @@ export type AccountSyncErrorKind =
   | "remote-deleted"
   | "remote-public"
   | "rate-limited"
+  | "cache-revalidation"
   | "network"
   | "schema-incompatible"
   | "remote-corrupt"

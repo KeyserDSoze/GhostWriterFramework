@@ -2,18 +2,33 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "fake-indexeddb/auto";
 import { closeAccountLocalStoreForTests, initializeAccountLocalStore, loadLocalAccountSnapshot, saveLocalAccountClipboard } from "@/account/accountLocalStore";
 import { useConnectionStore } from "@/account/connectionStore";
-import { syncOneAccountReplica, useAccountSyncStore } from "@/account/accountSync";
+import { classifyAccountSyncError, scheduleAccountSync, syncOneAccountReplica, useAccountSyncStore } from "@/account/accountSync";
 import { ACCOUNT_SYNC_SCHEMA_VERSION } from "@/account/types";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { emptyCostsFile } from "@/costs/model";
 
 const github = vi.hoisted(() => ({ pull: vi.fn(), push: vi.fn(), remove: vi.fn() }));
+const drives = vi.hoisted(() => ({
+  google: { pull: vi.fn(), push: vi.fn(), remove: vi.fn() },
+  microsoft: { pull: vi.fn(), push: vi.fn(), remove: vi.fn() },
+}));
 vi.mock("@/account/sync/githubBackend", () => ({
   GitHubAccountSyncBackend: class {
     kind = "github" as const;
     pull = github.pull;
     push = github.push;
     deleteRemoteData = github.remove;
+  },
+}));
+vi.mock("@/account/sync/driveBackend", () => ({
+  DriveAccountSyncBackend: class {
+    readonly kind: "google-drive" | "onedrive";
+    constructor(private readonly provider: "google" | "microsoft") {
+      this.kind = provider === "google" ? "google-drive" : "onedrive";
+    }
+    pull = (...args: unknown[]) => drives[this.provider].pull(...args);
+    push = (...args: unknown[]) => drives[this.provider].push(...args);
+    deleteRemoteData = (...args: unknown[]) => drives[this.provider].remove(...args);
   },
 }));
 
@@ -31,6 +46,11 @@ describe("account synchronization races", () => {
     github.pull.mockReset();
     github.push.mockReset();
     github.remove.mockReset();
+    for (const backend of Object.values(drives)) {
+      backend.pull.mockReset();
+      backend.push.mockReset();
+      backend.remove.mockReset();
+    }
     await initializeAccountLocalStore({ settings: DEFAULT_SETTINGS, costs: emptyCostsFile(), clipboard: [], chats: [] });
     await saveLocalAccountClipboard([{ id: "base", text: "base", at: "2026-08-31T12:00:00.000Z" }]);
     await useConnectionStore.getState().connectGitHub({ method: "github-pat", credentialKind: "pat", identity: { provider: "github", providerAccountId: "1", displayName: "Writer", username: "writer" }, token: "token", rememberMe: true, accountSyncEnabled: true });
@@ -57,5 +77,42 @@ describe("account synchronization races", () => {
     github.push.mockRejectedValue(new TypeError("network unavailable"));
     await expect(syncOneAccountReplica("github")).rejects.toThrow("GitHub sync failed (network)");
     expect(useConnectionStore.getState().configuration.github?.replica).toMatchObject({ status: "error", errorKind: "network" });
+  });
+
+  it("does not run another provider from a pending automatic sync after an explicit OneDrive sync", async () => {
+    await useConnectionStore.getState().connectGoogle({
+      identity: { provider: "google", providerAccountId: "google-1", displayName: "Google Writer" },
+      accessToken: "google-token",
+      accessTokenExpiry: Date.now() + 60_000,
+      rememberMe: true,
+    });
+    await useConnectionStore.getState().connectMicrosoft({
+      identity: { provider: "microsoft", providerAccountId: "microsoft-1", displayName: "Microsoft Writer" },
+      accessToken: "microsoft-token",
+      accessTokenExpiry: Date.now() + 60_000,
+      homeAccountId: "microsoft-1",
+      localAccountId: "local-1",
+      rememberMe: true,
+    });
+    drives.microsoft.pull.mockResolvedValue(null);
+    drives.microsoft.push.mockResolvedValue({ revision: "onedrive-1" });
+
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    try {
+      scheduleAccountSync(60_000);
+      await syncOneAccountReplica("onedrive");
+      expect(clearTimeoutSpy).toHaveBeenCalledOnce();
+    } finally {
+      clearTimeoutSpy.mockRestore();
+    }
+
+    expect(drives.microsoft.pull).toHaveBeenCalledOnce();
+    expect(drives.microsoft.push).toHaveBeenCalledOnce();
+    expect(drives.google.pull).not.toHaveBeenCalled();
+    expect(drives.google.push).not.toHaveBeenCalled();
+  });
+
+  it("classifies an HTTP 304 reported in an untyped provider error", () => {
+    expect(classifyAccountSyncError(new Error("OneDrive folder lookup: 304"))).toBe("cache-revalidation");
   });
 });

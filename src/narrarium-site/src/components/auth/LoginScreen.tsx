@@ -15,6 +15,7 @@ import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { cloudDeletionReconnectState, registerCloudAccount, resumeCloudWrites } from "@/drive/cloudWriteBarrier";
 import { clearLegacyRecoveryLoginRequest, consumeLegacyRecoveryLoginRequest, matchesLegacyRecoveryLoginRequest, normalizeAppReturnTo, readLegacyRecoveryLoginRequest } from "@/auth/legacyRecoveryLogin";
 import { resolveUpdateAwareLoginReturnTo } from "@/pwaUpdateIntent";
+import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
 
 export function LoginScreen() {
   const { t } = useTranslation();
@@ -161,7 +162,7 @@ export function LoginScreen() {
          graphToken = result.accessToken;
        }
 
-      const profileRes = await fetch("https://graph.microsoft.com/v1.0/me", {
+      const profileRes = await fetchMicrosoftGraph("https://graph.microsoft.com/v1.0/me", {
         headers: { Authorization: `Bearer ${graphToken}` },
       });
       if (!profileRes.ok) throw new Error(`Microsoft profile load failed (${profileRes.status})`);

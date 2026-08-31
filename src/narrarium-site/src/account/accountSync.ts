@@ -121,13 +121,15 @@ async function setReplicaFailure(kind: AccountSyncBackendKind, error: unknown): 
 export function classifyAccountSyncError(error: unknown) {
   if (error instanceof AccountCredentialError) return error.reason === "expired" ? "credential-expired" as const : "credential-missing" as const;
   const value = error && typeof error === "object" ? error as { status?: unknown; code?: unknown; message?: unknown } : {};
-  const status = typeof value.status === "number" ? value.status : undefined;
   const message = typeof value.message === "string" ? value.message.toLowerCase() : "";
+  const statusMatch = message.match(/(?:^|[\s:(])([1-5]\d{2})(?:[\s).]|$)/);
+  const status = typeof value.status === "number" ? value.status : statusMatch ? Number(statusMatch[1]) : undefined;
   if (value.code === "GITHUB_ACCOUNT_REPOSITORY_PUBLIC") return "remote-public" as const;
   if (status === 401 || /expired/.test(message)) return "credential-expired" as const;
   if (status === 403 || /permission|forbidden/.test(message)) return "permission-denied" as const;
   if (status === 404) return "remote-not-found" as const;
   if (status === 429 || /rate.?limit/.test(message)) return "rate-limited" as const;
+  if (status === 304) return "cache-revalidation" as const;
   if (/hash/.test(message)) return "hash-mismatch" as const;
   if (/schema/.test(message)) return "schema-incompatible" as const;
   if (/corrupt|malformed|incomplete/.test(message)) return "remote-corrupt" as const;
@@ -245,6 +247,7 @@ export async function resolveAccountReconciliation(authoritative: "local" | Acco
 export async function syncOneAccountReplica(kind: AccountSyncBackendKind): Promise<void> {
   const currentKinds = activeBackendKinds();
   if (!currentKinds.includes(kind)) throw new Error(`${backendLabel(kind)} sync is disabled on this device.`);
+  cancelScheduledAccountSync();
   const result = await withAccountSyncLock(() => syncAccountReplicas([kind]));
   if (result.synced.includes(kind) || result.reconciliation) return;
   const configuration = useConnectionStore.getState().configuration;
@@ -269,9 +272,15 @@ let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let automaticSyncInstalled = false;
 let syncRequestedWhileBusy = false;
 
+function cancelScheduledAccountSync(): void {
+  if (!syncTimer) return;
+  clearTimeout(syncTimer);
+  syncTimer = null;
+}
+
 export function scheduleAccountSync(delayMs = 2_000): void {
   if (useAccountSyncStore.getState().syncing) syncRequestedWhileBusy = true;
-  if (syncTimer) clearTimeout(syncTimer);
+  cancelScheduledAccountSync();
   syncTimer = setTimeout(() => {
     syncTimer = null;
     if (navigator.onLine !== false) void syncAllAccountReplicas().catch(() => undefined);

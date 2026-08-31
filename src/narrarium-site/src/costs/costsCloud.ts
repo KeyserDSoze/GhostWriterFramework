@@ -5,6 +5,7 @@ import { ensureGoogleAppFolder } from "@/drive/googleAppFolder";
 import { beginCloudWrite, fencedCloudMutation } from "@/drive/cloudWriteBarrier";
 import { assertCloudStatus } from "@/drive/migrationSafety";
 import { ensureMicrosoftAppMarker, graphPath, ONE_DRIVE_APP_FOLDER } from "@/drive/microsoftAppFolder";
+import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
 
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -103,7 +104,7 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
   let currentPath = "";
   for (const part of parts) {
     const nextPath = currentPath ? `${currentPath}/${part}` : part;
-    const exists = await fetch(`${GRAPH_DRIVE_API}/root:/${graphPath(nextPath)}`, { headers: authHeaders(accessToken) });
+    const exists = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/root:/${graphPath(nextPath)}`, { headers: authHeaders(accessToken) });
     if (exists.ok) { currentPath = nextPath; continue; }
     if (exists.status !== 404) throw new Error(`OneDrive costs folder lookup: ${exists.status}`);
     const createUrl = currentPath ? `${GRAPH_DRIVE_API}/root:/${graphPath(currentPath)}:/children` : `${GRAPH_DRIVE_API}/root/children`;
@@ -120,7 +121,7 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
 
 async function loadMicrosoftCosts(accessToken: string): Promise<CostsHandle> {
   await ensureMicrosoftFolderPath(accessToken, ONE_DRIVE_APP_FOLDER);
-  const response = await fetch(`${GRAPH_DRIVE_API}/root:/${graphPath(ONE_DRIVE_APP_FOLDER)}/${encodeURIComponent(COSTS_FILE)}:/content`, { headers: authHeaders(accessToken) });
+  const response = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/root:/${graphPath(ONE_DRIVE_APP_FOLDER)}/${encodeURIComponent(COSTS_FILE)}:/content`, { headers: authHeaders(accessToken) });
   if (response.status === 404) return { file: emptyCostsFile() };
   assertOk(response, "OneDrive costs download");
   const file = parseCostsFile(await response.json());

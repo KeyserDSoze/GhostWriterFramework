@@ -19,6 +19,7 @@ import {
 } from "@/drive/migration";
 import { cloudDeletionReconnectState, completeCloudDeletion, failCloudDeletion, registerCloudAccount, resumeCloudWrites, suspendCloudWrites } from "@/drive/cloudWriteBarrier";
 import { requireGoogleProviderAccountId } from "@/auth/accountIdentity";
+import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
 
 interface TargetAccount {
   provider: AuthProvider;
@@ -107,7 +108,7 @@ export function MigratePage() {
       const account = result.account;
       if (!account?.homeAccountId?.trim() || !account.localAccountId?.trim()) throw new Error("Microsoft did not provide immutable account identifiers.");
       const graphToken = (await msalInstance.acquireTokenSilent(microsoftSilentRequest(account)).catch(() => result)).accessToken;
-      const res = await fetch("https://graph.microsoft.com/v1.0/me", {
+      const res = await fetchMicrosoftGraph("https://graph.microsoft.com/v1.0/me", {
         headers: { Authorization: `Bearer ${graphToken}` },
       });
       if (!res.ok) throw new Error(`Microsoft profile load failed (${res.status})`);

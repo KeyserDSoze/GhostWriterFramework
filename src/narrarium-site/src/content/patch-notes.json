@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.77.7",
+    "date": "2026-08-31",
+    "en": {
+      "title": "Reliable isolated OneDrive sync",
+      "summary": "OneDrive synchronization now bypasses stale browser revalidation and provider-specific sync buttons contact only the selected replica.",
+      "changes": [
+        "Authenticated Microsoft Graph reads now bypass the browser HTTP cache, preventing a cached Apps/Narrarium response from surfacing as a failed 304 revalidation.",
+        "Starting a sync from an individual Google Drive, OneDrive, or GitHub card cancels any pending all-provider debounce so the action remains isolated to that provider.",
+        "Provider controls remain disabled while synchronization is active, preventing overlapping manual operations from being queued behind each other.",
+        "HTTP status codes embedded in provider errors are now classified, including a dedicated cache-revalidation category for any unexpected 304 response."
+      ]
+    },
+    "it": {
+      "title": "Sync OneDrive affidabile e isolato",
+      "summary": "La sincronizzazione OneDrive ora evita le rivalidazioni obsolete del browser e i pulsanti dei singoli provider contattano soltanto la replica selezionata.",
+      "changes": [
+        "Le letture autenticate da Microsoft Graph ora ignorano la cache HTTP del browser, evitando che una risposta memorizzata per Apps/Narrarium emerga come rivalidazione 304 fallita.",
+        "L'avvio del sync dalla singola scheda Google Drive, OneDrive o GitHub annulla qualsiasi debounce globale in attesa, mantenendo l'azione isolata al provider scelto.",
+        "I controlli dei provider restano disabilitati durante una sincronizzazione, impedendo di accodare operazioni manuali sovrapposte.",
+        "I codici HTTP presenti negli errori dei provider vengono ora classificati, inclusa una categoria dedicata alla rivalidazione della cache per eventuali risposte 304 inattese."
+      ]
+    }
+  },
+  {
     "version": "0.77.6",
     "date": "2026-08-31",
     "en": {

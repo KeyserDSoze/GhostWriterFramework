@@ -4,6 +4,7 @@ import { BROWSER_ROUTING_ID, sanitizeTaskRouting } from "@/assistant/router";
 import { ensureGoogleAppFolder, listVerifiedGoogleAppFolders, selectCanonicalGoogleAppFolder } from "@/drive/googleAppFolder";
 import { assertCloudReadAllowed, beginCloudWrite, fencedCloudMutation } from "@/drive/cloudWriteBarrier";
 import { ensureMicrosoftAppMarker, graphPath, ONE_DRIVE_APP_FOLDER, verifyMicrosoftAppFolder } from "@/drive/microsoftAppFolder";
+import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
 
 export class TokenExpiredError extends Error {
   constructor() {
@@ -212,7 +213,7 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
   let currentPath = "";
   for (const part of parts) {
     const nextPath = currentPath ? `${currentPath}/${part}` : part;
-    const exists = await fetch(`${GRAPH_DRIVE_API}/root:/${graphPath(nextPath)}`, {
+    const exists = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/root:/${graphPath(nextPath)}`, {
       headers: authHeaders(accessToken),
     });
     if (exists.status === 401) throw new TokenExpiredError();
@@ -238,7 +239,7 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
 
 async function loadMicrosoftSettings(accessToken: string, strict = false): Promise<CloudSettingsHandle> {
   await ensureMicrosoftFolderPath(accessToken, ONE_DRIVE_APP_FOLDER);
-  const meta = await fetch(`${GRAPH_DRIVE_API}/root:/${graphPath(ONE_DRIVE_APP_FOLDER)}/${encodeURIComponent(SETTINGS_FILE_NAME)}`, {
+  const meta = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/root:/${graphPath(ONE_DRIVE_APP_FOLDER)}/${encodeURIComponent(SETTINGS_FILE_NAME)}`, {
     headers: authHeaders(accessToken),
   });
 
@@ -251,7 +252,7 @@ async function loadMicrosoftSettings(accessToken: string, strict = false): Promi
   const metaData = (await meta.json()) as MicrosoftDriveItem;
   const revision = microsoftRevision(metaData, meta);
   if (!metaData.id || !revision) throw new Error("OneDrive did not provide a settings revision.");
-  const file = await fetch(`${GRAPH_DRIVE_API}/items/${metaData.id}/content`, {
+  const file = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/items/${metaData.id}/content`, {
     headers: authHeaders(accessToken),
   });
   assertOk(file, "OneDrive settings download");
@@ -265,13 +266,13 @@ async function loadMicrosoftSettingsById(accessToken: string, fileId: string, st
   const folder = await verifyMicrosoftAppFolder(accessToken);
   const child = folder?.children.find((entry) => entry.id === fileId);
   if (!folder || child?.name !== SETTINGS_FILE_NAME || !child.file || child.folder) return null;
-  const meta = await fetch(`${GRAPH_DRIVE_API}/items/${encodeURIComponent(fileId)}?$select=id,name,eTag,file,parentReference`, { headers: authHeaders(accessToken) });
+  const meta = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/items/${encodeURIComponent(fileId)}?$select=id,name,eTag,file,parentReference`, { headers: authHeaders(accessToken) });
   if (meta.status === 404) return null;
   assertOk(meta, "OneDrive settings lookup");
   const metaData = await meta.json() as MicrosoftDriveItem & { name?: string; file?: object; parentReference?: { id?: string } };
   const revision = microsoftRevision(metaData, meta);
   if (metaData.id !== fileId || metaData.name !== SETTINGS_FILE_NAME || !metaData.file || metaData.parentReference?.id !== folder.id || !revision) return null;
-  const file = await fetch(`${GRAPH_DRIVE_API}/items/${encodeURIComponent(fileId)}/content`, { headers: authHeaders(accessToken) });
+  const file = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/items/${encodeURIComponent(fileId)}/content`, { headers: authHeaders(accessToken) });
   assertOk(file, "OneDrive settings download");
   const raw = await file.json();
   const after = await microsoftMetadataRevision(accessToken, fileId, "");
@@ -295,7 +296,7 @@ function microsoftRevision(item: MicrosoftDriveItem, response?: Response): strin
 
 async function microsoftMetadataRevision(accessToken: string, itemId: string | undefined, itemUrl: string): Promise<{ fileId: string; revision: string }> {
   const url = itemId ? `${GRAPH_DRIVE_API}/items/${encodeURIComponent(itemId)}` : itemUrl;
-  const response = await fetch(url, { headers: authHeaders(accessToken) });
+  const response = await fetchMicrosoftGraph(url, { headers: authHeaders(accessToken) });
   assertOk(response, "OneDrive settings metadata");
   const item = await response.json() as MicrosoftDriveItem;
   const revision = microsoftRevision(item, response);
@@ -306,7 +307,7 @@ async function microsoftMetadataRevision(accessToken: string, itemId: string | u
 async function saveMicrosoftSettings(accessToken: string, settings: AppSettings, expected?: { fileId: string | null; revision: string | null }): Promise<{ fileId: string; revision: string }> {
   await ensureMicrosoftFolderPath(accessToken, ONE_DRIVE_APP_FOLDER);
   const itemUrl = `${GRAPH_DRIVE_API}/root:/${graphPath(ONE_DRIVE_APP_FOLDER)}/${encodeURIComponent(SETTINGS_FILE_NAME)}`;
-  const current = await fetch(itemUrl, { headers: authHeaders(accessToken) });
+  const current = await fetchMicrosoftGraph(itemUrl, { headers: authHeaders(accessToken) });
   if (!(current.ok || current.status === 404)) assertOk(current, "OneDrive settings revision");
   const item = current.ok ? await current.json() as MicrosoftDriveItem : null;
   if (item) {

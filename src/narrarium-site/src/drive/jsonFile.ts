@@ -3,6 +3,7 @@ import { ensureGoogleAppFolder } from "@/drive/googleAppFolder";
 import { beginCloudWrite, fencedCloudMutation } from "@/drive/cloudWriteBarrier";
 import { assertCloudStatus } from "@/drive/migrationSafety";
 import { ensureMicrosoftAppMarker, graphPath, ONE_DRIVE_APP_FOLDER } from "@/drive/microsoftAppFolder";
+import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
 
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -118,7 +119,7 @@ async function ensureMsFolder(token: string): Promise<void> {
   let current = "";
   for (const part of parts) {
     const next = current ? `${current}/${part}` : part;
-    const exists = await fetch(`${GRAPH_DRIVE_API}/root:/${graphPath(next)}`, { headers: headers(token) });
+    const exists = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/root:/${graphPath(next)}`, { headers: headers(token) });
     if (exists.ok) { current = next; continue; }
     if (exists.status !== 404) throw new Error(`OneDrive folder lookup: ${exists.status}`);
     const url = current ? `${GRAPH_DRIVE_API}/root:/${graphPath(current)}:/children` : `${GRAPH_DRIVE_API}/root/children`;
@@ -132,12 +133,12 @@ async function ensureMsFolder(token: string): Promise<void> {
 async function loadMs<T>(token: string, fileName: string): Promise<JsonHandle<T>> {
   await ensureMsFolder(token);
   const itemUrl = `${GRAPH_DRIVE_API}/root:/${graphPath(ONE_DRIVE_APP_FOLDER)}/${encodeURIComponent(fileName)}`;
-  const metadata = await fetch(itemUrl, { headers: headers(token) });
+  const metadata = await fetchMicrosoftGraph(itemUrl, { headers: headers(token) });
   if (metadata.status === 404) return { data: null };
   assertOk(metadata, `OneDrive ${fileName} metadata`);
   const item = await metadata.json() as { id?: string; eTag?: string; "@odata.etag"?: string };
   if (!item.id) throw new Error(`OneDrive ${fileName} identity is unavailable.`);
-  const response = await fetch(`${GRAPH_DRIVE_API}/items/${encodeURIComponent(item.id)}/content`, { headers: headers(token) });
+  const response = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/items/${encodeURIComponent(item.id)}/content`, { headers: headers(token) });
   assertOk(response, `OneDrive ${fileName} download`);
   return { data: (await response.json()) as T, driveFileId: item.id, revision: item.eTag ?? item["@odata.etag"] ?? metadata.headers.get("etag") ?? undefined };
 }

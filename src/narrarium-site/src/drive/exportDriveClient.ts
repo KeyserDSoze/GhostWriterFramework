@@ -2,6 +2,7 @@ import type { AuthProvider } from "@/store/authStore";
 import { useAuthStore } from "@/store/authStore";
 import { graphPath } from "@/drive/microsoftAppFolder";
 import { acquireCloudWriteLease, fencedCloudMutation } from "@/drive/cloudWriteBarrier";
+import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
 
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -93,7 +94,7 @@ export async function listGoogleDriveFolders(accessToken: string, parentId = "ro
 export async function listMicrosoftDriveFolders(accessToken: string, folderPath = ""): Promise<DriveFolderEntry[]> {
   const normalized = folderPath.split("/").filter(Boolean).join("/");
   const endpoint = normalized ? `${GRAPH_DRIVE_API}/root:/${graphPath(normalized)}:/children` : `${GRAPH_DRIVE_API}/root/children`;
-  const response = await fetch(endpoint, {
+  const response = await fetchMicrosoftGraph(endpoint, {
     headers: authHeaders(accessToken),
   });
   assertOk(response, "OneDrive folder list", "microsoft", accessToken);
@@ -184,7 +185,7 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
   let currentPath = "";
   for (const part of parts) {
     const nextPath = currentPath ? `${currentPath}/${part}` : part;
-    const exists = await fetch(`${GRAPH_DRIVE_API}/root:/${graphPath(nextPath)}`, {
+    const exists = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/root:/${graphPath(nextPath)}`, {
       headers: authHeaders(accessToken),
     });
     if (exists.status === 401) {

@@ -15,6 +15,7 @@ describe("OneDrive first synchronization", () => {
 
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if ((init?.method ?? "GET") === "GET") expect(init?.cache).toBe("no-store");
       if (url.includes("/v1.0/me?$select=id")) return Response.json({ id: "graph-first-sync" });
       if (url.endsWith("/root:/Apps")) return Response.json({ id: "apps", folder: {} });
       if (url.endsWith("/root:/Apps/Narrarium")) return folderCreated ? Response.json({ id: "folder", folder: {} }) : new Response(null, { status: 404 });

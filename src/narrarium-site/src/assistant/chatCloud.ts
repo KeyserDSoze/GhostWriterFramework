@@ -7,6 +7,7 @@ import { MAX_ASSISTANT_LOSSLESS_ARCHIVE_BYTES, MAX_ASSISTANT_LOSSLESS_SEGMENT_BY
 import { serializeAssistantLosslessSegment } from "./sessionSchema.ts";
 import { assistantSegmentSha256, verifyAssistantSegment } from "./chatSegments.ts";
 import type { AssistantLosslessSegment, AssistantLosslessSegmentRef } from "./store.ts";
+import { fetchMicrosoftGraph } from "../drive/microsoftGraph.ts";
 
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -618,7 +619,7 @@ async function ensureMicrosoftFolderPath(accessToken: string, folderPath: string
   let currentPath = "";
   for (const part of parts) {
     const nextPath = currentPath ? `${currentPath}/${part}` : part;
-    const exists = await fetch(`${GRAPH_DRIVE_API}/root:/${nextPath}`, { headers: authHeaders(accessToken) });
+    const exists = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/root:/${nextPath}`, { headers: authHeaders(accessToken) });
     if (exists.ok) { currentPath = nextPath; continue; }
     if (exists.status !== 404) throw new AssistantCloudRequestError("OneDrive folder lookup", exists.status);
     const createUrl = currentPath ? `${GRAPH_DRIVE_API}/root:/${currentPath}:/children` : `${GRAPH_DRIVE_API}/root/children`;
@@ -643,7 +644,7 @@ async function persistMicrosoftSegment(accessToken: string, sessionId: string, r
 }
 
 async function loadMicrosoftSegment(accessToken: string, sessionId: string, ref: AssistantLosslessSegmentRef, signal?: AbortSignal): Promise<unknown> {
-  const response = await fetch(`${GRAPH_DRIVE_API}/root:/${microsoftSegmentsPath(sessionId)}/${segmentFileName(sessionId, ref)}:/content`, { headers: authHeaders(accessToken), signal });
+  const response = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/root:/${microsoftSegmentsPath(sessionId)}/${segmentFileName(sessionId, ref)}:/content`, { headers: authHeaders(accessToken), signal });
   assertOk(response, "OneDrive chat segment download");
   return JSON.parse(await readResponseTextBounded(response, MAX_ASSISTANT_LOSSLESS_SEGMENT_BYTES));
 }
@@ -664,7 +665,7 @@ async function findMicrosoftSessions(accessToken: string, options: ListOptions =
   const entries: NativeChatMeta[] = [];
   while (next) {
     assertCurrent(options);
-    const response = await fetch(next, { headers: authHeaders(accessToken), signal: options.signal });
+    const response = await fetchMicrosoftGraph(next, { headers: authHeaders(accessToken), signal: options.signal });
     assertOk(response, "OneDrive chats list");
     const data = await response.json() as { "@odata.nextLink"?: string; value?: Array<{ id: string; name: string; lastModifiedDateTime?: string; eTag?: string; description?: string; file?: unknown; folder?: unknown }> };
     for (const entry of data.value ?? []) {
@@ -689,7 +690,7 @@ async function reclaimMicrosoftOrphanSegments(accessToken: string, reachableName
   await ensureMicrosoftFolderPath(accessToken, `${ONE_DRIVE_APP_FOLDER}/${SEGMENTS_FOLDER}`);
   let next: string | undefined = `${GRAPH_DRIVE_API}/root:/${ONE_DRIVE_APP_FOLDER}/${SEGMENTS_FOLDER}:/children?$select=id,name,folder,createdDateTime&$top=200`;
   while (next) {
-    const response = await fetch(next, { headers: authHeaders(accessToken), signal });
+    const response = await fetchMicrosoftGraph(next, { headers: authHeaders(accessToken), signal });
     assertOk(response, "OneDrive orphan chat segment list");
     const page = await response.json() as { "@odata.nextLink"?: string; value?: Array<{ id: string; name: string; folder?: unknown; createdDateTime?: string }> };
     for (const item of page.value ?? []) {
@@ -710,7 +711,7 @@ async function reclaimMicrosoftSegmentFolder(accessToken: string, sessionId: str
   let next: string | undefined = `${GRAPH_DRIVE_API}/root:/${microsoftSegmentsPath(sessionId)}:/children?$select=id,name,createdDateTime&$top=200`;
   let childrenRemain = false;
   while (next) {
-    const response = await fetch(next, { headers: authHeaders(accessToken), signal });
+    const response = await fetchMicrosoftGraph(next, { headers: authHeaders(accessToken), signal });
     if (response.status === 404) return false;
     assertOk(response, "OneDrive chat segment maintenance list");
     const page = await response.json() as { "@odata.nextLink"?: string; value?: Array<{ id: string; name: string; createdDateTime?: string }> };
@@ -791,10 +792,10 @@ async function loadMicrosoftSession(accessToken: string, fileId: string, signal?
 }
 
 async function loadMicrosoftSessionState(accessToken: string, fileId: string, signal?: AbortSignal): Promise<{ session: AssistantSession; description?: string }> {
-  const metadataResponse = await fetch(`${GRAPH_DRIVE_API}/items/${encodeURIComponent(fileId)}?$select=id,eTag,description`, { headers: authHeaders(accessToken), signal });
+  const metadataResponse = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/items/${encodeURIComponent(fileId)}?$select=id,eTag,description`, { headers: authHeaders(accessToken), signal });
   assertOk(metadataResponse, "OneDrive chat metadata");
   const metadata = await metadataResponse.json() as { eTag?: string; description?: string };
-  const response = await fetch(`${GRAPH_DRIVE_API}/items/${encodeURIComponent(fileId)}/content`, { headers: authHeaders(accessToken), signal });
+  const response = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/items/${encodeURIComponent(fileId)}/content`, { headers: authHeaders(accessToken), signal });
   assertOk(response, "OneDrive chat download");
   const session = await parseSessionResponse(response);
   return { session: { ...session, fileId, revision: responseRevision(metadataResponse, metadata) }, description: metadata.description };
@@ -813,7 +814,7 @@ async function patchMicrosoftMetadata(accessToken: string, handle: AssistantSess
 }
 
 async function findMicrosoftSessionByIdentity(accessToken: string, folderPath: string, session: AssistantSession): Promise<(AssistantSessionCloudHandle & { metadataMatches: boolean }) | undefined> {
-  const response = await fetch(`${GRAPH_DRIVE_API}/root:/${folderPath}/${chatFileName(session)}?$select=id,name,eTag,description,file,folder`, { headers: authHeaders(accessToken) });
+  const response = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/root:/${folderPath}/${chatFileName(session)}?$select=id,name,eTag,description,file,folder`, { headers: authHeaders(accessToken) });
   if (response.status === 404) return undefined;
   assertOk(response, "OneDrive chat identity lookup");
   const item = await response.json() as { id?: string; name?: string; eTag?: string; description?: string; file?: unknown; folder?: unknown };

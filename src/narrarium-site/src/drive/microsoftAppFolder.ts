@@ -1,4 +1,5 @@
 import { fencedCloudMutation, registeredCloudAccount } from "@/drive/cloudWriteBarrier";
+import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
 
 const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
 const GRAPH_ME_API = "https://graph.microsoft.com/v1.0/me?$select=id";
@@ -33,7 +34,7 @@ function markerBody(proof: MicrosoftAccountProof): string {
   return JSON.stringify({ application: "Narrarium", version: 3, provider: "microsoft", providerAccountId: proof.providerAccountId, graphUserId: proof.graphUserId });
 }
 async function microsoftAccountProof(token: string): Promise<MicrosoftAccountProof> {
-  const response = await fetch(GRAPH_ME_API, { headers: headers(token) });
+  const response = await fetchMicrosoftGraph(GRAPH_ME_API, { headers: headers(token) });
   if (!response.ok) throw new Error(`Microsoft account proof: ${response.status}`);
   const profile = await response.json() as { id?: unknown };
   if (typeof profile.id !== "string" || !profile.id.trim()) throw new Error("Microsoft account proof is unavailable.");
@@ -57,7 +58,7 @@ export async function listMicrosoftFolderChildren(token: string, id: string): Pr
   const children: MicrosoftChild[] = [];
   let next: string | undefined = `${GRAPH_DRIVE_API}/items/${encodeURIComponent(id)}/children?$select=id,name,eTag,file,folder&$top=200`;
   while (next) {
-    const response = await fetch(next, { headers: headers(token) });
+    const response = await fetchMicrosoftGraph(next, { headers: headers(token) });
     if (!response.ok) throw new Error(`OneDrive folder verification: ${response.status}`);
     const page = await response.json() as { value?: Array<{ id?: unknown; name?: unknown; eTag?: unknown; file?: object; folder?: object }>; "@odata.nextLink"?: string };
     for (const item of page.value ?? []) {
@@ -71,7 +72,7 @@ export async function listMicrosoftFolderChildren(token: string, id: string): Pr
 
 export async function verifyMicrosoftAppFolder(token: string): Promise<{ id: string; eTag?: string; children: MicrosoftChild[] } | null> {
   const encoded = graphPath(ONE_DRIVE_APP_FOLDER);
-  const meta = await fetch(`${GRAPH_DRIVE_API}/root:/${encoded}?$select=id,eTag,folder,createdBy`, { headers: headers(token) });
+  const meta = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/root:/${encoded}?$select=id,eTag,folder,createdBy`, { headers: headers(token) });
   if (meta.status === 404) return null;
   if (!meta.ok) throw new Error(`OneDrive folder lookup: ${meta.status}`);
   const proof = await microsoftAccountProof(token);
@@ -80,7 +81,7 @@ export async function verifyMicrosoftAppFolder(token: string): Promise<{ id: str
   assertFolderAccountProof(item, proof);
   const children = await listMicrosoftFolderChildren(token, item.id);
   validateKnownChildren(children);
-  const marker = await fetch(`${GRAPH_DRIVE_API}/root:/${encoded}/${encodeURIComponent(MICROSOFT_APP_MARKER)}:/content`, { headers: headers(token) });
+  const marker = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/root:/${encoded}/${encodeURIComponent(MICROSOFT_APP_MARKER)}:/content`, { headers: headers(token) });
   if (marker.status === 404) return null;
   if (!marker.ok) throw new Error(`OneDrive app marker verification: ${marker.status}`);
   const value = await marker.json().catch(() => null);
@@ -95,7 +96,7 @@ export async function verifyMicrosoftFolderEmpty(token: string, id: string): Pro
 export async function ensureMicrosoftAppMarker(token: string): Promise<void> {
   const proof = await microsoftAccountProof(token);
   const encoded = graphPath(ONE_DRIVE_APP_FOLDER);
-  const meta = await fetch(`${GRAPH_DRIVE_API}/root:/${encoded}?$select=id,folder,createdBy`, { headers: headers(token) });
+  const meta = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/root:/${encoded}?$select=id,folder,createdBy`, { headers: headers(token) });
   if (!meta.ok) throw new Error(`OneDrive folder lookup: ${meta.status}`);
   const item = await meta.json() as { id?: string; folder?: object; createdBy?: { user?: { id?: string } } };
   if (!item.id || !item.folder) throw new Error("The OneDrive Apps/Narrarium item is not a folder.");
@@ -103,7 +104,7 @@ export async function ensureMicrosoftAppMarker(token: string): Promise<void> {
   const children = await listMicrosoftFolderChildren(token, item.id);
   validateKnownChildren(children);
   const markerUrl = `${GRAPH_DRIVE_API}/root:/${encoded}/${encodeURIComponent(MICROSOFT_APP_MARKER)}:/content`;
-  const existing = await fetch(markerUrl, { headers: headers(token) });
+  const existing = await fetchMicrosoftGraph(markerUrl, { headers: headers(token) });
   if (existing.ok) {
     const value = await existing.json().catch(() => null);
     if (!ownedMarker(proof, value)) {
