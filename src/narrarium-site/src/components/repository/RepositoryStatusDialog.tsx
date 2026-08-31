@@ -6,12 +6,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import type { BookEntry, AppSettings } from "@/types/settings";
-import { resolveBookToken } from "@/types/settings";
+import { bookStorageMode, resolveBookToken } from "@/types/settings";
 import { buildLocalBookStructure, deleteLocalRecoverySnapshot, effectiveRemoteStatus, type LocalRepoLogEntry, type LocalRepoLogKind, type LocalRepositoryDiagnostic, type LocalRepositoryFile, type LocalRepositoryMeta, type LocalRepositoryRecovery, type LocalRepoStatus } from "@/repository/localRepository";
 import { commitLocalChanges, ensureLocalBookStructure, fetchRemoteStatus, forceRecloneLocalWorkingCopy, overwriteRemoteWithLocal, pullRemoteChanges, recloneLocalWorkingCopy, removeLocalWorkingCopy, restoreLocalFilesToBase, restoreRepositoryRecovery, checkRepositoryTokenHealth } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
-import { useAuthStore } from "@/store/authStore";
-import { accountIdentity } from "@/auth/accountIdentity";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { createMaintenanceBackupBundle, lookupRepositoryMaintenanceTarget, RepositoryMaintenanceError, type BackupReceipt, type RepositoryMaintenanceSnapshot } from "@/repository/repositoryMaintenance";
 import { repositoryErrorDescription } from "@/repository/repositoryError";
@@ -69,8 +68,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const clearBook = useBooksStore((s) => s.clearBook);
   const setCloneProgress = useBooksStore((s) => s.setCloneProgress);
   const cloneProgress = useBooksStore((s) => (book ? s.cloneProgress[book.id] : undefined));
-  const user = useAuthStore((s) => s.user);
-  const currentAccountIdentity = accountIdentity(user);
+  const currentAccountIdentity = localWorkspaceScope();
   const [status, setStatus] = useState<LocalRepoStatus | null>(null);
   const [repoMeta, setRepoMeta] = useState<LocalRepositoryMeta | null>(null);
   const [dirtyFiles, setDirtyFiles] = useState<LocalRepositoryFile[]>([]);
@@ -94,8 +92,9 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const token = book ? resolveBookToken(book, settings) : "";
   const disabled = !book || !!busy;
   const operationalReady = maintenance?.lifecycle === "complete";
-  const networkDisabled = !book || !token || !!busy || !navigator.onLine || !operationalReady;
-  const maintenanceNetworkDisabled = !book || !token || !!busy || !navigator.onLine;
+  const localOnly = Boolean(book && bookStorageMode(book) === "local-only");
+  const networkDisabled = localOnly || !book || !token || !!busy || !navigator.onLine || !operationalReady;
+  const maintenanceNetworkDisabled = localOnly || !book || !token || !!busy || !navigator.onLine;
   const storageHigh = Boolean(storage.usage && storage.quota && storage.usage / storage.quota > 0.8);
   const draftDirtyFiles = useMemo(() => dirtyFiles.filter((file) => file.path.startsWith("drafts/")), [dirtyFiles]);
   const remoteStatus = repoMeta ? effectiveRemoteStatus(repoMeta) : null;

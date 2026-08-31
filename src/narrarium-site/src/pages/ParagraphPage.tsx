@@ -34,8 +34,7 @@ import { useRegisterPageSave } from "@/store/saveStore";
 import { useRegisterPageActions } from "@/store/pageActionsStore";
 import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
 import { presentMetadata } from "@/export/metadataPresentation";
-import { useAuthStore } from "@/store/authStore";
-import { accountIdentity } from "@/auth/accountIdentity";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { paragraphRenameTarget } from "@/narrarium/paragraphSave";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
@@ -212,7 +211,7 @@ export function ParagraphPage() {
     textareaRef: bodyRef,
     getBody: () => body,
     setBody,
-    buildSource: () => (book && structure && chapter && token ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: accountIdentity(useAuthStore.getState().user) } : null),
+    buildSource: () => (book && structure && chapter && token ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: localWorkspaceScope() } : null),
     ghostwriter: effectiveGhostwriter,
     ghostwriterLabel: effectiveGhostwriterLabel,
     ghostwriterInherited: !currentGhostwriter,
@@ -220,7 +219,7 @@ export function ParagraphPage() {
   const draftBodyRef = useRef("");
   const draftPath = paragraph?.draftPath ?? (chapter && paragraph ? `${chapter.path}/drafts/${(paragraph.path.split("/").pop() ?? "").replace(/\.md$/i, "")}.md` : "");
   const merge = useMergeDraftFinal({
-    buildSource: () => (book && structure && chapter ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: accountIdentity(useAuthStore.getState().user) } : null),
+    buildSource: () => (book && structure && chapter ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: localWorkspaceScope() } : null),
     getDraftBody: () => draftBodyRef.current,
     getFinalBody: () => body,
     getFinalFrontmatter: () => buildFrontmatter(entries, "").replace(/\n*$/, "\n"),
@@ -580,7 +579,7 @@ export function ParagraphPage() {
     if (!target) return;
     setSynonymLoading(true);
     try {
-      const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: accountIdentity(useAuthStore.getState().user) };
+      const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: localWorkspaceScope() };
       const options = await synonymsFor(src, body, target, { count: 3, exclude, ghostwriterSlug: currentGhostwriter });
       setSynonymOptions(options);
       setSynonymSeen((prev) => [...prev, ...options]);

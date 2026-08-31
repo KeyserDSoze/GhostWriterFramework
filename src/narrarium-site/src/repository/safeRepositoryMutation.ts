@@ -15,16 +15,15 @@ import { AmbiguousLocalPushError, pushLocalCommits, RemoteHeadMismatchError, Rep
 import { loadRemoteFileContentAtRef } from "@/github/githubClient";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
 import { reconcileRemoteMutation } from "@/repository/remoteMutationReconciliation";
-import { accountIdentity } from "@/auth/accountIdentity";
-import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { createTrackedGitHubClient } from "@/repository/githubRequest";
 import { recordRepositoryWriteValidated } from "@/repository/tokenHealth";
 import { RepositoryByteMeter, utf8Bytes } from "@/repository/repositoryLimits";
 import { useRepositorySyncStore } from "@/store/repositorySyncStore";
+import { currentRepositoryScopeIdentity } from "@/repository/repositoryOperationScope";
 
 function currentAccountIdentity(): string | null {
-  return accountIdentity(useAuthStore.getState().user);
+  return currentRepositoryScopeIdentity();
 }
 
 export type RepositoryTextMutation = LocalTextFileMutation;

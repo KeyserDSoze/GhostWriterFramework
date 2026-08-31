@@ -5,8 +5,6 @@ import { loadRemoteFileContentAtRef } from "@/github/githubClient";
 import { getLocalRepository, listLocalFiles } from "@/repository/localRepository";
 import { commitAndPushTextFileMutation, preflightRepositoryOperation, RepositoryConflictError, sha256Text } from "@/repository/safeRepositoryMutation";
 import type { BookEntry } from "@/types/settings";
-import { accountIdentity } from "@/auth/accountIdentity";
-import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 import { CanonicalScriptConflictError, planCanonicalScriptMutation, type CanonicalScriptMutation, type CanonicalScriptMutationResult } from "@/narrarium/canonicalScriptMutationPlan";
@@ -20,8 +18,7 @@ export type { CanonicalScriptMutation, CanonicalScriptMutationResult } from "@/n
 async function collectSources(input: { token: string; book: BookEntry; branch: string; signal?: AbortSignal }, extraPaths: string[] = []): Promise<{ files: ScriptLedgerSourceFile[]; headSha: string }> {
   const requested = new Set(extraPaths);
   input.signal?.throwIfAborted();
-  const identity = accountIdentity(useAuthStore.getState().user);
-  const local = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, captureRepositoryOperationScope()).catch(() => null) : null;
+  const local = await getLocalRepository(input.book.owner, input.book.repo, input.branch, captureRepositoryOperationScope()).catch(() => null);
   input.signal?.throwIfAborted();
   if (local) {
     const preflight = await preflightRepositoryOperation(input);

@@ -4,7 +4,7 @@ const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
 const GRAPH_ME_API = "https://graph.microsoft.com/v1.0/me?$select=id";
 export const ONE_DRIVE_APP_FOLDER = "Apps/Narrarium";
 export const MICROSOFT_APP_MARKER = ".narrarium-app-folder-v1.json";
-const ALLOWED_CHILDREN = new Set([MICROSOFT_APP_MARKER, "settings.json", "costs.json", "clipboard.json", "chats", "chat-segments", "Exports"]);
+const ALLOWED_CHILDREN = new Set([MICROSOFT_APP_MARKER, "manifest.json", "account-data.json", "settings.json", "costs.json", "clipboard.json", "chats", "chat-segments", "Exports"]);
 
 function headers(token: string) { return { Authorization: `Bearer ${token}` }; }
 export function graphPath(path: string): string { return path.split("/").filter(Boolean).map(encodeURIComponent).join("/"); }

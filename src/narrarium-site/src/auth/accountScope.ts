@@ -16,13 +16,14 @@ import { useSaveStore } from "@/store/saveStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useUiStore } from "@/store/uiStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
-import { accountIdentity, shouldResetAccountScope } from "@/auth/accountIdentity";
+import { accountIdentity } from "@/auth/accountIdentity";
 import { setFallbackAcknowledgementAccountScope } from "@/assistant/fallbackDisclosure";
 import { resetAssistantSessionIndex } from "@/assistant/sessionIndex";
-import { resumeCurrentAccountRepositoryMigrations } from "@/repository/localRepository";
+import { migrateCurrentProviderRepositoriesToWorkspace, resumeCurrentAccountRepositoryMigrations } from "@/repository/localRepository";
 import { resetBookStructureLoadCoordinator } from "@/hooks/useBookStructure";
 import { clearTokenHealth } from "@/repository/tokenHealth";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 const ACCOUNT_SCOPE_KEY = "narrarium-account-scope-v1";
 let installed = false;
@@ -86,25 +87,14 @@ export function resetAccountScopedState(): void {
 export function installAccountScopeIsolation(): void {
   if (installed) return;
   installed = true;
-  let activeIdentity = accountIdentity(useAuthStore.getState().user) ?? useAuthStore.getState().interactiveRecoveryIdentity;
+  const activeIdentity = localWorkspaceScope();
   setFallbackAcknowledgementAccountScope(activeIdentity);
   const storedIdentity = loadAccountScope();
-  const accountChanged = shouldResetAccountScope(storedIdentity, activeIdentity);
-  if (accountChanged) resetAccountScopedState();
-  else useSettingsStore.setState({ accountIdentity: activeIdentity });
-  useLlmDebugStore.getState().setAccount(activeIdentity, storedIdentity, accountChanged);
+  useSettingsStore.setState({ accountIdentity: activeIdentity });
+  useLlmDebugStore.getState().setAccount(activeIdentity, storedIdentity, false);
   storeAccountScope(activeIdentity);
-  if (activeIdentity) void resumeCurrentAccountRepositoryMigrations(captureRepositoryOperationScope()).catch(() => undefined);
-
-  useAuthStore.subscribe((state) => {
-    const nextIdentity = accountIdentity(state.user) ?? state.interactiveRecoveryIdentity;
-    if (nextIdentity === activeIdentity) return;
-    const previousIdentity = activeIdentity;
-    activeIdentity = nextIdentity;
-    setFallbackAcknowledgementAccountScope(nextIdentity);
-    resetAccountScopedState();
-    useLlmDebugStore.getState().setAccount(nextIdentity, previousIdentity, true);
-    storeAccountScope(nextIdentity);
-    if (nextIdentity) void resumeCurrentAccountRepositoryMigrations(captureRepositoryOperationScope()).catch(() => undefined);
-  });
+  const scope = captureRepositoryOperationScope();
+  void migrateCurrentProviderRepositoriesToWorkspace(scope)
+    .then(() => resumeCurrentAccountRepositoryMigrations(scope))
+    .catch(() => undefined);
 }

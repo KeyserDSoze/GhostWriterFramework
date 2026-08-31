@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.77.0",
+    "date": "2026-08-31",
+    "en": {
+      "title": "Local-first workspaces and independent account replicas",
+      "summary": "Narrarium now opens without login, saves account data and chats locally first, supports local-only books, and treats Google Drive, OneDrive, and GitHub as optional independent replicas.",
+      "changes": [
+        "Removed mandatory startup authentication and added a durable anonymous workspace with local settings, credentials, clipboard, costs, chats, and lossless chat segments.",
+        "Added Account & Sync controls for independent Google Drive, OneDrive, and GitHub PAT replicas, manual sync, lazy reauthentication, provider-specific disconnect, and separately confirmed remote deletion.",
+        "Added UTC manifests, stable device IDs, vector clocks, deterministic content hashes, same/ahead/behind/diverged comparison, recovery-backed authoritative-copy reconciliation, and isolated provider failures.",
+        "New books default to this device only and retain the existing IndexedDB file, commit, lock, diagnostic, and recovery engine; they can later be attached in place to a private GitHub repository.",
+        "Added a Data Safety Report for account data and books before deleting the local workspace, with exact DELETE confirmation and explicit local-only or unpushed warnings.",
+        "Prepared GitHub OAuth Web Flow with one-time PKCE state and triple-Base64 secret decoding, then disabled its production button after real Chromium verification confirmed GitHub's token endpoint response is not browser-readable through CORS; PAT remains fully supported."
+      ]
+    },
+    "it": {
+      "title": "Workspace local-first e repliche account indipendenti",
+      "summary": "Narrarium ora si apre senza login, salva prima in locale dati account e chat, supporta libri solo locali e tratta Google Drive, OneDrive e GitHub come repliche opzionali indipendenti.",
+      "changes": [
+        "Rimossa l'autenticazione obbligatoria all'avvio e aggiunto un workspace anonimo durevole con impostazioni, credenziali, clipboard, costi, chat e segmenti lossless locali.",
+        "Aggiunta la schermata Account e sincronizzazione per repliche Google Drive, OneDrive e GitHub PAT indipendenti, sync manuale, riautenticazione lazy, disconnessione per provider e cancellazione remota confermata separatamente.",
+        "Aggiunti manifest UTC, device ID stabile, vector clock, hash deterministico, confronto uguale/avanti/indietro/divergente, riconciliazione della copia autorevole con recovery ed errori provider isolati.",
+        "I nuovi libri usano per default solo questo dispositivo e mantengono il motore IndexedDB esistente per file, commit, lock, diagnostica e recovery; possono essere collegati in seguito e in-place a una repository GitHub privata.",
+        "Aggiunto un Data Safety Report per dati account e libri prima della cancellazione del workspace locale, con conferma esatta DELETE e avvisi espliciti per libri solo locali o commit non pushati.",
+        "Predisposto il Web Flow OAuth GitHub con state PKCE monouso e decodifica triplo Base64 del secret, poi disabilitato il pulsante in produzione dopo che una verifica reale Chromium ha confermato che la risposta del token endpoint GitHub non è leggibile via CORS; il PAT resta pienamente supportato."
+      ]
+    }
+  },
+  {
     "version": "0.76.97",
     "date": "2026-08-27",
     "en": {

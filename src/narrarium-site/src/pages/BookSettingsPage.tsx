@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { GitBranch, KeyRound, Loader2, Plus, Save } from "lucide-react";
+import { GitBranch, Github, KeyRound, Loader2, Plus, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
@@ -20,13 +20,13 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
-import { DEFAULT_AUDIT_SETTINGS, DEFAULT_BOOK_EXPORT_SETTINGS, resolveBookAuditSettings, resolveBookExportSettings, resolveBookToken, type AuditSettings, type BookEntry, type BookExportSettings, type ParagraphSeparator } from "@/types/settings";
+import { bookStorageMode, DEFAULT_AUDIT_SETTINGS, DEFAULT_BOOK_EXPORT_SETTINGS, resolveBookAuditSettings, resolveBookExportSettings, resolveBookToken, resolveGitHubRemoteToken, type AuditSettings, type BookEntry, type BookExportSettings, type ParagraphSeparator } from "@/types/settings";
 import { createBranchFromBase, getDefaultBranch, listBranches } from "@/github/githubClient";
-import { checkRepositoryTokenHealth } from "@/repository/repositoryService";
+import { attachLocalBookToGitHub, checkRepositoryTokenHealth } from "@/repository/repositoryService";
 import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { readTokenHealth, tokenExpirationWarning, type TokenHealth } from "@/repository/tokenHealth";
-import { accountIdentity } from "@/auth/accountIdentity";
-import { useAuthStore } from "@/store/authStore";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
+import { useConnectionStore } from "@/account/connectionStore";
 
 type TokenMode = "default" | "custom" | string;
 
@@ -45,7 +45,6 @@ export function BookSettingsPage() {
   const { save, syncStatus } = useSettings();
   const offline = typeof navigator !== "undefined" && !navigator.onLine;
   const { clearBook, structures, workingBranches } = useBooksStore();
-  const user = useAuthStore((state) => state.user);
 
   const book = settings.books.find((entry) => entry.id === bookId);
   const structure = bookId ? structures[bookId] : undefined;
@@ -64,6 +63,12 @@ export function BookSettingsPage() {
   const [auditSettings, setAuditSettings] = useState<AuditSettings>(() => book ? resolveBookAuditSettings(book) : DEFAULT_AUDIT_SETTINGS);
   const [tokenHealth, setTokenHealth] = useState<TokenHealth | null>(null);
   const [checkingToken, setCheckingToken] = useState(false);
+  const githubConnection = useConnectionStore((state) => state.configuration.github);
+  const [attachOwner, setAttachOwner] = useState(githubConnection?.identity?.username ?? "");
+  const [attachRepo, setAttachRepo] = useState(book?.name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-") ?? "");
+  const [attaching, setAttaching] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [overwriteExisting, setOverwriteExisting] = useState(false);
 
   useEffect(() => {
     if (book) {
@@ -74,20 +79,20 @@ export function BookSettingsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    const identity = accountIdentity(user);
+    const identity = localWorkspaceScope();
     const token = book ? resolveBookToken(book, settings) : "";
     const branch = activeBranch === "__auto__" ? workingBranches[book?.id ?? ""] ?? structure?.defaultBranch ?? "main" : activeBranch;
     setTokenHealth(null);
-    if (identity && token && book) void readTokenHealth({ accountIdentity: identity, token, owner: book.owner, repo: book.repo, branch }).then((health) => { if (!cancelled) setTokenHealth(health); });
+    if (book && bookStorageMode(book) === "github" && token) void readTokenHealth({ accountIdentity: identity, token, owner: book.owner, repo: book.repo, branch }).then((health) => { if (!cancelled) setTokenHealth(health); });
     return () => { cancelled = true; };
-  }, [book, settings, user, activeBranch, workingBranches, structure?.defaultBranch]);
+  }, [book, settings, activeBranch, workingBranches, structure?.defaultBranch]);
 
-  useEffect(() => {
-    if (!book) return;
+  async function loadRemoteBranches() {
+    if (!book || bookStorageMode(book) === "local-only") return;
     const token = resolveBookToken(book, settings);
     if (!token) return;
     setLoadingBranches(true);
-    Promise.all([
+    await Promise.all([
       listBranches(token, book.owner, book.repo),
       getDefaultBranch(token, book.owner, book.repo),
     ])
@@ -99,7 +104,7 @@ export function BookSettingsPage() {
         toast({ title: t("bookSettings.loadBranchesFailed"), description: String(err), variant: "destructive" });
       })
       .finally(() => setLoadingBranches(false));
-  }, [book, settings, toast, t]);
+  }
 
   if (!book) {
     return (
@@ -114,11 +119,29 @@ export function BookSettingsPage() {
   const currentBook = book;
   const isSaving = syncStatus === "saving";
   const currentToken = resolveBookToken(currentBook, settings);
-  const currentAccountIdentity = accountIdentity(user);
+  const currentAccountIdentity = localWorkspaceScope();
   const currentAutoBranch = workingBranches[currentBook.id] ?? (structure?.defaultBranch ?? "main");
 
   function patchAuditSettings(patch: Partial<AuditSettings>) {
     setAuditSettings((current) => ({ ...current, ...patch }));
+  }
+
+  async function handleAttachToGitHub() {
+    const token = resolveGitHubRemoteToken(currentBook, settings);
+    if (!token) { setAttachError(settings.ui.language === "it" ? "Collega GitHub o configura un PAT." : "Connect GitHub or configure a PAT."); return; }
+    if (!attachOwner.trim() || !attachRepo.trim()) return;
+    setAttaching(true);
+    setAttachError(null);
+    try {
+      const attached = await attachLocalBookToGitHub({ book: currentBook, token, owner: attachOwner.trim(), repo: attachRepo.trim(), createRepository: true, overwriteExisting });
+      const updated: BookEntry = { ...currentBook, storageMode: "github", owner: attached.owner, repo: attached.repo, activeBranch: attached.branch };
+      patchSettings({ books: settings.books.map((entry) => entry.id === currentBook.id ? updated : entry) });
+      await save();
+      clearBook(currentBook.id);
+      toast({ title: settings.ui.language === "it" ? "Libro collegato a GitHub" : "Book connected to GitHub" });
+      navigate(`/app/books/${currentBook.id}`);
+    } catch (error) { setAttachError(String(error)); }
+    finally { setAttaching(false); }
   }
 
   async function handleSave() {
@@ -126,9 +149,9 @@ export function BookSettingsPage() {
     const updated: BookEntry = {
       ...currentBook,
       name: name.trim() || currentBook.repo,
-      tokenIndex: offline ? currentBook.tokenIndex : mode === "default" || usingCustom ? null : Number(mode),
-      bookToken: offline ? currentBook.bookToken : usingCustom ? customToken.trim() || undefined : undefined,
-      bookTokenLabel: offline ? currentBook.bookTokenLabel : usingCustom ? customTokenLabel.trim() || `${currentBook.repo} PAT` : undefined,
+      tokenIndex: mode === "default" || usingCustom ? null : Number(mode),
+      bookToken: usingCustom ? customToken.trim() || undefined : undefined,
+      bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${currentBook.repo} PAT` : undefined,
       activeBranch: activeBranch === "__auto__" ? undefined : activeBranch,
       exportSettings: {
         ...currentBook.exportSettings,
@@ -187,10 +210,10 @@ export function BookSettingsPage() {
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
         <h1 className="font-serif text-3xl font-semibold tracking-tight">{t("bookSettings.title")}</h1>
-        <p className="text-muted-foreground">{currentBook.owner}/{currentBook.repo}</p>
+        <p className="text-muted-foreground">{bookStorageMode(currentBook) === "local-only" ? (settings.ui.language === "it" ? "Solo su questo dispositivo" : "This device only") : `${currentBook.owner}/${currentBook.repo}`}</p>
       </div>
 
-      <Card>
+      {bookStorageMode(currentBook) === "github" && <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><KeyRound className="h-4 w-4" />{t("repoStatus.tokenHealth")}</CardTitle>
           <CardDescription>{tokenHealth?.expiresAt ? t(`repoStatus.expiration.${tokenExpirationWarning(tokenHealth.expiresAt)}`, { date: new Date(tokenHealth.expiresAt).toLocaleDateString() }) : t("repoStatus.expiration.unknown")}</CardDescription>
@@ -199,9 +222,11 @@ export function BookSettingsPage() {
         <CardContent>
           <Button type="button" variant="outline" disabled={!currentToken || !currentAccountIdentity || offline || checkingToken} onClick={() => void handleTokenHealth()}>{checkingToken ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <KeyRound className="mr-1 h-4 w-4" />}{t("repoStatus.checkToken")}</Button>
         </CardContent>
-      </Card>
+      </Card>}
 
-      <Card>
+      {bookStorageMode(currentBook) === "local-only" && <Card><CardHeader><CardTitle className="flex items-center gap-2"><Github className="h-4 w-4" />{settings.ui.language === "it" ? "Collega il libro a GitHub" : "Connect this book to GitHub"}</CardTitle><CardDescription>{settings.ui.language === "it" ? "La working copy locale esistente verrà mantenuta e pubblicata in una repository privata." : "The existing local working copy will be retained and published to a private repository."}</CardDescription></CardHeader><CardContent className="space-y-3"><div className="grid gap-3 sm:grid-cols-2"><div className="grid gap-2"><Label>Owner</Label><Input value={attachOwner} onChange={(event) => setAttachOwner(event.target.value)} placeholder={githubConnection?.identity?.username ?? "username"} /></div><div className="grid gap-2"><Label>Repository</Label><Input value={attachRepo} onChange={(event) => setAttachRepo(event.target.value)} /></div></div><div className="flex items-start gap-3 rounded-md border p-3"><Switch checked={overwriteExisting} onCheckedChange={setOverwriteExisting} /><div><Label>{settings.ui.language === "it" ? "Sovrascrivi repository esistente" : "Overwrite existing repository"}</Label><p className="text-xs text-muted-foreground">{settings.ui.language === "it" ? "Se la repository non è vuota, il suo branch verrà sostituito con questo libro locale." : "If the repository is not empty, its branch will be replaced by this local book."}</p></div></div>{attachError && <Alert variant="destructive"><AlertDescription>{attachError}</AlertDescription></Alert>}<Button onClick={() => void handleAttachToGitHub()} disabled={attaching || !attachOwner.trim() || !attachRepo.trim()}>{attaching ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Github className="mr-1 h-4 w-4" />}{settings.ui.language === "it" ? "Crea o collega repository privata" : "Create or connect private repository"}</Button></CardContent></Card>}
+
+      {bookStorageMode(currentBook) === "github" && <Card>
         <CardHeader>
           <CardTitle>{t("bookSettings.general")}</CardTitle>
           <CardDescription>{t("bookSettings.generalDescription")}</CardDescription>
@@ -212,9 +237,9 @@ export function BookSettingsPage() {
             <Input id="book-name" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
         </CardContent>
-      </Card>
+      </Card>}
 
-      <Card>
+      {bookStorageMode(currentBook) === "github" && <Card>
         <CardHeader>
           <CardTitle>{t("bookSettings.auditSettings")}</CardTitle>
           <CardDescription>{t("bookSettings.auditSettingsDescription")}</CardDescription>
@@ -287,7 +312,7 @@ export function BookSettingsPage() {
             <AutoTextarea id="audit-custom-prompt" value={auditSettings.customPrompt} onChange={(event) => patchAuditSettings({ customPrompt: event.target.value })} placeholder={t("bookSettings.auditCustomPromptPlaceholder")} className="min-h-24" disabled={!auditSettings.enabled} />
           </div>
         </CardContent>
-      </Card>
+      </Card>}
 
       <Card>
         <CardHeader>
@@ -335,6 +360,7 @@ export function BookSettingsPage() {
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">{t("bookSettings.defaultBranch")} {baseBranch}</p>
+            <Button type="button" variant="outline" className="w-fit" onClick={() => void loadRemoteBranches()} disabled={loadingBranches || offline}>{loadingBranches ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <GitBranch className="mr-1 h-4 w-4" />}{settings.ui.language === "it" ? "Carica branch remoti" : "Load remote branches"}</Button>
           </div>
 
           <div className="grid gap-2 rounded-lg border border-dashed p-3">
@@ -360,7 +386,7 @@ export function BookSettingsPage() {
         <CardContent className="space-y-4">
           <div className="grid gap-2">
             <Label>{t("bookSettings.token")}</Label>
-            <Select value={mode} onValueChange={setMode} disabled={offline}>
+            <Select value={mode} onValueChange={setMode}>
               <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="default">{t("bookSettings.defaultTokenOption")}{settings.defaultGitHubToken ? ` (…${settings.defaultGitHubToken.slice(-4)})` : t("bookSettings.notSet")}</SelectItem>
@@ -374,8 +400,8 @@ export function BookSettingsPage() {
             <div className="grid gap-2 rounded-lg border border-dashed p-3">
               <p className="text-xs text-muted-foreground">{t("bookSettings.dedicatedHint")}</p>
               <div className="grid gap-2 sm:grid-cols-[1fr_2fr]">
-                <Input placeholder={t("bookSettings.labelOptional")} value={customTokenLabel} onChange={(e) => setCustomTokenLabel(e.target.value)} disabled={offline} />
-                <Input type="password" placeholder="github_pat_…" value={customToken} onChange={(e) => setCustomToken(e.target.value)} autoComplete="off" disabled={offline} />
+                <Input placeholder={t("bookSettings.labelOptional")} value={customTokenLabel} onChange={(e) => setCustomTokenLabel(e.target.value)} />
+                <Input type="password" placeholder="github_pat_…" value={customToken} onChange={(e) => setCustomToken(e.target.value)} autoComplete="off" />
               </div>
               <p className="text-[11px] text-muted-foreground">{t("bookSettings.createOneAt")} <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener noreferrer" className="underline">github.com/settings/tokens</a> {t("bookSettings.withPermissions")}</p>
             </div>

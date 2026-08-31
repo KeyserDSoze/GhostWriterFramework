@@ -19,6 +19,7 @@
   "auth-session-persistence",
   "dependency-security",
   "deployment-routing",
+  "github-oauth-static-client",
   "publishing",
   "query-canon",
   "reader-password",

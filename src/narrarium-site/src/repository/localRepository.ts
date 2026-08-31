@@ -12,11 +12,12 @@ import {
 } from "@/narrarium/paragraphArtifacts";
 import { accountIdentity, beginStrandedLegacyRecovery, consumeLegacyAccountUpgradeEvidence, getLegacyAccountUpgradeEvidence, legacyEmailAccountIdentity } from "@/auth/accountIdentity";
 import { consumeLegacyAdoptionConsent, type LegacyAdoptionTarget } from "@/auth/legacyAdoptionConsent";
-import { finalizeLegacyRewriteOperationMigration, inspectLegacyRewriteOperationMigration, prepareLegacyRewriteOperationMigration } from "@/repository/localRewriteOperationStore";
+import { finalizeLegacyRewriteOperationMigration, inspectLegacyRewriteOperationMigration, migrateRewriteOperationsToWorkspace, prepareLegacyRewriteOperationMigration } from "@/repository/localRewriteOperationStore";
 import { classifyRepositoryError, type RepositoryErrorKind } from "@/repository/repositoryError";
 import { RepositoryByteMeter, assertRepositoryFileBytes, utf8Bytes } from "@/repository/repositoryLimits";
 import { useAuthStore } from "@/store/authStore";
-import { assertRepositoryOperationScopeCurrent, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
+import { assertRepositoryOperationScopeCurrent, currentRepositoryScopeIdentity, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 const DB_NAME = "narrarium-local-repositories";
 const DB_VERSION = 14;
@@ -26,6 +27,11 @@ export type LocalFileKind = "text" | "binary";
 export type LocalCloneStatus = "cloning" | "migrating" | "repair-required" | "repairing" | "complete";
 export type RepositoryLifecycleOperationKind = "cloning" | "migrating" | "repairing";
 export type RemoteVerificationStatus = "checking" | "clean" | "changed" | "unverified" | "unavailable";
+
+export interface LocalRepositoryIdentity {
+  localRepositoryId: string;
+  kind: "book" | "account-data";
+}
 
 export interface RemoteVerificationSnapshot {
   status: RemoteVerificationStatus;
@@ -81,6 +87,9 @@ export interface LocalRepositoryMeta {
   /** Immutable identity of this particular local working-copy incarnation. */
   localInstanceId: string;
   bookId: string;
+  repositoryKind?: "book" | "account-data";
+  remoteKind?: "github" | "none";
+  localRepositoryId?: string;
   owner: string;
   repo: string;
   branch: string;
@@ -251,7 +260,7 @@ function simulateRepositoryMigrationCrash(phase: RepositoryMigrationCrashPhase):
 }
 
 function activeAccountScope(): string | null {
-  return accountIdentity(useAuthStore.getState().user);
+  return currentRepositoryScopeIdentity();
 }
 
 function isCurrentAccountScope(scope: string): boolean {
@@ -327,6 +336,7 @@ export function repositoryLifecycleInstanceNonce(): string {
 }
 
 function legacyRepoId(owner: string, repo: string, branch: string): string {
+  if (!owner && !repo && branch.startsWith("local:")) return branch.toLowerCase();
   return `${owner}/${repo}#${branch}`.toLowerCase();
 }
 
@@ -453,6 +463,18 @@ export async function inspectPrimaryRepositoryDatabaseForTests(): Promise<{ vers
     }
   });
   return { version: db.version, stores, records };
+}
+
+export async function deleteAllLocalRepositoryData(): Promise<void> {
+  if (dbPromise) (await dbPromise).close();
+  dbPromise = null;
+  upgradeBlocked = false;
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(DB_NAME);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("Local repository deletion is blocked by another Narrarium tab."));
+  });
 }
 
 function mutationLeaseTransaction<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore, tx: IDBTransaction) => IDBRequest<T> | void): Promise<T | undefined> {
@@ -645,7 +667,7 @@ export async function putLocalRepository(meta: Omit<LocalRepositoryMeta, "id" | 
       const existing = request.result as LocalRepositoryMeta | undefined;
       if (existing && existing.accountScope !== scope.accountIdentity) { validationError = new RepositoryOwnershipChangedError(); tx.abort(); return; }
       const nextCommitOrder = Math.max(existing?.nextCommitOrder ?? 0, meta.nextCommitOrder ?? 0);
-      full = { ...meta, localInstanceId: existing?.localInstanceId ?? meta.localInstanceId ?? crypto.randomUUID(), accountScope, id, updatedAt: now, ...(meta.cloneComplete === false && !meta.cloneStatus ? { cloneStatus: "repair-required" as const } : {}), ...(nextCommitOrder ? { nextCommitOrder } : {}) };
+      full = { ...meta, repositoryKind: meta.repositoryKind ?? "book", remoteKind: meta.remoteKind ?? (meta.owner && meta.repo ? "github" : "none"), localInstanceId: existing?.localInstanceId ?? meta.localInstanceId ?? crypto.randomUUID(), accountScope, id, updatedAt: now, ...(meta.cloneComplete === false && !meta.cloneStatus ? { cloneStatus: "repair-required" as const } : {}), ...(nextCommitOrder ? { nextCommitOrder } : {}) };
       store.put(full);
     };
     request.onerror = () => tx.abort();
@@ -934,21 +956,37 @@ export async function getLocalRepository(owner: string, repo: string, branch: st
   const scopedId = repoId(owner, repo, branch, scope.accountIdentity);
   const db = await openDb();
   return new Promise<LocalRepositoryMeta | null>((resolve, reject) => {
-    const tx = db.transaction("repositories", "readonly");
-    const request = tx.objectStore("repositories").get(scopedId);
+    const tx = db.transaction("repositories", "readwrite");
+    const store = tx.objectStore("repositories");
+    const request = store.get(scopedId);
+    const candidatesRequest = store.index("remote").getAll(IDBKeyRange.only([owner, repo, branch]));
     let result: LocalRepositoryMeta | null = null;
     let validationError: Error | null = null;
-    request.onsuccess = () => {
+    let loaded = 0;
+    const finish = () => {
+      loaded += 1;
+      if (loaded !== 2) return;
       try {
         assertRepositoryOperationScopeCurrent(scope);
-        const repository = request.result as LocalRepositoryMeta | undefined;
-        result = repository?.accountScope === scope.accountIdentity ? repository : null;
+        const exact = request.result as LocalRepositoryMeta | undefined;
+        const candidates = candidatesRequest.result as LocalRepositoryMeta[];
+        const repository = exact?.accountScope === scope.accountIdentity
+          ? exact
+          : candidates.find((candidate) => candidate.accountScope === scope.accountIdentity)
+            ?? (scope.accountIdentity.startsWith("workspace:") ? candidates.find((candidate) => legacyRepositoryScopeCanJoinWorkspace(candidate.accountScope)) : undefined);
+        if (repository && (repository.accountScope !== scope.accountIdentity || !repository.repositoryKind || !repository.remoteKind)) {
+          result = { ...repository, repositoryKind: repository.repositoryKind ?? "book", remoteKind: repository.remoteKind ?? (repository.owner && repository.repo ? "github" : "none"), accountScope: scope.accountIdentity, updatedAt: new Date().toISOString() };
+          store.put(result);
+        } else result = repository ?? null;
       } catch (error) {
         validationError = error as Error;
         tx.abort();
       }
     };
+    request.onsuccess = finish;
+    candidatesRequest.onsuccess = finish;
     request.onerror = () => reject(request.error);
+    candidatesRequest.onerror = () => reject(candidatesRequest.error);
     tx.oncomplete = () => {
       try { assertRepositoryOperationScopeCurrent(scope); resolve(result); }
       catch (error) { reject(error); }
@@ -956,6 +994,13 @@ export async function getLocalRepository(owner: string, repo: string, branch: st
     tx.onerror = () => reject(validationError ?? tx.error);
     tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local repository read was aborted."));
   });
+}
+
+function legacyRepositoryScopeCanJoinWorkspace(scope: string | undefined): boolean {
+  if (!scope || scope === localWorkspaceScope()) return false;
+  const user = useAuthStore.getState().user;
+  if (!user) return false;
+  return scope === accountIdentity(user) || scope === legacyEmailAccountIdentity(user);
 }
 
 /** Re-key a proven pre-0.76.38 email-scoped working copy without copying or downloading content. */
@@ -967,6 +1012,7 @@ export async function adoptLegacyEmailScopedRepository(input: {
   scope: RepositoryOperationScope;
 }): Promise<LocalRepositoryMeta | null> {
   assertRepositoryOperationScopeCurrent(input.scope);
+  if (input.scope.accountIdentity === localWorkspaceScope()) return getLocalRepository(input.owner, input.repo, input.branch, input.scope);
   const user = useAuthStore.getState().user;
   if (!user || accountIdentity(user) !== input.scope.accountIdentity) throw new RepositoryOwnershipChangedError();
   const legacyScope = legacyEmailAccountIdentity(user);
@@ -1177,16 +1223,172 @@ export async function resumeCurrentAccountRepositoryMigrations(scope: Repository
   }
 }
 
+export async function migrateCurrentProviderRepositoriesToWorkspace(scope: RepositoryOperationScope): Promise<number> {
+  assertRepositoryOperationScopeCurrent(scope);
+  if (!scope.accountIdentity.startsWith("workspace:")) return 0;
+  const user = useAuthStore.getState().user;
+  if (!user) return 0;
+  const legacyIdentities = [...new Set([accountIdentity(user), legacyEmailAccountIdentity(user)].filter((value): value is string => Boolean(value)))];
+  const db = await openDb();
+  const migratedRepoIds: string[] = [];
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(["repositories", "recoveries", "migrationJournals"], "readwrite");
+    const repositories = tx.objectStore("repositories");
+    const recoveries = tx.objectStore("recoveries");
+    const journals = tx.objectStore("migrationJournals");
+    let validationError: Error | null = null;
+    const request = repositories.openCursor();
+    const journalRequest = journals.openCursor();
+    journalRequest.onsuccess = () => {
+      const cursor = journalRequest.result;
+      if (!cursor) return;
+      const journal = cursor.value as RepositoryMigrationJournal;
+      if (legacyIdentities.includes(journal.immutableAccountIdentity)) cursor.update({ ...journal, immutableAccountIdentity: scope.accountIdentity });
+      cursor.continue();
+    };
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      try { assertRepositoryOperationScopeCurrent(scope); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
+      const repository = cursor.value as LocalRepositoryMeta;
+      if (repository.accountScope && legacyIdentities.includes(repository.accountScope)) {
+        const previousScope = repository.accountScope;
+        migratedRepoIds.push(repository.id);
+        cursor.update({ ...repository, repositoryKind: repository.repositoryKind ?? "book", remoteKind: repository.remoteKind ?? (repository.owner && repository.repo ? "github" : "none"), accountScope: scope.accountIdentity, updatedAt: new Date().toISOString() });
+        const recoveryRequest = recoveries.index("repoId").openCursor(IDBKeyRange.only(repository.id));
+        recoveryRequest.onsuccess = () => {
+          const recoveryCursor = recoveryRequest.result;
+          if (!recoveryCursor) return;
+          const recovery = recoveryCursor.value as LocalRepositoryRecovery;
+          if (recovery.accountIdentity === previousScope || recovery.repository?.accountScope === previousScope) recoveryCursor.update({ ...recovery, accountIdentity: scope.accountIdentity, repository: { ...recovery.repository, accountScope: scope.accountIdentity, repositoryKind: recovery.repository.repositoryKind ?? "book", remoteKind: recovery.repository.remoteKind ?? (recovery.repository.owner && recovery.repository.repo ? "github" : "none") } });
+          recoveryCursor.continue();
+        };
+      }
+      cursor.continue();
+    };
+    request.onerror = () => reject(request.error);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Repository workspace migration was aborted."));
+  });
+  await migrateRewriteOperationsToWorkspace(migratedRepoIds, legacyIdentities, scope.accountIdentity);
+  return migratedRepoIds.length;
+}
+
 export async function getLocalRepositoryById(repoIdValue: string, scope: string): Promise<LocalRepositoryMeta | null> {
   if (!isCurrentAccountScope(scope)) return null;
   const repository = await txStore<LocalRepositoryMeta | undefined>("repositories", "readonly", (store) => store.get(repoIdValue));
-  return repository?.accountScope === scope ? repository : null;
+  if (!repository) return null;
+  if (repository.accountScope === scope) return repository;
+  if (!scope.startsWith("workspace:") || !legacyRepositoryScopeCanJoinWorkspace(repository.accountScope)) return null;
+  const adopted = { ...repository, repositoryKind: repository.repositoryKind ?? "book", remoteKind: repository.remoteKind ?? (repository.owner && repository.repo ? "github" : "none"), accountScope: scope, updatedAt: new Date().toISOString() };
+  await txStore("repositories", "readwrite", (store) => store.put(adopted));
+  return adopted;
 }
 
 export async function getLocalRepositoryByBook(bookId: string, scope: string): Promise<LocalRepositoryMeta | null> {
   if (!isCurrentAccountScope(scope)) return null;
   const rows = await allFromIndex<LocalRepositoryMeta>("repositories", "bookId", bookId);
-  return rows.filter((row) => row.accountScope === scope).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;
+  const selected = rows.filter((row) => row.accountScope === scope).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+    ?? rows.filter((row) => legacyRepositoryScopeCanJoinWorkspace(row.accountScope)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  if (!selected) return null;
+  if (selected.accountScope === scope) return selected;
+  const adopted = { ...selected, accountScope: scope, updatedAt: new Date().toISOString() };
+  await txStore("repositories", "readwrite", (store) => store.put(adopted));
+  return adopted;
+}
+
+export async function attachLocalRepositoryToGitHub(input: {
+  repoId: string;
+  scope: RepositoryOperationScope;
+  owner: string;
+  repo: string;
+  branch: string;
+  defaultBranch: string;
+  remoteHeadSha: string;
+}): Promise<LocalRepositoryMeta> {
+  const db = await openDb();
+  return new Promise<LocalRepositoryMeta>((resolve, reject) => {
+    const tx = guardedWriteTransaction(db, ["repositories"], input.repoId);
+    const store = tx.objectStore("repositories");
+    let updated: LocalRepositoryMeta | null = null;
+    let validationError: Error | null = null;
+    const request = store.get(input.repoId);
+    request.onsuccess = () => {
+      try {
+        const current = validateRepositoryOperation(request.result as LocalRepositoryMeta | undefined, input.scope);
+        if (current.remoteKind !== "none") throw new Error("The local repository is already connected to a remote.");
+        updated = {
+          ...current,
+          owner: input.owner,
+          repo: input.repo,
+          branch: input.branch,
+          defaultBranch: input.defaultBranch,
+          remoteHeadSha: input.remoteHeadSha,
+          remoteKind: "github",
+          remoteStatus: "clean",
+          remoteChanged: false,
+          remoteCheckedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        store.put(updated);
+      } catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve(updated!);
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local repository attachment was aborted."));
+  });
+}
+
+export async function settleLocalRepositoryAttachment(input: {
+  repoId: string;
+  scope: RepositoryOperationScope;
+  remoteHeadSha: string;
+  expectedFiles: LocalRepositoryFile[];
+  commitIds: string[];
+  pushedShas: Record<string, string>;
+  remote: { owner: string; repo: string; branch: string; defaultBranch: string };
+}): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = guardedWriteTransaction(db, ["repositories", "files", "commits"], input.repoId);
+    const repositories = tx.objectStore("repositories");
+    const files = tx.objectStore("files");
+    const commits = tx.objectStore("commits");
+    let validationError: Error | null = null;
+    const now = new Date().toISOString();
+    const request = repositories.get(input.repoId);
+    request.onsuccess = () => {
+      try {
+        const repository = validateRepositoryOperation(request.result as LocalRepositoryMeta | undefined, input.scope);
+        if (repository.remoteKind !== "none") throw new Error("The local repository is already connected to a remote.");
+        repositories.put({ ...repository, ...input.remote, remoteKind: "github", remoteHeadSha: input.remoteHeadSha, remoteStatus: "clean", remoteChanged: false, remoteCheckedAt: now, lastRemoteHead: input.remoteHeadSha, lastKnownChanged: false, updatedAt: now });
+        for (const expected of input.expectedFiles) {
+          const sha = input.pushedShas[expected.path];
+          if (!sha) continue;
+          const currentRequest = files.get(expected.key);
+          currentRequest.onsuccess = () => {
+            const current = currentRequest.result as LocalRepositoryFile | undefined;
+            if (!current || localFileVersion(current) !== localFileVersion(expected)) return;
+            files.put({ ...current, baseSha: sha, baseHash: current.currentHash, status: "clean", committed: false, updatedAt: now });
+          };
+        }
+        for (const id of input.commitIds) {
+          const commitRequest = commits.get(id);
+          commitRequest.onsuccess = () => {
+            const commit = commitRequest.result as LocalCommit | undefined;
+            if (commit?.repoId === input.repoId) commits.put({ ...commit, pushed: true, remoteCommitSha: input.remoteHeadSha });
+          };
+        }
+      } catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local repository attachment settlement was aborted."));
+  });
 }
 
 export async function listLocalFiles(repoIdValue: string): Promise<LocalRepositoryFile[]> {

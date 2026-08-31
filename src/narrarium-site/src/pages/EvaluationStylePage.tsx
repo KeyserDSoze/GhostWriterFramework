@@ -22,8 +22,7 @@ import { appendAssistantNote } from "@/assistant/service";
 import { completeTextRouted } from "@/assistant/router";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import { defaultEvaluationCriteria, defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
-import { useAuthStore } from "@/store/authStore";
-import { accountIdentity } from "@/auth/accountIdentity";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 interface Criterion {
   key: string;
@@ -86,11 +85,11 @@ function EvaluationCriterionEditor({
     improveText: async (body, selection) => completeTextRouted(settings, [
       { role: "system", content: `${pagePrompt}\nReturn only the improved criterion description.` },
       { role: "user", content: `${currentRequest("Improve the selected criterion description.")}\n\n${untrustedData("repository_content", `Current criterion description:\n${body}\n\nSelected text:\n${selection ?? body}`)}` },
-    ], "review", { accountScope: accountIdentity(useAuthStore.getState().user), label: "evaluation-style:improve-criterion" }),
+    ], "review", { accountScope: localWorkspaceScope(), label: "evaluation-style:improve-criterion" }),
     summarizeText: async (body, selection) => completeTextRouted(settings, [
       { role: "system", content: `${pagePrompt}\nSummarize this criterion description into one concise, actionable rule. Return only the summary.` },
       { role: "user", content: `${currentRequest("Summarize this criterion description.")}\n\n${untrustedData("repository_content", selection ?? body)}` },
-    ], "chat-resume", { accountScope: accountIdentity(useAuthStore.getState().user), label: "evaluation-style:summarize-criterion" }),
+    ], "chat-resume", { accountScope: localWorkspaceScope(), label: "evaluation-style:summarize-criterion" }),
     onSaveSummary,
   });
   useRegisterProseEditor(ref, { improve: assist.improve, summarize: assist.summarize, synonym: () => undefined });
@@ -126,11 +125,11 @@ export function EvaluationStylePage() {
     improveText: async (currentBody, selection) => completeTextRouted(settings, [
       { role: "system", content: `${pagePrompt}\nReturn only the improved text.` },
       { role: "user", content: `${currentRequest("Improve the selected evaluation-style text.")}\n\n${untrustedData("repository_content", `Full document:\n${currentBody}\n\nSelected text:\n${selection ?? currentBody}`)}` },
-    ], "review", { accountScope: accountIdentity(useAuthStore.getState().user), label: "evaluation-style:improve" }),
+    ], "review", { accountScope: localWorkspaceScope(), label: "evaluation-style:improve" }),
     summarizeText: async (currentBody, selection) => completeTextRouted(settings, [
       { role: "system", content: `${pagePrompt}\nSummarize the selected text into concise, actionable markdown rules. Return only the summary.` },
       { role: "user", content: `${currentRequest("Summarize the selected evaluation-style text.")}\n\n${untrustedData("repository_content", selection ?? currentBody)}` },
-    ], "chat-resume", { accountScope: accountIdentity(useAuthStore.getState().user), label: "evaluation-style:summarize" }),
+    ], "chat-resume", { accountScope: localWorkspaceScope(), label: "evaluation-style:summarize" }),
     onSaveSummary: async (summary) => {
       if (!book || !token) return;
       await appendAssistantNote({ token, owner: book.owner, repo: book.repo, branch, path: "notes.md", noteBody: `## Evaluation style summary\n\n${summary}` });

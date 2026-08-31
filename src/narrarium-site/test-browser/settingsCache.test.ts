@@ -188,16 +188,18 @@ describe("validated account-scoped settings cache", () => {
     expect(JSON.stringify(sessionStorage)).not.toContain("PAT_DEFAULT_CANARY");
   });
 
-  it("sign-out wiring purges the account cache before clearing auth", () => {
+  it("disconnect and logout wiring does not clear authoritative local data", () => {
     const source = readFileSync(resolve(process.cwd(), "src/components/layout/Topbar.tsx"), "utf8");
-    expect(source.indexOf("clearOfflineCache();")).toBeGreaterThan(-1);
-    expect(source.indexOf("clearOfflineCache();")).toBeLessThan(source.indexOf("clearAuth();"));
+    expect(source).not.toContain("clearOfflineCache();");
+    const connections = readFileSync(resolve(process.cwd(), "src/pages/AccountSyncPage.tsx"), "utf8");
+    expect(connections).toContain("disconnectAll");
+    expect(connections).toContain("deleteAllNarrariumLocalData");
   });
 
-  it("renders omitted settings sections read-only offline with an explanation", () => {
+  it("keeps important settings locally editable offline with an explanation", () => {
     const page = readFileSync(resolve(process.cwd(), "src/pages/SettingsPage.tsx"), "utf8");
-    expect(page).toContain('fieldset className="space-y-3" disabled={offline}');
-    expect(page).toContain('<fieldset disabled={offline} aria-describedby={offline ? "offline-settings-explanation" : undefined}><DeepSearchSettingsBody');
+    expect(page).toContain('fieldset className="space-y-3" aria-describedby={offline ? "offline-settings-explanation" : undefined}');
+    expect(page).toContain('credentialsDisabled={false}');
     expect(page).toContain('id="offline-settings-explanation"');
   });
 });

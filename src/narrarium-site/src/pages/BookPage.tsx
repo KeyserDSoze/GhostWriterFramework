@@ -30,7 +30,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { createFile, readFileWithSha, slugToTitle, updateFile } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type BookFile } from "@/types/book";
-import { resolveBookToken } from "@/types/settings";
+import { bookStorageMode, resolveBookToken } from "@/types/settings";
 import { openCanonDossier } from "@/narrarium/openDossier";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useRegisterPageSave } from "@/store/saveStore";
@@ -274,19 +274,19 @@ export function BookPage() {
             <p className="text-muted-foreground">{displayDescription}</p>
           )}
           <p className="mt-1 text-xs text-muted-foreground">
-            {book.owner}/{book.repo}
+            {bookStorageMode(book) === "local-only" ? (settings.ui.language === "it" ? "Solo su questo dispositivo" : "This device only") : `${book.owner}/${book.repo}`}
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground font-mono">
             {ensuring ? t("bookPage.creatingBranch") : branch}
           </p>
-          <p className="mt-1 text-[11px] text-muted-foreground">
+          {bookStorageMode(book) === "github" && <p className="mt-1 text-[11px] text-muted-foreground">
             {t("bookPage.token")}{" "}
             {book.bookToken
               ? `${t("bookPage.dedicatedPatLabel")}${book.bookTokenLabel ? ` · ${book.bookTokenLabel}` : ""}`
               : book.tokenIndex != null
                 ? settings.extraGitHubTokens[book.tokenIndex]?.label ?? t("bookPage.savedToken")
                 : t("bookPage.defaultToken")}
-          </p>
+          </p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}

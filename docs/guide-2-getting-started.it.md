@@ -1,59 +1,37 @@
 # Primi passi
 
-> Come accedere, collegare un libro e configurare l'AI.
+> Parti in locale e collega soltanto i servizi che ti servono.
 
-## 1. Accedi
+## 1. Apri Narrarium
 
-Apri il sito e accedi con **Google** o **Microsoft**.
+Narrarium si apre direttamente in un workspace locale durevole. Non sono necessari account o connessione di rete.
 
-- Con Google le impostazioni vanno su **Google Drive**.
-- Con Microsoft vanno su **OneDrive**.
+Impostazioni, registro libri, stato reader, bookmark, azioni personalizzate, clipboard, costi, chat e segmenti dell'archivio chat vengono scritti prima in locale. Chiudere e riaprire il browser non richiede il login a un provider.
 
-La prima volta dovrai dare il consenso ai permessi su Drive (servono per salvare le tue impostazioni e le chat).
+## 2. Crea un libro
 
-### Ricordami su questo dispositivo
+La modalità predefinita è **Solo questo dispositivo**. Un libro locale usa la stessa working copy di file, commit, snapshot di recovery e dirty tracking di un libro GitHub, ma non ha un target remoto.
 
-L'opzione vale sia per Google sia per Microsoft:
+In seguito puoi aprire le Impostazioni libro e collegare la stessa working copy a una nuova repository GitHub privata. Il PAT è supportato senza OAuth.
 
-- Senza spunta, il token OAuth resta in `sessionStorage` e normalmente termina con la scheda del browser o la sessione PWA.
-- Con la spunta, Narrarium salva in `localStorage`, con ambito account, token, scadenza, provider e ID immutabile dell'account del provider. Una nuova scheda o un riavvio della PWA può così ripristinare la sessione finché il token è valido.
-- Narrarium non salva mai refresh token OAuth. I token persistenti scaduti vengono eliminati automaticamente.
-- Dopo la scadenza Google riceve un solo tentativo silenzioso `prompt=none`; se fallisce si torna alla login interattiva senza retry o loop di popup.
-- Microsoft usa l'acquisizione silenziosa supportata finché la cache account MSAL è disponibile; altrimenti torna alla login.
-- Il logout elimina token persistente e continuità dell'account. Non attivare questa opzione su dispositivi condivisi o non affidabili.
+## 3. Configura l'AI
 
-## 2. Crea un token GitHub (PAT)
+Narrarium non include un modello. Apri Impostazioni → integrazioni AI e configura OpenAI, Azure OpenAI, GitHub Models o un altro provider supportato. Configurazione e credenziali vengono salvate nel dataset account locale.
 
-Il libro vive su GitHub, quindi serve un token con permesso di scrittura sui repository.
+## 4. Repliche account opzionali
 
-1. Vai su GitHub → Settings → Developer settings → Personal access tokens.
-2. Crea un token (fine-grained va benissimo) con accesso ai repository che userai e permesso di **lettura e scrittura sui contenuti**.
-3. Copia il token.
+Apri **Account e sincronizzazione** per abilitare indipendentemente Google Drive, OneDrive o GitHub. Sono repliche dello stesso dataset account locale, non requisiti di accesso.
 
-In Narrarium puoi:
-- impostare un **token di default** in Impostazioni, oppure
-- dare a un singolo libro un **token dedicato** (consigliato se usi repository diversi con permessi diversi).
+- Le credenziali dei connettori e il loro stato attivo/disattivo restano su questo dispositivo.
+- I dati logici dell'account usano manifest UTC, hash dei contenuti e vector clock.
+- Un errore remoto lascia al sicuro la copia locale e marca soltanto quella replica come in attesa o in errore.
+- Le repliche divergenti richiedono una scelta esplicita della copia autorevole.
 
-## 3. Collega un libro
-
-- Se hai già un repository Narrarium su GitHub, aggiungilo dalla pagina Libri.
-- Se parti da zero, puoi creare il repository del libro con lo strumento del framework (vedi le guide di riferimento) e poi collegarlo.
-
-Un libro = un repository. Narrarium legge la struttura (capitoli, canon, ecc.) direttamente dai file.
-
-## 4. Aggiungi la tua AI (LLM)
-
-Narrarium **non include un modello**: usi il tuo.
-
-1. Vai in Impostazioni → integrazioni AI.
-2. Aggiungi un'integrazione **OpenAI** o **Azure OpenAI** con la tua chiave.
-3. Indica i modelli (scrittura, eventuale revisione, immagini, voce).
-4. Facoltativo: inserisci i **prezzi** per stimare i costi (vedi la guida costi).
-
-Da qui in poi le funzioni AI (Copilot, migliora, sinonimo, generazione script/bozza/paragrafo, immagini, voce) useranno la tua integrazione.
+Il PAT GitHub è il collegamento attualmente funzionante nel browser statico. Il flusso OAuth PKCE è implementato, ma il token endpoint GitHub non espone una risposta CORS leggibile dal browser; vedi `docs/github-oauth-static-client.md`.
 
 ## 5. Inizia a scrivere
 
-- Apri un capitolo, aggiungi un paragrafo.
-- Usa lo **script** per progettare la scena, poi genera la **bozza**, poi il **paragrafo finale**.
-- Seleziona del testo e usa il tasto destro (desktop) o il pulsante che appare sulla selezione (mobile) per **Migliora** o **Sinonimo**.
+- Apri un capitolo e aggiungi un paragrafo.
+- Usa uno script per progettare la scena, genera la bozza e poi rifinisci il paragrafo finale.
+- Seleziona testo e usa l'azione contestuale Migliora o Sinonimo.
+- Usa **Sincronizza ora** quando vuoi aggiornare immediatamente le repliche remote abilitate.

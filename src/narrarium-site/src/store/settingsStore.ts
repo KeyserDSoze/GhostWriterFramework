@@ -4,13 +4,15 @@ import { AppSettings, DEFAULT_SETTINGS } from "@/types/settings";
 import { SETTINGS_CACHE_SCHEMA_VERSION, assertOfflineSettingsReplacementAllowed } from "@/drive/settingsCache";
 
 export const CLOUD_SETTINGS_SOURCE_SCHEMA_VERSION = 1;
+export const LOCAL_SETTINGS_SOURCE_SCHEMA_VERSION = 1;
 
 type TrustedSettingsLoad = {
   accountGeneration: number;
   accountIdentity: string;
   source:
     | { kind: "cloud"; schemaVersion: typeof CLOUD_SETTINGS_SOURCE_SCHEMA_VERSION }
-    | { kind: "offline-cache"; schemaVersion: typeof SETTINGS_CACHE_SCHEMA_VERSION };
+    | { kind: "offline-cache"; schemaVersion: typeof SETTINGS_CACHE_SCHEMA_VERSION }
+    | { kind: "local"; schemaVersion: typeof LOCAL_SETTINGS_SOURCE_SCHEMA_VERSION };
 };
 
 type SettingsSyncStatus = "idle" | "loading" | "saving" | "error";
@@ -60,7 +62,9 @@ export const useSettingsStore = create<SettingsState>()(
       replaceSettingsFromTrustedLoad: (settings, load) => set((state) => {
         const validSource = load.source.kind === "cloud"
           ? load.source.schemaVersion === CLOUD_SETTINGS_SOURCE_SCHEMA_VERSION
-          : load.source.kind === "offline-cache" && load.source.schemaVersion === SETTINGS_CACHE_SCHEMA_VERSION;
+          : load.source.kind === "offline-cache"
+            ? load.source.schemaVersion === SETTINGS_CACHE_SCHEMA_VERSION
+            : load.source.kind === "local" && load.source.schemaVersion === LOCAL_SETTINGS_SOURCE_SCHEMA_VERSION;
         if (!validSource) throw new Error("Trusted settings load source schema is invalid.");
         if (state.accountGeneration !== load.accountGeneration || state.accountIdentity !== load.accountIdentity) {
           throw new Error("Trusted settings load is stale for the current account.");

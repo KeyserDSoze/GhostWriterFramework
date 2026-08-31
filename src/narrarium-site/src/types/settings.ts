@@ -1,3 +1,5 @@
+import { resolveGitHubCredentialValue, type ResolvedGitHubCredential } from "@/github/githubCredentialRuntime";
+
 // ─── Azure OpenAI ────────────────────────────────────────────────────────────
 
 export interface AzureOpenAIConfig {
@@ -142,6 +144,8 @@ export type ParagraphSeparator = "none" | "star" | "asterisks" | "custom";
 export type AuditDepth = "quick" | "standard" | "deep";
 export type AuditSeverityThreshold = "critical" | "high" | "medium" | "low" | "informational";
 export type AuditReportLanguage = "book" | "en" | "it";
+export type BookStorageMode = "local-only" | "github";
+export const LOCAL_BOOK_TOKEN = "narrarium-local-repository";
 
 export interface AuditSettings {
   enabled: boolean;
@@ -256,6 +260,10 @@ export const DEFAULT_AUDIT_SETTINGS: AuditSettings = {
 export interface BookEntry {
   /** Unique local ID (crypto.randomUUID()) */
   id: string;
+  /** Legacy entries without this field are GitHub-backed. */
+  storageMode?: BookStorageMode;
+  /** Stable local repository identity for books that have no remote target. */
+  localRepositoryId?: string;
   /** GitHub repository owner (user or org) */
   owner: string;
   /** GitHub repository name */
@@ -363,11 +371,20 @@ export function resolveBookExportSettings(book: BookEntry, profileId?: string): 
  * 3. the default GitHub token
  */
 export function resolveBookToken(book: BookEntry, settings: AppSettings): string {
-  if (book.bookToken && book.bookToken.trim()) return book.bookToken.trim();
-  if (book.tokenIndex != null) {
-    return settings.extraGitHubTokens[book.tokenIndex]?.token ?? "";
-  }
-  return settings.defaultGitHubToken;
+  if (book.storageMode === "local-only") return LOCAL_BOOK_TOKEN;
+  return resolveGitHubRemoteToken(book, settings);
+}
+
+export function resolveGitHubRemoteToken(book: BookEntry, settings: AppSettings): string {
+  return resolveGitHubCredential(book, settings)?.token ?? "";
+}
+
+export function resolveGitHubCredential(book: BookEntry, settings: AppSettings): ResolvedGitHubCredential | null {
+  return resolveGitHubCredentialValue({ bookToken: book.bookToken, tokenIndex: book.tokenIndex, extraTokens: settings.extraGitHubTokens, defaultToken: settings.defaultGitHubToken });
+}
+
+export function bookStorageMode(book: BookEntry): BookStorageMode {
+  return book.storageMode ?? "github";
 }
 
 // ─── Root settings object stored in Google Drive ─────────────────────────────
@@ -537,8 +554,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     ttsRate: 0.95,
   },
   repository: {
-    autoFetchOnOpen: true,
-    autoFetchIntervalMinutes: 15,
+    autoFetchOnOpen: false,
+    autoFetchIntervalMinutes: 0,
     autoPullWhenClean: false,
   },
   deepSearch: {

@@ -147,6 +147,28 @@ export interface LocalRewriteOperationQuery {
   paragraphSlug?: string;
 }
 
+export async function migrateRewriteOperationsToWorkspace(repoIds: string[], legacyIdentities: string[], workspaceIdentity: string): Promise<void> {
+  if (!repoIds.length || !legacyIdentities.length) return;
+  const db = await openDb();
+  const tx = db.transaction(STORE_NAME, "readwrite");
+  const store = tx.objectStore(STORE_NAME);
+  const allowedRepos = new Set(repoIds);
+  const allowedIdentities = new Set(legacyIdentities);
+  const request = store.openCursor();
+  request.onsuccess = () => {
+    const cursor = request.result;
+    if (!cursor) return;
+    const record = cursor.value as StoredRewriteOperation;
+    if (allowedRepos.has(record.repoId) && record.accountIdentity && allowedIdentities.has(record.accountIdentity)) cursor.update({ ...record, accountIdentity: workspaceIdentity });
+    cursor.continue();
+  };
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error("Rewrite workspace migration was aborted."));
+  });
+}
+
 let dbPromise: Promise<IDBDatabase> | null = null;
 let upgradeBlocked = false;
 
@@ -216,6 +238,18 @@ function openDb(): Promise<IDBDatabase> {
     throw error;
   });
   return dbPromise;
+}
+
+export async function deleteAllLocalRewriteOperationData(): Promise<void> {
+  if (dbPromise) (await dbPromise).close();
+  dbPromise = null;
+  upgradeBlocked = false;
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(DB_NAME);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("Local rewrite data deletion is blocked by another Narrarium tab."));
+  });
 }
 
 export async function ensureLocalRewriteOperationStoreReady(): Promise<void> {

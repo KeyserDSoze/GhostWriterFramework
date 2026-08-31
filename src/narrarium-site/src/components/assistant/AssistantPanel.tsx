@@ -44,9 +44,9 @@ import { assistantMarkdownToRichPlainText, buildAssistantSessionMarkdown, buildA
 import { AssistantArchiveProvenance } from "@/components/assistant/AssistantArchiveProvenance";
 import { loadWriterContext, parseAppRoute } from "@/assistant/context";
 import { bindReadAloudActionProvenance, readAloudReplaySource, resolveNavigateAction, resolveReadAloudAction, type ReadAloudAction } from "@/assistant/planner";
-import { deleteAssistantSession, hydrateAssistantSessionArchive, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
-import { refreshAssistantSessionIndex, resetAssistantSessionIndex } from "@/assistant/sessionIndex";
-import { assistantSessionSaveQueue, assistantSessionSaveFingerprint, assistantSessionSaveRetryPlan, attachAssistantSessionCloudHandle, clearFailedAssistantSessionSaveFingerprint, flushAssistantSessionSnapshot, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
+import { hydrateAssistantSessionArchive } from "@/assistant/chatCloud";
+import { refreshAssistantSessionIndex } from "@/assistant/sessionIndex";
+import { assistantSessionSaveQueue, assistantSessionSaveFingerprint, assistantSessionSaveRetryPlan, clearFailedAssistantSessionSaveFingerprint, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
 import { assistantSessionCompactionTarget, mergeAssistantSessionCompaction } from "@/assistant/sessionCompaction";
 import { isAssistantRequestOwned, isConfirmedMutationOwned, type AssistantRequestOwner } from "@/assistant/sessionOwnership";
 import { resolveChatNoteDestination, reusableChatNoteOperation, type ChatNoteDestination } from "@/assistant/chatNoteSave";
@@ -55,7 +55,6 @@ import { assistantActionToolId, policyTargetEnabled, quickActionToolId } from "@
 import { hasAssistantActionProvenance, sourceRevisionFromFiles, validateAssistantAction } from "@/assistant/actionValidation";
 import { copilotToolRegistry, isCopilotToolIdEnabled } from "@/assistant/tools/registry";
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
-import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
 import { parseAttachments } from "@/assistant/attachments";
 import type { AttachmentImportTarget } from "@/assistant/attachmentImport";
 import { useSettings } from "@/drive/useSettings";
@@ -112,6 +111,8 @@ import { refreshBookAfterMutation, runPromptWithMutationRefresh } from "@/assist
 import { captureLiveVoiceRewriteSnapshot, generateLiveVoiceRewrite, liveVoiceRewriteMatches, persistLiveVoiceRewrite, resolveLiveVoiceRewrite, type LiveVoiceRewriteContext, type LiveVoiceSource, type PendingLiveVoiceRewrite } from "@/assistant/liveVoiceRewrite";
 import { commitCanonicalScriptMutation } from "@/narrarium/scriptLedger";
 import { directSecretPath } from "@/assistant/secretPolicy";
+import { deleteLocalChatSession, loadLocalChatSession, saveLocalChatSession } from "@/assistant/chatLocal";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 ensureBuiltinCopilotToolsRegistered();
 
@@ -320,8 +321,6 @@ export function AssistantPanel() {
   }, [currentSession?.id, bookId, branch, location.pathname, activeSecretPath, settings, structures, workingBranches]);
 
   useEffect(() => {
-    const provider = user?.provider;
-    const token = accessToken;
     cloudAccountAbortRef.current.abort();
     cloudAccountAbortRef.current = new AbortController();
     sessionSaveQueueRef.current.reset();
@@ -333,14 +332,7 @@ export function AssistantPanel() {
     setAutosaveStatus(null);
     return () => {
       const session = useAssistantStore.getState().currentSession;
-      if (provider && token && session) {
-        void sessionSaveQueueRef.current.enqueue(
-          session,
-          (snapshot) => saveAssistantSession(provider, token, snapshot),
-          () => undefined,
-          () => undefined,
-        );
-      }
+      if (session) void saveLocalChatSession(session).catch(() => undefined);
       cloudAccountAbortRef.current.abort();
       sessionSaveQueueRef.current.reset();
       savedSessionFingerprintsRef.current.clear();
@@ -384,20 +376,17 @@ export function AssistantPanel() {
   }, [route, currentSession, setCurrentSession]);
 
   useEffect(() => {
-    if (!user || !accessToken) { resetAssistantSessionIndex(null); return; }
     if (!open) return;
-    const expectedIdentity = accountIdentity(user);
-    void refreshAssistantSessionIndex(user.provider, accessToken, expectedIdentity!)
+    void refreshAssistantSessionIndex(localWorkspaceScope())
       .catch((err) => {
-        if (!(err instanceof DOMException && err.name === "AbortError") && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
+        if (!(err instanceof DOMException && err.name === "AbortError")) {
           toast({ title: t("assistant.toastLoadChatsFailed"), description: String(err), variant: "destructive" });
         }
       });
   }, [open, user, accessToken, setSessions, toast]);
 
   useEffect(() => {
-    if (!user || !accessToken || !currentSession) return;
-    const expectedIdentity = accountIdentity(user);
+    if (!currentSession) return;
     const fingerprint = assistantSessionSaveFingerprint(currentSession);
     const previousAttempt = autosaveAttemptsRef.current.get(currentSession.id);
     if (previousAttempt && previousAttempt.fingerprint !== fingerprint) {
@@ -409,44 +398,34 @@ export function AssistantPanel() {
     if (savedSessionFingerprintsRef.current.get(currentSession.id) === fingerprint || pendingSessionFingerprintsRef.current.get(currentSession.id) === fingerprint) return;
     const timer = setTimeout(() => {
       pendingSessionFingerprintsRef.current.set(currentSession.id, fingerprint);
-      void sessionSaveQueueRef.current.enqueue(
-        currentSession,
-        (session) => saveAssistantSession(user.provider, accessToken, session, cloudAccountAbortRef.current.signal),
-        (savedSnapshot, handle) => {
-          if (!isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
-          clearFailedAssistantSessionSaveFingerprint(pendingSessionFingerprintsRef.current, savedSnapshot.id, fingerprint);
-          savedSessionFingerprintsRef.current.set(savedSnapshot.id, fingerprint);
-          autosaveAttemptsRef.current.delete(savedSnapshot.id);
+      void saveLocalChatSession(currentSession)
+        .then(() => {
+          clearFailedAssistantSessionSaveFingerprint(pendingSessionFingerprintsRef.current, currentSession.id, fingerprint);
+          savedSessionFingerprintsRef.current.set(currentSession.id, fingerprint);
+          autosaveAttemptsRef.current.delete(currentSession.id);
           setAutosaveStatus(null);
           const state = useAssistantStore.getState();
-          const latest = state.currentSession?.id === savedSnapshot.id ? state.currentSession : null;
-          const sessionWithFileId = attachAssistantSessionCloudHandle(state.currentSession, savedSnapshot, handle);
-          if (sessionWithFileId !== state.currentSession) state.setCurrentSession(sessionWithFileId);
-          const metadataSource = latest ?? savedSnapshot;
-          state.setSessions(upsertAssistantSessionMeta(state.sessions, metadataSource, handle));
-        },
-        (err) => {
-          if (isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
-            const failedAttempts = autosaveAttemptsRef.current.get(currentSession.id)?.fingerprint === fingerprint
-              ? autosaveAttemptsRef.current.get(currentSession.id)!.failedAttempts
-              : 0;
-            const plan = assistantSessionSaveRetryPlan(err, failedAttempts);
-            if (plan.kind === "retry") {
-              if (!clearFailedAssistantSessionSaveFingerprint(pendingSessionFingerprintsRef.current, currentSession.id, fingerprint)) return;
-              autosaveAttemptsRef.current.set(currentSession.id, { fingerprint, failedAttempts: plan.attempt });
-              setAutosaveStatus({ sessionId: currentSession.id, kind: "retrying", attempt: plan.attempt, message: String(err) });
-              autosaveRetryTimerRef.current = window.setTimeout(() => {
-                autosaveRetryTimerRef.current = null;
-                setAutosaveRetry((value) => value + 1);
-              }, plan.delayMs);
-            } else {
-              setAutosaveStatus({ sessionId: currentSession.id, kind: "stopped", message: String(err), retryable: plan.reason === "exhausted" });
-            }
-            toast({ title: t("assistant.toastSaveChatFailed"), description: String(err), variant: "destructive" });
+          state.setSessions(upsertAssistantSessionMeta(state.sessions, currentSession, { fileId: currentSession.id }));
+        })
+        .catch((err) => {
+          const failedAttempts = autosaveAttemptsRef.current.get(currentSession.id)?.fingerprint === fingerprint
+            ? autosaveAttemptsRef.current.get(currentSession.id)!.failedAttempts
+            : 0;
+          const plan = assistantSessionSaveRetryPlan(err, failedAttempts);
+          if (plan.kind === "retry") {
+            if (!clearFailedAssistantSessionSaveFingerprint(pendingSessionFingerprintsRef.current, currentSession.id, fingerprint)) return;
+            autosaveAttemptsRef.current.set(currentSession.id, { fingerprint, failedAttempts: plan.attempt });
+            setAutosaveStatus({ sessionId: currentSession.id, kind: "retrying", attempt: plan.attempt, message: String(err) });
+            autosaveRetryTimerRef.current = window.setTimeout(() => {
+              autosaveRetryTimerRef.current = null;
+              setAutosaveRetry((value) => value + 1);
+            }, plan.delayMs);
+          } else {
+            setAutosaveStatus({ sessionId: currentSession.id, kind: "stopped", message: String(err), retryable: plan.reason === "exhausted" });
           }
-        },
-      );
-    }, 300);
+          toast({ title: t("assistant.toastSaveChatFailed"), description: String(err), variant: "destructive" });
+        });
+    }, 100);
     return () => clearTimeout(timer);
   }, [currentSession, user, accessToken, toast, autosaveRetry]);
 
@@ -455,7 +434,7 @@ export function AssistantPanel() {
     const sourceSession = currentSession;
     const controller = new AbortController();
     const runId = ++compactionRunRef.current;
-    void compactAssistantSession({ session: sourceSession, settings, accountScope: accountIdentity(user), signal: controller.signal })
+    void compactAssistantSession({ session: sourceSession, settings, accountScope: localWorkspaceScope(), signal: controller.signal })
       .then((compacted) => {
         if (controller.signal.aborted || compactionRunRef.current !== runId) return;
         const state = useAssistantStore.getState();
@@ -573,11 +552,11 @@ export function AssistantPanel() {
     if (releasedBusy) setBusy(false);
   }
 
-  function beginConfirmedMutation(targetBookId: string, expectedAccount: string | null): ConfirmedMutationOperation | null {
+  function beginConfirmedMutation(targetBookId: string, _expectedAccount: string | null): ConfirmedMutationOperation | null {
     const sessionId = useAssistantStore.getState().currentSession?.id;
-    if (!sessionId || !isAccountIdentityCurrent(expectedAccount, useAuthStore.getState().user)) return null;
+    if (!sessionId) return null;
     confirmedMutationRef.current?.controller.abort(new DOMException("A newer confirmed mutation started.", "AbortError"));
-    const operation = { id: crypto.randomUUID(), controller: new AbortController(), account: expectedAccount, sessionId, bookId: targetBookId, branch: activeBranchRef.current, pathname: activePathnameRef.current };
+    const operation = { id: crypto.randomUUID(), controller: new AbortController(), account: localWorkspaceScope(), sessionId, bookId: targetBookId, branch: activeBranchRef.current, pathname: activePathnameRef.current };
     confirmedMutationRef.current = operation;
     return operation;
   }
@@ -587,7 +566,7 @@ export function AssistantPanel() {
     const currentBookId = activeBookIdRef.current;
     if (confirmedMutationRef.current?.id !== operation.id || !currentSessionId || !currentBookId) return false;
     return isConfirmedMutationOwned(operation, {
-      account: accountIdentity(useAuthStore.getState().user),
+      account: localWorkspaceScope(),
       sessionId: currentSessionId,
       bookId: currentBookId,
       branch: activeBranchRef.current,
@@ -677,18 +656,14 @@ export function AssistantPanel() {
 
   async function flushCurrentSessionBeforeSwitch(): Promise<boolean> {
     const session = useAssistantStore.getState().currentSession;
-    if (!session || !user || !accessToken) return true;
+    if (!session) return true;
     const fingerprint = assistantSessionSaveFingerprint(session);
     if (savedSessionFingerprintsRef.current.get(session.id) === fingerprint) return true;
     try {
-      const handle = await flushAssistantSessionSnapshot(
-        sessionSaveQueueRef.current,
-        session,
-        (snapshot) => saveAssistantSession(user.provider, accessToken, snapshot, cloudAccountAbortRef.current.signal),
-      );
+      await saveLocalChatSession(session);
       savedSessionFingerprintsRef.current.set(session.id, fingerprint);
       const state = useAssistantStore.getState();
-      state.setSessions(upsertAssistantSessionMeta(state.sessions, session, handle));
+      state.setSessions(upsertAssistantSessionMeta(state.sessions, session, { fileId: session.id }));
       return true;
     } catch (error) {
       toast({ title: t("assistant.toastSaveChatFailed"), description: String(error), variant: "destructive" });
@@ -848,7 +823,7 @@ export function AssistantPanel() {
           if (voiceModeRef.current) setVoiceStatus("thinking");
           try {
             const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
-            const transcript = (await transcribeAudio(blob, settings, operation.signal, candidateIndex, accountIdentity(user))).trim();
+            const transcript = (await transcribeAudio(blob, settings, operation.signal, candidateIndex, localWorkspaceScope())).trim();
             if (!ownsMediaOperation(operation.generation, operation.signal)) return;
             if (transcript) {
               if (voiceModeRef.current) void handleVoiceTranscript(transcript, operation.generation, operation.signal);
@@ -988,7 +963,7 @@ export function AssistantPanel() {
     }
     try {
       const controller = await speakText(text, settings, {
-        accountScope: accountIdentity(user),
+        accountScope: localWorkspaceScope(),
         segments,
         startIndex,
         signal: operation.signal,
@@ -1105,7 +1080,7 @@ export function AssistantPanel() {
           content: `Summarize the assistant reply below as a concise writer note in markdown. Keep only the useful takeaways and next actions. No frontmatter, no wrapper commentary. Respond in ${settings.ui.language === "it" ? "Italian" : "English"}.`,
         },
         { role: "user", content: `${currentRequest("Summarize this assistant reply.")}\n\n${untrustedData("prior_transcript", text)}` },
-      ], "chat-resume", { accountScope: accountIdentity(user), label: "assistant:reply-summary" });
+      ], "chat-resume", { accountScope: localWorkspaceScope(), label: "assistant:reply-summary" });
     } catch (err) {
       toast({ title: t("assistant.toastChatSummaryFailed"), description: String(err), variant: "destructive" });
       return null;
@@ -1113,7 +1088,7 @@ export function AssistantPanel() {
   }
 
   async function saveCurrentChatAsNote(options: { mode: "full" | "reply-summary"; deleteAfter?: boolean }) {
-    if (!currentSession?.messages.length || !user || !accessToken) return;
+    if (!currentSession?.messages.length) return;
     const sourceSessionId = currentSession.id;
     const resolved = resolveChatNoteDestination(currentSession, sessionContext);
     if (!resolved) {
@@ -1139,7 +1114,7 @@ export function AssistantPanel() {
         : "The note is not a complete backup: it omits attachment contents, full action/proposal payloads, proposed file contents, undo snapshots, and cloud identity. Delete the chat anyway?";
       if (!window.confirm(lossyWarning)) return;
     }
-    const mutationOperation = beginConfirmedMutation(activeBookIdRef.current ?? destination.bookId, accountIdentity(user));
+    const mutationOperation = beginConfirmedMutation(activeBookIdRef.current ?? destination.bookId, localWorkspaceScope());
     if (!mutationOperation) return;
     const latestReply = [...currentSession.messages].reverse().find((message) => message.role === "assistant" && message.text.trim());
     let noteBody = "";
@@ -1167,9 +1142,9 @@ export function AssistantPanel() {
       // A prior ambiguous delete may already have removed the cloud file. Never save it again before retrying deletion.
       if (!(options.deleteAfter && (operation.status === "note-saved" || operation.status === "delete-failed"))) {
         const pending = { ...latest, noteSaveOperation: { ...operation, status: "pending" as const, updatedAt: new Date().toISOString() } };
-        const pendingHandle = await saveAssistantSession(user.provider, accessToken, pending, mutationOperation.controller.signal);
+        await saveLocalChatSession(pending);
         if (!ownsConfirmedMutation(mutationOperation)) return;
-        useAssistantStore.getState().setCurrentSession({ ...pending, ...pendingHandle, losslessSegments: [] });
+        useAssistantStore.getState().setCurrentSession(pending);
         await appendAssistantNote({
           token,
           owner: book.owner,
@@ -1182,15 +1157,15 @@ export function AssistantPanel() {
         });
         if (!ownsConfirmedMutation(mutationOperation)) return;
         const noteSaved = { ...useAssistantStore.getState().currentSession!, noteSaveOperation: { ...operation, status: options.deleteAfter ? "note-saved" as const : "complete" as const, updatedAt: new Date().toISOString() } };
-        const savedHandle = await saveAssistantSession(user.provider, accessToken, noteSaved, mutationOperation.controller.signal);
+        await saveLocalChatSession(noteSaved);
         if (!ownsConfirmedMutation(mutationOperation)) return;
-        useAssistantStore.getState().setCurrentSession({ ...noteSaved, ...savedHandle, losslessSegments: [] });
+        useAssistantStore.getState().setCurrentSession(noteSaved);
       }
       await refreshBookAfterMutation({ book, token, branch: destination.branch });
       if (!ownsConfirmedMutation(mutationOperation)) return;
       if (options.deleteAfter) {
         const saved = useAssistantStore.getState().currentSession;
-        if (saved?.fileId) await deleteAssistantSession(user.provider, accessToken, saved.fileId, mutationOperation.controller.signal, sourceSessionId);
+        await deleteLocalChatSession(sourceSessionId);
         const state = useAssistantStore.getState();
         state.setSessions(state.sessions.filter((entry) => entry.id !== sourceSessionId && entry.fileId !== saved?.fileId));
         state.setCurrentSession(null);
@@ -1224,8 +1199,7 @@ export function AssistantPanel() {
       const markdown = options.format === "markdown" ? buildAssistantSessionMarkdown(exportSession) : "";
       const artifact = options.format === "json"
         ? (() => {
-            if (!user) throw new Error(t("assistant.toastChatDriveUnavailable"));
-            return { fileName: `${baseName}.narrarium-chat.json`, mimeType: "application/json", archive: createAssistantChatArchive(exportSession, user.provider, user.providerAccountId ?? "") };
+            return { fileName: `${baseName}.narrarium-chat.json`, mimeType: "application/json", archive: createAssistantChatArchive(exportSession, user?.provider ?? "local", user?.providerAccountId ?? localWorkspaceScope()) };
           })()
         : options.format === "markdown"
         ? { fileName: `${baseName}.md`, mimeType: "text/markdown", blob: new Blob([markdown], { type: "text/markdown;charset=utf-8" }) }
@@ -1364,7 +1338,7 @@ export function AssistantPanel() {
   }, [consumeLaunchMode, launchMode]);
 
   async function sendPrompt(prompt: string, options?: { spokenMode?: boolean; signal?: AbortSignal; attachmentTarget?: AttachmentImportTarget }): Promise<AssistantMessage | null> {
-    const accountScope = accountIdentity(user);
+    const accountScope = localWorkspaceScope();
     const trimmed = prompt.trim();
     if (!trimmed || useAssistantStore.getState().busy) return null;
     const session = ensureSession();
@@ -1694,7 +1668,7 @@ export function AssistantPanel() {
         return makeAssistantReply(t("assistant.rewriteCancelled"));
       }
       // Ambiguous → ask the cheap "simple-tasks" model with a forced tool to decide.
-      const decision = await classifyConfirmationRouted(settings, prompt, operation?.signal, accountIdentity(user));
+      const decision = await classifyConfirmationRouted(settings, prompt, operation?.signal, localWorkspaceScope());
       if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
       if (decision === "yes") return applyPendingRewrite(operation);
       if (decision === "no") {
@@ -1762,7 +1736,7 @@ export function AssistantPanel() {
         generate: () => completeTextRouted(settings, [
           { role: "system", content: `You are a prose editor. ${task} Reply with only the rewritten passage in ${langName}.` },
           { role: "user", content: `${currentRequest(opts.synonymWord ? `Replace ${opts.synonymWord} with a fitting synonym.` : opts.instruction)}\n\n${untrustedData("repository_content", original)}` },
-        ], "default", { accountScope: accountIdentity(user), label: "live-voice:rewrite", signal: operation?.signal }),
+        ], "default", { accountScope: localWorkspaceScope(), label: "live-voice:rewrite", signal: operation?.signal }),
         getActiveContext: () => activeLiveVoiceRewriteContext(window),
         split: splitIntoStrofe,
       });
@@ -1870,7 +1844,6 @@ export function AssistantPanel() {
   }
 
   async function openSession(fileId: string) {
-    if (!user || !accessToken) return;
     cancelSessionOperations();
     if (!await flushCurrentSessionBeforeSwitch()) return;
     const runId = ++openSessionRunRef.current;
@@ -1879,7 +1852,7 @@ export function AssistantPanel() {
     activeOpenSessionRunRef.current = runId;
     setBusy(true);
     try {
-      const loaded = await loadAssistantSession(user.provider, accessToken, fileId, controller.signal);
+      const loaded = await loadLocalChatSession(fileId);
       if (controller.signal.aborted || activeOpenSessionRunRef.current !== runId) return;
       const session = invalidateAssistantSecretContext(loaded, directSecretPath(route));
       setCurrentSession(session);
@@ -1898,25 +1871,23 @@ export function AssistantPanel() {
   }
 
   async function deleteSavedSession(session: AssistantSessionMeta) {
-    const fileId = session.fileId;
-    if (!user || !accessToken || !fileId) return;
+    const fileId = session.id;
     if (!window.confirm(t("assistant.deleteChatConfirm", { title: session.title || t("assistant.untitledChat") }))) return;
-    const expectedIdentity = accountIdentity(user);
     const signal = cloudAccountAbortRef.current.signal;
     try {
       if (useAssistantStore.getState().currentSession?.id === session.id) await sessionSaveQueueRef.current.retire(session.id);
-      await deleteAssistantSession(user.provider, accessToken, fileId, signal, session.id);
-      if (signal.aborted || !isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
+      await deleteLocalChatSession(session.id);
+      if (signal.aborted) return;
       const state = useAssistantStore.getState();
       state.setSessions(state.sessions.filter((entry) => entry.fileId !== fileId));
-      if (useAssistantStore.getState().currentSession?.fileId === fileId) {
+      if (useAssistantStore.getState().currentSession?.id === session.id || useAssistantStore.getState().currentSession?.fileId === fileId) {
         cancelSessionOperations();
         setCurrentSession(null);
       }
       toast({ title: t("assistant.toastChatDeleted") });
     } catch (err) {
       sessionSaveQueueRef.current.resume(session.id);
-      if (!signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
+      if (!signal.aborted) {
         toast({ title: t("assistant.toastDeleteChatFailed"), description: String(err), variant: "destructive" });
       }
     }
@@ -2019,7 +1990,7 @@ export function AssistantPanel() {
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
     if (!await validatePersistedMutation(action, book, token)) return;
-    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
     if (!operation) return;
     setBusy(true);
     try {
@@ -2046,7 +2017,7 @@ export function AssistantPanel() {
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token || updates.length === 0) return;
     if (!await validatePersistedMutation(action, book, token)) return;
-    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
     if (!operation) return;
     const signal = operation.controller.signal;
     setBusy(true);
@@ -2117,7 +2088,7 @@ export function AssistantPanel() {
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
     if (!await validatePersistedMutation(action, book, token)) return;
-    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
     if (!operation) return;
     const signal = operation.controller.signal;
     setBusy(true);
@@ -2152,7 +2123,7 @@ export function AssistantPanel() {
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
     if (!await validatePersistedMutation(action, book, token)) return;
-    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
     if (!operation) return;
     const signal = operation.controller.signal;
     setBusy(true);
@@ -2226,7 +2197,7 @@ export function AssistantPanel() {
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token || !await validatePersistedMutation(action, book, token)) return;
-    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
     if (!operation) return;
     const signal = operation.controller.signal;
     setBusy(true);
@@ -2256,7 +2227,7 @@ export function AssistantPanel() {
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token || !await validatePersistedMutation(action, book, token)) return;
-    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
     if (!operation) return;
     setBusy(true);
     try {
@@ -2280,7 +2251,7 @@ export function AssistantPanel() {
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
     if (!await validatePersistedMutation(action, book, token)) return;
-    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
     if (!operation) return;
     const signal = operation.controller.signal;
     setBusy(true);
@@ -2370,7 +2341,7 @@ export function AssistantPanel() {
     const book = settings.books.find((entry) => entry.id === bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token) return;
-    const operation = beginConfirmedMutation(book.id, accountIdentity(user));
+    const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
     if (!operation) return;
     const signal = operation.controller.signal;
     setBusy(true);

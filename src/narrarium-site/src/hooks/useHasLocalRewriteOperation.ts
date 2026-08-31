@@ -3,8 +3,6 @@ import type { BookEntry } from "@/types/settings";
 import type { RewriteOperationScope } from "@/narrarium/rewriteOperationPaths";
 import { loadLatestLocalRewriteOperation, LOCAL_REWRITE_OPERATIONS_CHANGED_EVENT } from "@/repository/localRewriteOperationStore";
 import { getLocalRepository } from "@/repository/localRepository";
-import { accountIdentity } from "@/auth/accountIdentity";
-import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 export function useHasLocalRewriteOperation(input: {
@@ -31,11 +29,6 @@ export function useHasLocalRewriteOperation(input: {
     }
     const book = input.book;
     const scope = input.scope;
-    const identity = accountIdentity(useAuthStore.getState().user);
-    if (!identity) {
-      setHasOperation(false);
-      return () => { active = false; };
-    }
     const operationScope = captureRepositoryOperationScope();
     void getLocalRepository(book.owner, book.repo, input.branch, operationScope).then((local) => {
       if (!local || local.cloneComplete !== true) return null;

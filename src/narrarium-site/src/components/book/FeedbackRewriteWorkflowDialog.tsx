@@ -30,8 +30,7 @@ import { RewriteOperationRecoveryRequiredError } from "@/repository/localRewrite
 import { useSettingsStore } from "@/store/settingsStore";
 import { isFeedbackWorkflowRequestCurrent, useFeedbackRewriteWorkflowStore, type FeedbackRewriteIntent } from "@/store/feedbackRewriteWorkflowStore";
 import { resolveBookToken } from "@/types/settings";
-import { useAuthStore } from "@/store/authStore";
-import { accountIdentity } from "@/auth/accountIdentity";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 export function FeedbackRewriteWorkflowDialog() {
   const { t } = useTranslation();
@@ -42,7 +41,7 @@ export function FeedbackRewriteWorkflowDialog() {
   const { book, structure, reload } = useBookStructure(state.intent?.bookId);
   const token = book ? resolveBookToken(book, settings) : "";
   const context: RewriteRepositoryContext | null = book && structure && token
-    ? { token, book, branch, structure, settings, accountScope: accountIdentity(useAuthStore.getState().user) }
+    ? { token, book, branch, structure, settings, accountScope: localWorkspaceScope() }
     : null;
   const busy = Boolean(state.abortController);
   const [restoreScopePaths, setRestoreScopePaths] = useState<string[] | null>(null);
@@ -117,11 +116,11 @@ export function FeedbackRewriteWorkflowDialog() {
   }
 
   function captureWorkflowRequest() {
-    return { requestId: state.requestId, ownerSessionId: intent.ownerSessionId!, ownerRequestId: intent.ownerRequestId!, account: accountIdentity(useAuthStore.getState().user) };
+    return { requestId: state.requestId, ownerSessionId: intent.ownerSessionId!, ownerRequestId: intent.ownerRequestId!, account: localWorkspaceScope() };
   }
 
   function ownsWorkflowRequest(request: ReturnType<typeof captureWorkflowRequest>): boolean {
-    return isFeedbackWorkflowRequestCurrent(request) && accountIdentity(useAuthStore.getState().user) === request.account;
+    return isFeedbackWorkflowRequestCurrent(request) && localWorkspaceScope() === request.account;
   }
 
   function patchWorkflowRequest(request: ReturnType<typeof captureWorkflowRequest>, patch: Parameters<typeof state.patch>[0]): void {

@@ -4,6 +4,7 @@ import {
   BookOpen,
   ClipboardCheck,
   Clock,
+  Cloud,
   Columns2,
   Download,
   EyeOff,
@@ -131,10 +132,11 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       ]
     : [];
 
-  const inSettings = location.pathname === "/app/settings" || location.pathname.startsWith("/app/settings/");
+  const inSettings = location.pathname === "/app/settings" || location.pathname.startsWith("/app/settings/") || location.pathname === "/app/account-sync";
   const inDocs = location.pathname === "/app/docs" || location.pathname.startsWith("/app/docs/");
   const docsNav = getDocGroups().flatMap((group) => group.docs).map((doc) => ({ label: localizedDoc(doc, normalizeDocLang(i18n.language)).title, href: `/app/docs/${doc.slug}`, icon: <FileText className="h-4 w-4" /> }));
   const settingsNav: NavItem[] = [
+    { label: "Account & Sync", href: "/app/account-sync", icon: <Cloud className="h-4 w-4" /> },
     { label: t("settings.title"), href: "/app/settings", icon: <Settings className="h-4 w-4" /> },
     { label: t("settingsSection.aiRouterTitle"), href: "/app/settings/ai-router", icon: <Users className="h-4 w-4" /> },
     { label: t("settingsSection.deepSearchTitle"), href: "/app/settings/deep-search", icon: <Search className="h-4 w-4" /> },

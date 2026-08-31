@@ -700,6 +700,26 @@ export function resetCloudWriteBarrierForTests(): void {
   leaseDbPromise = null;
 }
 
+export async function deleteLocalCloudWriteBarrierData(): Promise<void> {
+  for (const active of [...activeLeases.values(), ...deletionLeases.values()]) {
+    clearInterval(active.heartbeat);
+    active.controller.abort();
+  }
+  activeLeases.clear();
+  deletionLeases.clear();
+  states.clear();
+  accountKeys.clear();
+  memoryTombstones.clear();
+  if (leaseDbPromise) (await leaseDbPromise).close();
+  leaseDbPromise = null;
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(LEASE_DB);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("Cloud operation data deletion is blocked by another Narrarium tab."));
+  });
+}
+
 export function failNextCloudResumeTransactionForTests(): void { failNextResumeTransaction = true; }
 export function crashNextCloudResumeAfterCommitForTests(): void { crashNextResumeAfterCommit = true; }
 export function crashNextCloudDeletionTransitionAfterCommitForTests(): void { crashNextDeletionTransitionAfterCommit = true; }

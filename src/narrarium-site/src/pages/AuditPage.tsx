@@ -50,8 +50,7 @@ import { useRegisterPageActions } from "@/store/pageActionsStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { resolveBookAuditSettings, resolveBookToken, type AuditDepth } from "@/types/settings";
 import { auditRunBlocker } from "@/narrarium/auditAvailability";
-import { useAuthStore } from "@/store/authStore";
-import { accountIdentity } from "@/auth/accountIdentity";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { resolveUnsavedChanges } from "@/hooks/resolveUnsavedChanges";
 
@@ -168,7 +167,7 @@ export function AuditPage() {
     setProgress({ state: "preparingContext", completedCalls: 0, totalCalls: 0 });
     try {
       const completed = await runAudit({
-        accountScope: accountIdentity(useAuthStore.getState().user),
+        accountScope: localWorkspaceScope(),
         token,
         book,
         branch,

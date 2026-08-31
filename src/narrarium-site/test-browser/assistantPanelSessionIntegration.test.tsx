@@ -5,10 +5,12 @@ import { AssistantPanel, diffRevertRevisionsMatch, speechRecognitionResultDelta 
 import { createEmptyAssistantSession, useAssistantStore } from "@/assistant/store";
 import { useAuthStore } from "@/store/authStore";
 import { resetAssistantSessionIndex } from "@/assistant/sessionIndex";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 const service = vi.hoisted(() => ({ run: vi.fn() }));
 const context = vi.hoisted(() => ({ load: vi.fn() }));
 const cloud = vi.hoisted(() => ({ list: vi.fn(), save: vi.fn(), load: vi.fn(), remove: vi.fn() }));
+const localChat = vi.hoisted(() => ({ list: vi.fn(), save: vi.fn(), load: vi.fn(), remove: vi.fn() }));
 
 vi.mock("@/assistant/service", () => ({
   appendAssistantNote: vi.fn(), applyParagraphRewrite: vi.fn(), compactAssistantSession: vi.fn(async ({ session }) => session),
@@ -19,6 +21,12 @@ vi.mock("@/assistant/chatCloud", async (original) => ({
   listAssistantSessions: cloud.list,
   saveAssistantSession: cloud.save,
   loadAssistantSession: cloud.load, deleteAssistantSession: cloud.remove,
+}));
+vi.mock("@/assistant/chatLocal", () => ({
+  listLocalChatSessions: localChat.list,
+  saveLocalChatSession: localChat.save,
+  loadLocalChatSession: localChat.load,
+  deleteLocalChatSession: localChat.remove,
 }));
 vi.mock("@/assistant/context", async (original) => ({
   ...await original<typeof import("@/assistant/context")>(),
@@ -34,6 +42,10 @@ beforeEach(() => {
   cloud.save.mockResolvedValue({ fileId: "saved-file", revision: "r1" });
   cloud.load.mockReset();
   cloud.remove.mockReset();
+  localChat.list.mockReset().mockResolvedValue([]);
+  localChat.save.mockReset().mockResolvedValue(undefined);
+  localChat.load.mockReset();
+  localChat.remove.mockReset().mockResolvedValue(undefined);
   context.load.mockReset().mockResolvedValue({ title: "Narrarium", summary: "", loadedFilePaths: [], availableFiles: [], route: { kind: "settings" } });
   service.run.mockImplementation(async (input) => {
     input.onText?.("streamed reply");
@@ -123,29 +135,28 @@ describe("AssistantPanel shared session mutations", () => {
     release({ title: "Narrarium", summary: "", loadedFilePaths: [], availableFiles: [], route: { kind: "settings" } });
 
     await waitFor(() => expect(service.run).toHaveBeenCalledOnce());
-    expect(service.run.mock.calls[0][0].accountScope).toBe("google:writer-id");
+    expect(service.run.mock.calls[0][0].accountScope).toBe(localWorkspaceScope());
   });
 
   it("opens and deletes a saved session through Panel controls", async () => {
     const saved = { ...createEmptyAssistantSession("Saved"), id: "saved-session", fileId: "saved-file", revision: "r1" };
-    cloud.list.mockResolvedValue([{ id: saved.id, fileId: saved.fileId, revision: saved.revision, title: saved.title, contextTitle: saved.contextTitle, updatedAt: saved.updatedAt }]);
-    cloud.load.mockResolvedValue(saved);
-    cloud.remove.mockResolvedValue(undefined);
+    localChat.list.mockResolvedValue([{ id: saved.id, fileId: saved.id, revision: saved.revision, title: saved.title, contextTitle: saved.contextTitle, updatedAt: saved.updatedAt }]);
+    localChat.load.mockResolvedValue(saved);
     vi.spyOn(window, "confirm").mockReturnValue(true);
     useAssistantStore.setState({ sessions: [], sessionAccountIdentity: null, currentSession: null });
     render(<MemoryRouter initialEntries={["/app/settings"]}><AssistantPanel /></MemoryRouter>);
-    await waitFor(() => expect(cloud.list).toHaveBeenCalled());
+    await waitFor(() => expect(localChat.list).toHaveBeenCalled());
     await waitFor(() => expect(useAssistantStore.getState().sessions[0]?.id).toBe(saved.id));
     fireEvent.mouseDown(screen.getByRole("tab", { name: "assistant.tabHistory" }), { button: 0 });
     fireEvent.click(screen.getByRole("tab", { name: "assistant.tabHistory" }));
     await waitFor(() => expect(screen.getByRole("tab", { name: "assistant.tabHistory" })).toHaveAttribute("data-state", "active"));
     fireEvent.click(await screen.findByText(saved.title));
-    await waitFor(() => expect(cloud.load).toHaveBeenCalledOnce());
+    await waitFor(() => expect(localChat.load).toHaveBeenCalledOnce());
     expect(useAssistantStore.getState().currentSession?.id).toBe(saved.id);
     fireEvent.mouseDown(screen.getByRole("tab", { name: "assistant.tabHistory" }), { button: 0 });
     fireEvent.click(screen.getByRole("tab", { name: "assistant.tabHistory" }));
     fireEvent.click(await screen.findByTitle(`assistant.deleteChat`));
-    await waitFor(() => expect(cloud.remove).toHaveBeenCalledOnce());
+    await waitFor(() => expect(localChat.remove).toHaveBeenCalledOnce());
     expect(useAssistantStore.getState().currentSession).toBeNull();
   });
 

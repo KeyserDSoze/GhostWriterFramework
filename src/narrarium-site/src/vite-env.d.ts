@@ -3,6 +3,11 @@
 declare const __APP_VERSION__: string;
 declare const __NARRARIUM_E2E_BUILD__: boolean;
 
+interface ImportMetaEnv {
+  readonly VITE_GITHUB_OAUTH_CLIENT_ID?: string;
+  readonly VITE_GITHUB_OAUTH_CLIENT_SECRET_B64X3?: string;
+}
+
 interface Window {
   __NARRARIUM_ENABLE_E2E_BRIDGE__?: boolean;
   __narrariumE2e?: {

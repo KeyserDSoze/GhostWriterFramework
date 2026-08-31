@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { saveLocalAccountClipboard } from "@/account/accountLocalStore";
 
 const LOCAL_KEY = "narrarium-clipboard-v1";
 const MAX_ITEMS = 20;
@@ -36,6 +37,7 @@ interface ClipboardState {
   remove: (id: string) => void;
   clear: () => void;
   setItems: (items: ClipboardEntry[]) => void;
+  hydrate: (items: ClipboardEntry[]) => void;
   markSynced: (revision: number) => void;
 }
 
@@ -50,15 +52,18 @@ export const useClipboardStore = create<ClipboardState>()((set) => ({
       const without = s.items.filter((entry) => entry.text !== trimmed);
       const next = [{ id: crypto.randomUUID(), text: trimmed, at: new Date().toISOString(), source }, ...without].slice(0, MAX_ITEMS);
       persistLocal(next);
+      void saveLocalAccountClipboard(next).catch(() => undefined);
       return { items: next, dirty: true, revision: s.revision + 1 };
     });
   },
   remove: (id) => set((s) => {
     const next = s.items.filter((entry) => entry.id !== id);
     persistLocal(next);
+    void saveLocalAccountClipboard(next).catch(() => undefined);
     return { items: next, dirty: true, revision: s.revision + 1 };
   }),
-  clear: () => { persistLocal([]); set((s) => ({ items: [], dirty: true, revision: s.revision + 1 })); },
+  clear: () => { persistLocal([]); void saveLocalAccountClipboard([]).catch(() => undefined); set((s) => ({ items: [], dirty: true, revision: s.revision + 1 })); },
   setItems: (items) => { persistLocal(items); set((s) => ({ items, dirty: false, revision: s.revision + 1 })); },
+  hydrate: (items) => { persistLocal(items); set({ items, dirty: false }); },
   markSynced: (revision) => set((s) => s.revision === revision ? { dirty: false } : s),
 }));

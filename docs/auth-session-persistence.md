@@ -1,49 +1,27 @@
-# OAuth session persistence and security model
+# Local workspace, connector credentials, and session persistence
 
-Narrarium remains a static client application. It does not operate a backend session and does not store OAuth refresh tokens.
+Narrarium is a static, offline-first client. A local workspace exists independently from remote identities and connector credentials.
 
-## Selected model
+## Local lifecycle
 
-Authentication persistence is explicit and account-scoped:
+Opening Narrarium never requires login and never validates a provider token. The same workspace remains usable after browser restarts, network loss, token expiry, or disconnecting every provider.
 
-- Default sign-in is session-only and keeps bearer material in `sessionStorage`.
-- **Remember me on this device** opts into `localStorage` persistence for the access token, expiry, provider, and immutable provider account ID.
-- Durable account continuity metadata is stored separately and cannot authenticate requests by itself.
-- A persistent record is accepted only while unexpired and bound to the same provider and immutable account identity.
-- Signing in as another provider account replaces the previous persistent bearer instead of merging credentials.
-- Sign out removes volatile auth, persistent auth, token-health state, and account continuity.
+Provider validation is lazy and occurs only for an explicit or scheduled remote operation such as sync, push, pull, remote creation, export, or remote deletion. Invalid credentials move only that connector to `needs-auth`; local saves continue.
 
-## Lifecycle contract
+## Connections
 
-| Event | Expected behavior |
-| --- | --- |
-| New tab, remember-me off | Explicit sign-in may be required. |
-| New tab, remember-me on | Restore the unexpired account-bound access token. |
-| Browser or installed PWA restart | Same behavior as a new tab. |
-| Token expiry | Delete the persistent bearer and attempt only the provider-safe recovery flow. |
-| Google recovery | One `prompt=none` attempt, then interactive login; no automatic retries or popup loop. |
-| Microsoft recovery | `acquireTokenSilent` only when the matching immutable MSAL account is available, otherwise interactive login. |
-| Account switch | Replace bearer state and preserve strict provider/account repository isolation. |
-| Logout | Remove all Narrarium authentication persistence on the device. Provider-side grants may still require revocation at Google or Microsoft. |
+Google, Microsoft, and GitHub connection records are device-local. Each may be enabled independently as an account replica. Enabling or disabling a connector does not change the logical account vector clock.
 
-## Security review
+Without **Remember this connection**, bearer material stays in memory or provider session storage. With remember enabled, the minimum connector material needed for a later remote attempt is retained locally. The application still does not call the provider during ordinary local startup.
 
-### XSS
+PAT credentials have no synthetic login expiry. They are attempted only when needed and become `needs-auth` after GitHub rejects them.
 
-An access token in JavaScript-readable storage is exposed if arbitrary script executes in the Narrarium origin. Remember-me is therefore opt-in, refresh tokens are never stored, expiry is enforced, persisted fields are minimal, and the application applies its existing content sanitization and CSP-oriented controls. Users needing the smallest credential exposure window should leave remember-me disabled.
+## Logout and deletion
 
-### Shared devices
+Disconnecting or logging out removes connector credentials and leaves the local workspace and remote data intact. Deleting remote Narrarium data is a separate provider-specific operation. Deleting the local workspace is a separate destructive action guarded by a Data Safety Report and exact `DELETE` confirmation.
 
-Persistent sign-in must not be enabled on shared or untrusted devices. Narrarium cannot determine whether an operating-system account or browser profile is shared. Logout is the local revocation boundary.
+## Security boundaries
 
-### Account isolation
+JavaScript-readable browser storage is exposed to a successful same-origin script injection. Private Drive storage and a private GitHub repository are not dedicated secret vaults. PATs and configured AI API credentials remain syncable for product continuity, but OAuth access tokens, provider session internals, connector enabled state, and the GitHub OAuth client secret are never included in the account dataset.
 
-Every bearer is bound to provider plus immutable subject (`sub` for Google or `homeAccountId` for Microsoft). Email is display metadata and is not an authorization identity. Repository state is scoped by the same immutable account identity.
-
-### Expiry and revocation
-
-Expired records are removed before use. Narrarium stores no refresh token and cannot centrally revoke provider grants. Logout clears local state; users can additionally revoke Narrarium access from their Google or Microsoft account security settings.
-
-### Provider differences
-
-Google and Microsoft cannot provide identical static-client recovery. Google token recovery is deliberately one-shot to prevent popup loops. Microsoft silent recovery additionally depends on the MSAL account cache, which remains session-scoped.
+The GitHub OAuth client secret requested for the static build is triple-Base64 obfuscated only. This is explicitly not encryption. Browser token exchange is currently disabled after real Chromium testing confirmed GitHub's missing CORS grant; see `github-oauth-static-client.md`.

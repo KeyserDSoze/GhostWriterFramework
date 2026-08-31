@@ -24,7 +24,7 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-2">
             <ThemeToggle />
             <PublicLanguageToggle />
-            <Button asChild variant="outline" size="sm"><Link to="/login">{t("app.signIn")}</Link></Button>
+            <Button asChild variant="outline" size="sm"><Link to="/app/account-sync">{t("app.signIn")}</Link></Button>
             <Button asChild size="sm" className="hidden sm:inline-flex"><Link to="/app/books">{t("app.openApp")}</Link></Button>
           </div>
         </div>

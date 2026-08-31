@@ -105,7 +105,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("useBookStructure shared operation coordinator", () => {
-  it("serves 20 StrictMode consumers from one local load and one optional fetch", async () => {
+  it("serves 20 StrictMode consumers from one local load without validating the remote on open", async () => {
     repository.getExistingLocalBookStructure.mockResolvedValue({ meta: { cloneComplete: true }, structure: structure() });
 
     render(<StrictMode><Consumers /></StrictMode>);
@@ -115,7 +115,7 @@ describe("useBookStructure shared operation coordinator", () => {
     expect(repository.getExistingLocalBookStructure).toHaveBeenCalledOnce();
     expect(repository.ensureLocalBookStructure).not.toHaveBeenCalled();
     expect(ensureDefaultGhostwriter).toHaveBeenCalledOnce();
-    expect(repository.fetchRemoteStatus).toHaveBeenCalledOnce();
+    expect(repository.fetchRemoteStatus).not.toHaveBeenCalled();
   });
 
   it("performs one clone workflow when no local clone exists", async () => {
@@ -127,7 +127,7 @@ describe("useBookStructure shared operation coordinator", () => {
     await waitFor(() => expect(screen.getByTestId("consumer-0")).toHaveTextContent("Cloned book"));
     expect(repository.getExistingLocalBookStructure).toHaveBeenCalledOnce();
     expect(repository.ensureLocalBookStructure).toHaveBeenCalledOnce();
-    expect(repository.fetchRemoteStatus).toHaveBeenCalledOnce();
+    expect(repository.fetchRemoteStatus).not.toHaveBeenCalled();
   });
 
   it("retries default ghostwriter provisioning without keeping the book loading", async () => {

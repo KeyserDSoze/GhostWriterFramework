@@ -29,8 +29,7 @@ import { useRegisterPageActions } from "@/store/pageActionsStore";
 import { useRegisterPageSave } from "@/store/saveStore";
 import type { EntityKind } from "@/narrarium/canon";
 import type { ResearchDepth, ResearchFrontmatter, ResearchIntent } from "@/research/types";
-import { useAuthStore } from "@/store/authStore";
-import { accountIdentity } from "@/auth/accountIdentity";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 import type { ResearchFile } from "@/types/book";
 import { integrationChatModels } from "@/assistant/llm";
 import { renderRepositoryMarkdownHtml } from "@/markdown/safeMarkdown";
@@ -272,7 +271,7 @@ function ResearchDetail({
       const lang = bookLanguage ?? i18n.resolvedLanguage?.split("-")[0] ?? settings.ui.language ?? "en";
       const [overrideIntegrationId, overrideModelName] = llmOverride ? llmOverride.split("::") : [undefined, undefined];
       const result = await createEntityFromResearch({
-        accountScope: accountIdentity(useAuthStore.getState().user),
+        accountScope: localWorkspaceScope(),
         settings,
         book,
         branch,
@@ -504,7 +503,7 @@ function NewResearchForm({
       const lang = bookLanguage ?? i18n.resolvedLanguage?.split("-")[0] ?? settings.ui.language ?? "en";
       const [overrideIntegrationId, overrideModelName] = llmOverride ? llmOverride.split("::") : [undefined, undefined];
       const result = await runDeepResearch({
-        accountScope: accountIdentity(useAuthStore.getState().user),
+        accountScope: localWorkspaceScope(),
         settings,
         book,
         branch,

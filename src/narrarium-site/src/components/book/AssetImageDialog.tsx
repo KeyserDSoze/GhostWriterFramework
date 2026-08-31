@@ -13,8 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
-import { useAuthStore } from "@/store/authStore";
-import { accountIdentity } from "@/auth/accountIdentity";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 export async function optionalAssetPrompt<T>(operation: Promise<T>): Promise<T | null> {
   try {
@@ -44,7 +43,6 @@ export function AssetImageDialog(props: {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { settings } = useSettingsStore();
-  const user = useAuthStore((state) => state.user);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const generationControllerRef = useRef<AbortController | null>(null);
   const [internalOpen, setInternalOpen] = useState(false);
@@ -112,7 +110,7 @@ export function AssetImageDialog(props: {
   }
 
   async function composePrompt() {
-    const accountScope = accountIdentity(user);
+    const accountScope = localWorkspaceScope();
     setBusy(true);
     try {
       const sourceText = await loadSourceText();
@@ -192,7 +190,7 @@ export function AssetImageDialog(props: {
     setBusy(true);
     try {
       clearPendingGenerated();
-      const generated = await generateAssetImage({ settings, prompt, orientation, signal: controller.signal, accountScope: accountIdentity(user) });
+      const generated = await generateAssetImage({ settings, prompt, orientation, signal: controller.signal, accountScope: localWorkspaceScope() });
       const url = URL.createObjectURL(new Blob([bytesToArrayBuffer(generated.bytes)], { type: "image/png" }));
       if (previewUrl) {
         setPendingGenerated({ ...generated, url });

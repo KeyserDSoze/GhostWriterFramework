@@ -1,13 +1,28 @@
 import { useTranslation } from "react-i18next";
-import { Loader2, WifiOff } from "lucide-react";
+import { CloudOff, Loader2, Save, WifiOff } from "lucide-react";
 import { useUiStore } from "@/store/uiStore";
+import { useConnectionStore } from "@/account/connectionStore";
+import { useAccountSyncStore } from "@/account/accountSync";
 
 export function SessionStatusPill() {
   const { t } = useTranslation();
   const activity = useUiStore((s) => s.authActivity);
-  if (activity === "idle") return null;
+  const configuration = useConnectionStore((state) => state.configuration);
+  const syncing = useAccountSyncStore((state) => state.syncing);
+  const replicas = [configuration.google, configuration.microsoft, configuration.github].filter((connection) => connection?.replica.enabled);
+  const needsAuth = replicas.find((connection) => connection?.replica.status === "needs-auth");
+  const pending = replicas.some((connection) => ["dirty", "error", "offline", "ahead", "behind", "diverged"].includes(connection?.replica.status ?? ""));
 
   const offline = activity === "offline";
+  const label = syncing
+    ? "Saved locally · Syncing"
+    : needsAuth
+      ? `Saved locally · ${needsAuth.backend} needs login`
+      : pending
+        ? "Saved locally · Sync pending"
+        : replicas.length
+          ? `Saved locally · ${replicas.length} remote${replicas.length === 1 ? "" : "s"} synced`
+          : "Saved locally";
   return (
     <div className="pointer-events-none fixed left-1/2 top-16 z-[70] -translate-x-1/2">
       <div
@@ -17,8 +32,8 @@ export function SessionStatusPill() {
             : "border-primary/30 bg-card/95 text-foreground"
         }`}
       >
-        {offline ? <WifiOff className="h-3.5 w-3.5" /> : <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
-        <span>{offline ? t("session.offline") : t("session.refreshing")}</span>
+        {offline ? <WifiOff className="h-3.5 w-3.5" /> : syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" /> : needsAuth ? <CloudOff className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}
+        <span>{offline ? `${t("session.offline")} · ${label}` : activity === "refreshing" ? t("session.refreshing") : label}</span>
       </div>
     </div>
   );

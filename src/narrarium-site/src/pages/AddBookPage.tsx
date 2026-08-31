@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Search, Loader2, Github, Lock, Globe, Plus } from "lucide-react";
+import { Search, Loader2, Github, Lock, Globe, Plus, HardDrive } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,6 +20,8 @@ import { useSettings } from "@/drive/useSettings";
 import { useRepositories } from "@/github/useRepositories";
 import { createNarrariumBookRepository, type RepoSummary } from "@/github/githubClient";
 import { type BookEntry } from "@/types/settings";
+import { createLocalOnlyBookRepository } from "@/repository/repositoryService";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 function defaultRepoName(title: string): string {
   const normalized = title
@@ -38,7 +40,6 @@ export function AddBookPage() {
   const { settings } = useSettingsStore();
   const { save } = useSettings();
   const { patchSettings } = useSettingsStore();
-  const offline = typeof navigator !== "undefined" && !navigator.onLine;
 
   // Token selection: "default", "custom" (inline per-book PAT), or index of extraGitHubTokens
   const [selectedToken, setSelectedToken] = useState("default");
@@ -48,6 +49,7 @@ export function AddBookPage() {
   const [newRepoName, setNewRepoName] = useState("");
   const [repoNameEdited, setRepoNameEdited] = useState(false);
   const [newRepoVisibility, setNewRepoVisibility] = useState<"private" | "public">("private");
+  const [storageMode, setStorageMode] = useState<"local-only" | "github">("local-only");
   const [creatingRepo, setCreatingRepo] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -59,7 +61,7 @@ export function AddBookPage() {
         : settings.extraGitHubTokens[Number(selectedToken)]?.token ?? "";
 
   const { repos, loading, error } = useRepositories(
-    activeToken || undefined,
+    storageMode === "github" ? activeToken || undefined : undefined,
   );
 
   const hasPrivateRepos = repos.some((r) => r.private);
@@ -109,10 +111,30 @@ export function AddBookPage() {
   async function handleCreateNewBook() {
     const title = newBookTitle.trim();
     const repoName = newRepoName.trim();
-    if (!title || !repoName || !activeToken) return;
+    if (!title || (storageMode === "github" && (!repoName || !activeToken))) return;
     setCreateError(null);
     setCreatingRepo(true);
     try {
+      if (storageMode === "local-only") {
+        const id = crypto.randomUUID();
+        const localRepositoryId = crypto.randomUUID();
+        const entry: BookEntry = {
+          id,
+          storageMode: "local-only",
+          localRepositoryId,
+          owner: "",
+          repo: "",
+          name: title,
+          tokenIndex: null,
+          activeBranch: `local:${localRepositoryId}`,
+          addedAt: new Date().toISOString(),
+        };
+        await createLocalOnlyBookRepository({ book: entry, accountIdentity: localWorkspaceScope(), title, language: settings.ui.language });
+        patchSettings({ books: [...settings.books, entry] });
+        await save();
+        navigate(`/app/books/${entry.id}`);
+        return;
+      }
       const repo = await createNarrariumBookRepository(activeToken, {
         name: repoName,
         title,
@@ -152,7 +174,7 @@ export function AddBookPage() {
         </p>
       </div>
 
-      {noDefaultToken && (
+      {storageMode === "github" && noDefaultToken && (
         <Alert variant="destructive">
           <AlertDescription>
             {t("addBook.noDefaultToken")}{" "}
@@ -181,10 +203,18 @@ export function AddBookPage() {
         </Alert>
       )}
 
+      <div className="grid gap-2 sm:max-w-xs">
+        <Label>{settings.ui.language === "it" ? "Archiviazione" : "Storage"}</Label>
+        <Select value={storageMode} onValueChange={(value) => setStorageMode(value as "local-only" | "github")}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="local-only">{settings.ui.language === "it" ? "Solo questo dispositivo" : "This device only"}</SelectItem><SelectItem value="github">GitHub</SelectItem></SelectContent>
+        </Select>
+      </div>
+
       {/* Token picker */}
-      <div className="grid gap-2">
+      {storageMode === "github" && <div className="grid gap-2">
         <Label>{t("addBook.tokenToUse")}</Label>
-        <Select value={selectedToken} onValueChange={setSelectedToken} disabled={offline}>
+        <Select value={selectedToken} onValueChange={setSelectedToken}>
           <SelectTrigger className="w-full sm:max-w-xs">
             <SelectValue placeholder={t("addBook.selectToken")} />
           </SelectTrigger>
@@ -214,7 +244,6 @@ export function AddBookPage() {
                 placeholder={t("addBook.labelOptional")}
                 value={customTokenLabel}
                 onChange={(e) => setCustomTokenLabel(e.target.value)}
-                disabled={offline}
               />
               <Input
                 type="password"
@@ -222,12 +251,11 @@ export function AddBookPage() {
                 value={customToken}
                 onChange={(e) => setCustomToken(e.target.value)}
                 autoComplete="off"
-                disabled={offline}
               />
             </div>
           </div>
         )}
-      </div>
+      </div>}
 
       <Card>
         <CardHeader>
@@ -240,13 +268,13 @@ export function AddBookPage() {
               <Label>{t("addBook.bookTitle")}</Label>
               <Input value={newBookTitle} onChange={(e) => setNewBookTitle(e.target.value)} placeholder={t("addBook.bookTitlePlaceholder")} />
             </div>
-            <div className="grid gap-2">
+            {storageMode === "github" && <div className="grid gap-2">
               <Label>{t("addBook.repositoryName")}</Label>
               <Input value={newRepoName} onChange={(e) => { setRepoNameEdited(true); setNewRepoName(e.target.value); }} placeholder="book-my-story" />
               <p className="text-xs text-muted-foreground">{newRepoName.trim() ? t("addBook.repoNameHint") : t("addBook.repoNameHintEmpty")}</p>
-            </div>
+            </div>}
           </div>
-          <div className="grid gap-2 sm:max-w-xs">
+          {storageMode === "github" && <div className="grid gap-2 sm:max-w-xs">
             <Label>{t("addBook.visibility")}</Label>
             <Select value={newRepoVisibility} onValueChange={(value) => setNewRepoVisibility(value as "private" | "public")}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -255,16 +283,16 @@ export function AddBookPage() {
                 <SelectItem value="public">{t("addBook.publicRepo")}</SelectItem>
               </SelectContent>
             </Select>
-          </div>
+          </div>}
           {createError && <Alert variant="destructive"><AlertDescription>{createError}</AlertDescription></Alert>}
-          <Button className="w-full sm:w-fit" onClick={() => void handleCreateNewBook()} disabled={creatingRepo || !activeToken || !newBookTitle.trim() || !newRepoName.trim()}>
-            {creatingRepo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-            {creatingRepo ? t("addBook.creatingRepo") : t("addBook.createRepo")}
+          <Button className="w-full sm:w-fit" onClick={() => void handleCreateNewBook()} disabled={creatingRepo || !newBookTitle.trim() || (storageMode === "github" && (!activeToken || !newRepoName.trim()))}>
+            {creatingRepo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : storageMode === "local-only" ? <HardDrive className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
+            {creatingRepo ? t("addBook.creatingRepo") : storageMode === "local-only" ? (settings.ui.language === "it" ? "Crea libro locale" : "Create local book") : t("addBook.createRepo")}
           </Button>
         </CardContent>
       </Card>
 
-      <Card>
+      {storageMode === "github" && <Card>
         <CardHeader>
           <CardTitle>{t("addBook.existingReposTitle")}</CardTitle>
           <CardDescription>{t("addBook.existingReposDescription")}</CardDescription>
@@ -342,7 +370,7 @@ export function AddBookPage() {
         })}
       </div>
         </CardContent>
-      </Card>
+      </Card>}
     </div>
   );
 }

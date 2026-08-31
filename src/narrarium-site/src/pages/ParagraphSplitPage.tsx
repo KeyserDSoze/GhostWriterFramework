@@ -18,8 +18,7 @@ import { useRegisterPageSave } from "@/store/saveStore";
 import { useProseAssist } from "@/components/editor/useProseAssist";
 import { useMergeDraftFinal } from "@/components/editor/useMergeDraftFinal";
 import type { PipelineSource } from "@/narrarium/pipeline";
-import { useAuthStore } from "@/store/authStore";
-import { accountIdentity } from "@/auth/accountIdentity";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 /** Split a markdown file into its frontmatter block (kept verbatim) and the body. */
 function splitDoc(raw: string): { frontmatter: string; body: string } {
@@ -80,7 +79,7 @@ export function ParagraphSplitPage() {
 
   const buildSource = (): PipelineSource | null => {
     if (!book || !structure || !chapter) return null;
-    return { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph, accountScope: accountIdentity(useAuthStore.getState().user) };
+    return { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph, accountScope: localWorkspaceScope() };
   };
 
   const draftAssist = useProseAssist({ textareaRef: draftRef, getBody: () => draft.body, setBody: (v) => setDraft((s) => ({ ...s, body: v })), buildSource });

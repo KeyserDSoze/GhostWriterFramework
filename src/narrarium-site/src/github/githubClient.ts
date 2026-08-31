@@ -19,10 +19,9 @@ import {
 import { planCanonicalScriptMutation, SCRIPT_PATH_PATTERN, type CanonicalScriptMutationResult } from "@/narrarium/canonicalScriptMutationPlan";
 import { reconcileRemoteMutation, type IntendedRemoteRevision } from "@/repository/remoteMutationReconciliation";
 import { createTrackedGitHubClient } from "@/repository/githubRequest";
-import { accountIdentity } from "@/auth/accountIdentity";
-import { useAuthStore } from "@/store/authStore";
 import { REPOSITORY_BINARY_FILE_LIMIT_BYTES, REPOSITORY_TEXT_FILE_LIMIT_BYTES, RepositoryByteMeter, RepositoryLimitExceededError, assertRepositoryFileBytes, utf8Bytes } from "@/repository/repositoryLimits";
 import { readBoundedRepositoryResponse } from "@/repository/repositoryBlobTransport";
+import { currentRepositoryScopeIdentity } from "@/repository/repositoryOperationScope";
 
 type StructuralTextWrite = { path: string; text: string };
 
@@ -59,7 +58,7 @@ async function updateStructuralRef(
 }
 
 export function createGitHubClient(token: string, target?: { owner: string; repo: string; branch: string }): Octokit {
-  const identity = accountIdentity(useAuthStore.getState().user);
+  const identity = currentRepositoryScopeIdentity();
   return createTrackedGitHubClient(token, identity && target ? { accountIdentity: identity, ...target } : undefined);
 }
 

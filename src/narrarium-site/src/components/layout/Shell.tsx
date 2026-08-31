@@ -17,7 +17,6 @@ import { invalidateSettingsLoadCoordinator, useSettings } from "@/drive/useSetti
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
-import { useTokenRefresh } from "@/hooks/useTokenRefresh";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCostsSync } from "@/costs/useCostsSync";
 import { useCostsStore } from "@/costs/costsStore";
@@ -33,6 +32,7 @@ import { useRewriteDatabaseBlockedNotification } from "@/hooks/useRewriteDatabas
 import { useAssistantStore } from "@/assistant/store";
 import { AssistantLauncher } from "@/components/assistant/AssistantLauncher";
 import { useAuthStore } from "@/store/authStore";
+import { useConnectionStore } from "@/account/connectionStore";
 
 const AssistantPanel = lazy(() =>
   import("@/components/assistant/AssistantPanel").then((module) => ({ default: module.AssistantPanel })),
@@ -51,13 +51,15 @@ export function Shell() {
   const setNotesOpen = useUiStore((s) => s.setNotesOpen);
   const assistantOpen = useAssistantStore((s) => s.open);
   const accessToken = useAuthStore((s) => s.accessToken);
+  const hydrateConnections = useConnectionStore((state) => state.hydrate);
 
-  useTokenRefresh();
   useCostsSync();
   useClipboardSync();
   useGlobalShortcuts();
   useDirtyNavigationGuard(t("common.unsavedNavigationConfirm"));
   useRewriteDatabaseBlockedNotification();
+
+  useEffect(() => { void hydrateConnections(); }, [hydrateConnections]);
 
   useEffect(() => {
     const route = parseAppRoute(location.pathname);

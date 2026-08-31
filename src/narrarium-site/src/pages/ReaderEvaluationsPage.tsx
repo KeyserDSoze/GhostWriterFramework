@@ -22,8 +22,7 @@ import type { ReaderEvaluationDepth, ReaderPersonaProfile } from "@/narrarium/re
 import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
 import { useRegisterPageActions } from "@/store/pageActionsStore";
 import { openFeedbackRewriteWorkflow, type FeedbackRewriteMode } from "@/store/feedbackRewriteWorkflowStore";
-import { useAuthStore } from "@/store/authStore";
-import { accountIdentity } from "@/auth/accountIdentity";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 export function ReaderEvaluationsPage() {
   const { bookId, chapterId, paragraphNum } = useParams<{ bookId: string; chapterId: string; paragraphNum?: string }>();
@@ -155,7 +154,7 @@ export function ReaderEvaluationsPage() {
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const result = await runReaderEvaluations({ token, book, branch, structure, settings, accountScope: accountIdentity(useAuthStore.getState().user), target, readers, depth, includeContext, concurrency: 2, signal: controller.signal, onProgress: (entry) => setProgress((current) => ({ ...current, [entry.readerId]: entry })) });
+      const result = await runReaderEvaluations({ token, book, branch, structure, settings, accountScope: localWorkspaceScope(), target, readers, depth, includeContext, concurrency: 2, signal: controller.signal, onProgress: (entry) => setProgress((current) => ({ ...current, [entry.readerId]: entry })) });
       const nextRecords = [...result.completed, ...result.failed];
       const replacedPaths = new Set(nextRecords.map((record) => record.path));
       setHistory((current) => [...nextRecords, ...current.filter((record) => !replacedPaths.has(record.path))]);
@@ -185,7 +184,7 @@ export function ReaderEvaluationsPage() {
     if (evaluations.length < 2) return;
     setSummaryBusy(true);
     try {
-      const summary = await generateReaderEvaluationSummary({ token, book, branch, settings, accountScope: accountIdentity(useAuthStore.getState().user), target, evaluations, language: structure?.language });
+      const summary = await generateReaderEvaluationSummary({ token, book, branch, settings, accountScope: localWorkspaceScope(), target, evaluations, language: structure?.language });
       setHistory((current) => [summary, ...current.filter((entry) => entry.path !== summary.path)]);
       await reload();
     } catch (err) { toast({ title: t("readerEvaluations.summaryFailed"), description: String(err), variant: "destructive" }); }

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Bot, BookOpen, Github, PlusCircle, Lock, Globe, KeyRound, Trash2 } from "lucide-react";
+import { Bot, BookOpen, Cloud, PlusCircle, Lock, Globe, HardDrive, Trash2 } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -81,16 +81,18 @@ export function BooksPage() {
                         variant="outline"
                         className="ml-2 shrink-0 text-[10px]"
                       >
-                        {book.bookToken || book.tokenIndex !== null ? (
+                        {book.storageMode === "local-only" ? (
+                          <HardDrive className="mr-1 h-3 w-3" />
+                        ) : book.bookToken || book.tokenIndex !== null ? (
                           <Lock className="mr-1 h-3 w-3" />
                         ) : (
                           <Globe className="mr-1 h-3 w-3" />
                         )}
-                        {book.owner}/{book.repo}
+                        {book.storageMode === "local-only" ? (settings.ui.language === "it" ? "Locale" : "Local") : `${book.owner}/${book.repo}`}
                       </Badge>
                     </div>
                     <CardDescription className="text-xs">
-                      {book.owner}/{book.repo}
+                      {book.storageMode === "local-only" ? (settings.ui.language === "it" ? "Solo su questo dispositivo" : "This device only") : `${book.owner}/${book.repo}`}
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
@@ -156,8 +158,8 @@ function EmptyState() {
     <div className="space-y-6 rounded-3xl border border-dashed p-5 sm:p-8">
       <div className="text-center"><BookOpen className="mx-auto h-12 w-12 text-primary" /><h2 className="mt-4 font-serif text-2xl font-semibold">{t("books.emptyTitle")}</h2><p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{t("books.emptyDescription")}</p></div>
       <div className="grid gap-3 md:grid-cols-2">
-        <QuickStartCard icon={<Github className="h-5 w-5" />} step={t("books.quickStart.step", { number: 1 })} title={t("books.quickStart.githubTitle")} text={t("books.quickStart.githubBody")} action={<a href="https://github.com/signup" target="_blank" rel="noreferrer" className="text-sm font-medium text-primary underline">{t("books.quickStart.githubAction")}</a>} />
-        <QuickStartCard icon={<KeyRound className="h-5 w-5" />} step={t("books.quickStart.step", { number: 2 })} title={t("books.quickStart.patTitle")} text={t("books.quickStart.patBody")} action={<Link to="/app/settings/github" className="text-sm font-medium text-primary underline">{t("books.quickStart.patAction")}</Link>} />
+        <QuickStartCard icon={<HardDrive className="h-5 w-5" />} step={t("books.quickStart.step", { number: 1 })} title={t("books.quickStart.githubTitle")} text={t("books.quickStart.githubBody")} action={<Link to="/app/books/add" className="text-sm font-medium text-primary underline">{t("books.quickStart.githubAction")}</Link>} />
+        <QuickStartCard icon={<Cloud className="h-5 w-5" />} step={t("books.quickStart.step", { number: 2 })} title={t("books.quickStart.patTitle")} text={t("books.quickStart.patBody")} action={<Link to="/app/account-sync" className="text-sm font-medium text-primary underline">{t("books.quickStart.patAction")}</Link>} />
         <QuickStartCard icon={<Bot className="h-5 w-5" />} step={t("books.quickStart.step", { number: 3 })} title={t("books.quickStart.aiTitle")} text={t("books.quickStart.aiBody")} action={<Link to="/app/settings/ai-router" className="text-sm font-medium text-primary underline">{t("books.quickStart.aiAction")}</Link>} />
         <QuickStartCard icon={<BookOpen className="h-5 w-5" />} step={t("books.quickStart.step", { number: 4 })} title={t("books.quickStart.bookTitle")} text={t("books.quickStart.bookBody")} action={<Link to="/app/books/add" className="text-sm font-medium text-primary underline">{t("books.addFirst")}</Link>} />
       </div>

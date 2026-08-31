@@ -1,14 +1,14 @@
 import { useCallback, useEffect } from "react";
 import i18n from "@/i18n";
 import { toast } from "@/components/ui/use-toast";
-import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
 import { ensureAuthoritativePersonalBranch, resolveAuthoritativeBranch } from "@/github/branchResolution";
-import { ensureLocalBookStructure, fetchRemoteStatus, getExistingLocalBookStructure, invalidateRepositoryEnsureOperations, pullRemoteChanges } from "@/repository/repositoryService";
+import { ensureLocalBookStructure, getExistingLocalBookStructure, invalidateRepositoryEnsureOperations } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
 import { useBooksStore, type LegacyBookStructureErrorCode } from "@/store/booksStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { resolveBookToken } from "@/types/settings";
 import { ensureDefaultGhostwriter } from "@/narrarium/defaultGhostwriter";
+import { currentRepositoryScopeIdentity } from "@/repository/repositoryOperationScope";
 
 type Operation = { token: string; epoch: number; controller: AbortController; promise: Promise<void> };
 
@@ -20,7 +20,7 @@ let loadEpoch = 0;
 export function resetBookStructureLoadCoordinator(): number {
   loadEpoch += 1;
   useBooksStore.setState({ structureLoadEpoch: loadEpoch });
-  invalidateRepositoryEnsureOperations(loadEpoch, accountIdentity(useAuthStore.getState().user) ?? undefined);
+  invalidateRepositoryEnsureOperations(loadEpoch, currentRepositoryScopeIdentity());
   for (const operation of operations.values()) operation.controller.abort();
   operations.clear();
   failedOperations.clear();
@@ -35,20 +35,16 @@ export function retryBookStructureLoad(bookId: string): number {
   return generation;
 }
 
-function remoteChangedNoticeKey(bookId: string, remoteHeadSha: string): string {
-  return `narrarium-remote-changed-${bookId}-${remoteHeadSha}`;
-}
-
 function operationKey(epoch: number, identity: string, bookId: string, owner: string, repo: string, branch: string, generation: number): string {
   return `${epoch}::${identity}::${bookId}::${owner}/${repo}#${branch}::${generation}`;
 }
 
 function startBookStructureOperation(bookId: string, requestedGeneration?: number): Promise<void> | undefined {
   const user = useAuthStore.getState().user;
-  const identity = accountIdentity(user);
+  const identity = currentRepositoryScopeIdentity();
   const settings = useSettingsStore.getState().settings;
   const book = settings.books.find((entry) => entry.id === bookId);
-  if (!identity || !book) return;
+  if (!book) return;
 
   const books = useBooksStore.getState();
   const epoch = loadEpoch;
@@ -95,7 +91,7 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
       userEmail: currentUser?.email,
     }).branch;
     return loadEpoch === epoch
-      && isAccountIdentityCurrent(identity, currentUser)
+      && identity === currentRepositoryScopeIdentity()
       && (currentBooks.structureGenerations[bookId] ?? 0) === generation
       && currentBranch === operationBranch;
   };
@@ -199,29 +195,8 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
       }
     }
 
-    // A remote status check is opportunistic and must never hold the local loading UI.
-    const latestRepositorySettings = useSettingsStore.getState().settings.repository;
-    if (!tokenValue || !latestRepositorySettings.autoFetchOnOpen || !navigator.onLine) return;
-    try {
-      const target = { bookId, owner: book.owner, repo: book.repo, branch: authoritativeBranch, accountIdentity: identity };
-      const remote = await fetchRemoteStatus({ ...target, token: tokenValue, signal: controller.signal });
-      if (!scopeIsCurrent()) return;
-      if (remote.changed && latestRepositorySettings.autoPullWhenClean) {
-        await pullRemoteChanges({ ...target, token: tokenValue, signal: controller.signal });
-        const refreshed = await getExistingLocalBookStructure(bookId, book.owner, book.repo, authoritativeBranch, identity);
-        if (refreshed && scopeIsCurrent()) {
-          useBooksStore.getState().setStructure(bookId, refreshed.structure, generation);
-        }
-      } else if (remote.changed) {
-        const noticeKey = remoteChangedNoticeKey(bookId, remote.remoteHeadSha);
-        if (!sessionStorage.getItem(noticeKey)) {
-          sessionStorage.setItem(noticeKey, "1");
-          toast({ title: i18n.t("repoStatus.remoteBehindTitle"), description: i18n.t("repoStatus.remoteBehindDescription") });
-        }
-      }
-    } catch {
-      // Local editing remains available when the optional remote check fails.
-    }
+    // Opening a local working copy never contacts its remote. Fetch/pull/push are
+    // explicit or scheduled repository operations and validate credentials lazily.
   })().catch((error: unknown) => {
     if (loadEpoch === epoch) failedOperations.add(key);
     if (ownsOperation()) {

@@ -32,8 +32,7 @@ import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
 import type { RoutedLlmRunMetadata } from "@/assistant/router";
 import { commitCanonicalScriptMutation } from "@/narrarium/scriptLedger";
 import { sha256Text } from "@/repository/safeRepositoryMutation";
-import { useAuthStore } from "@/store/authStore";
-import { accountIdentity } from "@/auth/accountIdentity";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 interface MetaEntry {
   key: string;
@@ -361,7 +360,7 @@ export function WorkspaceDocPage() {
     ghostwriter: effectiveGhostwriter,
     ghostwriterLabel: effectiveGhostwriterLabel,
     ghostwriterInherited: !explicitGhostwriter,
-    buildSource: () => (book && structure && chapter && token ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: accountIdentity(useAuthStore.getState().user) } : null),
+    buildSource: () => (book && structure && chapter && token ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: localWorkspaceScope() } : null),
   });
   useRegisterProseEditor(bodyRef, {
     improve: (s) => proseAssist.improve(s),
@@ -383,7 +382,7 @@ export function WorkspaceDocPage() {
   // Merge draft + final (paragraph draft workspace only).
   const finalBodyRef = useRef("");
   const merge = useMergeDraftFinal({
-    buildSource: () => (book && structure && chapter && token ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: accountIdentity(useAuthStore.getState().user) } : null),
+    buildSource: () => (book && structure && chapter && token ? { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: localWorkspaceScope() } : null),
     getDraftBody: () => body,
     getFinalBody: () => finalBodyRef.current,
     getDraftFrontmatter: () => buildFrontmatter(entries, "").replace(/\n*$/, "\n"),
@@ -655,7 +654,7 @@ export function WorkspaceDocPage() {
     if (!book || !token || !structure || !chapter || !paragraph) return;
     setScriptGenLoading(true);
     try {
-      const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: accountIdentity(useAuthStore.getState().user) };
+      const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: localWorkspaceScope() };
       const load = (p?: string) => p ? loadFileContent(token, book.owner, book.repo, p, branch).then(stripFrontmatter).catch(() => "") : Promise.resolve("");
       const prose = (await load(paragraph.draftPath)) || (await load(paragraph.path));
       if (!prose.trim()) { toast({ title: t("script.noProse") }); return; }
@@ -696,7 +695,7 @@ export function WorkspaceDocPage() {
     if (!book || !structure || !chapter) return;
     setPipelineLoading(true);
     try {
-      const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: accountIdentity(useAuthStore.getState().user) };
+      const src: PipelineSource = { token, owner: book.owner, repo: book.repo, branch, settings, structure, chapter, paragraph: paragraph ?? undefined, accountScope: localWorkspaceScope() };
       const text = mode === "toDraft" ? await scriptToProse(src, body, gw) : await refineProse(src, body, gw);
       setPipelineText(text);
     } catch (err) {
@@ -734,7 +733,7 @@ export function WorkspaceDocPage() {
     const bookRef = book;
     const chapterRef = chapter;
     const currentPath = path;
-    const src: PipelineSource = { token, owner: bookRef.owner, repo: bookRef.repo, branch, settings, structure, chapter: chapterRef, accountScope: accountIdentity(useAuthStore.getState().user) };
+    const src: PipelineSource = { token, owner: bookRef.owner, repo: bookRef.repo, branch, settings, structure, chapter: chapterRef, accountScope: localWorkspaceScope() };
     const loadProse = async (p?: string) => (p ? loadFileContent(token, bookRef.owner, bookRef.repo, p, branch).then(stripFrontmatter).catch(() => "") : "");
 
     useGenerateDiffStore.getState().start(async () => {

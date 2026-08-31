@@ -1,65 +1,55 @@
-# GitHub, Drive e costi
+# Dati locali, GitHub, Drive e costi
 
-> Branch, commit, pull request, dove finiscono i dati e come si stima la spesa.
+> Dove vivono i dati nell'architettura offline-first.
 
-## Il libro su GitHub
+## Fonte locale autorevole
 
-Ogni libro è un repository. Mentre lavori, Narrarium scrive file Markdown e fa **commit veri** sul branch attivo.
+Narrarium scrive prima ogni normale azione utente nello storage durevole del browser. Il dataset account comprende impostazioni, registro libri, stato reader, bookmark, azioni personalizzate, routing e credenziali AI, clipboard, costi, chat e segmenti lossless delle chat.
 
-- **Branch di lavoro**: per non scrivere direttamente su `main`, l'app usa un tuo branch personale. Puoi vedere il branch attivo in alto nelle pagine del libro.
-- **Commit**: ogni salvataggio (capitolo, paragrafo, canon, script, ecc.) è un commit con un messaggio descrittivo.
-- **Pull request**: dal menu Azioni del libro puoi aprire/vedere le PR per portare il tuo branch su `main`.
-- **Cronologia commit**: sempre dal menu Azioni puoi consultare la storia.
+Gli errori remoti non annullano mai le modifiche locali. Lo stato globale distingue **Salvato localmente**, **Sync in attesa**, **richiede login** e repliche remote confermate.
 
-Le azioni Git (Commit, PR, Esporta, Immagine) sono raccolte nel pulsante **Azioni** della pagina libro.
+## Libri
+
+Un libro può essere **solo locale** o collegato a GitHub. La modalità solo locale è predefinita e usa la stessa working copy di file, commit locali, dirty tracking, lock, diagnostica e snapshot di recovery senza inventare owner o repository remoti.
+
+Un libro locale può essere collegato in seguito a una nuova repository GitHub privata. Identità repository locale, file, cronologia in attesa e recovery vengono conservati. Le operazioni repository GitHub ricevono un token risolto e non distinguono internamente OAuth da PAT.
+
+## Repliche account
+
+Google Drive, OneDrive e la repository GitHub privata `narrarium.settings` sono repliche indipendenti dello stesso dataset account logico. Sullo stesso browser può essere abilitata qualsiasi combinazione.
+
+Provider attivi, token OAuth dei connettori, identità provider, stato retry, ID cartelle ed errori locali dei connettori appartengono esclusivamente al dispositivo e non vengono copiati su altri client.
+
+Ogni copia remota possiede un manifest con:
+
+- versione schema;
+- UUID snapshot;
+- ora di modifica UTC ISO-8601;
+- device ID locale;
+- vector clock;
+- hash deterministico dei contenuti.
+
+I vector clock classificano le repliche come uguali, avanti, indietro o divergenti. Le copie divergenti non vengono mai sovrascritte automaticamente. La scelta della copia autorevole crea un recovery e una nuova versione di riconciliazione che domina tutti i vector clock osservati.
+
+## Dati account GitHub
+
+Il sync account GitHub usa esattamente `narrarium.settings`. Se manca, viene creata privata. Una repository pubblica viene rifiutata prima del caricamento. Le scritture usano un unico commit Git aggregato come `Sync Narrarium account data`, non un commit per carattere.
+
+Il PAT è supportato direttamente. OAuth GitHub con PKCE è predisposto ma disabilitato perché una verifica reale in Chromium ha confermato che il token endpoint GitHub non espone una risposta CORS leggibile dal browser. Non sono stati introdotti workaround `no-cors` opachi né backend. Vedi `github-oauth-static-client.md`.
+
+## Drive
+
+Google Drive e OneDrive restano disponibili come repliche account e destinazioni di esportazione opzionali. I vecchi file di impostazioni, costi, clipboard e chat possono essere importati nel dataset locale comune. I nuovi snapshot account usano revisioni condizionali del provider quando disponibili per non sovrascrivere modifiche concorrenti.
+
+La disconnessione lascia intatti dati locali e remoti. La cancellazione remota è un'azione separata e confermata esplicitamente.
+
+## Costi ed esportazioni
+
+I contatori dei costi vengono salvati subito in locale e partecipano alla versione account. DOCX, PDF, EPUB, pacchetti di submission e chat esportate restano artefatti generati, scaricabili o caricabili in una cartella Drive scelta.
 
 ## Limiti repository nel browser
 
-Narrarium verifica i byte misurati prima di scritture IndexedDB, creazione blob Git, clone, pull, repair e sync:
-
 - file di testo o Markdown: **2 MiB**;
 - asset binario: **25 MiB**;
-- singola mutazione save/push: **50 MiB** complessivi;
-- singolo trasferimento clone/pull/repair: **250 MiB** complessivi, ridotti ulteriormente se la quota disponibile del browser è inferiore.
-
-I metadati remoti sulla dimensione sono solo un'indicazione anticipata. Narrarium conta i byte in streaming e si ferma al limite. Se un'operazione viene rifiutata, modifiche locali e commit non pushati restano intatti. Dividi i file di manoscritto insolitamente grandi, comprimi o rimuovi gli asset grandi oppure gestiscili con Git LFS fuori dall'app browser.
-
-## Navigazione contestuale
-
-Il menu (hamburger) si popola in base a dove sei:
-
-- nel **libro**: panoramica, dashboard, ghostwriter, stile, asset, reader, impostazioni, canon (personaggi, luoghi, ...);
-- nel **capitolo**: script, bozze, resume, valutazione, stile capitolo;
-- nel **paragrafo**: script, bozza, finale, valutazione.
-
-In più c'è un pulsante flottante **Azioni** contestuale, e puoi nascondere i pulsanti flottanti dall'icona occhio in alto.
-
-## Dati personali su Drive
-
-Su Drive (Google Drive o OneDrive, secondo l'account) finiscono:
-
-- **Impostazioni** dell'app (incluse le chiavi AI e i PAT che inserisci): le conserva il provider, cifrate dal provider stesso.
-- **Chat del Copilot**: ogni conversazione è un file.
-- **Storico clipboard**: le ultime 20 copie/tagli.
-- **Costi**: un file aggregato per libro.
-
-Il libro (i testi) **non** sta su Drive: sta su GitHub. Drive è solo per la tua configurazione e i dati dell'app.
-
-## Esportazione
-
-Puoi esportare il libro in **DOCX, PDF, EPUB** o come **pacchetto di submission**, interamente nel browser, con preset configurabili e download locale o caricamento su Drive.
-
-## Costi AI
-
-Narrarium può stimare quanto stai spendendo, **solo se imposti i prezzi** nelle integrazioni AI.
-
-- I prezzi si impostano per integrazione, in **euro**.
-- Token (chat e immagini) sono per **1.000.000** di token; lo STT è all'**ora**; il TTS è per **1M caratteri**.
-- L'app legge dall'API i token usati a ogni richiesta e somma il costo sul libro corrente.
-- La pagina **Costi** (ultima voce del menu) mostra il totale complessivo e il totale per libro, suddiviso per chat, immagini, TTS, STT.
-- Si tiene solo l'**aggregato** (totali), non il costo di ogni singola richiesta. Se non imposti i prezzi, non viene calcolato nulla.
-
-## Sessione e accesso
-
-- Microsoft mantiene la sessione a lungo grazie al refresh token nel browser.
-- Google, per come funziona l'accesso lato browser, può richiedere ogni tanto un nuovo login alla scadenza dell'ora; durante l'uso non vieni disconnesso a metà lavoro.
+- singola mutazione repository: **50 MiB**;
+- singolo trasferimento clone, pull o repair: **250 MiB**, ulteriormente limitato dalla quota browser disponibile.

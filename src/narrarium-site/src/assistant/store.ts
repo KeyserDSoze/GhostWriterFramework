@@ -184,7 +184,7 @@ export interface AssistantLosslessSegmentRef {
 }
 
 export interface AssistantArchiveOrigin {
-  provider: "google" | "microsoft";
+  provider: "local" | "github" | "google" | "microsoft";
   account: string;
   fileId?: string;
 }

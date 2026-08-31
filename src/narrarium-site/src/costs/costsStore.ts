@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { AIPricing } from "@/types/settings";
 import { addBucket, aggregateAll, bucketTotal, emptyBucket, emptyCostsFile, type BookUsage, type CostsFile, type UsageBucket } from "@/costs/model";
+import { saveLocalAccountCosts } from "@/account/accountLocalStore";
 
 const LOCAL_KEY = "narrarium-costs-v1";
 
@@ -31,6 +32,7 @@ interface CostsState {
   currentBookName?: string;
   setCurrentBook: (bookId: string | undefined, bookName: string | undefined) => void;
   setFile: (file: CostsFile, driveFileId?: string) => void;
+  hydrate: (file: CostsFile, driveFileId?: string) => void;
   markSynced: (revision: number, driveFileId?: string) => void;
   record: (bookId: string | undefined, bookName: string | undefined, delta: Partial<UsageBucket>, model?: string) => void;
   recordCurrent: (delta: Partial<UsageBucket>, model?: string) => void;
@@ -45,6 +47,7 @@ export const useCostsStore = create<CostsState>()((set, get) => ({
   currentBookName: undefined,
   setCurrentBook: (currentBookId, currentBookName) => set({ currentBookId, currentBookName }),
   setFile: (file, driveFileId) => { persistLocal(file); set((s) => ({ file, driveFileId, dirty: false, revision: s.revision + 1 })); },
+  hydrate: (file, driveFileId) => { persistLocal(file); set({ file, driveFileId, dirty: false }); },
   markSynced: (revision, driveFileId) => set((s) => s.revision === revision ? { driveFileId: driveFileId ?? s.driveFileId, dirty: false } : s),
   record: (bookId, bookName, delta, model) => {
     if (!bookId) return;
@@ -64,6 +67,7 @@ export const useCostsStore = create<CostsState>()((set, get) => ({
       }
       const file: CostsFile = { ...s.file, updatedAt: new Date().toISOString(), books: { ...s.file.books, [bookId]: merged } };
       persistLocal(file);
+      void saveLocalAccountCosts(file).catch(() => undefined);
       return { file, dirty: true, revision: s.revision + 1 };
     });
   },

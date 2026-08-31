@@ -21,7 +21,7 @@ export function beginAccountScopedAiOperation(signal?: AbortSignal, accountScope
   const controller = new AbortController();
   const explicitScope = accountScope === undefined ? undefined : normalizeAccountScope(accountScope);
   if (explicitScope !== undefined && explicitScope !== activeAccountScope) {
-    controller.abort(new DOMException("The AI operation belongs to a stale authenticated account.", "AbortError"));
+    controller.abort(new DOMException("The local workspace changed.", "AbortError"));
     return { accountScope: explicitScope, signal: controller.signal, dispose: () => undefined };
   }
   const snapshot = explicitScope === undefined ? activeAccountScope : explicitScope;

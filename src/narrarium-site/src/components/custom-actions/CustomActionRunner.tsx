@@ -14,7 +14,7 @@ import { useBooksStore } from "@/store/booksStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import type { CustomAction } from "@/types/settings";
 import { useAuthStore } from "@/store/authStore";
-import { accountIdentity } from "@/auth/accountIdentity";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 export interface CustomActionInvocation {
   id: string;
@@ -89,7 +89,7 @@ export function CustomActionRunner({ invocation, onDone }: { invocation: CustomA
       selectionRange: invocation.range,
       editorBody: invocation.editable?.value,
       signal: controller.signal,
-      accountScope: accountIdentity(user),
+      accountScope: localWorkspaceScope(),
       getCurrentSettings: () => useSettingsStore.getState().settings,
       getCurrentBookState: () => {
         const state = useBooksStore.getState();
@@ -146,7 +146,7 @@ export function CustomActionRunner({ invocation, onDone }: { invocation: CustomA
     if (!result.trim()) return;
     setSpeaking(true);
     try {
-      const controller = await speakText(result, settings, { accountScope: accountIdentity(user) });
+      const controller = await speakText(result, settings, { accountScope: localWorkspaceScope() });
       speechRef.current = controller;
       await controller.done;
     } catch (err) {

@@ -1,15 +1,18 @@
-import type { AuthProvider } from "../store/authStore.ts";
-import { listAssistantSessions, maintainAssistantSessionSegments } from "./chatCloud.ts";
-import { useAssistantStore } from "./store.ts";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
+import { listLocalChatSessions } from "@/assistant/chatLocal";
+import { useAssistantStore } from "@/assistant/store";
+import type { AuthProvider } from "@/store/authStore";
+import { listAssistantSessions, maintainAssistantSessionSegments } from "@/assistant/chatCloud";
 
 let generation = 0;
 let active: { key: string; controller: AbortController; promise: Promise<void>; settled: boolean } | null = null;
 const lastMaintenance = new Map<string, number>();
 const MAINTENANCE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
-/** Refreshes the single account-scoped chat index and rejects stale/out-of-order results. */
-export function refreshAssistantSessionIndex(provider: AuthProvider, accessToken: string, identity: string): Promise<void> {
-  const key = `${identity}\0${accessToken}`;
+/** Refreshes the durable device-local chat index without contacting a provider. */
+export function refreshAssistantSessionIndex(providerOrIdentity: AuthProvider | string = localWorkspaceScope(), legacyAccessToken?: string, legacyIdentity?: string): Promise<void> {
+  const identity = legacyIdentity ?? (providerOrIdentity.startsWith("workspace:") ? providerOrIdentity : localWorkspaceScope());
+  const key = identity;
   useAssistantStore.getState().setSessionAccountIdentity(identity);
   if (active?.key === key && !active.settled) return active.promise;
   active?.controller.abort();
@@ -19,18 +22,15 @@ export function refreshAssistantSessionIndex(provider: AuthProvider, accessToken
   const isCurrent = () => requestGeneration === generation
     && !controller.signal.aborted
     && useAssistantStore.getState().sessionAccountIdentity === identity;
-  const promise = listAssistantSessions(provider, accessToken, { signal: controller.signal, isCurrent })
-    .then(async (sessions) => {
-      if (!isCurrent()) return;
-      useAssistantStore.getState().setSessions(sessions);
-      const previous = lastMaintenance.get(identity) ?? 0;
-      if (Date.now() - previous < MAINTENANCE_INTERVAL_MS) return;
-      try {
-        await maintainAssistantSessionSegments(provider, accessToken, { signal: controller.signal, isCurrent });
-        if (isCurrent()) lastMaintenance.set(identity, Date.now());
-      } catch {
-        // Session listing remains usable; maintenance retries on the next refresh.
-      }
+  const legacyCloudRequest = Boolean(legacyAccessToken && legacyIdentity && (providerOrIdentity === "google" || providerOrIdentity === "microsoft"));
+  const promise = (legacyCloudRequest
+    ? listAssistantSessions(providerOrIdentity as AuthProvider, legacyAccessToken!, { signal: controller.signal, isCurrent })
+    : listLocalChatSessions())
+    .then((sessions) => { if (isCurrent()) useAssistantStore.getState().setSessions(sessions); })
+    .then(async () => {
+      if (!legacyCloudRequest || Date.now() - (lastMaintenance.get(identity) ?? 0) < MAINTENANCE_INTERVAL_MS) return;
+      await maintainAssistantSessionSegments(providerOrIdentity as AuthProvider, legacyAccessToken!, { signal: controller.signal, isCurrent }).catch(() => undefined);
+      if (isCurrent()) lastMaintenance.set(identity, Date.now());
     })
     .finally(() => {
       if (isCurrent()) useAssistantStore.getState().setSessionsLoading(false);

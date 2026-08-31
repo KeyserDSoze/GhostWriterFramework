@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getLocalFileEntry, getLocalRepository } from "@/repository/localRepository";
 import type { BookEntry } from "@/types/settings";
-import { accountIdentity } from "@/auth/accountIdentity";
-import { useAuthStore } from "@/store/authStore";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
 export function useCurrentObjectPendingCommit(input: {
@@ -22,8 +20,6 @@ export function useCurrentObjectPendingCommit(input: {
     }
 
     async function refresh() {
-      const identity = accountIdentity(useAuthStore.getState().user);
-      if (!identity) return;
       const scope = captureRepositoryOperationScope();
       const repo = await getLocalRepository(input.book!.owner, input.book!.repo, input.branch, scope).catch(() => null);
       if (!repo) {

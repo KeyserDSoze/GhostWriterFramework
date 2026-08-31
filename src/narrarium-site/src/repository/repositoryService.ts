@@ -1,9 +1,7 @@
 import { Octokit } from "@octokit/rest";
 import type { BookEntry } from "@/types/settings";
 import type { BookStructure } from "@/types/book";
-import { isAccountIdentityCurrent } from "@/auth/accountIdentity";
-import { useAuthStore } from "@/store/authStore";
-import { assertRepositoryOperationScopeCurrent, captureRepositoryOperationScope, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
+import { assertRepositoryOperationScopeCurrent, captureRepositoryOperationScope, currentRepositoryScopeIdentity, RepositoryOwnershipChangedError, type RepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import {
   addLocalRepoLog,
   adoptLegacyEmailScopedRepository,
@@ -20,6 +18,7 @@ import {
   getLocalFileEntry,
   getLocalRecoverySnapshot,
   getLocalRepository,
+  getLocalRepositoryByBook,
   getLocalRepositoryById,
   listAllLocalFiles,
   listDirtyLocalFiles,
@@ -37,7 +36,9 @@ import {
   heartbeatRepositoryMutationLease,
   releaseRepositoryMutationLease,
   markLocalCommitsPushed,
+  putCleanLocalFile,
   putCleanLocalFileScoped,
+  putLocalRepository,
   releaseLocalRepositoryRepair,
   releaseLegacyLocalRepositoryMigration,
   reclaimExpiredRepositoryLifecycleLease,
@@ -46,6 +47,7 @@ import {
   restoreUnpushedCommitsAsDirty,
   sha256Bytes,
   settleLocalSourceOverwriteAtomically,
+  settleLocalRepositoryAttachment,
   updateLocalRepositoryHead,
   type LocalCommitFile,
   type LocalRepositoryMeta,
@@ -60,6 +62,8 @@ import { createTrackedGitHubClient } from "@/repository/githubRequest";
 import { recordRepositoryReadValidated, recordRepositoryWriteValidated, tokenExpirationFromHeaders, writeTokenHealth, type TokenHealth, type TokenHealthTarget } from "@/repository/tokenHealth";
 import { RepositoryByteMeter, RepositoryLimitExceededError, REPOSITORY_TRANSFER_LIMIT_BYTES, assertRepositoryAggregateBytes, assertRepositoryFileBytes, bytesToBase64, utf8Bytes } from "@/repository/repositoryLimits";
 import { fetchRepositoryBlobBytes } from "@/repository/repositoryBlobTransport";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
+import { buildInitialBookFiles } from "@/narrarium/bookScaffold";
 
 const TEXT_EXTENSIONS = new Set(["md", "markdown", "txt", "json", "yaml", "yml", "toml", "csv", "html", "css", "js", "ts", "tsx"]);
 
@@ -250,9 +254,7 @@ async function diagnostic(input: {
 
 async function exactLocalRepository(target: ExactRepositoryTarget, scope = operationScope(target), options: { allowIncomplete?: boolean } = {}): Promise<LocalRepositoryMeta> {
   assertRepositoryOperationScopeCurrent(scope);
-  if (!target.accountIdentity || !isAccountIdentityCurrent(target.accountIdentity, useAuthStore.getState().user)) {
-    throw new Error("Local repository account identity is not current.");
-  }
+  if (!target.accountIdentity || target.accountIdentity !== currentRepositoryScopeIdentity()) throw new Error("Local repository account identity is not current.");
   const meta = target.repoId
     ? await getLocalRepositoryById(target.repoId, target.accountIdentity)
     : await getLocalRepository(target.owner, target.repo, target.branch, scope);
@@ -362,6 +364,11 @@ async function ensureLocalBookStructureOnce(input: {
     return { meta: repaired.meta, structure: repaired.structure, cloned: false };
   }
 
+  if (input.book.storageMode === "local-only") {
+    if (!input.book.localRepositoryId) throw new Error("This local-only book belongs to another device and has no content in this workspace.");
+    return createLocalOnlyBookRepository({ book: input.book, accountIdentity: input.accountIdentity, branch: branch || `local:${input.book.localRepositoryId}` });
+  }
+
   const octokit = createTrackedGitHubClient(input.token);
   const repoData = await octokit.rest.repos.get({ owner: input.book.owner, repo: input.book.repo, request: { signal } });
   const defaultBranch = repoData.data.default_branch;
@@ -436,6 +443,105 @@ async function ensureLocalBookStructureOnce(input: {
 
   const finalMeta = await getLocalRepository(input.book.owner, input.book.repo, resolvedBranch, scope) ?? meta;
   return { meta: finalMeta, structure: await buildLocalBookStructure(finalMeta), cloned: true };
+}
+
+export async function createLocalOnlyBookRepository(input: {
+  book: BookEntry;
+  accountIdentity?: string;
+  branch?: string;
+  title?: string;
+  author?: string;
+  language?: string;
+}): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
+  const accountIdentity = input.accountIdentity ?? localWorkspaceScope();
+  if (!input.book.localRepositoryId) throw new Error("A stable local repository identity is required.");
+  const branch = input.branch ?? `local:${input.book.localRepositoryId}`;
+  const scope = operationScope({ bookId: input.book.id, owner: "", repo: "", branch, accountIdentity });
+  const existing = await getLocalRepository("", "", branch, scope);
+  if (existing) return { meta: existing, structure: await buildLocalBookStructure(existing), cloned: false };
+  const now = new Date().toISOString();
+  const meta = await putLocalRepository({
+    bookId: input.book.id,
+    repositoryKind: "book",
+    remoteKind: "none",
+    localRepositoryId: input.book.localRepositoryId,
+    owner: "",
+    repo: "",
+    branch,
+    defaultBranch: branch,
+    remoteHeadSha: `local:${crypto.randomUUID()}`,
+    clonedAt: now,
+    cloneComplete: true,
+    cloneStatus: "complete",
+    expectedFileCount: 0,
+  }, scope);
+  const files = buildInitialBookFiles({ title: input.title ?? input.book.name, author: input.author, language: input.language });
+  for (const file of files) await putCleanLocalFile({ repoId: meta.id, path: file.path, kind: "text", text: file.content, size: utf8Bytes(file.content) }, scope);
+  await addLocalRepoLog(meta.id, scope, "clone", "Created local-only book repository");
+  return { meta, structure: await buildLocalBookStructure(meta), cloned: true };
+}
+
+export async function attachLocalBookToGitHub(input: {
+  book: BookEntry;
+  token: string;
+  owner: string;
+  repo: string;
+  createRepository?: boolean;
+  overwriteExisting?: boolean;
+}): Promise<{ owner: string; repo: string; branch: string; remoteHeadSha: string; repoId: string }> {
+  if (input.book.storageMode !== "local-only") throw new Error("Only a local-only book can be attached with this operation.");
+  const scope = operationScope({ bookId: input.book.id, owner: "", repo: "", branch: input.book.activeBranch ?? `local:${input.book.localRepositoryId ?? input.book.id}`, accountIdentity: localWorkspaceScope() });
+  const local = await getLocalRepositoryByBook(input.book.id, scope.accountIdentity);
+  if (!local || local.remoteKind !== "none") throw new Error("The local-only working copy is unavailable or already connected.");
+  const files = (await listAllLocalFiles(local.id)).filter((file) => file.status !== "deleted");
+  if (!files.length) throw new Error("The local book has no files to publish.");
+  const octokit = createTrackedGitHubClient(input.token);
+  let repository;
+  try {
+    repository = (await octokit.rest.repos.get({ owner: input.owner, repo: input.repo })).data;
+    if (!input.overwriteExisting) {
+      try {
+        await octokit.rest.git.getRef({ owner: input.owner, repo: input.repo, ref: `heads/${repository.default_branch || "main"}` });
+        throw new Error("The selected GitHub repository is not empty. Explicit overwrite confirmation is required.");
+      } catch (error) {
+        if (!(error && typeof error === "object" && "status" in error && (error as { status?: number }).status === 404)) throw error;
+      }
+    }
+  } catch (error) {
+    const status = error && typeof error === "object" && "status" in error ? (error as { status?: number }).status : undefined;
+    if (status !== 404 || input.createRepository === false) throw error;
+    const authenticated = await octokit.rest.users.getAuthenticated();
+    if (authenticated.data.login.toLocaleLowerCase() !== input.owner.toLocaleLowerCase()) throw new Error("A new repository can only be created for the authenticated GitHub user.");
+    repository = (await octokit.rest.repos.createForAuthenticatedUser({ name: input.repo, private: true, auto_init: false, description: `Narrarium book: ${input.book.name}` })).data;
+  }
+  const branch = repository.default_branch || "main";
+  let parent: string | null = null;
+  let baseTree: string | undefined;
+  try {
+    const ref = await octokit.rest.git.getRef({ owner: input.owner, repo: input.repo, ref: `heads/${branch}` });
+    parent = ref.data.object.sha;
+    const commit = await octokit.rest.git.getCommit({ owner: input.owner, repo: input.repo, commit_sha: parent });
+    baseTree = input.overwriteExisting ? undefined : commit.data.tree.sha;
+  } catch (error) {
+    if (!(error && typeof error === "object" && "status" in error && [404, 409].includes((error as { status?: number }).status ?? 0))) throw error;
+  }
+  const meter = new RepositoryByteMeter("mutation");
+  const pushedShas: Record<string, string> = {};
+  for (const file of files) meter.add(file.kind, file.kind === "text" ? utf8Bytes(file.text ?? "") : file.blob?.size ?? 0);
+  const entries = [] as Array<{ path: string; mode: "100644"; type: "blob"; sha: string }>;
+  for (const file of files) {
+    const sha = await createBlobForFile(octokit, { ...local, owner: input.owner, repo: input.repo }, file);
+    pushedShas[file.path] = sha;
+    entries.push({ path: file.path, mode: "100644", type: "blob", sha });
+  }
+  const tree = await octokit.rest.git.createTree({ owner: input.owner, repo: input.repo, ...(baseTree ? { base_tree: baseTree } : {}), tree: entries });
+  const commit = await octokit.rest.git.createCommit({ owner: input.owner, repo: input.repo, message: "Initialize Narrarium book from local workspace", tree: tree.data.sha, parents: parent ? [parent] : [] });
+  if (parent) await octokit.rest.git.updateRef({ owner: input.owner, repo: input.repo, ref: `heads/${branch}`, sha: commit.data.sha, force: Boolean(input.overwriteExisting) });
+  else await octokit.rest.git.createRef({ owner: input.owner, repo: input.repo, ref: `refs/heads/${branch}`, sha: commit.data.sha });
+  const commits = await listUnpushedLocalCommits(local.id);
+  await settleLocalRepositoryAttachment({ repoId: local.id, scope, remoteHeadSha: commit.data.sha, expectedFiles: files, commitIds: commits.map((entry) => entry.id), pushedShas, remote: { owner: input.owner, repo: input.repo, branch, defaultBranch: branch } });
+  await addLocalRepoLog(local.id, scope, "push", `Attached local book to ${input.owner}/${input.repo} at ${commit.data.sha.slice(0, 7)}`);
+  return { owner: input.owner, repo: input.repo, branch, remoteHeadSha: commit.data.sha, repoId: local.id };
 }
 
 export async function migrateLegacyLocalRepository(input: { meta: LocalRepositoryMeta; token: string; accountIdentity: string; scope?: RepositoryOperationScope }): Promise<LocalRepositoryMeta> {
@@ -906,6 +1012,7 @@ export async function pushLocalCommits(input: PushLocalCommitsInput): Promise<Pu
 
 async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLocalCommitsInput, scope: RepositoryOperationScope): Promise<PushResult> {
   input.signal?.throwIfAborted();
+  if (meta.remoteKind === "none") throw new Error("This book is local-only. Connect it to GitHub before pushing.");
   const dirty = await listDirtyLocalFiles(meta.id);
   input.signal?.throwIfAborted();
   if (dirty.length) throw new Error("Commit local changes before pushing.");
@@ -1044,6 +1151,7 @@ export async function syncFullRepository(input: ExactRepositoryTarget & { token:
 }
 
 async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactRepositoryTarget & { token: string; conflictResolutions?: Record<string, RepositorySyncConflictChoice> }, scope: RepositoryOperationScope): Promise<SyncResult> {
+  if (meta.remoteKind === "none") throw new Error("This book is local-only. Connect it to GitHub before synchronizing.");
   const previous = await markLocalRepositoryRemoteChecking(meta.id, scope, meta.remoteHeadSha);
   try {
   const pendingBeforeSync = await listUnpushedLocalCommits(meta.id);

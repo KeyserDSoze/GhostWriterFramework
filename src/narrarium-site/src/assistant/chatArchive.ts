@@ -1,18 +1,18 @@
-import type { AuthProvider } from "../store/authStore.ts";
 import type { AssistantAction, AssistantArchivedAction, AssistantSession } from "./store.ts";
 import { parseAssistantSession } from "./sessionSchema.ts";
 import { assistantSegmentSha256 } from "./chatSegments.ts";
 import { MAX_ASSISTANT_LOSSLESS_ARCHIVE_BYTES, MAX_ASSISTANT_SESSION_BYTES } from "./sessionSchema.ts";
 
 export const ASSISTANT_CHAT_ARCHIVE_VERSION = 1 as const;
+export type AssistantArchiveProvider = "local" | "github" | "google" | "microsoft";
 
 export interface AssistantChatArchive {
   format: "narrarium-assistant-chat";
   version: 1;
   exportedAt: string;
-  provider: { type: AuthProvider; account: string };
+  provider: { type: AssistantArchiveProvider; account: string };
   cloud: { fileId?: string; revision?: string };
-  origin: { provider: AuthProvider; account: string; fileId?: string };
+  origin: { provider: AssistantArchiveProvider; account: string; fileId?: string };
   completeness: { complete: boolean; missingRanges: Array<{ from: number; to: number; reason: string }> };
   session: AssistantSession;
 }
@@ -76,7 +76,7 @@ function importedActionRecord(messageId: string, action: AssistantAction): Assis
   return { messageId, kind: action.kind, ...(action.toolId ? { toolId: action.toolId } : {}), ...(action.owner ? { owner: action.owner } : {}), ...(action.repo ? { repo: action.repo } : {}), ...(action.branch ? { branch: action.branch } : {}), ...(action.sourceRevision ? { sourceRevision: action.sourceRevision } : {}), ...(action.sourceRevisions ? { sourceRevisions: action.sourceRevisions } : {}), ...(action.generatedAt ? { generatedAt: action.generatedAt } : {}), ...("bookId" in action ? { bookId: action.bookId } : {}), paths };
 }
 
-export function createAssistantChatArchive(session: AssistantSession, provider: AuthProvider, account: string): AssistantChatArchive {
+export function createAssistantChatArchive(session: AssistantSession, provider: AssistantArchiveProvider, account: string): AssistantChatArchive {
   const persisted = parseAssistantSession(session);
   const { fileId, revision } = session;
   const manifest = persisted.losslessArchive!;
@@ -101,7 +101,7 @@ export async function parseAssistantChatArchive(value: unknown): Promise<Assista
   if (typeof raw.exportedAt !== "string" || !Number.isFinite(Date.parse(raw.exportedAt))) throw new Error("Chat archive export time is invalid.");
   if (!raw.provider || typeof raw.provider !== "object" || Array.isArray(raw.provider)) throw new Error("Chat archive provider is invalid.");
   const provider = raw.provider as Record<string, unknown>;
-  if ((provider.type !== "google" && provider.type !== "microsoft") || typeof provider.account !== "string" || !provider.account.trim()) throw new Error("Chat archive provider is invalid.");
+  if (!(["local", "github", "google", "microsoft"] as unknown[]).includes(provider.type) || typeof provider.account !== "string" || !provider.account.trim()) throw new Error("Chat archive provider is invalid.");
   if (!raw.cloud || typeof raw.cloud !== "object" || Array.isArray(raw.cloud)) throw new Error("Chat archive cloud identity is invalid.");
   const cloud = raw.cloud as Record<string, unknown>;
   if (cloud.fileId !== undefined && typeof cloud.fileId !== "string" || cloud.revision !== undefined && typeof cloud.revision !== "string") throw new Error("Chat archive cloud identity is invalid.");
@@ -109,8 +109,8 @@ export async function parseAssistantChatArchive(value: unknown): Promise<Assista
   const rawOrigin = raw.origin === undefined ? { provider: provider.type, account: provider.account, ...(cloud.fileId ? { fileId: cloud.fileId } : {}) } : raw.origin;
   if (!rawOrigin || typeof rawOrigin !== "object" || Array.isArray(rawOrigin)) throw new Error("Chat archive origin is invalid.");
   const originValue = rawOrigin as Record<string, unknown>;
-  if ((originValue.provider !== "google" && originValue.provider !== "microsoft") || typeof originValue.account !== "string" || !originValue.account.trim() || (originValue.fileId !== undefined && typeof originValue.fileId !== "string")) throw new Error("Chat archive origin is invalid.");
-  const origin: AssistantChatArchive["origin"] = { provider: originValue.provider, account: originValue.account, ...(originValue.fileId ? { fileId: originValue.fileId as string } : {}) };
+  if (!(["local", "github", "google", "microsoft"] as unknown[]).includes(originValue.provider) || typeof originValue.account !== "string" || !originValue.account.trim() || (originValue.fileId !== undefined && typeof originValue.fileId !== "string")) throw new Error("Chat archive origin is invalid.");
+  const origin: AssistantChatArchive["origin"] = { provider: originValue.provider as AssistantArchiveProvider, account: originValue.account, ...(originValue.fileId ? { fileId: originValue.fileId as string } : {}) };
   const manifest = session.losslessArchive!;
   const manifestCompleteness = validateCompleteness({ complete: manifest.complete, missingRanges: manifest.missingRanges }, "Chat archive manifest completeness");
   const segments = session.losslessSegments ?? [];
@@ -136,7 +136,7 @@ export async function parseAssistantChatArchive(value: unknown): Promise<Assista
     format: raw.format,
     version: raw.version,
     exportedAt: raw.exportedAt,
-    provider: { type: provider.type, account: provider.account },
+    provider: { type: provider.type as AssistantArchiveProvider, account: provider.account },
     cloud: { ...(cloud.fileId ? { fileId: cloud.fileId as string } : {}), ...(cloud.revision ? { revision: cloud.revision as string } : {}) },
     origin,
     completeness,

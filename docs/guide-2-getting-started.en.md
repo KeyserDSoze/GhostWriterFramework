@@ -1,59 +1,37 @@
 # Getting started
 
-> How to sign in, connect a book, and set up the AI.
+> Start locally, then connect only the services you need.
 
-## 1. Sign in
+## 1. Open Narrarium
 
-Open the site and sign in with **Google** or **Microsoft**.
+Narrarium opens directly into a durable local workspace. No account or network connection is required.
 
-- With Google, settings go to **Google Drive**.
-- With Microsoft, they go to **OneDrive**.
+Settings, the book registry, reader state, bookmarks, custom actions, clipboard, costs, chats, and chat archive segments are written locally first. Closing and reopening the browser does not require a provider login.
 
-The first time you will be asked to grant Drive permissions (needed to save your settings and chats).
+## 2. Create a book
 
-### Remember me on this device
+The default storage mode is **This device only**. A local book uses the same file working copy, commits, recovery snapshots, and dirty tracking as a GitHub-backed book, but has no remote target.
 
-The option applies to both Google and Microsoft:
+You can later open Book Settings and attach the same working copy to a new private GitHub repository. A PAT is supported without OAuth.
 
-- When unchecked, the OAuth access token stays in `sessionStorage` and normally ends with the browser tab or PWA session.
-- When checked, Narrarium stores the access token, expiry, provider, and immutable provider account ID in account-scoped `localStorage`, so a new tab or PWA restart can restore the session while the token is still valid.
-- Narrarium never stores an OAuth refresh token. Expired persistent tokens are deleted automatically.
-- Google receives one silent `prompt=none` recovery attempt after expiry; failure returns to interactive sign-in without retry or popup loops.
-- Microsoft uses its supported silent acquisition while its MSAL account cache is available; otherwise it returns to sign-in.
-- Sign out removes the persistent token and remembered account continuity. Do not enable this option on a shared or untrusted device.
+## 3. Configure AI
 
-## 2. Create a GitHub token (PAT)
+Narrarium does not include a model. Open Settings → AI integrations and configure OpenAI, Azure OpenAI, GitHub Models, or another supported provider. Configuration and credentials are saved in the local account dataset.
 
-The book lives on GitHub, so you need a token with write access to repositories.
+## 4. Optional account replicas
 
-1. Go to GitHub → Settings → Developer settings → Personal access tokens.
-2. Create a token (fine-grained is fine) with access to the repositories you will use and **read and write access to contents**.
-3. Copy the token.
+Open **Account & Sync** to independently enable Google Drive, OneDrive, or GitHub. These are replicas of the same local account dataset, not login requirements.
 
-In Narrarium you can:
-- set a **default token** in Settings, or
-- give a single book a **dedicated token** (recommended if you use different repositories with different permissions).
+- Connector credentials and enabled/disabled state remain on this device.
+- Logical account data uses a UTC manifest, content hash, and vector clock.
+- A remote error leaves the local copy safe and marks only that replica pending or in error.
+- Divergent replicas require an explicit authoritative-copy decision.
 
-## 3. Connect a book
-
-- If you already have a Narrarium repository on GitHub, add it from the Books page.
-- If you are starting from scratch, you can create the book repository with the framework tooling (see the reference guides) and then connect it.
-
-One book = one repository. Narrarium reads the structure (chapters, canon, etc.) straight from the files.
-
-## 4. Add your AI (LLM)
-
-Narrarium **does not include a model**: you use your own.
-
-1. Go to Settings → AI integrations.
-2. Add an **OpenAI** or **Azure OpenAI** integration with your key.
-3. Set the models (writing, optional review, images, speech).
-4. Optional: enter **prices** to estimate costs (see the cost guide).
-
-From now on, AI features (Copilot, improve, synonym, script/draft/paragraph generation, images, voice) will use your integration.
+GitHub PAT is the currently functional static-browser connection. The OAuth PKCE flow is implemented, but GitHub's token endpoint does not expose a browser-readable CORS response; see `docs/github-oauth-static-client.md`.
 
 ## 5. Start writing
 
-- Open a chapter, add a paragraph.
-- Use the **script** to plan the scene, then generate the **draft**, then the **final paragraph**.
-- Select text and use right-click (desktop) or the button that appears on the selection (mobile) for **Improve** or **Synonym**.
+- Open a chapter and add a paragraph.
+- Use a script to plan a scene, generate a draft, then refine the final paragraph.
+- Select text and use the contextual Improve or Synonym action.
+- Use **Sync now** only when you want enabled remote replicas updated immediately.

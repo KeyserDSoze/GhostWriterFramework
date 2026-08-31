@@ -5,17 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
-import { useAuthStore } from "@/store/authStore";
 import { createEmptyAssistantSession, useAssistantStore, type AssistantSessionMeta } from "@/assistant/store";
-import { deleteAssistantSession, loadAssistantSession, saveAssistantSession } from "@/assistant/chatCloud";
-import { accountIdentity, isAccountIdentityCurrent } from "@/auth/accountIdentity";
-import { refreshAssistantSessionIndex, resetAssistantSessionIndex } from "@/assistant/sessionIndex";
+import { refreshAssistantSessionIndex } from "@/assistant/sessionIndex";
 import { migrateAssistantChatArchive, readAssistantChatArchiveFile } from "@/assistant/chatArchive";
-import { assistantSessionSaveQueue, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
+import { deleteLocalChatSession, loadLocalChatSession, saveLocalChatSession } from "@/assistant/chatLocal";
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 export function AssistantChatsPage() {
   const { t } = useTranslation();
-  const { user, accessToken } = useAuthStore();
   const { toast } = useToast();
   const { setOpen, setCurrentSession, sessions, sessionsLoading: loading } = useAssistantStore();
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -36,90 +33,77 @@ export function AssistantChatsPage() {
     accountRequestsRef.current.clear();
     setQuery("");
     setDeleting(null);
-    if (!user || !accessToken) { resetAssistantSessionIndex(null); return; }
-    const expectedIdentity = accountIdentity(user);
-    void refreshAssistantSessionIndex(user.provider, accessToken, expectedIdentity!)
+    const expectedIdentity = localWorkspaceScope();
+    void refreshAssistantSessionIndex(expectedIdentity)
       .catch((err) => {
-        if (!(err instanceof DOMException && err.name === "AbortError") && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) toast({ title: t("assistant.toastLoadChatsFailed"), description: String(err), variant: "destructive" });
+        if (!(err instanceof DOMException && err.name === "AbortError")) toast({ title: t("assistant.toastLoadChatsFailed"), description: String(err), variant: "destructive" });
       });
-  }, [user, accessToken, toast, t]);
+  }, [toast, t]);
 
   async function openSession(fileId: string) {
-    if (!user || !accessToken) return;
-    const expectedIdentity = accountIdentity(user);
     const controller = new AbortController();
     accountRequestsRef.current.add(controller);
     try {
-      const loaded = await loadAssistantSession(user.provider, accessToken, fileId, controller.signal);
-      if (controller.signal.aborted || !isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) return;
+      const loaded = await loadLocalChatSession(fileId);
+      if (controller.signal.aborted) return;
       setCurrentSession(loaded);
       setOpen(true);
     } catch (err) {
-      if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) toast({ title: t("assistant.toastOpenChatFailed"), description: String(err), variant: "destructive" });
+      if (!controller.signal.aborted) toast({ title: t("assistant.toastOpenChatFailed"), description: String(err), variant: "destructive" });
     } finally {
       accountRequestsRef.current.delete(controller);
     }
   }
 
   async function deleteSession(session: AssistantSessionMeta) {
-    if (!user || !accessToken || !session.fileId) return;
+    if (!session.id) return;
     if (!window.confirm(t("assistant.deleteChatConfirm", { title: session.title || t("assistant.untitledChat") }))) return;
-    setDeleting(session.fileId);
-    const expectedIdentity = accountIdentity(user);
+    setDeleting(session.id);
     const controller = new AbortController();
     accountRequestsRef.current.add(controller);
     const current = useAssistantStore.getState().currentSession;
     const deletingCurrent = current?.id === session.id || current?.fileId === session.fileId;
     try {
-      await assistantSessionSaveQueue.retire(session.id);
       if (deletingCurrent) useAssistantStore.getState().setCurrentSession(null);
-      await deleteAssistantSession(user.provider, accessToken, session.fileId, controller.signal, session.id);
-      if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) {
+      await deleteLocalChatSession(session.id);
+      if (!controller.signal.aborted) {
         const state = useAssistantStore.getState();
-        state.setSessions(state.sessions.filter((entry) => entry.fileId !== session.fileId));
+        state.setSessions(state.sessions.filter((entry) => entry.id !== session.id));
       }
     } catch (err) {
-      assistantSessionSaveQueue.resume(session.id);
-      if (deletingCurrent && current && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) useAssistantStore.getState().setCurrentSession(current);
-      if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) toast({ title: t("assistant.toastDeleteChatFailed"), description: String(err), variant: "destructive" });
+      if (deletingCurrent && current) useAssistantStore.getState().setCurrentSession(current);
+      if (!controller.signal.aborted) toast({ title: t("assistant.toastDeleteChatFailed"), description: String(err), variant: "destructive" });
     } finally {
       accountRequestsRef.current.delete(controller);
-      if (!controller.signal.aborted && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user)) setDeleting(null);
+      if (!controller.signal.aborted) setDeleting(null);
     }
   }
 
   async function importArchive(file: File | undefined) {
-    if (!file || !user || !accessToken) return;
-    const expectedIdentity = accountIdentity(user);
-    const expectedToken = accessToken;
+    if (!file) return;
     const controller = new AbortController();
     accountRequestsRef.current.add(controller);
-    const isCurrent = () => !controller.signal.aborted && expectedToken === useAuthStore.getState().accessToken && isAccountIdentityCurrent(expectedIdentity, useAuthStore.getState().user);
+    const isCurrent = () => !controller.signal.aborted;
     try {
       const archive = await readAssistantChatArchiveFile(file);
       if (!isCurrent()) return;
-      const currentAccount = user.providerAccountId?.trim() ?? "";
-      if ((archive.provider.type !== user.provider || archive.provider.account.trim().toLocaleLowerCase() !== currentAccount)
-        && !window.confirm(t("assistant.importChatAccountConfirm", { account: archive.provider.account }))) return;
       let knownIds = sessions.map((entry) => entry.id);
       let imported = await migrateAssistantChatArchive(archive, knownIds);
-      let handle;
       for (let attempt = 0; ; attempt += 1) {
         if (!isCurrent()) return;
-        try { handle = await saveAssistantSession(user.provider, expectedToken, imported, controller.signal); break; }
+        try { await saveLocalChatSession(imported); break; }
         catch (error) {
           if (attempt >= 2 || !(error && typeof error === "object" && "code" in error && error.code === "ASSISTANT_SESSION_CONFLICT")) throw error;
-          await refreshAssistantSessionIndex(user.provider, expectedToken, expectedIdentity!);
+          await refreshAssistantSessionIndex();
           if (!isCurrent()) return;
           knownIds = useAssistantStore.getState().sessions.map((entry) => entry.id);
           imported = await migrateAssistantChatArchive(archive, [...knownIds, imported.id]);
         }
       }
       if (!isCurrent()) return;
-      const saved = { ...imported, ...handle, losslessSegments: [] };
       const state = useAssistantStore.getState();
-      state.setSessions(upsertAssistantSessionMeta(state.sessions, saved, handle));
-      state.setCurrentSession(saved);
+      await refreshAssistantSessionIndex();
+      state.setCurrentSession(imported);
       state.setOpen(true);
       toast({ title: t("assistant.importChatComplete") });
     } catch (err) {

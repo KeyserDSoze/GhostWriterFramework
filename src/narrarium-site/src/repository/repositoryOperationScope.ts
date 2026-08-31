@@ -1,3 +1,4 @@
+import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { accountIdentity } from "@/auth/accountIdentity";
 import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -16,15 +17,19 @@ export class RepositoryOwnershipChangedError extends Error {
   }
 }
 
+export function currentRepositoryScopeIdentity(): string {
+  const configured = useSettingsStore.getState().accountIdentity;
+  if (configured?.startsWith("workspace:")) return configured;
+  return accountIdentity(useAuthStore.getState().user) ?? localWorkspaceScope();
+}
+
 export function captureRepositoryOperationScope(): RepositoryOperationScope {
-  const identity = accountIdentity(useAuthStore.getState().user);
-  if (!identity) throw new RepositoryOwnershipChangedError("A current immutable account identity is required.");
-  return Object.freeze({ accountIdentity: identity, accountGeneration: useSettingsStore.getState().accountGeneration });
+  return Object.freeze({ accountIdentity: currentRepositoryScopeIdentity(), accountGeneration: useSettingsStore.getState().accountGeneration });
 }
 
 export function assertRepositoryOperationScopeCurrent(scope: RepositoryOperationScope): void {
-  if (accountIdentity(useAuthStore.getState().user) !== scope.accountIdentity
+  if (currentRepositoryScopeIdentity() !== scope.accountIdentity
     || useSettingsStore.getState().accountGeneration !== scope.accountGeneration) {
-    throw new RepositoryOwnershipChangedError();
+    throw new RepositoryOwnershipChangedError("The repository operation was cancelled because the local workspace changed.");
   }
 }

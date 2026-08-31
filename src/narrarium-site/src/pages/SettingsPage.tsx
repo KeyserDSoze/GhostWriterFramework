@@ -113,10 +113,8 @@ export function SettingsPage() {
       toast({ title: t("routing.invalidSave"), variant: "destructive" });
       return;
     }
-    if (!offline) {
-      const azureOpenAI = integrationToAzureCompat(aiIntegrations) ?? settings.azureOpenAI;
-      patchSettings({ defaultGitHubToken: defaultToken, azureOpenAI });
-    }
+    const azureOpenAI = integrationToAzureCompat(aiIntegrations) ?? settings.azureOpenAI;
+    patchSettings({ defaultGitHubToken: defaultToken, azureOpenAI });
     try {
       await save();
     } catch {
@@ -176,10 +174,11 @@ export function SettingsPage() {
           <p className="text-muted-foreground">{sectionMeta.description}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={isLoading || offline}>
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={isLoading}>
             {isLoading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Cloud className="mr-1 h-3 w-3" />}
-            {t("settings.syncFromDrive")}
+            {settings.ui.language === "it" ? "Ricarica dati locali" : "Reload local data"}
           </Button>
+          <Button asChild variant="outline" size="sm"><Link to="/app/account-sync">Account &amp; Sync</Link></Button>
           {section !== "home" && (
             <Button size="sm" onClick={() => void handleSave()} disabled={isSaving || brokenRoutes.length > 0 || Boolean(offlineConflict)}>
               {isSaving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
@@ -190,7 +189,7 @@ export function SettingsPage() {
       </div>
 
       {syncStatus === "error" && <Alert variant="destructive"><CloudOff className="h-4 w-4" /><AlertDescription>{t("settings.syncError")}</AlertDescription></Alert>}
-      {offline && <Alert><CloudOff className="h-4 w-4" /><AlertDescription id="offline-settings-explanation">{t("settings.offlineCredentialsDisabled")}</AlertDescription></Alert>}
+      {offline && <Alert><CloudOff className="h-4 w-4" /><AlertDescription id="offline-settings-explanation">{settings.ui.language === "it" ? "Offline: le modifiche vengono salvate localmente e saranno sincronizzate in seguito." : "Offline: changes are saved locally and will sync later."}</AlertDescription></Alert>}
       {offlineConflict && <Alert variant="destructive"><CloudOff className="h-4 w-4" /><AlertDescription className="space-y-3"><p>{t("settings.offlineConflict", { fields: offlineConflict.changedKeys.join(", ") })}</p><div className="flex flex-wrap gap-2"><Button size="sm" variant="destructive" onClick={() => void resolveOfflineConflict("local")}>{t("settings.keepOfflineChanges")}</Button><Button size="sm" variant="outline" onClick={() => void resolveOfflineConflict("cloud")}>{t("settings.useCloudSettings")}</Button></div></AlertDescription></Alert>}
       {brokenRoutes.length > 0 && (
         <Alert variant="destructive">
@@ -213,7 +212,7 @@ export function SettingsPage() {
           <SettingsCard href="/app/settings/repository" title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-5 w-5" />} />
         </div>
       ) : section === "ai-router" ? (
-        <fieldset className="space-y-3" disabled={offline} aria-describedby={offline ? "offline-settings-explanation" : undefined}>
+        <fieldset className="space-y-3" aria-describedby={offline ? "offline-settings-explanation" : undefined}>
           {aiIntegrations.length > 0 && <Section title={t("routing.title")} description={t("routing.description")} icon={<Route className="h-4 w-4 shrink-0" />} defaultOpen><TaskRoutingBody settings={settings} patchSettings={patchSettings} /></Section>}
           <Section title={t("settings.aiIntegrations")} description={t("settings.aiDescription")} icon={<Bot className="h-4 w-4 shrink-0" />} defaultOpen>
             <div className="space-y-5">
@@ -233,19 +232,19 @@ export function SettingsPage() {
                 <p className="text-xs text-muted-foreground">{t("settings.costCurrencyHint")}</p>
               </div>
               {aiIntegrations.length === 0 && <p className="text-sm text-muted-foreground">{t("settings.noIntegrations")}</p>}
-              <div className="grid gap-3">{aiIntegrations.map((integration) => <IntegrationAccordion key={integration.id} integration={integration}><IntegrationEditor integration={integration} onChange={(patch) => updateIntegration(integration.id, patch)} onRemove={offline ? undefined : () => removeIntegration(integration.id)} credentialsDisabled={offline} /></IntegrationAccordion>)}</div>
+              <div className="grid gap-3">{aiIntegrations.map((integration) => <IntegrationAccordion key={integration.id} integration={integration}><IntegrationEditor integration={integration} onChange={(patch) => updateIntegration(integration.id, patch)} onRemove={() => removeIntegration(integration.id)} credentialsDisabled={false} /></IntegrationAccordion>)}</div>
               <Separator />
               <div className="rounded-2xl border border-dashed p-4">
                 <p className="mb-3 text-sm font-medium">{t("settings.addIntegration")}</p>
-                <IntegrationEditor integration={newIntegration} onChange={(patch) => setNewIntegration((current) => normalizeIntegration({ ...current, ...patch }))} credentialsDisabled={offline} />
-                <Button className="mt-3" variant="outline" onClick={addIntegration} disabled={offline || !newIntegration.name.trim()}><Plus className="mr-2 h-4 w-4" />{t("settings.addIntegration")}</Button>
+                <IntegrationEditor integration={newIntegration} onChange={(patch) => setNewIntegration((current) => normalizeIntegration({ ...current, ...patch }))} credentialsDisabled={false} />
+                <Button className="mt-3" variant="outline" onClick={addIntegration} disabled={!newIntegration.name.trim()}><Plus className="mr-2 h-4 w-4" />{t("settings.addIntegration")}</Button>
               </div>
             </div>
           </Section>
         </fieldset>
       ) : section === "deep-search" ? (
         <Section title={t("settingsSection.deepSearchTitle")} description={t("settingsSection.deepSearchDescription")} icon={<Search className="h-4 w-4 shrink-0" />} defaultOpen>
-          <fieldset disabled={offline} aria-describedby={offline ? "offline-settings-explanation" : undefined}><DeepSearchSettingsBody settings={settings} patchSettings={patchSettings} credentialsDisabled={offline} /></fieldset>
+          <fieldset aria-describedby={offline ? "offline-settings-explanation" : undefined}><DeepSearchSettingsBody settings={settings} patchSettings={patchSettings} credentialsDisabled={false} /></fieldset>
         </Section>
       ) : section === "tools" ? (
         <Section title={t("settingsSection.copilotToolsTitle")} description={t("settingsSection.copilotToolsDescription")} icon={<Wand2 className="h-4 w-4 shrink-0" />} defaultOpen>
@@ -253,7 +252,7 @@ export function SettingsPage() {
         </Section>
       ) : section === "github" ? (
         <Section title={t("settings.github")} description={t("settings.githubDescription")} icon={<Github className="h-4 w-4 shrink-0" />} defaultOpen>
-          <fieldset className="space-y-4" disabled={offline}>
+          <fieldset className="space-y-4">
             <div className="grid gap-2">
               <Label htmlFor="default-token">{t("settings.defaultGithubToken")}</Label>
               <Input id="default-token" type="password" placeholder="github_pat_..." value={defaultToken} onChange={(e) => { setDefaultToken(e.target.value); patchSettings({ defaultGitHubToken: e.target.value }); }} autoComplete="off" />
