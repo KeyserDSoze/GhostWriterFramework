@@ -34,7 +34,7 @@ test("public docs load documentation but no authenticated feature graph", async 
 test("login loads OAuth without AI, GitHub, ZIP, editor, or repository chunks", async ({ page }) => {
   const scripts = await requestedScripts(page, "login");
   await expect(page.locator('[data-route-ready="LoginScreen"]')).toBeAttached();
-  await expect(page.getByRole("heading", { name: /sign in|accedi/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /connect a service|collega un servizio/i })).toBeVisible();
   expect(scripts.some((script) => /AuthProviders|LoginScreen|msal/i.test(script))).toBe(true);
   expectNoFeatureChunks(scripts, /ai-vendor|github|zip|repository|AppShell|AssistantPanel|Workspace|ParagraphPage|BookExport|pdfFonts|jspdf/i);
 });
