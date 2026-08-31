@@ -194,6 +194,9 @@ describe("validated account-scoped settings cache", () => {
     const connections = readFileSync(resolve(process.cwd(), "src/pages/AccountSyncPage.tsx"), "utf8");
     expect(connections).toContain("disconnectAll");
     expect(connections).toContain("deleteAllNarrariumLocalData");
+    expect(connections).toContain('await syncOneAccountReplica("onedrive")');
+    const shell = readFileSync(resolve(process.cwd(), "src/components/layout/Shell.tsx"), "utf8");
+    expect(shell).toContain("hydrateConnections().then(() => scheduleAccountSync(250))");
   });
 
   it("keeps important settings locally editable offline with an explanation", () => {

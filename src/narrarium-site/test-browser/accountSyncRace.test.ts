@@ -51,4 +51,11 @@ describe("account synchronization races", () => {
     expect(current?.data.clipboard[0]?.text).toBe("newer");
     expect(useConnectionStore.getState().configuration.github?.replica.status).toBe("dirty");
   });
+
+  it("reports an explicit single-replica failure to the caller", async () => {
+    github.pull.mockRejectedValue(new TypeError("network unavailable"));
+    github.push.mockRejectedValue(new TypeError("network unavailable"));
+    await expect(syncOneAccountReplica("github")).rejects.toThrow("GitHub sync failed (network)");
+    expect(useConnectionStore.getState().configuration.github?.replica).toMatchObject({ status: "error", errorKind: "network" });
+  });
 });

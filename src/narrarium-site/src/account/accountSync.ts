@@ -245,7 +245,13 @@ export async function resolveAccountReconciliation(authoritative: "local" | Acco
 export async function syncOneAccountReplica(kind: AccountSyncBackendKind): Promise<void> {
   const currentKinds = activeBackendKinds();
   if (!currentKinds.includes(kind)) throw new Error(`${backendLabel(kind)} sync is disabled on this device.`);
-  await withAccountSyncLock(() => syncAccountReplicas([kind]));
+  const result = await withAccountSyncLock(() => syncAccountReplicas([kind]));
+  if (result.synced.includes(kind) || result.reconciliation) return;
+  const configuration = useConnectionStore.getState().configuration;
+  const replica = kind === "google-drive" ? configuration.google?.replica : kind === "onedrive" ? configuration.microsoft?.replica : configuration.github?.replica;
+  if (replica?.status === "error" || replica?.status === "offline" || replica?.status === "needs-auth") {
+    throw new Error(`${backendLabel(kind)} sync failed (${replica.errorKind ?? replica.status}).`);
+  }
 }
 
 async function withAccountSyncLock<T>(run: () => Promise<T>): Promise<T> {

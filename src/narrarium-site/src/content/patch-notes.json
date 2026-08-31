@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.77.6",
+    "date": "2026-08-31",
+    "en": {
+      "title": "Immediate OneDrive replica bootstrap",
+      "summary": "A newly connected OneDrive account now creates and verifies its first remote replica immediately instead of remaining in Sync pending.",
+      "changes": [
+        "Google Drive and OneDrive connections now run their first account sync before the connection flow finishes, creating the app-owned folder and initial account snapshot when no remote replica exists.",
+        "Narrarium schedules one account sync after local connection settings hydrate, allowing previously pending replicas to recover automatically after an update or reload.",
+        "Explicit single-provider sync reports the real stored failure category to the page, and connection cards display that category instead of only a generic pending state.",
+        "Added regression coverage for a first OneDrive sync where Apps/Narrarium initially returns 404 and must be created with its ownership marker."
+      ]
+    },
+    "it": {
+      "title": "Bootstrap immediato della replica OneDrive",
+      "summary": "Un account OneDrive appena collegato ora crea e verifica subito la prima replica remota invece di restare in Sync pending.",
+      "changes": [
+        "Le connessioni Google Drive e OneDrive ora eseguono il primo sync dell'account prima di concludere il collegamento, creando la cartella di proprietà dell'app e lo snapshot iniziale quando non esiste una replica remota.",
+        "Narrarium pianifica un sync dopo l'idratazione delle connessioni locali, permettendo alle repliche già in attesa di riprendersi automaticamente dopo un aggiornamento o un reload.",
+        "Il sync esplicito di un singolo provider riporta alla pagina la categoria reale dell'errore memorizzato e le schede delle connessioni la mostrano invece di indicare soltanto uno stato generico in attesa.",
+        "Aggiunta copertura di regressione per il primo sync OneDrive in cui Apps/Narrarium restituisce inizialmente 404 e deve essere creata con il relativo marker di proprietà."
+      ]
+    }
+  },
+  {
     "version": "0.77.5",
     "date": "2026-08-31",
     "en": {

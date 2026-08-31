@@ -33,6 +33,7 @@ import { useAssistantStore } from "@/assistant/store";
 import { AssistantLauncher } from "@/components/assistant/AssistantLauncher";
 import { useAuthStore } from "@/store/authStore";
 import { useConnectionStore } from "@/account/connectionStore";
+import { scheduleAccountSync } from "@/account/accountSync";
 
 const AssistantPanel = lazy(() =>
   import("@/components/assistant/AssistantPanel").then((module) => ({ default: module.AssistantPanel })),
@@ -59,7 +60,7 @@ export function Shell() {
   useDirtyNavigationGuard(t("common.unsavedNavigationConfirm"));
   useRewriteDatabaseBlockedNotification();
 
-  useEffect(() => { void hydrateConnections(); }, [hydrateConnections]);
+  useEffect(() => { void hydrateConnections().then(() => scheduleAccountSync(250)); }, [hydrateConnections]);
 
   useEffect(() => {
     const route = parseAppRoute(location.pathname);
