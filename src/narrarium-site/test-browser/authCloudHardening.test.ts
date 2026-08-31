@@ -15,8 +15,8 @@ function account(homeAccountId: string, email: string): AccountInfo {
 }
 
 describe("non-Copilot auth and cloud hardening", () => {
-  it("uses a static callback page for Microsoft popup and silent authentication", () => {
-    expect(microsoftSilentRequest(account("home-test", "test@example.com")).redirectUri).toMatch(/\/msal-popup\.html$/);
+  it("uses the SPA entrypoint for Microsoft popup and silent authentication", () => {
+    expect(microsoftSilentRequest(account("home-test", "test@example.com")).redirectUri).not.toMatch(/msal-popup\.html$/);
   });
 
   it("selects the MSAL cache from the Microsoft remember preference", () => {

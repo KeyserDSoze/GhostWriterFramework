@@ -1,5 +1,25 @@
 [
   {
+    "version": "0.77.4",
+    "date": "2026-08-31",
+    "en": {
+      "title": "Complete Microsoft popup authentication in the app runtime",
+      "summary": "Microsoft popup authentication now returns through the loaded application runtime so MSAL can process the response and update the signed-in state.",
+      "changes": [
+        "Restored the registered SPA entrypoint as the MSAL popup and silent-token redirect target, allowing the existing MSAL runtime to receive the authentication response.",
+        "Kept an explicit callback route available for hosting fallback requests so the popup cannot land on the generic page-not-found screen."
+      ]
+    },
+    "it": {
+      "title": "Completamento del login Microsoft nel runtime dell'app",
+      "summary": "Il login Microsoft tramite popup ora torna nel runtime applicativo già caricato, così MSAL può elaborare la risposta e aggiornare lo stato di autenticazione.",
+      "changes": [
+        "Ripristinato l'entrypoint SPA registrato come destinazione del redirect MSAL per popup e token silenziosi, permettendo al runtime MSAL esistente di ricevere la risposta di autenticazione.",
+        "Mantenuta una route callback esplicita per le richieste riscritte dal fallback dell'hosting, evitando che il popup finisca nella schermata generica di pagina non trovata."
+      ]
+    }
+  },
+  {
     "version": "0.77.3",
     "date": "2026-08-31",
     "en": {

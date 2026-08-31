@@ -5,7 +5,7 @@ export const MICROSOFT_SCOPES = ["User.Read", "Files.ReadWrite"];
 export const MICROSOFT_REMEMBER_ME_KEY = "narrarium-microsoft-remember-v1";
 
 function redirectUri(): string {
-  return new URL("msal-popup.html", new URL(import.meta.env.BASE_URL, window.location.origin)).toString();
+  return new URL(import.meta.env.BASE_URL, window.location.origin).toString();
 }
 
 export function microsoftSilentRequest(account: AccountInfo): SilentRequest {
