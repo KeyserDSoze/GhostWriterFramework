@@ -67,13 +67,13 @@ describe("non-Copilot auth and cloud hardening", () => {
     vi.unstubAllGlobals();
   });
 
-  it("accepts the same immutable Microsoft account on a fresh device with ordinary app children", async () => {
+  it("accepts the same immutable Microsoft marker when Graph reports a different folder creator identity", async () => {
     registerCloudAccount("microsoft", "fresh-device-token", "home-fresh");
     localStorage.clear();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/v1.0/me?$select=id")) return Response.json({ id: "graph-fresh" });
-      if (url.includes("/root:/Apps/Narrarium?") && url.includes("createdBy")) return Response.json({ id: "folder-fresh", folder: {}, createdBy: { user: { id: "graph-fresh" } } });
+      if (url.includes("/root:/Apps/Narrarium?") && url.includes("createdBy")) return Response.json({ id: "folder-fresh", folder: {}, createdBy: { user: { id: "opaque-drive-creator" } } });
       if (url.includes("/items/folder-fresh/children")) return Response.json({ value: [
         { id: "marker-fresh", name: ".narrarium-app-folder-v1.json", eTag: "m1", file: {} },
         { id: "settings-fresh", name: "settings.json", eTag: "s1", file: {} },

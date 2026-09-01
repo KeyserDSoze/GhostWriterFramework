@@ -23,7 +23,7 @@ describe("OneDrive first synchronization", () => {
         folderCreated = true;
         return Response.json({ id: "folder", folder: {} }, { status: 201 });
       }
-      if (url.includes("/root:/Apps/Narrarium?") && url.includes("createdBy")) return Response.json({ id: "folder", folder: {}, createdBy: { user: { id: "graph-first-sync" } } });
+      if (url.includes("/root:/Apps/Narrarium?") && url.includes("createdBy")) return Response.json({ id: "folder", folder: {}, createdBy: { user: { id: "opaque-drive-creator" } } });
       if (url.includes("/items/folder/children")) return Response.json({ value: markerCreated ? [{ id: "marker", name: ".narrarium-app-folder-v1.json", eTag: "m1", file: {} }] : [] });
       if (url.endsWith("/.narrarium-app-folder-v1.json:/content") && init?.method === "PUT") {
         markerCreated = true;

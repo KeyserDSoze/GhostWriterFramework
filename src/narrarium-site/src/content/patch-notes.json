@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.77.9",
+    "date": "2026-09-01",
+    "en": {
+      "title": "OneDrive bootstrap recovery and clearer replica status",
+      "summary": "OneDrive can now safely recover an empty Narrarium folder left by an interrupted first sync, while the global status identifies a failed provider instead of labelling every replica as pending.",
+      "changes": [
+        "OneDrive ownership now relies on the account-bound Narrarium marker instead of comparing Microsoft Graph folder-creator and profile identifiers that are not guaranteed to use the same identity namespace.",
+        "An empty Apps/Narrarium folder left by a failed bootstrap can receive its account-bound marker and complete the first synchronization without deleting or adopting remote data.",
+        "Legacy marker migration still requires matching folder-creator evidence, and foreign markers, unrelated children, or non-empty unmarked folders remain blocked.",
+        "When Google Drive is synchronized but OneDrive fails, the global status now says that OneDrive sync failed instead of showing the ambiguous Sync pending label."
+      ]
+    },
+    "it": {
+      "title": "Recupero bootstrap OneDrive e stato repliche più chiaro",
+      "summary": "OneDrive ora può recuperare in sicurezza una cartella Narrarium vuota lasciata da un primo sync interrotto, mentre lo stato globale identifica il provider fallito invece di indicare tutte le repliche come in attesa.",
+      "changes": [
+        "La proprietà OneDrive ora si basa sul marker Narrarium legato all'account invece di confrontare gli identificatori del creatore della cartella e del profilo Microsoft Graph, che non usano necessariamente lo stesso namespace di identità.",
+        "Una cartella Apps/Narrarium vuota lasciata da un bootstrap fallito può ricevere il marker legato all'account e completare il primo sync senza eliminare né adottare dati remoti.",
+        "La migrazione dei marker legacy richiede ancora la corrispondenza del creatore della cartella e marker estranei, contenuti non riconosciuti o cartelle non vuote senza marker restano bloccati.",
+        "Quando Google Drive è sincronizzato ma OneDrive fallisce, lo stato globale ora indica che il sync OneDrive è fallito invece di mostrare l'ambigua etichetta Sync pending."
+      ]
+    }
+  },
+  {
     "version": "0.77.8",
     "date": "2026-09-01",
     "en": {

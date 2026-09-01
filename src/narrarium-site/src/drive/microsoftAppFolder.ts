@@ -41,6 +41,8 @@ async function microsoftAccountProof(token: string): Promise<MicrosoftAccountPro
   return { providerAccountId: accountId(token), graphUserId: profile.id.trim() };
 }
 function assertFolderAccountProof(item: { createdBy?: { user?: { id?: string } } }, proof: MicrosoftAccountProof): void {
+  // DriveItem creator IDs are not guaranteed to share /me's identifier namespace.
+  // Use this weaker signal only when adopting a legacy marker with existing data.
   if (item.createdBy?.user?.id !== proof.graphUserId) throw new Error("The OneDrive Apps/Narrarium folder was not created by the authenticated Microsoft account.");
 }
 
@@ -78,7 +80,6 @@ export async function verifyMicrosoftAppFolder(token: string): Promise<{ id: str
   const proof = await microsoftAccountProof(token);
   const item = await meta.json() as { id?: string; eTag?: string; folder?: object; createdBy?: { user?: { id?: string } } };
   if (!item.id || !item.folder) throw new Error("The OneDrive Apps/Narrarium item is not an app-owned folder.");
-  assertFolderAccountProof(item, proof);
   const children = await listMicrosoftFolderChildren(token, item.id);
   validateKnownChildren(children);
   const marker = await fetchMicrosoftGraph(`${GRAPH_DRIVE_API}/root:/${encoded}/${encodeURIComponent(MICROSOFT_APP_MARKER)}:/content`, { headers: headers(token) });
@@ -100,7 +101,6 @@ export async function ensureMicrosoftAppMarker(token: string): Promise<void> {
   if (!meta.ok) throw new Error(`OneDrive folder lookup: ${meta.status}`);
   const item = await meta.json() as { id?: string; folder?: object; createdBy?: { user?: { id?: string } } };
   if (!item.id || !item.folder) throw new Error("The OneDrive Apps/Narrarium item is not a folder.");
-  assertFolderAccountProof(item, proof);
   const children = await listMicrosoftFolderChildren(token, item.id);
   validateKnownChildren(children);
   const markerUrl = `${GRAPH_DRIVE_API}/root:/${encoded}/${encodeURIComponent(MICROSOFT_APP_MARKER)}:/content`;
@@ -109,6 +109,7 @@ export async function ensureMicrosoftAppMarker(token: string): Promise<void> {
     const value = await existing.json().catch(() => null);
     if (!ownedMarker(proof, value)) {
       if (!legacyMarker(value)) throw new Error("The OneDrive Narrarium marker belongs to another account or application.");
+      assertFolderAccountProof(item, proof);
       const adopted = await fencedCloudMutation("microsoft", token, markerUrl, { method: "PUT", headers: { ...headers(token), "Content-Type": "application/json", "If-Match": existing.headers.get("etag") ?? "*" }, body: markerBody(proof) });
       if (!adopted.ok) throw new Error(`OneDrive app marker adoption: ${adopted.status}`);
     }
