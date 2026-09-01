@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.77.11",
+    "date": "2026-09-01",
+    "en": {
+      "title": "Reliable legacy chat recovery",
+      "summary": "The Google Drive legacy-chat recovery is now available from Account & Sync with atomic local import and safe propagation to current replicas.",
+      "changes": [
+        "Use Import legacy chats on the Google Drive card to recover conversations that still exist in the old Narrarium/chats folder but are absent from the current local workspace.",
+        "The recovery validates complete chat payloads and archive segments, leaves every original Google file unchanged, and asks for confirmation before writing locally.",
+        "Conflicting conversation IDs stop the import instead of overwriting current data; matching conversations are skipped and new conversations enter one recoverable local snapshot.",
+        "Recovered conversations immediately refresh Narrarium's chat list and synchronize through account-data.json to enabled Google Drive and OneDrive replicas."
+      ]
+    },
+    "it": {
+      "title": "Recupero affidabile delle chat legacy",
+      "summary": "Il recupero delle chat Google Drive legacy è ora disponibile in Account e sincronizzazione con importazione locale atomica e propagazione sicura alle repliche correnti.",
+      "changes": [
+        "Usa Importa chat legacy nella scheda Google Drive per recuperare le conversazioni ancora presenti nella vecchia cartella Narrarium/chats ma assenti dal workspace locale corrente.",
+        "Il recupero valida i contenuti completi delle chat e i segmenti di archivio, lascia invariati tutti i file Google originali e richiede conferma prima della scrittura locale.",
+        "Gli ID conversazione in conflitto interrompono l'importazione invece di sovrascrivere dati correnti; le conversazioni identiche vengono ignorate e quelle nuove entrano in un unico snapshot locale recuperabile.",
+        "Le conversazioni recuperate aggiornano immediatamente l'elenco chat di Narrarium e vengono sincronizzate tramite account-data.json con le repliche Google Drive e OneDrive abilitate."
+      ]
+    }
+  },
+  {
     "version": "0.77.10",
     "date": "2026-09-01",
     "en": {
