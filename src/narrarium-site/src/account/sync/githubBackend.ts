@@ -5,6 +5,8 @@ import { parseAccountRepositoryFiles, serializeAccountRepository } from "@/accou
 import { RepositoryByteMeter, utf8Bytes } from "@/repository/repositoryLimits";
 
 export const GITHUB_ACCOUNT_REPOSITORY = "narrarium.settings" as const;
+const BOOTSTRAP_PATH = ".narrarium-bootstrap";
+const BOOTSTRAP_CONTENT = "Narrarium account synchronization repository.\n";
 const MANAGED_PATH = /^(?:manifest\.json|settings\.json|books\.json|costs\.json|clipboard\.json|chats\/[^/]+\.json|chat-segments\/[^/]+\/[^/]+\.json)$/;
 
 export class GitHubAccountRepositoryPublicError extends Error {
@@ -58,18 +60,32 @@ export class GitHubAccountSyncBackend implements AccountSyncBackend {
     let headSha: string | null = null;
     let baseTree: string | undefined;
     let previousManaged: string[] = [];
+    let ref;
     try {
-      const ref = await this.octokit.rest.git.getRef({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, ref: `heads/${branch}` });
-      headSha = ref.data.object.sha;
-      if (expected.absent || !expected.revision || expected.revision !== headSha) throw new Error("GitHub account repository changed before it could be updated.");
-      const commit = await this.octokit.rest.git.getCommit({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, commit_sha: headSha });
-      baseTree = commit.data.tree.sha;
-      const currentTree = await this.octokit.rest.git.getTree({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, tree_sha: headSha, recursive: "1" });
-      if (currentTree.data.truncated) throw new Error("GitHub account repository tree is truncated.");
-      previousManaged = currentTree.data.tree.filter((entry) => entry.type === "blob" && entry.path && MANAGED_PATH.test(entry.path)).map((entry) => entry.path!);
+      ref = await this.octokit.rest.git.getRef({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, ref: `heads/${branch}` });
     } catch (error) {
       if (statusOf(error) !== 404 && statusOf(error) !== 409) throw error;
       if (!expected.absent) throw new Error("GitHub account repository was deleted before it could be updated.");
+      headSha = await this.bootstrapEmptyRepository(branch);
+    }
+
+    if (ref) {
+      headSha = ref.data.object.sha;
+      if (expected.absent) {
+        if (!await this.isBootstrapCommit(headSha)) throw new Error("GitHub account repository changed before it could be updated.");
+      } else {
+        if (!expected.revision || expected.revision !== headSha) throw new Error("GitHub account repository changed before it could be updated.");
+        try {
+          const commit = await this.octokit.rest.git.getCommit({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, commit_sha: headSha });
+          baseTree = commit.data.tree.sha;
+          const currentTree = await this.octokit.rest.git.getTree({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, tree_sha: headSha, recursive: "1" });
+          if (currentTree.data.truncated) throw new Error("GitHub account repository tree is truncated.");
+          previousManaged = currentTree.data.tree.filter((entry) => entry.type === "blob" && entry.path && MANAGED_PATH.test(entry.path)).map((entry) => entry.path!);
+        } catch (error) {
+          if (statusOf(error) === 404 || statusOf(error) === 409) throw new Error("GitHub account repository was deleted before it could be updated.");
+          throw error;
+        }
+      }
     }
 
     const blobs = new Map<string, string>();
@@ -113,6 +129,48 @@ export class GitHubAccountSyncBackend implements AccountSyncBackend {
       const created = await this.octokit.rest.repos.createForAuthenticatedUser({ name: GITHUB_ACCOUNT_REPOSITORY, private: true, auto_init: false, description: "Private Narrarium account synchronization data" });
       if (!created.data.private) throw new GitHubAccountRepositoryPublicError();
       return { private: true, default_branch: created.data.default_branch || "main" };
+    }
+  }
+
+  private async bootstrapEmptyRepository(branch: string): Promise<string> {
+    let response;
+    try {
+      response = await this.octokit.rest.repos.createOrUpdateFileContents({
+        owner: this.owner,
+        repo: GITHUB_ACCOUNT_REPOSITORY,
+        path: BOOTSTRAP_PATH,
+        message: "Initialize Narrarium account repository",
+        content: encodeBase64(BOOTSTRAP_CONTENT),
+      });
+    } catch (error) {
+      if (statusOf(error) !== 409 && statusOf(error) !== 422) throw error;
+      const ref = await this.octokit.rest.git.getRef({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, ref: `heads/${branch}` });
+      if (!await this.isBootstrapCommit(ref.data.object.sha)) throw new Error("GitHub account repository changed before it could be updated.");
+      return ref.data.object.sha;
+    }
+    if (!response.data.commit.sha) throw new Error("GitHub did not return the initial account repository commit.");
+    if (!await this.isBootstrapCommit(response.data.commit.sha)) {
+      await this.removeBootstrapMarker(response.data.content?.sha, branch);
+      throw new Error("GitHub account repository changed before it could be updated.");
+    }
+    return response.data.commit.sha;
+  }
+
+  private async isBootstrapCommit(commitSha: string): Promise<boolean> {
+    const tree = await this.octokit.rest.git.getTree({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, tree_sha: commitSha, recursive: "1" });
+    if (tree.data.truncated || tree.data.tree.length !== 1) return false;
+    const marker = tree.data.tree[0];
+    if (marker.type !== "blob" || marker.path !== BOOTSTRAP_PATH || !marker.sha) return false;
+    const blob = await this.octokit.rest.git.getBlob({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, file_sha: marker.sha });
+    return new TextDecoder().decode(decodeBase64(blob.data.content.replace(/\s/g, ""))) === BOOTSTRAP_CONTENT;
+  }
+
+  private async removeBootstrapMarker(sha: string | undefined, branch: string): Promise<void> {
+    if (!sha) return;
+    try {
+      await this.octokit.rest.repos.deleteFile({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, path: BOOTSTRAP_PATH, message: "Remove Narrarium account repository bootstrap marker", sha, branch });
+    } catch {
+      // Refusing the account commit is the safety boundary; marker cleanup is best effort.
     }
   }
 }

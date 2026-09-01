@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.77.12",
+    "date": "2026-09-01",
+    "en": {
+      "title": "GitHub account sync starts from empty repositories",
+      "summary": "Narrarium can now initialize a new or previously interrupted empty narrarium.settings repository before publishing the first account snapshot.",
+      "changes": [
+        "Connecting GitHub now initializes the private narrarium.settings repository before using GitHub's Git Database API, avoiding the Git Repository is empty error on the first synchronization.",
+        "A private narrarium.settings repository left completely empty by an interrupted first attempt can be resumed automatically without deleting or recreating it.",
+        "Initialization uses a verified temporary Narrarium marker, publishes the complete account dataset as one subsequent snapshot commit, and removes the marker from the final tree.",
+        "Repositories containing unrelated files or concurrent changes are still rejected instead of being adopted or overwritten, and interrupted marker initialization remains safely retryable."
+      ]
+    },
+    "it": {
+      "title": "Il sync account GitHub parte dalle repository vuote",
+      "summary": "Narrarium ora può inizializzare una repository narrarium.settings nuova o rimasta vuota dopo un tentativo interrotto prima di pubblicare il primo snapshot account.",
+      "changes": [
+        "Il collegamento GitHub ora inizializza la repository privata narrarium.settings prima di usare la Git Database API di GitHub, evitando l'errore Git Repository is empty alla prima sincronizzazione.",
+        "Una repository privata narrarium.settings rimasta completamente vuota dopo un primo tentativo interrotto può essere ripresa automaticamente senza eliminarla o ricrearla.",
+        "L'inizializzazione usa un marker Narrarium temporaneo verificato, pubblica il dataset account completo in un successivo commit snapshot unico e rimuove il marker dal tree finale.",
+        "Le repository contenenti file estranei o modifiche concorrenti vengono ancora rifiutate invece di essere adottate o sovrascritte, mentre un'inizializzazione del marker interrotta resta ripetibile in sicurezza."
+      ]
+    }
+  },
+  {
     "version": "0.77.11",
     "date": "2026-09-01",
     "en": {
