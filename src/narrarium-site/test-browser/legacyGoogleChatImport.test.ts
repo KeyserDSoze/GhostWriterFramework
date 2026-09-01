@@ -13,7 +13,7 @@ vi.mock("@/assistant/chatCloud", () => ({
   loadAssistantSession: cloud.load,
   hydrateAssistantSessionArchive: cloud.hydrate,
 }));
-vi.mock("@/assistant/sessionIndex", () => ({ refreshAssistantSessionIndex: vi.fn() }));
+vi.mock("@/assistant/sessionIndex", () => ({ refreshAssistantSessionIndex: vi.fn().mockResolvedValue(undefined) }));
 
 function chat(id: string, text: string): AssistantSession {
   return {
