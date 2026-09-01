@@ -20,6 +20,7 @@ import { deleteAllNarrariumLocalData, getFullDeviceSafetyReport } from "@/accoun
 import { useAuthStore } from "@/store/authStore";
 import { migrateConnectedProviderRepositories } from "@/auth/accountScope";
 import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
+import { applyLegacyGoogleChatImport, prepareLegacyGoogleChatImport } from "@/account/legacyGoogleChatImport";
 
 export function AccountSyncPage() {
   const italian = useSettingsStore((state) => state.settings.ui.language) === "it";
@@ -31,6 +32,7 @@ export function AccountSyncPage() {
   const [pat, setPat] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [localSummary, setLocalSummary] = useState<{ modifiedAtUtc: string; books: number; chats: number; dirty: boolean } | null>(null);
 
   const refreshLocalSummary = async () => {
@@ -119,6 +121,38 @@ export function AccountSyncPage() {
     finally { setBusy(null); }
   }
 
+  async function importLegacyGoogleChats() {
+    setBusy("google-legacy-chats");
+    setError(null);
+    setNotice(null);
+    try {
+      const plan = await prepareLegacyGoogleChatImport();
+      if (!plan.total) {
+        setNotice(italian ? "Nessuna chat legacy trovata su Google Drive." : "No legacy chats were found on Google Drive.");
+        return;
+      }
+      if (plan.conflicts.length) throw new Error(`${italian ? "Le chat legacy sono in conflitto con chat locali correnti" : "Legacy chats conflict with current local chats"}: ${plan.conflicts.join(", ")}.`);
+      if (!plan.importableSessions.length) {
+        setNotice(italian ? `Tutte le ${plan.unchanged} chat legacy sono già presenti nel workspace locale.` : `All ${plan.unchanged} legacy chats are already present in the local workspace.`);
+        return;
+      }
+      const confirmed = window.confirm(italian
+        ? `Importare ${plan.importableSessions.length} chat legacy da Google Drive nel workspace locale? I file originali non verranno modificati. Dopo l'importazione il nuovo snapshot verrà sincronizzato con tutte le repliche abilitate.`
+        : `Import ${plan.importableSessions.length} legacy Google Drive chat${plan.importableSessions.length === 1 ? "" : "s"} into the local workspace? The original files will not be changed. The new snapshot will then sync to every enabled replica.`);
+      if (!confirmed) return;
+      const imported = await applyLegacyGoogleChatImport(plan);
+      const syncResult = await syncAllAccountReplicas();
+      await refreshLocalSummary();
+      setNotice(syncResult.reconciliation
+        ? (italian ? `${imported} chat legacy importate localmente. Scegli la copia autorevole per completare la riconciliazione delle repliche.` : `${imported} legacy chat${imported === 1 ? "" : "s"} imported locally. Choose the authoritative copy to finish replica reconciliation.`)
+        : (italian ? `${imported} chat legacy importate localmente. Sync completato per ${syncResult.synced.length} repliche.` : `${imported} legacy chat${imported === 1 ? "" : "s"} imported locally. Sync completed for ${syncResult.synced.length} replica${syncResult.synced.length === 1 ? "" : "s"}.`));
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function disconnect(kind: AccountSyncBackendKind) {
     if (!window.confirm(italian ? "Scollegare il servizio? I dati locali e remoti rimarranno invariati." : "Disconnect this service? Local and remote data will remain unchanged.")) return;
     await useConnectionStore.getState().disconnect(kind);
@@ -162,6 +196,7 @@ export function AccountSyncPage() {
       </div>
 
       {error && <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+      {notice && <div className="rounded-lg border border-primary/30 bg-primary/10 p-3 text-sm text-foreground">{notice}</div>}
 
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><HardDrive className="h-5 w-5" />{italian ? "Workspace locale" : "Local workspace"}</CardTitle><CardDescription>{italian ? "Disponibile senza login e senza connessione." : "Available without login or network access."}</CardDescription></CardHeader>
@@ -179,7 +214,9 @@ export function AccountSyncPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <ConnectionCard title="Google Drive" icon={<Cloud className="h-5 w-5" />} connected={Boolean(configuration.google)} enabled={configuration.google?.replica.enabled} status={configuration.google?.replica.status} errorKind={configuration.google?.replica.errorKind} lastSync={configuration.google?.replica.lastSuccessfulSyncAtUtc} busy={syncing || busy === "google" || busy === "google-drive"} onToggle={(enabled) => useConnectionStore.getState().setEnabled("google-drive", enabled)} onConnect={() => googleLogin()} onSync={() => runSync("google-drive")} onDisconnect={() => disconnect("google-drive")} onDelete={() => removeRemote("google-drive")} />
+        <ConnectionCard title="Google Drive" icon={<Cloud className="h-5 w-5" />} connected={Boolean(configuration.google)} enabled={configuration.google?.replica.enabled} status={configuration.google?.replica.status} errorKind={configuration.google?.replica.errorKind} lastSync={configuration.google?.replica.lastSuccessfulSyncAtUtc} busy={syncing || busy === "google" || busy === "google-drive" || busy === "google-legacy-chats"} onToggle={(enabled) => useConnectionStore.getState().setEnabled("google-drive", enabled)} onConnect={() => googleLogin()} onSync={() => runSync("google-drive")} onDisconnect={() => disconnect("google-drive")} onDelete={() => removeRemote("google-drive")}>
+          {configuration.google && <div className="space-y-2 border-t pt-3"><p className="text-xs text-muted-foreground">{italian ? "Recupera le conversazioni conservate nella vecchia cartella Google Drive/Narrarium/chats. L'importazione non modifica i file originali." : "Recover conversations stored in the old Google Drive/Narrarium/chats folder. Importing does not modify the original files."}</p><Button size="sm" variant="outline" onClick={() => void importLegacyGoogleChats()} disabled={syncing || busy !== null}>{busy === "google-legacy-chats" && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}{italian ? "Importa chat legacy" : "Import legacy chats"}</Button></div>}
+        </ConnectionCard>
         <ConnectionCard title="OneDrive" icon={<Cloud className="h-5 w-5" />} connected={Boolean(configuration.microsoft)} enabled={configuration.microsoft?.replica.enabled} status={configuration.microsoft?.replica.status} errorKind={configuration.microsoft?.replica.errorKind} lastSync={configuration.microsoft?.replica.lastSuccessfulSyncAtUtc} busy={syncing || busy === "microsoft" || busy === "onedrive"} onToggle={(enabled) => useConnectionStore.getState().setEnabled("onedrive", enabled)} onConnect={connectMicrosoft} onSync={() => runSync("onedrive")} onDisconnect={() => disconnect("onedrive")} onDelete={() => removeRemote("onedrive")} />
         <ConnectionCard title="GitHub" icon={<Github className="h-5 w-5" />} connected={Boolean(configuration.github)} enabled={configuration.github?.replica.enabled} status={configuration.github?.replica.status} errorKind={configuration.github?.replica.errorKind} lastSync={configuration.github?.replica.lastSuccessfulSyncAtUtc} detail={configuration.github ? `${configuration.github.identity?.username ?? "GitHub"} · ${configuration.github.credentialKind.toUpperCase()}` : undefined} busy={syncing || busy === "github"} connectDisabled={!GITHUB_OAUTH_BROWSER_EXCHANGE_SUPPORTED} onToggle={(enabled) => useConnectionStore.getState().setEnabled("github", enabled)} onConnect={connectOAuth} onSync={() => runSync("github")} onDisconnect={() => disconnect("github")} onDelete={() => removeRemote("github")}>
           {(!configuration.github || configuration.github.replica.status === "needs-auth") && <div className="space-y-2 border-t pt-3">{!GITHUB_OAUTH_BROWSER_EXCHANGE_SUPPORTED && <p className="text-xs text-amber-700 dark:text-amber-300">{italian ? "OAuth GitHub è predisposto con PKCE ma il token endpoint GitHub non consente al browser di leggere la risposta CORS. Usa un PAT finché GitHub non abilita questo flusso per client statici." : "GitHub OAuth is implemented with PKCE, but GitHub's token endpoint does not let a browser read the CORS response. Use a PAT until GitHub supports this static-client flow."}</p>}<Label htmlFor="github-pat">Personal Access Token</Label><div className="flex gap-2"><Input id="github-pat" type="password" value={pat} onChange={(event) => setPat(event.target.value)} placeholder="github_pat_..." /><Button variant="outline" onClick={() => void connectPat()} disabled={!pat.trim()}>PAT</Button></div></div>}

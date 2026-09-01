@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.77.10",
+    "date": "2026-09-01",
+    "en": {
+      "title": "Recover Google Drive legacy chats",
+      "summary": "Account & Sync can now explicitly recover conversations left in the old Google Drive chats folder after the common account snapshot was created without them.",
+      "changes": [
+        "The Google Drive card now offers an Import legacy chats action that scans the old Narrarium/chats folder without modifying or deleting its original files.",
+        "Every legacy conversation and lossless archive segment is validated before import, and provider-specific file IDs and revisions are removed before the data enters the local-first account dataset.",
+        "Import is atomic and creates a local recovery snapshot; conflicting chat IDs are blocked instead of overwriting current conversations, while identical chats are skipped.",
+        "After confirmation, recovered chats are added to the common account-data snapshot and synchronized to every enabled replica, including OneDrive where chats remain embedded inside account-data.json."
+      ]
+    },
+    "it": {
+      "title": "Recupero delle chat Google Drive legacy",
+      "summary": "Account e sincronizzazione ora può recuperare esplicitamente le conversazioni rimaste nella vecchia cartella chat di Google Drive dopo la creazione dello snapshot account comune senza di esse.",
+      "changes": [
+        "La scheda Google Drive ora offre l'azione Importa chat legacy, che analizza la vecchia cartella Narrarium/chats senza modificare né eliminare i file originali.",
+        "Ogni conversazione legacy e segmento dell'archivio lossless viene validato prima dell'importazione e gli ID file e le revisioni specifiche del provider vengono rimossi prima dell'ingresso nel dataset account local-first.",
+        "L'importazione è atomica e crea uno snapshot di recovery locale; gli ID chat in conflitto vengono bloccati invece di sovrascrivere conversazioni correnti, mentre le chat identiche vengono ignorate.",
+        "Dopo la conferma, le chat recuperate vengono aggiunte allo snapshot account comune e sincronizzate con tutte le repliche abilitate, incluso OneDrive dove restano incorporate in account-data.json."
+      ]
+    }
+  },
+  {
     "version": "0.77.9",
     "date": "2026-09-01",
     "en": {
