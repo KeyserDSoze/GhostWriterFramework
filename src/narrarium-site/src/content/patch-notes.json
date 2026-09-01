@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.77.8",
+    "date": "2026-09-01",
+    "en": {
+      "title": "Silent OneDrive renewal and actionable errors",
+      "summary": "OneDrive replicas now renew Microsoft access silently before synchronization and preserve the exact provider failure when a sync cannot complete.",
+      "changes": [
+        "Before every OneDrive account sync, Narrarium resolves the exact cached MSAL account by its stable home and local identifiers and acquires a current token without opening a popup.",
+        "Renewed OneDrive tokens and their buffered expiry are written back to the device connection, so later automatic and manual synchronizations reuse the current credential.",
+        "Expired Graph credentials trigger one forced silent renewal and an explicit reconnect is requested only when Microsoft reports that interaction is required or the bound account is no longer available; network failures remain network failures.",
+        "A provider whose remote read fails is no longer allowed to continue into a write or overwrite the failure with an idle status.",
+        "Provider-card sync errors now include the original failure detail after the classified category instead of reducing every unclassified condition to failed unknown."
+      ]
+    },
+    "it": {
+      "title": "Rinnovo OneDrive silenzioso ed errori utili",
+      "summary": "Le repliche OneDrive ora rinnovano silenziosamente l'accesso Microsoft prima del sync e conservano l'errore esatto del provider quando la sincronizzazione non può concludersi.",
+      "changes": [
+        "Prima di ogni sync account OneDrive, Narrarium risolve l'account MSAL esatto tramite gli identificatori stabili home e local e ottiene un token corrente senza aprire popup.",
+        "Il token OneDrive rinnovato e la relativa scadenza con margine vengono salvati nella connessione del dispositivo, così i sync automatici e manuali successivi riutilizzano la credenziale corrente.",
+        "Le credenziali Graph scadute attivano un rinnovo silenzioso forzato e la riconnessione esplicita viene richiesta soltanto quando Microsoft segnala che serve interazione o l'account associato non è più disponibile; gli errori di rete restano errori di rete.",
+        "Un provider la cui lettura remota fallisce non può più proseguire con una scrittura né sostituire l'errore con uno stato idle.",
+        "Gli errori di sync delle singole schede ora includono il dettaglio originale dopo la categoria classificata, invece di ridurre ogni condizione non classificata al solo failed unknown."
+      ]
+    }
+  },
+  {
     "version": "0.77.7",
     "date": "2026-08-31",
     "en": {

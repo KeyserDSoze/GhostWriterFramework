@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS } from "@/types/settings";
 import { emptyCostsFile } from "@/costs/model";
 
 const github = vi.hoisted(() => ({ pull: vi.fn(), push: vi.fn(), remove: vi.fn() }));
+const microsoftToken = vi.hoisted(() => ({ acquire: vi.fn() }));
 const drives = vi.hoisted(() => ({
   google: { pull: vi.fn(), push: vi.fn(), remove: vi.fn() },
   microsoft: { pull: vi.fn(), push: vi.fn(), remove: vi.fn() },
@@ -20,6 +21,7 @@ vi.mock("@/account/sync/githubBackend", () => ({
     deleteRemoteData = github.remove;
   },
 }));
+vi.mock("@/account/microsoftConnectionToken", () => ({ acquireMicrosoftConnectionToken: microsoftToken.acquire }));
 vi.mock("@/account/sync/driveBackend", () => ({
   DriveAccountSyncBackend: class {
     readonly kind: "google-drive" | "onedrive";
@@ -46,6 +48,7 @@ describe("account synchronization races", () => {
     github.pull.mockReset();
     github.push.mockReset();
     github.remove.mockReset();
+    microsoftToken.acquire.mockReset().mockResolvedValue("microsoft-token");
     for (const backend of Object.values(drives)) {
       backend.pull.mockReset();
       backend.push.mockReset();
@@ -75,8 +78,16 @@ describe("account synchronization races", () => {
   it("reports an explicit single-replica failure to the caller", async () => {
     github.pull.mockRejectedValue(new TypeError("network unavailable"));
     github.push.mockRejectedValue(new TypeError("network unavailable"));
-    await expect(syncOneAccountReplica("github")).rejects.toThrow("GitHub sync failed (network)");
+    await expect(syncOneAccountReplica("github")).rejects.toThrow("GitHub sync failed (network): network unavailable");
     expect(useConnectionStore.getState().configuration.github?.replica).toMatchObject({ status: "error", errorKind: "network" });
+  });
+
+  it("marks an HTTP authentication failure as needing reauthentication", async () => {
+    github.pull.mockRejectedValue(Object.assign(new Error("GitHub account request: 401"), { status: 401 }));
+
+    await expect(syncOneAccountReplica("github")).rejects.toThrow("GitHub sync failed (credential-expired): GitHub account request: 401");
+    expect(github.pull).toHaveBeenCalledOnce();
+    expect(useConnectionStore.getState().configuration.github?.replica).toMatchObject({ status: "needs-auth", errorKind: "credential-expired" });
   });
 
   it("does not run another provider from a pending automatic sync after an explicit OneDrive sync", async () => {

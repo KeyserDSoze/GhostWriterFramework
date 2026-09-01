@@ -12,6 +12,7 @@ import { useClipboardStore } from "@/clipboard/clipboardStore";
 import { refreshAssistantSessionIndex } from "@/assistant/sessionIndex";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { mergeLocalDeviceSettings } from "@/account/dataProjection";
+import { acquireMicrosoftConnectionToken } from "@/account/microsoftConnectionToken";
 
 export interface ReplicaCandidate {
   id: "local" | AccountSyncBackendKind;
@@ -67,9 +68,9 @@ function activeBackendKinds(): AccountSyncBackendKind[] {
   ];
 }
 
-function createBackend(kind: AccountSyncBackendKind): AccountSyncBackend {
+async function createBackend(kind: AccountSyncBackendKind): Promise<AccountSyncBackend> {
   const configuration = useConnectionStore.getState().configuration;
-  const token = accountBackendToken(kind);
+  const token = kind === "onedrive" ? await acquireMicrosoftConnectionToken() : accountBackendToken(kind);
   if (kind === "google-drive") {
     const connection = configuration.google;
     if (!connection) throw new AccountCredentialError(kind, "missing");
@@ -110,11 +111,12 @@ async function applyLocalSnapshot(snapshot: LocalAccountSnapshot): Promise<void>
 }
 
 async function setReplicaFailure(kind: AccountSyncBackendKind, error: unknown): Promise<void> {
-  const patch = error instanceof AccountCredentialError
-    ? { status: "needs-auth" as const, errorKind: error.reason === "expired" ? "credential-expired" as const : "credential-missing" as const }
+  const errorKind = classifyAccountSyncError(error);
+  const patch = errorKind === "credential-expired" || errorKind === "credential-missing"
+    ? { status: "needs-auth" as const, errorKind }
     : navigator.onLine === false
       ? { status: "offline" as const, errorKind: "offline" as const }
-      : { status: "error" as const, errorKind: classifyAccountSyncError(error) };
+      : { status: "error" as const, errorKind };
   await useConnectionStore.getState().updateReplica(kind, { ...patch, lastAttemptAtUtc: new Date().toISOString() });
 }
 
@@ -137,17 +139,25 @@ export function classifyAccountSyncError(error: unknown) {
   return "unknown" as const;
 }
 
-export async function syncAllAccountReplicas(): Promise<{ synced: AccountSyncBackendKind[]; reconciliation: boolean }> {
-  return withAccountSyncLock(() => syncAccountReplicas(activeBackendKinds()));
+interface AccountSyncResult {
+  synced: AccountSyncBackendKind[];
+  reconciliation: boolean;
+  failures: Map<AccountSyncBackendKind, unknown>;
 }
 
-async function syncAccountReplicas(activeKinds: AccountSyncBackendKind[]): Promise<{ synced: AccountSyncBackendKind[]; reconciliation: boolean }> {
+export async function syncAllAccountReplicas(): Promise<{ synced: AccountSyncBackendKind[]; reconciliation: boolean }> {
+  const { synced, reconciliation } = await withAccountSyncLock(() => syncAccountReplicas(activeBackendKinds()));
+  return { synced, reconciliation };
+}
+
+async function syncAccountReplicas(activeKinds: AccountSyncBackendKind[]): Promise<AccountSyncResult> {
   if (useAccountSyncStore.getState().syncing) {
     syncRequestedWhileBusy = true;
-    return { synced: [], reconciliation: Boolean(useAccountSyncStore.getState().reconciliation) };
+    return { synced: [], reconciliation: Boolean(useAccountSyncStore.getState().reconciliation), failures: new Map() };
   }
   useAccountSyncStore.setState({ syncing: true });
   const synced: AccountSyncBackendKind[] = [];
+  const failures = new Map<AccountSyncBackendKind, unknown>();
   try {
     let local = await localSnapshotWithHash();
     const backends = new Map<AccountSyncBackendKind, AccountSyncBackend>();
@@ -157,12 +167,13 @@ async function syncAccountReplicas(activeKinds: AccountSyncBackendKind[]): Promi
     await Promise.all(activeKinds.map(async (kind) => {
       try {
         await useConnectionStore.getState().updateReplica(kind, { status: "syncing", lastAttemptAtUtc: new Date().toISOString(), errorKind: undefined });
-        const backend = createBackend(kind);
-        backends.set(kind, backend);
+        const backend = await createBackend(kind);
         const remote = await backend.pull();
+        backends.set(kind, backend);
         if (remote) remotes.push(remote);
         else missing.push(kind);
       } catch (error) {
+        failures.set(kind, error);
         await setReplicaFailure(kind, error);
       }
     }));
@@ -176,7 +187,7 @@ async function syncAccountReplicas(activeKinds: AccountSyncBackendKind[]): Promi
       ];
       useAccountSyncStore.getState().setReconciliation({ local, remotes, candidates });
       for (const { remote, comparison } of comparisons) await useConnectionStore.getState().updateReplica(remote.backend, { status: comparison === "same" ? "idle" : comparison });
-      return { synced, reconciliation: true };
+      return { synced, reconciliation: true, failures };
     }
 
     const newer = comparisons.find(({ comparison }) => comparison === "behind")?.remote;
@@ -211,15 +222,16 @@ async function syncAccountReplicas(activeKinds: AccountSyncBackendKind[]): Promi
         useClipboardStore.getState().markSynced(useClipboardStore.getState().revision);
         synced.push(kind);
       } catch (error) {
+        failures.set(kind, error);
         await setReplicaFailure(kind, error);
       }
     }
     useAccountSyncStore.getState().setReconciliation(null);
-    return { synced, reconciliation: false };
+    return { synced, reconciliation: false, failures };
   } catch (error) {
     if (error instanceof LocalAccountSnapshotChangedError) {
       syncRequestedWhileBusy = true;
-      return { synced, reconciliation: false };
+      return { synced, reconciliation: false, failures };
     }
     throw error;
   } finally {
@@ -250,6 +262,11 @@ export async function syncOneAccountReplica(kind: AccountSyncBackendKind): Promi
   cancelScheduledAccountSync();
   const result = await withAccountSyncLock(() => syncAccountReplicas([kind]));
   if (result.synced.includes(kind) || result.reconciliation) return;
+  const failure = result.failures.get(kind);
+  if (failure) {
+    const detail = failure instanceof Error ? failure.message : String(failure);
+    throw new Error(`${backendLabel(kind)} sync failed (${classifyAccountSyncError(failure)}): ${detail}`);
+  }
   const configuration = useConnectionStore.getState().configuration;
   const replica = kind === "google-drive" ? configuration.google?.replica : kind === "onedrive" ? configuration.microsoft?.replica : configuration.github?.replica;
   if (replica?.status === "error" || replica?.status === "offline" || replica?.status === "needs-auth") {
@@ -263,7 +280,7 @@ async function withAccountSyncLock<T>(run: () => Promise<T>): Promise<T> {
 }
 
 export async function deleteRemoteAccountData(kind: AccountSyncBackendKind): Promise<void> {
-  const backend = createBackend(kind);
+  const backend = await createBackend(kind);
   await backend.deleteRemoteData();
   await useConnectionStore.getState().updateReplica(kind, { status: "disabled", enabled: false, lastKnownRemoteSnapshotId: undefined });
 }

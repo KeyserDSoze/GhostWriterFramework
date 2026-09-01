@@ -34,6 +34,7 @@ interface ConnectionState {
   connectMicrosoft: (connection: Omit<LocalMicrosoftConnection, "backend" | "method" | "replica"> & { replica?: LocalReplicaState }) => Promise<void>;
   connectGitHub: (connection: Omit<LocalGitHubConnection, "backend" | "repositoryName" | "replica"> & { replica?: LocalReplicaState }) => Promise<void>;
   setEnabled: (backend: AccountSyncBackendKind, enabled: boolean) => Promise<void>;
+  updateAccessToken: (backend: "google-drive" | "onedrive", accessToken: string, accessTokenExpiry: number) => Promise<void>;
   updateReplica: (backend: AccountSyncBackendKind, patch: Partial<LocalReplicaState>) => Promise<void>;
   disconnect: (backend: AccountSyncBackendKind) => Promise<void>;
 }
@@ -117,6 +118,14 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     const replica = { ...current.replica, enabled, status: enabled ? "dirty" as const : "disabled" as const };
     const next = key === "github" ? { ...current, accountSyncEnabled: enabled, replica } : { ...current, replica };
     const configuration = { ...get().configuration, [key]: next } as LocalSyncConfiguration;
+    set({ configuration });
+    await persist(configuration);
+  },
+  updateAccessToken: async (backend, accessToken, accessTokenExpiry) => {
+    const key = connectionKey(backend);
+    const current = get().configuration[key];
+    if (!current || !("accessToken" in current)) throw new AccountCredentialError(backend, "missing");
+    const configuration = { ...get().configuration, [key]: { ...current, accessToken, accessTokenExpiry } } as LocalSyncConfiguration;
     set({ configuration });
     await persist(configuration);
   },
