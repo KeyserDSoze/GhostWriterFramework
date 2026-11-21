@@ -316,7 +316,7 @@ export function AuditPage() {
       </section>
 
       {runBlocker === "disabled" && <Alert><AlertCircle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center justify-between gap-3"><span>{t("audit.disabled")}</span><Button size="sm" variant="outline" onClick={() => navigate(`/app/books/${bookId}/settings`)}>{t("audit.actions.openBookSettings")}</Button></AlertDescription></Alert>}
-      {runBlocker === "missing-model" && <Alert><AlertCircle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center justify-between gap-3"><span>{t("audit.missingModel")}</span><Button size="sm" variant="outline" onClick={() => navigate("/app/settings/ai-router")}>{t("audit.actions.openAiRouter")}</Button></AlertDescription></Alert>}
+      {runBlocker === "missing-model" && <Alert><AlertCircle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center justify-between gap-3"><span>{t("audit.missingModel")}</span><Button size="sm" variant="outline" onClick={() => navigate("/app/settings/ai-integrations")}>{t("audit.actions.openAiIntegrations")}</Button></AlertDescription></Alert>}
       {error && <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{error}</AlertDescription></Alert>}
 
       {(running || runState === "failed" || runState === "cancelled" || runState === "completed") && progress && (

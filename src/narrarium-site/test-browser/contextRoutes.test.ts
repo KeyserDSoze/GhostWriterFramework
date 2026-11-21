@@ -10,6 +10,7 @@ const routeCases = [
   ["/app/patch-notes", "app-page"],
   ["/app/autopilot", "app-page"],
   ["/app/settings", "app-page"],
+  ["/app/settings/ai-integrations", "app-page"],
   ["/app/settings/ai-router", "app-page"],
   ["/app/settings/deep-search", "app-page"],
   ["/app/settings/tools", "app-page"],

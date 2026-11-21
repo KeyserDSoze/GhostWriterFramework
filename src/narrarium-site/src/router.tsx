@@ -16,6 +16,16 @@ const component = <T extends Record<string, unknown>, K extends keyof T>(loader:
 };
 const routeError = <RouteErrorFallback />;
 
+/**
+ * One loader for several routes gives them one page component, so React keeps the page mounted when the author moves
+ * between them (AI Integrations and AI Router). A remount would reload the settings from disk and drop unsaved edits.
+ */
+const sharedRoute = <T,>(load: () => Promise<T>) => {
+  let pending: Promise<T> | undefined;
+  return () => (pending ??= load().catch((error: unknown) => { pending = undefined; throw error; }));
+};
+const aiSettingsPage = sharedRoute(component(() => import("@/pages/SettingsPage"), "SettingsPage"));
+
 function RootRoute() {
   return <Outlet />;
 }
@@ -65,7 +75,8 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/chapters/:chapterId", lazy: component(() => import("@/pages/ChapterPage"), "ChapterPage") },
       { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum", lazy: component(() => import("@/pages/ParagraphPage"), "ParagraphPage") },
       { path: "settings", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
-      { path: "settings/ai-router", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
+      { path: "settings/ai-integrations", lazy: aiSettingsPage },
+      { path: "settings/ai-router", lazy: aiSettingsPage },
       { path: "settings/deep-search", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
       { path: "settings/tools", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
       { path: "settings/github", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },

@@ -190,42 +190,42 @@ Ogni libro può scegliere un branch attivo. Copilot e i dialog Git possono elenc
     summary: "Configure providers, models, task routing, fallbacks, browser speech and costs.",
     markdown: `# AI integrations and Router
 
-Narrarium uses your AI integrations. Configure Azure OpenAI, OpenAI-compatible endpoints or GitHub Models in **Settings → AI Router**.
+Narrarium uses your AI integrations. Add Azure OpenAI, OpenAI-compatible endpoints or GitHub Models in **Settings → AI Integrations**, which also holds keys, models, prices and default models. Then choose in **Settings → AI Router** which model handles each task.
 
 ## GitHub Models quick start
 
-Create a GitHub PAT authorized for GitHub Models, add a **GitHub Models** integration, load the model catalog and assign capabilities to the models you want to use.
+Create a GitHub PAT authorized for GitHub Models, add a **GitHub Models** integration in **AI Integrations**, load the model catalog and assign capabilities to the models you want to use.
 
 ## Task routing
 
-Each task can have a primary integration/model and ordered fallbacks. Tasks include Copilot, review, simple tasks, chat resume, deep research, reader evaluation, reader-evaluation summary, TTS, STT and image generation.
+In **AI Router**, each task can have a primary integration/model and ordered fallbacks. Tasks include Copilot, review, simple tasks, chat resume, deep research, reader evaluation, reader-evaluation summary, TTS, STT and image generation.
 
 Browser TTS and STT are virtual Router integrations and do not consume AI tokens.
 
 ## Costs
 
-When pricing is configured, Narrarium records input, cached-input and output tokens plus media costs. Reader evaluations save their own provider/model/token/cost metadata while using the same cost engine.
+When pricing is configured in AI Integrations, Narrarium records input, cached-input and output tokens plus media costs. Reader evaluations save their own provider/model/token/cost metadata while using the same cost engine.
 `,
   }, {
     title: "Integrazioni AI e Router",
     summary: "Configura provider, modelli, task, fallback, voce browser e costi.",
     markdown: `# Integrazioni AI e Router
 
-Narrarium usa le tue integrazioni AI. Configura Azure OpenAI, endpoint compatibili OpenAI o GitHub Models in **Impostazioni → AI Router**.
+Narrarium usa le tue integrazioni AI. Aggiungi Azure OpenAI, endpoint compatibili OpenAI o GitHub Models in **Impostazioni → Integrazioni AI**, dove trovi anche chiavi, modelli, prezzi e modelli predefiniti. Poi scegli in **Impostazioni → AI Router** quale modello gestisce ogni task.
 
 ## Avvio rapido GitHub Models
 
-Crea un PAT GitHub abilitato a GitHub Models, aggiungi un'integrazione **GitHub Models**, carica il catalogo e assegna ai modelli le capability desiderate.
+Crea un PAT GitHub abilitato a GitHub Models, aggiungi un'integrazione **GitHub Models** in **Integrazioni AI**, carica il catalogo e assegna ai modelli le capability desiderate.
 
 ## Routing dei task
 
-Ogni task può avere integrazione/modello primario e fallback ordinati. I task includono Copilot, review, task semplici, resume chat, deep research, valutazione lettore, sintesi valutazioni, TTS, STT e immagini.
+In **AI Router**, ogni task può avere integrazione/modello primario e fallback ordinati. I task includono Copilot, review, task semplici, resume chat, deep research, valutazione lettore, sintesi valutazioni, TTS, STT e immagini.
 
 TTS e STT browser sono integrazioni virtuali del Router e non consumano token AI.
 
 ## Costi
 
-Quando configuri i prezzi, Narrarium registra token input, input in cache e output, oltre ai costi media. Le valutazioni dei lettori salvano provider, modello, token e costo usando lo stesso motore.
+Quando configuri i prezzi in Integrazioni AI, Narrarium registra token input, input in cache e output, oltre ai costi media. Le valutazioni dei lettori salvano provider, modello, token e costo usando lo stesso motore.
 `,
   }),
   entry("book-structure", "reference", {
@@ -536,7 +536,7 @@ Narrarium does not store your book or credentials on Narrarium servers. GitHub s
 
 ## Settings
 
-Configure AI Router, Deep Search, Copilot tools, GitHub credentials, speech and local repository synchronization. Book-specific settings control branches, dedicated PATs, reader/export metadata and Drive export destinations.
+Configure AI Integrations, AI Router, Deep Search, Copilot tools, GitHub credentials, speech and local repository synchronization. Book-specific settings control branches, dedicated PATs, reader/export metadata and Drive export destinations.
 
 ## Migration and deletion
 
@@ -555,7 +555,7 @@ Narrarium non conserva libro o credenziali su server Narrarium. GitHub conserva 
 
 ## Impostazioni
 
-Configura AI Router, Deep Search, tool Copilot, credenziali GitHub, voce e sincronizzazione repository locale. Le impostazioni libro controllano branch, PAT dedicati, metadati reader/export e destinazioni Drive.
+Configura Integrazioni AI, AI Router, Deep Search, tool Copilot, credenziali GitHub, voce e sincronizzazione repository locale. Le impostazioni libro controllano branch, PAT dedicati, metadati reader/export e destinazioni Drive.
 
 ## Migrazione e cancellazione
 

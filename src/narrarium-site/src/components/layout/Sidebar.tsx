@@ -2,6 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   BookOpen,
+  Bot,
   Clapperboard,
   ClipboardCheck,
   Clock,
@@ -20,6 +21,7 @@ import {
   Package,
   PanelLeftClose,
   Plane,
+  Plug,
   Search,
   Server,
   Settings,
@@ -141,9 +143,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const inDocs = location.pathname === "/app/docs" || location.pathname.startsWith("/app/docs/");
   const docsNav = getDocGroups().flatMap((group) => group.docs).map((doc) => ({ label: localizedDoc(doc, normalizeDocLang(i18n.language)).title, href: `/app/docs/${doc.slug}`, icon: <FileText className="h-4 w-4" /> }));
   const settingsNav: NavItem[] = [
-    { label: "Account & Sync", href: "/app/account-sync", icon: <Cloud className="h-4 w-4" /> },
+    { label: t("nav.accountSync"), href: "/app/account-sync", icon: <Cloud className="h-4 w-4" /> },
     { label: t("settings.title"), href: "/app/settings", icon: <Settings className="h-4 w-4" /> },
-    { label: t("settingsSection.aiRouterTitle"), href: "/app/settings/ai-router", icon: <Users className="h-4 w-4" /> },
+    { label: t("settingsSection.aiIntegrationsTitle"), href: "/app/settings/ai-integrations", icon: <Plug className="h-4 w-4" /> },
+    { label: t("settingsSection.aiRouterTitle"), href: "/app/settings/ai-router", icon: <Bot className="h-4 w-4" /> },
     { label: t("settingsSection.deepSearchTitle"), href: "/app/settings/deep-search", icon: <Search className="h-4 w-4" /> },
     { label: t("settingsSection.copilotToolsTitle"), href: "/app/settings/tools", icon: <Wand2 className="h-4 w-4" /> },
     { label: t("settings.github"), href: "/app/settings/github", icon: <Library className="h-4 w-4" /> },

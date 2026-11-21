@@ -201,7 +201,7 @@ describe("validated account-scoped settings cache", () => {
 
   it("keeps important settings locally editable offline with an explanation", () => {
     const page = readFileSync(resolve(process.cwd(), "src/pages/SettingsPage.tsx"), "utf8");
-    expect(page).toContain('fieldset className="space-y-3" aria-describedby={offline ? "offline-settings-explanation" : undefined}');
+    expect(page).toContain('fieldset className="min-w-0 space-y-3" aria-describedby={offline ? "offline-settings-explanation" : undefined}');
     expect(page).toContain('credentialsDisabled={false}');
     expect(page).toContain('id="offline-settings-explanation"');
   });

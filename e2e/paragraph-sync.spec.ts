@@ -518,6 +518,7 @@ test("authenticated route families survive direct navigation and refresh", async
     [`app/books/${BOOK_ID}/chapters/001-the-arrival`, "ChapterPage"],
     [`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001`, "ParagraphPage"],
     ["app/settings", "SettingsPage"],
+    ["app/settings/ai-integrations", "SettingsPage"],
     ["app/settings/ai-router", "SettingsPage"],
     ["app/settings/deep-search", "SettingsPage"],
     ["app/settings/tools", "SettingsPage"],

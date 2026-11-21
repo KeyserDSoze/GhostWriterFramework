@@ -110,7 +110,7 @@ describe("Copilot critical paths", () => {
     } as never;
     const readOnly = await runAssistantPrompt({ prompt: "What is the plot?", context, settings, book: null, branch: "main", token: "", history: [], compactSummary: "", compactedMessageCount: 0, attachments: [], accountScope: null });
     expect(readOnly.text).not.toContain("explicit editing request");
-    expect(readOnly.action).toMatchObject({ kind: "navigate", to: "/app/settings/ai-router" });
+    expect(readOnly.action).toMatchObject({ kind: "navigate", to: "/app/settings/ai-integrations", label: "AI Integrations" });
 
     ensureBuiltinCopilotToolsRegistered();
     expect(chooseToolMatch({ prompt: "update the plot", lowered: "update the plot", settings }, new Set(["update-plot"]))).toMatchObject({ toolId: "update-plot", mutationIntent: "positive" });

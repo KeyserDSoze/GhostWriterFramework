@@ -118,11 +118,11 @@ describe("audit Copilot dispatch", () => {
     expect(listBranchCommits).not.toHaveBeenCalled();
   });
 
-  it("explains a missing Audit model and links to the router", async () => {
+  it("explains a missing Audit model and links to AI Integrations", async () => {
     const noModel = { ...settings, aiIntegrations: [] } as unknown as AppSettings;
     const message = await prompt("run audit", book, noModel);
     expect(message.text).toContain("No executable AI model");
-    expect(message.action).toMatchObject({ kind: "navigate", to: "/app/settings/ai-router" });
+    expect(message.action).toMatchObject({ kind: "navigate", to: "/app/settings/ai-integrations", label: "AI Integrations" });
     expect(auditRunBlocker(book, noModel)).toBe("missing-model");
   });
 

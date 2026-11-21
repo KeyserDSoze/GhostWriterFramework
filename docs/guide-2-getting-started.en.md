@@ -16,7 +16,7 @@ You can later open Book Settings and attach the same working copy to a new priva
 
 ## 3. Configure AI
 
-Narrarium does not include a model. Open Settings → AI integrations and configure OpenAI, Azure OpenAI, GitHub Models, or another supported provider. Configuration and credentials are saved in the local account dataset.
+Narrarium does not include a model. Open **Settings → AI Integrations** and add OpenAI, Azure OpenAI, GitHub Models, or another supported provider. Configuration and credentials are saved in the local account dataset. Then open **Settings → AI Router** to choose which model handles each task, with fallbacks.
 
 ## 4. Optional account replicas
 

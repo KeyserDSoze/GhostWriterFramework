@@ -257,7 +257,7 @@ export async function runAssistantPrompt(input: {
         : missingToolRequirementsMessage(tool, contract.missing, settings.ui.language);
       const message = makeAssistantMessage("assistant", text);
       return contract.missing.includes("configured compatible AI model")
-        ? { ...message, action: { kind: "navigate", to: "/app/settings/ai-router", label: "AI Router" } }
+        ? { ...message, action: { kind: "navigate", to: "/app/settings/ai-integrations", label: "AI Integrations" } }
         : message;
     }
     const message = await runImmediateHandler(handlers[tool.handlerId as keyof typeof handlers]);
@@ -1072,8 +1072,8 @@ async function auditNavigationFromPrompt(input: PromptInput & { book: BookEntry;
       return {
         id: crypto.randomUUID(),
         role: "assistant",
-        text: "No executable AI model is configured for the Audit task. Configure its primary model or a fallback before running the audit.",
-        action: { kind: "navigate", to: "/app/settings/ai-router", label: "AI Router" },
+        text: "No executable AI model is configured for the Audit task. Add one in AI Integrations (or route the task in AI Router) before running the audit.",
+        action: { kind: "navigate", to: "/app/settings/ai-integrations", label: "AI Integrations" },
       };
     }
   }

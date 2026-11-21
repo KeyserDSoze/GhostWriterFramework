@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, ArrowUpDown, Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Search, Server, Trash2, Volume2, Wand2 } from "lucide-react";
+import { ArrowRight, ArrowUp, ArrowUpDown, Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plug, Plus, Route, Search, Server, Trash2, Volume2, Wand2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -86,6 +86,10 @@ export function SettingsPage() {
   const offline = typeof navigator !== "undefined" && !navigator.onLine;
 
   const section = currentSettingsSection(location.pathname);
+  useEffect(() => {
+    // The app's <main> keeps its scroll offset between pages, and the AI pages link to each other from their bottom.
+    document.querySelector("main")?.scrollTo?.({ top: 0 });
+  }, [section]);
   const didAutoLoad = useRef(false);
   useEffect(() => {
     if (didAutoLoad.current) return;
@@ -97,6 +101,7 @@ export function SettingsPage() {
   const [newTokenLabel, setNewTokenLabel] = useState("");
   const [newToken, setNewToken] = useState("");
   const [newIntegration, setNewIntegration] = useState<AIIntegration>(() => createBlankIntegration());
+  const currencyId = useId();
 
   useEffect(() => {
     setDefaultToken(settings.defaultGitHubToken);
@@ -175,12 +180,12 @@ export function SettingsPage() {
           <h1 className="font-serif text-3xl font-semibold tracking-tight">{sectionMeta.title}</h1>
           <p className="text-muted-foreground">{sectionMeta.description}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={isLoading}>
             {isLoading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Cloud className="mr-1 h-3 w-3" />}
-            {settings.ui.language === "it" ? "Ricarica dati locali" : "Reload local data"}
+            {t("settings.syncFromDrive")}
           </Button>
-          <Button asChild variant="outline" size="sm"><Link to="/app/account-sync">Account &amp; Sync</Link></Button>
+          <Button asChild variant="outline" size="sm"><Link to="/app/account-sync">{t("nav.accountSync")}</Link></Button>
           {section !== "home" && (
             <Button size="sm" onClick={() => void handleSave()} disabled={isSaving || brokenRoutes.length > 0 || Boolean(offlineConflict)}>
               {isSaving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
@@ -191,7 +196,7 @@ export function SettingsPage() {
       </div>
 
       {syncStatus === "error" && <Alert variant="destructive"><CloudOff className="h-4 w-4" /><AlertDescription>{t("settings.syncError")}</AlertDescription></Alert>}
-      {offline && <Alert><CloudOff className="h-4 w-4" /><AlertDescription id="offline-settings-explanation">{settings.ui.language === "it" ? "Offline: le modifiche vengono salvate localmente e saranno sincronizzate in seguito." : "Offline: changes are saved locally and will sync later."}</AlertDescription></Alert>}
+      {offline && <Alert><CloudOff className="h-4 w-4" /><AlertDescription id="offline-settings-explanation">{t("settings.offlineExplanation")}</AlertDescription></Alert>}
       {offlineConflict && <Alert variant="destructive"><CloudOff className="h-4 w-4" /><AlertDescription className="space-y-3"><p>{t("settings.offlineConflict", { fields: offlineConflict.changedKeys.join(", ") })}</p><div className="flex flex-wrap gap-2"><Button size="sm" variant="destructive" onClick={() => void resolveOfflineConflict("local")}>{t("settings.keepOfflineChanges")}</Button><Button size="sm" variant="outline" onClick={() => void resolveOfflineConflict("cloud")}>{t("settings.useCloudSettings")}</Button></div></AlertDescription></Alert>}
       {brokenRoutes.length > 0 && (
         <Alert variant="destructive">
@@ -206,6 +211,7 @@ export function SettingsPage() {
 
       {section === "home" ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <SettingsCard href="/app/settings/ai-integrations" title={t("settingsSection.aiIntegrationsTitle")} description={t("settingsSection.aiIntegrationsDescription")} icon={<Plug className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/ai-router" title={t("settingsSection.aiRouterTitle")} description={t("settingsSection.aiRouterDescription")} icon={<Bot className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/deep-search" title={t("settingsSection.deepSearchTitle")} description={t("settingsSection.deepSearchDescription")} icon={<Search className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/tools" title={t("settingsSection.copilotToolsTitle")} description={t("settingsSection.copilotToolsDescription")} icon={<Wand2 className="h-5 w-5" />} />
@@ -214,16 +220,16 @@ export function SettingsPage() {
           <SettingsCard href="/app/settings/repository" title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/server" title={t("personalServer.title")} description={t("personalServer.description")} icon={<Server className="h-5 w-5" />} />
         </div>
-      ) : section === "ai-router" ? (
-        <fieldset className="space-y-3" aria-describedby={offline ? "offline-settings-explanation" : undefined}>
-          {aiIntegrations.length > 0 && <Section title={t("routing.title")} description={t("routing.description")} icon={<Route className="h-4 w-4 shrink-0" />} defaultOpen><TaskRoutingBody settings={settings} patchSettings={patchSettings} /></Section>}
-          <Section title={t("settings.aiIntegrations")} description={t("settings.aiDescription")} icon={<Bot className="h-4 w-4 shrink-0" />} defaultOpen>
+      ) : section === "ai-integrations" ? (
+        // The two AI pages share one mounted SettingsPage (router.tsx): keyed, so nothing of one carries over to the other.
+        <fieldset className="min-w-0 space-y-3" aria-describedby={offline ? "offline-settings-explanation" : undefined} key="ai-integrations">
+          <Section title={t("settings.aiIntegrations")} description={t("settings.aiDescription")} icon={<Plug className="h-4 w-4 shrink-0" />} defaultOpen>
             <div className="space-y-5">
               <DefaultIntegrationSelectors integrations={aiIntegrations} defaultWriting={defaultWriting} defaultReview={defaultReview} onWritingChange={(id) => patchAi({ defaultWritingIntegrationId: id })} onReviewChange={(id) => patchAi({ defaultReviewIntegrationId: id })} />
               <div className="grid gap-2 sm:max-w-xs">
-                <Label>{t("settings.costCurrency")}</Label>
+                <Label htmlFor={currencyId}>{t("settings.costCurrency")}</Label>
                 <Select value={settings.costCurrency || "USD"} onValueChange={(value) => patchSettings({ costCurrency: value })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id={currencyId} aria-describedby={`${currencyId}-hint`}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {COST_CURRENCIES.map((currency) => (
                       <SelectItem key={currency.value} value={currency.value}>
@@ -232,7 +238,7 @@ export function SettingsPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">{t("settings.costCurrencyHint")}</p>
+                <p id={`${currencyId}-hint`} className="text-xs text-muted-foreground">{t("settings.costCurrencyHint")}</p>
               </div>
               {aiIntegrations.length === 0 && <p className="text-sm text-muted-foreground">{t("settings.noIntegrations")}</p>}
               <div className="grid gap-3">{aiIntegrations.map((integration) => <IntegrationAccordion key={integration.id} integration={integration}><IntegrationEditor integration={integration} onChange={(patch) => updateIntegration(integration.id, patch)} onRemove={() => removeIntegration(integration.id)} credentialsDisabled={false} /></IntegrationAccordion>)}</div>
@@ -244,6 +250,22 @@ export function SettingsPage() {
               </div>
             </div>
           </Section>
+          {aiIntegrations.length > 0 && (
+            <div className="flex justify-end pb-12">
+              <Button asChild variant="outline" className="h-auto whitespace-normal py-2 text-left"><Link to="/app/settings/ai-router">{t("settings.nextRouteTasks")}<ArrowRight className="ml-2 h-4 w-4" /></Link></Button>
+            </div>
+          )}
+        </fieldset>
+      ) : section === "ai-router" ? (
+        <fieldset className="min-w-0 space-y-3" aria-describedby={offline ? "offline-settings-explanation" : undefined} key="ai-router">
+          {aiIntegrations.length > 0 ? (
+            <>
+              <p className="text-sm text-muted-foreground">{t("routing.modelsFromIntegrations")} <Link to="/app/settings/ai-integrations" className="font-medium text-primary underline underline-offset-2">{t("settingsSection.aiIntegrationsTitle")}</Link>.</p>
+              <Section title={t("routing.title")} description={t("routing.description")} icon={<Route className="h-4 w-4 shrink-0" />} defaultOpen><TaskRoutingBody settings={settings} patchSettings={patchSettings} /></Section>
+            </>
+          ) : (
+            <RoutingEmptyState />
+          )}
         </fieldset>
       ) : section === "deep-search" ? (
         <Section title={t("settingsSection.deepSearchTitle")} description={t("settingsSection.deepSearchDescription")} icon={<Search className="h-4 w-4 shrink-0" />} defaultOpen>
@@ -280,7 +302,8 @@ export function SettingsPage() {
   );
 }
 
-function currentSettingsSection(pathname: string): "home" | "ai-router" | "deep-search" | "tools" | "github" | "speech" | "repository" | "server" {
+function currentSettingsSection(pathname: string): "home" | "ai-integrations" | "ai-router" | "deep-search" | "tools" | "github" | "speech" | "repository" | "server" {
+  if (/\/app\/settings\/ai-integrations$/.test(pathname)) return "ai-integrations";
   if (/\/app\/settings\/ai-router$/.test(pathname)) return "ai-router";
   if (/\/app\/settings\/deep-search$/.test(pathname)) return "deep-search";
   if (/\/app\/settings\/tools$/.test(pathname)) return "tools";
@@ -292,6 +315,7 @@ function currentSettingsSection(pathname: string): "home" | "ai-router" | "deep-
 }
 
 function settingsSectionMeta(t: ReturnType<typeof useTranslation>["t"], section: ReturnType<typeof currentSettingsSection>) {
+  if (section === "ai-integrations") return { title: t("settingsSection.aiIntegrationsTitle"), description: t("settingsSection.aiIntegrationsDescription") };
   if (section === "ai-router") return { title: t("settingsSection.aiRouterTitle"), description: t("settingsSection.aiRouterDescription") };
   if (section === "deep-search") return { title: t("settingsSection.deepSearchTitle"), description: t("settingsSection.deepSearchDescription") };
   if (section === "tools") return { title: t("settingsSection.copilotToolsTitle"), description: t("settingsSection.copilotToolsDescription") };
@@ -404,22 +428,23 @@ function DefaultIntegrationSelectors({
   onReviewChange: (id: string) => void;
 }) {
   const { t } = useTranslation();
+  const id = useId();
   const options = useMemo(() => integrations.map((integration) => ({ id: integration.id, label: integration.name || integration.provider })), [integrations]);
   if (options.length === 0) return null;
 
   return (
     <div className="grid gap-4 rounded-2xl border bg-muted/20 p-4 sm:grid-cols-2">
       <div className="grid gap-2">
-        <Label>{t("settings.defaultWriting")}</Label>
+        <Label htmlFor={`${id}-writing`}>{t("settings.defaultWriting")}</Label>
         <Select value={defaultWriting} onValueChange={onWritingChange}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectTrigger id={`${id}-writing`}><SelectValue /></SelectTrigger>
           <SelectContent>{options.map((option) => <SelectItem key={option.id} value={option.id}>{option.label}</SelectItem>)}</SelectContent>
         </Select>
       </div>
       <div className="grid gap-2">
-        <Label>{t("settings.defaultReview")}</Label>
+        <Label htmlFor={`${id}-review`}>{t("settings.defaultReview")}</Label>
         <Select value={defaultReview} onValueChange={onReviewChange}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectTrigger id={`${id}-review`}><SelectValue /></SelectTrigger>
           <SelectContent>{options.map((option) => <SelectItem key={option.id} value={option.id}>{option.label}</SelectItem>)}</SelectContent>
         </Select>
       </div>
@@ -452,7 +477,7 @@ function IntegrationAccordion({ integration, children }: { integration: AIIntegr
   const providerText = providerLabel(t, integration.provider);
   const modelCount = integration.chatModels?.length ?? 0;
   return (
-    <details className="group rounded-2xl border bg-card shadow-sm [&[open]>summary_.chev]:rotate-90">
+    <details className="group min-w-0 rounded-2xl border bg-card shadow-sm [&[open]>summary_.chev]:rotate-90">
       <summary className="flex cursor-pointer list-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden">
         <ChevronRight className="chev h-4 w-4 shrink-0 text-muted-foreground transition-transform" />
         <div className="min-w-0 flex-1">
@@ -471,6 +496,7 @@ function IntegrationAccordion({ integration, children }: { integration: AIIntegr
 function IntegrationEditor({ integration, onChange, onRemove, credentialsDisabled = false }: { integration: AIIntegration; onChange: (patch: Partial<AIIntegration>) => void; onRemove?: () => void; credentialsDisabled?: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const id = useId();
   const isGithub = integration.provider === "github_models";
   const usesApiKey = integration.provider !== "m365_copilot";
   const usesEndpoint = integration.provider !== "m365_copilot" && !isGithub;
@@ -481,13 +507,13 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="grid flex-1 gap-3 sm:grid-cols-2">
           <div className="grid gap-2">
-            <Label>{t("settings.integrationName")}</Label>
-            <Input value={integration.name} onChange={(e) => onChange({ name: e.target.value })} placeholder="Azure OpenAI" />
+            <Label htmlFor={`${id}-name`}>{t("settings.integrationName")}</Label>
+            <Input id={`${id}-name`} value={integration.name} onChange={(e) => onChange({ name: e.target.value })} placeholder="Azure OpenAI" />
           </div>
           <div className="grid gap-2">
-            <Label>{t("settings.provider")}</Label>
+            <Label htmlFor={`${id}-provider`}>{t("settings.provider")}</Label>
             <Select value={integration.provider} onValueChange={(value) => onChange({ provider: value as AIProviderType })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger id={`${id}-provider`}><SelectValue /></SelectTrigger>
               <SelectContent>{PROVIDERS.map((provider) => <SelectItem key={provider.value} value={provider.value}>{t(provider.labelKey, { defaultValue: provider.fallback })}</SelectItem>)}</SelectContent>
             </Select>
           </div>
@@ -502,21 +528,23 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
       <div className="grid gap-3 sm:grid-cols-2">
         {usesEndpoint && (
           <div className="grid gap-2 sm:col-span-2">
-            <Label>{t("settings.endpoint")}</Label>
-            <Input value={integration.endpoint ?? ""} onChange={(e) => onChange({ endpoint: e.target.value })} placeholder={integration.provider === "azure_openai" ? "https://resource.openai.azure.com" : "https://api.openai.com/v1"} />
+            <Label htmlFor={`${id}-endpoint`}>{t("settings.endpoint")}</Label>
+            <Input id={`${id}-endpoint`} value={integration.endpoint ?? ""} onChange={(e) => onChange({ endpoint: e.target.value })} placeholder={integration.provider === "azure_openai" ? "https://resource.openai.azure.com" : "https://api.openai.com/v1"} />
           </div>
         )}
         {usesApiKey && (
           <div className="grid gap-2">
-            <Label>{isGithub ? t("settings.githubPat") : t("settings.apiKey")}</Label>
+            <Label htmlFor={`${id}-key`}>{isGithub ? t("settings.githubPat") : t("settings.apiKey")}</Label>
             <SecretInput
+              id={`${id}-key`}
+              aria-describedby={isGithub ? `${id}-key-hint` : undefined}
               value={integration.apiKey}
               onChange={(e) => onChange({ apiKey: e.target.value })}
               placeholder={isGithub ? "ghp_… (GitHub PAT)" : undefined}
               disabled={credentialsDisabled}
               onCopyResult={(copied) => toast(copied ? { title: t("secretInput.copiedToast") } : { title: t("secretInput.copyFailed"), variant: "destructive" })}
             />
-            {isGithub && <p className="text-xs text-muted-foreground">{t("settings.githubModelsHint")}</p>}
+            {isGithub && <p id={`${id}-key-hint`} className="text-xs text-muted-foreground">{t("settings.githubModelsHint")}</p>}
           </div>
         )}
         {integration.provider !== "m365_copilot" && (
@@ -525,23 +553,23 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
         {usesMedia && (
           <>
             <div className="grid gap-2">
-              <Label>{t("speech.sttModel")}</Label>
-              <Input value={integration.modelSpeechToText ?? ""} onChange={(e) => onChange({ modelSpeechToText: e.target.value })} placeholder="whisper-1 or deployment" />
+              <Label htmlFor={`${id}-stt`}>{t("speech.sttModel")}</Label>
+              <Input id={`${id}-stt`} value={integration.modelSpeechToText ?? ""} onChange={(e) => onChange({ modelSpeechToText: e.target.value })} placeholder={t("settings.modelOrDeployment", { model: "whisper-1" })} />
             </div>
             <div className="grid gap-2">
-              <Label>{t("speech.ttsModel")}</Label>
-              <Input value={integration.modelTextToSpeech ?? ""} onChange={(e) => onChange({ modelTextToSpeech: e.target.value })} placeholder="tts-1 or deployment" />
+              <Label htmlFor={`${id}-tts`}>{t("speech.ttsModel")}</Label>
+              <Input id={`${id}-tts`} value={integration.modelTextToSpeech ?? ""} onChange={(e) => onChange({ modelTextToSpeech: e.target.value })} placeholder={t("settings.modelOrDeployment", { model: "tts-1" })} />
             </div>
             <div className="grid gap-2">
-              <Label>{t("images.imageModel")}</Label>
-              <Input value={integration.modelImageGeneration ?? ""} onChange={(e) => onChange({ modelImageGeneration: e.target.value })} placeholder="gpt-image-1 or deployment" />
+              <Label htmlFor={`${id}-image`}>{t("images.imageModel")}</Label>
+              <Input id={`${id}-image`} value={integration.modelImageGeneration ?? ""} onChange={(e) => onChange({ modelImageGeneration: e.target.value })} placeholder={t("settings.modelOrDeployment", { model: "gpt-image-1" })} />
             </div>
           </>
         )}
         {integration.provider === "azure_openai" && (
           <div className="grid gap-2">
-            <Label>{t("settings.apiVersion")}</Label>
-            <Input value={integration.apiVersion ?? ""} onChange={(e) => onChange({ apiVersion: e.target.value })} placeholder="2024-10-21" />
+            <Label htmlFor={`${id}-version`}>{t("settings.apiVersion")}</Label>
+            <Input id={`${id}-version`} value={integration.apiVersion ?? ""} onChange={(e) => onChange({ apiVersion: e.target.value })} placeholder="2024-10-21" />
           </div>
         )}
       </div>
@@ -583,6 +611,7 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
 function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networkDisabled = false }: { provider: AIProviderType; endpoint: string; apiKey: string; models: ChatModel[]; onChange: (models: ChatModel[]) => void; networkDisabled?: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const id = useId();
   const [loadingCatalog, setLoadingCatalog] = useState(false);
   const [remoteModels, setRemoteModels] = useState<OpenAICompatibleModel[]>([]);
   const [selectedRemoteModel, setSelectedRemoteModel] = useState("");
@@ -670,20 +699,20 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networ
 
   return (
     <div className="mt-3 rounded-lg border bg-muted/10 p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-[12rem] flex-1">
           <p className="text-sm font-medium">{t("settings.chatModels")}</p>
           <p className="text-xs text-muted-foreground">{t("settings.chatModelsHint")}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {provider === "github_models" && (
-            <Button type="button" variant="outline" size="sm" disabled={networkDisabled || loadingCatalog} onClick={() => void loadCatalog()}>
+            <Button type="button" variant="outline" size="sm" className="h-auto whitespace-normal py-1.5 text-left" disabled={networkDisabled || loadingCatalog} onClick={() => void loadCatalog()}>
               {loadingCatalog ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1 h-3.5 w-3.5" />}
               {t("settings.loadCatalogModels")}
             </Button>
           )}
           {provider === "openai" && (
-            <Button type="button" variant="outline" size="sm" disabled={networkDisabled || loadingCatalog} onClick={() => void loadOpenAIModels()}>
+            <Button type="button" variant="outline" size="sm" className="h-auto whitespace-normal py-1.5 text-left" disabled={networkDisabled || loadingCatalog} onClick={() => void loadOpenAIModels()}>
               {loadingCatalog ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1 h-3.5 w-3.5" />}
               {t("settings.loadApiModels")}
             </Button>
@@ -696,9 +725,9 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networ
       {provider === "openai" && remoteModels.length > 0 && (
         <div className="mb-3 flex flex-col gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3 sm:flex-row sm:items-end">
           <div className="grid flex-1 gap-1">
-            <Label className="text-xs">{t("settings.apiModelChoice")}</Label>
+            <Label htmlFor={`${id}-remote`} className="text-xs">{t("settings.apiModelChoice")}</Label>
             <Select value={selectedRemoteModel} onValueChange={setSelectedRemoteModel}>
-              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("settings.chooseApiModel")} /></SelectTrigger>
+              <SelectTrigger id={`${id}-remote`} className="h-8 text-sm"><SelectValue placeholder={t("settings.chooseApiModel")} /></SelectTrigger>
               <SelectContent>
                 {remoteModels.map((model) => <SelectItem key={model.id} value={model.id}>{model.id}</SelectItem>)}
               </SelectContent>
@@ -715,8 +744,8 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networ
           <div key={model.id} className="rounded-lg border bg-card p-3">
             <div className="flex items-end gap-2">
               <div className="grid flex-1 gap-1">
-                <Label className="text-xs">{t("settings.chatModelName")}</Label>
-                <Input value={model.name} onChange={(e) => patchModel(model.id, { name: e.target.value })} placeholder="gpt-4o" className="h-8 text-sm" />
+                <Label htmlFor={`${id}-${model.id}-name`} className="text-xs">{t("settings.chatModelName")}</Label>
+                <Input id={`${id}-${model.id}-name`} value={model.name} onChange={(e) => patchModel(model.id, { name: e.target.value })} placeholder="gpt-4o" className="h-8 text-sm" />
               </div>
               <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => removeModel(model.id)} aria-label={t("settings.removeModel", { name: model.name })}>
                 <Trash2 className="h-4 w-4 text-destructive" />
@@ -725,21 +754,21 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networ
             <div className="mt-2 grid gap-2 sm:grid-cols-3">
               {provider === "azure_openai" && (
                 <div className="grid gap-1">
-                  <Label className="text-xs">{t("settings.underlyingModel")}</Label>
-                  <Input value={model.underlyingModel ?? ""} onChange={(e) => patchModel(model.id, { underlyingModel: e.target.value.trim() || undefined })} placeholder="o3-mini / gpt-4o" className="h-8 text-sm" />
+                  <Label htmlFor={`${id}-${model.id}-underlying`} className="text-xs">{t("settings.underlyingModel")}</Label>
+                  <Input id={`${id}-${model.id}-underlying`} value={model.underlyingModel ?? ""} onChange={(e) => patchModel(model.id, { underlyingModel: e.target.value.trim() || undefined })} placeholder="o3-mini / gpt-4o" className="h-8 text-sm" />
                 </div>
               )}
               {provider === "github_models" && (
                 <div className="grid gap-1">
-                  <Label className="text-xs">{t("settings.modelTier")}</Label>
-                  <Input value={model.tier ?? ""} onChange={(e) => patchModel(model.id, { tier: e.target.value.trim() || undefined })} placeholder="low / standard / high" className="h-8 text-sm" />
+                  <Label htmlFor={`${id}-${model.id}-tier`} className="text-xs">{t("settings.modelTier")}</Label>
+                  <Input id={`${id}-${model.id}-tier`} value={model.tier ?? ""} onChange={(e) => patchModel(model.id, { tier: e.target.value.trim() || undefined })} placeholder="low / standard / high" className="h-8 text-sm" />
                 </div>
               )}
               <TokenLimitField label={t("settings.maxInputTokens")} value={model.maxInputTokens} onChange={(v) => patchModel(model.id, { maxInputTokens: v })} />
               <TokenLimitField label={t("settings.maxOutputTokens")} value={model.maxOutputTokens} onChange={(v) => patchModel(model.id, { maxOutputTokens: v })} />
               <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
-                <Label className="text-xs">Forced tool calls</Label>
-                <Switch checked={model.supportsToolCalls !== false} onCheckedChange={(supportsToolCalls) => patchModel(model.id, { supportsToolCalls })} />
+                <Label htmlFor={`${id}-${model.id}-tools`} className="text-xs">{t("settings.forcedToolCalls")}</Label>
+                <Switch id={`${id}-${model.id}-tools`} checked={model.supportsToolCalls !== false} onCheckedChange={(supportsToolCalls) => patchModel(model.id, { supportsToolCalls })} />
               </div>
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -749,6 +778,7 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networ
                   <button
                     key={capability}
                     type="button"
+                    aria-pressed={Boolean(active)}
                     onClick={() => toggleCapability(model.id, capability)}
                     className={active
                       ? "rounded-full border border-primary bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground"
@@ -775,10 +805,12 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networ
 }
 
 function PriceField({ label, value, onChange }: { label: string; value: number | undefined; onChange: (v: number | undefined) => void }) {
+  const id = useId();
   return (
     <div className="grid gap-1">
-      <Label className="text-xs">{label}</Label>
+      <Label htmlFor={id} className="text-xs">{label}</Label>
       <Input
+        id={id}
         type="number"
         inputMode="decimal"
         step="0.01"
@@ -795,10 +827,12 @@ function PriceField({ label, value, onChange }: { label: string; value: number |
 }
 
 function TokenLimitField({ label, value, onChange }: { label: string; value: number | undefined; onChange: (v: number | undefined) => void }) {
+  const id = useId();
   return (
     <div className="grid gap-1">
-      <Label className="text-xs">{label}</Label>
+      <Label htmlFor={id} className="text-xs">{label}</Label>
       <Input
+        id={id}
         type="number"
         inputMode="numeric"
         min="0"
@@ -907,8 +941,21 @@ function normalizeRoutingTarget(target: RoutingTarget | undefined, task: Routing
   return model ? { integrationId: target.integrationId, model } : undefined;
 }
 
+function RoutingEmptyState() {
+  const { t } = useTranslation();
+  return (
+    <div className="rounded-3xl border border-dashed p-6 text-center sm:p-8">
+      <Plug className="mx-auto h-10 w-10 text-primary" />
+      <h2 className="mt-4 font-serif text-xl font-semibold">{t("routing.noIntegrationsTitle")}</h2>
+      <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted-foreground">{t("routing.noIntegrationsBody")}</p>
+      <Button asChild className="mt-5"><Link to="/app/settings/ai-integrations">{t("routing.noIntegrationsAction")}</Link></Button>
+    </div>
+  );
+}
+
 function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
   const { t } = useTranslation();
+  const id = useId();
   const integrations = settings.aiIntegrations ?? [];
   const routing = settings.taskRouting ?? {};
   const execution = settings.routingExecution ?? DEFAULT_SETTINGS.routingExecution;
@@ -924,19 +971,19 @@ function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; p
     <div className="space-y-4">
       <div className="space-y-3 rounded-lg border bg-muted/10 p-3">
         <div className="flex items-center justify-between gap-4">
-          <div><Label>{t("routing.sameBoundaryOnly")}</Label><p className="text-xs text-muted-foreground">{t("routing.sameBoundaryOnlyHint")}</p></div>
-          <Switch checked={settings.fallbackDisclosure?.sameBoundaryOnly ?? false} onCheckedChange={(sameBoundaryOnly) => patchSettings({ fallbackDisclosure: { ...settings.fallbackDisclosure, sameBoundaryOnly } })} />
+          <div><Label htmlFor={`${id}-boundary`}>{t("routing.sameBoundaryOnly")}</Label><p id={`${id}-boundary-hint`} className="text-xs text-muted-foreground">{t("routing.sameBoundaryOnlyHint")}</p></div>
+          <Switch id={`${id}-boundary`} aria-describedby={`${id}-boundary-hint`} checked={settings.fallbackDisclosure?.sameBoundaryOnly ?? false} onCheckedChange={(sameBoundaryOnly) => patchSettings({ fallbackDisclosure: { ...settings.fallbackDisclosure, sameBoundaryOnly } })} />
         </div>
         <div className="flex items-center justify-between gap-4">
-          <div><Label>{t("routing.requireAcknowledgement")}</Label><p className="text-xs text-muted-foreground">{t("routing.requireAcknowledgementHint")}</p></div>
-          <Switch checked={settings.fallbackDisclosure?.requireAcknowledgement ?? false} onCheckedChange={(requireAcknowledgement) => { clearFallbackAcknowledgements(); patchSettings({ fallbackDisclosure: { ...settings.fallbackDisclosure, requireAcknowledgement } }); }} />
+          <div><Label htmlFor={`${id}-acknowledge`}>{t("routing.requireAcknowledgement")}</Label><p id={`${id}-acknowledge-hint`} className="text-xs text-muted-foreground">{t("routing.requireAcknowledgementHint")}</p></div>
+          <Switch id={`${id}-acknowledge`} aria-describedby={`${id}-acknowledge-hint`} checked={settings.fallbackDisclosure?.requireAcknowledgement ?? false} onCheckedChange={(requireAcknowledgement) => { clearFallbackAcknowledgements(); patchSettings({ fallbackDisclosure: { ...settings.fallbackDisclosure, requireAcknowledgement } }); }} />
         </div>
       </div>
       <div className="grid gap-3 rounded-lg border bg-muted/10 p-3 sm:grid-cols-2">
-        <TokenLimitField label="Maximum candidates" value={execution.maxCandidates} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxCandidates: Math.min(8, Math.max(1, value ?? 4)) } })} />
-        <TokenLimitField label="Total routing time (ms)" value={execution.maxTotalDurationMs} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxTotalDurationMs: Math.min(600_000, Math.max(1_000, value ?? 180_000)) } })} />
-        <TokenLimitField label="Maximum token attempts" value={execution.maxTokenAttempts} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxTokenAttempts: Math.min(2_000_000, Math.max(1_000, value ?? 200_000)) } })} />
-        <PriceField label="Maximum estimated route cost" value={execution.maxEstimatedCost} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxEstimatedCost: Math.min(1_000, Math.max(0.01, value ?? 5)) } })} />
+        <TokenLimitField label={t("routing.maxCandidates")} value={execution.maxCandidates} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxCandidates: Math.min(8, Math.max(1, value ?? 4)) } })} />
+        <TokenLimitField label={t("routing.maxTotalDuration")} value={execution.maxTotalDurationMs} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxTotalDurationMs: Math.min(600_000, Math.max(1_000, value ?? 180_000)) } })} />
+        <TokenLimitField label={t("routing.maxTokenAttempts")} value={execution.maxTokenAttempts} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxTokenAttempts: Math.min(2_000_000, Math.max(1_000, value ?? 200_000)) } })} />
+        <PriceField label={t("routing.maxEstimatedCost")} value={execution.maxEstimatedCost} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxEstimatedCost: Math.min(1_000, Math.max(0.01, value ?? 5)) } })} />
       </div>
       {ROUTING_TASKS.map((task) => (
         <TaskRouteEditor
@@ -954,6 +1001,7 @@ function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; p
 
 function TaskRouteEditor({ task, settings, integrations, route, onChange }: { task: RoutingTaskKind; settings: AppSettings; integrations: AIIntegration[]; route?: TaskRoute; onChange: (route: TaskRoute | undefined) => void }) {
   const { t } = useTranslation();
+  const id = useId();
   const current: TaskRoute = route ?? { primary: undefined, fallbacks: [] };
   const execution = settings.routingExecution ?? DEFAULT_SETTINGS.routingExecution;
   const firstChoice = taskIntegrationChoices(integrations, task, t)[0];
@@ -989,12 +1037,12 @@ function TaskRouteEditor({ task, settings, integrations, route, onChange }: { ta
   }
 
   const label = t(`routing.task.${task}`);
-  const boundaries = resolveEffectiveTaskCandidates(settings, task).map((candidate) => `${candidateBoundaryLabel(candidate)} (${candidate.browser ? "browser" : candidate.model})`);
+  const boundaries = resolveEffectiveTaskCandidates(settings, task).map((candidate) => `${candidate.browser ? t("routing.browserBoundary") : candidateBoundaryLabel(candidate)} (${candidate.browser ? "browser" : candidate.model})`);
 
   return (
-    <div className="rounded-lg border bg-muted/10 p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-sm font-medium">{label}</p>
+    <div role="group" aria-labelledby={`${id}-title`} className="rounded-lg border bg-muted/10 p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <p id={`${id}-title`} className="text-sm font-medium">{label}</p>
         <Button
           type="button"
           variant="outline"
@@ -1009,16 +1057,16 @@ function TaskRouteEditor({ task, settings, integrations, route, onChange }: { ta
       </div>
       {boundaries.length > 0 && <p className="mb-2 text-xs text-muted-foreground">{t("routing.boundaryChain", { chain: boundaries.join(" → ") })}</p>}
       <div className="grid gap-2">
-        <div className="grid gap-1">
-          <Label className="text-xs">{t("routing.primary")}</Label>
-          <TargetRow task={task} integrations={integrations} target={current.primary} onChange={setPrimary} clearable />
+        <div className="grid min-w-0 gap-1">
+          <Label htmlFor={`${id}-primary-integration`} className="text-xs">{t("routing.primary")}</Label>
+          <TargetRow idBase={`${id}-primary`} label={t("routing.primary")} task={task} integrations={integrations} target={current.primary} onChange={setPrimary} clearable />
         </div>
         {current.fallbacks.map((fb, i) => (
-          <div key={i} className="grid gap-1">
-            <Label className="text-xs">{t("routing.fallbackN", { n: i + 1 })}</Label>
+          <div key={i} className="grid min-w-0 gap-1">
+            <Label htmlFor={`${id}-fallback${i}-integration`} className="text-xs">{t("routing.fallbackN", { n: i + 1 })}</Label>
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
-                <TargetRow task={task} integrations={integrations} target={fb} onChange={(t2) => setFallback(i, t2)} clearable onRemove={() => setFallback(i, undefined)} />
+                <TargetRow idBase={`${id}-fallback${i}`} label={t("routing.fallbackN", { n: i + 1 })} task={task} integrations={integrations} target={fb} onChange={(t2) => setFallback(i, t2)} clearable onRemove={() => setFallback(i, undefined)} />
               </div>
               {i > 0 && (
                 <Button
@@ -1044,14 +1092,14 @@ function TaskRouteEditor({ task, settings, integrations, route, onChange }: { ta
   );
 }
 
-function TargetRow({ task, integrations, target, onChange, clearable, onRemove }: { task: RoutingTaskKind; integrations: AIIntegration[]; target?: RoutingTarget; onChange: (target: RoutingTarget | undefined) => void; clearable?: boolean; onRemove?: () => void }) {
+function TargetRow({ idBase, label, task, integrations, target, onChange, clearable, onRemove }: { idBase: string; label: string; task: RoutingTaskKind; integrations: AIIntegration[]; target?: RoutingTarget; onChange: (target: RoutingTarget | undefined) => void; clearable?: boolean; onRemove?: () => void }) {
   const { t } = useTranslation();
   const integrationChoices = taskIntegrationChoices(integrations, task, t);
   const models = modelChoicesFor(integrations, target?.integrationId, task);
   const browserSelected = target?.integrationId === BROWSER_ROUTING_ID;
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex min-w-0 items-center gap-2">
       <Select
         value={target?.integrationId ?? ""}
         onValueChange={(integrationId) => {
@@ -1059,7 +1107,7 @@ function TargetRow({ task, integrations, target, onChange, clearable, onRemove }
           onChange({ integrationId, model: firstModel });
         }}
       >
-        <SelectTrigger className="h-8 flex-1 text-sm"><SelectValue placeholder={t("routing.pickIntegration")} /></SelectTrigger>
+        <SelectTrigger id={`${idBase}-integration`} aria-label={t("routing.targetIntegration", { target: label })} className="h-8 min-w-0 flex-1 text-sm"><SelectValue placeholder={t("routing.pickIntegration")} /></SelectTrigger>
         <SelectContent>{integrationChoices.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}</SelectContent>
       </Select>
       {browserSelected ? (
@@ -1069,7 +1117,7 @@ function TargetRow({ task, integrations, target, onChange, clearable, onRemove }
           value={target?.model ?? ""}
           onValueChange={(model) => target && onChange({ ...target, model })}
         >
-          <SelectTrigger className="h-8 flex-1 text-sm"><SelectValue placeholder={t("routing.pickModel")} /></SelectTrigger>
+          <SelectTrigger id={`${idBase}-model`} aria-label={t("routing.targetModel", { target: label })} className="h-8 min-w-0 flex-1 text-sm"><SelectValue placeholder={t("routing.pickModel")} /></SelectTrigger>
           <SelectContent>
             {models.length === 0 ? (
               <SelectItem value="__none__" disabled>{t("routing.noModel")}</SelectItem>

@@ -154,7 +154,7 @@ export function AutopilotPage() {
         </div>
       </div>
 
-      {noAi && <Alert><AlertTriangle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center justify-between gap-2"><span>{t("autopilot.errors.aiMissing")}</span><Button asChild size="sm" variant="outline"><Link to="/app/settings/ai-router">AI Router</Link></Button></AlertDescription></Alert>}
+      {noAi && <Alert><AlertTriangle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center justify-between gap-2"><span>{t("autopilot.errors.aiMissing")}</span><Button asChild size="sm" variant="outline"><Link to="/app/settings/ai-integrations">{t("settingsSection.aiIntegrationsTitle")}</Link></Button></AlertDescription></Alert>}
       {view.error && <Alert variant="destructive"><AlertDescription>{view.error}</AlertDescription></Alert>}
       {snapshot?.stateError && (
         <Alert variant="destructive">
