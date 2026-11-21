@@ -22,6 +22,7 @@ import {
   STORY_DESIGN_FILE,
   TOTAL_RESUME_FILE,
   canonPath,
+  canonSlug,
   chapterFilePath,
   chapterResumePath,
   chapterSlug,
@@ -32,7 +33,6 @@ import {
   paragraphSlug,
   readerEvaluationPath,
   readerSummaryPath,
-  slugify,
   type CanonKind,
 } from "../book/paths.js";
 import type { BookSnapshot, ChapterInfo } from "../book/snapshot.js";
@@ -40,6 +40,7 @@ import type { BookFileChange, BookStore } from "../book/store.js";
 import { askDirector, directorSystemPrompt, renderDirectorOpinion, type DirectorOpinion } from "../director/opinion.js";
 import { frontmatterString, parseMarkdown, renderMarkdown } from "../markdown/frontmatter.js";
 import { directorPrompt, type DirectorProfile } from "../profiles/director.js";
+import type { GhostwriterProfile } from "../profiles/ghostwriter.js";
 import { readerPersonaSystemPrompt, type ReaderPersonaProfile } from "../profiles/readers.js";
 import { currentRequest, untrustedData } from "../prompt/trust.js";
 import {
@@ -52,8 +53,9 @@ import {
 } from "../readers/evaluation.js";
 import { sha256Hex } from "../util/hash.js";
 import { asArray, asInteger, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
-import { bulletList, countWords, isItalian, languageName, tail, truncate } from "../util/text.js";
-import { importedChapters, type TaskDescriptor } from "./planner.js";
+import { bulletList, countWords, isItalian, languageName, OUTPUT_TOKENS_CEILING, scaleOutputTokens, tail, tokensPerWord, truncate } from "../util/text.js";
+import { chapterLines, layoutChapters, listSection, outlineList, type ChapterFormat } from "./outline.js";
+import { batchesNamed, firstMissingChapter, importedChapters, isExtensionNote, nextPlanBatch, planRange, revisionBatchStarts, type TaskDescriptor } from "./planner.js";
 import {
   CHAPTER_REVIEW_TOOL,
   CONCEPT_TOOL,
@@ -70,9 +72,9 @@ import {
   specialistsSystemPrompt,
   writerSystemPrompt,
 } from "./prompts.js";
-import { MAX_DIRECTOR_NOTES } from "./state.js";
+import { MAX_BOOK_CHAPTERS, MAX_DIRECTOR_NOTES } from "./state.js";
 import { STORY_SO_FAR_MAX_WORDS, STORY_SO_FAR_TARGET_WORDS, pruneStorySnapshots, readStorySoFar, renderTotalResumeBody, storySoFarExcess } from "./story-so-far.js";
-import type { AuthorIntervention, AutopilotPlan, AutopilotState, InsightTone, PlannedChapter, PlannedScene, ReviewDecision, ReviewFinding } from "./types.js";
+import type { AuthorIntervention, AutopilotPlan, AutopilotState, InsightTone, PlannedChapter, PlannedScene, ReviewDecision, ReviewFinding, RevisionRequest } from "./types.js";
 
 export type TaskAi = (request: Omit<AiRequest, "signal">) => Promise<AiResponse>;
 
@@ -141,20 +143,6 @@ function directorTaste(profile: DirectorProfile): string {
   ].filter(Boolean).join("\n\n");
 }
 
-function planOutline(plan: AutopilotPlan | null, options: { scenes?: boolean; upTo?: number } = {}): string {
-  if (!plan?.chapters.length) return "No plan yet.";
-  return plan.chapters
-    .filter((chapter) => options.upTo === undefined || chapter.number <= options.upTo)
-    .map((chapter) => {
-      const lines = [`${chapter.number}. ${chapter.title}${chapter.imported ? " (already written by the author)" : ""}${chapter.status === "done" ? " [done]" : ""}`];
-      if (chapter.summary) lines.push(`   ${chapter.summary}`);
-      if (chapter.reveals.length) lines.push(`   Reveals: ${chapter.reveals.join("; ")}`);
-      if (options.scenes) for (const scene of chapter.scenes) lines.push(`   - Scene ${scene.number}: ${scene.title}${scene.summary ? ` — ${scene.summary}` : scene.goal ? ` — ${scene.goal}` : ""}`);
-      return lines.join("\n");
-    })
-    .join("\n");
-}
-
 function chapterPlanBlock(chapter: PlannedChapter): string {
   return [
     `CHAPTER ${chapter.number}: ${chapter.title}`,
@@ -184,6 +172,27 @@ function data(sections: Array<string | false | undefined | null>): string {
 
 function request(lines: Array<string | false | undefined | null>): string {
   return currentRequest(lines.filter((line): line is string => Boolean(line && line.trim())).join("\n\n"));
+}
+
+/** A limit on the reply of a step, sized for a book in a Latin script and grown for the language of this one (unchanged for Italian and English). */
+function outputLimit(ctx: TaskContext, tokens: number): number {
+  return scaleOutputTokens(tokens, ctx.snapshot.book.language);
+}
+
+/** Tokens the reply of a scene may take: its words, each at what a word of the book's language costs, and room for what is not prose. */
+function sceneOutputLimit(ctx: TaskContext, words: number): number {
+  return Math.min(OUTPUT_TOKENS_CEILING, Math.ceil(words * tokensPerWord(ctx.snapshot.book.language)) + 800);
+}
+
+/** The ghostwriter of a chapter. One the book names that is not a file name is skipped, and the author is told. */
+function ghostwriterOf(ctx: TaskContext, chapter: ChapterInfo): Promise<GhostwriterProfile | null> {
+  return loadGhostwriter(ctx.store, ctx.snapshot, chapter, undefined, {
+    onInvalid: (slug) => ctx.insight(
+      "warning",
+      isItalian(ctx.language) ? `Il ghostwriter «${slug}» non è un nome di file valido: scrive quello predefinito` : `The ghostwriter «${slug}» is not a valid file name: the default one writes`,
+      isItalian(ctx.language) ? "Correggi la riga `ghostwriter` del libro, del capitolo o della scena." : "Correct the `ghostwriter` line of the book, the chapter or the scene.",
+    ),
+  });
 }
 
 const MAX_NOTE_CHARACTERS = 400;
@@ -236,12 +245,17 @@ function chapterFiles(ctx: TaskContext, chapter: PlannedChapter): ChapterInfo {
     ?? { slug: chapter.slug, number: chapter.number, title: chapter.title, pov: chapter.pov, path: chapterFilePath(chapter.slug), paragraphs: [] };
 }
 
+/** A line that only labels the scene, in Latin script ("Scene 3:", "Scena 3."): the writer is asked for prose and nothing else. */
+const LATIN_SCENE_HEADING = /^(?:scene|scena)\s+\d+\s*[:.—-]/i;
+/** The same label in the other scripts ("Сцена 3.", "场景3：", "シーン 3 —", "第三场"). A sentence that merely starts with the word is not one. */
+const OTHER_SCENE_HEADING = /^(?:(?:сцена|σκηνή|σκηνη|场景|場景|場面|シーン|장면|مشهد|סצנה|दृश्य|ฉาก)\s*[\p{Nd}〇一二三四五六七八九十]+\s*[:.：。—–-]|第\s*[\p{Nd}〇一二三四五六七八九十百]+\s*[场場幕节節]\s*(?:[:：.。—–-]|$))/iu;
+
 /** Strip wrappers models sometimes add around prose, including a leading reasoning block. */
 export function cleanProse(text: string): string {
   let value = splitReasoningBlock((text ?? "").trim()).reply;
   value = value.replace(/^```[a-z]*\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
   const lines = value.split(/\r?\n/);
-  while (lines.length && (/^#{1,6}\s/.test(lines[0].trim()) || /^(?:scene|scena)\s+\d+\s*[:.—-]/i.test(lines[0].trim()) || !lines[0].trim())) lines.shift();
+  while (lines.length && (/^#{1,6}\s/.test(lines[0].trim()) || LATIN_SCENE_HEADING.test(lines[0].trim()) || OTHER_SCENE_HEADING.test(lines[0].trim()) || !lines[0].trim())) lines.shift();
   return lines.join("\n").trim();
 }
 
@@ -390,7 +404,7 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
       `DIRECTOR (the author's taste):\n${directorTaste(ctx.director)}`,
     ])}`,
     json: CONCEPT_TOOL,
-    maxOutputTokens: 9000,
+    maxOutputTokens: outputLimit(ctx, 9000),
     temperature: 0.8,
   });
   const output = requireStructuredFields(response.json, { storyDesign: "text" }, "The concept");
@@ -413,25 +427,32 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
       expectedHash: context?.file.hash ?? null,
     });
   }
-  const created = new Set<string>();
   const known: Array<{ kind: CanonKind; slug: string; names: string[] }> = ctx.snapshot.canon.map((entry) => ({ kind: entry.kind, slug: entry.slug, names: [entry.name, ...entry.aliases] }));
   const counts = { character: 0, other: 0 };
-  const create = (kind: "character" | "location" | "faction" | "secret", name: string, frontmatter: Record<string, unknown>, body: string) => {
+  // File names that are taken, whatever their case: the book's own, and the ones this step creates.
+  const taken = new Set([...ctx.snapshot.files.keys()].map((name) => name.toLowerCase()));
+  const italian = isItalian(ctx.language);
+  const create = (kind: "character" | "location" | "faction" | "secret", name: string, frontmatter: Record<string, unknown>, body: string): string => {
     // An entity that already exists under this name, an alias or (for characters) a first name is reused, never duplicated.
     const existing = known.find((entry) => entry.kind === kind && sameCanonEntity(kind, name, entry.names));
     if (existing) return existing.slug;
-    const slug = slugify(name);
+    // Two different names can make one file name ("Café" and "Cafe!", "Игорь" and "Игор"): the later one gets -2, -3… and the book is told.
+    const base = canonSlug(kind, name);
+    let slug = base;
+    for (let number = 2; taken.has(canonPath(kind, slug).toLowerCase()); number += 1) slug = `${base}-${number}`;
     const path = canonPath(kind, slug);
-    if (!slug || created.has(path) || ctx.snapshot.files.has(path)) return slug || null;
-    created.add(path);
+    taken.add(path.toLowerCase());
     known.push({ kind, slug, names: [name] });
+    if (slug !== base) {
+      ctx.insight("info", italian ? `«${name}» salvato come ${path}` : `«${name}» saved as ${path}`, italian ? `Il nome di file ${canonPath(kind, base)} era già usato da un altro elemento.` : `The file name ${canonPath(kind, base)} was already taken by another entry.`);
+    }
     if (kind === "character") counts.character += 1;
     else counts.other += 1;
     const label = kind === "secret" ? { title: name } : { name };
     changes.push({ path, content: renderMarkdown({ type: kind, id: `${kind}:${slug}`, ...label, ...frontmatter, canon: "draft" }, body), expectedHash: null });
     return slug;
   };
-  const characterSlug = (name: string) => known.find((entry) => entry.kind === "character" && sameCanonEntity("character", name, entry.names))?.slug ?? slugify(name);
+  const characterSlug = (name: string) => known.find((entry) => entry.kind === "character" && sameCanonEntity("character", name, entry.names))?.slug ?? canonSlug("character", name);
   const characters = asArray(output.characters).slice(0, 10).map(asRecord);
   for (const character of characters) {
     const name = asString(character.name);
@@ -459,13 +480,13 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
     const title = asString(secret.title);
     if (!title) continue;
     const holders = asStringList(secret.holders, 10).map((holder) => `character:${characterSlug(holder)}`);
-    const slug = create("secret", title, { holders, stakes: asString(secret.stakes) || undefined, status: "hidden" }, `# ${title}\n\n${asString(secret.truth)}`) ?? slugify(title);
-    const revealChapter = asInteger(secret.revealChapter, 0, 0, 999);
+    const slug = create("secret", title, { holders, stakes: asString(secret.stakes) || undefined, status: "hidden" }, `# ${title}\n\n${asString(secret.truth)}`);
+    const revealChapter = asInteger(secret.revealChapter, 0, 0, MAX_BOOK_CHAPTERS);
     secrets.push({ slug, title, revealChapter: revealChapter || undefined });
   }
   ctx.state.concept = { done: true, generated: true, secrets };
   if (logline) ctx.insight("ok", logline);
-  const summary = isItalian(ctx.language)
+  const summary = italian
     ? `${counts.character} personaggi, ${counts.other} altri elementi di canone, ${secrets.length} segreti.`
     : `${counts.character} characters, ${counts.other} other canon entries, ${secrets.length} secrets.`;
   return { changes: compact(changes), summary: logline ? `${logline} — ${summary}` : summary };
@@ -495,27 +516,41 @@ export function sameCanonEntity(kind: CanonKind, name: string, existingNames: st
 async function runPlan(ctx: TaskContext): Promise<TaskResult> {
   const previous = ctx.state.plan;
   // Chapters already in the book keep what the autopilot knew about them (the synopsis saved when they closed).
+  const known = new Map((previous?.chapters ?? []).map((chapter) => [chapter.slug, chapter]));
   const imported = importedChapters(ctx.snapshot).map((chapter) => {
-    const known = previous?.chapters.find((entry) => entry.slug === chapter.slug);
-    return known?.storySoFarAtClose ? { ...chapter, storySoFarAtClose: known.storySoFarAtClose, ...(known.score !== undefined ? { score: known.score } : {}) } : chapter;
+    const earlier = known.get(chapter.slug);
+    return earlier?.storySoFarAtClose ? { ...chapter, storySoFarAtClose: earlier.storySoFarAtClose, ...(earlier.score !== undefined ? { score: earlier.score } : {}) } : chapter;
   });
-  const startNumber = imported.length ? Math.max(...imported.map((chapter) => chapter.number)) + 1 : 1;
-  const count = Math.max(1, ctx.state.brief.targetChapters - imported.length);
+  const range = planRange(imported, ctx.state.brief.targetChapters);
+  const batch = nextPlanBatch(previous, range);
+  if (!batch) throw new Error("There is no chapter left to plan.");
+  const { start: startNumber, last: lastNumber } = range;
+  const { from, to, batched } = batch;
+  const batchCount = to - from + 1;
   const [design, context, resume] = await Promise.all([
     readBody(ctx.store, STORY_DESIGN_FILE, 6000),
     readBody(ctx.store, CONTEXT_FILE, 2500),
     readStorySoFar(ctx.store, { chapters: imported, beforeChapter: startNumber, max: 4000 }),
   ]);
-  const revising = Boolean(previous && previous.revisionNotes.length);
+  const notes = previous?.revisionNotes ?? [];
+  // A batch of a long plan is revised only when it already exists; a new one only learns the notes that ask for more than the extension.
+  const existing = batched ? (previous?.chapters ?? []).filter((chapter) => !chapter.imported && chapter.number >= from && chapter.number <= to) : [];
+  const revising = batched ? existing.length > 0 && notes.length > 0 : notes.length > 0;
+  const changesToApply = notes.filter((note) => !isExtensionNote(note));
   const secretsPlan = ctx.state.concept.secrets.filter((secret) => secret.revealChapter).map((secret) => `- ${secret.title}: reveal in chapter ${secret.revealChapter}`).join("\n");
+  const otherChapters = batched && previous ? { ...previous, chapters: previous.chapters.filter((chapter) => !chapter.imported && (chapter.number < from || chapter.number > to)) } : null;
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.writer,
     label: "autopilot:plan",
     system: architectSystemPrompt(ctx.language),
     user: `${request([
       revising
-        ? `Revise the chapter plan (chapters ${startNumber}-${startNumber + count - 1}) applying the director's changes:\n${bulletList(previous!.revisionNotes)}`
-        : `Plan the next ${count} chapters of the novel, numbered ${startNumber} to ${startNumber + count - 1}.`,
+        ? `Revise the chapter plan (chapters ${from}-${to}) applying the director's changes:\n${bulletList(notes)}`
+        : `Plan the next ${batchCount} chapters of the novel, numbered ${from} to ${to}.`,
+      batched ? `The novel will have ${ctx.state.brief.targetChapters} chapters in all and is planned in batches: this call covers only chapters ${from} to ${to}.` : "",
+      batched ? (to < lastNumber ? `The story must not end before chapter ${lastNumber}: leave room for what the following chapters have to tell.` : `These are the last chapters of the book: close its arcs and end the story in chapter ${lastNumber}.`) : "",
+      batched && revising ? `Apply only the changes that concern chapters ${from} to ${to} or the whole book: the other chapters are revised in their own call. Return every chapter of the range.` : "",
+      batched && !revising && changesToApply.length ? `Apply the changes below that concern these chapters or the whole book:\n${bulletList(changesToApply)}` : "",
       ctx.state.brief.synopsis ? "Follow the author's chapter-by-chapter synopsis exactly: same chapters, same order, same events. Enrich, never change." : "",
       imported.length ? `Chapters 1-${startNumber - 1} are already written by the author: continue from them without changing them.` : "",
       "Every chapter must change something and raise the stakes; place every secret reveal in a specific chapter; vary the shape of chapters.",
@@ -527,20 +562,21 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
       context ? `WORLD CONTEXT:\n${context}` : "",
       `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: true }) || "-"}`,
       secretsPlan ? `PLANNED REVEALS:\n${secretsPlan}` : "",
-      imported.length ? `CHAPTERS ALREADY WRITTEN:\n${imported.map((chapter) => `${chapter.number}. ${chapter.title}${chapter.summary ? ` — ${chapter.summary}` : ""}`).join("\n")}` : "",
+      imported.length ? listSection("CHAPTERS ALREADY WRITTEN", chapterLines(imported, { around: startNumber })) : "",
       resume ? `STORY SO FAR (before chapter ${startNumber}):\n${resume}` : "",
-      revising ? `CURRENT PLAN:\n${planOutline(previous)}` : "",
+      batched ? (otherChapters?.chapters.length ? listSection(`PLAN SO FAR (the planned chapters outside ${from}-${to})`, outlineList(otherChapters, { around: from })) : "") : revising ? listSection("CURRENT PLAN", outlineList(previous, { around: startNumber })) : "",
+      batched && revising ? `CURRENT VERSION OF CHAPTERS ${from}-${to} (revise it):\n${existing.map(chapterPlanBlock).join("\n\n")}` : "",
       `DIRECTOR (the author's taste):\n${directorTaste(ctx.director)}`,
     ])}`,
     json: PLAN_TOOL,
-    maxOutputTokens: 9000,
+    maxOutputTokens: outputLimit(ctx, 9000),
     temperature: 0.7,
   });
   const output = requireStructuredFields(response.json, { chapters: "list" }, "The chapter plan");
-  const proposed = asArray(output.chapters).map(asRecord).filter((chapter) => asString(chapter.title)).slice(0, count);
-  if (proposed.length < count) throw new AiReplyRejectedError(`The chapter plan has ${proposed.length} chapters with a title, but ${count} were requested (chapters ${startNumber}-${startNumber + count - 1}).`);
+  const proposed = asArray(output.chapters).map(asRecord).filter((chapter) => asString(chapter.title)).slice(0, batchCount);
+  if (proposed.length < batchCount) throw new AiReplyRejectedError(`The chapter plan has ${proposed.length} chapters with a title, but ${batchCount} were requested (chapters ${from}-${to}).`);
   const planned: PlannedChapter[] = proposed.map((chapter, index) => {
-    const number = startNumber + index;
+    const number = from + index;
     const title = asString(chapter.title);
     return {
       number,
@@ -555,31 +591,61 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
       scenes: [],
     };
   });
+  // The chapters of the range that are outside this batch stay as they are; the batch replaces what it covers.
+  const kept = (previous?.chapters ?? []).filter((chapter) => !chapter.imported && chapter.number >= startNumber && chapter.number <= lastNumber && (chapter.number < from || chapter.number > to));
+  const chapters = [...imported, ...[...kept, ...planned].sort((left, right) => left.number - right.number)];
   const changes: Array<BookFileChange | null> = [];
   if (previous) {
-    const keep = new Set(planned.map((chapter) => chapter.slug));
+    const retained = new Set(chapters.map((chapter) => chapter.slug));
     for (const old of previous.chapters) {
-      if (old.imported || keep.has(old.slug)) continue;
+      if (old.imported || retained.has(old.slug)) continue;
       const files = ctx.snapshot.chapters.find((chapter) => chapter.slug === old.slug);
       const hash = ctx.snapshot.files.get(chapterFilePath(old.slug));
       if (hash && (!files || files.paragraphs.length === 0)) changes.push({ path: chapterFilePath(old.slug), content: null, expectedHash: hash });
     }
   }
+  // The notes are applied once the batches they concern are planned; the batches still to regenerate stay listed.
+  let revisionNotes = notes;
+  let revisionBatches: number[] | undefined;
+  if (!batched) {
+    revisionNotes = [];
+  } else if (revising) {
+    const pending = revisionBatchStarts(previous!, range).filter((start) => start !== from);
+    if (pending.length) revisionBatches = pending;
+    else revisionNotes = [];
+  } else if (previous?.revisionBatches?.length) {
+    revisionBatches = previous.revisionBatches;
+  } else if (notes.length && notes.every(isExtensionNote) && firstMissingChapter(chapters, range) === undefined) {
+    revisionNotes = [];
+  }
   ctx.state.plan = {
-    chapters: [...imported, ...planned],
+    chapters,
     approved: false,
     rounds: previous?.rounds ?? 0,
-    revisionNotes: [],
+    revisionNotes,
+    ...(revisionBatches ? { revisionBatches } : {}),
     readerReactions: previous?.readerReactions ?? [],
     readersDone: previous?.readersDone ?? false,
     awaitingAuthor: false,
   };
   changes.push(await planFileChange(ctx));
-  ctx.insight("info", isItalian(ctx.language) ? `${planned.length} capitoli pianificati` : `${planned.length} chapters planned`, planned.slice(0, 8).map((chapter) => `${chapter.number}. ${chapter.title}`).join(" · "));
+  // A batch of a long plan is reported under the chapters it covers; a short book's only batch, as ever, under their number.
+  const italian = isItalian(ctx.language);
+  const single = from === to;
+  const covered = single ? `${from}` : `${from}-${to}`;
+  let title = italian ? `${planned.length} capitoli pianificati` : `${planned.length} chapters planned`;
+  if (batched) title = italian ? `${single ? "Capitolo" : "Capitoli"} ${covered} ${single ? "pianificato" : "pianificati"}` : `${single ? "Chapter" : "Chapters"} ${covered} planned`;
+  ctx.insight("info", title, planned.slice(0, 8).map((chapter) => `${chapter.number}. ${chapter.title}`).join(" · "));
+  const list = planned.map((chapter) => `${chapter.number}. ${chapter.title}`).join("; ");
   return {
     changes: compact(changes),
-    summary: planned.map((chapter) => `${chapter.number}. ${chapter.title}`).join("; "),
+    summary: batched ? `${single ? "Chapter" : "Chapters"} ${covered}: ${list}` : list,
   };
+}
+
+/** Where a review of the whole plan looks first: the start of what is being planned, not the chapters the author wrote. */
+function planFocus(plan: AutopilotPlan): number | undefined {
+  return plan.chapters.find((chapter) => !chapter.imported)?.number;
 }
 
 async function runPlanReader(ctx: TaskContext): Promise<TaskResult> {
@@ -598,10 +664,10 @@ async function runPlanReader(ctx: TaskContext): Promise<TaskResult> {
       bookHeader(ctx),
       ctx.state.brief.idea ? `PITCH:\n${ctx.state.brief.idea}` : "",
       design ? `PREMISE:\n${design}` : "",
-      `CHAPTER PLAN:\n${planOutline(plan)}`,
+      listSection("CHAPTER PLAN", outlineList(plan, { around: planFocus(plan) })),
     ])}`,
     json: PLAN_REACTION_TOOL,
-    maxOutputTokens: 1500,
+    maxOutputTokens: outputLimit(ctx, 1500),
   });
   const output = requireStructuredFields(response.json, { interest: "number" }, "The reader's reaction");
   const reaction = {
@@ -636,36 +702,36 @@ async function runPlanReview(ctx: TaskContext): Promise<TaskResult> {
       briefBlock(ctx),
       design ? `STORY DESIGN:\n${design}` : "",
       `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: true }) || "-"}`,
-      `CHAPTER PLAN:\n${planOutline(plan)}`,
+      listSection("CHAPTER PLAN", outlineList(plan, { around: planFocus(plan) })),
       plan.readerReactions.length
         ? `SIMULATED READERS:\n${plan.readerReactions.map((reaction) => `- ${reaction.name} (weight ${ctx.director.readerWeights[reaction.slug] ?? 1}): ${reaction.interest}/10 — ${reaction.reaction}${reaction.concerns.length ? ` Concerns: ${reaction.concerns.join("; ")}.` : ""}${reaction.wishes.length ? ` Wishes: ${reaction.wishes.join("; ")}.` : ""}`).join("\n")}`
         : "",
     ])}`,
     json: PLAN_REVIEW_TOOL,
-    maxOutputTokens: 4000,
+    maxOutputTokens: outputLimit(ctx, 4000),
   });
   // Without a verdict the plan is never approved by default.
   const output = requireStructuredFields(response.json, { verdict: "text" }, "The director's plan review");
   const verdict = verdictOf(output.verdict, "The director's plan review");
   const score = Math.round(asNumber(output.score, 7, 1, 10));
   const summaryText = asString(output.summary);
-  const changesRequested = asArray(output.changes).map(asRecord)
-    .map((change) => {
-      const instruction = asString(change.instruction);
-      const chapterNumber = asInteger(change.chapterNumber, 0, 0, 999);
-      return instruction ? `${chapterNumber ? `Chapter ${chapterNumber}: ` : ""}${instruction}` : "";
-    })
-    .filter(Boolean);
+  const requested = asArray(output.changes).map(asRecord)
+    .map((change) => ({ instruction: asString(change.instruction), chapterNumber: asInteger(change.chapterNumber, 0, 0, MAX_BOOK_CHAPTERS) }))
+    .filter((change) => change.instruction);
+  const changesRequested = requested.map((change) => `${change.chapterNumber ? `Chapter ${change.chapterNumber}: ` : ""}${change.instruction}`);
   const guidance = asStringList(output.guidance, 10);
   const changes: Array<BookFileChange | null> = [];
   const approved = verdict === "approve" || lastRound || changesRequested.length === 0;
   if (!approved) {
     plan.rounds += 1;
     plan.revisionNotes = changesRequested;
+    // Only the batches that hold the chapters the changes name are planned again; a change that names none concerns them all.
+    plan.revisionBatches = batchesNamed(planRange(importedChapters(ctx.snapshot), ctx.state.brief.targetChapters), requested.map((change) => change.chapterNumber));
     ctx.insight("warning", isItalian(ctx.language) ? `Il direttore chiede ${changesRequested.length} modifiche al piano` : `The director asks for ${changesRequested.length} plan changes`, changesRequested.slice(0, 3).join(" · "));
   } else {
     plan.approved = true;
     plan.revisionNotes = [];
+    delete plan.revisionBatches;
     plan.awaitingAuthor = ctx.state.options.pauseAfterPlan || ctx.director.autonomy === "ask-always";
     ctx.state.directorNotes = mergeNotes(ctx.state.directorNotes, [...guidance, ...(lastRound ? changesRequested : [])]);
     for (const chapter of plan.chapters) if (!chapter.imported) changes.push(ensureChapterFile(ctx, chapter));
@@ -728,7 +794,7 @@ async function runScenes(ctx: TaskContext): Promise<TaskResult> {
       secrets ? `SECRETS AND REVEAL RULES:\n${secrets}` : "",
     ])}`,
     json: SCENES_TOOL,
-    maxOutputTokens: 5000,
+    maxOutputTokens: outputLimit(ctx, 5000),
     temperature: 0.7,
   });
   const output = requireStructuredFields(response.json, { scenes: "list" }, "The scene plan");
@@ -760,7 +826,7 @@ async function summarizeScene(ctx: TaskContext, chapter: PlannedChapter, scene: 
       system: continuitySystemPrompt(ctx.language),
       user: `${request(["Summarize this scene in one or two sentences: what happens and what changes."])}\n\n${data([prose])}`,
       json: SCENE_SUMMARY_TOOL,
-      maxOutputTokens: 400,
+      maxOutputTokens: outputLimit(ctx, 400),
     });
     return asString(asRecord(response.json).summary) || null;
   } catch (error) {
@@ -794,7 +860,7 @@ async function runWrite(ctx: TaskContext): Promise<TaskResult> {
   const nextScene = chapter.scenes.find((entry) => entry.number === scene.number + 1);
   const info = chapterFiles(ctx, chapter);
   const [ghostwriter, context, resume, secrets, neighbors] = await Promise.all([
-    loadGhostwriter(ctx.store, ctx.snapshot, info),
+    ghostwriterOf(ctx, info),
     readBody(ctx.store, CONTEXT_FILE, 2000),
     storySoFar(ctx, chapter.number, 5000),
     secretRules(ctx.store, ctx.snapshot, chapter.number),
@@ -825,7 +891,7 @@ async function runWrite(ctx: TaskContext): Promise<TaskResult> {
       relevant.length ? `RELEVANT CANON:\n${await canonDetails(ctx.store, relevant)}` : "",
       secrets ? `SECRETS AND REVEAL RULES:\n${secrets}` : "",
     ])}`,
-    maxOutputTokens: Math.min(16000, Math.ceil(words * 2.4) + 800),
+    maxOutputTokens: sceneOutputLimit(ctx, words),
     temperature: ghostwriter?.temperature ?? 0.8,
   });
   const prose = cleanProse(response.text);
@@ -878,7 +944,7 @@ async function runReader(ctx: TaskContext): Promise<TaskResult> {
       source.readerText,
     ].filter(Boolean).join("\n\n"))}`,
     json: READER_EVALUATION_TOOL,
-    maxOutputTokens: 2500,
+    maxOutputTokens: outputLimit(ctx, 2500),
   });
   const output = normalizeReaderEvaluationOutput(requireStructuredFields(response.json, { score: "number" }, "The reader evaluation"));
   const path = readerEvaluationPath({ kind: "chapter", chapter: chapter.slug }, reader.slug);
@@ -931,7 +997,7 @@ async function runReadersSummary(ctx: TaskContext): Promise<TaskResult> {
     system: `Compare the separate simulated-reader evaluations. Preserve disagreements rather than flattening them. Return the summary in ${languageName(ctx.language)}.`,
     user: `${currentRequest("Summarize and compare these reader evaluations.")}\n\n${untrustedData("repository_content", evaluations.join("\n\n---\n\n"))}`,
     json: READER_SUMMARY_TOOL,
-    maxOutputTokens: 2500,
+    maxOutputTokens: outputLimit(ctx, 2500),
   });
   const output = requireStructuredFields(response.json, { overallScore: "number" }, "The readers' summary");
   const overall = Math.round(asNumber(output.overallScore, 6, 1, 10) * 10) / 10;
@@ -989,9 +1055,9 @@ async function runSpecialists(ctx: TaskContext): Promise<TaskResult> {
   const source = await chapterSource(ctx, chapter);
   const info = chapterFiles(ctx, chapter);
   const text = source.paragraphs.map((paragraph) => paragraph.body).join("\n");
-  const [ghostwriter, secrets] = await Promise.all([loadGhostwriter(ctx.store, ctx.snapshot, info), secretRules(ctx.store, ctx.snapshot, chapter.number)]);
+  const [ghostwriter, secrets] = await Promise.all([ghostwriterOf(ctx, info), secretRules(ctx.store, ctx.snapshot, chapter.number)]);
   const relevant = mentionedCanon(ctx.snapshot, text, 16);
-  const previousChapters = ctx.state.plan!.chapters.filter((entry) => entry.number < chapter.number).map((entry) => `${entry.number}. ${entry.title}${entry.summary ? ` — ${entry.summary}` : ""}`).join("\n");
+  const previousChapters = chapterLines(ctx.state.plan!.chapters.filter((entry) => entry.number < chapter.number), { around: chapter.number });
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.specialist,
     label: `autopilot:specialists:${chapter.number}`,
@@ -1003,7 +1069,7 @@ async function runSpecialists(ctx: TaskContext): Promise<TaskResult> {
     ])}\n\n${data([
       bookHeader(ctx),
       `GHOSTWRITER PROFILE:\n${ghostwriterBlock(ghostwriter)}`,
-      previousChapters ? `PREVIOUS CHAPTERS:\n${previousChapters}` : "",
+      previousChapters.text ? listSection("PREVIOUS CHAPTERS", previousChapters) : "",
       chapterPlanBlock(chapter),
       `SCENE PLANS:\n${chapter.scenes.map((scene) => `- Scene ${scene.number} «${scene.title}»: ${scene.goal}`).join("\n")}`,
       `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: false }) || "-"}`,
@@ -1012,7 +1078,7 @@ async function runSpecialists(ctx: TaskContext): Promise<TaskResult> {
       `CHAPTER TEXT:\n${markedChapterText(source.paragraphs)}`,
     ])}`,
     json: FINDINGS_TOOL,
-    maxOutputTokens: 5000,
+    maxOutputTokens: outputLimit(ctx, 5000),
   });
   // A reply without the findings list is not "no problems": it is rejected.
   const output = requireStructuredFields(response.json, { findings: "list" }, "The specialists' review");
@@ -1095,7 +1161,7 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
       `CHAPTER TEXT:\n${markedChapterText(source.paragraphs, perScene)}`,
     ])}`,
     json: CHAPTER_REVIEW_TOOL,
-    maxOutputTokens: 6000,
+    maxOutputTokens: outputLimit(ctx, 6000),
   });
   const subject = "The director's chapter review";
   const output = requireStructuredFields(response.json, { verdict: "text" }, subject);
@@ -1222,7 +1288,7 @@ async function rewriteScene(ctx: TaskContext, chapter: PlannedChapter, scene: Pl
   if (!loaded) throw new Error(`Scene file not found: ${scene.path}`);
   const info = chapterFiles(ctx, chapter);
   const [ghostwriter, secrets, neighbors] = await Promise.all([
-    loadGhostwriter(ctx.store, ctx.snapshot, info),
+    ghostwriterOf(ctx, info),
     secretRules(ctx.store, ctx.snapshot, chapter.number),
     sceneNeighbors(ctx, chapter, scene),
   ]);
@@ -1250,7 +1316,7 @@ async function rewriteScene(ctx: TaskContext, chapter: PlannedChapter, scene: Pl
       neighbors.nextOpening ? `NEXT SCENE OPENING (keep it consistent):\n${neighbors.nextOpening}` : "",
       `CURRENT SCENE:\n${loaded.document.body}`,
     ])}`,
-    maxOutputTokens: Math.min(16000, Math.ceil(Math.max(originalWords, 300) * 2.4) + 800),
+    maxOutputTokens: sceneOutputLimit(ctx, Math.max(originalWords, 300)),
     temperature: Math.min(0.7, ghostwriter?.temperature ?? 0.7),
   });
   const prose = cleanProse(response.text);
@@ -1304,7 +1370,7 @@ async function runConsolidate(ctx: TaskContext): Promise<TaskResult> {
       `CHAPTER TEXT:\n${markedChapterText(source.paragraphs, 9000)}`,
     ])}`,
     json: CONSOLIDATION_TOOL,
-    maxOutputTokens: 5000,
+    maxOutputTokens: outputLimit(ctx, 5000),
     temperature: 0.3,
   });
   const subject = "The chapter consolidation";
@@ -1352,15 +1418,65 @@ async function runConsolidate(ctx: TaskContext): Promise<TaskResult> {
 
 // ─── Author revision and final review ───────────────────────────────────────
 
+interface WrittenChapter {
+  number: number;
+  chapter: PlannedChapter;
+  /** The scenes of the chapter that are written. */
+  scenes: PlannedScene[];
+}
+
+const WRITTEN_SCENES: ChapterFormat<WrittenChapter> = {
+  render(entry, detail) {
+    if (detail === "full") return entry.scenes.map((scene) => `- Chapter ${entry.number}, scene ${scene.number} «${scene.title}»: ${scene.summary ?? scene.goal}`).join("\n");
+    return `- Chapter ${entry.number} «${entry.chapter.title}» (${entry.scenes.length} written scenes)${detail === "summary" && entry.chapter.summary ? `: ${entry.chapter.summary}` : ""}`;
+  },
+  collapse(entries, titles) {
+    const range = `Chapters ${entries[0].number}-${entries[entries.length - 1].number}`;
+    return titles ? `- ${range}: ${entries.map((entry) => entry.chapter.title).join("; ")}` : `- ${range} (${entries.reduce((sum, entry) => sum + entry.scenes.length, 0)} written scenes)`;
+  },
+};
+
+/** The number of the chapter an instruction names in the other scripts: "главе 12", "κεφάλαιο 12", "第12章", "제12장", "الفصل 12", "פרק 12", "अध्याय 12", "บทที่ 12". */
+const OTHER_CHAPTER_MENTIONS = [
+  /(?<![\p{L}\p{N}_])(?:глав(?:а|ы|е|у|ой|ам|ами|ах)?|розділ(?:у|і|и|ів)?)\s*(\d{1,6})(?![\p{L}\p{N}_])/iu,
+  /(?<![\p{L}\p{N}_])κεφ[αά]λα[ιί](?:ο|ου|α|ων)\s*(\d{1,6})(?![\p{L}\p{N}_])/iu,
+  /[第제]\s*(\d{1,6})\s*[章장]|(?<![\p{N}])(\d{1,6})\s*[章장]/u,
+  /(?<![\p{L}\p{N}_])[وبلف]?(?:ال)?فصل\s*(\d{1,6})(?![\p{L}\p{N}_])/u,
+  /(?<![\p{L}\p{N}_])[בלה]?פרק\s*(\d{1,6})(?![\p{L}\p{N}_])/u,
+  /(?<![\p{L}\p{N}_])अध्याय\s*(\d{1,6})(?![\p{L}\p{N}_])/u,
+  /บทที่\s*(\d{1,6})/u,
+];
+
+function otherChapterMention(instruction: string): string | undefined {
+  const text = instruction.normalize("NFC");
+  for (const pattern of OTHER_CHAPTER_MENTIONS) {
+    const found = pattern.exec(text)?.slice(1).find(Boolean);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** The chapter a revision is about: its first target once known, else a chapter the author names, else the latest written one. */
+function revisionFocus(revision: RevisionRequest, written: WrittenChapter[]): number | undefined {
+  const target = revision.targets?.[0]?.chapterNumber;
+  if (target) return target;
+  const named = /\b(?:chapters?|capitol[oi]|cap\.)\s*(\d{1,6})\b/i.exec(revision.instruction)?.[1] ?? otherChapterMention(revision.instruction);
+  return named ? Number(named) : written.at(-1)?.number;
+}
+
 async function runImpact(ctx: TaskContext): Promise<TaskResult> {
   const revision = ctx.state.revision!;
   const plan = ctx.state.plan;
-  const written = (plan?.chapters ?? []).flatMap((chapter) => chapter.scenes.filter((scene) => scene.status !== "planned" && scene.path).map((scene) => ({ chapter, scene })));
+  const written: WrittenChapter[] = (plan?.chapters ?? []).flatMap((chapter) => {
+    const scenes = chapter.scenes.filter((scene) => scene.status !== "planned" && scene.path);
+    return scenes.length ? [{ number: chapter.number, chapter, scenes }] : [];
+  });
   if (!written.length) {
     revision.targets = [];
     return { changes: [], summary: "Nothing written yet: the instruction becomes a permanent rule." };
   }
   const design = await readBody(ctx.store, STORY_DESIGN_FILE, 3000);
+  const scenesList = layoutChapters(written, WRITTEN_SCENES, { around: revisionFocus(revision, written) });
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.director,
     label: "autopilot:impact",
@@ -1368,21 +1484,22 @@ async function runImpact(ctx: TaskContext): Promise<TaskResult> {
     user: `${request([
       `The author asked to revise what is already written: «${revision.instruction}».`,
       "Decide which written scenes must change to honor it, in reading order, with a precise instruction for each. Choose the minimum set; include later scenes only when they depend on the change.",
+      scenesList.note ? "Some chapters are listed without their scenes: a scene of such a chapter can still be chosen by its chapter and scene number." : "",
     ])}\n\n${data([
       bookHeader(ctx),
       design ? `STORY DESIGN:\n${design}` : "",
-      `WRITTEN SCENES:\n${written.map(({ chapter, scene }) => `- Chapter ${chapter.number}, scene ${scene.number} «${scene.title}»: ${scene.summary ?? scene.goal}`).join("\n")}`,
+      listSection("WRITTEN SCENES", scenesList),
     ])}`,
     json: IMPACT_TOOL,
-    maxOutputTokens: 3000,
+    maxOutputTokens: outputLimit(ctx, 3000),
   });
   const subject = "The revision impact";
   // Without the targets list the author's revision would be silently ignored.
   const output = requireStructuredFields(response.json, { targets: "list" }, subject);
   const proposedTargets = asArray(output.targets).map(asRecord);
-  const valid = new Set(written.map(({ chapter, scene }) => `${chapter.number}:${scene.number}`));
+  const valid = new Set(written.flatMap((entry) => entry.scenes.map((scene) => `${entry.number}:${scene.number}`)));
   revision.targets = proposedTargets
-    .map((target) => ({ chapterNumber: asInteger(target.chapterNumber, 0, 0, 999), sceneNumber: asInteger(target.sceneNumber, 0, 0, 999), instruction: asString(target.instruction) || revision.instruction }))
+    .map((target) => ({ chapterNumber: asInteger(target.chapterNumber, 0, 0, MAX_BOOK_CHAPTERS), sceneNumber: asInteger(target.sceneNumber, 0, 0, 999), instruction: asString(target.instruction) || revision.instruction }))
     .filter((target, index, list) => valid.has(`${target.chapterNumber}:${target.sceneNumber}`) && list.findIndex((other) => other.chapterNumber === target.chapterNumber && other.sceneNumber === target.sceneNumber) === index)
     .sort((left, right) => left.chapterNumber - right.chapterNumber || left.sceneNumber - right.sceneNumber)
     .slice(0, 40);

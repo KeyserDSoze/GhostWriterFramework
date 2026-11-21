@@ -1,5 +1,5 @@
 import { parseDocument, stringify } from "yaml";
-import { slugify } from "narrarium/slug";
+import { slugifyAny } from "narrarium/slug";
 
 export type ReaderPersonaType = "standard" | "genre" | "custom";
 export type ReaderEvaluationDepth = "brief" | "normal" | "deep";
@@ -210,7 +210,7 @@ export function mergeReaderPersonas(language: string | undefined, overrides: Rea
 }
 
 export function readerPersonaPath(profile: ReaderPersonaProfile): string {
-  const slug = profile.slug || slugify(profile.name) || `reader-${crypto.randomUUID().slice(0, 8)}`;
+  const slug = profile.slug || (profile.name.trim() ? slugifyAny(profile.name, "reader", true) : `reader-${crypto.randomUUID().slice(0, 8)}`);
   return `personas/${slug}.md`;
 }
 

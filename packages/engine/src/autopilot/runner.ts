@@ -10,7 +10,7 @@ import { randomId } from "../util/hash.js";
 import { StructuredReplyError } from "../util/json.js";
 import { currentRequest } from "../prompt/trust.js";
 import { isItalian, languageCode, tail } from "../util/text.js";
-import { advanceState, nextStep, phaseOf, type PlannerContext, type TaskDescriptor } from "./planner.js";
+import { advanceState, extensionNote, nextStep, phaseOf, type PlannerContext, type TaskDescriptor } from "./planner.js";
 import {
   MAX_INTERVENTIONS,
   MAX_REVISION_NOTES,
@@ -148,7 +148,9 @@ export function applyIntervention(state: AutopilotState, input: InterventionInpu
       }
       next.finalDone = false;
     } else if (next.plan) {
-      next.plan = { ...next.plan, approved: false, awaitingAuthor: false, revisionNotes: [...next.plan.revisionNotes, text].slice(-MAX_REVISION_NOTES) };
+      // A new note concerns the whole book: the batches an earlier revision still had to regenerate are no longer the only ones.
+      const { revisionBatches: _batches, ...plan } = next.plan;
+      next.plan = { ...plan, approved: false, awaitingAuthor: false, revisionNotes: [...next.plan.revisionNotes, text].slice(-MAX_REVISION_NOTES) };
     }
   }
   next.interventions = [...next.interventions, entry].slice(-MAX_INTERVENTIONS);
@@ -190,7 +192,7 @@ export function extendPlanIfNeeded(state: AutopilotState): AutopilotState {
       approved: false,
       rounds: 0,
       readersDone: true,
-      revisionNotes: [`Extend the book to ${state.brief.targetChapters} chapters, continuing from the chapters already written.`],
+      revisionNotes: [extensionNote(state.brief.targetChapters)],
     },
   };
 }
@@ -292,6 +294,14 @@ function withSpend(stats: AutopilotState["stats"], spend: StepSpend): AutopilotS
 
 function taskKey(task: TaskDescriptor): string {
   return [task.kind, task.chapterNumber ?? "", task.sceneNumber ?? "", task.reader ?? ""].join(":");
+}
+
+/**
+ * Steps one run may take before it is stopped as a runaway. It grows with the book, because a long book legitimately
+ * takes many more steps (a run that is not making progress is caught separately, whatever this number is).
+ */
+export function runStepCeiling(state: Pick<AutopilotState, "brief" | "plan">): number {
+  return 500 + 80 * Math.max(state.brief.targetChapters, state.plan?.chapters.length ?? 0);
 }
 
 interface StepContext {
@@ -417,7 +427,7 @@ export class AutopilotRun {
         state = await this.finish(state, "paused", null);
         break;
       }
-      if (steps > 5000) {
+      if (steps > runStepCeiling(state)) {
         state = await this.finish({ ...state, lastError: { message: "Too many steps in one run.", at: this.now().toISOString() } }, "error", "Too many steps in one run.");
         break;
       }

@@ -8,19 +8,38 @@ export class MemoryBookStore implements BookStore {
   readonly commits: Array<{ message: string; paths: string[] }> = [];
   /** Optional hook to simulate concurrent edits right before a commit is validated. */
   beforeCommit?: (changes: BookFileChange[]) => void | Promise<void>;
+  /** The hash of a file is computed once per content, like a real host that keeps it with the file. */
+  private readonly hashes = new Map<string, { content: string; hash: string }>();
 
   constructor(initial: Record<string, string> = {}) {
     for (const [path, content] of Object.entries(initial)) this.files.set(path, content);
   }
 
+  private async hashOf(path: string, content: string): Promise<string> {
+    const known = this.hashes.get(path);
+    if (known?.content === content) return known.hash;
+    const hash = await sha256Hex(content);
+    this.hashes.set(path, { content, hash });
+    return hash;
+  }
+
   async list(): Promise<BookFileEntry[]> {
-    const entries = await Promise.all([...this.files.entries()].map(async ([path, content]) => ({ path, hash: await sha256Hex(content) })));
+    const entries = await Promise.all([...this.files.entries()].map(async ([path, content]) => ({ path, hash: await this.hashOf(path, content) })));
     return entries.sort((left, right) => left.path.localeCompare(right.path));
   }
 
   async read(path: string): Promise<BookFileContent | null> {
     const content = this.files.get(path);
-    return content === undefined ? null : { path, content, hash: await sha256Hex(content) };
+    return content === undefined ? null : { path, content, hash: await this.hashOf(path, content) };
+  }
+
+  async readMany(paths: string[]): Promise<BookFileContent[]> {
+    const files: BookFileContent[] = [];
+    for (const path of new Set(paths)) {
+      const file = await this.read(path);
+      if (file) files.push(file);
+    }
+    return files;
   }
 
   async commit(changes: BookFileChange[], message: string): Promise<BookCommitResult> {
@@ -28,12 +47,14 @@ export class MemoryBookStore implements BookStore {
     for (const change of changes) {
       if (change.expectedHash === undefined) continue;
       const current = this.files.get(change.path);
-      const hash = current === undefined ? null : await sha256Hex(current);
+      const hash = current === undefined ? null : await this.hashOf(change.path, current);
       if (hash !== change.expectedHash) throw new BookConflictError(`File changed since it was read: ${change.path}`, change.path);
     }
     for (const change of changes) {
-      if (change.content === null) this.files.delete(change.path);
-      else this.files.set(change.path, change.content);
+      if (change.content === null) {
+        this.files.delete(change.path);
+        this.hashes.delete(change.path);
+      } else this.files.set(change.path, change.content);
     }
     this.commits.push({ message, paths: changes.map((change) => change.path) });
     return { revision: String(this.commits.length) };
@@ -41,8 +62,10 @@ export class MemoryBookStore implements BookStore {
 
   /** Direct write that bypasses CAS, to simulate an author editing the book. */
   write(path: string, content: string | null): void {
-    if (content === null) this.files.delete(path);
-    else this.files.set(path, content);
+    if (content === null) {
+      this.files.delete(path);
+      this.hashes.delete(path);
+    } else this.files.set(path, content);
   }
 
   toObject(): Record<string, string> {

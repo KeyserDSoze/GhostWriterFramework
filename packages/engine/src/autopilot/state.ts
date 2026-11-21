@@ -25,6 +25,11 @@ export const MAX_INTERVENTIONS = 100;
 export const MAX_DIRECTOR_NOTES = 12;
 export const MAX_CONSTRAINTS = 80;
 export const MAX_REVISION_NOTES = 40;
+/**
+ * Upper bound for any chapter number or chapter count read from a file or a reply. It only guards against typos and
+ * garbage: a book has no maximum length, and nothing below this value is ever clamped.
+ */
+export const MAX_BOOK_CHAPTERS = 100_000;
 
 /** A capped list keeps its newest entries: the author's latest rules matter most. */
 function newestList(value: unknown, max: number): string[] {
@@ -66,7 +71,7 @@ export function normalizeBrief(value: unknown, base: AutopilotBrief = DEFAULT_BR
   return {
     idea: asString(source.idea, base.idea),
     synopsis: asString(source.synopsis, base.synopsis),
-    targetChapters: asInteger(source.targetChapters, base.targetChapters, 1, 200),
+    targetChapters: asInteger(source.targetChapters, base.targetChapters, 1, MAX_BOOK_CHAPTERS),
     scenesPerChapter: asInteger(source.scenesPerChapter, base.scenesPerChapter, 1, 20),
     wordsPerScene: asInteger(source.wordsPerScene, base.wordsPerScene, 200, 8000),
     genre: asString(source.genre, base.genre),
@@ -83,7 +88,7 @@ export function normalizeOptions(value: unknown, base: AutopilotOptions = DEFAUL
     specialists: asBoolean(source.specialists, base.specialists),
     pauseAfterPlan: asBoolean(source.pauseAfterPlan, base.pauseAfterPlan),
     pauseAfterEachChapter: asBoolean(source.pauseAfterEachChapter, base.pauseAfterEachChapter),
-    chaptersPerRun: asInteger(source.chaptersPerRun, base.chaptersPerRun, 0, 200),
+    chaptersPerRun: asInteger(source.chaptersPerRun, base.chaptersPerRun, 0, MAX_BOOK_CHAPTERS),
     budgetLimit: asNumber(source.budgetLimit, base.budgetLimit, 0, 1_000_000),
     syncAfterChapter: asBoolean(source.syncAfterChapter, base.syncAfterChapter),
   };
@@ -110,7 +115,7 @@ function normalizeScene(value: unknown, index: number): PlannedScene {
 
 function normalizeChapter(value: unknown, index: number): PlannedChapter {
   const source = asRecord(value);
-  const number = asInteger(source.number, index + 1, 1, 999);
+  const number = asInteger(source.number, index + 1, 1, MAX_BOOK_CHAPTERS);
   return {
     number,
     title: asString(source.title) || `Chapter ${number}`,
@@ -132,11 +137,13 @@ function normalizeChapter(value: unknown, index: number): PlannedChapter {
 function normalizePlan(value: unknown): AutopilotPlan | null {
   if (!value || typeof value !== "object") return null;
   const source = asRecord(value);
+  const revisionBatches = [...new Set(asArray(source.revisionBatches).map((entry) => asInteger(entry, 0, 0, MAX_BOOK_CHAPTERS)).filter((entry) => entry > 0))].sort((left, right) => left - right);
   return {
     chapters: asArray(source.chapters).map(normalizeChapter).sort((left, right) => left.number - right.number),
     approved: asBoolean(source.approved, false),
     rounds: asInteger(source.rounds, 0, 0, 99),
     revisionNotes: newestList(source.revisionNotes, MAX_REVISION_NOTES),
+    ...(revisionBatches.length ? { revisionBatches } : {}),
     readerReactions: asArray(source.readerReactions).map((entry) => {
       const reaction = asRecord(entry);
       return {
@@ -156,7 +163,7 @@ function normalizePlan(value: unknown): AutopilotPlan | null {
 function normalizeSecrets(value: unknown): ConceptSecret[] {
   return asArray(value).map((entry) => {
     const secret = asRecord(entry);
-    const revealChapter = asInteger(secret.revealChapter, 0, 0, 999);
+    const revealChapter = asInteger(secret.revealChapter, 0, 0, MAX_BOOK_CHAPTERS);
     return { slug: asString(secret.slug), title: asString(secret.title), revealChapter: revealChapter || undefined };
   }).filter((secret) => secret.slug);
 }
@@ -165,7 +172,7 @@ function normalizeReview(value: unknown): ChapterReview | null {
   if (!value || typeof value !== "object") return null;
   const source = asRecord(value);
   return {
-    chapterNumber: asInteger(source.chapterNumber, 1, 1, 999),
+    chapterNumber: asInteger(source.chapterNumber, 1, 1, MAX_BOOK_CHAPTERS),
     round: asInteger(source.round, 1, 1, 99),
     readersPending: asStringList(source.readersPending, 40),
     readerScores: asArray(source.readerScores).map((entry) => {
@@ -232,7 +239,7 @@ function normalizeQuestion(value: unknown): DirectorQuestion | null {
   const source = asRecord(value);
   const question = asString(source.question);
   if (!question) return null;
-  const chapterNumber = asInteger(source.chapterNumber, 0, 0, 999);
+  const chapterNumber = asInteger(source.chapterNumber, 0, 0, MAX_BOOK_CHAPTERS);
   return {
     id: asString(source.id) || `question-${Date.now()}`,
     kind: asOneOf(source.kind, ["plan-approval", "chapter-approval", "round-limit", "director"] as const, "director"),
@@ -249,7 +256,7 @@ function normalizeRevision(value: unknown): RevisionRequest | null {
   const source = asRecord(value);
   const instruction = asString(source.instruction);
   if (!instruction) return null;
-  const revisedChapters = [...new Set(asArray(source.revisedChapters).map((entry) => asInteger(entry, 0, 0, 999)).filter((entry) => entry > 0))].sort((left, right) => left - right);
+  const revisedChapters = [...new Set(asArray(source.revisedChapters).map((entry) => asInteger(entry, 0, 0, MAX_BOOK_CHAPTERS)).filter((entry) => entry > 0))].sort((left, right) => left - right);
   return {
     id: asString(source.id) || `revision-${Date.now()}`,
     instruction,
@@ -257,10 +264,10 @@ function normalizeRevision(value: unknown): RevisionRequest | null {
     targets: Array.isArray(source.targets)
       ? source.targets.map((entry) => {
         const target = asRecord(entry);
-        return { chapterNumber: asInteger(target.chapterNumber, 1, 1, 999), sceneNumber: asInteger(target.sceneNumber, 1, 1, 999), instruction: asString(target.instruction) };
+        return { chapterNumber: asInteger(target.chapterNumber, 1, 1, MAX_BOOK_CHAPTERS), sceneNumber: asInteger(target.sceneNumber, 1, 1, 999), instruction: asString(target.instruction) };
       })
       : null,
-    cursor: asInteger(source.cursor, 0, 0, 9999),
+    cursor: asInteger(source.cursor, 0, 0, 1_000_000),
     ...(revisedChapters.length ? { revisedChapters } : {}),
   };
 }

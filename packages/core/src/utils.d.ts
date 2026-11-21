@@ -1,4 +1,4 @@
-export { chapterSlug, formatOrdinal, paragraphSlug, slugify } from "./slug.js";
+export { chapterSlug, formatOrdinal, paragraphSlug, slugify, slugifyAny } from "./slug.js";
 export declare function slugify(value: string): string;
 export declare function formatOrdinal(value: number, width?: number): string;
 export declare function chapterSlug(number: number, title: string): string;

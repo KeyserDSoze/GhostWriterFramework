@@ -30,6 +30,7 @@ export * from "./director/opinion.js";
 export * from "./autopilot/types.js";
 export * from "./autopilot/state.js";
 export * from "./autopilot/planner.js";
+export * from "./autopilot/outline.js";
 export * from "./autopilot/story-so-far.js";
 export { TASK_EXECUTORS, cleanProse, renderPlanMarkdown, sameCanonEntity, type TaskContext, type TaskResult, type TaskAi } from "./autopilot/tasks.js";
 export * from "./autopilot/runner.js";

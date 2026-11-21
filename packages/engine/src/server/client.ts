@@ -236,14 +236,40 @@ export class NarrariumServerClient {
   }
 }
 
+/** Paths asked of the server in one request: it answers up to 100 and 16 MiB. */
+const READ_CHUNK_PATHS = 50;
+
+/** The server refuses what it was asked to read in one request: too many bytes, or (older and newer servers differ) too many paths. */
+function isTooMuchToRead(error: unknown): boolean {
+  return error instanceof ServerRequestError && (error.status === 413 || error.code === "too_many_paths");
+}
+
 /** A `BookStore` backed by the files of a book hosted on the personal server. */
 export function remoteBookStore(client: NarrariumServerClient, bookId: string): BookStore {
+  /** One request for the paths; a refusal because it is too much splits it in halves, down to one path. */
+  async function readChunk(paths: string[]): Promise<BookFileContent[]> {
+    try {
+      const rank = (file: BookFileContent) => paths.indexOf(file.path) + 1 || paths.length + 1;
+      return (await client.readFiles(bookId, paths)).sort((left, right) => rank(left) - rank(right));
+    } catch (error) {
+      if (!isTooMuchToRead(error) || paths.length <= 1) throw error;
+      const middle = Math.ceil(paths.length / 2);
+      return [...await readChunk(paths.slice(0, middle)), ...await readChunk(paths.slice(middle))];
+    }
+  }
+
   return {
     async list(): Promise<BookFileEntry[]> {
       return (await client.manifest(bookId)).files;
     },
     async read(path: string): Promise<BookFileContent | null> {
       return (await client.readFiles(bookId, [path]))[0] ?? null;
+    },
+    async readMany(paths: string[]): Promise<BookFileContent[]> {
+      const unique = [...new Set(paths)];
+      const files: BookFileContent[] = [];
+      for (let start = 0; start < unique.length; start += READ_CHUNK_PATHS) files.push(...await readChunk(unique.slice(start, start + READ_CHUNK_PATHS)));
+      return files;
     },
     async commit(changes: BookFileChange[], message: string): Promise<BookCommitResult> {
       try {

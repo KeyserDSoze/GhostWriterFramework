@@ -123,6 +123,11 @@ export interface AutopilotPlan {
   rounds: number;
   /** Director (or author) notes the next plan revision must apply. */
   revisionNotes: string[];
+  /**
+   * First chapter of every batch (of `PLAN_BATCH_CHAPTERS` chapters) the current revision still has to regenerate, in
+   * order. Absent or empty with notes pending, as older versions wrote it, means every batch.
+   */
+  revisionBatches?: number[];
   readerReactions: ReaderReaction[];
   readersDone: boolean;
   /** Approved plan waiting for the author because of `pauseAfterPlan` or the director's autonomy. */

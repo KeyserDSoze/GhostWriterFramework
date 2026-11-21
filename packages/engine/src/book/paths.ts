@@ -1,6 +1,6 @@
-import { chapterSlug, formatOrdinal, paragraphSlug, slugify } from "narrarium/slug";
+import { chapterSlug, formatOrdinal, paragraphSlug, slugCode, slugify, slugifyAny, transliterate } from "narrarium/slug";
 
-export { chapterSlug, formatOrdinal, paragraphSlug, slugify };
+export { chapterSlug, formatOrdinal, paragraphSlug, slugCode, slugify, slugifyAny, transliterate };
 
 export const BOOK_FILE = "book.md";
 export const CONTEXT_FILE = "context.md";
@@ -51,12 +51,22 @@ export function canonPath(kind: CanonKind, slug: string): string {
   return `${CANON_DIRECTORIES[kind]}/${slug}.md`;
 }
 
+/**
+ * File name of a canon entry made from its name: the slug the name has always had; for Cyrillic and Greek the name read
+ * letter by letter; for any other script the kind of entry and a short code of the name, which is always the same
+ * (`character-0crj2m`). Never empty. It is what the core gives the same entry.
+ */
+export function canonSlug(kind: CanonKind, name: string): string {
+  return slugifyAny(name, kind, true);
+}
+
 export function pathSlug(path: string): string {
   return (path.split("/").pop() ?? "").replace(/\.md$/i, "");
 }
 
 const CHAPTER_FILE_PATTERN = /^chapters\/([^/]+)\/chapter\.md$/;
-const PARAGRAPH_FILE_PATTERN = /^chapters\/([^/]+)\/(\d{3}(?:-[^/]+)?)\.md$/;
+/** Folders and scenes named by the author may use letters of any script; `001-.md` is what older versions made of a title they could not read. */
+const PARAGRAPH_FILE_PATTERN = /^chapters\/([^/]+)\/(\d{3}(?:-[^/]*)?)\.md$/;
 
 export function parseChapterFilePath(path: string): { chapter: string } | null {
   const match = CHAPTER_FILE_PATTERN.exec(path);
@@ -69,7 +79,7 @@ export function parseParagraphFilePath(path: string): { chapter: string; paragra
 }
 
 export function chapterNumberFromSlug(slug: string): number | undefined {
-  const match = /^(\d{3})-/.exec(slug);
+  const match = /^(\d{3,})-/.exec(slug);
   return match ? Number(match[1]) : undefined;
 }
 
@@ -148,4 +158,13 @@ export function isSafeBookPath(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether the `ghostwriter` of a book, a chapter or a scene can be the slug of `ghostwriters/<slug>.md`: one safe file
+ * name and not a path. Every slug the core makes (letters, digits and hyphens, in Latin script) is one, and so is a name
+ * the author gave the file in any script.
+ */
+export function isValidGhostwriterSlug(slug: string): boolean {
+  return Boolean(slug) && slug === slug.trim() && !/^\.+$/.test(slug) && !/[\\/]/.test(slug) && isSafeBookPath(`ghostwriters/${slug}.md`);
 }

@@ -2,8 +2,8 @@ import { parseMarkdown, type MarkdownDocument } from "../markdown/frontmatter.js
 import { defaultDirector, parseDirector, type DirectorProfile } from "../profiles/director.js";
 import { ghostwriterPrompt, parseGhostwriter, type GhostwriterProfile } from "../profiles/ghostwriter.js";
 import { mergeReaderPersonas, parseReaderPersona, type ReaderPersonaProfile } from "../profiles/readers.js";
-import { tail, truncate } from "../util/text.js";
-import { CANON_DIRECTORIES, DIRECTOR_FILE, chapterNumberFromSlug, type CanonKind } from "./paths.js";
+import { latinLength, tail, truncate } from "../util/text.js";
+import { CANON_DIRECTORIES, DIRECTOR_FILE, chapterNumberFromSlug, isValidGhostwriterSlug, type CanonKind } from "./paths.js";
 import type { BookSnapshot, CanonInfo, ChapterInfo, ParagraphInfo } from "./snapshot.js";
 import type { BookFileContent, BookStore } from "./store.js";
 
@@ -30,7 +30,7 @@ export function isThinDocument(body: string): boolean {
     .filter((line) => line && !line.startsWith("#"))
     .filter((line) => !/^-\s*(?:record|describe|note|translate|add|keep)\b/i.test(line))
     .join(" ");
-  return meaningful.length < 160;
+  return latinLength(meaningful) < 160;
 }
 
 export async function loadDirectorProfile(store: BookStore, language?: string): Promise<DirectorProfile> {
@@ -38,9 +38,23 @@ export async function loadDirectorProfile(store: BookStore, language?: string): 
   return file ? parseDirector(file.content, language) : defaultDirector(language);
 }
 
-export async function loadGhostwriter(store: BookStore, snapshot: BookSnapshot, chapter?: ChapterInfo, paragraph?: ParagraphInfo): Promise<GhostwriterProfile | null> {
-  const slug = paragraph?.ghostwriter || chapter?.ghostwriter || snapshot.book.ghostwriter || (snapshot.ghostwriterSlugs.includes("default") ? "default" : snapshot.ghostwriterSlugs[0]);
-  if (!slug) return null;
+/**
+ * The ghostwriter of a paragraph, else its chapter, else the book, else the default one. A slug that is not a file name
+ * (`../x`, a path, a strange character) is never read: it is skipped for the next one and reported to `onInvalid`, so that
+ * a wrong line in a book's frontmatter cannot stop the writing.
+ */
+export async function loadGhostwriter(store: BookStore, snapshot: BookSnapshot, chapter?: ChapterInfo, paragraph?: ParagraphInfo, options: { onInvalid?: (slug: string) => void } = {}): Promise<GhostwriterProfile | null> {
+  let slug: string | undefined;
+  for (const candidate of [paragraph?.ghostwriter, chapter?.ghostwriter, snapshot.book.ghostwriter]) {
+    if (!candidate) continue;
+    if (isValidGhostwriterSlug(candidate)) {
+      slug = candidate;
+      break;
+    }
+    options.onInvalid?.(candidate);
+  }
+  slug ??= snapshot.ghostwriterSlugs.includes("default") ? "default" : snapshot.ghostwriterSlugs[0];
+  if (!slug || !isValidGhostwriterSlug(slug)) return null;
   const file = await store.read(`ghostwriters/${slug}.md`);
   return file ? parseGhostwriter(slug, file.content) : null;
 }
@@ -138,16 +152,46 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Case-insensitive, whole-word Unicode match: "Eva" is found in "Eva smiled", never inside "aveva". */
+/** Scripts whose names run into the text around them: no spaces (Chinese, Japanese, Thai, Khmer, Lao, Burmese) or particles written right after the name (Korean). */
+const RUNS_ON_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}\p{Script=Khmer}\p{Script=Lao}\p{Script=Myanmar}]/u;
+const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
+
+/** Whether this character, next to a name, makes it part of a longer word: a letter or a number, unless of a script that runs into the text. */
+function continuesWord(character: string | undefined): boolean {
+  return character !== undefined && WORD_CHARACTER.test(character) && !RUNS_ON_SCRIPT.test(character);
+}
+
+function characterBefore(text: string, index: number): string | undefined {
+  if (index <= 0) return undefined;
+  const unit = text.charCodeAt(index - 1);
+  const pair = unit >= 0xdc00 && unit <= 0xdfff && index >= 2 && text.charCodeAt(index - 2) >= 0xd800 && text.charCodeAt(index - 2) <= 0xdbff;
+  return text.slice(index - (pair ? 2 : 1), index);
+}
+
+function characterAt(text: string, index: number): string | undefined {
+  return index < text.length ? String.fromCodePoint(text.codePointAt(index) ?? 0) : undefined;
+}
+
+/**
+ * Case-insensitive, whole-word Unicode match: "Eva" is found in "Eva smiled", never inside "aveva". A letter of a script
+ * that runs into the text around the name (see `RUNS_ON_SCRIPT`) does not make the name part of a longer word: "李明" is
+ * found in "李明走进了海边", "민수" in "민수는", "Mira" in "Miraは". The name is looked for first and only its candidates
+ * have their boundaries checked, which is far quicker than a pattern with the boundaries in it when the canon is large.
+ */
 export function containsName(text: string, name: string): boolean {
   const needle = name.trim().replace(/\s+/g, " ");
   if (needle.length < 2) return false;
-  const pattern = escapeRegExp(needle).replace(/ /g, "\\s+");
-  return new RegExp(`(?<![\\p{L}\\p{N}_])${pattern}(?![\\p{L}\\p{N}_])`, "iu").test(text);
+  const pattern = new RegExp(escapeRegExp(needle).replace(/ /g, "\\s+"), "giu");
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    if (!continuesWord(characterBefore(text, match.index)) && !continuesWord(characterAt(text, match.index + match[0].length))) return true;
+    pattern.lastIndex = match.index + ((text.codePointAt(match.index) ?? 0) > 0xffff ? 2 : 1);
+  }
+  return false;
 }
 
+/** The names an entry can be mentioned by: longer than two characters, or two when written in a script whose names are that short. */
 function canonNames(entry: CanonInfo): string[] {
-  return [entry.name, ...entry.aliases].map((name) => name.trim()).filter((name) => name.length > 2);
+  return [entry.name, ...entry.aliases].map((name) => name.trim()).filter((name) => (RUNS_ON_SCRIPT.test(name) ? [...name].length >= 2 : name.length > 2));
 }
 
 /**

@@ -1,5 +1,5 @@
 import { frontmatterList, frontmatterNumber, frontmatterString, parseMarkdown } from "../markdown/frontmatter.js";
-import { slugToTitle } from "../util/text.js";
+import { clipText, slugToTitle } from "../util/text.js";
 import {
   BOOK_FILE,
   CANON_DIRECTORIES,
@@ -82,7 +82,7 @@ export class SnapshotCache {
     const file = await store.read(path);
     if (!file) return null;
     const document = parseMarkdown(file.content);
-    const entry = { hash: file.hash, frontmatter: document.frontmatter, body: document.body.slice(0, 600) };
+    const entry = { hash: file.hash, frontmatter: document.frontmatter, body: clipText(document.body, 600) };
     this.entries.set(path, entry);
     return entry;
   }
@@ -100,7 +100,7 @@ function canonKindOf(path: string): CanonKind | null {
 
 function firstLine(body: string): string | undefined {
   const line = body.split(/\r?\n/).map((entry) => entry.replace(/^#+\s*/, "").trim()).find((entry) => entry && !entry.startsWith("---"));
-  return line ? line.slice(0, 240) : undefined;
+  return line ? clipText(line, 240) : undefined;
 }
 
 export async function loadBookSnapshot(store: BookStore, cache = new SnapshotCache()): Promise<BookSnapshot> {

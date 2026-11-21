@@ -2,7 +2,7 @@ import type { BookSnapshot } from "../book/snapshot.js";
 import { chapterSlug } from "../book/paths.js";
 import type { DirectorProfile } from "../profiles/director.js";
 import { isItalian } from "../util/text.js";
-import type { AutopilotPhase, AutopilotState, AutopilotTaskKind, ChapterReview, PlannedChapter, PlannedScene } from "./types.js";
+import type { AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, PlannedChapter, PlannedScene } from "./types.js";
 
 export interface PlannerReader {
   slug: string;
@@ -47,8 +47,12 @@ function quoted(title: string | undefined): string {
   return title ? ` «${title}»` : "";
 }
 
-/** Plain-language "what / why / next" of every step, in the book language. */
-export function describeTask(kind: AutopilotTaskKind, language: string, params: { chapter?: PlannedChapter; scene?: PlannedScene; readerName?: string; round?: number; chapters?: number }): Pick<TaskDescriptor, "title" | "reason" | "next"> {
+/**
+ * Plain-language "what / why / next" of every step, in the book language. `from` and `to` (the chapters one batch of a
+ * long plan covers) make the title of the plan task say which chapters it plans; without them it says how many chapters
+ * the single batch of a short book plans.
+ */
+export function describeTask(kind: AutopilotTaskKind, language: string, params: { chapter?: PlannedChapter; scene?: PlannedScene; readerName?: string; round?: number; chapters?: number; from?: number; to?: number }): Pick<TaskDescriptor, "title" | "reason" | "next"> {
   const chapter = params.chapter;
   const scene = params.scene;
   const c = chapter?.number ?? 0;
@@ -60,12 +64,17 @@ export function describeTask(kind: AutopilotTaskKind, language: string, params: 
         reason: text(language, "Premise, cast, places and secrets must exist before planning chapters.", "Premessa, personaggi, luoghi e segreti devono esistere prima di pianificare i capitoli."),
         next: text(language, "Plan the chapters.", "Pianificare i capitoli."),
       };
-    case "plan":
+    case "plan": {
+      const batch = params.from !== undefined && params.to !== undefined ? { from: params.from, to: params.to } : null;
+      const one = batch?.from === batch?.to;
       return {
-        title: text(language, `Planning ${params.chapters ?? ""} chapters`.replace("  ", " "), `Pianificazione di ${params.chapters ?? ""} capitoli`.replace("  ", " ")),
+        title: batch
+          ? text(language, one ? `Planning chapter ${batch.from}` : `Planning chapters ${batch.from}-${batch.to}`, one ? `Pianificazione del capitolo ${batch.from}` : `Pianificazione dei capitoli ${batch.from}-${batch.to}`)
+          : text(language, `Planning ${params.chapters ?? ""} chapters`.replace("  ", " "), `Pianificazione di ${params.chapters ?? ""} capitoli`.replace("  ", " ")),
         reason: text(language, "Every chapter needs a purpose, escalation and causality before writing.", "Ogni capitolo ha bisogno di uno scopo, di un'escalation e di causalità prima della scrittura."),
         next: text(language, "Simulated readers and the director review the plan.", "I lettori simulati e il direttore valutano il piano."),
       };
+    }
     case "plan-reader":
       return {
         title: text(language, `${params.readerName ?? "A reader"} reads the pitch and the plan`, `${params.readerName ?? "Un lettore"} legge il pitch e il piano`),
@@ -162,6 +171,22 @@ function descriptor(kind: AutopilotTaskKind, phase: AutopilotPhase, ctx: Planner
   };
 }
 
+/** Whether another batch follows this one: chapters still missing from the plan, or batches a revision has still to regenerate. */
+function moreBatchesFollow(plan: AutopilotPlan | null, batch: PlanBatch): boolean {
+  const present = new Set((plan?.chapters ?? []).map((chapter) => chapter.number));
+  for (let number = batch.range.start; number <= batch.range.last; number += 1) {
+    if (!present.has(number) && (number < batch.from || number > batch.to)) return true;
+  }
+  return Boolean(plan?.revisionNotes.some((note) => !isExtensionNote(note))) && revisionBatchStarts(plan!, batch.range).some((start) => start !== batch.from);
+}
+
+/** A plan that fits one batch is one task as ever; a longer one is a task per batch, told apart by its first chapter. */
+function planDescriptor(ctx: PlannerContext, plan: AutopilotPlan | null, batch: PlanBatch): TaskDescriptor {
+  if (!batch.batched) return descriptor("plan", "plan", ctx, { chapters: batch.range.count });
+  const task = { ...descriptor("plan", "plan", ctx, { chapters: batch.to - batch.from + 1, from: batch.from, to: batch.to }), chapterNumber: batch.from };
+  return moreBatchesFollow(plan, batch) ? { ...task, next: text(ctx.language, "Plan the next chapters.", "Pianificare i capitoli successivi.") } : task;
+}
+
 function cloneState(state: AutopilotState): AutopilotState {
   return structuredClone(state);
 }
@@ -213,6 +238,83 @@ export function importedChapters(snapshot: BookSnapshot): PlannedChapter[] {
     }));
 }
 
+/** Chapters planned by one AI call: a longer plan is made of several, so that no reply outgrows the model's output. */
+export const PLAN_BATCH_CHAPTERS = 20;
+
+/** The chapters the autopilot has to plan: `count` of them from `start`, after the chapters already written in the book. */
+export interface PlanRange {
+  start: number;
+  count: number;
+  last: number;
+}
+
+/** A call of the plan task: the chapters `from` to `to`, out of a range that is `batched` when it takes more than one call. */
+export interface PlanBatch {
+  from: number;
+  to: number;
+  range: PlanRange;
+  batched: boolean;
+}
+
+export function planRange(imported: ReadonlyArray<{ number: number }>, targetChapters: number): PlanRange {
+  const start = imported.reduce((highest, chapter) => Math.max(highest, chapter.number), 0) + 1;
+  const count = Math.max(1, targetChapters - imported.length);
+  return { start, count, last: start + count - 1 };
+}
+
+/** The first chapter of every batch of the range. */
+export function planBatchStarts(range: PlanRange): number[] {
+  return Array.from({ length: Math.ceil(range.count / PLAN_BATCH_CHAPTERS) }, (_, index) => range.start + index * PLAN_BATCH_CHAPTERS);
+}
+
+/** The first chapter of the batches a revision of this plan has still to regenerate: all of them when the plan does not say. */
+export function revisionBatchStarts(plan: AutopilotPlan, range: PlanRange): number[] {
+  const listed = (plan.revisionBatches ?? []).filter((start) => start >= range.start && start <= range.last);
+  return listed.length ? listed : planBatchStarts(range);
+}
+
+/** The batches that hold the chapters a review names; all of them when a change names no chapter of the range. */
+export function batchesNamed(range: PlanRange, chapterNumbers: number[]): number[] {
+  if (!chapterNumbers.length || chapterNumbers.some((number) => number < range.start || number > range.last)) return planBatchStarts(range);
+  return [...new Set(chapterNumbers.map((number) => range.start + Math.floor((number - range.start) / PLAN_BATCH_CHAPTERS) * PLAN_BATCH_CHAPTERS))].sort((left, right) => left - right);
+}
+
+function batchAt(range: PlanRange, from: number): PlanBatch {
+  return range.count > PLAN_BATCH_CHAPTERS
+    ? { from, to: Math.min(from + PLAN_BATCH_CHAPTERS - 1, range.last), range, batched: true }
+    : { from: range.start, to: range.last, range, batched: false };
+}
+
+/**
+ * The batch the plan task runs next, or `null` when there is nothing to plan: the first chapter of the range that is not in
+ * the plan yet, else the first batch a revision still has to regenerate. A range that fits one batch is always planned
+ * whole.
+ */
+export function nextPlanBatch(plan: AutopilotPlan | null, range: PlanRange): PlanBatch | null {
+  if (!plan) return batchAt(range, range.start);
+  if (plan.approved) return null;
+  const missing = firstMissingChapter(plan.chapters, range);
+  if (missing !== undefined) return batchAt(range, missing);
+  return plan.revisionNotes.length ? batchAt(range, revisionBatchStarts(plan, range)[0]) : null;
+}
+
+/** The first chapter of the range that the chapters do not have. */
+export function firstMissingChapter(chapters: ReadonlyArray<{ number: number }>, range: PlanRange): number | undefined {
+  const present = new Set(chapters.map((chapter) => chapter.number));
+  for (let number = range.start; number <= range.last; number += 1) if (!present.has(number)) return number;
+  return undefined;
+}
+
+/** The note `extendPlanIfNeeded` leaves when the author raises the number of chapters of a finished book. */
+export function extensionNote(targetChapters: number): string {
+  return `Extend the book to ${targetChapters} chapters, continuing from the chapters already written.`;
+}
+
+/** Whether a revision note only asks for the book to be extended: planning the missing chapters is all it needs. */
+export function isExtensionNote(note: string): boolean {
+  return /^Extend the book to \d+ chapters, continuing from the chapters already written\.$/.test(note);
+}
+
 /**
  * Deterministic, AI-free transitions: reconcile the plan with the files the author may have
  * changed, skip what is not needed, open review cycles and advance review rounds.
@@ -233,9 +335,12 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
   }
 
   if (state.plan) {
+    // One lookup table instead of a scan of the snapshot per chapter: a book of thousands of chapters is advanced in linear time.
+    const filesBySlug = new Map<string, BookSnapshot["chapters"][number]>();
+    for (const entry of snapshot.chapters) if (!filesBySlug.has(entry.slug)) filesBySlug.set(entry.slug, entry);
     for (const chapter of state.plan.chapters) {
       if (!chapter.slug) chapter.slug = chapterSlug(chapter.number, chapter.title);
-      const files = snapshot.chapters.find((entry) => entry.slug === chapter.slug);
+      const files = filesBySlug.get(chapter.slug);
       for (const scene of chapter.scenes) {
         if (scene.status !== "planned" && scene.path && !snapshot.files.has(scene.path)) {
           scene.status = "planned";
@@ -341,10 +446,12 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
   if (!state.concept.done) return { kind: "task", task: descriptor("concept", "concept", ctx) };
 
   const plan = state.plan;
-  if (!plan || (!plan.approved && plan.revisionNotes.length > 0)) {
-    const planned = Math.max(1, state.brief.targetChapters - importedChapters(ctx.snapshot).length);
-    return { kind: "task", task: descriptor("plan", "plan", ctx, { chapters: planned }) };
+  if (!plan || !plan.approved) {
+    const batch = nextPlanBatch(plan, planRange(importedChapters(ctx.snapshot), state.brief.targetChapters));
+    if (batch) return { kind: "task", task: planDescriptor(ctx, plan, batch) };
   }
+
+  if (!plan) throw new Error("A book without a plan always has a batch to plan.");
 
   if (!plan.approved) {
     if (state.options.readersOnPlan && !plan.readersDone) {

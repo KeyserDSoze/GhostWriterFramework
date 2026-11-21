@@ -1,6 +1,7 @@
 import type { AiJsonSchema, AiPort, AiUsage } from "../ai/types.js";
 import { AI_CAPABILITIES, AiProviderError } from "../ai/types.js";
 import { requireStructuredFields } from "../ai/structured.js";
+import { layoutChapters, listSection, type ChapterFormat, type WindowedList } from "../autopilot/outline.js";
 import { importedChapters } from "../autopilot/planner.js";
 import { parseAutopilotState } from "../autopilot/state.js";
 import { readStorySoFar } from "../autopilot/story-so-far.js";
@@ -16,14 +17,14 @@ import {
   secretRules,
 } from "../book/context.js";
 import { AUTOPILOT_STATE_FILE, PLOT_FILE, STORY_DESIGN_FILE, chapterResumePath, directorOpinionPath, readerSummaryPath, type EvaluationTarget } from "../book/paths.js";
-import { findChapter, findParagraph, loadBookSnapshot, type BookSnapshot } from "../book/snapshot.js";
+import { findChapter, findParagraph, loadBookSnapshot, type BookSnapshot, type ChapterInfo } from "../book/snapshot.js";
 import type { BookStore } from "../book/store.js";
 import { frontmatterNumber, frontmatterString, parseMarkdown, renderMarkdown } from "../markdown/frontmatter.js";
 import { directorPrompt, type DirectorProfile } from "../profiles/director.js";
 import { currentRequest, untrustedData } from "../prompt/trust.js";
 import { asArray, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
 import { sha256Hex } from "../util/hash.js";
-import { isItalian, languageName, tail, truncate } from "../util/text.js";
+import { isItalian, languageName, scaleOutputTokens, tail, truncate } from "../util/text.js";
 
 export type DirectorVerdict = "approve" | "revise" | "rewrite";
 
@@ -214,12 +215,43 @@ interface DirectorMaterial {
   sourceHash: string;
 }
 
-async function bookMaterial(store: BookStore, snapshot: BookSnapshot): Promise<DirectorMaterial> {
-  const chapterLines = await Promise.all(snapshot.chapters.map(async (chapter) => {
+/** Up to this many chapters, every chapter's readers' score is read; beyond it, only the ones the list can show in full. */
+const SCORES_FOR_EVERY_CHAPTER = 200;
+
+function bookChapters(scores: ReadonlyMap<string, number>): ChapterFormat<ChapterInfo> {
+  const scenes = (chapters: ChapterInfo[]) => chapters.reduce((sum, chapter) => sum + chapter.paragraphs.length, 0);
+  return {
+    render(chapter, detail) {
+      const head = `- Chapter ${chapter.number} «${chapter.title}» (${chapter.paragraphs.length} scenes)`;
+      if (detail === "title") return head;
+      const readerScore = detail === "full" ? scores.get(chapter.slug) : undefined;
+      return `${head}${chapter.summary ? `: ${truncate(chapter.summary, 400)}` : ""}${readerScore ? ` — readers ${readerScore}/10` : ""}`;
+    },
+    collapse(chapters, titles) {
+      const range = `Chapters ${chapters[0].number}-${chapters[chapters.length - 1].number}`;
+      return titles ? `- ${range}: ${chapters.map((chapter) => chapter.title).join("; ")}` : `- ${range} (${scenes(chapters)} scenes)`;
+    },
+  };
+}
+
+/** The whole book as one line per chapter, condensed around the latest written chapter when it is too long for a prompt. */
+async function bookChapterList(store: BookStore, snapshot: BookSnapshot): Promise<WindowedList> {
+  const chapters = snapshot.chapters;
+  const around = [...chapters].reverse().find((chapter) => chapter.paragraphs.length > 0)?.number ?? chapters.at(-1)?.number;
+  const shown = chapters.length <= SCORES_FOR_EVERY_CHAPTER
+    ? chapters
+    : chapters.filter((chapter, index) => index < 5 || index >= chapters.length - 5 || Math.abs(chapter.number - (around ?? 0)) <= 30);
+  const scores = new Map<string, number>();
+  await Promise.all(shown.map(async (chapter) => {
     const summary = await readDocument(store, readerSummaryPath({ kind: "chapter", chapter: chapter.slug }));
     const readerScore = summary ? frontmatterNumber(summary.document.frontmatter, "score") : undefined;
-    return `- Chapter ${chapter.number} «${chapter.title}» (${chapter.paragraphs.length} scenes)${chapter.summary ? `: ${truncate(chapter.summary, 400)}` : ""}${readerScore ? ` — readers ${readerScore}/10` : ""}`;
+    if (readerScore) scores.set(chapter.slug, readerScore);
   }));
+  return layoutChapters(chapters, bookChapters(scores), { around });
+}
+
+async function bookMaterial(store: BookStore, snapshot: BookSnapshot): Promise<DirectorMaterial> {
+  const chapterList = await bookChapterList(store, snapshot);
   const [design, plot, autopilot] = await Promise.all([
     readBody(store, STORY_DESIGN_FILE, 5000),
     readBody(store, PLOT_FILE, 4000),
@@ -237,7 +269,7 @@ async function bookMaterial(store: BookStore, snapshot: BookSnapshot): Promise<D
       design ? `STORY DESIGN:\n${design}` : "",
       plot ? `PLOT MAP:\n${plot}` : "",
       resume ? `STORY SO FAR:\n${resume}` : "",
-      chapterLines.length ? `CHAPTERS:\n${chapterLines.join("\n")}` : "CHAPTERS: none yet.",
+      chapterList.text ? listSection("CHAPTERS", chapterList) : "CHAPTERS: none yet.",
       directorNotes ? `STANDING RULES AND NOTES:\n${directorNotes}` : "",
     ],
     sourceHash: await sha256Hex([...snapshot.files.entries()].filter(([path]) => path.startsWith("chapters/")).map(([path, hash]) => `${path}:${hash}`).sort().join("\n")),
@@ -352,7 +384,7 @@ export async function askDirector(input: AskDirectorInput): Promise<AskDirectorR
     system: directorSystemPrompt(director, language),
     user: `${currentRequest(request)}\n\n${untrustedData("repository_content", material.sections.filter(Boolean).join("\n\n"))}`,
     json: DIRECTOR_OPINION_TOOL,
-    maxOutputTokens: 4000,
+    maxOutputTokens: scaleOutputTokens(4000, language),
     signal: input.signal,
   });
   // A reply cut by the output limit is never an opinion, also outside the autopilot.

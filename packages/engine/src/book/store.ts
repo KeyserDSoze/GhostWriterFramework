@@ -31,6 +31,11 @@ export interface BookStore {
   /** Text files of the book with their content hashes. */
   list(): Promise<BookFileEntry[]>;
   read(path: string): Promise<BookFileContent | null>;
+  /**
+   * Several files at once, in the order asked, each once; a file that does not exist is left out. A store over a
+   * network provides it so that a big book is not read with one request per file; callers fall back to `read`.
+   */
+  readMany?(paths: string[]): Promise<BookFileContent[]>;
   commit(changes: BookFileChange[], message: string): Promise<BookCommitResult>;
 }
 

@@ -2,7 +2,7 @@ import path from "node:path";
 import { access, lstat, realpath } from "node:fs/promises";
 import { chapterSlug, formatOrdinal, paragraphSlug, slugify } from "./slug.js";
 
-export { chapterSlug, formatOrdinal, paragraphSlug, slugify } from "./slug.js";
+export { chapterSlug, formatOrdinal, paragraphSlug, slugify, slugifyAny } from "./slug.js";
 
 export function paragraphFilename(number: number, title: string): string {
   return `${paragraphSlug(number, title)}.md`;

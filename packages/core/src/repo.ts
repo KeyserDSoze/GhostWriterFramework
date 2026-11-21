@@ -109,6 +109,7 @@ import {
   pathExists,
   resolveContainedPath,
   slugify,
+  slugifyAny,
   toPosixPath,
 } from "./utils.js";
 
@@ -1442,7 +1443,7 @@ export async function createEntity(
 
   const slug = input.slug
     ? assertSafePathSegment(input.slug, `${kind} slug`)
-    : slugify(label ?? "entry");
+    : slugifyAny(label ?? "entry", kind, true);
   if (!slug) throw new Error(`A valid name or title is required for ${kind}.`);
   const directory = ENTITY_TYPE_TO_DIRECTORY[kind];
   const filePath = await assertContainedPath(root, path.join(directory, `${slug}.md`), `${kind} file path`);
@@ -2250,7 +2251,7 @@ export async function renameEntity(
   const raw = await readFile(oldFilePath, "utf8");
   const parsed = matter(raw);
   const oldSlug = path.basename(oldFilePath, ".md");
-  const nextSlug = normalizeRenameSlug(options.newSlug ?? options.newNameOrTitle);
+  const nextSlug = normalizeRenameSlug(options.newSlug ?? options.newNameOrTitle, options.kind);
   const newFilePath = await assertContainedPath(root, path.join(ENTITY_TYPE_TO_DIRECTORY[options.kind], `${nextSlug}.md`), `${options.kind} destination path`);
   const labelKey = getEntityLabelKey(options.kind);
   const oldId = `${options.kind}:${oldSlug}`;
@@ -3141,7 +3142,7 @@ async function resolveGhostwriter(
     ?? selections.chapterDraft
     ?? book?.frontmatter.ghostwriter;
   if (!slug) throw new Error("No ghostwriter is selected. Set ghostwriter in book.md or the current chapter/paragraph frontmatter.");
-  if (slugify(slug) !== slug) throw new Error(`Invalid ghostwriter slug: ${slug}`);
+  if (!isValidGhostwriterSlug(slug)) throw new Error(`Invalid ghostwriter slug: ${slug}`);
 
   const filePath = await assertContainedPath(root, path.join(GHOSTWRITERS_DIRECTORY, `${slug}.md`), "Ghostwriter file path");
   if (!(await pathExists(filePath))) throw new Error(`Selected ghostwriter does not exist: ${toPosixPath(path.relative(root, filePath))}`);
@@ -7238,6 +7239,15 @@ const OBJECT_PATTERNS = [
   /\b(muro|porta|tavolo|sedia|anello|manica|tunica|lettera|registro|libro|lama|coltello|bicchiere|finestra|soglia)\w*\b/giu,
 ];
 
+/**
+ * A ghostwriter is chosen by the name of its file. Latin names must be exactly what `slugify` makes of them (as always);
+ * a name in another script is accepted as it is, as long as it is letters, digits and hyphens: no path can hide in it.
+ */
+function isValidGhostwriterSlug(slug: string): boolean {
+  if (/^[\x00-\x7f]*$/.test(slug)) return slugify(slug) === slug;
+  return /^[\p{L}\p{N}][\p{L}\p{N}\p{M}_-]*$/u.test(slug.normalize("NFC")) && !slug.includes("..");
+}
+
 export async function validateBook(rootPath: string): Promise<{
   valid: boolean;
   checked: number;
@@ -7290,7 +7300,7 @@ export async function validateBook(rootPath: string): Promise<{
       continue;
     }
     if (typeof selected !== "string") continue;
-    if (slugify(selected) !== selected) {
+    if (!isValidGhostwriterSlug(selected)) {
       errors.push({ path: relativePath, message: `Invalid ghostwriter slug: ${selected}` });
     } else if (!(await pathExists(path.join(root, GHOSTWRITERS_DIRECTORY, `${selected}.md`)))) {
       errors.push({ path: relativePath, message: `Selected ghostwriter does not exist: ${GHOSTWRITERS_DIRECTORY}/${selected}.md` });
@@ -7762,7 +7772,7 @@ export async function exportEpub(
   const title = options?.title ?? book?.frontmatter.title ?? path.basename(root);
   const author = options?.author ?? book?.frontmatter.author ?? "Unknown Author";
   const language = options?.language ?? book?.frontmatter.language ?? "en";
-  const outputPath = path.resolve(options?.outputPath ?? path.join(root, "dist", `${slugify(title)}.epub`));
+  const outputPath = path.resolve(options?.outputPath ?? path.join(root, "dist", `${slugifyAny(title, "book", true)}.epub`));
 
   const content = [] as Array<{ title: string; content: string }>;
 
@@ -10348,7 +10358,7 @@ export async function writeWikipediaResearchSnapshot(
   const root = path.resolve(rootPath);
   const slug = options.slug
     ? assertSafePathSegment(options.slug, "Research snapshot slug")
-    : slugify(options.title);
+    : slugifyAny(options.title, "research", true);
   if (!slug) throw new Error("Research snapshot title must produce a non-empty slug.");
   const filePath = await assertContainedPath(root, path.join("research", "wikipedia", `${slug}.md`), "Research snapshot path");
   const secondaryLangLabel = options.secondaryLang ? options.secondaryLang.toUpperCase() : "IT";
@@ -10418,7 +10428,7 @@ export async function findWikipediaResearchSnapshot(
   const researchRoot = path.join(root, "research", "wikipedia");
 
   const candidateSlugs = uniqueValues(
-    [options.slug, slugify(options.title)]
+    [options.slug, slugifyAny(options.title, "research", true)]
       .filter((value): value is string => Boolean(value && value.trim()))
       .map((value) => value.trim().toLowerCase()),
   );
@@ -10753,8 +10763,8 @@ function normalizeAssetExtension(value: string): string {
   return normalized;
 }
 
-function normalizeRenameSlug(value: string): string {
-  const normalized = slugify(value);
+function normalizeRenameSlug(value: string, fallback = "entry"): string {
+  const normalized = slugifyAny(value, fallback, true);
   if (!normalized) {
     throw new Error("Rename target must produce a non-empty slug.");
   }
@@ -13736,7 +13746,7 @@ export async function createPersona(
   rootPath: string,
   input: CreatePersonaInput,
 ): Promise<{ filePath: string; frontmatter: PersonaFrontmatter }> {
-  const slug = input.slug ? assertSafePathSegment(input.slug, "Persona slug") : slugify(input.name);
+  const slug = input.slug ? assertSafePathSegment(input.slug, "Persona slug") : slugifyAny(input.name, "reader", true);
   if (!slug) throw new Error("Persona name must produce a non-empty slug.");
   const root = path.resolve(rootPath);
   const filePath = await assertContainedPath(root, path.join(PERSONAS_DIRECTORY, `${slug}.md`), "Persona file path");
@@ -13798,7 +13808,7 @@ export async function loadPersonas(rootPath: string): Promise<Array<{ filePath: 
 export async function seedDefaultPersonas(rootPath: string, language?: string): Promise<string[]> {
   const created: string[] = [];
   for (const persona of DEFAULT_PERSONAS) {
-    const slug = persona.slug ?? slugify(persona.name);
+    const slug = persona.slug ?? slugifyAny(persona.name, "reader", true);
     const filePath = await assertContainedPath(rootPath, path.join(PERSONAS_DIRECTORY, `${slug}.md`), "Persona file path");
     if (await pathExists(filePath)) continue;
     const result = await createPersona(rootPath, { ...persona, language, overwrite: false });
