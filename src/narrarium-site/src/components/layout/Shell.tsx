@@ -64,6 +64,7 @@ export function Shell() {
   const askDirectorOpen = useAskDirectorStore((s) => Boolean(s.request));
   const personalServerUrl = settings.personalServer?.url ?? "";
   const personalServerToken = settings.personalServer?.token ?? "";
+  const personalServerFingerprint = settings.personalServer?.fingerprint ?? "";
   const accessToken = useAuthStore((s) => s.accessToken);
   const hydrateConnections = useConnectionStore((state) => state.hydrate);
 
@@ -75,7 +76,8 @@ export function Shell() {
 
   useEffect(() => { void hydrateConnections().then(() => scheduleAccountSync(250)); }, [hydrateConnections]);
 
-  // Follow the personal server live while it is configured (debounced while the address is typed).
+  // Follow the personal server live while it is configured (debounced while the address is typed;
+  // until it runs, the settings screens show the typed connection as not connected yet).
   useEffect(() => {
     if (!cloudLoaded) return;
     const configured = Boolean(personalServerUrl.trim() && personalServerToken.trim());
@@ -87,7 +89,7 @@ export function Shell() {
         .catch(() => undefined);
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [cloudLoaded, personalServerUrl, personalServerToken]);
+  }, [cloudLoaded, personalServerUrl, personalServerToken, personalServerFingerprint]);
 
   useEffect(() => {
     const route = parseAppRoute(location.pathname);

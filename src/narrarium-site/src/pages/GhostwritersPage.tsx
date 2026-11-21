@@ -13,6 +13,8 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
+import { FileChangedNotice } from "@/components/book/FileChangedNotice";
+import { useGuardedDocumentLoad } from "@/hooks/useGuardedDocumentLoad";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { resolveBookToken } from "@/types/settings";
 import { readFileWithSha } from "@/github/githubClient";
@@ -44,20 +46,26 @@ export function GhostwritersPage() {
     setSelected(list.find((entry) => entry.slug === structure?.ghostwriter)?.slug ?? list[0].slug);
   }, [list, selected, structure?.ghostwriter]);
 
-  useEffect(() => {
-    if (!book || !token || !selected) return;
-    const entry = list.find((g) => g.slug === selected);
-    if (!entry) return;
-    setBusy(true);
-    readFileWithSha(token, book.owner, book.repo, branch, entry.path)
-      .then(({ content }) => {
-        const loaded = parseGhostwriter(selected, content);
-        setProfile(loaded);
-        setSavedProfile(serializeGhostwriter(loaded));
-      })
-      .catch((err) => toast({ title: t("ghostwriters.loadFailed"), description: String(err), variant: "destructive" }))
-      .finally(() => setBusy(false));
-  }, [book, token, branch, selected, list, t, toast]);
+  const dirty = Boolean(profile && serializeGhostwriter(profile) !== savedProfile);
+  const selectedEntry = selected ? list.find((g) => g.slug === selected) : undefined;
+
+  // The settings and the book structure are replaced whenever they reload: the profile is read again
+  // only for another book, branch or profile, and never over what the author is typing.
+  const file = useGuardedDocumentLoad<GhostwriterProfile>({
+    document: book && token && selectedEntry ? `${book.id}|${book.owner}/${book.repo}|${selectedEntry.slug}` : null,
+    source: `${branch}|${selectedEntry?.path ?? ""}`,
+    load: async () => {
+      const { content } = await readFileWithSha(token, book!.owner, book!.repo, branch, selectedEntry!.path);
+      return { value: parseGhostwriter(selectedEntry!.slug, content), version: content };
+    },
+    edited: dirty,
+    apply: (loaded) => {
+      setProfile(loaded);
+      setSavedProfile(serializeGhostwriter(loaded));
+    },
+    onLoading: setBusy,
+    onError: (err) => toast({ title: t("ghostwriters.loadFailed"), description: String(err), variant: "destructive" }),
+  });
 
   async function createGhostwriter() {
     const name = newName.trim();
@@ -87,7 +95,14 @@ export function GhostwritersPage() {
     try {
       const content = serializeGhostwriter(profile);
       const snapshot = await captureImmediateMutation({ token, book, branch, path: `ghostwriters/${profile.slug}.md` });
+      const loadedVersion = file.baseVersion();
+      if (loadedVersion !== undefined && snapshot.content !== loadedVersion) {
+        file.flagChanged();
+        toast({ title: t("ghostwriters.saveFailed"), description: t("ghostwriters.changedElsewhere"), variant: "destructive" });
+        return false;
+      }
       await commitImmediateMutation({ token, book, branch, snapshot, content, message: `Update ghostwriter ${profile.slug}` });
+      file.adopt(content);
       setSavedProfile(content);
       toast({ title: t("common.saved") });
       await reload();
@@ -98,7 +113,6 @@ export function GhostwritersPage() {
     } finally { setBusy(false); }
   }
 
-  const dirty = Boolean(profile && serializeGhostwriter(profile) !== savedProfile);
   useRegisterPageSave({ dirty, enabled: Boolean(profile && book && token), onSave: () => save() });
 
   async function allowProfileChange(): Promise<boolean> {
@@ -207,6 +221,7 @@ export function GhostwritersPage() {
           <div className="rounded-2xl border border-dashed p-10 text-center text-sm text-muted-foreground">{t("ghostwriters.selectHint")}</div>
         ) : (
            <div className="min-w-0 space-y-4">
+             {file.changedElsewhere && <FileChangedNotice message={t("ghostwriters.changedElsewhere")} reloadLabel={t("ghostwriters.reloadFile")} onReload={file.reload} />}
              <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                <h2 className="min-w-0 truncate font-serif text-xl font-semibold">{profile.name}</h2>
                <div className="flex max-w-full flex-wrap gap-2">

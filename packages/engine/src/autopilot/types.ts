@@ -303,10 +303,13 @@ export type AutopilotMessageCode =
   | "publishFailed"
   | "finalStateFailed";
 
-/** Live events: everything the autopilot does, as it happens. */
+/**
+ * Live events: everything the autopilot does, as it happens. `run-ended` carries a `code` when the run ended for a
+ * reason a client can translate (`takenOver`: another runner owns the book now, so this run stopped without saving).
+ */
 export type AutopilotEventBody =
   | { type: "run-started"; runId: string; host: "browser" | "server" }
-  | { type: "run-ended"; runId: string; status: AutopilotStatus; message?: string | null }
+  | { type: "run-ended"; runId: string; status: AutopilotStatus; message?: string | null; code?: AutopilotMessageCode }
   | { type: "task-started"; activity: AutopilotActivity }
   | { type: "task-progress"; activityId: string; characters: number; preview: string }
   | { type: "task-finished"; activity: AutopilotActivity }
@@ -347,6 +350,11 @@ export interface AutopilotSnapshot {
   live: { activity: AutopilotActivity; characters: number; preview: string } | null;
   running: boolean;
   host: "browser" | "server" | null;
+  /**
+   * Set when `autopilot/state.json` exists but cannot be read: `state` is then null, and the autopilot leaves the file
+   * alone until it is restored from the book's history or the autopilot is reset (which deletes it).
+   */
+  stateError?: { code: "state_corrupt"; message: string };
 }
 
 export interface InterventionInput {

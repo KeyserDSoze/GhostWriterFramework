@@ -369,6 +369,28 @@ export function parseAutopilotState(raw: string | null | undefined, now = new Da
   }
 }
 
+/**
+ * Like `parseAutopilotState`, but it tells a file that is absent or blank (nothing to protect) from one that exists
+ * with content that is not a JSON object, for example a merge's conflict markers: `unreadable` then says why, and
+ * the file must not be overwritten.
+ */
+export function inspectAutopilotState(raw: string | null | undefined, now = new Date()): { state: AutopilotState | null; unreadable?: string } {
+  if (!raw?.trim()) return { state: null };
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    const conflicted = /^<{7}(?: |$)/m.test(raw) && /^>{7}(?: |$)/m.test(raw);
+    return { state: null, unreadable: conflicted ? "it contains unresolved merge conflict markers" : "it is not valid JSON" };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { state: null, unreadable: "it does not hold a JSON object" };
+  try {
+    return { state: normalizeAutopilotState(value, now) };
+  } catch {
+    return { state: null, unreadable: "its content could not be interpreted" };
+  }
+}
+
 export function serializeAutopilotState(state: AutopilotState): string {
   return `${JSON.stringify(state, null, 2)}\n`;
 }

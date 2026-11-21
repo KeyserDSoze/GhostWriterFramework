@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { DEFAULT_ADMIN_PORT, DEFAULT_SERVER_PORT, pickAiRuntimeConfig, serverIdentityMessage, type AiRuntimeConfig, type ServerBookStorage } from "narrarium-engine";
 import { HttpError } from "./errors.js";
-import { atomicJson, ensurePrivateDirectory, readJson } from "./files.js";
+import { KeyedMutex } from "./fs-store.js";
+import { atomicJson, ensurePrivateDirectory, readJson, renameReplacing } from "./files.js";
 import { isEncryptedSecret, Vault, type EncryptedSecret } from "./vault.js";
 
 /** Browser origins that may always call the API: the Narrarium web app and its local dev servers. */
@@ -50,10 +51,23 @@ export interface StoredBook {
 }
 
 const BOOK_ID = /^[A-Za-z0-9._-]{1,120}$/;
+/** Where removed and replaced working copies wait, inside `books/`: no book may use this name. */
+const TRASH_DIRECTORY = ".trash";
+/** How long a working copy stays in the trash before the server deletes it for good. */
+export const TRASH_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+/** The longest GitHub token accepted (real ones are well under 100 characters): the token file is read with a 1 MiB cap. */
+export const MAX_BOOK_TOKEN_CHARACTERS = 512;
 
 export function assertBookId(bookId: string): string {
-  if (!BOOK_ID.test(bookId) || bookId === "." || bookId === "..") throw new HttpError(400, "invalid_book", "Invalid book id.");
+  if (!BOOK_ID.test(bookId) || bookId === "." || bookId === ".." || bookId.toLowerCase() === TRASH_DIRECTORY) throw new HttpError(400, "invalid_book", "Invalid book id.");
   return bookId;
+}
+
+/** Refuse a GitHub token that is too long to be one (clearing a token with `null` or "" is always fine). */
+export function assertBookToken(token: string | null | undefined): void {
+  if (typeof token === "string" && token.trim().length > MAX_BOOK_TOKEN_CHARACTERS) {
+    throw new HttpError(400, "invalid_token", `The GitHub token is too long: at most ${MAX_BOOK_TOKEN_CHARACTERS} characters.`);
+  }
 }
 
 function validPort(value: unknown, fallback: number): number {
@@ -123,6 +137,9 @@ interface IdentityFile {
 
 /** Everything the server keeps on disk. Secrets go through the vault. */
 export class DataDirectory {
+  /** One writer per file: every update reads the current content inside its turn, and readers wait for a write in progress. */
+  private readonly locks = new KeyedMutex();
+
   private constructor(
     readonly root: string,
     readonly vault: Vault,
@@ -168,13 +185,16 @@ export class DataDirectory {
     return sign(null, Buffer.from(serverIdentityMessage(nonce, this.currentConfig.serverId, this.publicKey)), this.privateKey).toString("base64");
   }
 
-  async updateConfig(change: (config: ServerConfig) => void): Promise<ServerConfig> {
-    const next = structuredClone(this.currentConfig);
-    change(next);
-    const checked = parseConfig(next);
-    await atomicJson(configPath(this.root), checked, 0o600);
-    this.currentConfig = checked;
-    return checked;
+  /** Apply `change` to the configuration as it is when this update gets its turn: updates never overwrite each other. */
+  updateConfig(change: (config: ServerConfig) => void): Promise<ServerConfig> {
+    return this.locks.run("config", async () => {
+      const next = structuredClone(this.currentConfig);
+      change(next);
+      const checked = parseConfig(next);
+      await atomicJson(configPath(this.root), checked, 0o600);
+      this.currentConfig = checked;
+      return checked;
+    });
   }
 
   file(...parts: string[]): string {
@@ -185,49 +205,125 @@ export class DataDirectory {
     return path.join(this.root, "books", assertBookId(bookId), "repo");
   }
 
-  async aiConfig(): Promise<{ config: AiRuntimeConfig; updatedAt: string | null }> {
-    const stored = await readJson(this.file("private", "ai.json"), 4 * 1024 * 1024) as { encrypted?: unknown; updatedAt?: unknown } | undefined;
-    if (!stored || !isEncryptedSecret(stored.encrypted)) return { config: pickAiRuntimeConfig({}), updatedAt: null };
-    return { config: pickAiRuntimeConfig(JSON.parse(this.vault.decrypt(stored.encrypted))), updatedAt: typeof stored.updatedAt === "string" ? stored.updatedAt : null };
+  aiConfig(): Promise<{ config: AiRuntimeConfig; updatedAt: string | null }> {
+    return this.locks.run("ai", async () => {
+      const stored = await readJson(this.file("private", "ai.json"), 4 * 1024 * 1024) as { encrypted?: unknown; updatedAt?: unknown } | undefined;
+      if (!stored || !isEncryptedSecret(stored.encrypted)) return { config: pickAiRuntimeConfig({}), updatedAt: null };
+      return { config: pickAiRuntimeConfig(JSON.parse(this.vault.decrypt(stored.encrypted))), updatedAt: typeof stored.updatedAt === "string" ? stored.updatedAt : null };
+    });
   }
 
   async saveAiConfig(config: AiRuntimeConfig): Promise<void> {
-    await atomicJson(this.file("private", "ai.json"), { encrypted: this.vault.encrypt(JSON.stringify(pickAiRuntimeConfig(config))), updatedAt: new Date().toISOString() });
+    await this.locks.run("ai", () => atomicJson(this.file("private", "ai.json"), { encrypted: this.vault.encrypt(JSON.stringify(pickAiRuntimeConfig(config))), updatedAt: new Date().toISOString() }));
   }
 
-  async books(): Promise<StoredBook[]> {
+  private async readBooks(): Promise<StoredBook[]> {
     const stored = await readJson(this.file("books.json"), 4 * 1024 * 1024) as { books?: StoredBook[] } | undefined;
     return Array.isArray(stored?.books) ? stored.books.filter((book) => book && typeof book.bookId === "string" && BOOK_ID.test(book.bookId)) : [];
   }
 
+  books(): Promise<StoredBook[]> {
+    return this.locks.run("books", () => this.readBooks());
+  }
+
   async saveBook(book: StoredBook): Promise<void> {
-    const books = (await this.books()).filter((entry) => entry.bookId !== book.bookId);
-    books.push(book);
-    await atomicJson(this.file("books.json"), { books: books.sort((left, right) => left.title.localeCompare(right.title)) }, 0o600);
+    await this.locks.run("books", async () => {
+      const books = (await this.readBooks()).filter((entry) => entry.bookId !== book.bookId);
+      books.push(book);
+      await atomicJson(this.file("books.json"), { books: books.sort((left, right) => left.title.localeCompare(right.title)) }, 0o600);
+    });
   }
 
+  /**
+   * Forget a book and its GitHub token. Its working copy is moved to the trash, never deleted: if that
+   * fails nothing else is changed.
+   */
   async removeBook(bookId: string): Promise<void> {
-    await atomicJson(this.file("books.json"), { books: (await this.books()).filter((entry) => entry.bookId !== bookId) }, 0o600);
+    assertBookId(bookId);
+    await this.moveToTrash(bookId);
+    await this.locks.run("books", async () => {
+      await atomicJson(this.file("books.json"), { books: (await this.readBooks()).filter((entry) => entry.bookId !== bookId) }, 0o600);
+    });
     await this.setBookToken(bookId, null);
-    await fs.rm(path.join(this.root, "books", assertBookId(bookId)), { recursive: true, force: true });
+    await fs.rm(path.join(this.root, "books", bookId), { recursive: true, force: true });
   }
 
-  private async bookTokens(): Promise<Record<string, EncryptedSecret>> {
+  get trashDirectory(): string {
+    return path.join(this.root, "books", TRASH_DIRECTORY);
+  }
+
+  /**
+   * Move a book's working copy to `books/.trash/<bookId>-<time>` (mode 0700) instead of deleting it.
+   * Returns where it went, or `undefined` when there was nothing to keep.
+   */
+  async moveToTrash(bookId: string): Promise<string | undefined> {
+    const directory = this.bookDirectory(bookId);
+    let entries: string[];
+    try {
+      entries = await fs.readdir(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+    if (!entries.length) {
+      await fs.rmdir(directory);
+      return undefined;
+    }
+    await fs.mkdir(this.trashDirectory, { recursive: true, mode: 0o700 });
+    let stamp = Date.now();
+    while (await fs.lstat(path.join(this.trashDirectory, `${bookId}-${stamp}`)).then(() => true, () => false)) stamp += 1;
+    const target = path.join(this.trashDirectory, `${bookId}-${stamp}`);
+    await renameReplacing(directory, target);
+    if (process.platform !== "win32") await fs.chmod(target, 0o700).catch(() => undefined);
+    return target;
+  }
+
+  /**
+   * Delete the trash entries older than `maxAgeMs`. The age is the time in the name (`<bookId>-<time>`):
+   * a moved folder keeps its old modification time, so that time would be wrong for it. Entries without
+   * a time in their name are judged by their modification time.
+   */
+  async purgeTrash(maxAgeMs = TRASH_RETENTION_MS, now = Date.now()): Promise<string[]> {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(this.trashDirectory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+    const removed: string[] = [];
+    for (const entry of entries) {
+      const target = path.join(this.trashDirectory, entry);
+      const stamp = /^.+-(\d{10,16})$/.exec(entry)?.[1];
+      const since = stamp ? Number(stamp) : await fs.lstat(target).then((info) => info.mtimeMs, () => now);
+      if (now - since <= maxAgeMs) continue;
+      await fs.rm(target, { recursive: true, force: true });
+      removed.push(entry);
+    }
+    return removed;
+  }
+
+  private async readBookTokens(): Promise<Record<string, EncryptedSecret>> {
     const stored = await readJson(this.file("private", "book-tokens.json"), 1024 * 1024) as { tokens?: Record<string, unknown> } | undefined;
     const tokens: Record<string, EncryptedSecret> = {};
     for (const [bookId, value] of Object.entries(stored?.tokens ?? {})) if (BOOK_ID.test(bookId) && isEncryptedSecret(value)) tokens[bookId] = value;
     return tokens;
   }
 
-  async bookToken(bookId: string): Promise<string | undefined> {
-    const encrypted = (await this.bookTokens())[bookId];
-    return encrypted ? this.vault.decrypt(encrypted) : undefined;
+  bookToken(bookId: string): Promise<string | undefined> {
+    return this.locks.run("book-tokens", async () => {
+      const encrypted = (await this.readBookTokens())[bookId];
+      return encrypted ? this.vault.decrypt(encrypted) : undefined;
+    });
   }
 
   async setBookToken(bookId: string, token: string | null): Promise<void> {
-    const tokens = await this.bookTokens();
-    if (token?.trim()) tokens[assertBookId(bookId)] = this.vault.encrypt(token.trim());
-    else delete tokens[bookId];
-    await atomicJson(this.file("private", "book-tokens.json"), { tokens });
+    assertBookToken(token);
+    await this.locks.run("book-tokens", async () => {
+      const tokens = await this.readBookTokens();
+      if (token?.trim()) tokens[assertBookId(bookId)] = this.vault.encrypt(token.trim());
+      else delete tokens[bookId];
+      await atomicJson(this.file("private", "book-tokens.json"), { tokens });
+    });
   }
 }

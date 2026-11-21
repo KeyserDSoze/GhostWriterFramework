@@ -66,6 +66,8 @@ To manage the server remotely as well, route a second hostname (or the same one)
 
 Narrarium on `https://narrarium.net` can always call the server; add other web origins under **Approved network**.
 
+Set the public API address (**Approved network**) even when you only use the tunnel: besides the `Host` check, the server uses it to believe Cloudflare's `cf-connecting-ip` header, so that every limit below is counted for the real caller. Without a public address (and without the server's own connector) all tunnel traffic would count as one caller.
+
 ## Start automatically
 
 ```bash
@@ -73,6 +75,8 @@ npx narrarium-server setup --autostart
 ```
 
 On Linux this installs a systemd user service (`~/.config/systemd/user/narrarium-server.service`; run `sudo loginctl enable-linger $USER` to start it before you log in). On macOS it installs a launch agent (`~/Library/LaunchAgents/net.narrarium.server.plist`, logging to `server.log` in the data folder). On Windows, add `npx narrarium-server start` to Task Scheduler at logon. The service runs the supervisor of the version installed by `setup`; the server it starts is always the active version, so run `setup --autostart` again after updates if you want the supervisor itself to move to the newer version.
+
+The service starts with the `PATH` of the shell that ran `setup` (so npm, git and cloudflared installed through nvm or Homebrew are found) and is restarted after a crash at most ten times in five minutes: after that systemd leaves it stopped, and `systemctl --user reset-failed narrarium-server` lets it start again. Run `setup --autostart` again to refresh an older unit.
 
 ## Commands
 
@@ -115,6 +119,7 @@ Default location, unless `--data-root` or `NARRARIUM_SERVER_HOME` says otherwise
 config.json              ports, label, origins, approved network (no secrets)
 books.json               hosted books
 books/<id>/repo/         working copy of each book: every autopilot step is a git commit
+books/.trash/           removed or replaced working copies, deleted for good after 14 days
 private/                 0700
   admin-code.txt         admin code (0600)
   authorization.json     client tokens as SHA-256 hashes, pending pairing
@@ -124,6 +129,8 @@ private/                 0700
   book-tokens.json       per-book GitHub tokens, encrypted
   cloudflare-tunnel-token, cloudflare-tunnel.json, cloudflared-home/
   npm-runtime/           verified versions and the active one
+  git-home/              the empty home git runs in (never your own ~/.gitconfig)
+  npm-home/              the empty home, configuration and cache npm runs with (never your ~/.npmrc)
   update-request.json, update-result.json
 ```
 
@@ -136,7 +143,11 @@ One server per data folder: a kernel lock on Linux (`flock`), a named mutex on W
 - The admin panel needs the admin code, an `HttpOnly`, `SameSite=Strict` cookie and a CSRF token; it is served under a strict Content-Security-Policy.
 - AI keys, GitHub tokens and the identity key are encrypted with AES-256-GCM; client tokens are stored only as hashes and never returned.
 - The server calls only the AI endpoints you approved, GitHub and the npm registry: DNS is resolved once per connection, private addresses are refused (except an approved local model on `127.0.0.1`) and redirects are never followed.
-- npm runs without install scripts and without your npm credentials.
+- npm runs without install scripts and without your npm credentials: every run gets empty user and global configuration files, a private cache and home and an empty working folder, so your `~/.npmrc` (tokens, registry overrides) is never read. A proxy you configured only there stops applying: use `HTTPS_PROXY`, which is still passed, and `NODE_EXTRA_CA_CERTS`.
+- A book's working copy is not trusted (a cloned repository can contain anything): no operation follows a symbolic link, git runs with `core.symlinks=false`, a private home, no hooks, no credential helpers and no URL rewrites from your own configuration, the names of git's own folder are refused in every spelling (`.GIT`, `GIT~1`, trailing dots, look-alike Unicode) together with Windows device names, and only text files (`.md`, `.markdown`, `.txt`, `.json`, `.yaml`, `.yml`) can be written. A commit is validated before anything is written, and a failed one puts every file back.
+- Every limit is counted per caller, never for everybody at once, so an anonymous caller cannot lock you out: 10 wrong admin codes per five minutes per address (a correct code clears the count), 10 pairing requests per five minutes per address (and 5 wrong codes per address, 50 in all, inside one pairing), 120 `info` requests a minute per address, 60 failed authentications a minute per address, 16 anonymous requests in flight per address, 6000 authenticated requests a minute per client token, and 10 live connections per client token (50 in all). A request body that goes quiet for 20 seconds is dropped, a whole request must arrive within five minutes, and at most two large uploads are read at once. Refused requests answer 429 with `Retry-After` (or 408, 503).
+- A server error that is not understood answers `500 internal` with a short `requestId` (also in the `x-request-id` header) and the details only in the log.
+- Removing a book, or moving it to another storage, never deletes its working copy: it goes to `books/.trash` for 14 days, and a failed move leaves the old copy untouched.
 
 ## How books travel
 
@@ -156,7 +167,7 @@ All endpoints live under `/api/v1` and return JSON; errors are `{ "code", "messa
 | `GET` | `/books` | read | Hosted books with their autopilot summary. |
 | `PUT`/`DELETE` | `/books/:id` | write | Register (local or GitHub) / remove a book. |
 | `GET` | `/books/:id/manifest` | read | Paths and hashes of the book's text files. |
-| `POST` | `/books/:id/files/read`, `/books/:id/files/commit` | read / write | Read files / commit changes with compare-and-swap. |
+| `POST` | `/books/:id/files/read`, `/books/:id/files/commit` | read / write | Read up to 100 files (16 MiB in all) / commit up to 5000 changes with compare-and-swap. |
 | `POST` | `/books/:id/sync` | write | Pull and push the GitHub branch. |
 | `GET` | `/books/:id/autopilot`, `/books/:id/autopilot/events?since=N` | read | Snapshot / recent live events. |
 | `POST` | `/books/:id/autopilot/{start,pause,intervene,answer}` | run | Control the autopilot. |
@@ -172,7 +183,7 @@ The typed client is `NarrariumServerClient` in `narrarium-engine` (with `pairWit
 Releases are published by [`.github/workflows/publish-server-npm.yml`](../../.github/workflows/publish-server-npm.yml) through npm Trusted Publishing, with a provenance attestation and without any npm token:
 
 1. Bump `version` in `packages/server/package.json` and `SERVER_VERSION` in `src/version.ts` (a test keeps them equal); `packages/engine` has the same pair (`ENGINE_VERSION`), commit and push.
-2. Push the tag: `git tag narrarium-server-v0.1.1 && git push origin narrarium-server-v0.1.1`.
+2. Push the tag: `git tag narrarium-server-v0.1.2 && git push origin narrarium-server-v0.1.2`.
 
 The workflow checks that the tag matches the package, builds and tests the engine and the server, checks the package contents and publishes. The generic `Publish npm packages` workflow never publishes this package.
 

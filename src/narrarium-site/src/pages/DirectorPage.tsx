@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Clapperboard, Loader2, Plane, RefreshCcw, Save } from "lucide-react";
-import { DIRECTOR_AUTONOMIES, listDirectorOpinions, type DirectorAutonomy, type DirectorOpinionRecord, type DirectorProfile, type ReaderPersonaProfile } from "narrarium-engine";
+import { BookConflictError, DIRECTOR_AUTONOMIES, listDirectorOpinions, type DirectorAutonomy, type DirectorOpinionRecord, type DirectorProfile, type ReaderPersonaProfile } from "narrarium-engine";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Button } from "@/components/ui/button";
@@ -11,10 +11,12 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
+import { FileChangedNotice } from "@/components/book/FileChangedNotice";
 import { DirectorVerdictBadge } from "@/components/director/DirectorOpinionView";
 import { createBrowserBookStore } from "@/autopilot/browserStore";
 import { formatDateTime } from "@/autopilot/format";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { useGuardedDocumentLoad } from "@/hooks/useGuardedDocumentLoad";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { renderRepositoryMarkdownHtml } from "@/markdown/safeMarkdown";
 import { loadDirectorProfile, renderDirectorFile, saveDirectorProfile } from "@/narrarium/director";
@@ -63,23 +65,6 @@ export function DirectorPage() {
   const canLoad = Boolean(book && token && structure && ready);
 
   useEffect(() => {
-    if (!book || !canLoad) return;
-    let cancelled = false;
-    setBusy(true);
-    loadDirectorProfile({ book, branch, language })
-      .then(({ profile: loaded, exists: present }) => {
-        if (cancelled) return;
-        setProfile(loaded);
-        setLists({ priorities: toLines(loaded.priorities), taste: toLines(loaded.taste), redLines: toLines(loaded.redLines) });
-        setSavedContent(present ? renderDirectorFile(loaded, null) : "");
-        setExists(present);
-      })
-      .catch((cause) => toast({ title: t("director.loadFailed"), description: String(cause), variant: "destructive" }))
-      .finally(() => { if (!cancelled) setBusy(false); });
-    return () => { cancelled = true; };
-  }, [book, branch, language, canLoad, t, toast]);
-
-  useEffect(() => {
     if (!book || !token || !structure || !canLoad) return;
     let cancelled = false;
     loadReaderPersonas({ token, book, branch, structure })
@@ -106,7 +91,28 @@ export function DirectorPage() {
     redLines: fromLines(lists.redLines),
   } : null, [profile, lists]);
   const currentContent = useMemo(() => (current ? renderDirectorFile(current, null) : ""), [current]);
-  const dirty = Boolean(current && (!exists || currentContent !== savedContent));
+  const edited = Boolean(current && currentContent !== savedContent);
+  const dirty = Boolean(current && (!exists || edited));
+
+  // The settings are replaced whenever they reload, so the `book` object is new each time: the file is
+  // read again only for another book, branch or language, and never over what the author is typing.
+  const file = useGuardedDocumentLoad<{ profile: DirectorProfile; exists: boolean }>({
+    document: canLoad && book ? `${book.id}|${book.owner}/${book.repo}` : null,
+    source: `${branch}|${language ?? ""}`,
+    load: async () => {
+      const { profile: loaded, exists: present, hash } = await loadDirectorProfile({ book: book!, branch, language });
+      return { value: { profile: loaded, exists: present }, version: hash };
+    },
+    edited,
+    apply: ({ profile: loaded, exists: present }) => {
+      setProfile(loaded);
+      setLists({ priorities: toLines(loaded.priorities), taste: toLines(loaded.taste), redLines: toLines(loaded.redLines) });
+      setSavedContent(renderDirectorFile(loaded, null));
+      setExists(present);
+    },
+    onLoading: setBusy,
+    onError: (cause) => toast({ title: t("director.loadFailed"), description: String(cause), variant: "destructive" }),
+  });
 
   async function save(): Promise<boolean> {
     if (!current || !book) return false;
@@ -116,14 +122,20 @@ export function DirectorPage() {
     }
     setBusy(true);
     try {
-      await saveDirectorProfile({ book, branch, profile: current });
+      const { hash } = await saveDirectorProfile({ book, branch, profile: current, expectedHash: file.baseVersion() });
+      file.adopt(hash);
       setSavedContent(renderDirectorFile(current, null));
       setExists(true);
       toast({ title: t("director.saved") });
       await reload();
       return true;
     } catch (cause) {
-      toast({ title: t("director.saveFailed"), description: String(cause), variant: "destructive" });
+      if (cause instanceof BookConflictError) {
+        file.flagChanged();
+        toast({ title: t("director.saveFailed"), description: t("director.changedElsewhere"), variant: "destructive" });
+      } else {
+        toast({ title: t("director.saveFailed"), description: String(cause), variant: "destructive" });
+      }
       return false;
     } finally {
       setBusy(false);
@@ -164,6 +176,7 @@ export function DirectorPage() {
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{t("director.save")}
           </Button>
         </div>
+        {file.changedElsewhere && <FileChangedNotice message={t("director.changedElsewhere")} reloadLabel={t("director.reloadFile")} onReload={file.reload} />}
         {(loading && !structure) || !profile ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</div>
         ) : (

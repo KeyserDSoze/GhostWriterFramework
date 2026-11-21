@@ -103,11 +103,49 @@ export function isTextBookPath(path: string): boolean {
   return /\.(md|markdown|txt|json|ya?ml)$/i.test(path);
 }
 
-/** Relative, normalized repository path; rejects traversal and absolute paths. */
+const MAX_PATH_LENGTH = 1024;
+const MAX_SEGMENT_LENGTH = 255;
+/** Code points HFS+ ignores when it compares names, so `.g\u200cit` is the repository's own folder there. */
+const IGNORED_BY_FILE_SYSTEMS = /[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/gu;
+/** Control characters and the characters Windows forbids; the colon also covers NTFS alternate data streams. */
+const FORBIDDEN_CHARACTERS = /[\u0000-\u001f\u007f-\u009f"*:<>?|]/u;
+const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])(?:\..*)?$/i;
+
+/**
+ * Git refuses to check out its own metadata folder under any spelling, but only after the bytes were
+ * written: letter case, trailing dots and spaces (NTFS), the 8.3 short name `git~1`, look-alike
+ * Unicode and the code points HFS+ ignores. Every spelling is refused before anything is written.
+ */
+function isRepositoryMetadataName(segment: string): boolean {
+  const name = segment.normalize("NFKC").replace(IGNORED_BY_FILE_SYSTEMS, "").replace(/[. ]+$/, "").toLowerCase();
+  return name === ".git" || name === "git~1";
+}
+
+/**
+ * Relative, normalized repository path. Rejects traversal, absolute and drive paths, empty segments,
+ * every spelling of `.git`, Windows device names and characters, and names that Windows would trim
+ * (trailing dots or spaces) so that two spellings can never reach the same file.
+ */
 export function assertSafeBookPath(path: string): string {
-  const normalized = path.replace(/\\/g, "/").trim();
-  if (!normalized || normalized.startsWith("/") || /^[a-zA-Z]:/.test(normalized)) throw new Error(`Unsafe book path: ${path}`);
-  const segments = normalized.split("/");
-  if (segments.some((segment) => !segment || segment === "." || segment === ".." || segment === ".git")) throw new Error(`Unsafe book path: ${path}`);
+  const unsafe = (): never => {
+    throw new Error(`Unsafe book path: ${path}`);
+  };
+  if (typeof path !== "string" || !path || path.length > MAX_PATH_LENGTH) return unsafe();
+  const normalized = path.replace(/\\/g, "/");
+  if (normalized.startsWith("/") || /^[a-zA-Z]:/.test(normalized)) return unsafe();
+  for (const segment of normalized.split("/")) {
+    if (!segment || segment.length > MAX_SEGMENT_LENGTH || segment === "." || segment === "..") return unsafe();
+    if (segment !== segment.trim() || /[. ]$/.test(segment) || FORBIDDEN_CHARACTERS.test(segment)) return unsafe();
+    if (isRepositoryMetadataName(segment) || WINDOWS_DEVICE_NAME.test(segment)) return unsafe();
+  }
   return normalized;
+}
+
+/** Whether a path coming from another host is already in its canonical, safe spelling. */
+export function isSafeBookPath(path: string): boolean {
+  try {
+    return !path.includes("\\") && assertSafeBookPath(path) === path;
+  } catch {
+    return false;
+  }
 }

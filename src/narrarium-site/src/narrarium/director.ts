@@ -2,6 +2,7 @@ import { parseDocument, stringify } from "yaml";
 import { DIRECTOR_FILE, defaultDirector, parseDirector, serializeDirector, type DirectorProfile } from "narrarium-engine";
 import { mergeManagedFrontmatter } from "@/assistant/immediateMutation";
 import { createBrowserBookStore } from "@/autopilot/browserStore";
+import { sha256Text } from "@/repository/localRepository";
 import type { BookEntry } from "@/types/settings";
 
 /** Frontmatter keys owned by the director editor; any other key the author added is preserved. */
@@ -32,11 +33,12 @@ function frontmatterOf(raw: string | null): Record<string, unknown> {
 
 /**
  * The book's director (`director.md`) from the local working copy, or the defaults in the book
- * language when it is not saved yet.
+ * language when it is not saved yet. `hash` is the version that was read (`null` when the file does
+ * not exist): hand it back to `saveDirectorProfile` as the version being edited.
  */
-export async function loadDirectorProfile(input: { book: BookEntry; branch: string; language?: string }): Promise<{ profile: DirectorProfile; exists: boolean }> {
+export async function loadDirectorProfile(input: { book: BookEntry; branch: string; language?: string }): Promise<{ profile: DirectorProfile; exists: boolean; hash: string | null }> {
   const file = await createBrowserBookStore(input.book, input.branch).read(DIRECTOR_FILE);
-  return file ? { profile: parseDirector(file.content, input.language), exists: true } : { profile: defaultDirector(input.language), exists: false };
+  return file ? { profile: parseDirector(file.content, input.language), exists: true, hash: file.hash } : { profile: defaultDirector(input.language), exists: false, hash: null };
 }
 
 export function renderDirectorFile(profile: DirectorProfile, existing: string | null): string {
@@ -47,11 +49,18 @@ export function renderDirectorFile(profile: DirectorProfile, existing: string | 
   return `---\n${stringify(frontmatter).trimEnd()}\n---\n\n${match[2].trim()}\n`;
 }
 
-/** Save the director as one local commit, refusing to overwrite a concurrent change. */
-export async function saveDirectorProfile(input: { book: BookEntry; branch: string; profile: DirectorProfile }): Promise<void> {
+/**
+ * Save the director as one local commit, refusing to overwrite a concurrent change. `expectedHash` is
+ * the version the author edited (`loadDirectorProfile`, `null` when the file did not exist): a change
+ * made since then is refused with a `BookConflictError`. Without it the version read now is replaced.
+ * Returns the hash of the saved version, the one to expect next.
+ */
+export async function saveDirectorProfile(input: { book: BookEntry; branch: string; profile: DirectorProfile; expectedHash?: string | null }): Promise<{ hash: string | null }> {
   const store = createBrowserBookStore(input.book, input.branch);
   const existing = await store.read(DIRECTOR_FILE);
   const content = renderDirectorFile(input.profile, existing?.content ?? null);
-  if (existing?.content === content) return;
-  await store.commit([{ path: DIRECTOR_FILE, content, expectedHash: existing?.hash ?? null }], `${existing ? "Update" : "Add"} director`);
+  if (existing?.content === content) return { hash: existing.hash };
+  const expectedHash = input.expectedHash === undefined ? existing?.hash ?? null : input.expectedHash;
+  await store.commit([{ path: DIRECTOR_FILE, content, expectedHash }], `${existing ? "Update" : "Add"} director`);
+  return { hash: await sha256Text(content) };
 }

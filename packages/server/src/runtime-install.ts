@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { constants, existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 import { NPM_SERVER_PACKAGE, isExactSemver, trustedNpmReleaseMetadata } from "./npm-release.js";
@@ -81,6 +81,8 @@ export interface RuntimeInstallerOptions {
   dataRoot: string;
   npmBinary?: string;
   runner?: CommandRunner;
+  /** The environment npm's own is derived from (default: this process's). */
+  environment?: NodeJS.ProcessEnv;
   now?: () => Date;
   uuid?: () => string;
 }
@@ -141,6 +143,50 @@ export function sanitizedNpmEnvironment(source: NodeJS.ProcessEnv = process.env)
   const env: NodeJS.ProcessEnv = { NPM_CONFIG_IGNORE_SCRIPTS: "true", NPM_CONFIG_UPDATE_NOTIFIER: "false" };
   for (const name of NETWORK_AND_SYSTEM_VARIABLES) if (source[name] !== undefined) env[name] = source[name];
   return env;
+}
+
+/** Where the server keeps what its npm runs need, so that none of it comes from the owner's account. */
+export const NPM_PRIVATE_FOLDER = path.join("private", "npm-home");
+
+/**
+ * The environment of an npm child. npm's configuration reaches it by command line only, so no `npm_config_*` variable
+ * (whatever its case) is left; the home folders point at an empty private folder, and the variables that would lead
+ * npm back to the owner's files are gone.
+ */
+export function npmChildEnvironment(source: NodeJS.ProcessEnv, home: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(sanitizedNpmEnvironment(source))) if (value !== undefined && !/^npm_config_/i.test(name)) env[name] = value;
+  for (const name of ["HOMEDRIVE", "HOMEPATH", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"]) delete env[name];
+  for (const name of ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"]) env[name] = home;
+  return env;
+}
+
+/** The private world of one npm run: its own empty configuration files and working folder, a shared private cache and home. */
+export interface NpmSandbox {
+  /** Removed when the run is over. */
+  run: string;
+  home: string;
+  cache: string;
+  userconfig: string;
+  globalconfig: string;
+  /** The working folder: empty, and npm's prefix for commands that have none of their own. */
+  work: string;
+}
+
+async function prepareNpmSandbox(dataRoot: string): Promise<NpmSandbox> {
+  const base = path.join(dataRoot, NPM_PRIVATE_FOLDER);
+  const home = path.join(base, "home");
+  const cache = path.join(base, "cache");
+  // Not a UUID: npm hides paths that look like one in its own output, which would make `npm config list` unreadable.
+  const run = path.join(base, `run-${randomBytes(8).toString("hex")}`);
+  const work = path.join(run, "work");
+  for (const directory of [base, home, cache, work]) await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32") await fs.chmod(base, 0o700);
+  const userconfig = path.join(run, "userconfig");
+  const globalconfig = path.join(run, "globalconfig");
+  // Fresh, empty and new for every run: nothing that was ever written elsewhere is read back, and no link is followed.
+  for (const file of [userconfig, globalconfig]) await fs.writeFile(file, "", { flag: "wx", mode: 0o600 });
+  return { run, home, cache, userconfig, globalconfig, work };
 }
 
 export function parseUpdateRequest(value: unknown): UpdateRequest {
@@ -300,6 +346,7 @@ export class RuntimeInstaller {
   private readonly runner: CommandRunner;
   private readonly npm: string;
   private readonly npmPrefix: string[];
+  private readonly environment: NodeJS.ProcessEnv;
   private readonly now: () => Date;
   private readonly uuid: () => string;
 
@@ -310,14 +357,34 @@ export class RuntimeInstaller {
     const npm = options.npmBinary ? { command: options.npmBinary, prefix: [] } : npmInvocation();
     this.npm = npm.command;
     this.npmPrefix = npm.prefix;
+    this.environment = options.environment ?? process.env;
     this.now = options.now ?? (() => new Date());
     this.uuid = options.uuid ?? randomUUID;
   }
 
+  /**
+   * One npm run, in a world of its own: empty user and global configuration files, a private cache and home, a working
+   * folder that is empty (and pinned as npm's prefix, or npm would take a parent folder with a `node_modules` for a project
+   * and read its `.npmrc`), no `npm_config_*` variable, no install scripts. The owner's `~/.npmrc` is never read, so its
+   * tokens and registry overrides cannot reach a registry. The public registry is always the last argument.
+   */
   private async runNpm(args: readonly string[]): Promise<CommandResult> {
-    const result = await this.runner(this.npm, [...this.npmPrefix, ...args, "--registry=https://registry.npmjs.org"], { cwd: this.dataRoot, env: sanitizedNpmEnvironment(), timeoutMs: 10 * 60_000 });
-    if (result.code !== 0) throw new Error(`npm ${args[0]} did not succeed.`);
-    return result;
+    const sandbox = await prepareNpmSandbox(this.dataRoot);
+    try {
+      const flags = [
+        "--userconfig", sandbox.userconfig,
+        "--globalconfig", sandbox.globalconfig,
+        "--cache", sandbox.cache,
+        ...(args.includes("--prefix") ? [] : ["--prefix", sandbox.work]),
+        ...(args.includes("--ignore-scripts") ? [] : ["--ignore-scripts"]),
+        "--no-update-notifier",
+      ];
+      const result = await this.runner(this.npm, [...this.npmPrefix, ...args, ...flags, "--registry=https://registry.npmjs.org"], { cwd: sandbox.work, env: npmChildEnvironment(this.environment, sandbox.home), timeoutMs: 10 * 60_000 });
+      if (result.code !== 0) throw new Error(`npm ${args[0]} did not succeed.`);
+      return result;
+    } finally {
+      await fs.rm(sandbox.run, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => undefined);
+    }
   }
 
   async latestVersion(): Promise<string> {

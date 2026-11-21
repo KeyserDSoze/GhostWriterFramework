@@ -16,10 +16,10 @@ import {
   MAX_REVISION_NOTES,
   capConstraints,
   createAutopilotState,
+  inspectAutopilotState,
   normalizeBrief,
   normalizeOptions,
   parseActivityLog,
-  parseAutopilotState,
   pendingNotes,
   serializeActivityLog,
   serializeAutopilotState,
@@ -65,16 +65,45 @@ export interface StoredAutopilot {
   stateHash: string | null;
   activities: AutopilotActivity[];
   activityHash: string | null;
+  /**
+   * Set when `autopilot/state.json` exists but cannot be read (`state` is then null, `stateHash` is the file's hash).
+   * An absent or blank file is not this: there is nothing in it to lose.
+   */
+  corrupt?: { path: string; reason: string };
 }
 
 export async function readStoredAutopilot(store: BookStore): Promise<StoredAutopilot> {
   const [stateFile, activityFile] = await Promise.all([store.read(AUTOPILOT_STATE_FILE), store.read(AUTOPILOT_ACTIVITY_FILE)]);
+  const reading = inspectAutopilotState(stateFile?.content);
   return {
-    state: parseAutopilotState(stateFile?.content),
+    state: reading.state,
     stateHash: stateFile?.hash ?? null,
     activities: parseActivityLog(activityFile?.content),
     activityHash: activityFile?.hash ?? null,
+    ...(reading.unreadable ? { corrupt: { path: AUTOPILOT_STATE_FILE, reason: reading.unreadable } } : {}),
   };
+}
+
+/**
+ * `autopilot/state.json` exists but cannot be read, for example because a merge left conflict markers in it. It holds
+ * the author's rules, the plan, the interventions and the budget counter, so the autopilot never replaces it.
+ */
+export class AutopilotStateCorruptError extends Error {
+  readonly code = "state_corrupt";
+  readonly path: string;
+  readonly reason: string;
+
+  constructor(problem: { path: string; reason: string }) {
+    super(`The autopilot state file ${problem.path} exists but cannot be read (${problem.reason}), so the autopilot leaves it untouched. Restore the file from the book's history, or reset the autopilot, which deletes the file so it can start over.`);
+    this.name = "AutopilotStateCorruptError";
+    this.path = problem.path;
+    this.reason = problem.reason;
+  }
+}
+
+/** Call before writing the state: an unreadable file is never overwritten. */
+export function assertStoredStateReadable(stored: StoredAutopilot): void {
+  if (stored.corrupt) throw new AutopilotStateCorruptError(stored.corrupt);
 }
 
 export function stampState(state: AutopilotState, now: Date): AutopilotState {
@@ -170,17 +199,42 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Errors raised by the book store itself (not by the AI or by the book's content), recorded by `transientStore`. */
+const storeFailures = new WeakSet<object>();
+
 /**
- * Closed list: only errors that declare themselves retryable (`retryable: true`, as
- * `AiProviderError` does) repeat the step. A reply cut by the output limit never does (the same
- * request ends the same way and is billed again), nor does an unclassified error (storage,
- * configuration, state). Hosts can mark their own transient failures with the same flag.
+ * Closed list: errors that declare themselves retryable (`retryable: true`, as `AiProviderError` does) and the
+ * failures of the book store itself (a working copy being refreshed, a full disk: transient, like a network failure)
+ * repeat the step once. A reply cut by the output limit never does (the same request ends the same way and is billed
+ * again), nor does an unclassified error (configuration, state). Hosts can mark their own transient failures with the
+ * same flag.
  */
 export function isRetryableError(error: unknown): boolean {
   if (error instanceof StructuredReplyError) return true;
   if (!error || typeof error !== "object") return false;
+  if (storeFailures.has(error)) return true;
   const flags = error as { retryable?: unknown; truncated?: unknown };
   return flags.retryable === true && flags.truncated !== true;
+}
+
+/**
+ * The store as a run sees it. What it throws, other than a conflict (own rule) or an abort, is a store failure and
+ * counts as retryable; the error itself is passed on unchanged, and a host that flagged it `retryable: false` is obeyed.
+ */
+function transientStore(store: BookStore): BookStore {
+  const guard = async <T>(operation: () => Promise<T>): Promise<T> => {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error && typeof error === "object" && !isBookConflictError(error) && !isAbortError(error) && (error as { retryable?: unknown }).retryable !== false) storeFailures.add(error);
+      throw error;
+    }
+  };
+  return {
+    list: () => guard(() => store.list()),
+    read: (path) => guard(() => store.read(path)),
+    commit: (changes, message) => guard(() => store.commit(changes, message)),
+  };
 }
 
 const RETRY_NOTE_MAX = 500;
@@ -246,6 +300,8 @@ interface StepContext {
   panel: ReaderPersonaProfile[];
 }
 
+const TAKEN_OVER = "Another runner took over this book: this run stops.";
+
 /** One autopilot run: loops over steps until it completes, pauses, or fails. */
 export class AutopilotRun {
   readonly runId = randomId("run");
@@ -253,14 +309,18 @@ export class AutopilotRun {
   private stepController: AbortController | null = null;
   private stopRequested = false;
   private interrupted = false;
+  /** Another run is recorded as the owner of the book: this one saves nothing more and ends. */
+  private leaseLost = false;
   private readonly queue: InterventionInput[] = [];
   private readonly cache = new SnapshotCache();
+  private readonly store: BookStore;
   private readonly now: () => Date;
   private chaptersThisRun = 0;
   private current: AutopilotActivity | null = null;
 
   constructor(private readonly config: AutopilotRunConfig) {
     this.now = config.now ?? (() => new Date());
+    this.store = transientStore(config.store);
   }
 
   get activity(): AutopilotActivity | null {
@@ -299,9 +359,9 @@ export class AutopilotRun {
   private async stepContext(snapshot: BookSnapshot, state: AutopilotState): Promise<StepContext> {
     const language = languageCode(snapshot.book.language);
     const [director, panel, design] = await Promise.all([
-      loadDirectorProfile(this.config.store, language),
-      loadReaderPanel(this.config.store, snapshot),
-      readBody(this.config.store, STORY_DESIGN_FILE, 20000),
+      loadDirectorProfile(this.store, language),
+      loadReaderPanel(this.store, snapshot),
+      readBody(this.store, STORY_DESIGN_FILE, 20000),
     ]);
     const readers = activeReaders(panel, director, state.options.maxReaders).map((reader) => ({ slug: reader.slug, name: reader.name }));
     return { planner: { snapshot, director, readers, language, storyDesignThin: isThinDocument(design) }, director, panel };
@@ -314,8 +374,9 @@ export class AutopilotRun {
   }
 
   async execute(start: StartOptions = {}): Promise<AutopilotState> {
-    const { store } = this.config;
+    const { store } = this;
     const stored = await readStoredAutopilot(store);
+    assertStoredStateReadable(stored);
     let state = stored.state ?? createAutopilotState(this.now(), start.brief, start.options);
     const startedAt = this.now().toISOString();
     state = extendPlanIfNeeded({
@@ -332,7 +393,19 @@ export class AutopilotRun {
     await store.commit([stateChange(state, stored.stateHash)], "Autopilot: started");
     this.emit({ type: "run-started", runId: this.runId, host: this.config.host });
     this.emit({ type: "state", state: summarizeAutopilotState(state) });
+    try {
+      return await this.runSteps(state);
+    } catch (error) {
+      // Nothing more can be saved (for example the state file became unreadable): the listeners still learn that the run is over.
+      this.emit({ type: "run-ended", runId: this.runId, status: "error", message: describeError(error) });
+      throw error;
+    }
+  }
 
+  /** The steps of the run, until it completes, pauses, fails, or another runner takes the book. */
+  private async runSteps(initial: AutopilotState): Promise<AutopilotState> {
+    const { store } = this;
+    let state = initial;
     let conflictRetries = 0;
     let failureRetries = 0;
     let lastSuccessKey = "";
@@ -348,12 +421,6 @@ export class AutopilotRun {
         state = await this.finish({ ...state, lastError: { message: "Too many steps in one run.", at: this.now().toISOString() } }, "error", "Too many steps in one run.");
         break;
       }
-      const latest = await readStoredAutopilot(store);
-      if (latest.state?.runner?.runId && latest.state.runner.runId !== this.runId) {
-        this.emit({ type: "insight", tone: "warning", code: "takenOver", title: "Another runner took over this book: this run stops." });
-        break;
-      }
-      if (latest.state) state = { ...latest.state, status: "running", runner: state.runner };
       let task: TaskDescriptor | null = null;
       const spend = newSpend();
       let lastLabel: string | undefined;
@@ -361,7 +428,16 @@ export class AutopilotRun {
       this.stepController = stepController;
       const onRunAbort = () => stepController.abort(this.controller.signal.reason);
       this.controller.signal.addEventListener("abort", onRunAbort, { once: true });
+      // A stop that already happened is never heard by a listener added afterwards: pass it on, or the step would run and be billed.
+      if (this.controller.signal.aborted) onRunAbort();
       try {
+        const latest = await readStoredAutopilot(store);
+        assertStoredStateReadable(latest);
+        if (this.lostLease(latest)) {
+          this.loseLease();
+          break;
+        }
+        if (latest.state) state = { ...latest.state, status: "running", runner: state.runner };
         await this.config.hooks?.beforeStep?.(stepController.signal);
         const snapshot = await loadBookSnapshot(store, this.cache);
         const context = await this.stepContext(snapshot, state);
@@ -518,6 +594,7 @@ export class AutopilotRun {
           const saved = await this.persistFailure(failed, spent ? spend : null).catch(() => null);
           if (spent) state = { ...state, stats: saved?.stats ?? withSpend(state.stats, spend) };
         }
+        if (this.leaseLost) break;
         if (interrupted) continue;
         if (runAborted || isAbortError(error)) {
           state = await this.finish(state, "paused", null);
@@ -550,10 +627,26 @@ export class AutopilotRun {
       } finally {
         this.controller.signal.removeEventListener("abort", onRunAbort);
         this.stepController = null;
+        // An interrupt that came when the step was already over must not make a later abort look like one.
+        this.interrupted = false;
       }
     }
-    this.emit({ type: "run-ended", runId: this.runId, status: state.status, message: state.message });
+    if (this.leaseLost) state = { ...state, status: "paused", message: TAKEN_OVER, runner: null };
+    this.emit({ type: "run-ended", runId: this.runId, status: state.status, message: state.message, ...(this.leaseLost ? { code: "takenOver" as const } : {}) });
     return state;
+  }
+
+  /** Another run is recorded as the owner of the book. A stored runner of `null` means nobody owns it: this run may still record its end. */
+  private lostLease(stored: StoredAutopilot): boolean {
+    const owner = stored.state?.runner?.runId;
+    return Boolean(owner) && owner !== this.runId;
+  }
+
+  /** From now on this run writes nothing: the book belongs to another runner. */
+  private loseLease(): void {
+    if (this.leaseLost) return;
+    this.leaseLost = true;
+    this.emit({ type: "insight", tone: "warning", code: "takenOver", title: TAKEN_OVER });
   }
 
   /**
@@ -562,12 +655,17 @@ export class AutopilotRun {
    */
   private async persistFailure(activity: AutopilotActivity, spend: StepSpend | null): Promise<AutopilotState | null> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const stored = await readStoredAutopilot(this.config.store);
+      const stored = await readStoredAutopilot(this.store);
+      assertStoredStateReadable(stored);
+      if (this.lostLease(stored)) {
+        this.loseLease();
+        return null;
+      }
       const changes = [activityChange([...stored.activities, activity], stored.activityHash)];
       const next = spend && stored.state ? stampState({ ...stored.state, stats: withSpend(stored.state.stats, spend) }, this.now()) : null;
       if (next) changes.push(stateChange(next, stored.stateHash));
       try {
-        await this.config.store.commit(changes, `Autopilot: ${activity.title} (${activity.status})`);
+        await this.store.commit(changes, `Autopilot: ${activity.title} (${activity.status})`);
         return next;
       } catch (error) {
         if (!isBookConflictError(error)) throw error;
@@ -578,13 +676,24 @@ export class AutopilotRun {
 
   /** Close the run with a final status, persisted together with any queued intervention. */
   private async finish(state: AutopilotState, status: AutopilotState["status"], message: string | null): Promise<AutopilotState> {
-    let final: AutopilotState = state;
+    const ended: AutopilotState = { ...state, status: state.question ? "waiting-author" : status, message, runner: null, phase: phaseOf(state) };
+    let final = ended;
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const stored = await readStoredAutopilot(this.config.store);
-      final = { ...state, status: state.question ? "waiting-author" : status, message, runner: null, phase: phaseOf(state) };
-      final = stampState(this.drainQueue(final, message ?? status), this.now());
+      let stored: StoredAutopilot;
       try {
-        await this.config.store.commit([stateChange(final, stored.stateHash)], `Autopilot: ${final.status}`);
+        stored = await readStoredAutopilot(this.store);
+      } catch (error) {
+        this.emit({ type: "insight", tone: "warning", code: "finalStateFailed", title: "Could not save the final autopilot state.", detail: describeError(error) });
+        return final;
+      }
+      assertStoredStateReadable(stored);
+      if (this.lostLease(stored)) {
+        this.loseLease();
+        return state;
+      }
+      final = stampState(this.drainQueue(ended, message ?? status), this.now());
+      try {
+        await this.store.commit([stateChange(final, stored.stateHash)], `Autopilot: ${final.status}`);
         this.emit({ type: "state", state: summarizeAutopilotState(final) });
         return final;
       } catch (error) {

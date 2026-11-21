@@ -21,18 +21,39 @@ if (!valid || !dataRoot) {
 } else {
   let server: RunningNarrariumServer | undefined;
   let restoreNetwork: (() => void) | undefined;
-  let stopping = false;
-  const stop = async () => {
-    if (stopping) return;
-    stopping = true;
-    try {
-      await server?.close();
-    } finally {
-      restoreNetwork?.();
-    }
+  let stopped: Promise<void> | undefined;
+  const stop = (): Promise<void> => {
+    stopped ??= (async () => {
+      try {
+        await server?.close();
+      } finally {
+        restoreNetwork?.();
+      }
+    })();
+    return stopped;
   };
   process.once("SIGINT", () => void stop());
   process.once("SIGTERM", () => void stop());
+
+  /** One line on stderr: when, what, and a few frames of the stack; never anything from a request. */
+  const report = (kind: string, reason: unknown) => {
+    const detail = reason instanceof Error
+      ? `${reason.name}: ${reason.message.slice(0, 500)}\n${(reason.stack ?? "").split("\n").filter((line) => /^\s+at /.test(line)).slice(0, 5).join("\n")}`.trimEnd()
+      : String(reason).slice(0, 500);
+    process.stderr.write(`[${new Date().toISOString()}] ${kind}: ${detail}\n`);
+  };
+  // A request that fails must never end the process: an unhandled rejection is reported and the server keeps serving.
+  process.on("unhandledRejection", (reason) => report("Unhandled rejection", reason));
+  // An uncaught exception leaves the process in an unknown state: stop cleanly, then exit (after five seconds at the latest).
+  let crashing = false;
+  process.on("uncaughtException", (error) => {
+    report("Uncaught exception", error);
+    if (crashing) return;
+    crashing = true;
+    process.exitCode = 1;
+    setTimeout(() => process.exit(1), 5000).unref();
+    void stop().catch(() => undefined).finally(() => process.exit(1));
+  });
   try {
     server = await startNarrariumServer({
       dataDir: dataRoot,

@@ -4,7 +4,6 @@ import { BookOpen, Check, CircleArrowUp, Copy, ExternalLink, Fingerprint, KeyRou
 import {
   DEFAULT_ADMIN_PORT,
   DEFAULT_SERVER_PORT,
-  NarrariumServerClient,
   ServerRequestError,
   pairWithServer,
   pickAiRuntimeConfig,
@@ -20,8 +19,10 @@ import { Label } from "@/components/ui/label";
 import { SecretInput } from "@/components/ui/secret-input";
 import { useToast } from "@/components/ui/use-toast";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
-import { ServerIdentityError, shortFingerprint, verifiedServerInfo } from "@/autopilot/serverIdentity";
-import { useAutopilotStore, type ServerConnectionStatus } from "@/autopilot/store";
+import { ServerAddressError, validateServerAddress } from "@/autopilot/serverAddress";
+import { useServerConnection } from "@/autopilot/serverConnection";
+import { ServerIdentityError, probeServerIdentity, shortFingerprint, verifiedServer } from "@/autopilot/serverIdentity";
+import type { ServerConnectionStatus } from "@/autopilot/store";
 import { formatDateTime } from "@/autopilot/format";
 import type { AppSettings, PersonalServerSettings } from "@/types/settings";
 import { cn } from "@/lib/utils";
@@ -38,10 +39,6 @@ const STATUS_STYLE: Record<ServerConnectionStatus, string> = {
   offline: "border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300",
   error: "border-transparent bg-red-500/15 text-red-700 dark:text-red-300",
 };
-
-function clientFor(connection: PersonalServerSettings): NarrariumServerClient {
-  return new NarrariumServerClient({ baseUrl: connection.url, token: connection.token });
-}
 
 function isLoopback(url: string): boolean {
   try {
@@ -68,9 +65,11 @@ const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve
 export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void; onSave?: () => Promise<void> }) {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const server = useAutopilotStore((state) => state.server);
+  const server = useServerConnection();
   const connection: PersonalServerSettings = settings.personalServer ?? { url: "", token: "" };
   const configured = Boolean(connection.url.trim() && connection.token.trim());
+  const address = validateServerAddress(connection.url);
+  const addressProblem = address.ok === false && address.reason !== "empty" ? address.reason : null;
   const [testing, setTesting] = useState(false);
   const [sending, setSending] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -102,6 +101,7 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
 
   const describe = (error: unknown): string => {
     if (error instanceof ServerIdentityError) return t(`personalServer.identity.${error.reason}`);
+    if (error instanceof ServerAddressError) return t(`personalServer.address.${error.reason}`);
     if (error instanceof ServerRequestError) {
       if (error.code === "pairing_invalid") return t("personalServer.pair.invalid");
       if (error.code === "pairing_expired") return t("personalServer.pair.expired");
@@ -111,10 +111,11 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
     return error instanceof Error ? error.message : String(error);
   };
 
-  async function loadUpdates(quiet: boolean) {
+  async function loadUpdates(quiet: boolean, source: PersonalServerSettings = connection) {
     setCheckingUpdates(true);
     try {
-      const info = await clientFor(connection).updates();
+      const { client } = await verifiedServer({ connection: source });
+      const info = await client.updates();
       if (alive.current) setUpdates(info);
     } catch (error) {
       if (!quiet) toast({ title: t("personalServer.failed"), description: describe(error), variant: "destructive" });
@@ -123,16 +124,26 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
     }
   }
 
+  // What is loaded here belongs to the connection the runtime verified and follows, never to the
+  // address being typed: the token is not sent to a prefix of an address, and typing cancels the requests.
+  const committed = server.status === "online" ? server.connection : null;
   useEffect(() => {
-    if (!configured || server.status !== "online") return;
-    let cancelled = false;
-    const client = clientFor(connection);
-    client.aiStatus().then((status) => { if (!cancelled) setAiStatus(status); }).catch(() => undefined);
-    client.session().then((value) => { if (!cancelled) setSession(value); }).catch(() => undefined);
-    void loadUpdates(true);
-    return () => { cancelled = true; };
-    // Reload when the connection comes online or changes.
-  }, [configured, server.status, connection.url, connection.token]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!committed) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    const ignore = () => undefined;
+    void verifiedServer({ connection: committed, signal }).then(({ client }) => Promise.all([
+      client.aiStatus().then((status) => { if (!signal.aborted) setAiStatus(status); }).catch(ignore),
+      client.session().then((value) => { if (!signal.aborted) setSession(value); }).catch(ignore),
+      client.updates().then((info) => { if (!signal.aborted) setUpdates(info); }).catch(ignore),
+    ])).catch(ignore);
+    return () => {
+      controller.abort();
+      setAiStatus(null);
+      setSession(null);
+      setUpdates(null);
+    };
+  }, [committed]);
 
   async function copyCommand() {
     try {
@@ -157,11 +168,13 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
     const label = deviceName.trim().slice(0, 80) || "Narrarium";
     setPairing({ stage: "checking" });
     try {
-      const { info, fingerprint } = await verifiedServerInfo(new NarrariumServerClient({ baseUrl: url, token: "" }));
+      const target = validateServerAddress(url);
+      if (target.ok === false) throw new ServerAddressError(target.reason);
+      const { info, fingerprint } = await probeServerIdentity(target.url, undefined, { signal: controller.signal });
       setPairing({ stage: "sending", fingerprint });
-      const token = await pairWithServer({ baseUrl: url, code: pairCode, label, signal: controller.signal, onWaitingApproval: () => setPairing({ stage: "waiting", fingerprint }) });
+      const token = await pairWithServer({ baseUrl: target.url, code: pairCode, label, signal: controller.signal, onWaitingApproval: () => setPairing({ stage: "waiting", fingerprint }) });
       // The server must still be the one whose identity was checked before the code was sent.
-      await verifiedServerInfo(new NarrariumServerClient({ baseUrl: url, token: "" }), fingerprint);
+      await probeServerIdentity(target.url, fingerprint, { signal: controller.signal });
       patchSettings({ personalServer: { url, token, serverId: info.serverId, fingerprint, clientLabel: label } });
       setPairCode("");
       toast({ title: t("personalServer.pair.done", { label: info.label }) });
@@ -185,15 +198,16 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
   async function test() {
     setTesting(true);
     try {
-      const client = clientFor(connection);
-      const { info, fingerprint } = await verifiedServerInfo(client, connection.fingerprint);
+      const { info, fingerprint } = await probeServerIdentity(connection.url, connection.fingerprint);
+      const pinned = { ...connection, fingerprint };
+      const { client } = await verifiedServer({ connection: pinned });
       const [value, status] = await Promise.all([client.session(), client.aiStatus()]);
       setSession(value);
       setAiStatus(status);
       if (!connection.fingerprint) update({ serverId: info.serverId, fingerprint, clientLabel: value.clientLabel });
       toast({ title: t("personalServer.connected", { label: info.label, server: info.serverVersion, engine: info.engineVersion }) });
       await reconnect();
-      void loadUpdates(true);
+      void loadUpdates(true, pinned);
     } catch (error) {
       toast({ title: t("personalServer.failed"), description: describe(error), variant: "destructive" });
     } finally {
@@ -204,7 +218,8 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
   async function sendAi() {
     setSending(true);
     try {
-      setAiStatus(await clientFor(connection).putAiConfig(pickAiRuntimeConfig(settings)));
+      const { client } = await verifiedServer({ connection });
+      setAiStatus(await client.putAiConfig(pickAiRuntimeConfig(settings)));
       toast({ title: t("personalServer.aiSent") });
     } catch (error) {
       toast({ title: t("personalServer.failed"), description: describe(error), variant: "destructive" });
@@ -216,9 +231,15 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
   async function disconnect() {
     if (connection.token && !window.confirm(t("personalServer.disconnectConfirm"))) return;
     // Revoke the token on the server first, but only on the server this device paired with.
+    let revoked = true;
     if (configured) {
-      const client = clientFor(connection);
-      await verifiedServerInfo(client, connection.fingerprint).then(() => client.forgetSession()).catch(() => undefined);
+      try {
+        const { client } = await verifiedServer({ connection });
+        await client.forgetSession();
+      } catch (error) {
+        // A server that does not accept the token anyway has nothing left to revoke.
+        revoked = error instanceof ServerRequestError && error.status === 401;
+      }
     }
     patchSettings({ personalServer: undefined });
     setAiStatus(null);
@@ -226,10 +247,11 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
     setUpdates(null);
     await onSave?.();
     void loadAutopilotRuntime().then((runtime) => runtime.reconnectServer()).catch(() => undefined);
+    if (!revoked) toast({ title: t("personalServer.disconnectUnrevoked.title"), description: t("personalServer.disconnectUnrevoked.body"), variant: "destructive" });
   }
 
   /** Wait for the server to come back on the new version, or for the supervisor to report a failure. */
-  async function waitForVersion(client: NarrariumServerClient, target: string, previousRequestId: string | undefined): Promise<"done" | "timeout" | "cancelled" | ServerUpdateResult> {
+  async function waitForVersion(source: PersonalServerSettings, target: string, previousRequestId: string | undefined): Promise<"done" | "timeout" | "cancelled" | ServerUpdateResult> {
     const deadline = Date.now() + UPDATE_WAIT_MS;
     let wentDown = false;
     let lastCheck = Date.now();
@@ -237,6 +259,9 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
       await sleep(3000);
       if (!alive.current) return "cancelled";
       try {
+        // A request that failed while the server restarted drops the verification: the server that
+        // comes back proves its identity again before it receives the token.
+        const { client } = await verifiedServer({ connection: source });
         const info = await client.info();
         if (info.serverVersion === target) return "done";
         // Back on the old version after a restart, or still up after a while: ask what happened.
@@ -246,7 +271,8 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
           const last = (await client.updates()).lastUpdate;
           if (last && last.state === "failed" && last.version === target && last.requestId !== previousRequestId) return last;
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof ServerIdentityError || error instanceof ServerAddressError) throw error;
         wentDown = true;
       }
     }
@@ -256,18 +282,19 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
   async function runUpdate() {
     const target = updates?.latestVersion;
     if (!updates || !target || !updates.canRequest || !window.confirm(t("personalServer.updates.confirm", { version: target }))) return;
-    const client = clientFor(connection);
+    const source = connection;
     setUpdating(target);
     try {
+      const { client } = await verifiedServer({ connection: source });
       await client.requestUpdate(target, updates.installedVersion);
       toast({ title: t("personalServer.updates.requested", { version: target }) });
-      const outcome = await waitForVersion(client, target, updates.lastUpdate?.requestId);
+      const outcome = await waitForVersion(source, target, updates.lastUpdate?.requestId);
       if (outcome === "cancelled") return;
       if (outcome === "done") toast({ title: t("personalServer.updates.done", { version: target }) });
       else if (outcome === "timeout") toast({ title: t("personalServer.updates.failedTitle"), description: t("personalServer.updates.timeout", { version: target }), variant: "destructive" });
       else toast({ title: t("personalServer.updates.failedTitle"), description: t(`personalServer.updates.failedReason.${outcome.outcome}`), variant: "destructive" });
       await reconnect();
-      await loadUpdates(true);
+      await loadUpdates(true, source);
     } catch (error) {
       toast({ title: t("personalServer.updates.failedTitle"), description: describe(error), variant: "destructive" });
     } finally {
@@ -284,6 +311,9 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
   };
 
   const online = configured && server.status === "online";
+  // Secrets go only to a server that proved the pinned identity: the live connection is online.
+  const identityVerified = online && !addressProblem && Boolean(connection.fingerprint);
+  const sendBlocked = configured && !identityVerified;
 
   return (
     <div className="space-y-6">
@@ -307,7 +337,8 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
 
       <div className="grid gap-2">
         <Label htmlFor="personal-server-url">{t("personalServer.url")}</Label>
-        <Input id="personal-server-url" value={connection.url} placeholder={DEFAULT_URL} autoComplete="off" spellCheck={false} disabled={Boolean(pairing)} onChange={(event) => update({ url: event.target.value })} />
+        <Input id="personal-server-url" value={connection.url} placeholder={DEFAULT_URL} autoComplete="off" spellCheck={false} disabled={Boolean(pairing)} aria-invalid={addressProblem ? true : undefined} aria-describedby={addressProblem ? "personal-server-url-error" : undefined} onChange={(event) => update({ url: event.target.value })} />
+        <p id="personal-server-url-error" aria-live="polite" className={cn("text-xs text-destructive", !addressProblem && "sr-only")}>{addressProblem ? t(`personalServer.address.${addressProblem}`) : ""}</p>
       </div>
 
       {!connection.token.trim() && (
@@ -325,7 +356,7 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button disabled={Boolean(pairing) || pairCode.replace(/\D/g, "").length !== 9} onClick={() => void pair()}>
+            <Button disabled={Boolean(pairing) || pairCode.replace(/\D/g, "").length !== 9 || Boolean(addressProblem)} onClick={() => void pair()}>
               {pairing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}{t("personalServer.pair.start")}
             </Button>
             {pairing && <Button variant="ghost" onClick={cancelPairing}><X className="h-4 w-4" />{t("personalServer.pair.cancel")}</Button>}
@@ -359,14 +390,19 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
       <p className="text-xs text-muted-foreground">{t("personalServer.saveHint")}</p>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" disabled={!configured || testing} onClick={() => void test()}>
+        <Button variant="outline" disabled={!configured || testing || Boolean(addressProblem)} onClick={() => void test()}>
           {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}{t("personalServer.test")}
         </Button>
-        <Button variant="outline" disabled={!configured || sending || settings.aiIntegrations.length === 0} onClick={() => void sendAi()}>
+        <Button variant="outline" disabled={!identityVerified || sending || settings.aiIntegrations.length === 0} aria-describedby={sendBlocked ? "personal-server-send-blocked" : undefined} onClick={() => void sendAi()}>
           {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}{t("personalServer.sendAi")}
         </Button>
         {settings.personalServer && <Button variant="ghost" onClick={() => void disconnect()}><Unplug className="h-4 w-4" />{t("personalServer.disconnect")}</Button>}
       </div>
+      {sendBlocked && (
+        <p id="personal-server-send-blocked" className="flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-200" role="note">
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />{t("personalServer.sendAiBlocked")}
+        </p>
+      )}
       <p className="text-xs text-muted-foreground">{t("personalServer.sendAiHint")}</p>
 
       <div className="space-y-2 rounded-xl border p-4">

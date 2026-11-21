@@ -55,6 +55,7 @@ async function localAdminSession(options: LocalAdminOptions): Promise<AdminSessi
   } catch {
     throw new Error(`The server is not running on ${origin}: start it with \`npx narrarium-server start\`.`);
   }
+  if (login.status === 429) throw new Error("Admin sign-in is paused after too many wrong codes from this computer: wait a few minutes and try again.");
   if (!login.ok) throw new Error("Admin sign-in failed: check that the server of this data folder is running.");
   const session = await login.json() as { csrf?: unknown };
   const cookie = login.headers.get("set-cookie")?.split(";", 1)[0];

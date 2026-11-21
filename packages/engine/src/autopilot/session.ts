@@ -4,8 +4,10 @@ import { isBookConflictError, type BookStore } from "../book/store.js";
 import { askDirector, type AskDirectorResult } from "../director/opinion.js";
 import {
   AutopilotRun,
+  AutopilotStateCorruptError,
   applyAnswer,
   applyIntervention,
+  assertStoredStateReadable,
   readStoredAutopilot,
   stampState,
   stateChange,
@@ -70,6 +72,10 @@ export type AutopilotListener = (event: AutopilotEvent) => void;
 export class AutopilotSession {
   private run: AutopilotRun | null = null;
   private runPromise: Promise<AutopilotState> | null = null;
+  /** A `start()` in flight: from its first line until the run has saved its start, or the start has failed. */
+  private starting: Promise<void> | null = null;
+  /** A pause asked for while a start was in flight: it is applied as soon as the run exists. */
+  private pendingPause: "now" | "after-step" | null = null;
   private seq = 0;
   private events: AutopilotEvent[] = [];
   private readonly listeners = new Set<AutopilotListener>();
@@ -84,8 +90,9 @@ export class AutopilotSession {
     return this.config.bookId;
   }
 
+  /** A run is active, or a start is about to create one. */
   get running(): boolean {
-    return this.run !== null;
+    return this.run !== null || this.starting !== null;
   }
 
   get lastSeq(): number {
@@ -130,7 +137,7 @@ export class AutopilotSession {
   }
 
   private async ownRunnerAliveElsewhere(): Promise<boolean> {
-    if (this.running || !this.config.ownRunnerAlive) return false;
+    if (this.run || !this.config.ownRunnerAlive) return false;
     try {
       return Boolean(await this.config.ownRunnerAlive());
     } catch {
@@ -158,13 +165,27 @@ export class AutopilotSession {
       live: this.live,
       running: this.running,
       host: this.running ? this.config.host : state?.status === "running" ? state.runner?.host ?? null : null,
+      ...(stored.corrupt ? { stateError: { code: "state_corrupt" as const, message: new AutopilotStateCorruptError(stored.corrupt).message } } : {}),
     };
   }
 
   /** Start or resume. Resolves once the run has saved its start, rejects if it could not start. */
   async start(options: StartOptions & { force?: boolean } = {}): Promise<void> {
-    if (this.run) throw new AutopilotBusyError(this.config.hostLabel);
+    // The claim is taken before anything is awaited: two concurrent calls can never both create a run.
+    if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
+    const starting = this.launch(options);
+    this.starting = starting;
+    try {
+      await starting;
+    } finally {
+      if (this.starting === starting) this.starting = null;
+      this.pendingPause = null;
+    }
+  }
+
+  private async launch(options: StartOptions & { force?: boolean }): Promise<void> {
     const stored = await readStoredAutopilot(this.config.store);
+    assertStoredStateReadable(stored);
     const runner = stored.state?.runner;
     if (!options.force && runner && runnerActivity(stored.state, this.now()) === "active" && (!this.isOwnRunner(runner) || await this.ownRunnerAliveElsewhere())) {
       throw new AutopilotBusyError(runner.label || runner.host);
@@ -206,25 +227,35 @@ export class AutopilotSession {
       }
     });
     this.runPromise.catch(() => undefined);
+    const pause = this.pendingPause;
+    this.pendingPause = null;
+    if (pause === "now") run.stop();
+    else if (pause === "after-step") run.stopAfterStep();
     await started;
   }
 
   /** `now` abandons the request in flight; `after-step` lets the current step finish and save. */
   pause(mode: "now" | "after-step" = "after-step"): boolean {
-    if (!this.run) return false;
-    if (mode === "now") this.run.stop();
-    else this.run.stopAfterStep();
+    if (this.run) {
+      if (mode === "now") this.run.stop();
+      else this.run.stopAfterStep();
+      return true;
+    }
+    if (!this.starting) return false;
+    this.pendingPause = mode === "now" || this.pendingPause === "now" ? "now" : "after-step";
     return true;
   }
 
-  /** Resolves when no run is active. */
+  /** Resolves when no run is active, and no start is about to create one. */
   async waitForIdle(): Promise<void> {
+    if (this.starting) await this.starting.catch(() => undefined);
     await this.runPromise?.catch(() => undefined);
   }
 
   private async mutate(message: string, change: (state: AutopilotState) => AutopilotState): Promise<AutopilotState> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const stored = await readStoredAutopilot(this.config.store);
+      assertStoredStateReadable(stored);
       const next = stampState(change(stored.state ?? createAutopilotState(this.now())), this.now());
       try {
         await this.config.store.commit([stateChange(next, stored.stateHash)], message);
@@ -240,6 +271,8 @@ export class AutopilotSession {
   /** Record an author intervention. While running it reaches the next step (or interrupts the current one). */
   async intervene(input: InterventionInput): Promise<AutopilotState | null> {
     if (!input.text.trim()) throw new Error("The intervention is empty.");
+    // A start in flight is about to own the book: let it settle, then hand the intervention to the run it created.
+    if (this.starting) await this.starting.catch(() => undefined);
     if (this.run) {
       this.run.intervene(input);
       this.emit({ type: "insight", tone: "info", code: input.interrupt ? "interventionInterrupt" : "interventionQueued", title: input.interrupt ? "Intervention recorded: the current step restarts with it." : "Intervention recorded: it applies from the next step." });
@@ -249,13 +282,13 @@ export class AutopilotSession {
   }
 
   async answer(answer: QuestionAnswer): Promise<AutopilotState> {
-    if (this.run) throw new AutopilotBusyError(this.config.hostLabel);
+    if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
     return this.mutate("Autopilot: author answer", (state) => applyAnswer(state, answer, this.now()));
   }
 
   /** Change the brief or the options while the autopilot is not running. */
   async configure(input: StartOptions): Promise<AutopilotState> {
-    if (this.run) throw new AutopilotBusyError(this.config.hostLabel);
+    if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
     return this.mutate("Autopilot: settings", (state) => ({
       ...state,
       brief: normalizeBrief(input.brief ?? {}, state.brief),
@@ -265,7 +298,7 @@ export class AutopilotSession {
 
   /** Forget the autopilot state (plan, history, rules). The book's chapters are never touched. */
   async reset(): Promise<void> {
-    if (this.run) throw new AutopilotBusyError(this.config.hostLabel);
+    if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
     const changes = (await Promise.all([AUTOPILOT_STATE_FILE, AUTOPILOT_ACTIVITY_FILE, AUTOPILOT_PLAN_FILE].map(async (path) => {
       const file = await this.config.store.read(path);
       return file ? { path, content: null, expectedHash: file.hash } : null;

@@ -173,23 +173,70 @@ async function readEventStream(response: Response, onData: (data: string) => voi
     if (data) onData(data);
     return false;
   };
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let newline = buffer.indexOf("\n");
-    while (newline >= 0) {
-      const line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
-      if (flushLine(line)) {
-        await reader.cancel().catch(() => undefined);
-        return true;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (flushLine(line)) {
+          await reader.cancel().catch(() => undefined);
+          return true;
+        }
+        newline = buffer.indexOf("\n");
       }
-      newline = buffer.indexOf("\n");
     }
+    buffer += decoder.decode();
+    return buffer.trim() ? flushLine(buffer) : false;
+  } catch (error) {
+    // The reply was given up (an error chunk, a failing listener): release the connection instead of leaving it open.
+    await reader.cancel().catch(() => undefined);
+    throw error;
   }
-  buffer += decoder.decode();
-  return buffer.trim() ? flushLine(buffer) : false;
+}
+
+const COMPLETE_REASONS = new Set(["stop", "tool_calls", "function_call", "end_turn", "stop_sequence", "tool_use", "eos"]);
+const TRUNCATED_REASONS = new Set(["length", "max_tokens", "max_output_tokens", "model_length", "context_length_exceeded"]);
+const FILTERED_REASONS = new Set(["content_filter", "safety", "blocked", "recitation", "prohibited_content"]);
+const FAILED_REASONS = new Set(["error", "failed", "abort", "aborted", "cancelled", "canceled"]);
+
+export type FinishOutcome = "complete" | "truncated" | "filtered" | "failed" | "unexpected" | "incomplete";
+
+/**
+ * What a provider's `finish_reason` says about a reply. A known reason decides by itself. A reason this client does
+ * not know is trusted only when the response also ended properly (`ended`: the `[DONE]` marker of a stream); with no
+ * reason at all, only that end marker makes the reply complete.
+ */
+export function classifyFinishReason(reason: string, ended: boolean): FinishOutcome {
+  const key = reason.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!key) return ended ? "complete" : "incomplete";
+  if (COMPLETE_REASONS.has(key)) return "complete";
+  if (TRUNCATED_REASONS.has(key)) return "truncated";
+  if (FILTERED_REASONS.has(key)) return "filtered";
+  if (FAILED_REASONS.has(key)) return "failed";
+  return ended ? "complete" : "unexpected";
+}
+
+const PERMANENT_STREAM_ERROR = /authenticat|unauthori[sz]ed|forbidden|permission|invalid[_ -]?(?:request|api[_ -]?key|argument|parameter)|bad[_ -]?request/i;
+
+/**
+ * A failure the provider reported inside the stream (`{"error": {...}}` or `{"error": "..."}`), or `null` when the
+ * chunk carries none. It is retried unless its status or code says authentication or an invalid request.
+ */
+function streamError(value: unknown, label: string, details: AiProviderErrorDetails): AiProviderError | null {
+  const source = value && typeof value === "object" ? value as Record<string, unknown> : null;
+  const message = typeof value === "string" ? value.trim() : typeof source?.message === "string" ? source.message.trim() : "";
+  if (!source && !message) return null;
+  const status = [source?.status, source?.status_code, source?.code]
+    .map((entry) => (typeof entry === "number" ? entry : typeof entry === "string" && /^\d{3}$/.test(entry.trim()) ? Number(entry) : Number.NaN))
+    .find((entry) => Number.isInteger(entry) && entry >= 100 && entry < 600);
+  const words = [source?.type, source?.code, source?.status].filter((entry): entry is string => typeof entry === "string").join(" ");
+  const permanent = (status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 409 && status !== 429) || PERMANENT_STREAM_ERROR.test(words);
+  const detail = (message || (source && Object.keys(source).length ? JSON.stringify(source) : "no details")).replace(/\s+/g, " ").slice(0, 400);
+  return new AiProviderError(`${label}: the provider reported an error during the reply — ${detail}`, status, !permanent, details);
 }
 
 /** Characters of reasoning a reply carried. Only the count is kept, never the reasoning itself. */
@@ -251,7 +298,8 @@ async function callCandidate(config: AiRuntimeConfig, candidate: AiCandidate, re
     let usage: AiUsage | undefined;
     let finishReason = "";
     let reasoningCharacters = 0;
-    let complete = true;
+    /** The response ended properly: a stream that closed with `[DONE]`, or a complete JSON body. */
+    let ended = true;
     const details = (extra: AiProviderErrorDetails = {}): AiProviderErrorDetails => ({
       usage,
       cost: estimateCost(usage, candidate.pricing),
@@ -263,12 +311,17 @@ async function callCandidate(config: AiRuntimeConfig, candidate: AiCandidate, re
     });
     try {
       if (stream) {
-        const sawDone = await readEventStream(response, (data) => {
-          let chunk: { choices?: Array<{ delta?: { content?: string | null; reasoning_content?: unknown; reasoning?: unknown }; finish_reason?: string | null }>; usage?: unknown };
+        ended = await readEventStream(response, (data) => {
+          let chunk: { choices?: Array<{ delta?: { content?: string | null; reasoning_content?: unknown; reasoning?: unknown }; finish_reason?: string | null }>; usage?: unknown; error?: unknown };
           try {
             chunk = JSON.parse(data);
           } catch {
             return;
+          }
+          if (!chunk || typeof chunk !== "object") return;
+          if (chunk.error) {
+            const failure = streamError(chunk.error, label, details());
+            if (failure) throw failure;
           }
           const delta = chunk.choices?.[0]?.delta;
           reasoningCharacters += reasoningLength(delta);
@@ -276,11 +329,10 @@ async function callCandidate(config: AiRuntimeConfig, candidate: AiCandidate, re
             text += delta.content;
             request.onText?.(text);
           }
-          const reason = chunk.choices?.find((choice) => choice.finish_reason)?.finish_reason;
+          const reason = chunk.choices?.find((choice) => typeof choice?.finish_reason === "string" && choice.finish_reason)?.finish_reason;
           if (reason) finishReason = reason;
           if (chunk.usage) usage = normalizeUsage(chunk.usage);
         });
-        complete = sawDone || Boolean(finishReason);
       } else {
         const payload = await response.json() as {
           choices?: Array<{ message?: { content?: string | null; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: Array<{ function?: { arguments?: string } }> }; finish_reason?: string | null }>;
@@ -289,7 +341,7 @@ async function callCandidate(config: AiRuntimeConfig, candidate: AiCandidate, re
         const choice = payload.choices?.[0];
         text = typeof choice?.message?.content === "string" ? choice.message.content : "";
         toolArguments = choice?.message?.tool_calls?.find((call) => typeof call.function?.arguments === "string")?.function?.arguments ?? "";
-        finishReason = choice?.finish_reason ?? "";
+        finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : "";
         reasoningCharacters = reasoningLength(choice?.message);
         usage = normalizeUsage(payload.usage);
       }
@@ -297,14 +349,18 @@ async function callCandidate(config: AiRuntimeConfig, candidate: AiCandidate, re
       if (request.signal?.aborted || error instanceof AiProviderError) throw error;
       throw new AiProviderError(`${label}: ${timer.timedOut() ? "request timed out" : "the reply could not be read"}.`, undefined, true, details());
     }
-    if (!complete) throw new AiProviderError(`${label}: the stream ended before the reply was complete.`, undefined, true, details());
-    if (finishReason === "content_filter") throw new AiProviderError(`${label}: the provider filtered the reply content.`, undefined, false, details());
+    const outcome = classifyFinishReason(finishReason, ended);
+    const shown = finishReason.replace(/\s+/g, " ").trim().slice(0, 60);
+    if (outcome === "incomplete") throw new AiProviderError(`${label}: the stream ended before the reply was complete.`, undefined, true, details());
+    if (outcome === "unexpected") throw new AiProviderError(`${label}: unexpected finish reason "${shown}" and the stream did not end with [DONE]: the reply may be incomplete.`, undefined, true, details());
+    if (outcome === "failed") throw new AiProviderError(`${label}: the provider ended the reply with the finish reason "${shown}".`, undefined, true, details());
+    if (outcome === "filtered") throw new AiProviderError(`${label}: the provider filtered the reply content (${shown}).`, undefined, false, details());
     // Some local servers leave the reasoning in the content as a leading <think> block: it is not the reply.
     const inline = splitReasoningBlock(text);
     text = inline.reply;
     reasoningCharacters += inline.reasoningCharacters;
     const answered = Boolean(text.trim() || toolArguments.trim());
-    if (finishReason === "length") {
+    if (outcome === "truncated") {
       throw new AiProviderError(
         `${label}: ${!answered && reasoningCharacters > 0 ? "the model used its output limit while reasoning, before writing the reply" : "the reply was cut by the output token limit"}. Nothing was applied.`,
         undefined,

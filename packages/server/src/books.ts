@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   AiUnavailableError,
@@ -15,9 +16,10 @@ import {
   type ServerBookSummary,
   type ServerBookSync,
 } from "narrarium-engine";
-import { assertBookId, type DataDirectory, type StoredBook } from "./config.js";
+import { assertBookId, assertBookToken, type DataDirectory, type StoredBook } from "./config.js";
 import { HttpError } from "./errors.js";
-import { FileBookStore } from "./fs-store.js";
+import { renameReplacing } from "./files.js";
+import { FileBookStore, KeyedMutex } from "./fs-store.js";
 import { GitRepository } from "./git.js";
 
 export { HttpError };
@@ -31,6 +33,9 @@ export interface BookRuntime {
   error?: string;
   unsubscribe: () => void;
 }
+
+/** Books one server hosts at most: each has a runtime, a working copy and a stored token, and the files that list them are read whole. */
+export const MAX_BOOKS = 200;
 
 export interface BookRegistryOptions {
   gitAvailable: boolean;
@@ -51,7 +56,7 @@ function validStorage(storage: unknown): StoredBook["storage"] {
   const value = storage as Partial<{ kind: string; owner: string; repo: string; branch: string }> | null;
   if (value?.kind === "local") return { kind: "local" };
   const segment = /^[A-Za-z0-9._-]{1,100}$/;
-  const branch = /^(?!.*\.\.)(?!\/)[A-Za-z0-9._/@+-]{1,200}$/;
+  const branch = /^(?!-)(?!.*\.\.)(?!\/)[A-Za-z0-9._/@+-]{1,200}$/;
   if (value?.kind === "github" && typeof value.owner === "string" && segment.test(value.owner) && typeof value.repo === "string" && segment.test(value.repo) && typeof value.branch === "string" && branch.test(value.branch)) {
     return { kind: "github", owner: value.owner, repo: value.repo, branch: value.branch };
   }
@@ -61,6 +66,10 @@ function validStorage(storage: unknown): StoredBook["storage"] {
 /** Books hosted by the server, each with its working copy and its autopilot session. */
 export class BookRegistry {
   private readonly runtimes = new Map<string, BookRuntime>();
+  /** Ids of new books being registered right now: they already take a place. */
+  private readonly arriving = new Set<string>();
+  /** `register` and `remove` of one book never overlap. */
+  private readonly locks = new KeyedMutex();
   private aiCache: { updatedAt: string | null; port: AiPort; configured: boolean } | null = null;
   /** Set once an update is accepted: the server only finishes what it is doing and then restarts. */
   private maintenance = false;
@@ -109,6 +118,12 @@ export class BookRegistry {
   };
 
   async load(): Promise<void> {
+    await this.data.purgeTrash().then(
+      (removed) => {
+        if (removed.length) this.options.log(`Deleted ${removed.length} book copies from the trash after the retention period.`);
+      },
+      (error) => this.options.log(`The trash could not be cleaned: ${error instanceof Error ? error.message : String(error)}`),
+    );
     for (const book of await this.data.books()) {
       try {
         this.instantiate(book);
@@ -118,14 +133,23 @@ export class BookRegistry {
     }
   }
 
+  /** The git side of a working copy; `null` when git is not installed. Git runs in a private home inside the data folder. */
+  private makeGit(directory: string, storage: StoredBook["storage"], token: () => string | undefined): GitRepository | null {
+    if (!this.options.gitAvailable) return null;
+    const remote = storage.kind === "github"
+      ? { owner: storage.owner, repo: storage.repo, branch: storage.branch, token, url: this.options.githubRemoteUrl?.(storage.owner, storage.repo) }
+      : undefined;
+    return new GitRepository(directory, remote, { home: this.data.file("private", "git-home") });
+  }
+
   private instantiate(book: StoredBook): BookRuntime {
-    this.runtimes.get(book.bookId)?.unsubscribe();
+    const previous = this.runtimes.get(book.bookId);
+    if (previous) {
+      previous.session.pause("now");
+      previous.unsubscribe();
+    }
     const directory = this.data.bookDirectory(book.bookId);
-    const git = this.options.gitAvailable
-      ? new GitRepository(directory, book.storage.kind === "github"
-        ? { owner: book.storage.owner, repo: book.storage.repo, branch: book.storage.branch, token: () => this.tokenCache.get(book.bookId), url: this.options.githubRemoteUrl?.(book.storage.owner, book.storage.repo) }
-        : undefined)
-      : null;
+    const git = this.makeGit(directory, book.storage, () => this.tokenCache.get(book.bookId));
     const store = new FileBookStore(directory, {
       afterWrite: async (paths, message) => git && existsSync(path.join(directory, ".git")) ? git.commit(paths, message) : undefined,
     });
@@ -199,37 +223,45 @@ export class BookRegistry {
   async register(bookId: string, request: RegisterBookRequest): Promise<ServerBookSummary> {
     assertBookId(bookId);
     this.assertNotInMaintenance();
+    assertBookToken(request.githubToken);
+    // A new book needs a free place; one that is already hosted (or being registered right now) never does.
+    const isNew = !this.runtimes.has(bookId) && !this.arriving.has(bookId);
+    if (isNew) {
+      if (this.runtimes.size + this.arriving.size >= MAX_BOOKS) throw new HttpError(409, "too_many_books", `This server hosts at most ${MAX_BOOKS} books: remove one before adding another.`);
+      this.arriving.add(bookId);
+    }
+    try {
+      return await this.locks.run(bookId, () => this.registerExclusive(bookId, request));
+    } finally {
+      if (isNew) this.arriving.delete(bookId);
+    }
+  }
+
+  private async registerExclusive(bookId: string, request: RegisterBookRequest): Promise<ServerBookSummary> {
+    this.assertNotInMaintenance();
     const title = typeof request.title === "string" && request.title.trim() ? request.title.trim().slice(0, 300) : bookId;
     const storage = validStorage(request.storage);
     const existing = this.runtimes.get(bookId);
-    if (existing?.session.running && !sameStorage(existing.book.storage, storage)) throw new HttpError(409, "busy", "Pause the autopilot before changing where the book is stored.");
-    if (request.githubToken !== undefined) await this.data.setBookToken(bookId, request.githubToken);
-    const directory = this.data.bookDirectory(bookId);
-    const now = new Date().toISOString();
-    const book: StoredBook = { bookId, title, storage, createdAt: existing?.book.createdAt ?? now, updatedAt: now };
-    const moved = existing && !sameStorage(existing.book.storage, storage);
-    if (moved) await rm(directory, { recursive: true, force: true });
-    await mkdir(path.dirname(directory), { recursive: true, mode: 0o700 });
+    const unchanged = existing !== undefined && sameStorage(existing.book.storage, storage);
+    if (existing?.session.running && !unchanged) throw new HttpError(409, "busy", "Pause the autopilot before changing where the book is stored.");
+    const token = request.githubToken === undefined ? await this.data.bookToken(bookId) : request.githubToken?.trim() || undefined;
     if (storage.kind === "github") {
       if (!this.options.gitAvailable) throw new HttpError(412, "git_unavailable", "Install git on the server to host GitHub books.");
-      if (!(await this.data.bookToken(bookId))) throw new HttpError(412, "github_token_required", "Send the book's GitHub token (with your consent) so the server can clone and push it.");
+      if (!token) throw new HttpError(412, "github_token_required", "Send the book's GitHub token (with your consent) so the server can clone and push it.");
     }
+    const now = new Date().toISOString();
+    const book: StoredBook = { bookId, title, storage, createdAt: existing?.book.createdAt ?? now, updatedAt: now };
+    if (existing && !unchanged) return this.move(existing, book, request, token);
+
+    if (request.githubToken !== undefined) await this.data.setBookToken(bookId, request.githubToken);
     await this.data.saveBook(book);
-    const runtime = this.instantiate(book);
+    // The same book again keeps its runtime: its session, its listeners and a run in progress.
+    const runtime = existing ?? this.instantiate(book);
+    runtime.book = book;
     try {
-      if (storage.kind === "github" && runtime.git) {
-        await this.refreshToken(bookId);
-        if (!existsSync(path.join(directory, ".git"))) {
-          await rm(directory, { recursive: true, force: true });
-          await runtime.git.clone();
-          runtime.lastSync = { at: new Date().toISOString(), ok: true, message: "Cloned from GitHub.", head: await runtime.git.head() };
-        } else if (!runtime.session.running) {
-          await this.syncGitHub(bookId);
-        }
-      } else {
-        await mkdir(directory, { recursive: true });
-        if (runtime.git && !existsSync(path.join(directory, ".git"))) await runtime.git.init();
-      }
+      if (storage.kind === "github") await this.refreshToken(bookId);
+      // A running book is never cloned or synced from here: the run owns its folder.
+      if (!runtime.session.running) await this.prepareRepository(runtime);
       runtime.error = undefined;
     } catch (error) {
       runtime.error = error instanceof Error ? error.message : String(error);
@@ -240,12 +272,95 @@ export class BookRegistry {
     return this.summary(runtime);
   }
 
+  /** Make sure the working copy exists and, for a GitHub book, is up to date. */
+  private async prepareRepository(runtime: BookRuntime): Promise<void> {
+    const { book, git } = runtime;
+    const directory = this.data.bookDirectory(book.bookId);
+    if (book.storage.kind === "github" && git) {
+      if (existsSync(path.join(directory, ".git"))) {
+        await this.syncGitHub(book.bookId);
+        return;
+      }
+      const staged = await this.stage(book.bookId, book.storage, () => this.tokenCache.get(book.bookId));
+      await this.swapIn(book.bookId, staged.directory);
+      runtime.lastSync = { at: new Date().toISOString(), ok: true, message: "Cloned from GitHub.", head: staged.head };
+    } else {
+      await mkdir(directory, { recursive: true });
+      if (git && !existsSync(path.join(directory, ".git"))) await git.init();
+    }
+  }
+
+  /**
+   * Build a working copy next to the final one (a clone, or an empty repository), so the copy in place
+   * stays untouched until the new one is complete.
+   */
+  private async stage(bookId: string, storage: StoredBook["storage"], token: () => string | undefined): Promise<{ directory: string; head: string | undefined }> {
+    const final = this.data.bookDirectory(bookId);
+    const parent = path.dirname(final);
+    await mkdir(parent, { recursive: true, mode: 0o700 });
+    for (const entry of await readdir(parent)) if (entry.startsWith("repo.new-")) await rm(path.join(parent, entry), { recursive: true, force: true });
+    const directory = `${final}.new-${randomUUID().slice(0, 8)}`;
+    try {
+      const git = this.makeGit(directory, storage, token);
+      if (storage.kind === "github") {
+        await git?.clone();
+      } else {
+        await mkdir(directory, { recursive: true });
+        await git?.init();
+      }
+      return { directory, head: await git?.head() };
+    } catch (error) {
+      await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /** Put a staged working copy in place; the copy it replaces goes to the trash, never to waste. */
+  private async swapIn(bookId: string, staged: string): Promise<void> {
+    const directory = this.data.bookDirectory(bookId);
+    const trashed = await this.data.moveToTrash(bookId);
+    try {
+      await renameReplacing(staged, directory);
+    } catch (error) {
+      if (trashed) await renameReplacing(trashed, directory).catch(() => undefined);
+      await rm(staged, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /** Change where a book is stored: the new copy is built first, and a failure leaves the old copy and the registration as they were. */
+  private async move(existing: BookRuntime, book: StoredBook, request: RegisterBookRequest, token: string | undefined): Promise<ServerBookSummary> {
+    const { bookId } = book;
+    let staged: { directory: string; head: string | undefined };
+    try {
+      staged = await this.stage(bookId, book.storage, () => token);
+    } catch (error) {
+      throw new HttpError(502, "repository_unavailable", error instanceof Error ? error.message : String(error));
+    }
+    if (existing.session.running) {
+      await rm(staged.directory, { recursive: true, force: true }).catch(() => undefined);
+      throw new HttpError(409, "busy", "Pause the autopilot before changing where the book is stored.");
+    }
+    await this.swapIn(bookId, staged.directory);
+    if (request.githubToken !== undefined) await this.data.setBookToken(bookId, request.githubToken);
+    await this.data.saveBook(book);
+    const runtime = this.instantiate(book);
+    if (book.storage.kind === "github") await this.refreshToken(bookId);
+    runtime.lastSync = book.storage.kind === "github" ? { at: new Date().toISOString(), ok: true, message: "Cloned from GitHub.", head: staged.head } : null;
+    this.options.onBookChanged(bookId);
+    return this.summary(runtime);
+  }
+
   async remove(bookId: string): Promise<void> {
-    const runtime = this.get(bookId);
-    if (runtime.session.running) throw new HttpError(409, "busy", "Pause the autopilot before removing the book from the server.");
-    runtime.unsubscribe();
-    this.runtimes.delete(bookId);
-    await this.data.removeBook(bookId);
+    assertBookId(bookId);
+    return this.locks.run(bookId, async () => {
+      const runtime = this.get(bookId);
+      if (runtime.session.running) throw new HttpError(409, "busy", "Pause the autopilot before removing the book from the server.");
+      await this.data.removeBook(bookId);
+      runtime.unsubscribe();
+      this.runtimes.delete(bookId);
+      this.tokenCache.delete(bookId);
+    });
   }
 
   async syncGitHub(bookId: string): Promise<ServerBookSummary> {
@@ -268,6 +383,8 @@ export class BookRegistry {
   async summary(runtime: BookRuntime): Promise<ServerBookSummary> {
     const snapshot = await runtime.session.snapshot();
     const revision = (runtime.git && existsSync(path.join(runtime.store.root, ".git")) ? await runtime.git.head() : undefined) ?? await runtime.store.contentRevision();
+    // Why the book cannot be used: the repository failed, or the autopilot's state file exists but cannot be read.
+    const error = runtime.error ?? snapshot.stateError?.message;
     return {
       bookId: runtime.book.bookId,
       title: runtime.book.title,
@@ -278,7 +395,7 @@ export class BookRegistry {
       autopilot: snapshot.state ? summarizeAutopilotState(snapshot.state) : null,
       running: runtime.session.running,
       lastSync: runtime.lastSync,
-      ...(runtime.error ? { error: runtime.error } : {}),
+      ...(error ? { error } : {}),
     };
   }
 

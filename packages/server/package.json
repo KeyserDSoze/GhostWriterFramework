@@ -1,6 +1,6 @@
 {
   "name": "narrarium-server",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Personal Narrarium server: runs the autopilot and the director for your books even with the browser closed, syncs them with the web app, and updates itself from npm. Start it with `npx narrarium-server`.",
   "license": "MIT",

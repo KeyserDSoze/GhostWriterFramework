@@ -1,7 +1,6 @@
 import {
   AutopilotBusyError,
   AutopilotSession,
-  NarrariumServerClient,
   ServerRequestError,
   pickAiRuntimeConfig,
   remoteBookStore,
@@ -21,7 +20,8 @@ import i18n from "@/i18n";
 import { localDeviceId } from "@/account/deviceIdentity";
 import { createBrowserAi } from "@/autopilot/browserAi";
 import { LocalWorkingCopyMissingError, createBrowserBookStore } from "@/autopilot/browserStore";
-import { ServerIdentityError, verifiedServerInfo } from "@/autopilot/serverIdentity";
+import { ServerAddressError, validateServerAddress } from "@/autopilot/serverAddress";
+import { ServerIdentityError, verifiedServer, type VerifiedServer } from "@/autopilot/serverIdentity";
 import { autopilotChannel, emptyView, shareAutopilotEvent, useAutopilotStore, type AutopilotChannelMessage, type RelayedCommand } from "@/autopilot/store";
 import { resolveAuthoritativeBranch } from "@/github/branchResolution";
 import { getLocalRepository, localStatus } from "@/repository/localRepository";
@@ -30,7 +30,7 @@ import { getExistingLocalBookStructure, pullRemoteChanges, syncFullRepository } 
 import { useAuthStore } from "@/store/authStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useSettingsStore } from "@/store/settingsStore";
-import { bookStorageMode, resolveGitHubRemoteToken, type BookEntry } from "@/types/settings";
+import { bookStorageMode, resolveGitHubRemoteToken, type BookEntry, type PersonalServerSettings } from "@/types/settings";
 
 export type AutopilotSetupErrorCode = "no-server" | "book-missing" | "web-locks" | "other-tab" | "github-token";
 
@@ -80,14 +80,8 @@ export function autopilotHostOf(book: BookEntry): "browser" | "server" {
   return book.autopilotHost === "server" ? "server" : "browser";
 }
 
-export function serverClient(): NarrariumServerClient | null {
-  const connection = settings().personalServer;
-  if (!connection?.url || !connection.token) return null;
-  try {
-    return new NarrariumServerClient({ baseUrl: connection.url, token: connection.token });
-  } catch {
-    return null;
-  }
+function hasServer(connection: PersonalServerSettings | undefined): connection is PersonalServerSettings {
+  return Boolean(connection?.url.trim() && connection.token.trim());
 }
 
 function browserLabel(): string {
@@ -95,10 +89,17 @@ function browserLabel(): string {
   return `Browser · ${platform}`;
 }
 
+/** The autopilot's saved state is damaged: raised by the engine here, answered as `state_corrupt` by the personal server. */
+function isStateCorrupt(error: unknown): boolean {
+  return error instanceof Error && (error as { code?: unknown }).code === "state_corrupt";
+}
+
 /** Readable message for errors shown in the autopilot views. */
 export function describeAutopilotError(error: unknown): string {
   if (error instanceof LocalWorkingCopyMissingError) return i18n.t("autopilot.errors.workingCopy");
+  if (isStateCorrupt(error)) return i18n.t("autopilot.errors.stateCorrupt");
   if (error instanceof ServerIdentityError) return i18n.t(`personalServer.identity.${error.reason}`);
+  if (error instanceof ServerAddressError) return i18n.t(`personalServer.address.${error.reason}`);
   if (error instanceof ServerRequestError) {
     if (error.code === "unreachable") return i18n.t("autopilot.serverOffline");
     if (error.code === "book_not_found") return i18n.t("autopilot.where.serverBookMissing");
@@ -126,7 +127,7 @@ interface LocalSessionEntry {
 class BrowserAutopilotRuntime {
   private readonly sessions = new Map<string, LocalSessionEntry>();
   private readonly timers = new Map<string, number>();
-  private stream: { controller: AbortController; key: string } | null = null;
+  private stream: { controller: AbortController; key: string; connection: PersonalServerSettings } | null = null;
   private wakeLock: { release: () => Promise<void> } | null = null;
   private unloadGuard = false;
 
@@ -266,7 +267,8 @@ class BrowserAutopilotRuntime {
     store.patchView(bookId, { loading: true });
     try {
       if (autopilotHostOf(book) === "server") {
-        const snapshot = await this.requireClient().autopilot(book.id);
+        const { client } = await this.requireServer();
+        const snapshot = await client.autopilot(book.id);
         useAutopilotStore.getState().patchView(bookId, { snapshot, loading: false, error: null, busyInAnotherTab: false });
         return snapshot;
       }
@@ -284,8 +286,10 @@ class BrowserAutopilotRuntime {
   async start(bookId: string, options: StartOptions & { force?: boolean } = {}): Promise<void> {
     const book = findBook(bookId);
     if (autopilotHostOf(book) === "server") {
-      const client = this.requireClient();
+      // Check the server before the book's changes are handed to it.
+      await this.requireServer();
       await this.syncWithServer(book.id, { push: true });
+      const { client } = await this.requireServer();
       const snapshot = await client.startAutopilot(book.id, options);
       useAutopilotStore.getState().patchView(bookId, { snapshot, error: null });
       return;
@@ -316,7 +320,7 @@ class BrowserAutopilotRuntime {
   async pause(bookId: string, mode: "now" | "after-step"): Promise<void> {
     const book = findBook(bookId);
     if (autopilotHostOf(book) === "server") {
-      useAutopilotStore.getState().patchView(bookId, { snapshot: await this.requireClient().pauseAutopilot(book.id, mode) });
+      useAutopilotStore.getState().patchView(bookId, { snapshot: await (await this.requireServer()).client.pauseAutopilot(book.id, mode) });
       return;
     }
     const session = this.sessions.get(book.id)?.session;
@@ -330,7 +334,7 @@ class BrowserAutopilotRuntime {
   async intervene(bookId: string, input: InterventionInput): Promise<void> {
     const book = findBook(bookId);
     if (autopilotHostOf(book) === "server") {
-      useAutopilotStore.getState().patchView(bookId, { snapshot: await this.requireClient().intervene(book.id, input) });
+      useAutopilotStore.getState().patchView(bookId, { snapshot: await (await this.requireServer()).client.intervene(book.id, input) });
       return;
     }
     const session = this.localSession(book, resolveBookBranch(book));
@@ -345,7 +349,7 @@ class BrowserAutopilotRuntime {
   async answer(bookId: string, answer: QuestionAnswer): Promise<void> {
     const book = findBook(bookId);
     if (autopilotHostOf(book) === "server") {
-      useAutopilotStore.getState().patchView(bookId, { snapshot: await this.requireClient().answer(book.id, answer) });
+      useAutopilotStore.getState().patchView(bookId, { snapshot: await (await this.requireServer()).client.answer(book.id, answer) });
       return;
     }
     await this.localSession(book, resolveBookBranch(book)).answer(answer);
@@ -355,7 +359,7 @@ class BrowserAutopilotRuntime {
   async configure(bookId: string, options: StartOptions): Promise<void> {
     const book = findBook(bookId);
     if (autopilotHostOf(book) === "server") {
-      useAutopilotStore.getState().patchView(bookId, { snapshot: await this.requireClient().configureAutopilot(book.id, options) });
+      useAutopilotStore.getState().patchView(bookId, { snapshot: await (await this.requireServer()).client.configureAutopilot(book.id, options) });
       return;
     }
     await this.localSession(book, resolveBookBranch(book)).configure(options);
@@ -365,7 +369,7 @@ class BrowserAutopilotRuntime {
   async reset(bookId: string): Promise<void> {
     const book = findBook(bookId);
     if (autopilotHostOf(book) === "server") {
-      useAutopilotStore.getState().patchView(bookId, { snapshot: await this.requireClient().resetAutopilot(book.id) });
+      useAutopilotStore.getState().patchView(bookId, { snapshot: await (await this.requireServer()).client.resetAutopilot(book.id) });
       return;
     }
     await this.localSession(book, resolveBookBranch(book)).reset();
@@ -376,9 +380,10 @@ class BrowserAutopilotRuntime {
   async askDirector(bookId: string, input: { target: EvaluationTarget; question?: string; save?: boolean; signal?: AbortSignal }): Promise<AskDirectorResult> {
     const book = findBook(bookId);
     if (autopilotHostOf(book) === "server") {
-      const client = this.requireClient();
+      await this.requireServer();
       // The director reads the server's copy: hand it the author's latest edits first.
       await this.syncWithServer(book.id, { push: true }).catch(() => undefined);
+      const { client } = await this.requireServer();
       const result = await client.askDirector(book.id, { target: input.target, question: input.question, save: input.save }, input.signal);
       if (input.save) this.debounce(`server-sync:${bookId}`, 300, () => void this.syncWithServer(bookId));
       return result;
@@ -388,10 +393,19 @@ class BrowserAutopilotRuntime {
     return result;
   }
 
-  private requireClient(): NarrariumServerClient {
-    const client = serverClient();
-    if (!client) throw new AutopilotSetupError("no-server");
-    return client;
+  /** The connection the runtime follows: an address typed in the settings counts only once `ensureServerStream` picked it up. */
+  private currentConnection(): PersonalServerSettings | undefined {
+    return this.stream?.connection ?? settings().personalServer;
+  }
+
+  /**
+   * The personal server, after it proved the identity pinned in the settings: the only way the runtime
+   * talks to it. Every request carries the client token, and some carry secrets (AI keys, GitHub token).
+   */
+  private async requireServer(): Promise<VerifiedServer> {
+    const connection = this.currentConnection();
+    if (!hasServer(connection)) throw new AutopilotSetupError("no-server");
+    return verifiedServer({ connection });
   }
 
   /** Send a command to the tab that runs the book's autopilot. */
@@ -457,11 +471,12 @@ class BrowserAutopilotRuntime {
    */
   async moveToServer(bookId: string, consent: { sendAiConfiguration: boolean; sendGitHubToken: boolean }): Promise<void> {
     const book = findBook(bookId);
-    const client = this.requireClient();
+    if (!hasServer(this.currentConnection())) throw new AutopilotSetupError("no-server");
     if (this.sessions.get(bookId)?.session.running || await this.lockHeldElsewhere(bookId)) throw new AutopilotBusyError(browserLabel());
-    const info = await client.info();
+    // The AI keys and the GitHub token are sent only to a server that proved the identity this device paired with.
+    const { client: aiClient, info } = await this.requireServer();
     const branch = resolveBookBranch(book);
-    if (consent.sendAiConfiguration) await client.putAiConfig(pickAiRuntimeConfig(settings()));
+    if (consent.sendAiConfiguration) await aiClient.putAiConfig(pickAiRuntimeConfig(settings()));
     let storage: ServerBookStorage = { kind: "local" };
     let githubToken: string | undefined;
     if (bookStorageMode(book) === "github") {
@@ -471,6 +486,8 @@ class BrowserAutopilotRuntime {
       storage = { kind: "github", owner: book.owner, repo: book.repo, branch };
       if (consent.sendGitHubToken) githubToken = token;
     }
+    // The publication above can take a while: the server proves itself again before it receives the book (and the token).
+    const { client } = await this.requireServer();
     const summary = await client.registerBook(book.id, { title: book.name, storage, ...(githubToken ? { githubToken } : {}) });
     if (storage.kind === "local") {
       const result = await syncBookStores({ local: createBrowserBookStore(book, branch), remote: remoteBookStore(client, book.id), base: this.readBase(info.serverId, book.id), resolveConflict: () => "local", message: "Upload from Narrarium" });
@@ -483,11 +500,14 @@ class BrowserAutopilotRuntime {
   /** Bring the server's work back and run the autopilot in this browser again. */
   async moveToBrowser(bookId: string): Promise<void> {
     const book = findBook(bookId);
-    const client = serverClient();
-    if (client) {
-      const snapshot = await client.autopilot(book.id).catch(() => null);
-      if (snapshot?.running) throw new AutopilotBusyError(i18n.t("autopilot.host.server"));
-      await this.syncWithServer(bookId);
+    if (hasServer(this.currentConnection())) {
+      // The server's latest work is fetched only from a verified server; otherwise the book comes back as it is here.
+      const server = await this.requireServer().catch(() => null);
+      if (server) {
+        const snapshot = await server.client.autopilot(book.id).catch(() => null);
+        if (snapshot?.running) throw new AutopilotBusyError(i18n.t("autopilot.host.server"));
+        await this.syncWithServer(bookId);
+      }
     }
     useAutopilotStore.getState().patchView(bookId, { server: null, error: null });
   }
@@ -498,8 +518,7 @@ class BrowserAutopilotRuntime {
    */
   async syncWithServer(bookId: string, options: { push?: boolean } = {}): Promise<void> {
     const book = findBook(bookId);
-    const client = serverClient();
-    if (!client) return;
+    if (!hasServer(this.currentConnection())) return;
     const store = useAutopilotStore.getState();
     try {
       const branch = resolveBookBranch(book);
@@ -514,12 +533,13 @@ class BrowserAutopilotRuntime {
             return;
           }
           await syncFullRepository({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentRepositoryScopeIdentity(), token });
+          const { client } = await this.requireServer();
           await client.syncGitHub(book.id).catch(() => undefined);
         } else {
           await pullRemoteChanges({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentRepositoryScopeIdentity(), token, mode: "safe" });
         }
       } else {
-        const info = await client.info();
+        const { client, info } = await this.requireServer();
         const result = await syncBookStores({ local: createBrowserBookStore(book, branch), remote: remoteBookStore(client, book.id), base: this.readBase(info.serverId, book.id) });
         this.writeBase(info.serverId, book.id, result.base);
         if (result.conflicts.length) {
@@ -538,18 +558,29 @@ class BrowserAutopilotRuntime {
 
   /** Keep one live connection to the personal server while it is configured. */
   ensureServerStream(): void {
-    const connection = settings().personalServer;
-    const key = connection?.url && connection.token ? `${connection.url}#${connection.token}` : "";
+    const saved = settings().personalServer;
+    const connection = hasServer(saved) ? { ...saved } : null;
+    const key = connection ? `${connection.url}#${connection.token}#${connection.fingerprint ?? ""}` : "";
     if (this.stream?.key === key) return;
     this.stream?.controller.abort();
     this.stream = null;
-    if (!key) {
-      useAutopilotStore.getState().setServer({ status: "disabled", info: null, message: null, books: [], updates: null });
+    const store = useAutopilotStore.getState();
+    if (!connection) {
+      store.setServer({ status: "disabled", info: null, message: null, books: [], updates: null, connection: null });
       return;
     }
     const controller = new AbortController();
-    this.stream = { controller, key };
-    void this.followServer(controller.signal);
+    this.stream = { controller, key, connection };
+    const followed = store.server.connection;
+    const sameServer = followed?.url === connection.url && followed.token === connection.token;
+    // What was learned from another address or token is not shown for this one.
+    store.setServer({ connection, ...(sameServer ? {} : { info: null, message: null, books: [], updates: null }) });
+    const address = validateServerAddress(connection.url);
+    if (address.ok === false) {
+      store.setServer({ status: "error", info: null, books: [], updates: null, message: describeAutopilotError(new ServerAddressError(address.reason)) });
+      return;
+    }
+    void this.followServer(controller.signal, connection);
   }
 
   /** Reconnect now (after a connection test or new credentials). */
@@ -559,15 +590,13 @@ class BrowserAutopilotRuntime {
     this.ensureServerStream();
   }
 
-  private async followServer(signal: AbortSignal): Promise<void> {
+  private async followServer(signal: AbortSignal, connection: PersonalServerSettings): Promise<void> {
     let delay = 2000;
     while (!signal.aborted) {
-      const client = serverClient();
-      if (!client) return;
       useAutopilotStore.getState().setServer({ status: "connecting" });
       try {
         // The token is sent only to the server that proves the pinned identity.
-        const { info } = await verifiedServerInfo(client, settings().personalServer?.fingerprint);
+        const { client, info } = await verifiedServer({ connection, fresh: true, signal });
         const books = await client.listBooks();
         if (signal.aborted) return;
         useAutopilotStore.getState().setServer({ status: "online", info, message: null, books });
@@ -582,7 +611,7 @@ class BrowserAutopilotRuntime {
         if (!signal.aborted) useAutopilotStore.getState().setServer({ status: "offline", message: null });
       } catch (error) {
         if (signal.aborted) return;
-        const fatal = (error instanceof ServerRequestError && error.status === 401) || error instanceof ServerIdentityError;
+        const fatal = (error instanceof ServerRequestError && error.status === 401) || error instanceof ServerIdentityError || error instanceof ServerAddressError;
         useAutopilotStore.getState().setServer({ status: fatal ? "error" : "offline", message: describeAutopilotError(error) });
         if (fatal) return;
       }

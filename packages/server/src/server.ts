@@ -1,9 +1,11 @@
-import http, { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
+import http, { Agent, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
+  AiProviderError,
   AiUnavailableError,
   AutopilotBusyError,
+  AutopilotStateCorruptError,
   DEFAULT_ADMIN_PORT,
   ENGINE_VERSION,
   SERVER_API_VERSION,
@@ -14,6 +16,7 @@ import {
   redactAiRuntimeConfig,
   type AiPort,
   type AutopilotEvent,
+  type BookFileContent,
   type EvaluationTarget,
   type ServerAiStatus,
   type ServerInfo,
@@ -22,17 +25,26 @@ import {
   type ServerUpdateInfo,
   type ServerUpdateResult,
 } from "narrarium-engine";
-import { Auth, isScope, parseScopes, type ClientRecord } from "./auth.js";
+import { Auth, assertScope, isScope, parseScopes, type ClientRecord } from "./auth.js";
 import { BookRegistry } from "./books.js";
 import { DEFAULT_ORIGINS, DataDirectory, normalizeOrigin } from "./config.js";
-import { HttpError } from "./errors.js";
+import { HttpError, retryAfter } from "./errors.js";
+import { MAX_COMMIT_CHANGES } from "./fs-store.js";
 import { lockDataRoot, unsafeKeys } from "./files.js";
+import { bridgeToApi } from "./gateway.js";
 import { gitVersion } from "./git.js";
+import { ConcurrencyLimiter, WindowLimiter, sourceOf, type LimitVerdict } from "./limits.js";
 import { checkNpmServerRelease, isExactSemver, type NpmReleaseCheck } from "./npm-release.js";
 import { RuntimeInstaller, SUPERVISED_ENV, type UpdateResult } from "./runtime-install.js";
 import { CloudflareTunnelManager, type CloudflareTunnelManagerOptions } from "./tunnel.js";
 import { ADMIN_CSS, ADMIN_HTML, ADMIN_JS } from "./ui.js";
 import { SERVER_VERSION } from "./version.js";
+
+/** Tuning of the server's own limits (the defaults are the ones to run with; tests shorten them). */
+export interface ServerLimits {
+  /** Silence in the middle of a request body, in milliseconds, after which the request is answered with 408 (default 20 000). */
+  bodyIdleMs?: number;
+}
 
 export interface NarrariumServerOptions {
   dataDir: string;
@@ -53,6 +65,8 @@ export interface NarrariumServerOptions {
   checkRelease?: (installedVersion: string) => Promise<NpmReleaseCheck>;
   /** Cloudflare connector overrides (tests). */
   tunnel?: Omit<CloudflareTunnelManagerOptions, "root">;
+  /** Limits of the listeners (tests). */
+  limits?: ServerLimits;
   log?: (line: string) => void;
 }
 
@@ -65,6 +79,8 @@ export interface RunningNarrariumServer {
   books: BookRegistry;
   auth: Auth;
   tunnel: CloudflareTunnelManager;
+  /** The two listeners, for tests and diagnostics. */
+  servers: { api: http.Server; admin: http.Server };
   /** AI origins the outbound network guard may reach. */
   allowedBases(): string[];
   close(): Promise<void>;
@@ -72,9 +88,28 @@ export interface RunningNarrariumServer {
 
 const SMALL_BODY = 2 * 1024 * 1024;
 const LARGE_BODY = 64 * 1024 * 1024;
-const MAX_STREAMS = 20;
+const MAX_STREAMS = 50;
+/** Live streams one client holds at most: the tabs and devices of one author (they share a token), not a way to take every slot. */
+const MAX_STREAMS_PER_CLIENT = 10;
+/** Bodies of the large kind (64 MiB) read at the same time: each one is buffered several times over. */
+const MAX_LARGE_BODIES = 2;
+/** Requests one source may have in flight before it has shown a valid token. */
+const ANONYMOUS_IN_FLIGHT = 16;
+/** A request body that goes quiet for this long is dropped. */
+const BODY_IDLE_MS = 20_000;
+/** Time a client has to send a whole request (uploads of big books are legitimate; streams and long answers are not limited by it). */
+const REQUEST_TIMEOUT_MS = 300_000;
+const MINUTE_MS = 60_000;
+const INFO_PER_MINUTE = 120;
+const PAIRING_RESULTS_PER_MINUTE = 120;
+const FAILED_AUTHENTICATIONS_PER_MINUTE = 60;
+/** Per client, and generous: the web app reads a book with one request per file. */
+const AUTHENTICATED_PER_MINUTE = 6000;
+const RELEASE_CACHE_MS = 10 * MINUTE_MS;
+/** An npm that could not be reached is asked again sooner. */
+const RELEASE_UNREACHABLE_CACHE_MS = MINUTE_MS;
 
-function readBody(request: IncomingMessage, limit: number): Promise<unknown> {
+function readJsonBody(request: IncomingMessage, limit: number, idleMs: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const type = String(request.headers["content-type"] ?? "");
     if (type && !/^application\/json\b/i.test(type)) {
@@ -93,16 +128,30 @@ function readBody(request: IncomingMessage, limit: number): Promise<unknown> {
     }
     const chunks: Buffer[] = [];
     let size = 0;
-    request.on("data", (chunk: Buffer) => {
+    let quiet: NodeJS.Timeout | undefined;
+    // Whatever ends the read, the listeners go: a body that is no longer wanted just flows past and is dropped.
+    const stop = (finish: () => void) => {
+      clearTimeout(quiet);
+      request.off("data", onData);
+      request.off("end", onEnd);
+      request.off("error", onAbort);
+      request.off("close", onAbort);
+      finish();
+    };
+    const waitForData = () => {
+      clearTimeout(quiet);
+      quiet = setTimeout(() => stop(() => reject(new HttpError(408, "request_timeout", "The request body stopped arriving."))), idleMs);
+    };
+    const onData = (chunk: Buffer) => {
       size += chunk.length;
       if (size > limit) {
-        reject(new HttpError(413, "payload_too_large", "The request is too large."));
-        request.destroy();
+        stop(() => reject(new HttpError(413, "payload_too_large", "The request is too large.")));
         return;
       }
       chunks.push(chunk);
-    });
-    request.on("end", () => {
+      waitForData();
+    };
+    const onEnd = () => stop(() => {
       if (!chunks.length) {
         resolve({});
         return;
@@ -115,24 +164,81 @@ function readBody(request: IncomingMessage, limit: number): Promise<unknown> {
         reject(new HttpError(400, "invalid_json", "The request body is not valid JSON."));
       }
     });
-    request.on("error", reject);
+    const onAbort = () => stop(() => reject(new HttpError(400, "request_aborted", "The request was interrupted before its body arrived.")));
+    request.on("data", onData);
+    request.once("end", onEnd);
+    request.once("error", onAbort);
+    request.once("close", onAbort);
+    waitForData();
   });
 }
 
-function sendJson(response: ServerResponse, status: number, payload: unknown): void {
+function sendJson(response: ServerResponse, status: number, payload: unknown, headers: Readonly<Record<string, string>> = {}): void {
   const body = JSON.stringify(payload);
-  response.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body) });
+  response.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body), ...headers });
   response.end(body);
 }
 
-function errorStatus(error: unknown): { status: number; code: string; message: string } {
-  if (error instanceof HttpError) return { status: error.status, code: error.code, message: error.message };
+export interface MappedError {
+  status: number;
+  code: string;
+  message: string;
+  /** Headers of the answer (for example `Retry-After`). */
+  headers?: Readonly<Record<string, string>>;
+  /** Set for the errors that are not understood: the short id that links the answer to the log line. */
+  requestId?: string;
+  /** What the log says about an error that is not understood; never sent to the client. */
+  detail?: string;
+}
+
+function describeUnknown(error: unknown): string {
+  if (error instanceof Error) {
+    const frame = (error.stack ?? "").split("\n").find((line) => /^\s+at /.test(line))?.trim();
+    return `${error.name}: ${error.message.slice(0, 500)}${frame ? ` (${frame})` : ""}`;
+  }
+  let text: string;
+  try {
+    text = typeof error === "object" && error !== null ? JSON.stringify(error) : String(error);
+  } catch {
+    text = String(error);
+  }
+  return `Not an Error: ${text.slice(0, 500)}`;
+}
+
+/**
+ * What a failure is answered with. Only errors this server knows keep their meaning: its own HttpError, the engine's
+ * errors and a few explicit cases. A `status` or `code` that some other library put on its error says nothing about this
+ * request (an AI provider's 401 must not read as "your server token is invalid"), so the rest is an internal error:
+ * the client gets a generic message and a short id, and the id is what the log line carries together with the real error.
+ */
+export function errorStatus(error: unknown): MappedError {
+  if (error instanceof HttpError) return { status: error.status, code: error.code, message: error.message, headers: error.headers };
   if (error instanceof AiUnavailableError) return { status: 412, code: "ai_not_configured", message: error.message };
   if (error instanceof AutopilotBusyError) return { status: 409, code: "busy", message: error.message };
   if (isBookConflictError(error)) return { status: 409, code: "conflict", message: (error as Error).message };
-  const status = typeof (error as { status?: unknown })?.status === "number" ? (error as { status: number }).status : 500;
-  const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "internal";
-  return { status, code, message: error instanceof Error ? error.message : String(error) };
+  if (error instanceof AutopilotStateCorruptError) return { status: 409, code: "state_corrupt", message: error.message };
+  if (error instanceof AiProviderError) return { status: 502, code: "ai_provider", message: error.message };
+  if (error instanceof Error && error.message.startsWith("Unsafe book path")) return { status: 400, code: "invalid_path", message: error.message };
+  return { status: 500, code: "internal", message: "The server could not complete the request.", requestId: randomBytes(4).toString("hex"), detail: describeUnknown(error) };
+}
+
+/** Whether an answer is a failure worth a log line: a 5xx that is not a 503 (busy, maintenance: refusals on purpose). */
+function isFailure(mapped: MappedError): boolean {
+  return mapped.status >= 500 && mapped.status !== 503;
+}
+
+function sendError(response: ServerResponse, mapped: MappedError): void {
+  sendJson(
+    response,
+    mapped.status,
+    { code: mapped.code, message: mapped.message, ...(mapped.requestId ? { requestId: mapped.requestId } : {}) },
+    { ...mapped.headers, ...(mapped.requestId ? { "x-request-id": mapped.requestId } : {}) },
+  );
+}
+
+/** A limiter's refusal as the error that answers it. */
+function refuseOver(verdict: LimitVerdict): void {
+  if (!verdict.allowed) throw new HttpError(429, "rate_limit", "Too many requests: wait a moment and try again.", retryAfter(verdict.retryAfterMs));
 }
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -217,6 +323,22 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     const installer = new RuntimeInstaller({ dataRoot: data.root });
     const gitAvailable = Boolean(await gitVersion());
 
+    const bodyIdleMs = typeof options.limits?.bodyIdleMs === "number" && options.limits.bodyIdleMs > 0 ? options.limits.bodyIdleMs : BODY_IDLE_MS;
+    const readBody = (request: IncomingMessage, limit: number) => readJsonBody(request, limit, bodyIdleMs);
+    // Every limit is counted per source (or per client), never for everybody at once.
+    const infoLimit = new WindowLimiter({ max: INFO_PER_MINUTE, windowMs: MINUTE_MS });
+    const pairingResultLimit = new WindowLimiter({ max: PAIRING_RESULTS_PER_MINUTE, windowMs: MINUTE_MS });
+    const failedAuthenticationLimit = new WindowLimiter({ max: FAILED_AUTHENTICATIONS_PER_MINUTE, windowMs: MINUTE_MS });
+    const clientLimit = new WindowLimiter({ max: AUTHENTICATED_PER_MINUTE, windowMs: MINUTE_MS });
+    const anonymousApi = new ConcurrencyLimiter(ANONYMOUS_IN_FLIGHT);
+    const anonymousAdmin = new ConcurrencyLimiter(ANONYMOUS_IN_FLIGHT);
+    const largeBodies = new ConcurrencyLimiter(MAX_LARGE_BODIES);
+    /** The connections of the admin gateway to the API: never reused, so closing a request really closes its connection. */
+    const gatewayAgent = new Agent({ keepAlive: false });
+    closers.push(() => gatewayAgent.destroy());
+    /** Cloudflare's `cf-connecting-ip` is believed once the owner has configured a public address or runs the server's own connector. */
+    const tunnelTrusted = () => Boolean(data.config.publicUrl) || Boolean(data.config.allowRemoteAdmin && data.config.adminPublicUrl) || tunnel.status().enabled;
+    const anonymousRefusal = () => new HttpError(429, "rate_limit", "Too many simultaneous requests from this address: wait a moment and try again.", { "retry-after": "1" });
     const streams = new Map<ServerResponse, ClientRecord>();
     /** Close the live streams of clients whose token was revoked or replaced. */
     const dropStaleStreams = () => {
@@ -315,9 +437,30 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       maintenanceTimer.unref();
     };
 
+    let cachedRelease: { version: string; expiresAt: number; check: Promise<NpmReleaseCheck> } | undefined;
+    /**
+     * The npm release check. Reading it is cached for ten minutes per installed version (and an unreachable npm for one
+     * minute), so the update pages do not ask the registry on every visit. `fresh` always asks again: an update request
+     * must not rest on an old answer. A check that throws is never kept.
+     */
+    const releaseCheck = (fresh: boolean): Promise<NpmReleaseCheck> => {
+      if (!fresh && cachedRelease && cachedRelease.version === SERVER_VERSION && cachedRelease.expiresAt > Date.now()) return cachedRelease.check;
+      const entry = { version: SERVER_VERSION, expiresAt: Number.POSITIVE_INFINITY, check: checkRelease(SERVER_VERSION) };
+      cachedRelease = entry;
+      entry.check.then(
+        (result) => {
+          entry.expiresAt = Date.now() + (result.reason === "unavailable" ? RELEASE_UNREACHABLE_CACHE_MS : RELEASE_CACHE_MS);
+        },
+        () => {
+          if (cachedRelease === entry) cachedRelease = undefined;
+        },
+      );
+      return entry.check;
+    };
+
     const updateInfo = async (client?: ClientRecord): Promise<ServerUpdateInfo> => {
       const [release, lastUpdate, pending] = await Promise.all([
-        checkRelease(SERVER_VERSION),
+        releaseCheck(false),
         installer.readUpdateResult().catch(() => undefined),
         pendingRequest(),
       ]);
@@ -346,7 +489,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       const version = body.version;
       if (!isExactSemver(version) || body.confirmed !== true) throw new HttpError(400, "invalid_request", "Send the exact version to install and confirm it.");
       if (body.installedVersion !== undefined && body.installedVersion !== SERVER_VERSION) throw new HttpError(412, "version", "The server version changed: reload before trying again.");
-      const release = await checkRelease(SERVER_VERSION);
+      const release = await releaseCheck(true);
       if (!release.available || !release.signed || release.latestVersion !== version) throw new HttpError(409, "release", "The requested version is not the latest signed and attested npm release: no update was started.");
       await books.requestUpdate(async () => {
         const previous = await pendingRequest();
@@ -399,18 +542,39 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       },
       {
         method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/files\/read$/, scope: "read", handler: async ({ request, params }) => {
+          const maxPaths = 100;
+          const maxBytes = 16 * 1024 * 1024;
           const runtime = books.get(params[0]);
           const body = asObject(await readBody(request, SMALL_BODY));
-          const paths = Array.isArray(body.paths) ? body.paths.filter((entry): entry is string => typeof entry === "string").slice(0, 2000) : [];
-          const files = await Promise.all(paths.map((path) => runtime.store.read(path)));
-          return { files: files.filter(Boolean) };
+          const paths = [...new Set(Array.isArray(body.paths) ? body.paths.filter((entry): entry is string => typeof entry === "string") : [])];
+          if (paths.length > maxPaths) throw new HttpError(400, "too_many_paths", `Read at most ${maxPaths} different files per request.`);
+          // One file at a time, so the answer can be refused as soon as it would be too big, before more is read.
+          const files: BookFileContent[] = [];
+          let total = 0;
+          for (const filePath of paths) {
+            const file = await runtime.store.read(filePath);
+            if (!file) continue;
+            total += Buffer.byteLength(file.content, "utf8");
+            if (total > maxBytes) throw new HttpError(413, "payload_too_large", "These files are too large to be read in one request: ask for fewer of them.");
+            files.push(file);
+          }
+          return { files };
         },
       },
       {
         method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/files\/commit$/, scope: "write", handler: async ({ request, params }) => {
           books.assertNotInMaintenance();
           const runtime = books.get(params[0]);
-          const body = asObject(await readBody(request, LARGE_BODY));
+          // Each large body is buffered several times over (chunks, text, parsed value): only a few are read at once.
+          const releaseBody = largeBodies.enter("commit");
+          if (!releaseBody) throw new HttpError(503, "busy", "The server is already receiving large uploads: try again in a moment.", { "retry-after": "2" });
+          let body: Record<string, unknown>;
+          try {
+            body = asObject(await readBody(request, LARGE_BODY));
+          } finally {
+            releaseBody();
+          }
+          if (Array.isArray(body.changes) && body.changes.length > MAX_COMMIT_CHANGES) throw new HttpError(413, "too_many_changes", `A commit may change at most ${MAX_COMMIT_CHANGES} files: send the rest in another commit.`);
           const changes = Array.isArray(body.changes) ? body.changes.map((entry) => {
             const change = asObject(entry);
             if (typeof change.path !== "string" || (change.content !== null && typeof change.content !== "string")) throw new HttpError(400, "invalid_change", "Every change needs a path and a text content (or null).");
@@ -495,13 +659,15 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         },
       },
       {
-        method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/director\/ask$/, scope: "run", handler: async ({ request, params }) => {
+        method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/director\/ask$/, scope: "run", handler: async ({ request, response, params }) => {
           books.assertNotInMaintenance();
           const runtime = books.get(params[0]);
           const body = asObject(await readBody(request, SMALL_BODY));
           const controller = new AbortController();
-          request.on("close", () => {
-            if (!request.complete || request.destroyed) controller.abort();
+          // The question may run for minutes and costs money: it stops with the connection. (The request's own `close`
+          // event fires as soon as its body is read, so only the response tells that the caller left.)
+          response.once("close", () => {
+            if (!response.writableEnded) controller.abort();
           });
           return runtime.session.askDirector({ target: asTarget(body.target), question: typeof body.question === "string" ? body.question.slice(0, 4000) : undefined, save: body.save === true, signal: controller.signal });
         },
@@ -510,16 +676,6 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       { method: "POST", pattern: /^\/api\/v1\/updates$/, scope: "update", handler: async ({ request }) => requestUpdate(asObject(await readBody(request, 4096)), "client") },
     ];
 
-    const limits = new Map<string, { window: number; count: number }>();
-    const limit = (key: string, max: number) => {
-      let state = limits.get(key);
-      if (!state || Date.now() - state.window >= 60_000) {
-        state = { window: Date.now(), count: 0 };
-        limits.set(key, state);
-      }
-      state.count += 1;
-      if (state.count > max) throw new HttpError(429, "rate_limit", "Too many requests: wait a moment and try again.");
-    };
     const common = (response: ServerResponse) => {
       response.setHeader("cache-control", "no-store");
       response.setHeader("x-content-type-options", "nosniff");
@@ -541,7 +697,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           if (!allowedOrigins().has(origin)) throw new HttpError(403, "origin_not_allowed", `The origin ${origin} is not allowed. Add it in the server's admin panel (Approved network).`);
           response.setHeader("access-control-allow-origin", origin);
           response.setHeader("vary", "Origin");
-          response.setHeader("access-control-expose-headers", "etag");
+          response.setHeader("access-control-expose-headers", "etag, retry-after, x-request-id");
         }
         if (request.method === "OPTIONS") {
           response.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -552,35 +708,54 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           response.end();
           return;
         }
-        const url = new URL(request.url ?? "/", "http://127.0.0.1");
+        let url: URL;
+        try {
+          url = new URL(request.url ?? "/", "http://127.0.0.1");
+        } catch {
+          throw new HttpError(400, "invalid_request", "The request address is not valid.");
+        }
+        // Who is calling, for every limit below. Until a valid token is shown the caller is anonymous, and one
+        // source may have only a few anonymous requests in flight (a stalled one frees its slot when it ends).
+        const source = sourceOf(request, tunnelTrusted());
+        const releaseAnonymous = anonymousApi.enter(source);
+        if (!releaseAnonymous) throw anonymousRefusal();
+        response.once("close", releaseAnonymous);
         if (request.method === "GET" && (url.pathname === "/api/v1/info" || url.pathname === "/")) {
-          limit("info", 600);
+          refuseOver(infoLimit.hit(source));
           const nonce = url.searchParams.get("nonce");
           if (nonce !== null && !/^[a-f0-9]{64}$/.test(nonce)) throw new HttpError(400, "invalid_nonce", "The nonce must be 64 hexadecimal characters.");
           sendJson(response, 200, url.pathname === "/" ? { ...info(), message: "Narrarium personal server. Connect it from Narrarium → Settings → Personal server." } : info(nonce ?? undefined));
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/pairings") {
-          limit("pair", 30);
+          auth.admitPairingAttempt(source);
           const body = asObject(await readBody(request, 4096));
           const code = typeof body.code === "string" ? body.code : "";
           const nonce = typeof body.nonce === "string" ? body.nonce : "";
           const label = typeof body.label === "string" ? body.label.trim() : "";
           if (!/^\d{9}$/.test(code) || !/^[a-f0-9]{64}$/.test(nonce) || !label || label.length > 80) throw new HttpError(400, "invalid_request", "Send the nine-digit code, a nonce and a client name.");
-          sendJson(response, 200, await auth.requestPairing(code, nonce, label));
+          sendJson(response, 200, await auth.requestPairing(code, nonce, label, source));
           return;
         }
         const pairing = /^\/api\/v1\/pairings\/([0-9a-f-]{36})\/result$/.exec(url.pathname);
         if (request.method === "POST" && pairing) {
-          limit("pair_result", 120);
+          refuseOver(pairingResultLimit.hit(source));
           const body = asObject(await readBody(request, 4096));
           if (typeof body.nonce !== "string" || !/^[a-f0-9]{64}$/.test(body.nonce)) throw new HttpError(400, "invalid_request", "Send the pairing nonce.");
           sendJson(response, 200, await auth.pollPairing(pairing[1], body.nonce));
           return;
         }
         const token = /^Bearer\s+(.+)$/i.exec(String(request.headers.authorization ?? ""))?.[1];
-        const client = auth.authenticate(token);
-        limit("authenticated", 1200);
+        let client: ClientRecord;
+        try {
+          client = auth.authenticate(token);
+        } catch (error) {
+          // A failed authentication is counted for its source; a valid token is never throttled by the failures of others.
+          if (error instanceof HttpError && error.status === 401) refuseOver(failedAuthenticationLimit.hit(source));
+          throw error;
+        }
+        releaseAnonymous();
+        refuseOver(clientLimit.hit(client.id));
         // Disconnecting a device revokes its own token, whatever its permissions.
         if (request.method === "DELETE" && url.pathname === "/api/v1/session") {
           await auth.revoke(client.id);
@@ -589,20 +764,36 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/events") {
-          auth.authenticate(token, "read");
+          assertScope(client, "read");
           if (streams.size >= MAX_STREAMS) throw new HttpError(429, "too_many_streams", "Too many live connections to this server.");
+          if ([...streams.values()].filter((entry) => entry.id === client.id).length >= MAX_STREAMS_PER_CLIENT) {
+            throw new HttpError(429, "too_many_streams", `This client already holds ${MAX_STREAMS_PER_CLIENT} live connections: close one before opening another.`);
+          }
           response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", connection: "keep-alive", "x-accel-buffering": "no" });
+          // A device that vanished without closing (sleep, a network change) is noticed by the operating system's probes, and its slot freed.
+          request.socket.setKeepAlive(true, 15_000);
           response.write(encodeServerSentEvent({ event: "hello", data: { serverId: data.config.serverId, at: new Date().toISOString() } }));
           streams.set(response, client);
-          request.on("close", () => streams.delete(response));
+          // The slot is free the moment the connection is: the response closes when the client leaves or the stream ends.
+          const forget = () => {
+            streams.delete(response);
+          };
+          response.once("close", forget);
+          response.once("error", forget);
           return;
         }
         for (const route of routes) {
           if (route.method !== request.method) continue;
           const match = route.pattern.exec(url.pathname);
           if (!match) continue;
-          auth.authenticate(token, route.scope);
-          const params = match.slice(1).map((value) => decodeURIComponent(value));
+          assertScope(client, route.scope);
+          const params = match.slice(1).map((value) => {
+            try {
+              return decodeURIComponent(value);
+            } catch {
+              throw new HttpError(400, "invalid_path", "The address contains an invalid escape sequence.");
+            }
+          });
           const payload = await route.handler({ request, response, params, url, client });
           if (!auth.isCurrent(client)) throw new HttpError(401, "revoked", "This client token was revoked.");
           sendJson(response, url.pathname === "/api/v1/updates" && request.method === "POST" ? 202 : 200, payload);
@@ -610,11 +801,11 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         }
         throw new HttpError(404, "not_found", "Unknown endpoint.");
       })().catch((error) => {
-        const { status, code, message } = errorStatus(error);
-        if (status >= 500) log(`Error on ${request.method} ${request.url}: ${message}`);
+        const mapped = errorStatus(error);
+        if (isFailure(mapped)) log(`Error${mapped.requestId ? ` ${mapped.requestId}` : ""} on ${request.method} ${request.url}: ${mapped.detail ?? mapped.message}`);
         if (!response.headersSent) {
           response.setHeader("connection", "close");
-          sendJson(response, status, { code, message });
+          sendError(response, mapped);
         } else response.end();
       }).finally(() => {
         if (request.url !== "/api/v1/events") log(`${request.method} ${request.url} ${response.statusCode} ${Date.now() - started}ms`);
@@ -640,16 +831,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         // One public hostname can point to the admin port: the panel is served on / and /api/v1/*
         // is bridged to the loopback API, which still checks Host, Origin and the client token.
         if (bridge) {
-          const upstream = httpRequest({ hostname: "127.0.0.1", port: apiPort, path, method: request.method, headers: { ...request.headers, host: hostOf(data.config.publicUrl) ?? `127.0.0.1:${apiPort}`, "x-narrarium-proxy": "admin-gateway" } }, (upstreamResponse) => {
-            response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
-            upstreamResponse.pipe(response);
-          });
-          upstream.on("error", () => {
-            if (!response.headersSent) sendJson(response, 503, { code: "api_proxy", message: "The server API is not reachable." });
-            else response.end();
-          });
-          upstream.setTimeout(130_000, () => upstream.destroy(new Error("timeout")));
-          request.pipe(upstream);
+          bridgeToApi(request, response, { port: apiPort, host: hostOf(data.config.publicUrl) ?? `127.0.0.1:${apiPort}` }, gatewayAgent);
           return;
         }
         if (request.method === "GET" && (path === "/" || path === "/admin.js" || path === "/admin.css")) {
@@ -661,8 +843,13 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         // Cookies are shared by every port of a host: one name per admin port keeps two servers apart.
         const cookieName = `nrs_admin_${adminPort}`;
         if (path === "/admin/api/login" && request.method === "POST") {
+          // Nobody has shown a session yet: one source may have only a few sign-ins (and half-sent bodies) in flight.
+          const source = sourceOf(request, tunnelTrusted());
+          const releaseAnonymous = anonymousAdmin.enter(source);
+          if (!releaseAnonymous) throw anonymousRefusal();
+          response.once("close", releaseAnonymous);
           const body = asObject(await readBody(request, 4096));
-          const session = await auth.login(typeof body.code === "string" ? body.code.trim() : "");
+          const session = await auth.login(typeof body.code === "string" ? body.code.trim() : "", source);
           const secure = header(request, "origin")?.startsWith("https://") ? "; Secure" : "";
           response.setHeader("set-cookie", `${cookieName}=${session.cookie}; HttpOnly; SameSite=Strict; Path=/admin/; Max-Age=1800${secure}`);
           sendJson(response, 200, { csrf: session.csrf });
@@ -800,17 +987,17 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         }
         throw new HttpError(404, "not_found", "Unknown admin endpoint.");
       })().catch((error) => {
-        const { status, code, message } = errorStatus(error);
-        if (status >= 500) log(`Admin error on ${request.method} ${request.url}: ${message}`);
+        const mapped = errorStatus(error);
+        if (isFailure(mapped)) log(`Admin error${mapped.requestId ? ` ${mapped.requestId}` : ""} on ${request.method} ${request.url}: ${mapped.detail ?? mapped.message}`);
         if (!response.headersSent) {
           response.setHeader("connection", "close");
-          sendJson(response, status, { code, message });
+          sendError(response, mapped);
         } else response.end();
       });
     });
 
     for (const server of [api, admin]) {
-      server.requestTimeout = 0;
+      server.requestTimeout = REQUEST_TIMEOUT_MS;
       server.headersTimeout = 20_000;
       server.keepAliveTimeout = 5_000;
       server.maxHeadersCount = 60;
@@ -838,6 +1025,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       books,
       auth,
       tunnel,
+      servers: { api, admin },
       allowedBases: () => [...data.config.allowedAiBases],
       async close() {
         if (closed) return;

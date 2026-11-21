@@ -50,6 +50,7 @@ import { AutopilotFeed, AutopilotLiveCard, AutopilotStatusBadge } from "@/compon
 import { useAutopilotRefresh, useBookAutopilotView, useElapsed } from "@/autopilot/hooks";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotStore } from "@/autopilot/store";
+import { useServerConnection } from "@/autopilot/serverConnection";
 import { formatCost, formatCount, formatDateTime, formatDuration, syncStatusText } from "@/autopilot/format";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
@@ -80,7 +81,7 @@ export function AutopilotPage() {
   const { book, structure, error, reload } = useBookStructure(bookId);
   const view = useBookAutopilotView(bookId);
   const live = useAutopilotStore((state) => (bookId ? state.live[bookId] ?? null : null));
-  const serverStatus = useAutopilotStore((state) => state.server.status);
+  const serverStatus = useServerConnection().status;
   const { busy, run } = useAutopilotActions(bookId);
   const host = book?.autopilotHost === "server" ? "server" : "browser";
   const canRefresh = Boolean(book && (host === "server" || (structure && ready)));
@@ -140,6 +141,22 @@ export function AutopilotPage() {
 
       {noAi && <Alert><AlertTriangle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center justify-between gap-2"><span>{t("autopilot.errors.aiMissing")}</span><Button asChild size="sm" variant="outline"><Link to="/app/settings/ai-router">AI Router</Link></Button></AlertDescription></Alert>}
       {view.error && <Alert variant="destructive"><AlertDescription>{view.error}</AlertDescription></Alert>}
+      {snapshot?.stateError && (
+        <Alert variant="destructive">
+          <XCircle className="h-4 w-4" />
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+            <span>{t("autopilot.errors.stateCorrupt")}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy !== null || running}
+              onClick={() => { if (window.confirm(t("autopilot.actions.resetConfirm"))) void run("reset", (runtime, id) => runtime.reset(id)); }}
+            >
+              <RotateCcw className="h-4 w-4" />{t("autopilot.actions.reset")}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
       {host === "server" && (serverStatus === "offline" || serverStatus === "error") && <Alert><Cloud className="h-4 w-4" /><AlertDescription>{t("autopilot.serverOffline")}</AlertDescription></Alert>}
       {view.busyInAnotherTab && <Alert><AlertDescription>{t("autopilot.anotherTab")}</AlertDescription></Alert>}
       {remote && <Alert><AlertDescription>{t("autopilot.remoteRunner", { label: remote.label || t(`autopilot.host.${remote.host}`) })}</AlertDescription></Alert>}
@@ -439,11 +456,11 @@ function RulesCard({ state }: { state: AutopilotState }) {
   );
 }
 
-function WhereCard({ book, running }: { book: BookEntry; running: boolean }) {
+export function WhereCard({ book, running }: { book: BookEntry; running: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { save } = useSettings();
-  const server = useAutopilotStore((state) => state.server);
+  const server = useServerConnection();
   const view = useBookAutopilotView(book.id);
   const { busy, run } = useAutopilotActions(book.id);
   const host = book.autopilotHost === "server" ? "server" : "browser";
@@ -451,6 +468,7 @@ function WhereCard({ book, running }: { book: BookEntry; running: boolean }) {
   const [consentAi, setConsentAi] = useState(true);
   const [consentGithub, setConsentGithub] = useState(true);
   const github = bookStorageMode(book) === "github";
+  // Online means the server proved the identity pinned in the settings: only then does a book (with its keys and tokens) move there.
   const serverReady = server.status === "online";
   const serverBook = view.server;
   useEffect(() => setChoice(host), [host]);
@@ -492,17 +510,21 @@ function WhereCard({ book, running }: { book: BookEntry; running: boolean }) {
         ))}
       </div>
       {choice === "server" && host === "browser" && (
-        !serverReady ? (
-          <p className="text-xs text-muted-foreground">{t("autopilot.where.noServer")} <Link className="underline" to="/app/settings/server">{t("personalServer.title")}</Link></p>
-        ) : (
-          <div className="space-y-2">
-            <label className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5" checked={consentAi} onChange={(event) => setConsentAi(event.target.checked)} />{t("autopilot.where.consentAi")}</label>
-            {github && <label className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5" checked={consentGithub} onChange={(event) => setConsentGithub(event.target.checked)} />{t("autopilot.where.consentGithub")}</label>}
-            <Button size="sm" disabled={busy !== null || running || (github && !consentGithub && !serverBook?.hasGithubToken)} onClick={move}>
-              {busy === "move" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Server className="h-3.5 w-3.5" />}{t("autopilot.where.move")}
-            </Button>
-          </div>
-        )
+        <div className="space-y-2">
+          {serverReady ? (
+            <>
+              <label className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5" checked={consentAi} onChange={(event) => setConsentAi(event.target.checked)} />{t("autopilot.where.consentAi")}</label>
+              {github && <label className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5" checked={consentGithub} onChange={(event) => setConsentGithub(event.target.checked)} />{t("autopilot.where.consentGithub")}</label>}
+            </>
+          ) : (
+            <p id={`where-move-blocked-${book.id}`} className="text-xs text-muted-foreground" role="note">
+              {server.status === "disabled" ? t("autopilot.where.noServer") : t("autopilot.where.serverUnverified")} <Link className="underline" to="/app/settings/server">{t("personalServer.title")}</Link>
+            </p>
+          )}
+          <Button size="sm" disabled={!serverReady || busy !== null || running || (github && !consentGithub && !serverBook?.hasGithubToken)} aria-describedby={serverReady ? undefined : `where-move-blocked-${book.id}`} onClick={move}>
+            {busy === "move" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Server className="h-3.5 w-3.5" />}{t("autopilot.where.move")}
+          </Button>
+        </div>
       )}
       {host === "server" && (
         <div className="space-y-2">

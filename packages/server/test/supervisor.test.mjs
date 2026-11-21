@@ -100,7 +100,8 @@ test("the installer trusts the metadata first, installs without scripts or crede
       assert.equal(first.serverPath, path.join(dataRoot, "private", "npm-runtime", "versions", "0.1.0", "dist", "server.mjs"));
       const install = npm.calls.find((call) => call.args[0] === "install");
       assert.ok(install.args.includes("--ignore-scripts"));
-      assert.equal(install.env.NPM_CONFIG_IGNORE_SCRIPTS, "true");
+      // Configuration reaches npm on the command line only: not one npm_config_* variable is left in its environment.
+      assert.deepEqual(Object.keys(install.env).filter((name) => /^npm_config_/i.test(name)), []);
       assert.equal(install.env.NPM_TOKEN, undefined, "npm never sees the user's tokens");
       assert.ok(npm.calls.findIndex((call) => call.args[0] === "view") < npm.calls.findIndex((call) => call.args[0] === "install"));
 

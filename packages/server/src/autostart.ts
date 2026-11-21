@@ -14,20 +14,51 @@ export interface AutostartResult {
 export const SYSTEMD_UNIT = "narrarium-server.service";
 export const LAUNCHD_LABEL = "net.narrarium.server";
 
+/** Every value written into a unit or a plist goes through here: a control character (a line break above all) would start a new directive. */
+function plain(value: string, what: string): string {
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value)) throw new Error(`The ${what} contains a control character, so it cannot be written into the autostart file.`);
+  return value;
+}
+
+/** A word of `ExecStart=`: quoted, with `\`, `"`, `%` (specifiers) and `$` (variables) written the way systemd reads them literally. */
 function systemdQuote(value: string): string {
-  return `"${value.replace(/([%\\"])/g, (char) => (char === "%" ? "%%" : `\\${char}`))}"`;
+  return `"${value.replace(/([%$\\"])/g, (char) => (char === "%" ? "%%" : char === "$" ? "$$" : `\\${char}`))}"`;
+}
+
+/** A whole `Environment=` assignment: quoted, `\`, `"` and `%` escaped; `$` has no meaning there. */
+function systemdAssignment(name: string, value: string): string {
+  return `Environment="${name}=${value.replace(/([%\\"])/g, (char) => (char === "%" ? "%%" : `\\${char}`))}"`;
+}
+
+/**
+ * The PATH of the shell that ran `setup` (npm, git and cloudflared installed through nvm or Homebrew are found there and
+ * nowhere else), led by the folder of the node that runs the supervisor.
+ */
+function supervisorSearchPath(nodeBinary: string, searchPath: string | undefined): string {
+  const nodeDirectory = path.dirname(nodeBinary);
+  const entries = plain(searchPath ?? "", "PATH").split(":").filter(Boolean);
+  return (entries.includes(nodeDirectory) ? entries : [nodeDirectory, ...entries]).join(":");
+}
+
+/** The command that runs the supervisor of one data folder, with every part checked. */
+function supervisorCommand(active: ActiveRuntime, dataRoot: string, nodeBinary: string): string[] {
+  return [plain(path.resolve(nodeBinary), "node binary"), plain(path.resolve(active.packageRoot, "dist", "cli.mjs"), "runtime folder"), "start", "--data-root", plain(path.resolve(dataRoot), "data folder")];
 }
 
 /** systemd user unit running the supervisor of this data folder. */
-export function renderUserService(active: ActiveRuntime, dataRoot: string, nodeBinary = process.execPath): string {
-  const exec = [systemdQuote(path.resolve(nodeBinary)), systemdQuote(path.resolve(active.packageRoot, "dist", "cli.mjs")), "start", "--data-root", systemdQuote(path.resolve(dataRoot))].join(" ");
+export function renderUserService(active: ActiveRuntime, dataRoot: string, nodeBinary = process.execPath, searchPath: string | undefined = process.env.PATH): string {
+  const [node, cli, start, flag, data] = supervisorCommand(active, dataRoot, nodeBinary);
+  const exec = [systemdQuote(node), systemdQuote(cli), start, flag, systemdQuote(data)].join(" ");
   return `[Unit]
 Description=Narrarium personal server
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
+${systemdAssignment("PATH", supervisorSearchPath(node, searchPath))}
 ExecStart=${exec}
 Restart=on-failure
 RestartSec=5
@@ -39,12 +70,13 @@ WantedBy=default.target
 }
 
 function xmlEscape(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
 /** launchd agent running the supervisor at login (macOS). */
-export function renderLaunchAgent(active: ActiveRuntime, dataRoot: string, nodeBinary = process.execPath): string {
-  const args = [path.resolve(nodeBinary), path.resolve(active.packageRoot, "dist", "cli.mjs"), "start", "--data-root", path.resolve(dataRoot)];
+export function renderLaunchAgent(active: ActiveRuntime, dataRoot: string, nodeBinary = process.execPath, searchPath: string | undefined = process.env.PATH): string {
+  const args = supervisorCommand(active, dataRoot, nodeBinary);
+  const log = path.join(args[4], "server.log");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -55,6 +87,11 @@ export function renderLaunchAgent(active: ActiveRuntime, dataRoot: string, nodeB
   <array>
 ${args.map((arg) => `    <string>${xmlEscape(arg)}</string>`).join("\n")}
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${xmlEscape(supervisorSearchPath(args[0], searchPath))}</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -62,10 +99,12 @@ ${args.map((arg) => `    <string>${xmlEscape(arg)}</string>`).join("\n")}
     <key>SuccessfulExit</key>
     <false/>
   </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
   <key>StandardOutPath</key>
-  <string>${xmlEscape(path.join(path.resolve(dataRoot), "server.log"))}</string>
+  <string>${xmlEscape(log)}</string>
   <key>StandardErrorPath</key>
-  <string>${xmlEscape(path.join(path.resolve(dataRoot), "server.log"))}</string>
+  <string>${xmlEscape(log)}</string>
 </dict>
 </plist>
 `;
@@ -91,7 +130,7 @@ export async function configureAutostart(active: ActiveRuntime, dataRoot: string
     const configDir = path.join(home, ".config", "systemd", "user");
     await fs.mkdir(configDir, { recursive: true, mode: 0o700 });
     const servicePath = path.join(configDir, SYSTEMD_UNIT);
-    await fs.writeFile(servicePath, renderUserService(active, dataRoot), { mode: 0o600 });
+    await fs.writeFile(servicePath, renderUserService(active, dataRoot, process.execPath, environment.PATH), { mode: 0o600 });
     if (!run(systemctl, ["--user", "daemon-reload"], env).ok) throw new Error("The service was written, but systemd --user does not answer. Run the command from a real user session or set XDG_RUNTIME_DIR.");
     if (!run(systemctl, ["--user", "enable", "--now", SYSTEMD_UNIT], env).ok) throw new Error(`The service was written but could not be enabled. Check: systemctl --user status ${SYSTEMD_UNIT}`);
     const user = environment.USER ?? String(uid);
@@ -109,7 +148,7 @@ export async function configureAutostart(active: ActiveRuntime, dataRoot: string
     const agents = path.join(home, "Library", "LaunchAgents");
     await fs.mkdir(agents, { recursive: true });
     const servicePath = path.join(agents, `${LAUNCHD_LABEL}.plist`);
-    await fs.writeFile(servicePath, renderLaunchAgent(active, dataRoot), { mode: 0o644 });
+    await fs.writeFile(servicePath, renderLaunchAgent(active, dataRoot, process.execPath, environment.PATH), { mode: 0o644 });
     const launchctl = environment.NARRARIUM_LAUNCHCTL || "launchctl";
     const domain = `gui/${uid ?? ""}`;
     run(launchctl, ["bootout", `${domain}/${LAUNCHD_LABEL}`], environment);

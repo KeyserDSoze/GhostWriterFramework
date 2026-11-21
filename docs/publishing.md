@@ -78,7 +78,7 @@ If GitHub Actions fails with `E404` while publishing, npm is usually telling you
 The personal server updates itself from npm and installs only releases that carry the provenance attestation of `publish-server-npm.yml`, so it is published only by that workflow, through npm Trusted Publishing (OIDC, no `NPM_TOKEN`):
 
 1. Bump `version` in `packages/server/package.json` and `SERVER_VERSION` in `packages/server/src/version.ts`, commit and push.
-2. Push the tag `narrarium-server-v<version>`, for example `git tag narrarium-server-v0.1.1 && git push origin narrarium-server-v0.1.1`.
+2. Push the tag `narrarium-server-v<version>`, for example `git tag narrarium-server-v0.1.2 && git push origin narrarium-server-v0.1.2`.
 
 The very first version (`0.1.0`) must be published by hand, because npm binds a Trusted Publisher only to an existing package; then configure the Trusted Publisher (repository `KeyserDSoze/GhostWriterFramework`, workflow `publish-server-npm.yml`, environment `npm-publish`). The exact steps are in the [`narrarium-server` README](../packages/server/README.md#maintainers-releasing).
 

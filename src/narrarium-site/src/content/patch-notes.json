@@ -1,5 +1,35 @@
 [
   {
+    "version": "0.80.0",
+    "date": "2026-11-21",
+    "en": {
+      "title": "A safer personal server, and edits that stay put",
+      "summary": "Narrarium now proves which personal server it is talking to before it sends anything, the server closes several ways a stolen token or a hostile repository could reach your files, and the pages that edit a file no longer overwrite what you are typing.",
+      "changes": [
+        "Settings → Personal server: the address is checked as you type, and an unusable one shows a message instead of breaking the page. Your client token is only ever sent to the server you are connected to, never to the address while you are still typing it.",
+        "Before Narrarium sends your AI keys, your GitHub token, a book or any autopilot command to the personal server, the server must prove the identity you paired with. A server that changed, or cannot prove who it is, is refused. If you connected with a pasted token, press \"Test connection\" once to verify and remember the server.",
+        "Disconnect warns you when the server could not revoke the token.",
+        "The Director and Ghostwriters pages keep what you are typing when your settings refresh in the background. If the file changed elsewhere you get a notice with a reload button, and saving no longer overwrites a change made since you opened the page.",
+        "If the autopilot's saved state file is damaged (for example after a conflicting change on GitHub), the autopilot leaves it alone instead of starting over and losing your rules, plan and budget, and the Autopilot page tells you how to restore it or reset it.",
+        "Autopilot engine 0.1.2: a second start no longer makes Pause useless, a run that was taken over stops without overwriting the new run's state, pausing between two steps no longer pays for the next one, and incomplete AI replies (an error inside the stream, an unexpected finish reason) are rejected instead of being saved as finished scenes.",
+        "Update your personal server to 0.1.2 (Settings → Personal server → Version and updates). It no longer stops when a commit is refused, never follows links inside a book's working copy, refuses git's own folders and non-text files, limits what an anonymous caller can do per address so nobody can lock you out, keeps your npm credentials out of its updates, and keeps removed books in a trash folder for 14 days."
+      ]
+    },
+    "it": {
+      "title": "Un server personale più sicuro e modifiche che non si perdono",
+      "summary": "Narrarium ora verifica con quale server personale sta parlando prima di inviargli qualsiasi cosa, il server chiude diversi modi in cui un token rubato o un repository ostile potevano arrivare ai tuoi file, e le pagine che modificano un file non sovrascrivono più ciò che stai scrivendo.",
+      "changes": [
+        "Impostazioni → Server personale: l'indirizzo viene controllato mentre lo scrivi e, se non è utilizzabile, compare un messaggio invece di rompere la pagina. Il token del client viene inviato solo al server a cui sei collegato, mai all'indirizzo mentre lo stai ancora digitando.",
+        "Prima di inviare al server personale le tue chiavi AI, il token GitHub, un libro o un comando dell'autopilot, Narrarium pretende che il server dimostri l'identità con cui l'hai abbinato. Un server cambiato, o che non sa dimostrare chi è, viene rifiutato. Se ti sei collegato incollando il token, premi una volta \"Prova connessione\" per verificare e ricordare il server.",
+        "Scollega ti avvisa se il server non è riuscito a revocare il token.",
+        "Le pagine Direttore e Ghostwriter mantengono ciò che stai scrivendo quando le impostazioni si aggiornano in background. Se il file è cambiato altrove compare un avviso con il pulsante per ricaricarlo, e il salvataggio non sovrascrive più una modifica fatta dopo l'apertura della pagina.",
+        "Se il file di stato dell'autopilot è danneggiato (per esempio dopo una modifica in conflitto su GitHub), l'autopilot lo lascia com'è invece di ripartire da zero perdendo regole, piano e budget, e la pagina Autopilot spiega come ripristinarlo o azzerarlo.",
+        "Motore dell'autopilot 0.1.2: un secondo avvio non rende più inutile Pausa, una corsa di cui qualcuno ha preso il controllo si ferma senza sovrascrivere lo stato della nuova, mettere in pausa tra due passi non fa più pagare il passo successivo, e le risposte AI incomplete (un errore dentro il flusso, un motivo di fine inatteso) vengono rifiutate invece di essere salvate come scene finite.",
+        "Aggiorna il tuo server personale alla 0.1.2 (Impostazioni → Server personale → Versione e aggiornamenti). Non si ferma più quando un commit viene rifiutato, non segue più i collegamenti simbolici nella copia di lavoro di un libro, rifiuta le cartelle interne di git e i file non di testo, limita per indirizzo ciò che può fare un anonimo così nessuno può escluderti, tiene le tue credenziali npm fuori dagli aggiornamenti e conserva i libri rimossi in un cestino per 14 giorni."
+      ]
+    }
+  },
+  {
     "version": "0.79.1",
     "date": "2026-11-21",
     "en": {

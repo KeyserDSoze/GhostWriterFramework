@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { AutopilotActivity, AutopilotEvent, AutopilotSnapshot, AutopilotStateSummary, InterventionInput, ServerBookSummary, ServerInfo, ServerUpdateInfo } from "narrarium-engine";
+import type { PersonalServerSettings } from "@/types/settings";
 
 export type AutopilotHostKind = "browser" | "server";
 export type ServerConnectionStatus = "disabled" | "connecting" | "online" | "offline" | "error";
@@ -41,6 +42,12 @@ export interface ServerConnectionState {
   books: ServerBookSummary[];
   /** Release check made once per connection (a newer verified server version, if any). */
   updates: ServerUpdateInfo | null;
+  /**
+   * The connection the status above belongs to: the address, token and pinned identity the runtime
+   * follows. What is being typed in the settings is not connected until the runtime picked it up.
+   * `online` means this server proved the pinned identity and accepted the token.
+   */
+  connection: PersonalServerSettings | null;
 }
 
 interface AutopilotStoreState {
@@ -95,7 +102,7 @@ export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
   feed: initialFeed(),
   live: {},
   summaries: {},
-  server: { status: "disabled", info: null, message: null, books: [], updates: null },
+  server: { status: "disabled", info: null, message: null, books: [], updates: null, connection: null },
   dockOpen: initialDockOpen(),
   dockTab: "live",
   setDockOpen: (open) => {

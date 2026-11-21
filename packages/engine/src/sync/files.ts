@@ -1,4 +1,4 @@
-import { isTextBookPath } from "../book/paths.js";
+import { isSafeBookPath, isTextBookPath } from "../book/paths.js";
 import type { BookFileChange, BookStore } from "../book/store.js";
 
 export type SyncDirection = "upload" | "download";
@@ -10,6 +10,8 @@ export interface FileSyncPlan {
   download: Array<{ path: string; hash: string | null }>;
   /** Changed differently on both sides since the last sync. */
   conflicts: string[];
+  /** Paths a manifest listed that are not safe repository paths (`../x.md`, `.git/…`, absolute): never synced. */
+  rejected: string[];
 }
 
 /**
@@ -17,10 +19,14 @@ export interface FileSyncPlan {
  * manifest of the last successful sync as the common base.
  */
 export function planFileSync(local: ReadonlyMap<string, string>, remote: ReadonlyMap<string, string>, base: ReadonlyMap<string, string>): FileSyncPlan {
-  const plan: FileSyncPlan = { upload: [], download: [], conflicts: [] };
+  const plan: FileSyncPlan = { upload: [], download: [], conflicts: [], rejected: [] };
   const paths = new Set([...local.keys(), ...remote.keys(), ...base.keys()]);
   for (const path of [...paths].sort()) {
     if (!isTextBookPath(path)) continue;
+    if (!isSafeBookPath(path)) {
+      plan.rejected.push(path);
+      continue;
+    }
     const mine = local.get(path) ?? null;
     const theirs = remote.get(path) ?? null;
     const before = base.get(path) ?? null;
@@ -46,6 +52,8 @@ export interface SyncStoresResult {
   uploaded: string[];
   downloaded: string[];
   conflicts: string[];
+  /** Paths left out because they are not safe repository paths. */
+  rejected: string[];
   /** New base to remember for the next sync. */
   base: Map<string, string>;
 }
@@ -91,6 +99,7 @@ export async function syncBookStores(input: SyncStoresInput): Promise<SyncStores
 
   const next = new Map<string, string>();
   for (const path of new Set([...local.keys(), ...remote.keys(), ...input.base.keys()])) {
+    if (plan.rejected.includes(path)) continue;
     if (unresolved.includes(path)) {
       const previous = input.base.get(path);
       if (previous) next.set(path, previous);
@@ -101,5 +110,5 @@ export async function syncBookStores(input: SyncStoresInput): Promise<SyncStores
     const hash = uploaded ? local.get(path) : downloaded ? remote.get(path) : local.get(path) === remote.get(path) ? local.get(path) : input.base.get(path);
     if (hash) next.set(path, hash);
   }
-  return { uploaded: toRemote.map((change) => change.path), downloaded: toLocal.map((change) => change.path), conflicts: unresolved, base: next };
+  return { uploaded: toRemote.map((change) => change.path), downloaded: toLocal.map((change) => change.path), conflicts: unresolved, rejected: plan.rejected, base: next };
 }

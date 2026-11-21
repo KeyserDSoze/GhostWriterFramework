@@ -1158,6 +1158,8 @@ const en = {
     inUse: "This ghostwriter is still selected by a book, chapter, paragraph, draft, or script.",
     defaultRequired: "At least one other ghostwriter must remain available.",
     alreadyExists: "A ghostwriter with this name already exists.",
+    changedElsewhere: "This ghostwriter changed since you opened it (on another device, on another branch, or by the assistant). Your edits are still here: reloading shows the saved version and discards them.",
+    reloadFile: "Reload the saved version",
     name: "Name",
     language: "Language",
     tone: "Tone",

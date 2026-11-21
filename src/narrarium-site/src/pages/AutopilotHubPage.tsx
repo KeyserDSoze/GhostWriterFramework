@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { AutopilotFeed, AutopilotStatusBadge } from "@/components/autopilot/AutopilotFeed";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
 import { useAutopilotStore } from "@/autopilot/store";
+import { useServerConnection } from "@/autopilot/serverConnection";
 import { autopilotSummaryLine } from "@/autopilot/format";
 import { useSettingsStore } from "@/store/settingsStore";
 
@@ -18,7 +19,7 @@ export function AutopilotHubPage() {
   const views = useAutopilotStore((state) => state.views);
   const summaries = useAutopilotStore((state) => state.summaries);
   const live = useAutopilotStore((state) => state.live);
-  const server = useAutopilotStore((state) => state.server);
+  const server = useServerConnection();
   const bookIds = useMemo(() => books.map((book) => book.id).join(","), [books]);
 
   useEffect(() => {
