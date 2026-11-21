@@ -361,6 +361,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     };
     const pendingBookUpdates = new Set<string>();
     let bookTimer: NodeJS.Timeout | null = null;
+    /** Summaries being built (each asks git for a revision): closing waits for them, so no git process outlives the server. */
+    const summariesInFlight = new Set<Promise<unknown>>();
     const books = new BookRegistry(data, {
       gitAvailable,
       ai: options.ai,
@@ -376,7 +378,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           pendingBookUpdates.clear();
           for (const id of ids) {
             if (!books.has(id)) continue;
-            void books.summary(books.get(id)).then((summary) => broadcast({ event: "book", data: summary })).catch(() => undefined);
+            const task: Promise<unknown> = books.summary(books.get(id)).then((summary) => broadcast({ event: "book", data: summary })).catch(() => undefined).finally(() => summariesInFlight.delete(task));
+            summariesInFlight.add(task);
           }
         }, 300);
       },
@@ -1035,6 +1038,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         if (bookTimer) clearTimeout(bookTimer);
         for (const stream of streams.keys()) stream.end();
         for (const close of closers.reverse()) await close();
+        await Promise.allSettled([...summariesInFlight]);
         await Promise.all([api, admin].map((server) => new Promise<void>((resolve) => {
           server.close(() => resolve());
           server.closeAllConnections?.();

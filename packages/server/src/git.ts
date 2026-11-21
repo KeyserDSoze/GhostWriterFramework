@@ -193,7 +193,7 @@ export class GitRepository {
 
   async init(): Promise<void> {
     await this.run(["init", "--quiet", this.dir]);
-    await this.git(["config", "core.symlinks", "false"]);
+    await this.git(["config", "--replace-all", "core.symlinks", "false"]);
   }
 
   /** Clone the book branch; when the branch does not exist yet it is created from the default branch. */
@@ -208,7 +208,7 @@ export class GitRepository {
       await this.run(["clone", ...settings, "--", this.remoteUrl!, this.dir], { token });
       await this.git(["checkout", "--quiet", "-B", branch]);
     }
-    await this.git(["config", "core.symlinks", "false"]);
+    await this.git(["config", "--replace-all", "core.symlinks", "false"]);
   }
 
   async head(): Promise<string | undefined> {

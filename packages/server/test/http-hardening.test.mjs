@@ -364,7 +364,7 @@ test("C6: authorization.json keeps no attempt counters, and a file written by th
     assert.equal("failures" in rewritten, false);
     assert.equal("failureWindow" in rewritten, false);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -922,7 +922,7 @@ test("small: at most 200 books; a new id above that is a 409 too_many_books, an 
       await server.close();
     }
   } finally {
-    await rm(dataDir, { recursive: true, force: true });
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

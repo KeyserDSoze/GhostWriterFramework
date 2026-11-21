@@ -17,6 +17,8 @@ const inside = (parent, child) => {
   const relative = path.relative(parent, child);
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 };
+/** An environment variable by name, the way the operating system reads it: Windows ignores the case (`Path` is `PATH`). */
+const valueOf = (env, name) => env[name] ?? (posix ? undefined : Object.entries(env).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1]);
 const systemEnvironment = () => Object.fromEntries(SYSTEM_VARIABLES.filter((name) => process.env[name] !== undefined).map((name) => [name, process.env[name]]));
 
 /** npm as the installer sees it, recording what every call was given: arguments, environment, working folder, config files. */
@@ -96,7 +98,7 @@ test("C13: every npm call gets empty configuration files, a private cache and ho
       assert.equal(call.env.HOMEDRIVE, undefined, label);
       assert.equal(call.env.HOMEPATH, undefined, label);
       for (const name of ["NPM_TOKEN", "NODE_AUTH_TOKEN"]) assert.equal(call.env[name], undefined, `${label}: ${name} never reaches npm`);
-      for (const name of ["HTTPS_PROXY", "NODE_EXTRA_CA_CERTS", ...SYSTEM_VARIABLES.filter((variable) => owner[variable] !== undefined)]) assert.equal(call.env[name], owner[name], `${label}: ${name} is kept`);
+      for (const name of ["HTTPS_PROXY", "NODE_EXTRA_CA_CERTS", ...SYSTEM_VARIABLES.filter((variable) => owner[variable] !== undefined)]) assert.equal(valueOf(call.env, name), valueOf(owner, name), `${label}: ${name} is kept`);
 
       assert.notEqual(path.resolve(call.cwd), path.resolve(dataRoot), `${label}: not the data folder`);
       assert.ok(inside(dataRoot, call.cwd), `${label}: a folder of its own inside the data folder`);

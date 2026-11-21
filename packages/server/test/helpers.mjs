@@ -67,7 +67,7 @@ export async function withServer(run, extra = {}) {
     await run(server, new NarrariumServerClient({ baseUrl: server.url, token }), dataDir);
   } finally {
     await server.close();
-    await rm(dataDir, { recursive: true, force: true });
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
