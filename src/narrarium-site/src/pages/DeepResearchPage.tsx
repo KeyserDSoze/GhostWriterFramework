@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LocalTime } from "@/components/ui/local-time";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/components/ui/use-toast";
@@ -315,7 +316,7 @@ function ResearchDetail({
           {frontmatter && (
             <>
               <p className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
-                <span>{t("research.date")}: {frontmatter.createdAt?.slice(0, 10)}</span>
+                <span>{t("research.date")}: {frontmatter.createdAt && <LocalTime value={frontmatter.createdAt} />}</span>
                 <span>{t("research.depth")}: {frontmatter.depth}</span>
                 <span>{t("research.sourceMode")}: {frontmatter.sourceMode}</span>
                 {frontmatter.intents?.length ? <span>{t("research.intentLabel")}: {frontmatter.intents.join(", ")}</span> : null}

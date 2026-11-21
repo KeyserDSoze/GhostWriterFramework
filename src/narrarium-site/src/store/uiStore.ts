@@ -23,7 +23,7 @@ interface UiState {
   /** Quick notes dialog (opened with Ctrl+M or the topbar button). */
   notesOpen: boolean;
   setNotesOpen: (open: boolean) => void;
-  /** Session/connection status shown as a discreet pill. */
+  /** Session/connection status, read by the sync status indicator in the header. */
   authActivity: "idle" | "refreshing" | "offline";
   setAuthActivity: (activity: "idle" | "refreshing" | "offline") => void;
 }

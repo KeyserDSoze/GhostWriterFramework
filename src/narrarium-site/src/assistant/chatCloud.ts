@@ -3,6 +3,7 @@ import { normalizeAssistantSession, type AssistantSession, type AssistantSession
 import type { AssistantSessionCloudHandle } from "./sessionAutosave.ts";
 import { ensureGoogleAppFolder } from "../drive/googleAppFolder.ts";
 import { acquireCloudWriteLease, fencedCloudMutation } from "../drive/cloudWriteBarrier.ts";
+import { googleRevision, ifMatchHeader, isDriveVersion } from "../drive/googleRevision.ts";
 import { MAX_ASSISTANT_LOSSLESS_ARCHIVE_BYTES, MAX_ASSISTANT_LOSSLESS_SEGMENT_BYTES, MAX_ASSISTANT_SESSION_BYTES, parseAssistantSessionJson, serializeAssistantSession } from "./sessionSchema.ts";
 import { serializeAssistantLosslessSegment } from "./sessionSchema.ts";
 import { assistantSegmentSha256, verifyAssistantSegment } from "./chatSegments.ts";
@@ -531,7 +532,9 @@ async function loadGoogleSession(accessToken: string, fileId: string, signal?: A
   const response = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media`, { headers: authHeaders(accessToken), signal });
   assertOk(response, "Google chat download");
   const session = await parseSessionResponse(response);
-  return { ...session, fileId, revision: responseRevision(response) };
+  // The ETag of the download is not readable in a browser. The version is read right after the download, so a write
+  // landing in between would leave the session with a revision newer than the content that was read.
+  return { ...session, fileId, revision: responseRevision(response) ?? await readGoogleRevision(accessToken, fileId, signal) };
 }
 
 async function resolveGoogleIdentity(accessToken: string, chats: string, session: AssistantSession, signal?: AbortSignal): Promise<NativeChatMeta | undefined> {
@@ -586,13 +589,18 @@ async function saveGoogleSession(accessToken: string, session: AssistantSession,
     const revision = responseRevision(create) ?? (await loadGoogleRevision(accessToken, fileId, signal));
     return { fileId, revision };
   }
-  const revision = session.revision ?? await loadGoogleRevision(accessToken, fileId, signal);
+  let revision = session.revision;
+  if (!revision || isDriveVersion(revision)) {
+    const current = await loadGoogleRevision(accessToken, fileId, signal);
+    if (revision && revision !== current) return idempotentOrConflict("google", accessToken, session, fileId);
+    revision = current;
+  }
   const form = new FormData();
   form.append("metadata", new Blob([JSON.stringify({ name: chatFileName(session), mimeType: MIME_JSON, appProperties: googleProperties(session) })], { type: MIME_JSON }));
   form.append("file", new Blob([body], { type: MIME_JSON }));
   const update = await fencedCloudMutation("google", accessToken, `${GOOGLE_UPLOAD_API}/files/${encodeURIComponent(fileId)}?uploadType=multipart`, {
     method: "PATCH",
-    headers: { ...authHeaders(accessToken), "If-Match": revision },
+    headers: { ...authHeaders(accessToken), ...ifMatchHeader(revision) },
     body: form,
     signal,
   });
@@ -601,10 +609,14 @@ async function saveGoogleSession(accessToken: string, session: AssistantSession,
   return { fileId, revision: responseRevision(update) ?? await loadGoogleRevision(accessToken, fileId, signal) };
 }
 
-async function loadGoogleRevision(accessToken: string, fileId: string, signal?: AbortSignal): Promise<string> {
-  const response = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=id`, { headers: authHeaders(accessToken), signal });
+async function readGoogleRevision(accessToken: string, fileId: string, signal?: AbortSignal): Promise<string | undefined> {
+  const response = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=id,version`, { headers: authHeaders(accessToken), signal });
   assertOk(response, "Google chat revision");
-  const revision = responseRevision(response);
+  return googleRevision(await response.json().catch(() => null) as { version?: unknown } | null, response);
+}
+
+async function loadGoogleRevision(accessToken: string, fileId: string, signal?: AbortSignal): Promise<string> {
+  const revision = await readGoogleRevision(accessToken, fileId, signal);
   if (!revision) throw new Error(`Google chat ${fileId} did not provide a revision.`);
   return revision;
 }

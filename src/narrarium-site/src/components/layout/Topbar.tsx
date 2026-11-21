@@ -38,6 +38,7 @@ import { useCurrentObjectPendingCommit } from "@/hooks/useCurrentObjectPendingCo
 import { useAppUpdateStore } from "@/store/appUpdateStore";
 import { activateAvailableUpdate } from "@/pwa";
 import { KeyboardShortcutsDialog } from "@/components/layout/KeyboardShortcutsDialog";
+import { SyncStatusIndicator } from "@/components/layout/SyncStatusIndicator";
 import { triggerCurrentSave } from "@/store/saveStore";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 
@@ -393,6 +394,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
             </DropdownMenuContent>
           </DropdownMenu>
         )}
+        <SyncStatusIndicator />
         <Button variant="ghost" size="icon" aria-label={floatingHidden ? t("shell.showFloating") : t("shell.hideFloating")} onClick={toggleFloating}>
           {floatingHidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </Button>

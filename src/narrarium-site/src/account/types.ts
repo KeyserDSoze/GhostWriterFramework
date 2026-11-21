@@ -51,6 +51,8 @@ export interface LocalReplicaState {
   lastKnownRemoteSnapshotId?: string;
   status: "disabled" | "idle" | "dirty" | "syncing" | "needs-auth" | "offline" | "behind" | "ahead" | "diverged" | "error";
   errorKind?: AccountSyncErrorKind;
+  /** The message of the last failure, as the error reported it (cut to a bounded length). Cleared with the error. */
+  lastErrorMessage?: string;
 }
 
 export type AccountSyncErrorKind =

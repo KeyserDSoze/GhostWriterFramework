@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.80.1",
+    "date": "2026-11-21",
+    "en": {
+      "title": "Google Drive sync works again, and the sync status moves to the header",
+      "summary": "Google Drive account sync no longer fails with \"did not provide a revision\", the sync status sits in the header instead of covering the page, and Account & Sync shows times in your own time zone.",
+      "changes": [
+        "Google Drive account sync works again: the \"google-drive did not provide a revision for a conditional account update\" error is gone, and Google chat files sync in the browser too. A change made on another device is still detected before anything is overwritten.",
+        "The floating \"Saved locally · …\" pill is gone. A small cloud indicator in the header, next to the other buttons, shows the state: quiet when everything is synced (hover it for the time of the last sync), amber with a label when you need to log in, a sync failed, or a service or your device is offline.",
+        "Click the indicator to see each service's state, its last sync and its last error, press \"Sync now\", or open Account & Sync. Screen readers are told about problems and recoveries, not about every save.",
+        "Account & Sync shows dates in your own time zone and in the app language instead of UTC text: in the connection cards, the local workspace card, the reconciliation dialog and the research list.",
+        "Account & Sync is fully translated, and a failed sync now says in plain words what went wrong, with the technical message underneath."
+      ]
+    },
+    "it": {
+      "title": "Google Drive torna a sincronizzare e lo stato della sync passa nell'header",
+      "summary": "La sincronizzazione dell'account con Google Drive non fallisce più con «did not provide a revision», lo stato della sincronizzazione sta nell'header invece di coprire la pagina e Account & Sync mostra gli orari nel tuo fuso orario.",
+      "changes": [
+        "La sincronizzazione dell'account con Google Drive funziona di nuovo: l'errore «google-drive did not provide a revision for a conditional account update» è sparito e anche le chat su Google Drive si sincronizzano dal browser. Una modifica fatta da un altro dispositivo viene comunque rilevata prima di sovrascrivere qualcosa.",
+        "La pillola flottante «Saved locally · …» non c'è più. Un piccolo indicatore a forma di nuvola nell'header, accanto agli altri pulsanti, mostra lo stato: discreto quando tutto è sincronizzato (passaci sopra per l'ora dell'ultima sincronizzazione), ambra con un'etichetta quando devi accedere, una sincronizzazione è fallita oppure un servizio o il dispositivo è offline.",
+        "Cliccando l'indicatore vedi lo stato di ogni servizio, l'ultima sincronizzazione e l'ultimo errore, puoi premere «Sincronizza ora» o aprire Account & Sync. Gli screen reader ricevono l'avviso dei problemi e dei ripristini, non di ogni salvataggio.",
+        "Account & Sync mostra le date nel tuo fuso orario e nella lingua dell'app invece del testo UTC: nelle schede dei collegamenti, nella scheda del workspace locale, nella finestra di riconciliazione e nell'elenco delle ricerche.",
+        "Account & Sync è tradotta per intero e una sincronizzazione fallita dice a parole semplici cosa è andato storto, con il messaggio tecnico sotto."
+      ]
+    }
+  },
+  {
     "version": "0.80.0",
     "date": "2026-11-21",
     "en": {

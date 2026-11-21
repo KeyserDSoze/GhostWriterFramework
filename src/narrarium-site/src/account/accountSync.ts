@@ -110,6 +110,14 @@ async function applyLocalSnapshot(snapshot: LocalAccountSnapshot): Promise<void>
   await refreshAssistantSessionIndex();
 }
 
+const MAX_ERROR_MESSAGE_LENGTH = 300;
+
+function describeAccountSyncError(error: unknown): string | undefined {
+  const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const message = raw.replace(/\s+/g, " ").trim();
+  return message ? message.slice(0, MAX_ERROR_MESSAGE_LENGTH) : undefined;
+}
+
 async function setReplicaFailure(kind: AccountSyncBackendKind, error: unknown): Promise<void> {
   const errorKind = classifyAccountSyncError(error);
   const patch = errorKind === "credential-expired" || errorKind === "credential-missing"
@@ -117,7 +125,7 @@ async function setReplicaFailure(kind: AccountSyncBackendKind, error: unknown): 
     : navigator.onLine === false
       ? { status: "offline" as const, errorKind: "offline" as const }
       : { status: "error" as const, errorKind };
-  await useConnectionStore.getState().updateReplica(kind, { ...patch, lastAttemptAtUtc: new Date().toISOString() });
+  await useConnectionStore.getState().updateReplica(kind, { ...patch, lastErrorMessage: describeAccountSyncError(error), lastAttemptAtUtc: new Date().toISOString() });
 }
 
 export function classifyAccountSyncError(error: unknown) {
@@ -166,7 +174,7 @@ async function syncAccountReplicas(activeKinds: AccountSyncBackendKind[]): Promi
 
     await Promise.all(activeKinds.map(async (kind) => {
       try {
-        await useConnectionStore.getState().updateReplica(kind, { status: "syncing", lastAttemptAtUtc: new Date().toISOString(), errorKind: undefined });
+        await useConnectionStore.getState().updateReplica(kind, { status: "syncing", lastAttemptAtUtc: new Date().toISOString(), errorKind: undefined, lastErrorMessage: undefined });
         const backend = await createBackend(kind);
         const remote = await backend.pull();
         backends.set(kind, backend);
@@ -216,6 +224,7 @@ async function syncAccountReplicas(activeKinds: AccountSyncBackendKind[]): Promi
           lastSuccessfulSyncAtUtc: new Date().toISOString(),
           lastKnownRemoteSnapshotId: local.manifest.snapshotId,
           errorKind: undefined,
+          lastErrorMessage: undefined,
         });
         await markLocalAccountReplicaConfirmed(local.manifest.snapshotId);
         useCostsStore.getState().markSynced(useCostsStore.getState().revision);
@@ -313,7 +322,7 @@ export function installAutomaticAccountSync(): void {
   });
   window.addEventListener("offline", () => {
     const state = useConnectionStore.getState();
-    for (const kind of activeBackendKinds()) void state.updateReplica(kind, { status: "offline", errorKind: "offline", lastAttemptAtUtc: new Date().toISOString() });
+    for (const kind of activeBackendKinds()) void state.updateReplica(kind, { status: "offline", errorKind: "offline", lastErrorMessage: undefined, lastAttemptAtUtc: new Date().toISOString() });
   });
   window.addEventListener("online", () => scheduleAccountSync(500));
 }

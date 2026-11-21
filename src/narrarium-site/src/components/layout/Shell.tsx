@@ -11,7 +11,6 @@ import { NotesDialog } from "./NotesDialog";
 import { GlobalContextMenu } from "@/components/editor/GlobalContextMenu";
 import { LlmDebugPanel } from "@/components/debug/LlmDebugPanel";
 import { GenerateDiffDialog } from "@/components/book/GenerateDiffDialog";
-import { SessionStatusPill } from "@/components/layout/SessionStatusPill";
 import { OnboardingDialog } from "@/components/layout/OnboardingDialog";
 import { invalidateSettingsLoadCoordinator, useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -187,7 +186,6 @@ export function Shell() {
         </main>
       </div>
       <DossierDock />
-      <SessionStatusPill />
       <DossierSearchDialog />
       <FloatingActions />
       <GlobalContextMenu />

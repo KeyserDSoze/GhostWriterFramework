@@ -64,15 +64,19 @@ export class DriveAccountSyncBackend implements AccountSyncBackend {
   async push(snapshot: LocalAccountSnapshot, expected: AccountRemoteExpectation): Promise<{ revision?: string }> {
     const envelope = await accountSyncEnvelope(snapshot);
     const existing = await loadAppJson<unknown>(this.provider, this.accessToken, ACCOUNT_DATA_FILE);
+    let revision: string | undefined;
     if (existing.data) {
       const current = parseAccountSyncEnvelope(existing.data);
       if (expected.absent || expected.format === "legacy" || !expected.snapshotId || current.manifest.snapshotId !== expected.snapshotId) throw new Error(`${this.kind} account data changed before it could be updated.`);
-      if (!expected.revision) throw new Error(`${this.kind} did not provide a revision for a conditional account update.`);
+      // Replicas recorded before Google revisions came from the file version carry none: the snapshot identity checked
+      // above is their guard, and the write stays conditional on the revision that was just read.
+      revision = expected.revision ?? existing.revision;
+      if (!revision) throw new Error(`${this.kind} did not provide a revision for a conditional account update.`);
     } else if (expected.format === "legacy") {
       const legacy = await this.pull();
       if (!legacy || legacy.format !== "legacy" || legacy.manifest.contentHash !== expected.contentHash) throw new Error(`${this.kind} legacy account data changed before first publication.`);
     } else if (!expected.absent) throw new Error(`${this.kind} account data was deleted before it could be updated.`);
-    const saved = await saveAppJson(this.provider, this.accessToken, ACCOUNT_DATA_FILE, envelope, existing.driveFileId, existing.data ? expected.revision : undefined);
+    const saved = await saveAppJson(this.provider, this.accessToken, ACCOUNT_DATA_FILE, envelope, existing.driveFileId, revision);
     const existingManifest = await loadAppJson<AccountSyncManifest>(this.provider, this.accessToken, MANIFEST_FILE);
     await saveAppJson(this.provider, this.accessToken, MANIFEST_FILE, envelope.manifest, existingManifest.driveFileId, existingManifest.revision);
     const verified = await loadAppJson<unknown>(this.provider, this.accessToken, ACCOUNT_DATA_FILE);

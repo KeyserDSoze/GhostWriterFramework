@@ -1,5 +1,6 @@
 import type { AuthProvider } from "@/store/authStore";
 import { ensureGoogleAppFolder } from "@/drive/googleAppFolder";
+import { googleRevision, ifMatchHeader } from "@/drive/googleRevision";
 import { beginCloudWrite, fencedCloudMutation } from "@/drive/cloudWriteBarrier";
 import { assertCloudStatus } from "@/drive/migrationSafety";
 import { ensureMicrosoftAppMarker, graphPath, ONE_DRIVE_APP_FOLDER } from "@/drive/microsoftAppFolder";
@@ -65,6 +66,13 @@ export async function deleteAppJson(provider: AuthProvider, token: string, fileN
     } finally { await endWrite(); }
 }
 
+async function googleFileState(token: string, id: string, fileName: string): Promise<{ id?: string; revision?: string }> {
+  const response = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(id)}?fields=id,version`, { headers: headers(token) });
+  assertOk(response, `Google ${fileName} revision`);
+  const metadata = await response.json() as { id?: string; version?: string };
+  return { id: metadata.id, revision: googleRevision(metadata, response) };
+}
+
 async function loadGoogle<T>(token: string, fileName: string): Promise<JsonHandle<T>> {
   const root = await ensureGoogleAppFolder(token);
   const params = new URLSearchParams({ q: `name='${fileName}' and '${root}' in parents and trashed=false`, spaces: "drive", fields: "files(id,version)" });
@@ -75,9 +83,7 @@ async function loadGoogle<T>(token: string, fileName: string): Promise<JsonHandl
   const selected = data.files?.[0];
   const id = selected?.id;
   if (!id) return { data: null };
-  const metadata = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(id)}?fields=id,version`, { headers: headers(token) });
-  assertOk(metadata, `Google ${fileName} revision`);
-  const revision = metadata.headers.get("etag") ?? undefined;
+  const { revision } = await googleFileState(token, id, fileName);
   const content = await fetch(`${GOOGLE_DRIVE_API}/files/${id}?alt=media`, { headers: headers(token) });
   assertOk(content, `Google ${fileName} download`);
   return { data: (await content.json()) as T, driveFileId: id, revision };
@@ -87,18 +93,13 @@ async function saveGoogle<T>(token: string, fileName: string, data: T, id?: stri
   const body = JSON.stringify(data, null, 2);
   if (id) {
     if (expectedRevision) {
-      const metadata = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(id)}?fields=id,version`, { headers: headers(token) });
-      assertOk(metadata, `Google ${fileName} revision`);
-      const value = await metadata.json() as { id?: string };
-      if (!value.id || metadata.headers.get("etag") !== expectedRevision) throw new Error(`Google ${fileName} changed before it could be updated.`);
+      const current = await googleFileState(token, id, fileName);
+      if (!current.id || current.revision !== expectedRevision) throw new Error(`Google ${fileName} changed before it could be updated.`);
     }
-    const response = await fencedCloudMutation("google", token, `${GOOGLE_UPLOAD_API}/files/${id}?uploadType=media`, { method: "PATCH", headers: { ...headers(token), "Content-Type": MIME_JSON, ...(expectedRevision ? { "If-Match": expectedRevision } : {}) }, body });
+    const response = await fencedCloudMutation("google", token, `${GOOGLE_UPLOAD_API}/files/${id}?uploadType=media`, { method: "PATCH", headers: { ...headers(token), "Content-Type": MIME_JSON, ...ifMatchHeader(expectedRevision) }, body });
     if (response.status === 409 || response.status === 412) throw new Error(`Google ${fileName} changed before it could be updated.`);
     assertOk(response, `Google ${fileName} update`);
-    const metadata = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(id)}?fields=id,version`, { headers: headers(token) });
-    assertOk(metadata, `Google ${fileName} revision`);
-    await metadata.json();
-    return { id, revision: metadata.headers.get("etag") ?? undefined };
+    return { id, revision: (await googleFileState(token, id, fileName)).revision };
   }
   if (expectedRevision) throw new Error(`Google ${fileName} was deleted before it could be updated.`);
   const root = await ensureGoogleAppFolder(token);
@@ -108,10 +109,7 @@ async function saveGoogle<T>(token: string, fileName: string, data: T, id?: stri
   const create = await fencedCloudMutation("google", token, `${GOOGLE_UPLOAD_API}/files?uploadType=multipart&fields=id`, { method: "POST", headers: headers(token), body: form });
   assertOk(create, `Google ${fileName} create`);
   const createdId = ((await create.json()) as { id: string }).id;
-  const metadata = await fetch(`${GOOGLE_DRIVE_API}/files/${encodeURIComponent(createdId)}?fields=id,version`, { headers: headers(token) });
-  assertOk(metadata, `Google ${fileName} revision`);
-  await metadata.json();
-  return { id: createdId, revision: metadata.headers.get("etag") ?? undefined };
+  return { id: createdId, revision: (await googleFileState(token, createdId, fileName)).revision };
 }
 
 async function ensureMsFolder(token: string): Promise<void> {
