@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.82.0",
+    "date": "2026-11-21",
+    "en": {
+      "title": "AI Integrations and AI Router, now two separate places",
+      "summary": "Settings now keeps your AI providers and the routing of tasks apart: first connect your integrations, then choose which model each task uses.",
+      "changes": [
+        "Settings → AI Integrations is the new first stop for AI: providers, keys, endpoints, models, prices, default models and the cost currency.",
+        "Settings → AI Router now holds only the routing: which model handles each task, fallbacks and limits. With no integration yet it explains that and links to AI Integrations, and AI Integrations ends with a link to the router. Both cards come first on the Settings home and in the sidebar, and the old AI Router address keeps working.",
+        "Moving between the two pages keeps what you have not saved yet and opens each page at the top.",
+        "Every \"no AI model\" hint (quick start, first-run guide, Autopilot, Audit and Copilot) now opens AI Integrations, and the in-app guides name the right page. The personal server texts say \"AI configuration\" instead of \"router configuration\".",
+        "The model capability buttons and the routing limits are fully translated, without raw keys, and the Italian \"Token massimi in uscita\", \"Tool call forzati\" and the \"PAT\" typo are fixed.",
+        "Form fields on both pages are labelled for screen readers: a label focuses its field, switches and capability buttons announce their state, and route selectors say which route they belong to. The Settings pages no longer scroll sideways on phones (down to 320 px): header buttons wrap and long integration and model names are shortened."
+      ]
+    },
+    "it": {
+      "title": "AI Integrations e AI Router, ora in due posti separati",
+      "summary": "Le impostazioni tengono ora separati i provider AI e l'instradamento dei task: prima colleghi le integrazioni, poi scegli quale modello usa ogni task.",
+      "changes": [
+        "Impostazioni → AI Integrations è la nuova prima tappa per l'AI: provider, chiavi, endpoint, modelli, prezzi, modelli predefiniti e valuta dei costi.",
+        "Impostazioni → AI Router contiene ora solo l'instradamento: quale modello gestisce ogni task, fallback e limiti. Senza integrazioni lo spiega e rimanda ad AI Integrations, e AI Integrations finisce con un link al router. Le due schede sono le prime nella home delle impostazioni e nella barra laterale, e il vecchio indirizzo di AI Router continua a funzionare.",
+        "Passando da una pagina all'altra si conserva ciò che non hai ancora salvato e ogni pagina si apre in cima.",
+        "Ogni suggerimento «nessun modello AI» (avvio rapido, guida iniziale, Autopilot, Audit e Copilot) apre ora AI Integrations, e le guide nell'app nominano la pagina giusta. I testi del server personale dicono «configurazione AI» invece di «configurazione del router».",
+        "I pulsanti delle capacità dei modelli e i limiti del routing sono tradotti per intero, senza chiavi grezze, e sono corretti «Token massimi in uscita», «Tool call forzati» e il refuso «PAT».",
+        "I campi di entrambe le pagine hanno etichette per gli screen reader: l'etichetta porta il focus sul campo, interruttori e pulsanti delle capacità annunciano il loro stato e i selettori delle rotte dicono a quale rotta appartengono. Le pagine delle impostazioni non scorrono più di lato sui telefoni (fino a 320 px): i pulsanti dell'intestazione vanno a capo e i nomi lunghi di integrazioni e modelli vengono abbreviati."
+      ]
+    }
+  },
+  {
     "version": "0.81.0",
     "date": "2026-11-21",
     "en": {
