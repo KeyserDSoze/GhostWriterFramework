@@ -171,7 +171,7 @@ The typed client is `NarrariumServerClient` in `narrarium-engine` (with `pairWit
 
 Releases are published by [`.github/workflows/publish-server-npm.yml`](../../.github/workflows/publish-server-npm.yml) through npm Trusted Publishing, with a provenance attestation and without any npm token:
 
-1. Bump `version` in `packages/server/package.json` and `SERVER_VERSION` in `src/version.ts` (a test keeps them equal), commit and push.
+1. Bump `version` in `packages/server/package.json` and `SERVER_VERSION` in `src/version.ts` (a test keeps them equal); `packages/engine` has the same pair (`ENGINE_VERSION`), commit and push.
 2. Push the tag: `git tag narrarium-server-v0.1.1 && git push origin narrarium-server-v0.1.1`.
 
 The workflow checks that the tag matches the package, builds and tests the engine and the server, checks the package contents and publishes. The generic `Publish npm packages` workflow never publishes this package.

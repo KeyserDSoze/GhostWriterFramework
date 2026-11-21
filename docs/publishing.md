@@ -63,13 +63,13 @@ Packages are published with **npm Trusted Publishing**: GitHub Actions proves it
    - create a GitHub Release tagged `vnarrarium@0.1.58`, `vcreate-narrarium-book@0.1.59`, and so on
    - run the `Publish npm packages` workflow manually
 
-Until every package has its trusted publisher, the `NPM_TOKEN` secret is used as a fallback; delete it once they all do.
+No npm token is stored in the repository: the workflow has only the `id-token: write` permission, and every package is registered with its trusted publisher.
 
 On pushes to `main`, the publish workflow checks npm first and only publishes workspace packages whose local version is not already present in the registry. It never creates a package: a package that is not on npm yet is skipped with a warning asking for its first manual publish.
 When unpublished versions are detected, it runs the full release checks and then publishes packages in dependency order.
 On GitHub Release events it verifies an unambiguous package tag such as `vnarrarium@0.1.57` or `vcreate-narrarium-book@0.1.58`, checks the tagged package's workspace dependency ranges, and checks that dependencies occur earlier in the publication order. The old ambiguous `v0.1.58` form is rejected.
 
-If GitHub Actions fails with `E401`, `E403` or `EOTP`, the package has no trusted publisher for this workflow yet (or the fallback token cannot publish it): register the trusted publisher as described above.
+If GitHub Actions fails with `E401`, `E403` or `EOTP`, the package has no trusted publisher for this workflow and environment yet (check the workflow file name and the environment): register it as described above.
 
 If GitHub Actions fails with `E404` while publishing, npm is usually telling you that the package does not exist yet or is not available to the publishing identity: publish its first version by hand, then register the trusted publisher.
 

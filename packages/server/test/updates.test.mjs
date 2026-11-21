@@ -4,7 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { remoteBookStore, syncBookStores } from "narrarium-engine";
 import { MemoryBookStore, seedBookFiles } from "narrarium-engine/testing";
-import { BOOTSTRAP_VERSIONS, UPDATE_MESSAGES, checkNpmServerRelease, compareSemver, isExactSemver, trustedNpmReleaseMetadata } from "../dist/testing.mjs";
+import { BOOTSTRAP_VERSIONS, SERVER_VERSION, UPDATE_MESSAGES, checkNpmServerRelease, compareSemver, isExactSemver, trustedNpmReleaseMetadata } from "../dist/testing.mjs";
 import { adminLogin, gatedAi, npmMetadata, releaseAvailable, until, withServer } from "./helpers.mjs";
 
 const ALL_SCOPES = ["read", "write", "run", "update"];
@@ -84,11 +84,11 @@ test("without the supervisor or the update permission a newer version is shown b
     const info = await client.updates();
     assert.equal(info.available, true);
     assert.equal(info.latestVersion, "0.2.0");
-    assert.equal(info.installedVersion, "0.1.0");
+    assert.equal(info.installedVersion, SERVER_VERSION);
     assert.equal(info.supervised, false);
     assert.equal(info.canRequest, false);
     assert.equal(info.reason, "no_supervisor");
-    await assert.rejects(() => client.requestUpdate("0.2.0", "0.1.0"), (error) => error.status === 409 && error.code === "no_supervisor");
+    await assert.rejects(() => client.requestUpdate("0.2.0", SERVER_VERSION), (error) => error.status === 409 && error.code === "no_supervisor");
   }, { checkRelease: releaseAvailable("0.2.0"), scopes: ALL_SCOPES });
 
   await withServer(async (_server, client) => {
@@ -97,7 +97,7 @@ test("without the supervisor or the update permission a newer version is shown b
     assert.equal(info.hasUpdateScope, false);
     assert.equal(info.canRequest, false);
     assert.equal(info.reason, "missing_scope");
-    await assert.rejects(() => client.requestUpdate("0.2.0", "0.1.0"), (error) => error.status === 403 && error.code === "scope");
+    await assert.rejects(() => client.requestUpdate("0.2.0", SERVER_VERSION), (error) => error.status === 403 && error.code === "scope");
   }, { checkRelease: releaseAvailable("0.2.0"), supervised: true });
 });
 
@@ -107,10 +107,10 @@ test("an accepted update is written for the supervisor and the server stops taki
     const info = await client.updates();
     assert.equal(info.canRequest, true);
     assert.equal(info.reason, undefined);
-    await assert.rejects(() => client.requestUpdate("0.3.0", "0.1.0"), (error) => error.status === 409 && error.code === "release", "only the latest verified release");
+    await assert.rejects(() => client.requestUpdate("0.3.0", SERVER_VERSION), (error) => error.status === 409 && error.code === "release", "only the latest verified release");
     await assert.rejects(() => client.requestUpdate("0.2.0", "0.0.9"), (error) => error.status === 412, "the client saw another installed version");
 
-    const accepted = await client.requestUpdate("0.2.0", "0.1.0");
+    const accepted = await client.requestUpdate("0.2.0", SERVER_VERSION);
     assert.equal(accepted.accepted, true);
     assert.equal(accepted.version, "0.2.0");
     const file = path.join(server.data.root, "private", "update-request.json");
@@ -125,11 +125,11 @@ test("an accepted update is written for the supervisor and the server stops taki
     assert.equal(waiting.canRequest, false);
     await assert.rejects(() => client.registerBook("late", { title: "Late", storage: { kind: "local" } }), (error) => error.status === 503 && error.code === "maintenance");
     await assert.rejects(() => client.startAutopilot("before"), (error) => error.status === 503);
-    await assert.rejects(() => client.requestUpdate("0.2.0", "0.1.0"), (error) => error.status === 503);
+    await assert.rejects(() => client.requestUpdate("0.2.0", SERVER_VERSION), (error) => error.status === 503);
     assert.equal((await client.listBooks()).length, 1, "reading still works");
 
     // The supervisor gives up (the server did not stop in time): the server accepts work again.
-    await writeFile(path.join(server.data.root, "private", "update-result.json"), JSON.stringify({ schemaVersion: 1, requestId: request.requestId, state: "failed", outcome: "stopping", version: "0.2.0", fromVersion: "0.1.0", at: new Date().toISOString(), message: UPDATE_MESSAGES.stopping }));
+    await writeFile(path.join(server.data.root, "private", "update-result.json"), JSON.stringify({ schemaVersion: 1, requestId: request.requestId, state: "failed", outcome: "stopping", version: "0.2.0", fromVersion: SERVER_VERSION, at: new Date().toISOString(), message: UPDATE_MESSAGES.stopping }));
     await until(async () => {
       try {
         await client.registerBook("late", { title: "Late", storage: { kind: "local" } });
@@ -155,7 +155,7 @@ test("an update waits for running autopilots, and a stale request of another ver
     await syncBookStores({ local: new MemoryBookStore(seedBookFiles()), remote: remoteBookStore(client, "busy"), base: new Map() });
     await client.startAutopilot("busy", { brief: { idea: "A busy harbor", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false } });
     await slow.started;
-    await assert.rejects(() => client.requestUpdate("0.2.0", "0.1.0"), (error) => error.status === 409 && error.code === "running");
+    await assert.rejects(() => client.requestUpdate("0.2.0", SERVER_VERSION), (error) => error.status === 409 && error.code === "running");
     await client.pauseAutopilot("busy", "now");
     slow.release();
     await until(async () => !(await client.autopilot("busy")).running);
@@ -165,10 +165,10 @@ test("an update waits for running autopilots, and a stale request of another ver
     const stale = { schemaVersion: 1, packageName: "narrarium-server", version: "0.2.0", requestedAt: new Date().toISOString(), requestId: "00000000-0000-4000-8000-000000000001", source: "client" };
     await writeFile(requestFile, JSON.stringify(stale));
     latest = "0.3.0";
-    await assert.rejects(() => client.requestUpdate("0.3.0", "0.1.0"), (error) => error.status === 409 && error.code === "update_pending");
+    await assert.rejects(() => client.requestUpdate("0.3.0", SERVER_VERSION), (error) => error.status === 409 && error.code === "update_pending");
     // ...until the supervisor answers it.
-    await writeFile(path.join(server.data.root, "private", "update-result.json"), JSON.stringify({ schemaVersion: 1, requestId: stale.requestId, state: "failed", outcome: "failed", version: "0.2.0", fromVersion: "0.1.0", at: new Date().toISOString(), message: UPDATE_MESSAGES.failed }));
-    await client.requestUpdate("0.3.0", "0.1.0");
+    await writeFile(path.join(server.data.root, "private", "update-result.json"), JSON.stringify({ schemaVersion: 1, requestId: stale.requestId, state: "failed", outcome: "failed", version: "0.2.0", fromVersion: SERVER_VERSION, at: new Date().toISOString(), message: UPDATE_MESSAGES.failed }));
+    await client.requestUpdate("0.3.0", SERVER_VERSION);
     const request = JSON.parse(await readFile(requestFile, "utf8"));
     assert.equal(request.version, "0.3.0");
     assert.notEqual(request.requestId, stale.requestId);
@@ -182,7 +182,7 @@ test("the owner can update from the admin panel", async () => {
     assert.equal(info.status, 200);
     assert.equal(info.body.canRequest, true);
     assert.equal(info.body.hasUpdateScope, true);
-    const accepted = await admin.call("POST", "/admin/api/updates", { version: "0.2.0", installedVersion: "0.1.0" });
+    const accepted = await admin.call("POST", "/admin/api/updates", { version: "0.2.0", installedVersion: SERVER_VERSION });
     assert.equal(accepted.status, 202);
     const request = JSON.parse(await readFile(path.join(server.data.root, "private", "update-request.json"), "utf8"));
     assert.equal(request.source, "admin");

@@ -1,5 +1,25 @@
 [
   {
+    "version": "0.79.1",
+    "date": "2026-11-21",
+    "en": {
+      "title": "Released packages with verified provenance",
+      "summary": "The Narrarium npm packages are now published from GitHub Actions with provenance, and the personal server can be updated from Narrarium to its first attested release.",
+      "changes": [
+        "Settings → Personal server → Version and updates now offers narrarium-server 0.1.1, the first release published by the Narrarium workflow with npm provenance; the update asks for confirmation and keeps the previous version if anything fails.",
+        "The web app is built on the same released engine (0.1.1) that the personal server bundles, so the autopilot behaves identically in the browser and on the server."
+      ]
+    },
+    "it": {
+      "title": "Pacchetti rilasciati con provenienza verificata",
+      "summary": "I pacchetti npm di Narrarium ora sono pubblicati da GitHub Actions con provenienza, e il server personale può essere aggiornato da Narrarium alla sua prima release attestata.",
+      "changes": [
+        "Impostazioni → Server personale → Versione e aggiornamenti ora propone narrarium-server 0.1.1, la prima release pubblicata dal flusso di Narrarium con provenienza npm; l'aggiornamento chiede conferma e mantiene la versione precedente se qualcosa fallisce.",
+        "L'app web è costruita sullo stesso motore rilasciato (0.1.1) incorporato dal server personale, quindi l'autopilot si comporta in modo identico nel browser e sul server."
+      ]
+    }
+  },
+  {
     "version": "0.79.0",
     "date": "2026-11-21",
     "en": {
