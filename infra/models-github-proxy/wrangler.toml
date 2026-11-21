@@ -15,3 +15,22 @@ compatibility_date = "2026-07-05"
 #   pattern = "models-proxy.narrarium.net"
 #   custom_domain = true
 workers_dev = true
+
+# Public configuration of the OAuth token broker (src/oauth.js, src/config.js).
+# Nothing secret belongs in this file: the client secrets are Worker secrets named
+# GOOGLE_CLIENT_SECRET and MICROSOFT_CLIENT_SECRET. The deploy workflow uploads them
+# from the GitHub repository secrets GOOGLE_OAUTH_CLIENT_SECRET and
+# MICROSOFT_OAUTH_CLIENT_SECRET (see README.md), or set them by hand with
+# `npx wrangler secret put <NAME>`.
+[vars]
+# Public client ids, also published in the site (src/narrarium-site/src/config/publicClients.ts).
+# They must be the ids the site uses to start the sign-in; change both together.
+GOOGLE_CLIENT_ID = "91477716497-k7n97b2q9ic3nc75jpjmb0d3f73s1vgu.apps.googleusercontent.com"
+MICROSOFT_CLIENT_ID = "a80b2024-b9e3-4cb1-8480-aac7f164a6eb"
+# Redirect URIs the broker may exchange a Microsoft code for (comma separated, exact match).
+# This list replaces the built-in defaults, so keep every entry you still need. A site
+# published under a sub-path (GitHub Pages) adds its own callback URL here.
+ALLOWED_REDIRECT_URIS = "https://narrarium.net/auth/microsoft-callback.html,https://www.narrarium.net/auth/microsoft-callback.html,http://localhost:5173/auth/microsoft-callback.html,http://localhost:4173/auth/microsoft-callback.html"
+# Extra origins allowed to call the whole Worker, on top of narrarium.net, www.narrarium.net
+# and the two localhost dev ports (comma separated, e.g. "https://user.github.io").
+ALLOWED_ORIGINS_EXTRA = ""

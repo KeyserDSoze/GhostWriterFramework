@@ -1,26 +1,25 @@
 /**
- * Cloudflare Worker: CORS proxy for the GitHub Models API.
+ * Cloudflare Worker: CORS proxy for the GitHub Models API, plus a stateless OAuth
+ * token broker for Google Drive and OneDrive (see ./oauth.js and the README).
  *
  * The Narrarium web app is a pure browser front-end served from GitHub Pages.
  * GitHub Models (https://models.github.ai/*) does not send CORS headers, so the
  * browser blocks direct calls. This Worker endpoint adds
  * CORS headers scoped to the Narrarium origins, and transparently forwards every
  * request (path, query string, method, body, headers) to models.github.ai.
+ * Everything under /oauth is the token broker instead and is never forwarded.
  *
  * NOTE: CORS is a browser guard, not authentication. A non-browser caller can
  * spoof the Origin header. If real protection is needed, add a shared token or a
- * Cloudflare Access policy in front of this Worker.
+ * Cloudflare Access policy in front of this Worker. For the broker, what really
+ * protects the OAuth client secrets is that they never leave the Worker; a stolen
+ * refresh token stays as dangerous as before, so the site treats it as a secret.
  */
 
-const TARGET_ORIGIN = "https://models.github.ai";
+import { resolveAllowedOrigin } from "./config.js";
+import { handleOAuth, isOAuthPath } from "./oauth.js";
 
-/** Origins allowed to use the proxy (production + www + local dev). */
-const ALLOWED_ORIGINS = new Set([
-  "https://narrarium.net",
-  "https://www.narrarium.net",
-  "http://localhost:5173",
-  "http://localhost:4173",
-]);
+const TARGET_ORIGIN = "https://models.github.ai";
 
 // Header che non vanno proxyati perché sono legati al singolo hop HTTP.
 const HOP_BY_HOP_HEADERS = new Set([
@@ -34,11 +33,6 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade",
   "host",
 ]);
-
-function resolveAllowedOrigin(request) {
-  const origin = request.headers.get("Origin");
-  return origin && ALLOWED_ORIGINS.has(origin) ? origin : null;
-}
 
 function corsHeaders(request, allowedOrigin) {
   const requestedHeaders =
@@ -71,8 +65,15 @@ function upstreamHeaders(request) {
 }
 
 export default {
-  async fetch(request) {
-    const allowedOrigin = resolveAllowedOrigin(request);
+  async fetch(request, env) {
+    const incomingUrl = new URL(request.url);
+
+    // The OAuth token broker owns everything under /oauth.
+    if (isOAuthPath(incomingUrl.pathname)) {
+      return handleOAuth(request, env);
+    }
+
+    const allowedOrigin = resolveAllowedOrigin(request, env);
 
     // Browser preflight: only answer for allowed origins.
     if (request.method === "OPTIONS") {
@@ -87,7 +88,6 @@ export default {
       return new Response("Forbidden origin", { status: 403 });
     }
 
-    const incomingUrl = new URL(request.url);
     const targetUrl = new URL(TARGET_ORIGIN);
     targetUrl.pathname = incomingUrl.pathname;
     targetUrl.search = incomingUrl.search;

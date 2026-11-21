@@ -7,6 +7,7 @@ on:
       - main
       - master
     paths:
+      - infra/**
       - infra/models-github-proxy/**
       - .github/workflows/deploy-worker.yml
 
@@ -24,6 +25,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Test the Worker
+        working-directory: infra/models-github-proxy
+        run: npm test
+
+      - name: Select the OAuth client secrets to upload
+        id: oauth_secrets
+        env:
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          MICROSOFT_CLIENT_SECRET: ${{ secrets.MICROSOFT_OAUTH_CLIENT_SECRET }}
+        run: node infra/models-github-proxy/scripts/list-oauth-secrets.mjs
+
       - name: Deploy to Cloudflare
         uses: cloudflare/wrangler-action@v4
         with:
@@ -31,3 +48,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: infra/models-github-proxy
           command: deploy
+          secrets: ${{ steps.oauth_secrets.outputs.names }}
+        env:
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          MICROSOFT_CLIENT_SECRET: ${{ secrets.MICROSOFT_OAUTH_CLIENT_SECRET }}
