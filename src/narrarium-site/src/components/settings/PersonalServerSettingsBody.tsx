@@ -35,6 +35,7 @@ const UPDATE_WAIT_MS = 10 * 60_000;
 const STATUS_STYLE: Record<ServerConnectionStatus, string> = {
   disabled: "border-transparent bg-muted text-muted-foreground",
   connecting: "border-transparent bg-sky-500/15 text-sky-700 dark:text-sky-300",
+  reconnecting: "border-transparent bg-sky-500/15 text-sky-700 dark:text-sky-300",
   online: "border-transparent bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
   offline: "border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300",
   error: "border-transparent bg-red-500/15 text-red-700 dark:text-red-300",

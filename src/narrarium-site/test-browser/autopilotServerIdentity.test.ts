@@ -195,7 +195,10 @@ describe("every call to the personal server goes through the identity check", ()
     vi.stubGlobal("fetch", network.fetch);
     configure(connection(), [SERVER_BOOK]);
     await expect(autopilotRuntime.syncWithServer(SERVER_BOOK.id, { push: true })).rejects.toBeInstanceOf(ServerIdentityError);
-    await expect(autopilotRuntime.moveToBrowser(SERVER_BOOK.id)).resolves.toBeUndefined();
+    // The server's work cannot be downloaded from a server that is not the one paired, so the book stays on it...
+    await expect(autopilotRuntime.moveToBrowser(SERVER_BOOK.id)).rejects.toBeInstanceOf(ServerIdentityError);
+    // ...unless the author chooses to leave without it.
+    await expect(autopilotRuntime.moveToBrowser(SERVER_BOOK.id, { discardServerWork: true })).resolves.toBeUndefined();
     expect(network.authenticated()).toHaveLength(0);
   });
 

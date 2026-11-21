@@ -21,18 +21,8 @@ import { useRepositories } from "@/github/useRepositories";
 import { createNarrariumBookRepository, type RepoSummary } from "@/github/githubClient";
 import { type BookEntry } from "@/types/settings";
 import { createLocalOnlyBookRepository } from "@/repository/repositoryService";
+import { defaultRepositoryName } from "@/narrarium/bookScaffold";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
-
-function defaultRepoName(title: string): string {
-  const normalized = title
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/^[.-]+|[.-]+$/g, "")
-    .replace(/-{2,}/g, "-")
-    .toLowerCase();
-  return normalized ? `book-${normalized}` : "";
-}
 
 export function AddBookPage() {
   const { t } = useTranslation();
@@ -73,7 +63,7 @@ export function AddBookPage() {
   const [adding, setAdding] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!repoNameEdited) setNewRepoName(defaultRepoName(newBookTitle));
+    if (!repoNameEdited) setNewRepoName(defaultRepositoryName(newBookTitle));
   }, [newBookTitle, repoNameEdited]);
 
   const filtered = repos.filter(

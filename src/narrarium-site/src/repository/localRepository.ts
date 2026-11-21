@@ -5,6 +5,8 @@ import {
   buildParagraphAuditPath,
 } from "@/narrarium/auditPaths";
 import { isRewriteOperationManifestPath } from "@/narrarium/rewriteOperationPaths";
+import { chapterTitleFromSlug, compareChapterFolders } from "@/lib/chapterSlug";
+import { generatedNameLabel } from "@/lib/fallbackTitle";
 import {
   resolveParagraphArtifactPaths,
   type ParagraphArtifactMetadata,
@@ -3002,14 +3004,14 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
         path: p,
         sha: file?.baseSha ?? file?.currentHash ?? "",
         size: file?.size ?? 0,
-        name: titleName(p, slugToTitle(slug)),
+        name: titleName(p, generatedNameLabel(slug) ?? slugToTitle(slug)),
         imagePath: firstExistingImage(assetBase),
         knownFrom: typeof frontmatter.known_from === "string" && frontmatter.known_from ? frontmatter.known_from : undefined,
         revealIn: typeof frontmatter.reveal_in === "string" && frontmatter.reveal_in ? frontmatter.reveal_in : undefined,
       };
     });
 
-  const chapterFolders = [...new Set(allPaths.filter((p) => p.startsWith("chapters/")).map((p) => p.split("/").slice(0, 2).join("/")))].sort();
+  const chapterFolders = [...new Set(allPaths.filter((p) => p.startsWith("chapters/")).map((p) => p.split("/").slice(0, 2).join("/")))].sort(compareChapterFolders);
   const chapters: Chapter[] = chapterFolders.map((folder) => {
     const slug = folder.replace("chapters/", "");
     const folderPaths = allPaths.filter((p) => p.startsWith(`${folder}/`));
@@ -3025,7 +3027,7 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
       const imagePromptPath = `assets/chapters/${slug}/paragraphs/${paragraphSlug}/primary.md`;
       return {
         number: num,
-        title: titleName(p, slugToTitle(filename.replace(/\.md$/, ""))),
+        title: titleName(p, generatedNameLabel(paragraphSlug) ?? slugToTitle(filename.replace(/\.md$/, ""))),
         path: p,
         revision: files.find((file) => file.path === p)?.currentHash,
         ghostwriter: typeof paragraphFm.ghostwriter === "string" && paragraphFm.ghostwriter ? paragraphFm.ghostwriter : undefined,
@@ -3041,7 +3043,7 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
     return {
       slug,
       path: folder,
-      title: titleName(`${folder}/chapter.md`, slugToTitle(slug)),
+      title: titleName(`${folder}/chapter.md`, generatedNameLabel(slug) ?? chapterTitleFromSlug(slug)),
       ghostwriter: typeof chapterFm.ghostwriter === "string" && chapterFm.ghostwriter ? chapterFm.ghostwriter : undefined,
       paragraphs,
       draftPath: allPaths.includes(`drafts/${slug}/chapter.md`)
@@ -3088,14 +3090,14 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
       .filter((p) => /^ghostwriters\/[^/]+\.md$/.test(p))
       .map((p) => {
         const slug = p.replace(/^ghostwriters\//, "").replace(/\.md$/i, "");
-        return { slug, path: p, name: titleName(p, slugToTitle(slug)) };
+        return { slug, path: p, name: titleName(p, generatedNameLabel(slug) ?? slugToTitle(slug)) };
       })
       .sort((a, b) => a.name.localeCompare(b.name)),
     readerPersonas: allPaths
       .filter((p) => /^personas\/[^/]+\.md$/.test(p))
       .map((p) => {
         const slug = p.replace(/^personas\//, "").replace(/\.md$/i, "");
-        return { slug, path: p, name: titleName(p, slugToTitle(slug)) };
+        return { slug, path: p, name: titleName(p, generatedNameLabel(slug) ?? slugToTitle(slug)) };
       })
       .sort((a, b) => a.name.localeCompare(b.name)),
     readerEvaluationFiles: files
@@ -3109,7 +3111,7 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
       .filter((p) => /^research\/[^/]+\.md$/.test(p))
       .map((p) => {
         const slug = p.replace(/^research\//, "").replace(/\.md$/i, "");
-        return { path: p, sha: "", slug, title: titleName(p, slug) };
+        return { path: p, sha: "", slug, title: titleName(p, generatedNameLabel(slug) ?? slug) };
       })
       .sort((a, b) => b.slug.localeCompare(a.slug)),
     notesFiles: allPaths

@@ -1,6 +1,6 @@
 import { stringify } from "yaml";
 import { createFileIfAbsent, createOrUpdateTextFile, mutateTextFilesAtomically } from "@/github/githubClient";
-import { chapterSlug, formatOrdinal, slugify } from "@/narrarium/canon";
+import { chapterSlug, paragraphSlug } from "@/narrarium/canon";
 import { commitCanonicalScriptMutation, type CanonicalScriptMutationResult } from "@/narrarium/scriptLedger";
 import type { BookEntry } from "@/types/settings";
 
@@ -185,7 +185,7 @@ export async function createParagraphDraftArtifact(
 }
 
 export function buildParagraphDraftArtifact(input: { chapterSlug: string; number: number; title: string; paragraphSlug?: string; body?: string }) {
-  const slug = input.paragraphSlug ?? `${formatOrdinal(input.number)}-${slugify(input.title)}`;
+  const slug = input.paragraphSlug ?? paragraphSlug(input.number, input.title);
   const path = `drafts/${input.chapterSlug}/${slug}.md`;
   const content = renderMarkdown({ type: "paragraph-draft", id: `draft:paragraph:${input.chapterSlug}:${slug}`, paragraph: `paragraph:${input.chapterSlug}:${slug}`, chapter: `chapter:${input.chapterSlug}`, number: input.number, title: input.title, canon: "draft" }, input.body?.trim() ?? "");
   return { slug, path, content };
@@ -210,7 +210,7 @@ export async function createParagraphScriptArtifact(
 export function buildParagraphScriptArtifact(
   input: { chapterSlug: string; number: number; title: string; paragraphSlug?: string; location?: string; body?: string },
 ) {
-  const slug = input.paragraphSlug ?? `${formatOrdinal(input.number)}-${slugify(input.title)}`;
+  const slug = input.paragraphSlug ?? paragraphSlug(input.number, input.title);
   const path = `scripts/${input.chapterSlug}/${slug}.md`;
   const content = renderMarkdown(
       {

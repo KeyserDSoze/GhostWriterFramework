@@ -20,10 +20,10 @@ import type { EntityKind } from "@/narrarium/canon";
 
 type Ref = { id: string; label: string };
 
-function slugsFrom(files: { path: string }[], prefix: string): Ref[] {
+function slugsFrom(files: { path: string; name?: string }[], prefix: string): Ref[] {
   return files.map((f) => {
     const slug = (f.path.split("/").pop() ?? "").replace(/\.md$/i, "");
-    return { id: `${prefix}:${slug}`, label: slug.replace(/-/g, " ") };
+    return { id: `${prefix}:${slug}`, label: f.name || slug.replace(/-/g, " ") };
   });
 }
 

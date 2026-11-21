@@ -41,8 +41,8 @@ import {
   buildCanonEntityDocument,
   buildChapterDocuments,
   buildParagraphDocument,
-  ENTITY_DIRECTORY,
-  slugify,
+  canonEntityPath,
+  slugifyAny,
   type EntityKind,
 } from "@/narrarium/canon";
 import { generateEntityFromResearchProposal } from "@/research/createFromResearch";
@@ -53,6 +53,9 @@ import {
   buildParagraphScriptArtifact,
 } from "@/narrarium/workspace";
 import { commitScriptWithCanonicalLedger } from "@/narrarium/scriptLedger";
+import { chapterNumberFromSlug } from "@/lib/chapterSlug";
+import { generatedNameLabel } from "@/lib/fallbackTitle";
+import { matchKey } from "@/lib/matchText";
 import { describeCopilotScriptCreation } from "@/assistant/scriptMutationResult";
 import { defaultEvaluationCriteria, defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
 import { emptyReaderPersona } from "@/narrarium/readerPersona";
@@ -683,7 +686,7 @@ async function createSimulatedReaderFromPrompt(input: PromptInput & { book: Book
   ], "default", readerOutputSchema, { accountScope: input.accountScope, signal: input.signal, label: "copilot:create-reader" });
   const profile = emptyReaderPersona(structure.language ?? input.settings.ui.language);
   const name = parsed.name;
-  const next = { ...profile, ...parsed, slug: slugToTitle(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") };
+  const next = { ...profile, ...parsed, slug: slugifyAny(name, "reader", true) };
   const path = await saveReaderPersona({ token: input.token, book: input.book, branch: input.branch, profile: next, remoteHeadSha, signal: input.signal });
   return mutationMessage(`Created simulated reader **${next.name}** at \`${path}\`.`, [path]);
 }
@@ -953,12 +956,11 @@ function routeMatchesExplicitCancellationTarget(
   return true;
 }
 
-function targetReferenceMatchesSlug(reference: string | undefined, slug: string | undefined): boolean {
+export function targetReferenceMatchesSlug(reference: string | undefined, slug: string | undefined): boolean {
   if (!reference || !slug) return false;
-  const normalize = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const normalizedReference = normalize(reference);
-  const normalizedSlug = normalize(slug).replace(/^\d+\s+/, "");
-  return Boolean(normalizedReference && normalizedSlug && (normalizedReference === normalizedSlug || normalize(slug) === normalizedReference));
+  const normalizedReference = matchKey(reference);
+  const normalizedSlug = matchKey(slug).replace(/^\d+\s+/, "");
+  return Boolean(normalizedReference && normalizedSlug && (normalizedReference === normalizedSlug || matchKey(slug) === normalizedReference));
 }
 
 function auditTargetFromPrompt(input: PromptInput & { book: BookEntry }): AuditTarget | null {
@@ -1144,12 +1146,14 @@ function canonList(structure: NonNullable<LoadedWriterContext["structure"]>, sec
 }
 
 /** Best-effort match of a canon file by a name/slug mentioned in the prompt. */
-function findCanonFileByPrompt<T extends { path: string; name?: string }>(files: T[], prompt: string): T | null {
+export function findCanonFileByPrompt<T extends { path: string; name?: string }>(files: T[], prompt: string): T | null {
   const lower = prompt.toLowerCase();
   let best: { file: T; len: number } | null = null;
   for (const file of files) {
+    // A file with no name of its own is listed as "Character" or "Secret": that says what it is, not who, so it is never a match.
+    const generic = generatedNameLabel(slugFromPath(file.path));
     const candidates = [file.name, slugToTitle(slugFromPath(file.path)), slugFromPath(file.path).replace(/-/g, " ")]
-      .filter((value): value is string => Boolean(value && value.length >= 3));
+      .filter((value): value is string => Boolean(value && value.length >= 3 && value !== generic));
     for (const candidate of candidates) {
       const needle = candidate.toLowerCase();
       if (lower.includes(needle) && (!best || needle.length > best.len)) best = { file, len: needle.length };
@@ -1504,8 +1508,7 @@ async function createDraftFromPrompt(input: PromptInput & { book: BookEntry; bra
       const path = artifact.path;
       return mutationMessage(`I created a paragraph draft for \`${paragraph.title}\`.`, [path]);
     }
-    const match = /^(\d{3})-/.exec(chapter.slug);
-    const number = Number(match?.[1] ?? 1);
+    const number = chapterNumberFromSlug(chapter.slug) ?? 1;
     const created = buildChapterDraftArtifactDocuments({ number, title: chapter.title, chapterSlug: chapter.slug });
     const changedPaths = await commitGeneratedDocuments(input, remoteHeadSha, created.documents.map((document) => ({ ...document, mode: "if-absent" as const })), `Add chapter draft ${created.slug}`);
     return mutationMessage(`I created a chapter draft workspace for \`${chapter.title}\`.`, changedPaths);
@@ -1561,7 +1564,7 @@ async function importAttachmentsAsDraft(input: PromptInput & { book: BookEntry; 
     path = artifact.path;
     changedPaths = await commitGeneratedDocuments(input, remoteHeadSha, [{ path, content: artifact.content, mode: "replace" }], `Import paragraph draft ${artifact.slug}`);
   } else {
-    const number = Number(/^(\d{3})-/.exec(chapter.slug)?.[1] ?? 1);
+    const number = chapterNumberFromSlug(chapter.slug) ?? 1;
     const created = buildChapterDraftArtifactDocuments({ number, title, chapterSlug: chapter.slug, body: parsed.body });
     path = created.path;
     changedPaths = await commitGeneratedDocuments(input, remoteHeadSha, created.documents.map((document, index) => ({ ...document, mode: index === 0 ? "replace" as const : "if-absent" as const })), `Import chapter draft ${created.slug}`);
@@ -1595,7 +1598,7 @@ async function proposeEntityFromResearch(input: PromptInput & { book: BookEntry;
   }
   const source = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, resolved.file.path);
   const proposal = await generateEntityFromResearchProposal({ settings: input.settings, book: input.book, branch: input.branch, token: input.token, researchMarkdown: source.content, entityKind, language: structure.language ?? input.settings.ui.language, accountScope: input.accountScope, signal: input.signal });
-  const destinationPath = `${ENTITY_DIRECTORY[entityKind]}/${slugify(proposal.label)}.md`;
+  const destinationPath = canonEntityPath(entityKind, proposal.label);
   const destination = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, destinationPath).catch((error) => {
     if (isGitHubFileNotFoundError(error)) return null;
     throw error;

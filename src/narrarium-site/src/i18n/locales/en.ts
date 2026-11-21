@@ -1672,7 +1672,8 @@ const en = {
     aiHint: "Select text in the body and use right-click → Improve with AI or Summarize with AI. You can review the proposal, apply it, or save the summary to notes.",
     criteriaTitle: "Scoring criteria",
     criteriaHint: "Define the dimensions Copilot must score. Each score is stored with a short explanation in evaluation frontmatter.",
-    criteriaCount: "{{count}} criteria",
+    criteriaCount_one: "{{count}} criterion",
+    criteriaCount_other: "{{count}} criteria",
     addCriterion: "Add criterion",
     removeCriterion: "Remove criterion",
     criterionName: "Criterion name",
@@ -1681,7 +1682,10 @@ const en = {
     bodyTitle: "Critical evaluation instructions",
     bodyHint: "Write the rules, sections, severity, and evidence standards that should guide the discursive evaluation.",
     summarySaved: "Summary saved to notes",
-    placeholder: "Write the evaluation rules here…"
+    placeholder: "Write the evaluation rules here…",
+    loadFailed: "Could not load the evaluation style",
+    changedElsewhere: "evaluation-guidelines.md changed since you opened this page (on another device, on another branch, or by the assistant). Your edits are still here: reloading shows the saved version and discards them.",
+    reloadFile: "Reload the saved version"
   },
   stageIndex: {
     draftsIntro: "All chapter drafts, mirroring the paragraph structure. Connects script, draft and final paragraph.",
@@ -2431,6 +2435,19 @@ const en = {
     deleteConfirm: "Delete this note?",
     loadFailed: "Failed to load note",
     saveFailed: "Failed to save note"
+  },
+  fallbackTitle: {
+    scene: "Scene {{number}}",
+    chapter: "Chapter {{number}}",
+    character: "Character",
+    location: "Location",
+    faction: "Faction",
+    item: "Item",
+    secret: "Secret",
+    timelineEvent: "Timeline event",
+    ghostwriter: "Ghostwriter",
+    reader: "Reader",
+    research: "Research {{date}}",
   },
   accountSync: {
     title: "Account & Sync",

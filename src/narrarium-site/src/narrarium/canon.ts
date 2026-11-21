@@ -6,10 +6,19 @@ import {
   formatOrdinal as coreFormatOrdinal,
   paragraphSlug as coreParagraphSlug,
   slugify as coreSlugify,
+  slugifyAny as coreSlugifyAny,
 } from "narrarium/slug";
 
 export function slugify(value: string): string {
   return coreSlugify(value);
+}
+
+/**
+ * Like `slugify`, but never empty: a name that has a Latin slug keeps it, Cyrillic and Greek are transliterated, and any
+ * other script becomes `fallback` (plus a stable code of the text when `uniqueCode` is set, for names that must not collide).
+ */
+export function slugifyAny(value: string, fallback: string, uniqueCode = false): string {
+  return coreSlugifyAny(value, fallback, uniqueCode);
 }
 
 export function formatOrdinal(value: number, width = 3): string {
@@ -81,9 +90,18 @@ export interface CreatedFile {
   slug: string;
 }
 
+/** File name of a canon entity, without extension; the same one the core and the MCP server give to the same name. */
+export function canonEntitySlug(kind: EntityKind, label: string): string {
+  return slugifyAny(label, kind, true);
+}
+
+export function canonEntityPath(kind: EntityKind, label: string): string {
+  return `${ENTITY_DIRECTORY[kind]}/${canonEntitySlug(kind, label)}.md`;
+}
+
 export function buildCanonEntityDocument(input: CreateEntityInput): CreatedFile & { content: string } {
-  const slug = slugify(input.label);
-  if (!slug) throw new Error("A valid name or title is required.");
+  if (!input.label.trim()) throw new Error("A valid name or title is required.");
+  const slug = canonEntitySlug(input.kind, input.label);
   const path = `${ENTITY_DIRECTORY[input.kind]}/${slug}.md`;
   const id = `${input.kind}:${slug}`;
   const nameField = input.kind === "secret" || input.kind === "timeline-event" ? { title: input.label } : { name: input.label };

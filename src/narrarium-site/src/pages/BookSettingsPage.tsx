@@ -26,6 +26,7 @@ import { attachLocalBookToGitHub, checkRepositoryTokenHealth } from "@/repositor
 import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { readTokenHealth, tokenExpirationWarning, type TokenHealth } from "@/repository/tokenHealth";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
+import { defaultPublishRepositoryName } from "@/narrarium/bookScaffold";
 import { useConnectionStore } from "@/account/connectionStore";
 
 type TokenMode = "default" | "custom" | string;
@@ -65,7 +66,7 @@ export function BookSettingsPage() {
   const [checkingToken, setCheckingToken] = useState(false);
   const githubConnection = useConnectionStore((state) => state.configuration.github);
   const [attachOwner, setAttachOwner] = useState(githubConnection?.identity?.username ?? "");
-  const [attachRepo, setAttachRepo] = useState(book?.name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-") ?? "");
+  const [attachRepo, setAttachRepo] = useState(book ? defaultPublishRepositoryName(book.name) : "");
   const [attaching, setAttaching] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [overwriteExisting, setOverwriteExisting] = useState(false);

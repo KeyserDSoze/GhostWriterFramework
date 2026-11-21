@@ -1,4 +1,4 @@
-import type { TFunction } from "i18next";
+import i18next, { type TFunction } from "i18next";
 import type { AutopilotEvent, AutopilotStateSummary, AutopilotStatus, InsightTone } from "narrarium-engine";
 import type { BookSyncStatus } from "@/autopilot/store";
 
@@ -27,16 +27,42 @@ export const STATUS_BADGE: Record<AutopilotStatus, string> = {
   completed: "border-transparent bg-primary/15 text-primary",
 };
 
+/** The language of the app, not the one of the browser: dates and numbers read like the rest of the screen. */
+function locale(): string | undefined {
+  return i18next.resolvedLanguage || i18next.language || undefined;
+}
+
 export function formatClock(iso: string | undefined): string {
   if (!iso) return "";
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 export function formatDateTime(iso: string | undefined): string {
   if (!iso) return "";
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString(locale(), { dateStyle: "medium", timeStyle: "short" });
+}
+
+/** "now", "25 seconds ago", "4 minutes ago", "3 hours ago", "10 days ago" (and the same in the other language). */
+export function formatAgo(milliseconds: number): string {
+  const rtf = new Intl.RelativeTimeFormat(locale(), { numeric: "auto" });
+  const seconds = Math.floor(Math.max(0, milliseconds) / 1000);
+  if (seconds < 10) return rtf.format(0, "second");
+  if (seconds < 60) return rtf.format(-seconds, "second");
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return rtf.format(-minutes, "minute");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return rtf.format(-hours, "hour");
+  return rtf.format(-Math.floor(hours / 24), "day");
+}
+
+/** "300 B", "1.2 KB", "3.4 MB". */
+export function formatBytes(bytes: number): string {
+  const number = (value: number, fraction: number) => new Intl.NumberFormat(locale(), { maximumFractionDigits: fraction }).format(value);
+  if (bytes < 1024) return `${number(bytes, 0)} B`;
+  if (bytes < 1024 * 1024) return `${number(bytes / 1024, 1)} KB`;
+  return `${number(bytes / (1024 * 1024), 1)} MB`;
 }
 
 export function formatDuration(milliseconds: number): string {
@@ -49,13 +75,13 @@ export function formatDuration(milliseconds: number): string {
 }
 
 export function formatCount(value: number): string {
-  return new Intl.NumberFormat(undefined, { notation: value >= 100_000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value);
+  return new Intl.NumberFormat(locale(), { notation: value >= 100_000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value);
 }
 
 export function formatCost(value: number | undefined, currency: string | undefined): string {
   if (!value) return "—";
   try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency: currency || "USD", maximumFractionDigits: value < 1 ? 4 : 2 }).format(value);
+    return new Intl.NumberFormat(locale(), { style: "currency", currency: currency || "USD", maximumFractionDigits: value < 1 ? 4 : 2 }).format(value);
   } catch {
     return `${value.toFixed(value < 1 ? 4 : 2)} ${currency ?? ""}`.trim();
   }
@@ -107,11 +133,15 @@ export function presentFeedEvent(t: TFunction, event: AutopilotEvent, currency?:
   }
 }
 
+/** What the last sync of a book came to, in the language of the app; each outcome reads differently. */
 export function syncStatusText(t: TFunction, sync: BookSyncStatus | null): string | null {
   if (!sync) return null;
-  if (sync.message === "synced") return t("autopilot.where.synced");
-  if (sync.message === "published") return t("autopilot.where.published");
-  if (sync.message === "local-changes") return t("autopilot.where.localChanges");
-  if (sync.message.startsWith("conflicts:")) return t("autopilot.where.conflicts");
-  return sync.message;
+  switch (sync.kind) {
+    case "synced": return t("autopilot.where.synced");
+    case "up-to-date": return t("autopilot.where.upToDate");
+    case "published": return t("autopilot.where.published");
+    case "local-changes": return t("autopilot.where.localChanges");
+    case "conflicts": return t("autopilot.where.conflicts", { count: sync.conflicts.length });
+    default: return sync.message;
+  }
 }

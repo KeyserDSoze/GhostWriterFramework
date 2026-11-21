@@ -16,6 +16,7 @@ import { auditTargetHref, type AuditTarget } from "@/narrarium/audit";
 import { openFeedbackRewriteWorkflow } from "@/store/feedbackRewriteWorkflowStore";
 import { useUiStore } from "@/store/uiStore";
 import { resolveContextualNavigation } from "@/lib/contextualNavigation";
+import { chapterNumberFromSlug } from "@/lib/chapterSlug";
 import { openAskDirector } from "@/store/askDirectorStore";
 
 export interface ContextualAction {
@@ -124,7 +125,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
     if (!present) {
       try {
         if (kind === "draft") {
-          const number = Number(/^(\d{3})-/.exec(chapter.slug)?.[1] ?? "1");
+          const number = chapterNumberFromSlug(chapter.slug) ?? 1;
           await createChapterDraftArtifacts(token, book.owner, book.repo, branch, { number, title: chapter.title });
         } else if (kind === "resume") {
           await createChapterResumeArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug });

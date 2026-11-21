@@ -1672,7 +1672,8 @@ const it = {
     aiHint: "Seleziona il testo nel body e usa tasto destro → Migliora con AI o Riassumi con AI. Puoi rivedere la proposta, applicarla o salvare il riassunto nelle note.",
     criteriaTitle: "Criteri di punteggio",
     criteriaHint: "Definisci le dimensioni che Copilot deve valutare. Ogni voto viene salvato con una breve spiegazione nel frontmatter.",
-    criteriaCount: "{{count}} criteri",
+    criteriaCount_one: "{{count}} criterio",
+    criteriaCount_other: "{{count}} criteri",
     addCriterion: "Aggiungi criterio",
     removeCriterion: "Rimuovi criterio",
     criterionName: "Nome criterio",
@@ -1681,7 +1682,10 @@ const it = {
     bodyTitle: "Istruzioni per la valutazione critica",
     bodyHint: "Scrivi regole, sezioni, severità e standard delle prove che devono guidare la valutazione discorsiva.",
     summarySaved: "Riassunto salvato nelle note",
-    placeholder: "Scrivi qui le regole di valutazione…"
+    placeholder: "Scrivi qui le regole di valutazione…",
+    loadFailed: "Impossibile caricare lo stile di valutazione",
+    changedElsewhere: "evaluation-guidelines.md è cambiato da quando hai aperto questa pagina (su un altro dispositivo, su un altro branch o per opera dell'assistente). Le tue modifiche sono ancora qui: ricaricando vedrai la versione salvata e le perderai.",
+    reloadFile: "Ricarica la versione salvata"
   },
   stageIndex: {
     draftsIntro: "Tutte le bozze del capitolo, con la stessa struttura dei paragrafi. Collega script, bozza e paragrafo definitivo.",
@@ -2671,6 +2675,19 @@ const it = {
     deleteConfirm: "Eliminare questa nota?",
     loadFailed: "Caricamento nota non riuscito",
     saveFailed: "Salvataggio nota non riuscito"
+  },
+  fallbackTitle: {
+    scene: "Scena {{number}}",
+    chapter: "Capitolo {{number}}",
+    character: "Personaggio",
+    location: "Luogo",
+    faction: "Fazione",
+    item: "Oggetto",
+    secret: "Segreto",
+    timelineEvent: "Evento timeline",
+    ghostwriter: "Ghostwriter",
+    reader: "Lettore",
+    research: "Ricerca {{date}}",
   },
   accountSync: {
     title: "Account e sincronizzazione",

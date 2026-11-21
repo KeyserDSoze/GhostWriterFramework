@@ -70,3 +70,32 @@ test("author edits win over stale autopilot writes, and a missing working copy i
   expect((await store.read("plot.md"))?.content).toBe("The author's plot.");
   await expect(createBrowserBookStore({ ...book, id: "another-book" }, "main").list()).rejects.toBeInstanceOf(LocalWorkingCopyMissingError);
 });
+
+test("readMany gives several files in the order asked, each once, and leaves out what does not exist", async () => {
+  await seedWorkingCopy();
+  const store = createBrowserBookStore(book, "main");
+  expect(store.readMany).toBeTypeOf("function");
+  const paths = ["plot.md", "nothing/here.md", "book.md", "plot.md", "resumes/total.md"];
+  const files = await store.readMany!(paths);
+  expect(files.map((file) => file.path)).toEqual(["plot.md", "book.md", "resumes/total.md"]);
+  for (const file of files) {
+    const single = await store.read(file.path);
+    expect(file).toEqual(single);
+  }
+  expect(await store.readMany!([])).toEqual([]);
+  await expect(createBrowserBookStore({ ...book, id: "another-book" }, "main").readMany!(["plot.md"])).rejects.toBeInstanceOf(LocalWorkingCopyMissingError);
+});
+
+test("readMany of a whole big book gives every file, whatever the number of reads in flight", async () => {
+  const id = await seedWorkingCopy();
+  const expected: string[] = [];
+  for (let number = 1; number <= 130; number += 1) {
+    const path = `notes/many-${String(number).padStart(4, "0")}.md`;
+    expected.push(path);
+    await putCleanLocalFile({ repoId: id, path, kind: "text", text: `note ${number}`, size: 8 });
+  }
+  const store = createBrowserBookStore(book, "main");
+  const files = await store.readMany!([...expected].reverse());
+  expect(files.map((file) => file.path)).toEqual([...expected].reverse());
+  expect(files[0].content).toBe("note 130");
+});

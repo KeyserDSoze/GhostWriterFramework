@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ClipboardCheck, Info, Loader2, Plus, Save, Sparkles, Trash2 } from "lucide-react";
@@ -13,11 +13,14 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
+import { FileChangedNotice } from "@/components/book/FileChangedNotice";
+import { useGuardedDocumentLoad } from "@/hooks/useGuardedDocumentLoad";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 import { useProseAssist } from "@/components/editor/useProseAssist";
 import { resolveBookToken } from "@/types/settings";
-import { createOrUpdateTextFile, loadFileContent } from "@/github/githubClient";
+import { isGitHubFileNotFoundError, readFileWithSha } from "@/github/githubClient";
+import { captureImmediateMutation, commitImmediateMutation } from "@/assistant/immediateMutation";
 import { appendAssistantNote } from "@/assistant/service";
 import { completeTextRouted } from "@/assistant/router";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
@@ -108,7 +111,12 @@ export function EvaluationStylePage() {
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});
   const [criteria, setCriteria] = useState<Criterion[]>([]);
   const [body, setBody] = useState("");
+  // The document as it was read or last saved: what "unsaved edits" are measured against.
   const [saved, setSaved] = useState("");
+  const [exists, setExists] = useState(true);
+  // Which book's document the form holds: a form that holds another book's text is not saved over this one.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const language = structure?.language ?? settings.ui.language;
@@ -138,38 +146,61 @@ export function EvaluationStylePage() {
   });
   useRegisterProseEditor(bodyRef, { improve: proseAssist.improve, summarize: proseAssist.summarize, synonym: () => undefined });
 
-  useEffect(() => {
-    if (!book || !token) return;
-    setLoading(true);
-    loadFileContent(token, book.owner, book.repo, EVALUATION_GUIDELINES_PATH, branch)
-      .then((raw) => {
-        const parsed = parseEvaluationDoc(raw.trim() ? raw : defaultEvaluationGuidelinesMarkdown(language));
-        const nextCriteria = parsed.criteria.length ? parsed.criteria : criteriaFromDefaults(language);
-        setFrontmatter(parsed.frontmatter);
-        setCriteria(nextCriteria);
-        setBody(parsed.body);
-        setSaved(raw.trim() && parsed.criteria.length ? buildEvaluationDoc(parsed.frontmatter, nextCriteria, parsed.body) : "");
-      })
-      .catch(() => {
-        const parsed = parseEvaluationDoc(defaultEvaluationGuidelinesMarkdown(language));
-        setFrontmatter(parsed.frontmatter);
-        setCriteria(parsed.criteria);
-        setBody(parsed.body);
-        setSaved("");
-      })
-      .finally(() => setLoading(false));
-  }, [book, token, branch, language]);
-
+  const documentKey = book && token ? `${book.id}|${book.owner}/${book.repo}|${EVALUATION_GUIDELINES_PATH}` : null;
+  const loaded = loadedFor !== null && loadedFor === documentKey;
   const current = buildEvaluationDoc(frontmatter, criteria, body);
-  const dirty = current !== saved;
-  useRegisterPageSave({ dirty, enabled: Boolean(book && token), onSave: () => save() });
+  const edited = loaded && current !== saved;
+  const dirty = loaded && (!exists || edited);
+
+  // The settings are replaced whenever they reload, so the `book` object is new each time: the file is read again only
+  // for another book, branch or language, and never over what the author is typing. A file that cannot be read is not
+  // taken for a missing one: the defaults are shown only for a file that is really not there.
+  const file = useGuardedDocumentLoad<{ raw: string; present: boolean }>({
+    document: documentKey,
+    source: `${branch}|${language}`,
+    load: async () => {
+      const found = await readFileWithSha(token, book!.owner, book!.repo, branch, EVALUATION_GUIDELINES_PATH).catch((cause: unknown) => {
+        if (isGitHubFileNotFoundError(cause)) return null;
+        throw cause;
+      });
+      return { value: { raw: found?.content ?? "", present: Boolean(found) }, version: found ? found.content : null };
+    },
+    edited,
+    apply: ({ raw, present }) => {
+      const parsed = parseEvaluationDoc(raw.trim() ? raw : defaultEvaluationGuidelinesMarkdown(language));
+      const nextCriteria = parsed.criteria.length ? parsed.criteria : criteriaFromDefaults(language);
+      setFrontmatter(parsed.frontmatter);
+      setCriteria(nextCriteria);
+      setBody(parsed.body);
+      setSaved(buildEvaluationDoc(parsed.frontmatter, nextCriteria, parsed.body));
+      setExists(present && Boolean(raw.trim()) && parsed.criteria.length > 0);
+      setLoadedFor(documentKey);
+      setLoadFailed(false);
+    },
+    onLoading: setLoading,
+    onError: (cause) => {
+      setLoadFailed(true);
+      toast({ title: t("evaluationStyle.loadFailed"), description: String(cause), variant: "destructive" });
+    },
+  });
+  useRegisterPageSave({ dirty, enabled: Boolean(book && token && loaded), onSave: () => save() });
 
   async function save(): Promise<boolean> {
-    if (!book || !token) return false;
+    if (!book || !token || !loaded) return false;
     setSaving(true);
     try {
-      await createOrUpdateTextFile(token, book.owner, book.repo, branch, EVALUATION_GUIDELINES_PATH, current, `Update ${EVALUATION_GUIDELINES_PATH}`);
+      const snapshot = await captureImmediateMutation({ token, book, branch, path: EVALUATION_GUIDELINES_PATH });
+      const loadedVersion = file.baseVersion();
+      // Someone changed the file after it was opened here: it is not overwritten, and the edits stay.
+      if (loadedVersion !== undefined && snapshot.content !== loadedVersion) {
+        file.flagChanged();
+        toast({ title: t("common.saveFailed"), description: t("evaluationStyle.changedElsewhere"), variant: "destructive" });
+        return false;
+      }
+      await commitImmediateMutation({ token, book, branch, snapshot, content: current, message: `Update ${EVALUATION_GUIDELINES_PATH}` });
+      file.adopt(current);
       setSaved(current);
+      setExists(true);
       toast({ title: t("common.saved") });
       reload();
       return true;
@@ -217,6 +248,16 @@ export function EvaluationStylePage() {
         </div>
       </div>
 
+      {file.changedElsewhere && <FileChangedNotice message={t("evaluationStyle.changedElsewhere")} reloadLabel={t("evaluationStyle.reloadFile")} onReload={file.reload} />}
+      {loadFailed && !loaded && !loading && (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-wrap items-center gap-3">
+            <span>{t("evaluationStyle.loadFailed")}</span>
+            <Button size="sm" variant="outline" onClick={file.reload}>{t("common.retry")}</Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <div className="rounded-2xl border bg-muted/20 p-4 text-sm text-muted-foreground">
         <div className="flex gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><p>{t("evaluationStyle.hint")}</p></div>
         <p className="mt-3 flex items-center gap-2 text-xs"><Sparkles className="h-3.5 w-3.5 text-primary" />{t("evaluationStyle.aiHint")}</p>
@@ -225,7 +266,7 @@ export function EvaluationStylePage() {
       <section className="rounded-2xl border bg-card p-5 shadow-sm sm:p-6">
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div><h2 className="text-lg font-semibold">{t("evaluationStyle.criteriaTitle")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("evaluationStyle.criteriaHint")}</p></div>
-          <Button variant="outline" size="sm" onClick={addCriterion}><Plus className="mr-1.5 h-4 w-4" />{t("evaluationStyle.addCriterion")}</Button>
+          <Button variant="outline" size="sm" onClick={addCriterion} disabled={!loaded}><Plus className="mr-1.5 h-4 w-4" />{t("evaluationStyle.addCriterion")}</Button>
         </div>
         {criteria.length ? (
           <div className="grid gap-3 lg:grid-cols-2">
@@ -255,7 +296,7 @@ export function EvaluationStylePage() {
 
       <section className="rounded-2xl border bg-card p-5 shadow-sm sm:p-6">
         <div className="mb-4"><h2 className="text-lg font-semibold">{t("evaluationStyle.bodyTitle")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("evaluationStyle.bodyHint")}</p></div>
-        {loading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</div> : <AutoTextarea ref={bodyRef} value={body} onChange={(event) => setBody(event.target.value)} className="min-h-[55vh] font-mono text-sm leading-7" placeholder={t("evaluationStyle.placeholder")} />}
+        {!loaded ? (loading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</div> : null) : <AutoTextarea ref={bodyRef} value={body} onChange={(event) => setBody(event.target.value)} className="min-h-[55vh] font-mono text-sm leading-7" placeholder={t("evaluationStyle.placeholder")} />}
       </section>
       {proseAssist.dialogs}
     </div>

@@ -40,13 +40,12 @@ import {
   createFile,
   readFileWithSha,
   reorderParagraphsInChapter,
-  slugToTitle,
   updateFile,
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type Paragraph } from "@/types/book";
 import { resolveBookToken } from "@/types/settings";
-import { slugify } from "@/narrarium/canon";
+import { paragraphSlug } from "@/narrarium/canon";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { resolveRepositoryHeadForMutation } from "@/repository/safeRepositoryMutation";
 import {
@@ -310,13 +309,12 @@ export function ChapterPage() {
     try {
       const nextNumber = Math.max(0, ...localParagraphs.map((entry) => Number(entry.number) || 0)) + 1;
       const nextNum = String(nextNumber).padStart(3, "0");
-      const slug = slugify(newTitle) || "paragraph";
-      const filename = `${nextNum}-${slug}.md`;
-      const path = `${chapter.path}/${filename}`;
+      const slug = paragraphSlug(nextNumber, newTitle);
+      const path = `${chapter.path}/${slug}.md`;
       if (localParagraphs.some((entry) => entry.path === path || entry.number === nextNum)) throw new Error(t("chapter.paragraphAlreadyExists"));
       const frontmatter = {
         type: "paragraph",
-        id: `paragraph:${chapter.slug}:${nextNum}-${slug}`,
+        id: `paragraph:${chapter.slug}:${slug}`,
         chapter: `chapter:${chapter.slug}`,
         number: nextNumber,
         title: newTitle.trim(),
@@ -336,7 +334,7 @@ export function ChapterPage() {
 
       const newParagraph: Paragraph = {
         number: nextNum,
-        title: slugToTitle(`${nextNum}-${slug}`),
+        title: newTitle.trim(),
         path,
       };
       const updated = [...localParagraphs, newParagraph];

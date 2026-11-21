@@ -37,6 +37,7 @@ import { bookStorageMode, resolveBookToken } from "@/types/settings";
 import { openCanonDossier } from "@/narrarium/openDossier";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useRegisterPageSave } from "@/store/saveStore";
+import { nextChapterNumber } from "@/lib/chapterSlug";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
 import {
   createCanonEntity,
@@ -369,7 +370,7 @@ export function BookPage() {
             <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted-foreground">{structure.chapters.length === 1 ? t("bookPage.chapterCountOne", { count: structure.chapters.length }) : t("bookPage.chapterCountMany", { count: structure.chapters.length })}</p>
               <CreateChapterDialog
-                nextNumber={Math.max(0, ...structure.chapters.map((entry) => Number(entry.slug.match(/^(\d{3})/)?.[1]) || 0)) + 1}
+                nextNumber={nextChapterNumber(structure.chapters.map((entry) => entry.slug))}
                 onCreate={handleCreateChapter}
               />
             </div>

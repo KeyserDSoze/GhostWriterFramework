@@ -28,7 +28,7 @@ export function AutopilotHubPage() {
       runtime.ensureServerStream();
       for (const id of bookIds.split(",").filter(Boolean)) {
         if (cancelled) return;
-        await runtime.refresh(id);
+        await runtime.refresh(id, { join: true });
       }
     }).catch(() => undefined);
     return () => { cancelled = true; };

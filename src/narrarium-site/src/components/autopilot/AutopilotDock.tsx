@@ -1,17 +1,18 @@
-import { useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, ExternalLink, Loader2, Pause, Plane, Play, Square, Trash2, X } from "lucide-react";
-import { summarizeAutopilotState } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
 import { parseAppRoute } from "@/assistant/context";
 import { useAutopilotRefresh, useBookAutopilotView } from "@/autopilot/hooks";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
+import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useAutopilotStore } from "@/autopilot/store";
 import { autopilotSummaryLine } from "@/autopilot/format";
 import { useUiStore } from "@/store/uiStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { AutopilotFeed, AutopilotStatusBadge } from "@/components/autopilot/AutopilotFeed";
+import { OperationNotice } from "@/components/autopilot/OperationNotice";
+import { RemoteRunNotice } from "@/components/autopilot/RemoteRunNotice";
 import { cn } from "@/lib/utils";
 
 /**
@@ -67,19 +68,18 @@ export function AutopilotDock() {
 function DockBookPanel({ bookId }: { bookId: string }) {
   const { t } = useTranslation();
   const view = useBookAutopilotView(bookId);
-  const liveSummary = useAutopilotStore((state) => state.summaries[bookId]);
   const bookName = useSettingsStore((state) => state.settings.books.find((book) => book.id === bookId)?.name);
+  const control = useAutopilotControl(bookId);
   const { busy, run } = useAutopilotActions(bookId);
   useAutopilotRefresh(bookId);
 
-  const snapshotState = view.snapshot?.state ?? null;
-  const summary = useMemo(() => {
-    if (snapshotState && (!liveSummary || liveSummary.updatedAt <= snapshotState.updatedAt)) return summarizeAutopilotState(snapshotState);
-    return liveSummary ?? null;
-  }, [liveSummary, snapshotState]);
-  const running = summary?.status === "running" || Boolean(view.snapshot?.running);
-  const awaitingPlan = Boolean(snapshotState?.plan?.awaitingAuthor);
+  // The same reading of who can command the run as the page: Pause and Stop never go to a run this client cannot reach.
+  const { summary, running, controllable } = control;
+  const pausing = busy === "pause" || busy === "stop";
+  const awaitingPlan = Boolean(view.snapshot?.state?.plan?.awaitingAuthor);
   const pageHref = `/app/books/${encodeURIComponent(bookId)}/autopilot`;
+  const noteId = `dock-remote-run-${bookId}`;
+  const explained = controllable ? undefined : noteId;
 
   return (
     <div className="space-y-3">
@@ -95,7 +95,9 @@ function DockBookPanel({ bookId }: { bookId: string }) {
           </p>
         )}
         {summary?.message && <p className="text-xs">{summary.message}</p>}
+        <OperationNotice bookId={bookId} />
         {view.busyInAnotherTab && <p className="text-xs text-muted-foreground">{t("autopilot.anotherTab")}</p>}
+        <RemoteRunNotice bookId={bookId} control={control} id={noteId} />
         {view.error && <p className="flex items-start gap-1.5 text-xs text-destructive"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{view.error}</p>}
         {summary?.question && (
           <Link to={pageHref} className="flex items-start gap-1.5 rounded-md bg-amber-500/10 p-2 text-xs text-amber-800 hover:bg-amber-500/20 dark:text-amber-200">
@@ -106,10 +108,10 @@ function DockBookPanel({ bookId }: { bookId: string }) {
         <div className="flex flex-wrap gap-2 pt-1">
           {running ? (
             <>
-              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void run("pause", (runtime, id) => runtime.pause(id, "after-step"))}>
+              <Button size="sm" variant="outline" disabled={pausing || !controllable} aria-describedby={explained} onClick={() => void run("pause", (runtime, id) => runtime.pause(id, "after-step"))}>
                 {busy === "pause" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Pause className="h-3.5 w-3.5" />}{t("autopilot.actions.pause")}
               </Button>
-              <Button size="sm" variant="ghost" disabled={busy !== null} title={t("autopilot.stopHint")} onClick={() => void run("stop", (runtime, id) => runtime.pause(id, "now"))}>
+              <Button size="sm" variant="ghost" disabled={pausing || !controllable} aria-describedby={explained} title={t("autopilot.stopHint")} onClick={() => void run("stop", (runtime, id) => runtime.pause(id, "now"))}>
                 <Square className="h-3.5 w-3.5" />{t("autopilot.actions.stop")}
               </Button>
             </>

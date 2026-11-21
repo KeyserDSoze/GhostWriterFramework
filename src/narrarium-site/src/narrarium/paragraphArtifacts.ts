@@ -1,3 +1,5 @@
+import { matchKey } from "../lib/matchText.ts";
+
 export interface ParagraphArtifactTarget {
   path: string;
   chapterSlug: string;
@@ -24,13 +26,7 @@ function artifactInfo(path: string, kind: ParagraphArtifactKind): { chapterSlug:
 }
 
 function normalizedTitle(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase()
-    .replace(/^\d{3}(?:-|\s+)?/, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
+  return matchKey(value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase().replace(/^\d{3}(?:-|\s+)?/, ""));
 }
 
 /** Resolve paragraph companions without guessing when more than one artifact could match. */

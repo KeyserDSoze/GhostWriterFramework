@@ -1,7 +1,30 @@
 import { stringify } from "yaml";
+import { slugCode, transliterate } from "narrarium/slug";
 import { defaultEvaluationGuidelinesMarkdown } from "@/narrarium/defaultGuidelines";
 import { builtinReaderPersonas, serializeReaderPersona } from "@/narrarium/readerPersona";
 import { defaultGhostwriter, serializeGhostwriter } from "@/narrarium/ghostwriter";
+
+function repositoryWords(text: string): string {
+  return text
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "")
+    .replace(/-{2,}/g, "-")
+    .toLowerCase();
+}
+
+/** The repository name suggested for a book title: Cyrillic and Greek are read, any other script becomes a stable code. */
+export function defaultRepositoryName(title: string): string {
+  const words = repositoryWords(title) || repositoryWords(transliterate(title)) || (title.trim() ? slugCode(title) : "");
+  return words ? `book-${words}` : "";
+}
+
+/** The repository name suggested when a book that lives on this device is published: its name as it was, unless that has no letter or digit. */
+export function defaultPublishRepositoryName(bookName: string): string {
+  const plain = bookName.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+  return /[a-z0-9]/.test(plain) ? plain : defaultRepositoryName(bookName);
+}
 
 export interface InitialBookFile {
   path: string;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
 import { emptyView, useAutopilotStore, type BookAutopilotView } from "@/autopilot/store";
 
@@ -8,13 +8,21 @@ export function useBookAutopilotView(bookId: string | undefined): BookAutopilotV
   return view ?? emptyView(bookId ?? "");
 }
 
-/** Load the runtime and refresh the book's view when the book, `enabled` or `refreshKey` change. */
+/**
+ * Load the runtime and refresh the book's view when the book, `enabled` or `refreshKey` change. Opening only joins a
+ * download that is already on its way (the dock and the page open together); a changed book or key (another branch,
+ * another host) asks for a download of its own, as the one on its way may be for what was shown before.
+ */
 export function useAutopilotRefresh(bookId: string | undefined, enabled = true, refreshKey = ""): void {
+  const lastKey = useRef<string | null>(null);
   useEffect(() => {
     if (!bookId || !enabled) return;
+    const key = `${bookId}\n${refreshKey}`;
+    const changed = lastKey.current !== null && lastKey.current !== key;
+    lastKey.current = key;
     let cancelled = false;
     void loadAutopilotRuntime().then((runtime) => {
-      if (!cancelled) void runtime.refresh(bookId);
+      if (!cancelled) void runtime.refresh(bookId, { join: !changed });
     }).catch(() => undefined);
     return () => {
       cancelled = true;
@@ -32,4 +40,16 @@ export function useElapsed(since: string | undefined): number {
   }, [since]);
   const start = since ? Date.parse(since) : Number.NaN;
   return Number.isFinite(start) ? Math.max(0, now - start) : 0;
+}
+
+/** The current time, refreshed every `intervalMs` while `enabled`: for what reads "4 minutes ago". */
+export function useNow(intervalMs: number, enabled = true): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!enabled) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), intervalMs);
+    return () => window.clearInterval(timer);
+  }, [intervalMs, enabled]);
+  return now;
 }

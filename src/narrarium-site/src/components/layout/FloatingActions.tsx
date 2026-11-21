@@ -16,6 +16,7 @@ import { createChapterDraftArtifacts, createChapterEvaluationArtifact, createCha
 import { useSaveStore } from "@/store/saveStore";
 import { usePageActionsStore } from "@/store/pageActionsStore";
 import { useContextualActions } from "@/hooks/useContextualActions";
+import { chapterNumberFromSlug } from "@/lib/chapterSlug";
 import { lazy, Suspense } from "react";
 
 const BookExportDialog = lazy(() => import("@/components/book/BookExportDialog").then((module) => ({ default: module.BookExportDialog })));
@@ -86,7 +87,7 @@ export function FloatingActions() {
     if (!present) {
       try {
         if (kind === "draft") {
-          const number = Number(/^(\d{3})-/.exec(chapter.slug)?.[1] ?? "1");
+          const number = chapterNumberFromSlug(chapter.slug) ?? 1;
           await createChapterDraftArtifacts(token, book.owner, book.repo, branch, { number, title: chapter.title });
         } else if (kind === "resume") {
           await createChapterResumeArtifact(token, book.owner, book.repo, branch, { chapterSlug: chapter.slug });

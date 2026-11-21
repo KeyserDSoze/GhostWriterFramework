@@ -1,15 +1,10 @@
 import { stringify } from "yaml";
+import { slugifyAny } from "narrarium/slug";
 import { createFile } from "@/github/githubClient";
 
+/** A note title in a script with no Latin reading gets `note` and a stable code, so two such notes never share a file. */
 export function slugifyNote(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-{2,}/g, "-")
-    .toLowerCase()
-    .slice(0, 60);
+  return slugifyAny(value, "note", true).slice(0, 60);
 }
 
 function renderMarkdown(frontmatter: Record<string, unknown>, body: string): string {
@@ -36,7 +31,7 @@ export async function createNote(
   input: CreateNoteInput,
 ): Promise<CreatedNote> {
   const title = input.title.trim() || "Untitled note";
-  const base = slugifyNote(title) || "note";
+  const base = slugifyNote(title);
   const now = new Date().toISOString();
   const slug = `${now.slice(0, 10)}-${base}`;
   const path = `notes/${slug}.md`;

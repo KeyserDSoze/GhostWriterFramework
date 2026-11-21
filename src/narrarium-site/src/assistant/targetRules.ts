@@ -1,3 +1,5 @@
+import { matchKey } from "../lib/matchText.ts";
+
 const ORDINALS: Record<string, number> = {
   primo: 1,
   prima: 1,
@@ -44,7 +46,7 @@ export function ordinalNumber(value: string): number | null {
 }
 
 function normalizeTargetText(value: string): string {
-  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return matchKey(value);
 }
 
 function namedReference<T extends { title: string }>(prompt: string, nouns: string, values: T[]): string | null {

@@ -2,6 +2,7 @@
 // Orchestrates: LLM query generation → provider search router → synthesis → save.
 
 import { stringify } from "yaml";
+import { slugifyAny } from "narrarium/slug";
 import type { AppSettings } from "@/types/settings";
 import type { BookEntry } from "@/types/settings";
 import { completeTextRouted } from "@/assistant/router";
@@ -155,15 +156,9 @@ async function synthesize(input: RunDeepResearchInput, results: ResearchResult[]
   return { title, markdown };
 }
 
-function slugifyResearch(query: string): string {
-  return query
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-{2,}/g, "-")
-    .toLowerCase()
-    .slice(0, 60);
+/** A query in a script with no Latin reading gets `research` and a stable code, so the file name is never empty. */
+export function slugifyResearch(query: string): string {
+  return slugifyAny(query, "research", true).slice(0, 60);
 }
 
 export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunDeepResearchResult> {

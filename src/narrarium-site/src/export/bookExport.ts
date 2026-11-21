@@ -2,7 +2,8 @@ import { parseDocument, stringify } from "yaml";
 import type { BookStructure, Chapter } from "@/types/book";
 import type { BookEntry, BookExportScope, BookExportSettings } from "@/types/settings";
 import { loadFileContent, optionalBinaryFileContent } from "@/github/githubClient";
-import { slugify } from "@/narrarium/canon";
+import { slugifyAny } from "@/narrarium/canon";
+import { chapterNumberFromSlug } from "@/lib/chapterSlug";
 import { paragraphSeparator, presentMetadata } from "@/export/metadataPresentation";
 import { renderEpubMarkdownHtml } from "@/markdown/safeMarkdown";
 
@@ -196,8 +197,13 @@ function countWords(chapters: ExportChapter[]): number {
   }, 0);
 }
 
+/** What names the files and the EPUB identifier of a book: a title in a script with no Latin reading keeps a stable code. */
+function bookSlug(snapshot: ExportBookSnapshot): string {
+  return slugifyAny(snapshot.title || "book", "book", true);
+}
+
 function outputBaseName(snapshot: ExportBookSnapshot, scope: BookExportScope): string {
-  const base = slugify(snapshot.title || "book") || "book";
+  const base = bookSlug(snapshot);
   return scope === "draft" ? `${base}-draft` : base;
 }
 
@@ -246,7 +252,7 @@ export async function loadBookExportSnapshot(input: {
       );
       return {
         slug: chapter.slug,
-        number: asNumber(chapterDoc.frontmatter.number, Number(chapter.slug.slice(0, 3)) || 0),
+        number: asNumber(chapterDoc.frontmatter.number, chapterNumberFromSlug(chapter.slug) ?? 0),
         title: asString(chapterDoc.frontmatter.title, chapter.title),
         summary: asString(chapterDoc.frontmatter.summary) || undefined,
         frontmatterText: exportSettings.includeFrontmatter ? chapterDoc.frontmatterText : undefined,
@@ -673,7 +679,7 @@ function buildContentOpf(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fil
   ].join("\n    ");
   const spine = [`<itemref idref="opening"/>`, ...chapterFiles.map((_, index) => `<itemref idref="chapter-${index + 1}"/>`)].join("\n    ");
   const coverMeta = imageItems.some((image) => image.id === "cover-image") ? `\n    <meta name="cover" content="cover-image"/>` : "";
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0">\n  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n    <dc:identifier id="bookid">urn:narrarium:${slugify(snapshot.title) || "book"}</dc:identifier>\n    <dc:title>${escapeXml(snapshot.title)}</dc:title>\n    <dc:creator>${escapeXml(snapshot.author)}</dc:creator>\n    <dc:language>${escapeXml(snapshot.language)}</dc:language>\n    <meta property="dcterms:modified">${modified}</meta>${coverMeta}\n  </metadata>\n  <manifest>\n    ${manifest}\n  </manifest>\n  <spine toc="ncx">\n    ${spine}\n  </spine>\n</package>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0">\n  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n    <dc:identifier id="bookid">urn:narrarium:${bookSlug(snapshot)}</dc:identifier>\n    <dc:title>${escapeXml(snapshot.title)}</dc:title>\n    <dc:creator>${escapeXml(snapshot.author)}</dc:creator>\n    <dc:language>${escapeXml(snapshot.language)}</dc:language>\n    <meta property="dcterms:modified">${modified}</meta>${coverMeta}\n  </metadata>\n  <manifest>\n    ${manifest}\n  </manifest>\n  <spine toc="ncx">\n    ${spine}\n  </spine>\n</package>`;
 }
 
 export function epubModifiedTimestamp(date = new Date()): string {
@@ -684,7 +690,7 @@ function buildTocNcx(snapshot: ExportBookSnapshot, chapterFiles: Array<{ fileNam
   const navPoints = chapterFiles
     .map((chapter, index) => `    <navPoint id="navPoint-${index + 1}" playOrder="${index + 1}">\n      <navLabel><text>${escapeXml(chapter.title)}</text></navLabel>\n      <content src="${chapter.fileName}"/>\n    </navPoint>`)
     .join("\n");
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">\n  <head><meta name="dtb:uid" content="urn:narrarium:${slugify(snapshot.title) || "book"}"/></head>\n  <docTitle><text>${escapeXml(snapshot.title)}</text></docTitle>\n  <navMap>\n${navPoints}\n  </navMap>\n</ncx>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">\n  <head><meta name="dtb:uid" content="urn:narrarium:${bookSlug(snapshot)}"/></head>\n  <docTitle><text>${escapeXml(snapshot.title)}</text></docTitle>\n  <navMap>\n${navPoints}\n  </navMap>\n</ncx>`;
 }
 
 function wrapXhtml(title: string, bodyHtml: string): string {

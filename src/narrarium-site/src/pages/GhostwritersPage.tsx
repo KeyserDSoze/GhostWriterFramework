@@ -19,7 +19,7 @@ import { useRegisterPageSave } from "@/store/saveStore";
 import { resolveBookToken } from "@/types/settings";
 import { readFileWithSha } from "@/github/githubClient";
 import { canDeleteGhostwriter, emptyGhostwriter, ghostwriterReferencePaths, parseGhostwriter, serializeGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
-import { slugify } from "@/narrarium/canon";
+import { slugifyAny } from "@/narrarium/canon";
 import { resolveUnsavedChanges } from "@/hooks/resolveUnsavedChanges";
 import { captureImmediateMutation, commitImmediateMutation, commitImmediateMutations } from "@/assistant/immediateMutation";
 
@@ -70,7 +70,7 @@ export function GhostwritersPage() {
   async function createGhostwriter() {
     const name = newName.trim();
     if (!name || !book || !token || !await allowProfileChange()) return;
-    const slug = slugify(name);
+    const slug = slugifyAny(name, "ghostwriter", true);
     setBusy(true);
     try {
       const content = serializeGhostwriter({ slug, ...emptyGhostwriter(name) });

@@ -2,15 +2,34 @@ import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useToast } from "@/components/ui/use-toast";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
+import type { AutopilotOperationKind, BookOperation } from "@/autopilot/operations";
 import type { AutopilotRuntime } from "@/autopilot/runtime";
+import { useAutopilotStore } from "@/autopilot/store";
 
 export type AutopilotActionName = "start" | "pause" | "stop" | "intervene" | "answer" | "configure" | "reset" | "move" | "sync" | "refresh";
 
-/** Run an autopilot action through the lazily loaded runtime, with one busy flag and error toasts. */
+/** The action a person sees for an operation that holds the book. */
+const ACTION_OF_OPERATION: Record<AutopilotOperationKind, AutopilotActionName> = {
+  start: "start",
+  answer: "answer",
+  configure: "configure",
+  reset: "reset",
+  intervene: "intervene",
+  moveToServer: "move",
+  moveToBrowser: "move",
+  sync: "sync",
+};
+
+/**
+ * Run an autopilot action through the lazily loaded runtime, with error toasts. `busy` names what holds the book: an
+ * action of this component, or an operation another component (the page, the dock) or another tab started on the
+ * same book, so every component disables what conflicts and shows what is going on.
+ */
 export function useAutopilotActions(bookId: string | undefined) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [busy, setBusy] = useState<AutopilotActionName | null>(null);
+  const operation: BookOperation | null = useAutopilotStore((state) => (bookId ? state.views[bookId]?.operation ?? null : null));
 
   const run = useCallback(async (name: AutopilotActionName, action: (runtime: AutopilotRuntime, bookId: string) => Promise<unknown>, success?: string): Promise<boolean> => {
     if (!bookId) return false;
@@ -33,5 +52,5 @@ export function useAutopilotActions(bookId: string | undefined) {
     }
   }, [bookId, t, toast]);
 
-  return { busy, run };
+  return { busy: busy ?? (operation ? ACTION_OF_OPERATION[operation.kind] : null), run, operation };
 }

@@ -1,15 +1,45 @@
 import { create } from "zustand";
-import type { AutopilotActivity, AutopilotEvent, AutopilotSnapshot, AutopilotStateSummary, InterventionInput, ServerBookSummary, ServerInfo, ServerUpdateInfo } from "narrarium-engine";
+import type { AutopilotActivity, AutopilotEvent, AutopilotSnapshot, AutopilotStateSummary, InterventionInput, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo } from "narrarium-engine";
+import type { BookOperation } from "@/autopilot/operations";
 import type { PersonalServerSettings } from "@/types/settings";
 
 export type AutopilotHostKind = "browser" | "server";
-export type ServerConnectionStatus = "disabled" | "connecting" | "online" | "offline" | "error";
+/** `reconnecting`: the connection was online and went quiet or closed, and is being opened again. */
+export type ServerConnectionStatus = "disabled" | "connecting" | "online" | "offline" | "error" | "reconnecting";
 
-export interface BookSyncStatus {
-  at: string;
+export type SyncOutcomeKind = "synced" | "up-to-date" | "published" | "local-changes" | "conflicts" | "error";
+/** What happened to a file on one side since the last sync: it was edited, it is new there, or it was deleted there. */
+export type ConflictSide = "modified" | "added" | "deleted";
+
+/** A file that changed differently on both sides, and what each side did to it. Sizes are in bytes, when they could be read. */
+export interface SyncConflict {
+  path: string;
+  local: ConflictSide;
+  remote: ConflictSide;
+  localBytes?: number;
+  remoteBytes?: number;
+}
+
+/** How a sync with the personal server ended. Only `synced`, `up-to-date` and `published` are `ok`. */
+export interface SyncOutcome {
   ok: boolean;
-  /** `synced`, `published`, `local-changes`, `conflicts:<n>` or an error message. */
+  kind: SyncOutcomeKind;
+  /** Paths changed on both sides and not settled. */
+  conflicts: string[];
+  /** The same files with what happened on each side. */
+  conflictDetails: SyncConflict[];
+  /** In the language of the app: what happened, or why it failed. */
   message: string;
+  /** No base was ever saved for this book and server: nothing is deleted, files missing on one side are copied back. */
+  firstSync: boolean;
+  uploaded: number;
+  downloaded: number;
+  /** The base for the next sync could not be saved (storage full or blocked): the next sync will not see deletions. */
+  baseSaved: boolean;
+}
+
+export interface BookSyncStatus extends SyncOutcome {
+  at: string;
 }
 
 export interface BookAutopilotView {
@@ -22,6 +52,8 @@ export interface BookAutopilotView {
   /** Server-side summary when the book is hosted on the personal server. */
   server: ServerBookSummary | null;
   sync: BookSyncStatus | null;
+  /** What holds the book right now (a move, a sync, a start…): the same for every component showing the book. */
+  operation: BookOperation | null;
 }
 
 export interface FeedEntry {
@@ -94,7 +126,15 @@ function initialDockOpen(): boolean {
 }
 
 export function emptyView(bookId: string): BookAutopilotView {
-  return { bookId, snapshot: null, loading: false, error: null, busyInAnotherTab: false, server: null, sync: null };
+  return { bookId, snapshot: null, loading: false, error: null, busyInAnotherTab: false, server: null, sync: null, operation: null };
+}
+
+/** When something was last heard of each book (any event, even a streamed word), by this tab. Not state: it changes with every event. */
+const signals = new Map<string, number>();
+
+/** Milliseconds since the epoch of the last event received for a book, or `undefined`. */
+export function lastSignalAt(bookId: string): number | undefined {
+  return signals.get(bookId);
 }
 
 export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
@@ -116,6 +156,7 @@ export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
   setDockTab: (tab) => set({ dockTab: tab }),
   patchView: (bookId, patch) => set((state) => ({ views: { ...state.views, [bookId]: { ...(state.views[bookId] ?? emptyView(bookId)), ...patch } } })),
   ingest: (event, bookTitle) => set((state) => {
+    signals.set(event.bookId, Date.now());
     if (event.type === "task-progress") {
       const current = state.live[event.bookId];
       if (!current || current.activity.id !== event.activityId) return {};
@@ -172,10 +213,26 @@ export type RelayedCommand =
   | { type: "pause"; mode: "now" | "after-step" }
   | { type: "intervene"; input: InterventionInput };
 
+/** What the tab that holds the live connection tells the others about it. */
+export type SharedServerState = Pick<ServerConnectionState, "status" | "info" | "message" | "books" | "updates">;
+
+/**
+ * `server-*` messages carry the live connection to the personal server: a browser keeps one for all its tabs (the server
+ * accepts a few per token), and its leader tab tells the others what arrives. `stream` names the connection (a hash: the token is never sent).
+ */
 export type AutopilotChannelMessage =
   | { kind: "event"; event: AutopilotEvent; bookTitle: string }
   | { kind: "command"; id: string; bookId: string; command: RelayedCommand }
-  | { kind: "command-result"; id: string; ok: boolean; error?: string };
+  | { kind: "command-result"; id: string; ok: boolean; error?: string }
+  | { kind: "server-message"; stream: string; message: ServerStreamMessage }
+  | { kind: "server-state"; stream: string; state: SharedServerState }
+  | { kind: "server-state-request"; stream: string }
+  | { kind: "server-reconnect"; stream: string }
+  | { kind: "server-reconnected"; stream: string }
+  | { kind: "synced"; bookId: string; sync: BookSyncStatus };
+
+/** The bits of `BroadcastChannel` the runtime uses. */
+export type AutopilotChannel = Pick<BroadcastChannel, "postMessage" | "addEventListener" | "removeEventListener">;
 
 const CHANNEL_NAME = "narrarium-autopilot-v1";
 let channel: BroadcastChannel | null | undefined;

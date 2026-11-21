@@ -10,6 +10,9 @@ export class LocalWorkingCopyMissingError extends Error {
   }
 }
 
+/** Files read at the same time by `readMany`: enough to keep IndexedDB busy without opening thousands of transactions at once. */
+const READ_MANY_IN_FLIGHT = 50;
+
 async function repository(book: BookEntry, branch: string): Promise<LocalRepositoryMeta> {
   const scope = captureRepositoryOperationScope();
   const meta = await getLocalRepository(book.owner, book.repo, branch, scope);
@@ -35,6 +38,21 @@ export function createBrowserBookStore(book: BookEntry, branch: string): BookSto
       const file = await getLocalFile(meta.id, path, captureRepositoryOperationScope());
       if (!file || file.kind !== "text" || file.text === undefined) return null;
       return { path, content: file.text, hash: file.currentHash };
+    },
+    async readMany(paths: string[]): Promise<BookFileContent[]> {
+      const meta = await repository(book, branch);
+      const scope = captureRepositoryOperationScope();
+      const unique = [...new Set(paths)];
+      const output: BookFileContent[] = [];
+      for (let start = 0; start < unique.length; start += READ_MANY_IN_FLIGHT) {
+        const batch = unique.slice(start, start + READ_MANY_IN_FLIGHT);
+        const files = await Promise.all(batch.map((path) => getLocalFile(meta.id, path, scope)));
+        batch.forEach((path, index) => {
+          const file = files[index];
+          if (file && file.kind === "text" && file.text !== undefined) output.push({ path, content: file.text, hash: file.currentHash });
+        });
+      }
+      return output;
     },
     async commit(changes: BookFileChange[], message: string): Promise<BookCommitResult> {
       const meta = await repository(book, branch);

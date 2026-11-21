@@ -10,6 +10,8 @@ import {
   extractParagraphSlug,
 } from "@/narrarium/auditPaths";
 import { isRewriteOperationManifestPath } from "@/narrarium/rewriteOperationPaths";
+import { chapterSlugWithoutNumber, chapterTitleFromSlug, compareChapterFolders } from "@/lib/chapterSlug";
+import { generatedNameLabel, renumberedTitle } from "@/lib/fallbackTitle";
 import { classifyRepositoryError, isRepositoryError, isRepositoryNotFoundError, optionalRepositoryRead, RepositoryError } from "@/repository/repositoryError";
 import {
   resolveParagraphArtifactPaths,
@@ -454,7 +456,7 @@ export async function loadBookStructure(
           path: p,
           sha: treeData.tree.find((n) => n.path === p)?.sha ?? "",
           size: treeData.tree.find((n) => n.path === p)?.size ?? 0,
-          name: metaMap[p]?.name,
+          name: metaMap[p]?.name ?? generatedNameLabel(slug) ?? undefined,
           imagePath: firstExistingImage(assetBase),
           knownFrom: metaMap[p]?.knownFrom,
           revealIn: metaMap[p]?.revealIn,
@@ -469,7 +471,7 @@ export async function loadBookStructure(
         .filter((p) => p.startsWith("chapters/"))
         .map((p) => p.split("/").slice(0, 2).join("/"))
     ),
-  ].sort();
+  ].sort(compareChapterFolders);
 
   const chapters: Chapter[] = chapterFolders.map((folder) => {
     const slug = folder.replace("chapters/", "");
@@ -489,7 +491,7 @@ export async function loadBookStructure(
       const imagePromptPath = `assets/chapters/${slug}/paragraphs/${paragraphSlug}/primary.md`;
       return {
         number: num,
-        title: metaMap[p]?.name ?? slugToTitle(filename.replace(/\.md$/, "")),
+        title: metaMap[p]?.name ?? generatedNameLabel(paragraphSlug) ?? slugToTitle(filename.replace(/\.md$/, "")),
         path: p,
         revision: treeData.tree.find((node) => node.path === p)?.sha,
         ghostwriter: metaMap[p]?.ghostwriter,
@@ -510,7 +512,7 @@ export async function loadBookStructure(
     return {
       slug,
       path: folder,
-      title: metaMap[`${folder}/chapter.md`]?.name ?? slugToTitle(slug),
+      title: metaMap[`${folder}/chapter.md`]?.name ?? generatedNameLabel(slug) ?? chapterTitleFromSlug(slug),
       ghostwriter: metaMap[`${folder}/chapter.md`]?.ghostwriter,
       paragraphs,
       draftPath,
@@ -554,13 +556,13 @@ export async function loadBookStructure(
       .filter((p) => /^ghostwriters\/[^/]+\.md$/.test(p))
       .map((p) => {
         const slug = p.replace(/^ghostwriters\//, "").replace(/\.md$/i, "");
-        return { slug, path: p, name: metaMap[p]?.name ?? slugToTitle(slug) };
+        return { slug, path: p, name: metaMap[p]?.name ?? generatedNameLabel(slug) ?? slugToTitle(slug) };
       })
       .sort((a, b) => a.name.localeCompare(b.name)),
     readerPersonas: personaPaths
       .map((p) => {
         const slug = p.replace(/^personas\//, "").replace(/\.md$/i, "");
-        return { slug, path: p, name: metaMap[p]?.name ?? slugToTitle(slug) };
+        return { slug, path: p, name: metaMap[p]?.name ?? generatedNameLabel(slug) ?? slugToTitle(slug) };
       })
       .sort((a, b) => a.name.localeCompare(b.name)),
     readerEvaluationFiles: allPaths
@@ -580,7 +582,7 @@ export async function loadBookStructure(
             try { return ""; } catch { return ""; }
           })(),
         );
-        return { path: p, sha: treeData.tree.find((n) => n.path === p)?.sha ?? "", slug, title: rawTitle ?? slug };
+        return { path: p, sha: treeData.tree.find((n) => n.path === p)?.sha ?? "", slug, title: rawTitle ?? generatedNameLabel(slug) ?? slug };
       })
       .sort((a, b) => b.slug.localeCompare(a.slug)),
     notesFiles: allPaths
@@ -1127,7 +1129,7 @@ export async function renameParagraphWithCompanions(
     const finalContent = rewriteMovedText(updatedPrimaryContent);
     return {
       ...oldParagraph,
-      title: titleFromFrontmatter(finalContent, slugToTitle(newSlug)),
+      title: titleFromFrontmatter(finalContent, generatedNameLabel(newSlug) ?? slugToTitle(newSlug)),
       path: newParagraphPath,
       draftPath: movedExistingPath(oldParagraph.draftPath) ?? firstMoved([
         `drafts/${chapterSlug}/${oldSlug}.md`,
@@ -1299,7 +1301,7 @@ export async function reorderParagraphsInChapter(
 
     result.push({
       number: numStr,
-      title: slugToTitle(newSlug),
+      title: renumberedTitle(p.title, oldSlug, newSlug),
       path: `${chapterPath}/${newSlug}.md`,
       draftPath: rename(p.draftPath, (s) => p.draftPath?.startsWith(`drafts/${chapterSlug}/`)
         ? `drafts/${chapterSlug}/${s}.md`
@@ -1575,7 +1577,7 @@ export async function reorderChaptersInBook(
 
   newOrderedChapters.forEach((chapter, index) => {
     const newNumber = index + 1;
-    const titlePart = chapter.slug.replace(/^\d{3}(?:-)?/, "");
+    const titlePart = chapterSlugWithoutNumber(chapter.slug);
     const newSlug = titlePart ? `${String(newNumber).padStart(3, "0")}-${titlePart}` : String(newNumber).padStart(3, "0");
     newNumberForNewSlug.set(newSlug, newNumber);
     if (newSlug !== chapter.slug) remap.set(chapter.slug, newSlug);

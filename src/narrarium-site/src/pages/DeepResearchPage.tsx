@@ -77,6 +77,17 @@ export function researchSaveBaseline(markdown: string) {
   };
 }
 
+/** What the list shows for a research document: the title written in the file, else the one the book structure has. */
+export function researchListTitle(entry: ResearchFile, content: string | undefined): string {
+  if (content) {
+    try {
+      const title = (researchSaveBaseline(content).frontmatter as { title?: unknown } | null)?.title;
+      if (typeof title === "string" && title.trim()) return title.trim();
+    } catch { /* A document whose frontmatter cannot be read is listed by its file name. */ }
+  }
+  return entry.title || entry.slug;
+}
+
 function updateFrontmatterField(frontmatterRaw: string, field: string, value: string): string {
   if (!frontmatterRaw.trim()) return frontmatterRaw;
   const regex = new RegExp(`^${field}:.*$`, "m");
@@ -779,7 +790,7 @@ export function DeepResearchPage() {
               }
             >
               <BookOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate">{f.title || f.slug}</span>
+              <span className="min-w-0 flex-1 truncate">{researchListTitle(f, searchIndex[f.slug])}</span>
               {lastRunCosts[f.slug] !== undefined && (
                 <Badge variant="outline" className="shrink-0 font-mono text-[10px]">
                   {new Intl.NumberFormat(undefined, { style: "currency", currency: (settings.costCurrency || "USD").trim(), maximumFractionDigits: 4 }).format(lastRunCosts[f.slug])}

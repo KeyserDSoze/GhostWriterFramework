@@ -10,6 +10,7 @@ export const MAX_ASSISTANT_LOSSLESS_ARCHIVE_BYTES = 24 * 1024 * 1024;
 export const MAX_ASSISTANT_QUARANTINED_ACTIONS = 256;
 export const MAX_ASSISTANT_QUARANTINED_ACTION_BYTES = 4 * 1024;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const SLUG = /^[\p{L}\p{N}][\p{L}\p{M}\p{N}._:-]{0,127}$/u;
 const BRANCH = /^(?![./])(?!.*(?:\.\.|\/\/|[~^:?*[\\\x00-\x20\x7f]))(?!.*(?:\.|\/|\.lock)$).{1,255}$/;
 
 export class AssistantSessionValidationError extends Error {
@@ -30,6 +31,13 @@ function text(value: unknown, label: string, max = 1024 * 1024): string {
 function identifier(value: unknown, label: string): string {
   const result = text(value, label, 128);
   if (!ID.test(result)) throw new AssistantSessionValidationError(`${label} is invalid.`);
+  return result;
+}
+
+/** The name of a chapter folder or a scene file: an identifier whose letters may be in any script. */
+function slugIdentifier(value: unknown, label: string): string {
+  const result = text(value, label, 512);
+  if (!SLUG.test(result)) throw new AssistantSessionValidationError(`${label} is invalid.`);
   return result;
 }
 
@@ -79,7 +87,7 @@ function action(value: unknown, label: string): AssistantAction {
   if (raw.sourceRevisions !== undefined) common.sourceRevisions = Object.fromEntries(Object.entries(object(raw.sourceRevisions, `${label}.sourceRevisions`)).map(([path, revision]) => [repositoryPath(path, `${label}.sourceRevisions path`), revision === null ? null : text(revision, `${label}.sourceRevisions revision`, 256)]));
   const bookId = () => identifier(raw.bookId, `${label}.bookId`);
   switch (kind) {
-    case "apply-paragraph-rewrite": return { ...common, kind, bookId: bookId(), chapterSlug: identifier(raw.chapterSlug, `${label}.chapterSlug`), paragraphPath: repositoryPath(raw.paragraphPath, `${label}.paragraphPath`), proposedBody: text(raw.proposedBody, `${label}.proposedBody`) } as AssistantAction;
+    case "apply-paragraph-rewrite": return { ...common, kind, bookId: bookId(), chapterSlug: slugIdentifier(raw.chapterSlug, `${label}.chapterSlug`), paragraphPath: repositoryPath(raw.paragraphPath, `${label}.paragraphPath`), proposedBody: text(raw.proposedBody, `${label}.proposedBody`) } as AssistantAction;
     case "apply-file-updates":
     case "undo-file-updates": {
       if (!Array.isArray(raw.updates) || raw.updates.length > 100) throw new AssistantSessionValidationError(`${label}.updates is invalid.`);
@@ -103,7 +111,7 @@ function action(value: unknown, label: string): AssistantAction {
     }
     case "confirm-delete": {
       if (raw.target !== "note" && raw.target !== "paragraph" && raw.target !== "entity" && raw.target !== "reader-evaluation") throw new AssistantSessionValidationError(`${label}.target is invalid.`);
-      return { ...common, kind, bookId: bookId(), target: raw.target, path: repositoryPath(raw.path, `${label}.path`), title: text(raw.title, `${label}.title`, 500), ...(raw.chapterSlug === undefined ? {} : { chapterSlug: identifier(raw.chapterSlug, `${label}.chapterSlug`) }) } as AssistantAction;
+      return { ...common, kind, bookId: bookId(), target: raw.target, path: repositoryPath(raw.path, `${label}.path`), title: text(raw.title, `${label}.title`, 500), ...(raw.chapterSlug === undefined ? {} : { chapterSlug: slugIdentifier(raw.chapterSlug, `${label}.chapterSlug`) }) } as AssistantAction;
     }
     case "confirm-create-from-research": {
       const entityKind = text(raw.entityKind, `${label}.entityKind`, 32);
@@ -113,7 +121,7 @@ function action(value: unknown, label: string): AssistantAction {
     case "confirm-cancel-feedback-rewrite": {
       if (raw.scope !== "chapter" && raw.scope !== "paragraph") throw new AssistantSessionValidationError(`${label}.scope is invalid.`);
       if (!Number.isSafeInteger(raw.workflowRequestId) || (raw.workflowRequestId as number) < 0) throw new AssistantSessionValidationError(`${label}.workflowRequestId is invalid.`);
-      return { ...common, kind, bookId: bookId(), operationId: identifier(raw.operationId, `${label}.operationId`), scope: raw.scope, chapterSlug: identifier(raw.chapterSlug, `${label}.chapterSlug`), ...(raw.paragraphSlug === undefined ? {} : { paragraphSlug: identifier(raw.paragraphSlug, `${label}.paragraphSlug`) }), workflowRequestId: raw.workflowRequestId as number, ownerSessionId: identifier(raw.ownerSessionId, `${label}.ownerSessionId`), ownerRequestId: identifier(raw.ownerRequestId, `${label}.ownerRequestId`) } as AssistantAction;
+      return { ...common, kind, bookId: bookId(), operationId: identifier(raw.operationId, `${label}.operationId`), scope: raw.scope, chapterSlug: slugIdentifier(raw.chapterSlug, `${label}.chapterSlug`), ...(raw.paragraphSlug === undefined ? {} : { paragraphSlug: slugIdentifier(raw.paragraphSlug, `${label}.paragraphSlug`) }), workflowRequestId: raw.workflowRequestId as number, ownerSessionId: identifier(raw.ownerSessionId, `${label}.ownerSessionId`), ownerRequestId: identifier(raw.ownerRequestId, `${label}.ownerRequestId`) } as AssistantAction;
     }
     default: throw new AssistantSessionValidationError(`${label}.kind is unknown.`);
   }

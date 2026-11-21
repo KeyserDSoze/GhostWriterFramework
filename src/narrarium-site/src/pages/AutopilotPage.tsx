@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   AlertTriangle,
   Ban,
@@ -29,13 +30,14 @@ import {
   AUTOPILOT_PHASES,
   DEFAULT_BRIEF,
   DEFAULT_OPTIONS,
-  autopilotProgress,
   type AutopilotActivity,
   type AutopilotBrief,
   type AutopilotOptions,
+  type AutopilotPlan,
   type AutopilotState,
+  type AutopilotStateSummary,
+  type DirectorQuestion,
   type InterventionScope,
-  type PlannedChapter,
 } from "narrarium-engine";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
@@ -47,9 +49,14 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { AutopilotFeed, AutopilotLiveCard, AutopilotStatusBadge } from "@/components/autopilot/AutopilotFeed";
+import { OperationNotice } from "@/components/autopilot/OperationNotice";
+import { PlanChapters } from "@/components/autopilot/PlanChapters";
+import { RemoteRunNotice } from "@/components/autopilot/RemoteRunNotice";
+import { SyncConflicts } from "@/components/autopilot/SyncConflicts";
 import { useAutopilotRefresh, useBookAutopilotView, useElapsed } from "@/autopilot/hooks";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
-import { useAutopilotStore } from "@/autopilot/store";
+import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
+import { useAutopilotStore, type SyncOutcome } from "@/autopilot/store";
 import { useServerConnection } from "@/autopilot/serverConnection";
 import { formatCost, formatCount, formatDateTime, formatDuration, syncStatusText } from "@/autopilot/format";
 import { useBookStructure } from "@/hooks/useBookStructure";
@@ -60,6 +67,10 @@ import { bookStorageMode, type BookEntry } from "@/types/settings";
 import { cn } from "@/lib/utils";
 
 const SCOPES: InterventionScope[] = ["next_step", "from_now", "rewrite"];
+
+// A typo guard, not a product limit: a book has no maximum number of chapters. The engine accepts the same range;
+// the number is written here instead of imported so the form does not depend on the engine's build.
+const MAX_CHAPTERS = 100_000;
 
 function Card({ title, icon, actions, children, className }: { title: string; icon?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
   return (
@@ -80,7 +91,6 @@ export function AutopilotPage() {
   const { branch, ready } = useWorkingBranch(bookId);
   const { book, structure, error, reload } = useBookStructure(bookId);
   const view = useBookAutopilotView(bookId);
-  const live = useAutopilotStore((state) => (bookId ? state.live[bookId] ?? null : null));
   const serverStatus = useServerConnection().status;
   const { busy, run } = useAutopilotActions(bookId);
   const host = book?.autopilotHost === "server" ? "server" : "browser";
@@ -90,12 +100,16 @@ export function AutopilotPage() {
   const snapshot = view.snapshot;
   const loaded = Boolean(snapshot || view.error);
   const state = snapshot?.state ?? null;
-  const status = state?.status;
-  const controllable = Boolean(snapshot?.running) || view.busyInAnotherTab;
-  const remote = !controllable && status === "running" && state?.runner ? state.runner : null;
-  const running = controllable || status === "running";
+  // Status and statistics follow the summaries of the `state` events (the page does not download the whole state again for
+  // them), and who can command the run is read the same way here and in the dock.
+  const control = useAutopilotControl(bookId);
+  const { summary, status, controllable, running } = control;
+  // Pause and Stop wait only for themselves: whatever else holds the book (a sync, a move) never keeps a run from being stopped.
+  const pausing = busy === "pause" || busy === "stop";
+  const remoteNoteId = "autopilot-remote-run";
   const noAi = host === "browser" && settings.aiIntegrations.length === 0;
   const existingChapters = structure?.chapters.filter((chapter) => chapter.paragraphs.length > 0).length ?? 0;
+  const linkedChapters = useMemo(() => new Set(structure?.chapters.map((chapter) => chapter.slug) ?? []), [structure?.chapters]);
 
   if (error && !structure && host === "browser") return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book || !bookId) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
@@ -111,22 +125,23 @@ export function AutopilotPage() {
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{t("autopilot.description")}</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {loaded && <AutopilotStatusBadge status={status} />}
-            {state && state.phase !== "completed" && <Badge variant="outline">{t(`autopilot.phase.${state.phase}`)}</Badge>}
+            {summary && summary.phase !== "completed" && <Badge variant="outline">{t(`autopilot.phase.${summary.phase}`)}</Badge>}
             <Badge variant="outline" className="gap-1">{host === "server" ? <Server className="h-3 w-3" /> : <Laptop className="h-3 w-3" />}{t(`autopilot.host.${host}`)}</Badge>
             {(view.loading || !loaded) && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
           </div>
+          <OperationNotice bookId={bookId} className="mt-2" />
         </div>
         <div className="flex flex-wrap gap-2 lg:max-w-sm lg:shrink-0 lg:justify-end">
           {running ? (
             <>
-              <Button variant="outline" disabled={busy !== null || !controllable} onClick={() => void run("pause", (runtime, id) => runtime.pause(id, "after-step"))}>
+              <Button variant="outline" disabled={pausing || !controllable} aria-describedby={controllable ? undefined : remoteNoteId} onClick={() => void run("pause", (runtime, id) => runtime.pause(id, "after-step"))}>
                 {busy === "pause" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pause className="h-4 w-4" />}{t("autopilot.actions.pause")}
               </Button>
-              <Button variant="ghost" title={t("autopilot.stopHint")} disabled={busy !== null || !controllable} onClick={() => void run("stop", (runtime, id) => runtime.pause(id, "now"))}>
+              <Button variant="ghost" title={t("autopilot.stopHint")} disabled={pausing || !controllable} aria-describedby={controllable ? undefined : remoteNoteId} onClick={() => void run("stop", (runtime, id) => runtime.pause(id, "now"))}>
                 <Square className="h-4 w-4" />{t("autopilot.actions.stop")}
               </Button>
             </>
-          ) : state && !state.question ? (
+          ) : summary && !summary.question ? (
             <Button variant={status === "completed" ? "outline" : "default"} disabled={busy !== null || noAi} onClick={resume}>
               {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               {awaitingPlan ? t("autopilot.actions.approvePlan") : t("autopilot.actions.resume")}
@@ -158,18 +173,17 @@ export function AutopilotPage() {
         </Alert>
       )}
       {host === "server" && (serverStatus === "offline" || serverStatus === "error") && <Alert><Cloud className="h-4 w-4" /><AlertDescription>{t("autopilot.serverOffline")}</AlertDescription></Alert>}
+      {host === "server" && serverStatus === "reconnecting" && <Alert><Cloud className="h-4 w-4" /><AlertDescription>{t("autopilot.serverReconnecting")}</AlertDescription></Alert>}
       {view.busyInAnotherTab && <Alert><AlertDescription>{t("autopilot.anotherTab")}</AlertDescription></Alert>}
-      {remote && <Alert><AlertDescription>{t("autopilot.remoteRunner", { label: remote.label || t(`autopilot.host.${remote.host}`) })}</AlertDescription></Alert>}
-      {state?.message && !running && <Alert><AlertDescription>{state.message}</AlertDescription></Alert>}
-      {state?.lastError && status === "error" && (
-        <Alert variant="destructive"><XCircle className="h-4 w-4" /><AlertDescription><span className="font-medium">{t("autopilot.lastError")}:</span> {state.lastError.message}</AlertDescription></Alert>
+      <RemoteRunNotice bookId={bookId} control={control} id={remoteNoteId} />
+      {summary?.message && !running && <Alert><AlertDescription>{summary.message}</AlertDescription></Alert>}
+      {summary?.lastError && status === "error" && (
+        <Alert variant="destructive"><XCircle className="h-4 w-4" /><AlertDescription><span className="font-medium">{t("autopilot.lastError")}:</span> {summary.lastError.message}</AlertDescription></Alert>
       )}
 
-      {state?.question && <QuestionCard bookId={bookId} state={state} disabled={busy !== null || running} run={run} />}
+      {summary?.question && <QuestionCard bookId={bookId} question={summary.question} disabled={busy !== null || running} run={run} />}
 
-      {running && (live ? <AutopilotLiveCard preview={live} /> : (
-        <div className="flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin text-primary" />{t("autopilot.current.preparing")}</div>
-      ))}
+      {running && <LiveSection bookId={bookId} />}
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-5">
@@ -178,18 +192,18 @@ export function AutopilotPage() {
           ) : !state ? (
             <SetupCard book={book} state={null} existingChapters={existingChapters} running={false} busy={busy !== null} disabled={noAi || !canRefresh} run={run} />
           ) : (
-            <PlanCard bookId={bookId} state={state} structureChapters={new Set(structure?.chapters.map((chapter) => chapter.slug) ?? [])} awaitingPlan={awaitingPlan} />
+            <PlanCard bookId={bookId} plan={state.plan} reviewNumber={state.review?.chapterNumber} linkedSlugs={linkedChapters} awaitingPlan={awaitingPlan} />
           )}
           <Card title={t("autopilot.activity.title")} icon={<ListChecks className="h-4 w-4 text-primary" />}>
-            <ActivityList loading={!loaded} activities={snapshot?.activities ?? []} currency={state?.stats.currency ?? settings.costCurrency} />
+            <ActivityList loading={!loaded} activities={snapshot?.activities ?? []} currency={summary?.stats.currency ?? settings.costCurrency} />
           </Card>
           <Card title={t("autopilot.dockLive")} icon={<Rocket className="h-4 w-4 text-primary" />}>
             <AutopilotFeed bookId={bookId} limit={120} />
           </Card>
         </div>
         <div className="min-w-0 space-y-5">
-          {state && <ProgressCard state={state} />}
-          {state && <InterventionCard state={state} running={running} controllable={controllable} busy={busy !== null} run={run} />}
+          {summary && <ProgressCard summary={summary} />}
+          {state && <InterventionCard state={state} asking={Boolean(summary?.question)} running={running} controllable={controllable} busy={busy !== null} run={run} />}
           {state && <RulesCard state={state} />}
           <WhereCard book={book} running={running} />
           {state && <SetupCard book={book} state={state} existingChapters={existingChapters} running={running} busy={busy !== null} disabled={false} run={run} />}
@@ -211,10 +225,17 @@ export function AutopilotPage() {
 
 type RunAction = ReturnType<typeof useAutopilotActions>["run"];
 
-function QuestionCard({ bookId, state, disabled, run }: { bookId: string; state: AutopilotState; disabled: boolean; run: RunAction }) {
+/** The step running now with the text it streams. It follows the live preview itself, so the page does not redraw with every update of it. */
+function LiveSection({ bookId }: { bookId: string }) {
+  const { t } = useTranslation();
+  const live = useAutopilotStore((state) => state.live[bookId] ?? null);
+  if (live) return <AutopilotLiveCard preview={live} />;
+  return <div className="flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin text-primary" />{t("autopilot.current.preparing")}</div>;
+}
+
+function QuestionCard({ bookId, question, disabled, run }: { bookId: string; question: DirectorQuestion; disabled: boolean; run: RunAction }) {
   const { t } = useTranslation();
   const [answer, setAnswer] = useState("");
-  const question = state.question!;
   const send = (text: string, accept: boolean) => void run("answer", async (runtime, id) => {
     await runtime.answer(id, { questionId: question.id, answer: text, accept });
     await runtime.start(id);
@@ -241,20 +262,20 @@ function QuestionCard({ bookId, state, disabled, run }: { bookId: string; state:
   );
 }
 
-function ProgressCard({ state }: { state: AutopilotState }) {
+const ProgressCard = memo(function ProgressCard({ summary }: { summary: AutopilotStateSummary }) {
   const { t } = useTranslation();
-  const progress = autopilotProgress(state);
-  const phaseIndex = AUTOPILOT_PHASES.indexOf(state.phase);
+  const { progress, stats: spent } = summary;
+  const phaseIndex = AUTOPILOT_PHASES.indexOf(summary.phase);
   const stats: Array<[string, string]> = [
     [t("autopilot.progress.chapters"), `${progress.chaptersDone}/${progress.chapters}`],
     [t("autopilot.progress.scenes"), `${progress.scenesWritten}/${progress.scenes}`],
     [t("autopilot.progress.words"), formatCount(progress.words)],
-    [t("autopilot.progress.calls"), formatCount(state.stats.aiCalls)],
-    [t("autopilot.progress.tokens"), formatCount(state.stats.inputTokens + state.stats.outputTokens)],
-    [t("autopilot.progress.cost"), formatCost(state.stats.cost, state.stats.currency)],
+    [t("autopilot.progress.calls"), formatCount(spent.aiCalls)],
+    [t("autopilot.progress.tokens"), formatCount(spent.inputTokens + spent.outputTokens)],
+    [t("autopilot.progress.cost"), formatCost(spent.cost, spent.currency)],
   ];
   return (
-    <Card title={t(`autopilot.phase.${state.phase}`)} icon={<Gauge className="h-4 w-4 text-primary" />}>
+    <Card title={t(`autopilot.phase.${summary.phase}`)} icon={<Gauge className="h-4 w-4 text-primary" />}>
       <ol className="flex flex-wrap gap-1">
         {AUTOPILOT_PHASES.map((phase, index) => (
           <li key={phase} className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", index < phaseIndex ? "bg-primary/15 text-primary" : index === phaseIndex ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>
@@ -272,20 +293,17 @@ function ProgressCard({ state }: { state: AutopilotState }) {
       </dl>
     </Card>
   );
-}
+});
 
-function PlanCard({ bookId, state, structureChapters, awaitingPlan }: { bookId: string; state: AutopilotState; structureChapters: Set<string>; awaitingPlan: boolean }) {
+export const PlanCard = memo(function PlanCard({ bookId, plan, reviewNumber, linkedSlugs, awaitingPlan }: { bookId: string; plan: AutopilotPlan | null; reviewNumber: number | undefined; linkedSlugs: ReadonlySet<string>; awaitingPlan: boolean }) {
   const { t } = useTranslation();
-  const plan = state.plan;
   return (
     <Card title={t("autopilot.plan.title")} icon={<BookOpenCheck className="h-4 w-4 text-primary" />}>
       {awaitingPlan && <Alert><AlertDescription>{t("autopilot.plan.awaiting")}</AlertDescription></Alert>}
       {!plan?.chapters.length ? (
         <p className="text-sm text-muted-foreground">{t("autopilot.plan.empty")}</p>
       ) : (
-        <ol className="space-y-1.5">
-          {plan.chapters.map((chapter) => <PlanChapter key={`${chapter.number}:${chapter.slug}`} bookId={bookId} chapter={chapter} linked={structureChapters.has(chapter.slug)} current={state.review?.chapterNumber === chapter.number} />)}
-        </ol>
+        <PlanChapters key={bookId} bookId={bookId} chapters={plan.chapters} linkedSlugs={linkedSlugs} reviewNumber={reviewNumber} />
       )}
       {plan && plan.readerReactions.length > 0 && (
         <details className="rounded-lg border p-2 text-sm">
@@ -299,40 +317,7 @@ function PlanCard({ bookId, state, structureChapters, awaitingPlan }: { bookId: 
       )}
     </Card>
   );
-}
-
-function PlanChapter({ bookId, chapter, linked, current }: { bookId: string; chapter: PlannedChapter; linked: boolean; current: boolean }) {
-  const { t } = useTranslation();
-  const statusClass = chapter.status === "done" ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : chapter.status === "review" ? "bg-amber-500/15 text-amber-700 dark:text-amber-300" : chapter.status === "writing" ? "bg-sky-500/15 text-sky-700 dark:text-sky-300" : "bg-muted text-muted-foreground";
-  return (
-    <li>
-      <details className={cn("rounded-lg border", current && "border-primary/50")}>
-        <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 px-3 py-2 [&::-webkit-details-marker]:hidden">
-          <span className="w-7 shrink-0 text-xs tabular-nums text-muted-foreground">{chapter.number}.</span>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{chapter.title}</span>
-          {chapter.score !== undefined && <span className="text-[11px] text-muted-foreground">{t("autopilot.plan.score", { score: chapter.score })}</span>}
-          <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", statusClass)}>{chapter.imported ? t("autopilot.plan.imported") : t(`autopilot.plan.status.${chapter.status}`)}</span>
-        </summary>
-        <div className="space-y-2 border-t px-3 py-2 text-sm">
-          {chapter.summary && <p className="text-muted-foreground">{chapter.summary}</p>}
-          {chapter.scenes.length > 0 && (
-            <ol className="space-y-1 text-xs">
-              {chapter.scenes.map((scene) => (
-                <li key={scene.number} className="flex gap-2">
-                  <span className="w-5 shrink-0 tabular-nums text-muted-foreground">{scene.number}.</span>
-                  <span className="min-w-0 flex-1"><span className="font-medium">{scene.title}</span>{scene.summary || scene.goal ? <span className="text-muted-foreground"> — {scene.summary || scene.goal}</span> : null}</span>
-                  {scene.words ? <span className="shrink-0 tabular-nums text-muted-foreground">{formatCount(scene.words)}</span> : null}
-                  {scene.status !== "planned" ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" /> : null}
-                </li>
-              ))}
-            </ol>
-          )}
-          {linked && <Button asChild size="sm" variant="outline"><Link to={`/app/books/${encodeURIComponent(bookId)}/chapters/${encodeURIComponent(chapter.slug)}`}>{t("common.open")}</Link></Button>}
-        </div>
-      </details>
-    </li>
-  );
-}
+});
 
 function ActivityIcon({ activity }: { activity: AutopilotActivity }) {
   if (activity.status === "running") return <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />;
@@ -350,7 +335,7 @@ function ActivityList({ loading, activities, currency }: { loading: boolean; act
   return (
     <div className="space-y-1.5">
       {ordered.slice(0, limit).map((activity) => <ActivityRow key={activity.id} activity={activity} currency={currency} />)}
-      {ordered.length > limit && <Button variant="ghost" size="sm" className="w-full" onClick={() => setLimit((value) => value + 40)}>…</Button>}
+      {ordered.length > limit && <Button variant="ghost" size="sm" className="w-full" onClick={() => setLimit((value) => value + 40)}>{t("autopilot.activity.more")}</Button>}
     </div>
   );
 }
@@ -390,7 +375,7 @@ function ActivityRow({ activity, currency }: { activity: AutopilotActivity; curr
   );
 }
 
-function InterventionCard({ state, running, controllable, busy, run }: { state: AutopilotState; running: boolean; controllable: boolean; busy: boolean; run: RunAction }) {
+function InterventionCard({ state, asking, running, controllable, busy, run }: { state: AutopilotState; asking: boolean; running: boolean; controllable: boolean; busy: boolean; run: RunAction }) {
   const { t } = useTranslation();
   const [text, setText] = useState("");
   const [scope, setScope] = useState<InterventionScope>("next_step");
@@ -424,7 +409,7 @@ function InterventionCard({ state, running, controllable, busy, run }: { state: 
         ) : (
           <>
             <Button size="sm" variant="outline" disabled={blocked} onClick={() => void submit("record")}>{t("autopilot.intervention.record")}</Button>
-            {!state.question && <Button size="sm" disabled={blocked} onClick={() => void submit("continue")}><Play className="h-3.5 w-3.5" />{t("autopilot.intervention.recordAndContinue")}</Button>}
+            {!asking && <Button size="sm" disabled={blocked} onClick={() => void submit("continue")}><Play className="h-3.5 w-3.5" />{t("autopilot.intervention.recordAndContinue")}</Button>}
           </>
         )}
       </div>
@@ -454,6 +439,24 @@ function RulesCard({ state }: { state: AutopilotState }) {
       <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground">{t("autopilot.rules.directorNotes")}</p>{list(state.directorNotes)}</div>
     </Card>
   );
+}
+
+/** The toast that fits how a sync ended: each outcome reads differently, and only a real success reads as one. */
+function syncToast(t: TFunction, outcome: SyncOutcome): Parameters<ReturnType<typeof useToast>["toast"]>[0] {
+  switch (outcome.kind) {
+    case "synced": return { title: t("autopilot.where.synced") };
+    case "up-to-date": return { title: t("autopilot.where.upToDate") };
+    case "published": return { title: t("autopilot.where.published") };
+    case "local-changes": return { title: t("autopilot.where.localChanges"), variant: "destructive" };
+    case "conflicts": return { title: t("autopilot.where.conflicts", { count: outcome.conflicts.length }), variant: "destructive" };
+    default: return { title: t("autopilot.errors.action"), description: outcome.message, variant: "destructive" };
+  }
+}
+
+function SyncIcon({ kind }: { kind: SyncOutcome["kind"] }) {
+  if (kind === "error") return <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />;
+  if (kind === "conflicts" || kind === "local-changes") return <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />;
+  return <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />;
 }
 
 export function WhereCard({ book, running }: { book: BookEntry; running: boolean }) {
@@ -488,7 +491,24 @@ export function WhereCard({ book, running }: { book: BookEntry; running: boolean
     await setHost("browser");
     toast({ title: t("autopilot.where.movedBack") });
   });
-  const syncText = syncStatusText(t, view.sync);
+  // The way out when the server cannot be reached: the book comes back as it is here, without what the server wrote since the last sync.
+  const moveBackWithoutDownloading = () => {
+    if (!window.confirm(t("autopilot.where.discardConfirm"))) return;
+    void run("move", async (runtime, id) => {
+      await runtime.moveToBrowser(id, { discardServerWork: true });
+      await setHost("browser");
+      toast({ title: t("autopilot.where.movedBack") });
+    });
+  };
+  const statusRef = useRef<HTMLDivElement>(null);
+  const settle = (choices: Record<string, "local" | "remote">) => void run("sync", async (runtime, id) => {
+    toast(syncToast(t, await runtime.resolveSyncConflicts(id, choices)));
+  }).then(() => window.setTimeout(() => {
+    // The file that was settled leaves the list with its buttons: the focus goes to where the result is announced instead of being lost.
+    if (!document.activeElement || document.activeElement === document.body) statusRef.current?.focus();
+  }, 0));
+  const sync = view.sync;
+  const syncText = syncStatusText(t, sync);
 
   return (
     <Card title={t("autopilot.where.title")} icon={<Server className="h-4 w-4 text-primary" />}>
@@ -533,9 +553,8 @@ export function WhereCard({ book, running }: { book: BookEntry; running: boolean
           ) : serverReady ? (
             <p className="text-xs text-amber-700 dark:text-amber-300">{t("autopilot.where.serverBookMissing")}</p>
           ) : null}
-          {syncText && <p className={cn("text-xs", view.sync?.ok ? "text-muted-foreground" : "text-amber-700 dark:text-amber-300")}>{syncText}{view.sync ? ` · ${t("autopilot.where.lastSync", { time: formatDateTime(view.sync.at) })}` : ""}</p>}
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" disabled={busy !== null || !serverReady} onClick={() => void run("sync", (runtime, id) => runtime.syncWithServer(id, { push: true }), t("autopilot.where.synced"))}>
+            <Button size="sm" variant="outline" disabled={busy !== null || !serverReady} onClick={() => void run("sync", async (runtime, id) => { toast(syncToast(t, await runtime.syncWithServer(id, { push: true }))); })}>
               {busy === "sync" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}{t("autopilot.where.sync")}
             </Button>
             {choice === "browser" && (
@@ -543,9 +562,23 @@ export function WhereCard({ book, running }: { book: BookEntry; running: boolean
                 {busy === "move" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Laptop className="h-3.5 w-3.5" />}{t("autopilot.where.moveBack")}
               </Button>
             )}
+            {choice === "browser" && !serverReady && (
+              <Button size="sm" variant="ghost" disabled={busy !== null || running} onClick={moveBackWithoutDownloading}>{t("autopilot.where.discardServerWork")}</Button>
+            )}
           </div>
         </div>
       )}
+      {sync && (
+        <div ref={statusRef} role="status" tabIndex={-1} className="space-y-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <p className={cn("flex items-start gap-1.5 text-xs", sync.ok ? "text-muted-foreground" : "text-amber-700 dark:text-amber-300")}>
+            <SyncIcon kind={sync.kind} />
+            <span>{syncText} · {t("autopilot.where.lastSync", { time: formatDateTime(sync.at) })}</span>
+          </p>
+          {sync.firstSync && <p className="text-xs text-muted-foreground">{t("autopilot.where.firstSync")}</p>}
+          {sync.baseSaved === false && sync.kind !== "error" && <p className="text-xs text-amber-700 dark:text-amber-300">{t("autopilot.errors.baseSaveFailed")}</p>}
+        </div>
+      )}
+      {sync && <SyncConflicts conflicts={sync.conflictDetails} disabled={busy !== null} onResolve={settle} />}
     </Card>
   );
 }
@@ -588,7 +621,7 @@ function NumberField({ id, label, value, min, max, step = 1, disabled, onChange 
   );
 }
 
-function SetupCard({ book, state, existingChapters, running, busy, disabled, run }: { book: BookEntry; state: AutopilotState | null; existingChapters: number; running: boolean; busy: boolean; disabled: boolean; run: RunAction }) {
+export function SetupCard({ book, state, existingChapters, running, busy, disabled, run }: { book: BookEntry; state: AutopilotState | null; existingChapters: number; running: boolean; busy: boolean; disabled: boolean; run: RunAction }) {
   const { t } = useTranslation();
   const initial = useMemo<SetupForm>(() => state
     ? { brief: state.brief, options: state.options }
@@ -626,7 +659,7 @@ function SetupCard({ book, state, existingChapters, running, busy, disabled, run
         <AutoTextarea id="autopilot-synopsis" value={form.brief.synopsis} onChange={(event) => brief({ synopsis: event.target.value })} minRows={2} placeholder={t("autopilot.setup.synopsisPlaceholder")} className="text-sm" disabled={locked} />
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <NumberField id="autopilot-chapters" label={t("autopilot.setup.chapters")} value={form.brief.targetChapters} min={1} max={200} disabled={locked} onChange={(value) => brief({ targetChapters: value })} />
+        <NumberField id="autopilot-chapters" label={t("autopilot.setup.chapters")} value={form.brief.targetChapters} min={1} max={MAX_CHAPTERS} disabled={locked} onChange={(value) => brief({ targetChapters: value })} />
         <NumberField id="autopilot-scenes" label={t("autopilot.setup.scenes")} value={form.brief.scenesPerChapter} min={1} max={20} disabled={locked} onChange={(value) => brief({ scenesPerChapter: value })} />
         <NumberField id="autopilot-words" label={t("autopilot.setup.words")} value={form.brief.wordsPerScene} min={200} max={8000} step={100} disabled={locked} onChange={(value) => brief({ wordsPerScene: value })} />
       </div>
@@ -644,7 +677,7 @@ function SetupCard({ book, state, existingChapters, running, busy, disabled, run
         ))}
         <div className="grid grid-cols-2 gap-3 pt-1 sm:grid-cols-3">
           <NumberField id="autopilot-readers" label={t("autopilot.setup.maxReaders")} value={form.options.maxReaders} min={1} max={20} disabled={locked} onChange={(value) => options({ maxReaders: value })} />
-          <NumberField id="autopilot-per-run" label={t("autopilot.setup.chaptersPerRun")} value={form.options.chaptersPerRun} min={0} max={200} disabled={locked} onChange={(value) => options({ chaptersPerRun: value })} />
+          <NumberField id="autopilot-per-run" label={t("autopilot.setup.chaptersPerRun")} value={form.options.chaptersPerRun} min={0} max={MAX_CHAPTERS} disabled={locked} onChange={(value) => options({ chaptersPerRun: value })} />
           <NumberField id="autopilot-budget" label={t("autopilot.setup.budget")} value={form.options.budgetLimit} min={0} max={1_000_000} step={0.5} disabled={locked} onChange={(value) => options({ budgetLimit: value })} />
         </div>
         <p className="text-xs text-muted-foreground">{t("autopilot.setup.budgetHint")} {t("autopilot.modelHint")}</p>

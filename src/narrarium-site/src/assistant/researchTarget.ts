@@ -1,7 +1,9 @@
+import { matchKey } from "../lib/matchText.ts";
+
 export interface ResearchTargetCandidate { path: string; slug: string; title: string; }
 export type ResearchTargetResolution = { status: "resolved"; file: ResearchTargetCandidate } | { status: "missing" | "ambiguous"; matches: ResearchTargetCandidate[] };
 
-const normalize = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9/.-]+/g, " ").trim();
+const normalize = (value: string) => matchKey(value, true);
 
 export function isCreateFromResearchPrompt(prompt: string): boolean {
   const entity = /\b(?:character|personaggio|location|luogo|faction|fazione|item|oggetto|secret|segreto|timeline|event|evento)\b/i.test(prompt);
@@ -10,7 +12,7 @@ export function isCreateFromResearchPrompt(prompt: string): boolean {
 
 export function resolveResearchTarget(prompt: string, files: ResearchTargetCandidate[], currentSlug?: string): ResearchTargetResolution {
   const lower = normalize(prompt);
-  const explicitPath = /research\/([a-z0-9._/-]+\.md)/.exec(lower)?.[0];
+  const explicitPath = /research\/([\p{L}\p{M}\p{N}._/-]+\.md)/u.exec(lower)?.[0];
   if (explicitPath) {
     const found = files.filter((file) => normalize(file.path) === explicitPath);
     return found.length === 1 ? { status: "resolved", file: found[0] } : { status: "missing", matches: [] };
@@ -19,12 +21,13 @@ export function resolveResearchTarget(prompt: string, files: ResearchTargetCandi
     const current = files.filter((file) => file.slug === currentSlug);
     return current.length === 1 ? { status: "resolved", file: current[0] } : { status: "missing", matches: [] };
   }
-  const exact = files.filter((file) => lower.includes(normalize(file.slug)) || lower.includes(normalize(file.title)));
+  const exact = files.filter((file) => [normalize(file.slug), normalize(file.title)].some((needle) => needle && lower.includes(needle)));
   if (exact.length === 1) return { status: "resolved", file: exact[0] };
   if (exact.length > 1) return { status: "ambiguous", matches: exact };
   const generic = new Set(["create", "crea", "from", "dalla", "dalla", "research", "ricerca", "character", "personaggio", "location", "luogo", "faction", "fazione", "item", "oggetto", "secret", "segreto", "timeline", "event", "evento"]);
-  const terms = lower.split(/[^a-z0-9]+/).filter((term) => term.length >= 4 && !generic.has(term));
-  const partial = files.filter((file) => terms.some((term) => normalize(`${file.slug} ${file.title}`).split(/[^a-z0-9]+/).includes(term)));
+  const words = (text: string) => text.split(/[^\p{L}\p{M}\p{N}]+/u);
+  const terms = words(lower).filter((term) => term.length >= 4 && !generic.has(term));
+  const partial = files.filter((file) => terms.some((term) => words(normalize(`${file.slug} ${file.title}`)).includes(term)));
   if (partial.length > 1) return { status: "ambiguous", matches: partial };
   return { status: "missing", matches: [] };
 }

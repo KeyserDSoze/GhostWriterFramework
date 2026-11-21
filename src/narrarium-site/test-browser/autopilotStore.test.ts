@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from "vitest";
 import type { AutopilotActivity, AutopilotEvent, AutopilotStateSummary } from "narrarium-engine";
-import { latestFeedEntry, useAutopilotStore } from "@/autopilot/store";
+import { latestFeedEntry, useAutopilotStore, type BookSyncStatus } from "@/autopilot/store";
 import { autopilotSummaryLine, formatDuration, presentFeedEvent, syncStatusText } from "@/autopilot/format";
 
 const at = "2026-11-21T10:00:00.000Z";
@@ -54,8 +54,10 @@ test("runner messages use their codes for the UI language, task results keep the
   const failed = presentFeedEvent(t, event({ type: "task-finished", activity: { ...activity, status: "failed", error: "HTTP 401" } }, 4));
   expect(failed).toMatchObject({ tone: "critical", detail: "HTTP 401" });
   expect(presentFeedEvent(t, event({ type: "task-started", activity }, 5))).toBeNull();
-  expect(syncStatusText(t, { at, ok: false, message: "conflicts:2" })).toBe("t:autopilot.where.conflicts");
-  expect(syncStatusText(t, { at, ok: false, message: "HTTP 500" })).toBe("HTTP 500");
+  const sync: BookSyncStatus = { at, ok: false, kind: "conflicts", message: "", conflicts: ["a.md", "b.md"], conflictDetails: [], firstSync: false, uploaded: 0, downloaded: 0, baseSaved: true };
+  expect(syncStatusText(t, sync)).toBe("t:autopilot.where.conflicts");
+  expect(syncStatusText(t, { ...sync, kind: "error", conflicts: [], message: "HTTP 500" })).toBe("HTTP 500");
+  expect(syncStatusText(t, { ...sync, ok: true, kind: "synced", conflicts: [] })).toBe("t:autopilot.where.synced");
   expect(syncStatusText(t, null)).toBeNull();
 });
 

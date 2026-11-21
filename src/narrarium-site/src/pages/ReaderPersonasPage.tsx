@@ -17,7 +17,7 @@ import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAle
 import { resolveBookToken } from "@/types/settings";
 import { deleteReaderPersonaOverride, findOrphanReaderEvaluationPaths, loadReaderPersonas, saveReaderPersona } from "@/narrarium/readerEvaluations";
 import { emptyReaderPersona, type ReaderPersonaProfile } from "@/narrarium/readerPersona";
-import { slugify } from "@/narrarium/canon";
+import { slugifyAny } from "@/narrarium/canon";
 import { findOrphanAuditPaths } from "@/narrarium/auditPaths";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { resolveUnsavedChanges } from "@/hooks/resolveUnsavedChanges";
@@ -80,7 +80,7 @@ export function ReaderPersonasPage() {
     if (!book || !token) return false;
     setBusy(true);
     try {
-      const slug = profile.slug || slugify(profile.name) || `reader-${crypto.randomUUID().slice(0, 8)}`;
+      const slug = profile.slug || slugifyAny(profile.name, "reader", true);
       const saved = { ...profile, slug };
       await saveReaderPersona({ token, book, branch, profile: saved });
       if (saved.id === selectedId) {
@@ -178,7 +178,7 @@ function ReaderPersonaEditor({ profile, onChange, onSave, onDuplicate, onReset, 
   const { t } = useTranslation();
   const patch = (next: Partial<ReaderPersonaProfile>) => onChange({ ...profile, ...next });
   return <div className="space-y-4 rounded-2xl border bg-card p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-xl font-semibold">{profile.name || t("readerPersonas.untitled")}</h2><p className="font-mono text-xs text-muted-foreground">{profile.id}</p></div><div className="flex gap-1"><Button size="sm" variant="outline" onClick={onDuplicate}><Copy className="mr-1 h-4 w-4" />{t("readerPersonas.duplicate")}</Button>{profile.builtin ? <Button size="sm" variant="outline" onClick={onReset}><RotateCcw className="mr-1 h-4 w-4" />{t("readerPersonas.reset")}</Button> : <Button size="icon" variant="ghost" onClick={onDelete} aria-label={`${t("common.delete")}: ${profile.name}`}><Trash2 className="h-4 w-4 text-destructive" /></Button>}</div></div>
-    <Field label={t("readerPersonas.name")} value={profile.name} onChange={(value) => patch({ name: value, slug: profile.path ? profile.slug : slugify(value) })} />
+    <Field label={t("readerPersonas.name")} value={profile.name} onChange={(value) => patch({ name: value, slug: profile.path ? profile.slug : slugifyAny(value, "reader", true) })} />
     <Field label={t("readerPersonas.descriptionLabel")} value={profile.description} onChange={(value) => patch({ description: value })} multiline />
     <Field label={t("readerPersonas.profile")} value={profile.profile} onChange={(value) => patch({ profile: value })} multiline />
     <div className="grid gap-3 sm:grid-cols-3"><Field label={t("readerPersonas.language")} value={profile.language} onChange={(value) => patch({ language: value })} /><Field label={t("readerPersonas.experience")} value={profile.experienceLevel} onChange={(value) => patch({ experienceLevel: value })} /><Field label={t("readerPersonas.audienceAge")} value={profile.audienceAge} onChange={(value) => patch({ audienceAge: value })} /></div>
