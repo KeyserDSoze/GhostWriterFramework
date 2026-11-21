@@ -62,6 +62,10 @@ jobs:
           if [ "$code" -ne 0 ]; then
             # The first failures as one annotation, readable without opening the log.
             summary=$(grep -E "^not ok|^# Subtest|^  error:|expected:|actual:|operator:" "$RUNNER_TEMP/server-test.log" | grep -A6 "^not ok" | head -60 | cut -c1-240 | paste -sd '|' -)
+            # Node 24 reports in the "spec" format (✖ lines) where Node 22 reports TAP when it is not a terminal.
+            if [ -z "$summary" ]; then
+              summary=$(grep -E "^\s*✖|AssertionError|expected:|actual:|Error:" "$RUNNER_TEMP/server-test.log" | head -40 | cut -c1-240 | paste -sd '|' -)
+            fi
             echo "::error title=Server tests failed::${summary}"
           fi
           exit $code

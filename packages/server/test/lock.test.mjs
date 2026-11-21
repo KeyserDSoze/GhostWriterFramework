@@ -157,6 +157,53 @@ test("R11: an empty or damaged lock file is waited for while it is fresh (it may
   }
 });
 
+test("R11: taking a second lock in a process asks nothing more about the process (it does not change, and on Windows and macOS asking starts a program)", async () => {
+  const roots = [await temporary(), await temporary()];
+  const source = `
+    import fsp from "node:fs/promises";
+    import childProcess from "node:child_process";
+    import { syncBuiltinESMExports } from "node:module";
+    import { lockDataRoot } from ${JSON.stringify(testing)};
+    let asks = 0;
+    const readFile = fsp.readFile;
+    fsp.readFile = async (file, ...rest) => {
+      if (String(file) === "/proc/" + process.pid + "/stat") asks += 1;
+      return readFile(file, ...rest);
+    };
+    const execFile = childProcess.execFile;
+    childProcess.execFile = (command, args, ...rest) => {
+      if ([command, ...(args ?? [])].join(" ").includes(String(process.pid))) asks += 1;
+      return execFile(command, args, ...rest);
+    };
+    syncBuiltinESMExports();
+    const first = await lockDataRoot(${JSON.stringify(roots[0])}, () => undefined, { method: "pidfile", checkMs: 1000 });
+    const afterFirst = asks;
+    const second = await lockDataRoot(${JSON.stringify(roots[1])}, () => undefined, { method: "pidfile", checkMs: 1000 });
+    process.stdout.write("ASKS " + JSON.stringify({ afterFirst, afterSecond: asks }) + "\\n");
+    await first();
+    await second();
+  `;
+  try {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", source], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    await new Promise((resolve) => child.once("exit", resolve));
+    const asks = /ASKS (.*)\n/.exec(stdout);
+    assert.ok(asks, `${stdout}\n${stderr}`);
+    const { afterFirst, afterSecond } = JSON.parse(asks[1]);
+    assert.ok(afterFirst >= 1, "the first lock asked who this process is (to write it into the lock)");
+    assert.equal(afterSecond, afterFirst, "and the second did not ask again");
+  } finally {
+    await remove(...roots);
+  }
+});
+
 test("R3: a pid-file lock that is deleted or replaced under its holder is reported as lost, and a normal release is not", async () => {
   const root = await temporary();
   try {

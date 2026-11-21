@@ -1,6 +1,6 @@
 /** Test entry (bundled to dist/testing.mjs, never published). */
 export { startNarrariumServer, errorStatus, type NarrariumServerOptions, type RunningNarrariumServer } from "./server.js";
-export { DataDirectory, DEFAULT_ORIGINS, loadServerConfig, normalizeOrigin } from "./config.js";
+export { DataDirectory, DEFAULT_ORIGINS, loadServerConfig, normalizeOrigin, publicLabel } from "./config.js";
 export { Auth } from "./auth.js";
 export { Vault } from "./vault.js";
 export { FileBookStore, KeyedMutex } from "./fs-store.js";

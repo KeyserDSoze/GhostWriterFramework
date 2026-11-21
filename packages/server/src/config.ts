@@ -113,11 +113,14 @@ const DEFAULT_LABEL = "narrarium-server";
 
 /**
  * The label for anybody who is not the owner: `GET /info`, and the autopilot state that is committed (and pushed to GitHub). A
- * default label written by an earlier version carries the computer's name, which is not for them; a label the owner chose is
- * shown as it is.
+ * default label written by an earlier version carries the computer's name (`narrarium-server@name`), which is not for them; a label
+ * the owner chose is shown as it is. Whatever follows the `@` is taken for that name: the computer may have been renamed since, and
+ * a name of more than 63 characters (a cloud runner's) was cut to the 80 characters of a label when the configuration was read.
  */
 export function publicLabel(label: string, hostname: string = os.hostname()): string {
-  return label === `${DEFAULT_LABEL}@${hostname}` ? DEFAULT_LABEL : label;
+  const legacy = `${DEFAULT_LABEL}@`;
+  if (!label.startsWith(legacy)) return label;
+  return /^\S+$/.test(label) || `${legacy}${hostname}`.startsWith(label) ? DEFAULT_LABEL : label;
 }
 
 export function configPath(root: string): string {

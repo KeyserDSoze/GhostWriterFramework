@@ -26,6 +26,20 @@ function capture(command: string, args: readonly string[], timeoutMs: number): P
   });
 }
 
+/** What the main thread of every process is called by Node 24 and later: `comm` is the name of the thread, and says nothing of the program. */
+const THREAD_NAMES = new Set(["MainThread"]);
+
+/**
+ * The program a Linux process runs. `comm` is the name the program was started under, which is what is wanted, unless it is the name
+ * of a thread (see `THREAD_NAMES`): then the name it was started with (the first word of its command line, so that a link to node
+ * called `cloudflared` is `cloudflared`), and last the program file it runs.
+ */
+export function programName(parts: { comm: string; argv0?: string; exe?: string }): string {
+  const base = (value: string | undefined) => path.basename((value ?? "").replace(/ \(deleted\)$/, "")).trim();
+  if (parts.comm && !THREAD_NAMES.has(parts.comm)) return parts.comm;
+  return base(parts.argv0) || base(parts.exe) || parts.comm;
+}
+
 async function linuxIdentity(pid: number): Promise<ProcessIdentity | undefined> {
   let stat: string;
   try {
@@ -43,8 +57,10 @@ async function linuxIdentity(pid: number): Promise<ProcessIdentity | undefined> 
   // A zombie has ended: it only waits for its parent to collect it.
   if (!ticks || state === "Z" || state === "X") return undefined;
   const boot = await fs.readFile("/proc/sys/kernel/random/boot_id", "utf8").then((text) => text.trim(), () => "");
-  const command = await fs.readFile(`/proc/${pid}/cmdline`).then((bytes) => bytes.toString("utf8").split("\0").join(" ").trim(), () => "");
-  return { start: `${boot}:${ticks}`, name: stat.slice(open + 1, close), command };
+  const words = await fs.readFile(`/proc/${pid}/cmdline`).then((bytes) => bytes.toString("utf8").split("\0"), () => [] as string[]);
+  const comm = stat.slice(open + 1, close);
+  const exe = THREAD_NAMES.has(comm) ? await fs.readlink(`/proc/${pid}/exe`).catch(() => "") : "";
+  return { start: `${boot}:${ticks}`, name: programName({ comm, argv0: words[0], exe }), command: words.join(" ").trim() };
 }
 
 async function psIdentity(pid: number): Promise<ProcessIdentity | undefined> {

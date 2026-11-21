@@ -218,6 +218,19 @@ async function createLock(lock: string, record: Required<Pick<LockRecord, "pid" 
   }
 }
 
+/** When this process started. It never changes, and finding it out starts a program on Windows (PowerShell) and macOS (`ps`): it is asked once, and asked again only after a failure. */
+let ownStart: Promise<string | undefined> | undefined;
+function ownProcessStart(): Promise<string | undefined> {
+  if (!ownStart) {
+    const asked: Promise<string | undefined> = processIdentity(process.pid).then((identity) => identity?.start, () => undefined);
+    ownStart = asked;
+    void asked.then((start) => {
+      if (start === undefined && ownStart === asked) ownStart = undefined;
+    });
+  }
+  return ownStart;
+}
+
 /**
  * Lock file with the owner's pid and the time that process started, for systems that have no kernel lock to use. The lock is created
  * whole (never an empty file another server could take for a stale one), a lock whose holder is gone or is another program with the
@@ -228,7 +241,7 @@ async function pidLock(root: string, onLost: () => void, options: LockOptions): 
   const lock = path.join(root, "server.lock");
   const guard = `${lock}.takeover`;
   const token = randomUUID();
-  const start = (await processIdentity(process.pid).catch(() => undefined))?.start;
+  const start = await ownProcessStart();
   const mine = { pid: process.pid, token, ...(start ? { start } : {}) };
   const damagedAfterMs = options.damagedAfterMs ?? 10_000;
   const alreadyUsed = (holder: LockRecord) => new Error(`Another narrarium-server (pid ${holder.pid}) is already using ${root}.`);

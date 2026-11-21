@@ -59,6 +59,26 @@ test("C23: a label the owner chose is shown as chosen, also when it is not the d
   }, `${hostname} (my studio)`);
 });
 
+test("C23: the default label of an earlier version is neutral whatever the name of the computer was: long, or since changed", async () => {
+  // A configuration keeps a label to 80 characters when it reads it, so the default of a computer with a long name (a macOS runner's, say) is cut.
+  const longName = "sat12-bq158-e0183361-2995-475f-b220-b2a6033bbad8-C22FD16FD7B4.local";
+  const cut = `narrarium-server@${longName}`.slice(0, 80);
+  assert.equal(cut.length, 80);
+  await withLegacyServer(async (server) => {
+    const { label } = await (await fetch(`${server.url}/api/v1/info`)).json();
+    assert.equal(label, "narrarium-server", "the cut label is neutral too");
+  }, `narrarium-server@${longName}`);
+  await withLegacyServer(async (server) => {
+    const { label } = await (await fetch(`${server.url}/api/v1/info`)).json();
+    assert.equal(label, "narrarium-server", "the computer was renamed since: the old name is still not for anybody");
+  }, "narrarium-server@a-computer-that-is-not-this-one");
+  assert.equal(testing.publicLabel(cut, longName), "narrarium-server");
+  assert.equal(testing.publicLabel("narrarium-server", "anything"), "narrarium-server");
+  for (const chosen of ["Studio server", `${longName} (my studio)`, "narrarium-server (office)", "My narrarium-server@home"]) {
+    assert.equal(testing.publicLabel(chosen, longName), chosen, `${chosen} is the owner's own`);
+  }
+});
+
 test("C23: a new configuration starts with a label that does not contain the computer's name", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "narrarium-label-new-"));
   try {

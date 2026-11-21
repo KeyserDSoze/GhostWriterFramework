@@ -267,6 +267,8 @@ export class FileBookStore implements BookStore {
     const created: string[] = [];
     // Folders that gained or lost an entry: each is flushed once, after the files in it are in place.
     const touched = new Set<string>();
+    // Folders known to exist by now: a commit of thousands of files asks the file system about each folder once.
+    const present = new Set<string>();
     try {
       for (const target of targets) {
         reached += 1;
@@ -276,12 +278,12 @@ export class FileBookStore implements BookStore {
           await rm(target.location.full, { force: true });
           touched.add(folder);
         } else {
-          const first = await mkdir(folder, { recursive: true });
-          if (first) {
-            created.push(first);
+          const { made, parent } = await this.makeFolder(folder, present);
+          if (parent !== undefined) {
+            created.push(made[0]);
             // A folder that was just made is an entry of its parent, and so is every one below it on the way to the file.
-            touched.add(path.dirname(first));
-            for (let directory = folder; directory !== path.dirname(first); directory = path.dirname(directory)) touched.add(directory);
+            touched.add(parent);
+            for (const directory of made) touched.add(directory);
           }
           await this.replaceFile(target.location.full, target.content);
           touched.add(folder);
@@ -294,6 +296,33 @@ export class FileBookStore implements BookStore {
       await this.putBack(targets.slice(0, reached), created);
       throw error;
     }
+  }
+
+  /**
+   * Make `folder` and whatever is missing above it. `made` is what it created, outermost first, and `parent` the folder that held the
+   * outermost one: each of them gained an entry (there is nothing to report when the folder was there already). This is worked out from
+   * `folder` itself, not from the first folder `mkdir` says it made: on Windows that answer is not spelt the way `folder` is, and a
+   * loop that waited for the two to meet never ended.
+   */
+  private async makeFolder(folder: string, present: Set<string>): Promise<{ made: string[]; parent?: string }> {
+    if (present.has(folder)) return { made: [] };
+    const missing: string[] = [];
+    let current = folder;
+    while (!present.has(current)) {
+      const found = await lstat(current).then(() => true, (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      });
+      if (found) break;
+      missing.unshift(current);
+      const above = path.dirname(current);
+      if (above === current) break;
+      current = above;
+    }
+    await mkdir(folder, { recursive: true });
+    present.add(folder);
+    for (const directory of missing) present.add(directory);
+    return missing.length ? { made: missing, parent: path.dirname(missing[0]) } : { made: [] };
   }
 
   /** Write through a private temporary file in the same folder, flush it, then rename: readers never see a partial file, and a power cut never leaves an empty one. */

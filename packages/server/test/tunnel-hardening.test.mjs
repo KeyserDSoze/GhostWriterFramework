@@ -451,7 +451,10 @@ test("R10: when the connector exits by itself its process record goes", async ()
     fake.running[0].finish(1);
     await until(() => manager.status().process === "failed", 2_000);
     await until(async () => stat(path.join(root, "private", "cloudflared-process.json")).then(() => false, () => true), 2_000);
-    assert.equal(JSON.parse(await readFile(path.join(root, "private", "cloudflare-tunnel.json"), "utf8")).pid, undefined, "and the state file names no process");
+    // The record goes first and the state is written right after it: a slow disk (Windows) lets a reader in between.
+    const state = path.join(root, "private", "cloudflare-tunnel.json");
+    const namesNoProcess = async () => readFile(state, "utf8").then((text) => JSON.parse(text).pid === undefined, () => false);
+    await until(namesNoProcess, 5_000).catch(() => assert.fail("and the state file names no process"));
   });
 });
 
