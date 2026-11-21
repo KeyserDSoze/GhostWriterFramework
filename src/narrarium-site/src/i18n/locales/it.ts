@@ -360,7 +360,9 @@ const it = {
       "chat-resume": "Resume chat",
       "reader-evaluation": "Valutazione lettore",
       "reader-evaluation-summary": "Sintesi valutazioni lettori",
-      "rewrite-from-reader-feedback": "Riscrittura dal feedback lettori"
+      "rewrite-from-reader-feedback": "Riscrittura dal feedback lettori",
+      autopilot: "Autopilot",
+      director: "Direttore"
     },
     apiVersion: "Versione API",
     defaults: "Predefiniti",
@@ -384,6 +386,14 @@ const it = {
       CAD: "CAD — Dollaro canadese",
       AUD: "AUD — Dollaro australiano",
     },
+  },
+  secretInput: {
+    show: "Mostra valore",
+    hide: "Nascondi valore",
+    copy: "Copia negli appunti",
+    copied: "Copiata",
+    copiedToast: "Copiata negli appunti.",
+    copyFailed: "Il browser non ha consentito la copia negli appunti.",
   },
   dossier: {
     pinned: "Dossier",
@@ -445,6 +455,8 @@ const it = {
       "deep-research": "Deep Research",
       "create-from-research": "Crea da Ricerca",
       audit: "Audit",
+      autopilot: "Autopilot",
+      director: "Direttore",
       tts: "Sintesi vocale (TTS)",
       stt: "Trascrizione (STT)",
       image: "Immagini",
@@ -2657,6 +2669,19 @@ const it = {
     deleteConfirm: "Eliminare questa nota?",
     loadFailed: "Caricamento nota non riuscito",
     saveFailed: "Salvataggio nota non riuscito"
+  },
+  autopilot: {
+    title: "Autopilot",
+    launcher: "Autopilot",
+    openDock: "Mostra cosa sta facendo l'autopilot",
+  },
+  director: {
+    title: "Direttore",
+    ask: { action: "Chiedi al direttore" },
+  },
+  personalServer: {
+    title: "Server personale",
+    description: "Fai girare autopilot e direttore sul tuo computer, anche a browser chiuso.",
   }
 };
 

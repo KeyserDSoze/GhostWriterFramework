@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Bot, BookOpen, Check, ChevronLeft, ChevronRight, Github, Route, ShieldCheck, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ONBOARDING_COMPLETED_KEY } from "@/content/patchNotes";
+import { ONBOARDING_COMPLETED_KEY } from "@/content/storageKeys";
 import { useSettingsStore } from "@/store/settingsStore";
 
 const STEP_ICONS = [Sparkles, Github, ShieldCheck, Bot, BookOpen, Route, Check];

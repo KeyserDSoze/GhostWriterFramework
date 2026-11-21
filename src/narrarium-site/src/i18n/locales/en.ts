@@ -360,7 +360,9 @@ const en = {
       "chat-resume": "Chat resume",
       "reader-evaluation": "Reader evaluation",
       "reader-evaluation-summary": "Reader evaluation summary",
-      "rewrite-from-reader-feedback": "Rewrite from reader feedback"
+      "rewrite-from-reader-feedback": "Rewrite from reader feedback",
+      autopilot: "Autopilot",
+      director: "Director"
     },
     apiVersion: "API version",
     defaults: "Defaults",
@@ -384,6 +386,14 @@ const en = {
       CAD: "CAD — Canadian Dollar",
       AUD: "AUD — Australian Dollar",
     },
+  },
+  secretInput: {
+    show: "Show value",
+    hide: "Hide value",
+    copy: "Copy to clipboard",
+    copied: "Copied",
+    copiedToast: "Copied to the clipboard.",
+    copyFailed: "The browser did not allow copying to the clipboard.",
   },
   dossier: {
     pinned: "Dossier",
@@ -445,6 +455,8 @@ const en = {
       "deep-research": "Deep Research",
       "create-from-research": "Create from Research",
       audit: "Audit",
+      autopilot: "Autopilot",
+      director: "Director",
       tts: "Text-to-speech (TTS)",
       stt: "Speech-to-text (STT)",
       image: "Images",
@@ -2417,6 +2429,19 @@ const en = {
     deleteConfirm: "Delete this note?",
     loadFailed: "Failed to load note",
     saveFailed: "Failed to save note"
+  },
+  autopilot: {
+    title: "Autopilot",
+    launcher: "Autopilot",
+    openDock: "Show what the autopilot is doing",
+  },
+  director: {
+    title: "Director",
+    ask: { action: "Ask the director" },
+  },
+  personalServer: {
+    title: "Personal server",
+    description: "Run the autopilot and the director on your computer, even with the browser closed.",
   }
 };
 

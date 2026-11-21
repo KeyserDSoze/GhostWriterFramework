@@ -11,6 +11,8 @@ on:
       - package-lock.json
       - scripts/**
       - packages/core/**
+      - packages/engine/**
+      - packages/server/**
       - packages/astro-reader/**
       - packages/mcp-server/**
       - packages/create-narrarium-book/**

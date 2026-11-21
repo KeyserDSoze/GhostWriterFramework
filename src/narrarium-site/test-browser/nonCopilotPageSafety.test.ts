@@ -39,6 +39,8 @@ describe("non-Copilot page safety contracts", () => {
     expect(html).toContain("object-src 'none'");
     expect(html).toContain("img-src 'self' data: blob:");
     expect(html).toContain("upgrade-insecure-requests");
+    // Plain HTTP is allowed only towards this computer (the personal server started with npx).
+    expect(html).toContain("connect-src 'self' https: http://127.0.0.1:* http://localhost:*;");
   });
 
   it("keeps the anonymous local workspace usable and protects destructive actions", () => {

@@ -1,4 +1,5 @@
 import OpenAI, { AzureOpenAI } from "openai";
+import { completionTokenLimit } from "narrarium-engine";
 import type { AIIntegration, AIPricing, AppSettings, ChatCapability, ChatModel } from "@/types/settings";
 import { chatDelta, useCostsStore } from "@/costs/costsStore";
 import { flattenLlmContent, useLlmDebugStore, type LlmDebugMessage } from "@/debug/llmDebugStore";
@@ -178,13 +179,7 @@ export class ContentFilteredCompletionError extends Error {
   }
 }
 
-export function completionTokenLimit(provider: AIIntegration["provider"], model: string, maxOutputTokens?: number, underlyingModel?: string): Record<string, number> {
-  if (!maxOutputTokens || maxOutputTokens <= 0) return {};
-  const identity = provider === "azure_openai" ? underlyingModel?.trim() : model.trim();
-  if (!identity) return {};
-  const modernReasoningModel = /(?:^|[/_.-])(?:o[134](?:[-_.]|$)|gpt-5(?:[-_.]|$)|codex-mini(?:[-_.]|$))/i.test(identity);
-  return modernReasoningModel ? { max_completion_tokens: maxOutputTokens } : { max_tokens: maxOutputTokens };
-}
+export { completionTokenLimit };
 
 function debugFailure(error: unknown, signal?: AbortSignal): { status: "error"; error: string; failureKind: "timeout" | "cancelled" | "provider"; timeoutMs?: number } {
   const converted = signal?.reason instanceof CandidateTimeoutError ? signal.reason : error;
@@ -193,16 +188,31 @@ function debugFailure(error: unknown, signal?: AbortSignal): { status: "error"; 
   return { status: "error", error: converted instanceof Error ? converted.message : String(converted), failureKind: cancelled ? "cancelled" : "provider" };
 }
 
+export interface LlmUsageReport {
+  model: string;
+  provider: AIIntegration["provider"];
+  integrationId: string;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  cost?: number;
+}
+
 export async function completeText(
   integration: AIIntegration,
   messages: LlmMessage[],
   purpose: "writing" | "review" = "writing",
-  options: { accountScope: string | null; signal?: AbortSignal; capability?: ChatCapability; modelName?: string; label?: string; onText?: (text: string) => void; routeCandidateIndex?: number; usedFallback?: boolean; maxOutputTokens?: number; underlyingModel?: string },
+  options: { accountScope: string | null; signal?: AbortSignal; capability?: ChatCapability; modelName?: string; label?: string; onText?: (text: string) => void; onUsage?: (usage: LlmUsageReport) => void; routeCandidateIndex?: number; usedFallback?: boolean; maxOutputTokens?: number; underlyingModel?: string },
 ): Promise<string> {
   const operation = beginAccountScopedAiOperation(options.signal, options.accountScope);
   let debugId = "";
   try {
   const { model, pricing } = resolveModelForCall(integration, purpose, options);
+  const reportUsage = (usage: unknown) => {
+    if (!options.onUsage) return;
+    const normalized = normalizeUsage(usage);
+    options.onUsage({ model, provider: integration.provider, integrationId: integration.id, ...normalized, cost: pricing ? chatDelta({ inputTokens: normalized.inputTokens, cachedTokens: normalized.cachedInputTokens, outputTokens: normalized.outputTokens }, pricing).chatCost : undefined });
+  };
 
   const normalizedMessages = messages.map((message) => ({
     role: message.role,
@@ -241,12 +251,14 @@ export async function completeText(
           if (chunk.choices?.some((choice) => choice.finish_reason === "content_filter")) filtered = true;
         }
         recordChatUsage(model, pricing, usage);
+        reportUsage(usage);
         finishChatDebug(debugId, pricing, usage, text);
         if (filtered) throw new ContentFilteredCompletionError();
         return text;
       }
       const response = await client.chat.completions.create({ model, messages: normalizedMessages as never, ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel) }, { signal: operation.signal });
       recordChatUsage(model, pricing, response.usage);
+      reportUsage(response.usage);
       const text = response.choices[0]?.message?.content ?? "";
       finishChatDebug(debugId, pricing, response.usage, text);
       if (response.choices[0]?.finish_reason === "content_filter") throw new ContentFilteredCompletionError();
@@ -274,12 +286,14 @@ export async function completeText(
           if (chunk.choices?.some((choice) => choice.finish_reason === "content_filter")) filtered = true;
         }
         recordChatUsage(model, pricing, usage);
+        reportUsage(usage);
         finishChatDebug(debugId, pricing, usage, text);
         if (filtered) throw new ContentFilteredCompletionError();
         return text;
       }
       const response = await client.chat.completions.create({ model, messages: normalizedMessages as never, ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel) }, { signal: operation.signal });
       recordChatUsage(model, pricing, response.usage);
+      reportUsage(response.usage);
       const text = response.choices[0]?.message?.content ?? "";
       finishChatDebug(debugId, pricing, response.usage, text);
       if (response.choices[0]?.finish_reason === "content_filter") throw new ContentFilteredCompletionError();

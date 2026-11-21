@@ -19,14 +19,14 @@ export type AIProviderType = "azure_openai" | "openai" | "m365_copilot" | "githu
  * - simple-tasks: cheap micro-decisions (yes/no confirmation, tiny classifications)
  * - review: evaluations and editorial scoring
  */
-export type ChatCapability = "default" | "editor-actions" | "copilot" | "simple-tasks" | "review" | "chat-resume" | "reader-evaluation" | "reader-evaluation-summary" | "rewrite-from-reader-feedback" | "deep-research" | "create-from-research" | "audit";
+export type ChatCapability = "default" | "editor-actions" | "copilot" | "simple-tasks" | "review" | "chat-resume" | "reader-evaluation" | "reader-evaluation-summary" | "rewrite-from-reader-feedback" | "deep-research" | "create-from-research" | "audit" | "autopilot" | "director";
 
-export const CHAT_CAPABILITIES: ChatCapability[] = ["default", "editor-actions", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit"];
+export const CHAT_CAPABILITIES: ChatCapability[] = ["default", "editor-actions", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director"];
 
 /** Task kinds the configurable router can target: the 4 chat capabilities plus media tasks. */
 export type RoutingTaskKind = ChatCapability | "tts" | "stt" | "image";
 
-export const ROUTING_TASKS: RoutingTaskKind[] = ["default", "editor-actions", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "tts", "stt", "image"];
+export const ROUTING_TASKS: RoutingTaskKind[] = ["default", "editor-actions", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director", "tts", "stt", "image"];
 
 /** A concrete integration+model target the router points a task at. */
 export interface RoutingTarget {
@@ -293,6 +293,8 @@ export interface BookEntry {
   exportProfiles?: BookExportProfile[];
   /** Optional default preset id for export dialogs. */
   defaultExportProfileId?: string;
+  /** Where the autopilot of this book runs: in the browser (default) or on the personal server. */
+  autopilotHost?: "browser" | "server";
   addedAt: string; // ISO-8601
 }
 
@@ -488,6 +490,14 @@ export interface CopilotToolSettings {
   toolOverrides: Record<string, CopilotToolOverride>;
 }
 
+/** Connection to a personal Narrarium server started with `npx narrarium-server`. */
+export interface PersonalServerSettings {
+  /** Server address, e.g. http://127.0.0.1:24242 */
+  url: string;
+  /** Client token created by the server (`npx narrarium-server token create`). */
+  token: string;
+}
+
 export interface AppSettings {
   /** Schema version for future migrations */
   version: 2;
@@ -515,6 +525,8 @@ export interface AppSettings {
   customActionsSchemaVersion: 1;
   customActions: CustomAction[];
   books: BookEntry[];
+  /** Optional personal server for the autopilot and the director. */
+  personalServer?: PersonalServerSettings;
 }
 
 export const SETTINGS_FILE_NAME = "settings.json";

@@ -23,5 +23,4 @@ export function localizedPatchNote(note: PatchNote, language?: string): Localize
   return language?.toLowerCase().startsWith("it") ? note.it : note.en;
 }
 
-export const PATCH_NOTES_SEEN_KEY = "narrarium-patch-notes-seen-version";
-export const ONBOARDING_COMPLETED_KEY = "narrarium-onboarding-completed";
+export { ONBOARDING_COMPLETED_KEY, PATCH_NOTES_SEEN_KEY } from "@/content/storageKeys";

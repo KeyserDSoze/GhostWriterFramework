@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, ArrowUpDown, Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Search, Trash2, Volume2, Wand2 } from "lucide-react";
+import { ArrowUp, ArrowUpDown, Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plus, Route, Search, Server, Trash2, Volume2, Wand2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SecretInput } from "@/components/ui/secret-input";
+import { PersonalServerSettingsBody } from "@/components/settings/PersonalServerSettingsBody";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
@@ -210,6 +212,7 @@ export function SettingsPage() {
           <SettingsCard href="/app/settings/github" title={t("settings.github")} description={t("settings.githubDescription")} icon={<Github className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/speech" title={t("speech.title")} description={t("speech.browserOnlyDescription")} icon={<Volume2 className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/repository" title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-5 w-5" />} />
+          <SettingsCard href="/app/settings/server" title={t("personalServer.title")} description={t("personalServer.description")} icon={<Server className="h-5 w-5" />} />
         </div>
       ) : section === "ai-router" ? (
         <fieldset className="space-y-3" aria-describedby={offline ? "offline-settings-explanation" : undefined}>
@@ -268,6 +271,8 @@ export function SettingsPage() {
         </Section>
       ) : section === "speech" ? (
         <Section title={t("speech.title")} description={t("speech.browserOnlyDescription")} icon={<Volume2 className="h-4 w-4 shrink-0" />} defaultOpen><SpeechCardBody settings={settings} patchSettings={patchSettings} /></Section>
+      ) : section === "server" ? (
+        <Section title={t("personalServer.title")} description={t("personalServer.description")} icon={<Server className="h-4 w-4 shrink-0" />} defaultOpen><PersonalServerSettingsBody settings={settings} patchSettings={patchSettings} /></Section>
       ) : (
         <Section title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-4 w-4 shrink-0" />} defaultOpen><RepositorySettingsBody settings={settings} patchSettings={patchSettings} /></Section>
       )}
@@ -275,13 +280,14 @@ export function SettingsPage() {
   );
 }
 
-function currentSettingsSection(pathname: string): "home" | "ai-router" | "deep-search" | "tools" | "github" | "speech" | "repository" {
+function currentSettingsSection(pathname: string): "home" | "ai-router" | "deep-search" | "tools" | "github" | "speech" | "repository" | "server" {
   if (/\/app\/settings\/ai-router$/.test(pathname)) return "ai-router";
   if (/\/app\/settings\/deep-search$/.test(pathname)) return "deep-search";
   if (/\/app\/settings\/tools$/.test(pathname)) return "tools";
   if (/\/app\/settings\/github$/.test(pathname)) return "github";
   if (/\/app\/settings\/speech$/.test(pathname)) return "speech";
   if (/\/app\/settings\/repository$/.test(pathname)) return "repository";
+  if (/\/app\/settings\/server$/.test(pathname)) return "server";
   return "home";
 }
 
@@ -292,6 +298,7 @@ function settingsSectionMeta(t: ReturnType<typeof useTranslation>["t"], section:
   if (section === "github") return { title: t("settings.github"), description: t("settings.githubDescription") };
   if (section === "speech") return { title: t("speech.title"), description: t("speech.browserOnlyDescription") };
   if (section === "repository") return { title: t("repoSettings.title"), description: t("repoSettings.description") };
+  if (section === "server") return { title: t("personalServer.title"), description: t("personalServer.description") };
   return { title: t("settings.title"), description: t("settings.description") };
 }
 
@@ -463,6 +470,7 @@ function IntegrationAccordion({ integration, children }: { integration: AIIntegr
 
 function IntegrationEditor({ integration, onChange, onRemove, credentialsDisabled = false }: { integration: AIIntegration; onChange: (patch: Partial<AIIntegration>) => void; onRemove?: () => void; credentialsDisabled?: boolean }) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const isGithub = integration.provider === "github_models";
   const usesApiKey = integration.provider !== "m365_copilot";
   const usesEndpoint = integration.provider !== "m365_copilot" && !isGithub;
@@ -501,7 +509,13 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
         {usesApiKey && (
           <div className="grid gap-2">
             <Label>{isGithub ? t("settings.githubPat") : t("settings.apiKey")}</Label>
-            <Input type="password" value={integration.apiKey} onChange={(e) => onChange({ apiKey: e.target.value })} autoComplete="off" placeholder={isGithub ? "ghp_… (GitHub PAT)" : undefined} disabled={credentialsDisabled} />
+            <SecretInput
+              value={integration.apiKey}
+              onChange={(e) => onChange({ apiKey: e.target.value })}
+              placeholder={isGithub ? "ghp_… (GitHub PAT)" : undefined}
+              disabled={credentialsDisabled}
+              onCopyResult={(copied) => toast(copied ? { title: t("secretInput.copiedToast") } : { title: t("secretInput.copyFailed"), variant: "destructive" })}
+            />
             {isGithub && <p className="text-xs text-muted-foreground">{t("settings.githubModelsHint")}</p>}
           </div>
         )}

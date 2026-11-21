@@ -31,9 +31,11 @@ console.log(`Release tag ${tag} matches ${target.name}@${target.version}; worksp
 function packageDirectory(name) {
   return {
     narrarium: "core",
+    "narrarium-engine": "engine",
     "narrarium-sdk": "sdk-typescript",
     "narrarium-astro-reader": "astro-reader",
     "narrarium-mcp-server": "mcp-server",
     "create-narrarium-book": "create-narrarium-book",
+    "narrarium-server": "server",
   }[name];
 }

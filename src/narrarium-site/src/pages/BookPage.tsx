@@ -15,7 +15,10 @@ import {
   FileText,
   ChevronRight,
   Save,
+  Plane,
+  Clapperboard,
 } from "lucide-react";
+import { openAskDirector } from "@/store/askDirectorStore";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -290,6 +293,12 @@ export function BookPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}
+          <Button asChild size="sm" variant="outline">
+            <Link to={`/app/books/${encodeURIComponent(book.id)}/autopilot`}><Plane className="h-4 w-4" />{t("autopilot.title")}</Link>
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => openAskDirector({ bookId: book.id, target: { kind: "book" } })}>
+            <Clapperboard className="h-4 w-4" />{t("director.ask.action")}
+          </Button>
         </div>
       </div>
 

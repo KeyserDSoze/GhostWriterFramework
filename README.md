@@ -13,6 +13,8 @@ Narrarium Framework is a local-first writing stack built around three pieces:
 - `packages/mcp-server`: local stdio MCP server for OpenCode, Claude Desktop, and compatible clients
 - `packages/create-narrarium-book`: starter CLI to scaffold a new book repository from the terminal
 - `packages/astro-reader`: Astro reader with spoiler-safe public mode, full canon opt-in, EPUB export, and doctor tooling
+- `packages/engine`: shared autopilot, director, simulated readers, and personal-server sync, used identically by the web app and the personal server
+- `packages/server`: personal server started with `npx narrarium-server`, which runs the autopilot and the director with the browser closed and syncs with the web app
 
 ## Local MCP workflow
 
@@ -377,6 +379,14 @@ If you later rename canon with `rename_entity`, `rename_chapter`, or `rename_par
 
 The current repository convention is documented in `docs/repository-spec.md`.
 
+## Autopilot and director
+
+The web app and the personal server share one autopilot (`narrarium-engine`): concept, chapter plan, scenes, blind simulated readers, specialists and a **director** that decides as the author's stand-in. The director can also be asked at any time what it thinks of the book, a chapter, or a scene. See `docs/autopilot-spec.md`, `packages/engine/README.md`, and `packages/server/README.md`.
+
+```bash
+npx narrarium-server
+```
+
 ## Publishing
 
 The final public package set is:
@@ -386,6 +396,8 @@ The final public package set is:
 - `narrarium-mcp-server`
 - `create-narrarium-book`
 - `narrarium-astro-reader`
+- `narrarium-engine`
+- `narrarium-server`
 
 The public package line started at `0.1.0`; current workspace versions may be newer.
 

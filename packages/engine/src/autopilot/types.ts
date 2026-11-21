@@ -1,0 +1,363 @@
+import type { AiUsage } from "../ai/types.js";
+
+/** Lifecycle of the autopilot of one book. */
+export type AutopilotStatus = "idle" | "running" | "paused" | "waiting-author" | "error" | "completed";
+
+/** Macro stage shown in the UI (Concept → Plan → Writing → Review → Completed). */
+export type AutopilotPhase = "concept" | "plan" | "write" | "review" | "final" | "completed";
+
+export const AUTOPILOT_PHASES: AutopilotPhase[] = ["concept", "plan", "write", "review", "final", "completed"];
+
+export type AutopilotTaskKind =
+  | "concept"
+  | "plan"
+  | "plan-reader"
+  | "plan-review"
+  | "scenes"
+  | "write"
+  | "reader"
+  | "readers-summary"
+  | "specialists"
+  | "director-review"
+  | "repair"
+  | "consolidate"
+  | "impact"
+  | "revise"
+  | "final";
+
+export interface AutopilotBrief {
+  /** The idea, premise or pitch. One sentence is enough. */
+  idea: string;
+  /** Optional chapter-by-chapter synopsis: binding when present. */
+  synopsis: string;
+  targetChapters: number;
+  scenesPerChapter: number;
+  wordsPerScene: number;
+  genre: string;
+  audience: string;
+}
+
+export interface AutopilotOptions {
+  /** Simulated readers evaluate every finished chapter. */
+  readers: boolean;
+  /** Maximum simulated readers per panel (the enabled ones, in order). */
+  maxReaders: number;
+  /** Simulated readers react to the concept and plan before writing starts. */
+  readersOnPlan: boolean;
+  /** Continuity / canon / style specialists review every chapter. */
+  specialists: boolean;
+  /** Stop when the plan is ready so the author can read it. */
+  pauseAfterPlan: boolean;
+  /** Stop after every approved chapter. */
+  pauseAfterEachChapter: boolean;
+  /** Stop after this many chapters are completed in a single run (0 = no limit). */
+  chaptersPerRun: number;
+  /** Stop before the next AI call once the tracked cost reaches this amount (0 = no limit). */
+  budgetLimit: number;
+  /** Publish to GitHub after every approved chapter (browser host; the server publishes after every step). */
+  syncAfterChapter: boolean;
+}
+
+export type SceneStatus = "planned" | "written" | "reviewed";
+export type ChapterStatus = "planned" | "writing" | "review" | "done";
+
+export interface PlannedScene {
+  number: number;
+  title: string;
+  goal: string;
+  beats: string[];
+  pov?: string;
+  location?: string;
+  characters: string[];
+  summary?: string;
+  status: SceneStatus;
+  slug?: string;
+  path?: string;
+  words?: number;
+  revisions: number;
+}
+
+export interface PlannedChapter {
+  number: number;
+  title: string;
+  slug: string;
+  summary: string;
+  goal: string;
+  pov: string[];
+  keyEvents: string[];
+  reveals: string[];
+  status: ChapterStatus;
+  /** Chapter written before the autopilot took over: never rewritten automatically. */
+  imported?: boolean;
+  /** Re-review after an author revision: skip the simulated readers this time. */
+  skipReaders?: boolean;
+  scenes: PlannedScene[];
+  /** Final director score once the chapter is approved. */
+  score?: number;
+}
+
+export interface ReaderReaction {
+  slug: string;
+  name: string;
+  interest: number;
+  reaction: string;
+  concerns: string[];
+  wishes: string[];
+}
+
+export interface ConceptSecret {
+  slug: string;
+  title: string;
+  revealChapter?: number;
+}
+
+export interface AutopilotPlan {
+  chapters: PlannedChapter[];
+  approved: boolean;
+  /** Plan revisions requested by the director. */
+  rounds: number;
+  /** Director (or author) notes the next plan revision must apply. */
+  revisionNotes: string[];
+  readerReactions: ReaderReaction[];
+  readersDone: boolean;
+  /** Approved plan waiting for the author because of `pauseAfterPlan` or the director's autonomy. */
+  awaitingAuthor: boolean;
+}
+
+export interface ReviewFinding {
+  id: string;
+  source: "specialist" | "reader";
+  category: string;
+  severity: "critical" | "major" | "minor";
+  sceneNumber?: number;
+  evidence?: string;
+  /** Whether the evidence was found verbatim in the scene. */
+  anchored: boolean;
+  problem: string;
+  remediation: string;
+  reader?: string;
+}
+
+export interface ReviewDecision {
+  findingId: string;
+  action: "accept" | "reject";
+  rationale: string;
+  remediation: string;
+  sceneNumber?: number;
+}
+
+export interface ChapterReview {
+  chapterNumber: number;
+  round: number;
+  readersPending: string[];
+  readerScores: Array<{ slug: string; name: string; score: number; mainProblem: string; prioritySuggestion: string; path: string }>;
+  readersSummaryDone: boolean;
+  findings: ReviewFinding[];
+  specialistsDone: boolean;
+  directorDone: boolean;
+  verdict?: "approve" | "revise";
+  score?: number;
+  summary?: string;
+  decisions: ReviewDecision[];
+  repairQueue: number[];
+  /** Fixes accepted and applied in the previous round, verified by the next one. */
+  previousFixes: string[];
+  history: Array<{ round: number; verdict: "approve" | "revise"; score: number; accepted: number; rejected: number }>;
+}
+
+export type InterventionScope = "next_step" | "from_now" | "rewrite";
+
+export interface AuthorIntervention {
+  id: string;
+  scope: InterventionScope;
+  text: string;
+  createdAt: string;
+  /** Human label of the step running or due when the intervention was recorded. */
+  during: string;
+  status: "pending" | "applied";
+  appliedAt?: string;
+  appliedBy?: string;
+}
+
+export type DirectorQuestionKind = "plan-approval" | "chapter-approval" | "round-limit" | "director";
+
+export interface DirectorQuestion {
+  id: string;
+  kind: DirectorQuestionKind;
+  question: string;
+  context: string;
+  options: string[];
+  chapterNumber?: number;
+  askedAt: string;
+}
+
+export interface RevisionRequest {
+  id: string;
+  instruction: string;
+  createdAt: string;
+  /** `null` until the director has analyzed the impact. */
+  targets: Array<{ chapterNumber: number; sceneNumber: number; instruction: string }> | null;
+  cursor: number;
+}
+
+export interface AutopilotRunnerInfo {
+  host: "browser" | "server";
+  label: string;
+  /** Stable identity of the host (browser device or server id); the label is only for display. */
+  hostId?: string;
+  runId: string;
+  startedAt: string;
+  heartbeatAt: string;
+}
+
+export interface AutopilotStats {
+  tasks: number;
+  aiCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+  currency?: string;
+  failures: number;
+}
+
+export interface AutopilotState {
+  schemaVersion: 1;
+  status: AutopilotStatus;
+  phase: AutopilotPhase;
+  brief: AutopilotBrief;
+  options: AutopilotOptions;
+  /** `done` once the book has a usable foundation; `generated` when the autopilot wrote it. */
+  concept: { done: boolean; generated: boolean; secrets: ConceptSecret[] };
+  plan: AutopilotPlan | null;
+  review: ChapterReview | null;
+  revision: RevisionRequest | null;
+  /** The director's final review of the whole book has been written. */
+  finalDone: boolean;
+  /** Permanent author rules ("from now on"). */
+  constraints: string[];
+  interventions: AuthorIntervention[];
+  /** Guidance the director carries forward to the next chapters. */
+  directorNotes: string[];
+  question: DirectorQuestion | null;
+  runner: AutopilotRunnerInfo | null;
+  stats: AutopilotStats;
+  /** Short human message about the current status ("Plan ready for review"). */
+  message: string | null;
+  lastError: { message: string; at: string; task?: AutopilotTaskKind } | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Incremented at every saved change of this file. */
+  version: number;
+}
+
+export type ActivityStatus = "running" | "succeeded" | "failed" | "cancelled";
+
+export interface AutopilotActivity {
+  id: string;
+  runId: string;
+  task: AutopilotTaskKind;
+  phase: AutopilotPhase;
+  /** What it is doing. */
+  title: string;
+  /** Why it is doing it. */
+  reason: string;
+  /** What comes next. */
+  next: string;
+  chapterNumber?: number;
+  sceneNumber?: number;
+  reader?: string;
+  status: ActivityStatus;
+  startedAt: string;
+  endedAt?: string;
+  /** Result in plain words. */
+  summary?: string;
+  changedPaths?: string[];
+  model?: string;
+  provider?: string;
+  usage?: AiUsage;
+  cost?: number;
+  error?: string;
+  interventionIds?: string[];
+  host?: "browser" | "server";
+}
+
+export type InsightTone = "info" | "ok" | "warning" | "critical";
+
+/** Stable codes of the runner's own messages, so clients can show them in their language. */
+export type AutopilotMessageCode =
+  | "conflictRetry"
+  | "failureRetry"
+  | "takenOver"
+  | "interventionQueued"
+  | "interventionInterrupt"
+  | "reset"
+  | "unexpectedStop"
+  | "syncFailed"
+  | "publishFailed"
+  | "finalStateFailed";
+
+/** Live events: everything the autopilot does, as it happens. */
+export type AutopilotEventBody =
+  | { type: "run-started"; runId: string; host: "browser" | "server" }
+  | { type: "run-ended"; runId: string; status: AutopilotStatus; message?: string | null }
+  | { type: "task-started"; activity: AutopilotActivity }
+  | { type: "task-progress"; activityId: string; characters: number; preview: string }
+  | { type: "task-finished"; activity: AutopilotActivity }
+  | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode }
+  | { type: "state"; state: AutopilotStateSummary }
+  | { type: "sync"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode };
+
+export type AutopilotEvent = AutopilotEventBody & { bookId: string; at: string; seq: number };
+
+export interface AutopilotProgress {
+  chapters: number;
+  chaptersDone: number;
+  scenes: number;
+  scenesWritten: number;
+  words: number;
+}
+
+export interface AutopilotStateSummary {
+  status: AutopilotStatus;
+  phase: AutopilotPhase;
+  message: string | null;
+  progress: AutopilotProgress;
+  question: DirectorQuestion | null;
+  lastError: AutopilotState["lastError"];
+  runner: AutopilotRunnerInfo | null;
+  stats: AutopilotStats;
+  pendingNotes: number;
+  constraints: number;
+  updatedAt: string;
+}
+
+/** What a client needs to render the autopilot of one book. */
+export interface AutopilotSnapshot {
+  bookId: string;
+  state: AutopilotState | null;
+  activities: AutopilotActivity[];
+  /** Activity currently running with its streamed preview, if any. */
+  live: { activity: AutopilotActivity; characters: number; preview: string } | null;
+  running: boolean;
+  host: "browser" | "server" | null;
+}
+
+export interface InterventionInput {
+  scope: InterventionScope;
+  text: string;
+  /** Interrupt the running step and repeat it with the new instruction. */
+  interrupt?: boolean;
+}
+
+export interface QuestionAnswer {
+  questionId: string;
+  /** One of the proposed options, or free text. */
+  answer: string;
+  /** Accept the work as it is and continue. */
+  accept?: boolean;
+}
+
+export interface StartOptions {
+  brief?: Partial<AutopilotBrief>;
+  options?: Partial<AutopilotOptions>;
+}

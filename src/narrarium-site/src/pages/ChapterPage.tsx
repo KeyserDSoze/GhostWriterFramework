@@ -13,6 +13,7 @@ import {
   MoreHorizontal,
   ChevronUp,
   ChevronDown,
+  Clapperboard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -57,6 +58,7 @@ import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { countChapterReaderEvaluations, countParagraphReaderEvaluations } from "@/narrarium/readerEvaluationCounts";
 import { parseDocument, stringify } from "yaml";
+import { openAskDirector } from "@/store/askDirectorStore";
 
 function stringifyFrontmatter(frontmatter: Record<string, unknown>): string {
   return `---\n${stringify(frontmatter).trimEnd()}\n---`;
@@ -500,6 +502,16 @@ export function ChapterPage() {
           count={chapterReaderEvaluationCount}
           active={chapterReaderEvaluationCount > 0}
         />
+        {bookId && (
+          <button
+            type="button"
+            onClick={() => openAskDirector({ bookId, target: { kind: "chapter", chapter: chapter.slug } })}
+            className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
+          >
+            <Clapperboard className="h-3.5 w-3.5" />
+            <span>{t("director.ask.action")}</span>
+          </button>
+        )}
       </div>
 
       {/* Paragraph list */}

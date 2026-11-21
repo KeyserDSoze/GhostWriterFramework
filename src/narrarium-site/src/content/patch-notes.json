@@ -1,5 +1,39 @@
 [
   {
+    "version": "0.78.0",
+    "date": "2026-11-21",
+    "en": {
+      "title": "Autopilot, director and personal server",
+      "summary": "Narrarium can now write a book on autopilot while a configurable director decides as your stand-in, show everything it does live next to Copilot, and keep working on your own computer with npx narrarium-server.",
+      "changes": [
+        "Every book has a new Autopilot page (book sidebar → Autopilot, or Autopilot in the library): start from one idea or a binding chapter-by-chapter synopsis and it builds the concept, the plan and the scenes, while blind simulated readers, specialists and the director review every chapter.",
+        "The new Director page configures the author's stand-in — persona, autonomy, strictness, approval score, review rounds, priorities, taste, red lines, simulated reader weights and vision — and saves it in director.md.",
+        "Ask the director on any book, chapter or scene (page buttons, right-click menu and floating actions): verdict, score, concerns with quoted evidence, decisions and a direct answer to your question, optionally kept in evaluations/director/.",
+        "An Autopilot button next to Copilot shows what is happening right now and opens a live panel that stays open while you navigate; Copilot also gains an Autopilot tab with the full activity feed.",
+        "You can pause after the current step or stop now, answer the director's questions, and intervene for the next step only, from now on, or to revise what is already written: the director picks the scenes to rewrite and reviews them again.",
+        "Settings → Personal server connects npx narrarium-server, so the autopilot keeps working with the browser closed; GitHub books travel through GitHub and local books are synced file by file, with consent before sending AI keys or GitHub tokens.",
+        "The AI Router gains Autopilot and Director tasks, and integration API keys in Settings → AI Router can be revealed with the eye button and copied.",
+        "Every autopilot step is an atomic commit that never overwrites your own edits; only one tab runs a book, while the other tabs follow it live and can pause it or send interventions.",
+        "Third-party libraries with published security advisories were updated, including the OpenAI client and Zod used by the web app."
+      ]
+    },
+    "it": {
+      "title": "Autopilot, direttore e server personale",
+      "summary": "Narrarium ora può scrivere un libro in autopilot mentre un direttore configurabile decide al posto tuo, mostra in diretta accanto a Copilot tutto ciò che fa e continua a lavorare sul tuo computer con npx narrarium-server.",
+      "changes": [
+        "Ogni libro ha una nuova pagina Autopilot (barra laterale del libro → Autopilot, oppure Autopilot nella libreria): parti da un'idea o da una sinossi capitolo per capitolo vincolante e costruisce concept, piano e scene, mentre lettori simulati alla cieca, specialisti e direttore revisionano ogni capitolo.",
+        "La nuova pagina Direttore configura il tuo sostituto — personalità, autonomia, severità, voto di approvazione, giri di revisione, priorità, gusto, linee rosse, peso dei lettori simulati e visione — e lo salva in director.md.",
+        "Chiedi al direttore su qualsiasi libro, capitolo o scena (pulsanti di pagina, menu con il tasto destro e azioni flottanti): verdetto, voto, criticità con citazioni dal testo, decisioni e una risposta diretta alla tua domanda, conservabile in evaluations/director/.",
+        "Un pulsante Autopilot accanto a Copilot mostra cosa sta succedendo e apre un pannello in diretta che resta aperto mentre navighi; anche Copilot ha una nuova scheda Autopilot con tutta l'attività.",
+        "Puoi mettere in pausa dopo il passo corrente o fermare subito, rispondere alle domande del direttore e intervenire solo per il prossimo passo, d'ora in poi, oppure per rivedere il già scritto: il direttore sceglie le scene da riscrivere e le revisiona di nuovo.",
+        "Impostazioni → Server personale collega npx narrarium-server, così l'autopilot continua a browser chiuso; i libri GitHub viaggiano tramite GitHub e quelli locali sono sincronizzati file per file, con consenso prima di inviare chiavi AI o token GitHub.",
+        "Il router AI ha i nuovi task Autopilot e Direttore, e in Impostazioni → AI Router le API key delle integrazioni si possono mostrare con l'icona a occhio e copiare.",
+        "Ogni passo dell'autopilot è un commit atomico che non sovrascrive mai le tue modifiche; un solo tab esegue un libro, mentre gli altri lo seguono in diretta e possono metterlo in pausa o inviare interventi.",
+        "Aggiornate le librerie di terze parti segnalate da avvisi di sicurezza, tra cui il client OpenAI e Zod usati dall'app web."
+      ]
+    }
+  },
+  {
     "version": "0.77.12",
     "date": "2026-09-01",
     "en": {

@@ -11,6 +11,7 @@ on:
       - AGENTS.md
       - docs/**
       - packages/*/README.md
+      - packages/engine/**
       - src/narrarium-site/**
       - .github/workflows/book-management-system.yml
       - packages/mcp-server/src/index.ts
@@ -55,8 +56,8 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v6
 
-      - name: Build Narrarium core
-        run: npm run build -w narrarium
+      - name: Build Narrarium core and shared engine
+        run: npm run build -w narrarium && npm run build -w narrarium-engine
 
       - name: Test Narrarium site
         run: npm run test -w narrarium-site

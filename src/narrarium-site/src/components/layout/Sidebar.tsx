@@ -2,6 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   BookOpen,
+  Clapperboard,
   ClipboardCheck,
   Clock,
   Cloud,
@@ -18,7 +19,9 @@ import {
   NotebookText,
   Package,
   PanelLeftClose,
+  Plane,
   Search,
+  Server,
   Settings,
   ShieldAlert,
   Wand2,
@@ -87,6 +90,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     ? [
         { label: t("nav.bookOverview"), href: `/app/books/${bookId}`, icon: <BookOpen className="h-4 w-4" /> },
         { label: t("dashboard.title"), href: `/app/books/${bookId}/dashboard`, icon: <LayoutDashboard className="h-4 w-4" /> },
+        { label: t("autopilot.title"), href: `/app/books/${bookId}/autopilot`, icon: <Plane className="h-4 w-4" /> },
+        { label: t("director.title"), href: `/app/books/${bookId}/director`, icon: <Clapperboard className="h-4 w-4" /> },
         { label: t("ghostwriters.title"), href: `/app/books/${bookId}/ghostwriters`, icon: <Users className="h-4 w-4" /> },
         { label: t("evaluationStyle.title"), href: `/app/books/${bookId}/evaluation-style`, icon: <ClipboardCheck className="h-4 w-4" /> },
         { label: t("audit.title"), href: `/app/books/${bookId}/audit`, icon: <ShieldAlert className="h-4 w-4" /> },
@@ -144,6 +149,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     { label: t("settings.github"), href: "/app/settings/github", icon: <Library className="h-4 w-4" /> },
     { label: t("speech.title"), href: "/app/settings/speech", icon: <BookOpen className="h-4 w-4" /> },
     { label: t("repoSettings.title"), href: "/app/settings/repository", icon: <Network className="h-4 w-4" /> },
+    { label: t("personalServer.title"), href: "/app/settings/server", icon: <Server className="h-4 w-4" /> },
   ];
 
   return (
@@ -238,6 +244,11 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <NavLink
             item={{ label: t("nav.allBooks"), href: "/app/books", icon: <Library className="h-4 w-4" /> }}
             active={location.pathname === "/app/books"}
+            onNavigate={onNavigate}
+          />
+          <NavLink
+            item={{ label: t("autopilot.title"), href: "/app/autopilot", icon: <Plane className="h-4 w-4" /> }}
+            active={location.pathname === "/app/autopilot"}
             onNavigate={onNavigate}
           />
           {settings.books.map((entry) => (

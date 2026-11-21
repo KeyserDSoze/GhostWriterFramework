@@ -1,6 +1,6 @@
 # Publishing
 
-Narrarium is prepared to publish as five public npm packages.
+Narrarium is prepared to publish as seven public npm packages.
 
 ## Final package names
 
@@ -9,22 +9,26 @@ Narrarium is prepared to publish as five public npm packages.
 - `narrarium-mcp-server`
 - `create-narrarium-book`
 - `narrarium-astro-reader`
+- `narrarium-engine`
+- `narrarium-server`
 
 ## Versioning note
 
 - The public package line started at `0.1.0`.
 
-The five public packages use independent versions. Each package version is published and checked separately; dependency ranges must still resolve to the workspace versions in publication order.
+The public packages use independent versions. Each package version is published and checked separately; dependency ranges must still resolve to the workspace versions in publication order.
 
 ## Release order
 
 1. `narrarium`
-2. `narrarium-sdk`
-3. `narrarium-astro-reader`
-4. `narrarium-mcp-server`
-5. `create-narrarium-book`
+2. `narrarium-engine`
+3. `narrarium-sdk`
+4. `narrarium-astro-reader`
+5. `narrarium-mcp-server`
+6. `create-narrarium-book`
+7. `narrarium-server`
 
-The starter and reader depend on the published package names, so publish the lower-level packages first.
+The starter, the reader and the personal server depend on the published package names, so publish the lower-level packages first. `narrarium-engine` depends on `narrarium`; `narrarium-server` depends on `narrarium-engine`.
 
 ## Dry run checks
 

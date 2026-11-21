@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, ArrowRight, ClipboardCheck, Columns2, FileEdit, FileText, History, NotebookPen, NotebookText, Repeat, Network, Play, RefreshCcw, RotateCcw, Search, ShieldAlert, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Clapperboard, ClipboardCheck, Columns2, FileEdit, FileText, History, NotebookPen, NotebookText, Plane, Repeat, Network, Play, RefreshCcw, RotateCcw, Search, ShieldAlert, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useBookStructure } from "@/hooks/useBookStructure";
@@ -16,6 +16,7 @@ import { auditTargetHref, type AuditTarget } from "@/narrarium/audit";
 import { openFeedbackRewriteWorkflow } from "@/store/feedbackRewriteWorkflowStore";
 import { useUiStore } from "@/store/uiStore";
 import { resolveContextualNavigation } from "@/lib/contextualNavigation";
+import { openAskDirector } from "@/store/askDirectorStore";
 
 export interface ContextualAction {
   id: string;
@@ -77,7 +78,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
   const auditScope = (() => {
     if (route.kind === "paragraph" || route.kind === "paragraph-workspace" || route.kind === "paragraph-reader-evaluations" || route.kind === "paragraph-audit") return "paragraph";
     if (route.kind === "chapter" || route.kind === "chapter-workspace" || route.kind === "chapter-reader-evaluations" || route.kind === "chapter-audit") return "chapter";
-    if (["book", "book-dashboard", "book-assets", "book-ghostwriters", "book-evaluation-style", "book-simulated-readers", "reader", "book-export", "research", "research-detail", "canon", "book-audit"].includes(route.kind)) return "book";
+    if (["book", "book-dashboard", "book-autopilot", "book-director", "book-assets", "book-ghostwriters", "book-evaluation-style", "book-simulated-readers", "reader", "book-export", "research", "research-detail", "canon", "book-audit"].includes(route.kind)) return "book";
     return null;
   })();
   const auditTarget: AuditTarget | null = auditScope === "paragraph" && paragraph && chapterId
@@ -191,8 +192,18 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
       });
     }
     actions.push({ id: "research", label: t("research.title"), to: `/app/books/${bookId}/research`, icon: <Search className="h-4 w-4" /> });
+    actions.push({ id: "autopilot", label: t("autopilot.title"), to: `/app/books/${bookId}/autopilot`, icon: <Plane className="h-4 w-4" /> });
     actions.push({ id: "gw", label: t("ghostwriters.title"), to: `/app/books/${bookId}/ghostwriters`, icon: <Wand2 className="h-4 w-4" /> });
     actions.push({ id: "personas", label: t("readerPersonas.title"), to: `/app/books/${bookId}/simulated-readers`, icon: <Users className="h-4 w-4" /> });
+  }
+
+  if (bookId && book) {
+    const target = paragraph && chapter && paragraphSlug
+      ? { kind: "paragraph" as const, chapter: chapter.slug, paragraph: paragraphSlug }
+      : chapter
+        ? { kind: "chapter" as const, chapter: chapter.slug }
+        : { kind: "book" as const };
+    actions.push({ id: "ask-director", label: t("director.ask.action"), icon: <Clapperboard className="h-4 w-4" />, run: () => openAskDirector({ bookId, target }) });
   }
 
   if (structure && auditTarget) {

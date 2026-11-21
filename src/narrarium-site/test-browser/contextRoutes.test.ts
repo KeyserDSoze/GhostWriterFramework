@@ -8,6 +8,7 @@ const routeCases = [
   ["/app/books/add", "app-page"],
   ["/app/chats", "app-page"],
   ["/app/patch-notes", "app-page"],
+  ["/app/autopilot", "app-page"],
   ["/app/settings", "app-page"],
   ["/app/settings/ai-router", "app-page"],
   ["/app/settings/deep-search", "app-page"],
@@ -15,6 +16,7 @@ const routeCases = [
   ["/app/settings/github", "app-page"],
   ["/app/settings/speech", "app-page"],
   ["/app/settings/repository", "app-page"],
+  ["/app/settings/server", "app-page"],
   ["/app/reader-settings", "app-page"],
   ["/app/custom-actions", "app-page"],
   ["/app/migrate", "app-page"],
@@ -23,6 +25,8 @@ const routeCases = [
   ["/app/docs", "app-page"],
   ["/app/books/book", "book"],
   ["/app/books/book/dashboard", "book-dashboard"],
+  ["/app/books/book/autopilot", "book-autopilot"],
+  ["/app/books/book/director", "book-director"],
   ["/app/books/book/assets", "book-assets"],
   ["/app/books/book/reader", "reader"],
   ["/app/books/book/export", "book-export"],
@@ -59,6 +63,8 @@ test("book route titles and summaries describe the actual page", () => {
     ["/app/books/book/assets", "Book assets", "Assets"],
     ["/app/books/book/ghostwriters", "Ghostwriters", "Ghostwriters"],
     ["/app/books/book/evaluation-style", "Evaluation Style", "evaluation style"],
+    ["/app/books/book/autopilot", "Autopilot", "Autopilot"],
+    ["/app/books/book/director", "Director", "Director"],
   ];
   for (const [path, title, summary] of cases) {
     const route = parseAppRoute(path);

@@ -1,11 +1,12 @@
 import { parseDocument, stringify } from "yaml";
+import { READER_EVALUATION_TOOL as EVALUATION_TOOL, READER_SUMMARY_TOOL as SUMMARY_TOOL, renderReaderEvaluationBody as renderEvaluationBody, renderReaderSummaryBody as renderSummaryBody, type ReaderEvaluationOutput } from "narrarium-engine";
 import { completeToolRouted } from "@/assistant/router";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import type { LlmRunMetadata } from "@/assistant/llm";
 import { deleteFile, loadFileContent, readFileWithSha } from "@/github/githubClient";
 import type { BookStructure } from "@/types/book";
 import type { AppSettings, BookEntry } from "@/types/settings";
-import { builtinReaderPersonas, mergeReaderPersonas, parseReaderPersona, readerPersonaSystemPrompt, serializeReaderPersona, type ReaderEvaluationDepth, type ReaderPersonaProfile } from "@/narrarium/readerPersona";
+import { builtinReaderPersonas, readerPersonaSystemPrompt, serializeReaderPersona, type ReaderEvaluationDepth, type ReaderPersonaProfile } from "@/narrarium/readerPersona";
 import { isRepositoryError, optionalRepositoryRead } from "@/repository/repositoryError";
 import { captureImmediateMutation, commitImmediateMutation, commitImmediateMutations, mergeManagedFrontmatter } from "@/assistant/immediateMutation";
 import { commitAndPushTextFileMutation, RepositoryConflictError, resolveRepositoryHeadForMutation } from "@/repository/safeRepositoryMutation";
@@ -26,16 +27,7 @@ export interface ReaderEvaluationTarget {
   sourceRevisions?: Record<string, string>;
 }
 
-export interface ReaderEvaluationOutput {
-  generalImpression: string;
-  strengths: string[];
-  weaknesses: string[];
-  mostEffectiveMoment: string;
-  mainProblem: string;
-  prioritySuggestion: string;
-  score: number;
-  additionalNotes?: string;
-}
+export type { ReaderEvaluationOutput } from "narrarium-engine";
 
 export interface ReaderEvaluationRecord {
   path: string;
@@ -70,53 +62,7 @@ export interface ReaderEvaluationRunResult {
   changedPaths: string[];
 }
 
-const EVALUATION_TOOL = {
-  name: "reader_evaluation",
-  description: "Return a concise simulated-reader evaluation from the configured reader's point of view.",
-  parameters: {
-    type: "object",
-    properties: {
-      generalImpression: { type: "string" },
-      strengths: { type: "array", items: { type: "string" } },
-      weaknesses: { type: "array", items: { type: "string" } },
-      mostEffectiveMoment: { type: "string" },
-      mainProblem: { type: "string" },
-      prioritySuggestion: { type: "string" },
-      score: { type: "number", minimum: 1, maximum: 10 },
-      additionalNotes: { type: "string" },
-    },
-    required: ["generalImpression", "strengths", "weaknesses", "mostEffectiveMoment", "mainProblem", "prioritySuggestion", "score"],
-    additionalProperties: false,
-  },
-};
-
-const SUMMARY_TOOL = {
-  name: "reader_evaluation_summary",
-  description: "Compare separate simulated-reader evaluations and return a concise panel summary.",
-  parameters: {
-    type: "object",
-    properties: {
-      consensus: { type: "array", items: { type: "string" } },
-      disagreements: { type: "array", items: { type: "string" } },
-      recurringStrengths: { type: "array", items: { type: "string" } },
-      recurringProblems: { type: "array", items: { type: "string" } },
-      prioritySuggestions: { type: "array", items: { type: "string" } },
-      isolatedObservations: { type: "array", items: { type: "string" } },
-      revisionPriorities: { type: "array", items: { type: "string" } },
-      overallScore: { type: "number", minimum: 1, maximum: 10 },
-    },
-    required: ["consensus", "disagreements", "recurringStrengths", "recurringProblems", "prioritySuggestions", "isolatedObservations", "revisionPriorities", "overallScore"],
-    additionalProperties: false,
-  },
-};
-
-export async function loadReaderPersonas(input: { token: string; book: BookEntry; branch: string; structure: BookStructure }): Promise<ReaderPersonaProfile[]> {
-  const overrides = await Promise.all(input.structure.readerPersonas.map(async (entry) => {
-    const raw = await optionalRepositoryRead(() => loadFileContent(input.token, input.book.owner, input.book.repo, entry.path, input.branch)) ?? "";
-    return raw ? parseReaderPersona(entry.slug, raw) : null;
-  }));
-  return mergeReaderPersonas(input.structure.language, overrides.filter((profile): profile is ReaderPersonaProfile => Boolean(profile)));
-}
+export { loadReaderPersonas } from "@/narrarium/readerPanel";
 
 export async function saveReaderPersona(input: { token: string; book: BookEntry; branch: string; profile: ReaderPersonaProfile; remoteHeadSha?: string; signal?: AbortSignal }): Promise<string> {
   const path = `personas/${input.profile.slug}.md`;
@@ -201,38 +147,6 @@ export function latestNonStaleCompletedReaderEvaluations(records: ReaderEvaluati
       seen.add(record.readerId);
       return true;
     });
-}
-
-function renderEvaluationBody(output: ReaderEvaluationOutput, language: string): string {
-  const it = language.toLowerCase().startsWith("it");
-  const labels = it
-    ? ["Valutazione", "Impressione generale", "Punti di forza", "Punti di debolezza", "Momento più efficace", "Problema principale", "Suggerimento prioritario", "Punteggio", "Osservazioni aggiuntive"]
-    : ["Evaluation", "General impression", "Strengths", "Weaknesses", "Most effective moment", "Main problem", "Priority suggestion", "Score", "Additional notes"];
-  return [
-    `# ${labels[0]}`,
-    `\n## ${labels[1]}\n\n${output.generalImpression}`,
-    `\n## ${labels[2]}\n\n${output.strengths.map((value) => `- ${value}`).join("\n")}`,
-    `\n## ${labels[3]}\n\n${output.weaknesses.map((value) => `- ${value}`).join("\n")}`,
-    `\n## ${labels[4]}\n\n${output.mostEffectiveMoment}`,
-    `\n## ${labels[5]}\n\n${output.mainProblem}`,
-    `\n## ${labels[6]}\n\n${output.prioritySuggestion}`,
-    `\n## ${labels[7]}\n\n${output.score}/10`,
-    output.additionalNotes ? `\n## ${labels[8]}\n\n${output.additionalNotes}` : "",
-  ].filter(Boolean).join("\n").trim() + "\n";
-}
-
-function renderSummaryBody(output: Record<string, unknown>, language: string): string {
-  const it = language.toLowerCase().startsWith("it");
-  const sections: Array<[string, string]> = it
-    ? [["consensus", "Convergenze"], ["disagreements", "Disaccordi"], ["recurringStrengths", "Punti di forza ricorrenti"], ["recurringProblems", "Problemi ricorrenti"], ["prioritySuggestions", "Suggerimenti prioritari"], ["isolatedObservations", "Osservazioni isolate"], ["revisionPriorities", "Priorità di revisione"]]
-    : [["consensus", "Consensus"], ["disagreements", "Disagreements"], ["recurringStrengths", "Recurring strengths"], ["recurringProblems", "Recurring problems"], ["prioritySuggestions", "Priority suggestions"], ["isolatedObservations", "Isolated observations"], ["revisionPriorities", "Revision priorities"]];
-  const lines = [`# ${it ? "Sintesi dei lettori simulati" : "Simulated readers summary"}`];
-  for (const [key, label] of sections) {
-    const values = Array.isArray(output[key]) ? output[key] as unknown[] : [];
-    lines.push(`\n## ${label}\n\n${values.map((value) => `- ${String(value)}`).join("\n") || "-"}`);
-  }
-  lines.push(`\n## ${it ? "Punteggio complessivo" : "Overall score"}\n\n${Number(output.overallScore ?? 0)}/10`);
-  return lines.join("\n").trim() + "\n";
 }
 
 function renderFile(frontmatter: Record<string, unknown>, body: string): string {

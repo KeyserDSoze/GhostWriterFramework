@@ -1,5 +1,5 @@
 import type { AIIntegration, AIPricing, AppSettings, ChatCapability, RoutingTarget, RoutingTaskKind, TaskRoute } from "@/types/settings";
-import { integrationChatModels, modelSupportsCapability, resolveReviewIntegration, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmMessage, type LlmResult } from "@/assistant/llm";
+import { integrationChatModels, modelSupportsCapability, resolveReviewIntegration, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmMessage, type LlmResult, type LlmUsageReport } from "@/assistant/llm";
 import { executeCompletionFallback } from "@/assistant/completionFallback";
 import { runWithCandidateTimeout } from "@/assistant/executionLimits";
 import { budgetLlmMessages, resolveModelTokenBudgets, textTokenUpperBound } from "@/assistant/promptBudget";
@@ -58,7 +58,7 @@ function budgetForcedToolMessages(messages: LlmMessage[], candidate: TaskCandida
   return budgeted;
 }
 
-const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(["default", "editor-actions", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit"]);
+const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(["default", "editor-actions", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director"]);
 
 function isChatTask(task: RoutingTaskKind): task is ChatCapability {
   return CHAT_CAPABILITIES_SET.has(task);
@@ -313,7 +313,7 @@ export async function completeTextRouted(
   settings: AppSettings,
   messages: LlmMessage[],
   capability: ChatCapability,
-  options: { accountScope: string | null; signal?: AbortSignal; label?: string; onText?: (text: string) => void; preferred?: RoutingTarget; validateText?: (text: string) => void },
+  options: { accountScope: string | null; signal?: AbortSignal; label?: string; onText?: (text: string) => void; onUsage?: (usage: LlmUsageReport) => void; preferred?: RoutingTarget; validateText?: (text: string) => void; fallbackMaxOutputTokens?: number },
 ): Promise<string> {
   const operation = beginAccountScopedAiOperation(options?.signal, options?.accountScope);
   try {
@@ -328,15 +328,17 @@ export async function completeTextRouted(
   if (!executable.length) throw new NoCompletionCandidatesError();
   const total = createRoutingExecutionBudget(settings, operation.signal);
   try { return await executeCompletionFallback({ candidates: executable, signal: total.signal, timeoutMs: (candidate) => candidate.integration.requestTimeoutMs, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: executable[index - 1], to: candidate, accountScope: operation.accountScope }); }, resetPartial: () => options?.onText?.(""), run: async (candidate, signal) => {
-      const text = await completeText(candidate.integration, budgetLlmMessages(messages, candidate.maxInputTokens, candidate.maxOutputTokens), purpose, {
+      const outputBudget = candidate.maxOutputTokens ?? options.fallbackMaxOutputTokens;
+      const text = await completeText(candidate.integration, budgetLlmMessages(messages, candidate.maxInputTokens, outputBudget), purpose, {
         modelName: candidate.model,
         capability,
         signal,
         label: options?.label,
         onText: options?.onText,
+        onUsage: options?.onUsage,
         routeCandidateIndex: candidate.routeCandidateIndex,
         usedFallback: candidate.routeCandidateIndex > 0,
-        maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens,
+        maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, outputBudget).outputTokens,
         underlyingModel: candidate.underlyingModel,
         accountScope: operation.accountScope,
       });
@@ -353,7 +355,7 @@ export async function completeToolRouted<T>(
   messages: LlmMessage[],
   capability: ChatCapability,
   tool: ForcedToolDefinition,
-  options: { accountScope: string | null; signal?: AbortSignal; label?: string; validate?: (output: unknown) => T },
+  options: { accountScope: string | null; signal?: AbortSignal; label?: string; validate?: (output: unknown) => T; fallbackMaxOutputTokens?: number },
 ): Promise<LlmResult<T> & { metadata: RoutedLlmRunMetadata }> {
   const operation = beginAccountScopedAiOperation(options?.signal, options?.accountScope);
   try {
@@ -370,8 +372,9 @@ export async function completeToolRouted<T>(
     if (!candidate.integration || !candidate.model) continue;
     if (candidateIndex > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: candidates[candidateIndex - 1], to: candidate, accountScope: operation.accountScope });
     try {
-      const budgetedMessages = budgetForcedToolMessages(messages, candidate, tool);
-      const result = await runWithCandidateTimeout((signal) => completeToolWith<T>(candidate.integration!, candidate.model!, candidate.pricing, budgetedMessages, capability, tool, { accountScope: operation.accountScope, signal, label: options.label, currency: settings.costCurrency, validate: options.validate, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens, underlyingModel: candidate.underlyingModel }), total.signal, candidate.integration.requestTimeoutMs);
+      const budgeted = options.fallbackMaxOutputTokens && candidate.maxOutputTokens === undefined ? { ...candidate, maxOutputTokens: options.fallbackMaxOutputTokens } : candidate;
+      const budgetedMessages = budgetForcedToolMessages(messages, budgeted, tool);
+      const result = await runWithCandidateTimeout((signal) => completeToolWith<T>(candidate.integration!, candidate.model!, candidate.pricing, budgetedMessages, capability, tool, { accountScope: operation.accountScope, signal, label: options.label, currency: settings.costCurrency, validate: options.validate, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, maxOutputTokens: resolveModelTokenBudgets(budgeted.maxInputTokens, budgeted.maxOutputTokens).outputTokens, underlyingModel: candidate.underlyingModel }), total.signal, candidate.integration.requestTimeoutMs);
       return {
         ...result,
         output: options?.validate ? options.validate(result.output) : result.output as T,

@@ -1,6 +1,12 @@
 import { expect, test } from "vitest";
 import { appDocEntries } from "@/lib/appDocs";
 import { withGeneratedDocs } from "@/lib/docs";
+import { docEntries } from "@/lib/generated-docs";
+
+test("every repository document stays reachable next to the in-app guides", () => {
+  const curated = new Set(appDocEntries.map((entry) => entry.slug));
+  expect(docEntries.filter((entry) => curated.has(entry.slug)).map((entry) => entry.sourcePath)).toEqual([]);
+});
 
 test("curated docs override duplicate generated slugs while unique generated docs remain available", () => {
   const curated = appDocEntries[0];

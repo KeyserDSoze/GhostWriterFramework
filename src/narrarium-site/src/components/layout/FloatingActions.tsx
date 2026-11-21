@@ -21,7 +21,7 @@ import { lazy, Suspense } from "react";
 const BookExportDialog = lazy(() => import("@/components/book/BookExportDialog").then((module) => ({ default: module.BookExportDialog })));
 
 const AUDIT_ACTION_IDS = new Set(["run-audit", "open-audit", "update-audit", "delete-audit"]);
-const DIRECT_CONTEXT_ACTION_IDS = new Set([...AUDIT_ACTION_IDS, "generate-draft-from-feedback", "feedback-rewrite-status", "restore-previous-drafts", "navigate-prev", "navigate-next", "navigate-next-view", "navigate-previous-view", "open-notes"]);
+const DIRECT_CONTEXT_ACTION_IDS = new Set([...AUDIT_ACTION_IDS, "generate-draft-from-feedback", "feedback-rewrite-status", "restore-previous-drafts", "navigate-prev", "navigate-next", "navigate-next-view", "navigate-previous-view", "open-notes", "ask-director"]);
 
 interface ActionRow {
   label: string;

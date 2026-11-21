@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate, Outlet } from "react-router-dom";
 import type { ComponentType } from "react";
 import { RouteErrorFallback } from "@/components/layout/RouteErrorFallback";
 import { RouteLoadingFallback } from "@/components/layout/RouteLoadingFallback";
+import { withAutopilotTranslations } from "@/i18n/autopilot";
 
 function routerBasename(): string {
   const base = import.meta.env.BASE_URL;
@@ -36,8 +37,11 @@ export const router = createBrowserRouter([
       { path: "books/add", lazy: component(() => import("@/pages/AddBookPage"), "AddBookPage") },
       { path: "chats", lazy: component(() => import("@/pages/AssistantChatsPage"), "AssistantChatsPage") },
       { path: "patch-notes", lazy: component(() => import("@/pages/PatchNotesPage"), "PatchNotesPage") },
+      { path: "autopilot", lazy: component(withAutopilotTranslations(() => import("@/pages/AutopilotHubPage")), "AutopilotHubPage") },
       { path: "books/:bookId", lazy: component(() => import("@/pages/BookPage"), "BookPage") },
       { path: "books/:bookId/dashboard", lazy: component(() => import("@/pages/BookDashboardPage"), "BookDashboardPage") },
+      { path: "books/:bookId/autopilot", lazy: component(withAutopilotTranslations(() => import("@/pages/AutopilotPage")), "AutopilotPage") },
+      { path: "books/:bookId/director", lazy: component(withAutopilotTranslations(() => import("@/pages/DirectorPage")), "DirectorPage") },
       { path: "books/:bookId/assets", lazy: component(() => import("@/pages/AssetGalleryPage"), "AssetGalleryPage") },
       { path: "books/:bookId/reader", lazy: component(() => import("@/pages/ReaderPreviewPage"), "ReaderPreviewPage") },
       { path: "books/:bookId/export", lazy: component(() => import("@/pages/BookExportPage"), "BookExportPage") },
@@ -67,6 +71,7 @@ export const router = createBrowserRouter([
       { path: "settings/github", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
       { path: "settings/speech", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
       { path: "settings/repository", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
+      { path: "settings/server", lazy: component(withAutopilotTranslations(() => import("@/pages/SettingsPage")), "SettingsPage") },
       { path: "account-sync", lazy: component(() => import("@/pages/AccountSyncPage"), "AccountSyncPage") },
       { path: "reader-settings", lazy: component(() => import("@/pages/ReaderSettingsPage"), "ReaderSettingsPage") },
       { path: "custom-actions", lazy: component(() => import("@/pages/CustomActionsPage"), "CustomActionsPage") },

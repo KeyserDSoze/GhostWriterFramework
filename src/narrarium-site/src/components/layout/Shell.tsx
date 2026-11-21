@@ -31,12 +31,21 @@ import { useDirtyNavigationGuard } from "@/hooks/useDirtyNavigationGuard";
 import { useRewriteDatabaseBlockedNotification } from "@/hooks/useRewriteDatabaseBlockedNotification";
 import { useAssistantStore } from "@/assistant/store";
 import { AssistantLauncher } from "@/components/assistant/AssistantLauncher";
+import { useAutopilotStore } from "@/autopilot/store";
+import { useAskDirectorStore } from "@/store/askDirectorStore";
+import { withAutopilotTranslations } from "@/i18n/autopilot";
 import { useAuthStore } from "@/store/authStore";
 import { useConnectionStore } from "@/account/connectionStore";
 import { scheduleAccountSync } from "@/account/accountSync";
 
 const AssistantPanel = lazy(() =>
-  import("@/components/assistant/AssistantPanel").then((module) => ({ default: module.AssistantPanel })),
+  withAutopilotTranslations(() => import("@/components/assistant/AssistantPanel"))().then((module) => ({ default: module.AssistantPanel })),
+);
+const AutopilotDock = lazy(() =>
+  withAutopilotTranslations(() => import("@/components/autopilot/AutopilotDock"))().then((module) => ({ default: module.AutopilotDock })),
+);
+const AskDirectorDialog = lazy(() =>
+  withAutopilotTranslations(() => import("@/components/director/AskDirectorDialog"))().then((module) => ({ default: module.AskDirectorDialog })),
 );
 
 export function Shell() {
@@ -51,6 +60,10 @@ export function Shell() {
   const notesOpen = useUiStore((s) => s.notesOpen);
   const setNotesOpen = useUiStore((s) => s.setNotesOpen);
   const assistantOpen = useAssistantStore((s) => s.open);
+  const autopilotDockOpen = useAutopilotStore((s) => s.dockOpen);
+  const askDirectorOpen = useAskDirectorStore((s) => Boolean(s.request));
+  const personalServerUrl = settings.personalServer?.url ?? "";
+  const personalServerToken = settings.personalServer?.token ?? "";
   const accessToken = useAuthStore((s) => s.accessToken);
   const hydrateConnections = useConnectionStore((state) => state.hydrate);
 
@@ -61,6 +74,20 @@ export function Shell() {
   useRewriteDatabaseBlockedNotification();
 
   useEffect(() => { void hydrateConnections().then(() => scheduleAccountSync(250)); }, [hydrateConnections]);
+
+  // Follow the personal server live while it is configured (debounced while the address is typed).
+  useEffect(() => {
+    if (!cloudLoaded) return;
+    const configured = Boolean(personalServerUrl.trim() && personalServerToken.trim());
+    if (!configured && useAutopilotStore.getState().server.status === "disabled") return;
+    const timer = window.setTimeout(() => {
+      void import("@/autopilot/loader")
+        .then(({ loadAutopilotRuntime }) => loadAutopilotRuntime())
+        .then((runtime) => runtime.ensureServerStream())
+        .catch(() => undefined);
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [cloudLoaded, personalServerUrl, personalServerToken]);
 
   useEffect(() => {
     const route = parseAppRoute(location.pathname);
@@ -167,6 +194,8 @@ export function Shell() {
       <FeedbackRewriteWorkflowDialog />
       <OnboardingDialog />
       <AssistantLauncher />
+      {autopilotDockOpen && <Suspense fallback={null}><AutopilotDock /></Suspense>}
+      {askDirectorOpen && <Suspense fallback={null}><AskDirectorDialog /></Suspense>}
       {assistantOpen && <Suspense fallback={<span className="sr-only" role="status">{t("common.loading")}</span>}><AssistantPanel /></Suspense>}
 
       <Dialog open={mobileNavOpen} onOpenChange={setMobileNavOpen}>

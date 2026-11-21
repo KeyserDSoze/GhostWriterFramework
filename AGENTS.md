@@ -40,6 +40,8 @@ Narrarium MCP already auto-refreshes `plot.md` and the resume files after final 
 - In chapter and scene prose, write character, item, location, faction, secret, and timeline-event names as plain text. Do not insert markdown links to canon files or reader routes; the reader will link visible canon mentions.
 - Do not reveal a secret before its `known_from` or `reveal_in` threshold.
 - Treat `guidelines/`, `drafts/`, `plot.md`, `conversations/`, `resumes/`, `evaluations/`, and `secrets/` as first-class context, not optional notes.
+- Treat `director.md` (the director profile: the author's stand-in) and `evaluations/director/` as first-class context when judging or revising prose.
+- `autopilot/state.json`, `autopilot/activity.json`, and `autopilot/plan.md` belong to the autopilot. Read them for context, but do not edit them while an autopilot run is active; change the autopilot through its interventions instead.
 
 ## Historical or factual content
 
@@ -70,3 +72,6 @@ Narrarium MCP already auto-refreshes `plot.md` and the resume files after final 
   - `narrarium-mcp-server`
   - `create-narrarium-book`
   - `narrarium-astro-reader`
+  - `narrarium-engine`
+  - `narrarium-server`
+- Autopilot, director, simulated readers, and personal-server sync live once in `packages/engine` (`narrarium-engine`). The web app and `narrarium-server` only provide adapters (book store, AI port); never duplicate that logic in either host.

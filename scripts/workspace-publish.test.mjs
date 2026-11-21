@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parsePublishedVersion } from "./workspace-publish.mjs";
-import { assertSiteReleaseBump, parseReleaseTag, validateReleaseTarget } from "./release-policy.mjs";
+import { packages, parsePublishedVersion } from "./workspace-publish.mjs";
+import { assertSiteReleaseBump, parseReleaseTag, publishOrder, validateReleaseTarget } from "./release-policy.mjs";
 
 test("published workspace versions support npm string and workspace-array output", () => {
   assert.equal(parsePublishedVersion('"0.1.57"\n'), "0.1.57");
@@ -28,6 +28,23 @@ test("release target validation checks dependency ranges and publication order",
   assert.throws(
     () => validateReleaseTarget({ name: "narrarium-sdk", version: "0.1.56" }, records.map((record) => record.name === "narrarium" ? { ...record, version: "0.1.55" } : record)),
     /requires narrarium@\^0\.1\.57/,
+  );
+});
+
+test("the shared engine is published after the core and before the personal server", () => {
+  assert.deepEqual(packages.map((entry) => entry.name), publishOrder);
+  assert.ok(publishOrder.indexOf("narrarium") < publishOrder.indexOf("narrarium-engine"));
+  assert.ok(publishOrder.indexOf("narrarium-engine") < publishOrder.indexOf("narrarium-server"));
+  assert.deepEqual(parseReleaseTag("vnarrarium-server@0.1.0"), { name: "narrarium-server", version: "0.1.0" });
+  const records = [
+    { name: "narrarium", version: "0.1.58", dependencies: {} },
+    { name: "narrarium-engine", version: "0.1.0", dependencies: { narrarium: "^0.1.58" } },
+    { name: "narrarium-server", version: "0.1.0", dependencies: { "narrarium-engine": "^0.1.0" } },
+  ];
+  assert.equal(validateReleaseTarget({ name: "narrarium-server", version: "0.1.0" }, records).name, "narrarium-server");
+  assert.throws(
+    () => validateReleaseTarget({ name: "narrarium-server", version: "0.1.0" }, records.map((record) => record.name === "narrarium-engine" ? { ...record, version: "0.2.0" } : record)),
+    /requires narrarium-engine@\^0\.1\.0/,
   );
 });
 

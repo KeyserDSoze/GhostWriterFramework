@@ -419,6 +419,65 @@ Le Reader Persona possono essere abilitate, disabilitate, personalizzate, duplic
 Gli hash sorgente identificano feedback non aggiornati dopo la modifica del testo. Le sintesi del panel mantengono convergenze, disaccordi, punti forti/problemi ricorrenti e priorità senza sostituire le valutazioni singole.
 `,
   }),
+  entry("autopilot", "guides", {
+    title: "Autopilot, director and personal server",
+    summary: "Let the autopilot write while the director decides as your stand-in, follow it live, intervene, and run it on your own server.",
+    markdown: `# Autopilot, director and personal server
+
+The autopilot writes the book step by step: concept, chapter plan, scenes, simulated readers, specialists and the director's decisions. Open it from the book sidebar (**Autopilot**) or from **Autopilot** in the library.
+
+## Start
+
+Write an idea (one sentence is enough) or a binding chapter-by-chapter synopsis, choose chapters, scenes per chapter and words per scene, then **Start autopilot**. By default it pauses when the plan is ready: read it, then **Approve the plan and continue**. A book that already has chapters is continued after the last one.
+
+## The director
+
+The director is your stand-in. It approves the plan, decides on every finding of readers and specialists, scores each chapter and keeps standing guidance for the next ones. Configure it on the **Director** page: persona, autonomy (decide alone, ask only on critical matters, or let you review the plan and every chapter), strictness, approval score, review rounds, priorities, taste, red lines and the weight of each simulated reader. The profile is saved in **director.md**.
+
+On any book, chapter or scene, **Ask the director** gives its opinion, answers your question and can keep the opinion in **evaluations/director/**.
+
+## Follow and intervene
+
+The **Autopilot** button next to Copilot shows what is happening now and opens a live panel that stays open while you work; Copilot has an **Autopilot** tab too. You can pause after the current step or stop now, answer the director's questions, and intervene for the next step only, from now on, or to revise what is already written (the director picks the scenes to rewrite). Your instructions always win.
+
+## Personal server
+
+Run \`npx narrarium-server\` on your computer, then open **Settings → Personal server**, paste the address and the client token and send your AI configuration. On a book's Autopilot page choose **Move to my server**: the autopilot keeps working with the browser closed. GitHub books travel through GitHub; local books are synced file by file.
+
+## AI router
+
+Route the **Autopilot** and **Director** tasks in **Settings → AI Router**. Readers use **Reader evaluation**, specialists use **Review**. Tasks without a route use models tagged default.
+`,
+  }, {
+    title: "Autopilot, direttore e server personale",
+    summary: "Lascia scrivere l'autopilot mentre il direttore decide al posto tuo, seguilo in diretta, intervieni e fallo girare sul tuo server.",
+    markdown: `# Autopilot, direttore e server personale
+
+L'autopilot scrive il libro passo dopo passo: concept, piano dei capitoli, scene, lettori simulati, specialisti e decisioni del direttore. Aprilo dalla barra laterale del libro (**Autopilot**) o da **Autopilot** nella libreria.
+
+## Avvio
+
+Scrivi un'idea (basta una frase) oppure una sinossi capitolo per capitolo vincolante, scegli capitoli, scene per capitolo e parole per scena, poi **Avvia l'autopilot**. Di norma si ferma quando il piano è pronto: rileggilo, poi **Approva il piano e continua**. Un libro che ha già capitoli prosegue dopo l'ultimo.
+
+## Il direttore
+
+Il direttore ti sostituisce. Approva il piano, decide su ogni rilievo di lettori e specialisti, dà un voto a ogni capitolo e conserva indicazioni per i successivi. Configuralo nella pagina **Direttore**: personalità, autonomia (decide da solo, chiede solo le questioni critiche, oppure ti fa rileggere piano e capitoli), severità, voto di approvazione, giri di revisione, priorità, gusto, linee rosse e peso di ogni lettore simulato. Il profilo è salvato in **director.md**.
+
+Su qualsiasi libro, capitolo o scena, **Chiedi al direttore** restituisce il suo parere, risponde alla tua domanda e può conservare il parere in **evaluations/director/**.
+
+## Seguire e intervenire
+
+Il pulsante **Autopilot** accanto a Copilot mostra cosa sta succedendo e apre un pannello in diretta che resta aperto mentre lavori; anche Copilot ha una scheda **Autopilot**. Puoi mettere in pausa dopo il passo corrente o fermare subito, rispondere alle domande del direttore e intervenire solo per il prossimo passo, d'ora in poi, oppure per rivedere quanto già scritto (il direttore sceglie le scene da riscrivere). Le tue istruzioni vincono sempre.
+
+## Server personale
+
+Esegui \`npx narrarium-server\` sul tuo computer, poi apri **Impostazioni → Server personale**, incolla indirizzo e token client e invia la configurazione AI. Nella pagina Autopilot di un libro scegli **Sposta sul mio server**: l'autopilot continua anche a browser chiuso. I libri GitHub viaggiano tramite GitHub; quelli locali sono sincronizzati file per file.
+
+## Router AI
+
+Instrada i task **Autopilot** e **Direttore** in **Impostazioni → AI Router**. I lettori usano **Valutazione lettore**, gli specialisti **Revisione**. I task senza instradamento usano i modelli con capability predefinita.
+`,
+  }),
   entry("reader-export", "guides", {
     title: "Reader and publishing",
     summary: "Reading settings, visible metadata, paragraph separators and book exports.",

@@ -405,8 +405,17 @@ export function migrateSettingsWithDiagnostics(raw: unknown): { settings: AppSet
       ...(typeof source.fallbackDisclosure === "object" && source.fallbackDisclosure ? source.fallbackDisclosure : {}),
     },
     routingExecution: normalizeRoutingExecution(source.routingExecution),
+    personalServer: normalizePersonalServer(source.personalServer),
   };
   return { settings, diagnostics };
+}
+
+function normalizePersonalServer(raw: unknown): AppSettings["personalServer"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const source = raw as Record<string, unknown>;
+  const url = typeof source.url === "string" ? source.url.trim() : "";
+  const token = typeof source.token === "string" ? source.token.trim() : "";
+  return url || token ? { url, token } : undefined;
 }
 
 function normalizeRoutingExecution(raw: unknown): AppSettings["routingExecution"] {

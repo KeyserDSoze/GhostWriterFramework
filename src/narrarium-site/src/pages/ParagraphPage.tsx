@@ -3,7 +3,8 @@ import { useLocation, useNavigate, useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { renderRepositoryMarkdownHtml } from "@/markdown/safeMarkdown";
 import { parseDocument, stringify } from "yaml";
-import { ArrowLeft, ArrowLeftRight, BookOpen, FileEdit, Save, Loader2, MoreHorizontal, Plus, ShieldAlert, X, Lock, Wand2 } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, BookOpen, Clapperboard, FileEdit, Save, Loader2, MoreHorizontal, Plus, ShieldAlert, X, Lock, Wand2 } from "lucide-react";
+import { openAskDirector } from "@/store/askDirectorStore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
@@ -158,6 +159,10 @@ export function ParagraphPage() {
   const presentationSettings = useMemo(() => (book ? resolveBookExportSettings(book) : null), [book]);
   const auditHref = `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/audit`;
   const auditActionHref = auditHref;
+  const askDirector = () => {
+    if (!bookId || !chapter || !paragraph) return;
+    openAskDirector({ bookId, target: { kind: "paragraph", chapter: chapter.slug, paragraph: (paragraph.path.split("/").pop() ?? "").replace(/\.md$/i, "") } });
+  };
 
   // ── Content state ─────────────────────────────────────────────────────────
   const [entries, setEntries] = useState<MetaEntry[]>([]);
@@ -642,6 +647,10 @@ export function ParagraphPage() {
           <Button asChild className="hidden sm:inline-flex" size="sm" variant="outline">
             <Link to={auditActionHref}><ShieldAlert className="mr-1 h-4 w-4" />{t(paragraph.auditPath ? "audit.actions.open" : "audit.actions.run")}</Link>
           </Button>
+          <Button className="hidden sm:inline-flex" size="sm" variant="outline" title={t("director.ask.action")} onClick={askDirector}>
+            <Clapperboard className="mr-1 h-4 w-4" />
+            {t("director.title")}
+          </Button>
           <Button className="hidden sm:inline-flex" size="sm" variant="outline" onClick={() => void handleSwitchToDraft()} disabled={switchingDraft || saving}>
             {switchingDraft ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-1 h-4 w-4" />}
             {t("paragraph.switchToDraft")}
@@ -672,6 +681,10 @@ export function ParagraphPage() {
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <Link to={auditActionHref}><ShieldAlert className="mr-2 h-4 w-4" />{t(paragraph.auditPath ? "audit.actions.open" : "audit.actions.run")}</Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={askDirector}>
+                <Clapperboard className="mr-2 h-4 w-4" />
+                {t("director.ask.action")}
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void handleSwitchToDraft()} disabled={switchingDraft || saving}>
                 {switchingDraft ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-2 h-4 w-4" />}

@@ -10,6 +10,8 @@ export type AppRouteContext =
   | { kind: "app-home" }
   | { kind: "book"; bookId: string }
   | { kind: "book-dashboard"; bookId: string }
+  | { kind: "book-autopilot"; bookId: string }
+  | { kind: "book-director"; bookId: string }
   | { kind: "book-assets"; bookId: string }
   | { kind: "book-ghostwriters"; bookId: string }
   | { kind: "book-evaluation-style"; bookId: string }
@@ -59,7 +61,7 @@ export function parseAppRoute(pathname: string): AppRouteContext {
   const clean = pathname.replace(/\/+$/, "") || "/";
   if (clean === "/app" || clean === "/app/books") return { kind: "app-home" };
   if (clean === "/app/books/add") return { kind: "app-page", page: "books/add" };
-  const appPage = /^\/app\/(chats|patch-notes|settings(?:\/[^/]+)?|reader-settings|custom-actions|migrate|costs|docs(?:\/.*)?)$/.exec(clean);
+  const appPage = /^\/app\/(chats|patch-notes|autopilot|settings(?:\/[^/]+)?|reader-settings|custom-actions|migrate|costs|docs(?:\/.*)?)$/.exec(clean);
   if (appPage) return { kind: "app-page", page: decodeURIComponent(appPage[1]) };
 
   let match = /^\/app\/books\/([^/]+)\/reader$/.exec(clean);
@@ -70,6 +72,12 @@ export function parseAppRoute(pathname: string): AppRouteContext {
 
   match = /^\/app\/books\/([^/]+)\/dashboard$/.exec(clean);
   if (match) return { kind: "book-dashboard", bookId: decodeURIComponent(match[1]) };
+
+  match = /^\/app\/books\/([^/]+)\/autopilot$/.exec(clean);
+  if (match) return { kind: "book-autopilot", bookId: decodeURIComponent(match[1]) };
+
+  match = /^\/app\/books\/([^/]+)\/director$/.exec(clean);
+  if (match) return { kind: "book-director", bookId: decodeURIComponent(match[1]) };
 
   match = /^\/app\/books\/([^/]+)\/assets$/.exec(clean);
   if (match) return { kind: "book-assets", bookId: decodeURIComponent(match[1]) };
@@ -252,6 +260,14 @@ export async function loadWriterContext(
       case "book-simulated-readers":
         await Promise.all(structure.readerPersonas.map((entry) => pushFile(entry.path)));
         break;
+      case "book-autopilot":
+        await pushFile("book.md");
+        await pushFile(structure.plotPath);
+        break;
+      case "book-director":
+        if (structure.rootFiles?.some((file) => file.path === "director.md")) await pushFile("director.md");
+        await pushFile("book.md");
+        break;
       case "reader":
       case "book-export":
       case "research":
@@ -332,6 +348,8 @@ export function buildContextTitle(
   switch (route.kind) {
     case "book": return structure?.title ?? "Book";
     case "book-dashboard": return "Book dashboard";
+    case "book-autopilot": return "Autopilot";
+    case "book-director": return "Director";
     case "book-assets": return "Book assets";
     case "book-ghostwriters": return "Ghostwriters";
     case "book-evaluation-style": return "Evaluation Style";
@@ -380,6 +398,8 @@ export function buildContextSummary(
   switch (route.kind) {
     case "book": return `Book context for ${structure?.title ?? book?.name ?? "book"}.`;
     case "book-dashboard": return `Dashboard for ${structure?.title ?? book?.name ?? "book"}.`;
+    case "book-autopilot": return `Autopilot for ${structure?.title ?? book?.name ?? "book"}.`;
+    case "book-director": return `Director profile and opinions for ${structure?.title ?? book?.name ?? "book"}.`;
     case "book-assets": return `Assets for ${structure?.title ?? book?.name ?? "book"}.`;
     case "book-ghostwriters": return `Ghostwriters for ${structure?.title ?? book?.name ?? "book"}.`;
     case "book-evaluation-style": return `Editing evaluation style for ${structure?.title ?? book?.name ?? "book"}.`;
@@ -426,7 +446,7 @@ function buildNoteTargetPath(route: AppRouteContext, chapter: Chapter | null): s
   if (route.kind === "chapter" || route.kind === "paragraph" || route.kind === "chapter-workspace" || route.kind === "paragraph-workspace" || route.kind === "chapter-audit" || route.kind === "paragraph-audit") {
     return chapter ? `drafts/${chapter.slug}/notes.md` : null;
   }
-  if (route.kind === "book" || route.kind === "book-dashboard" || route.kind === "book-assets" || route.kind === "book-ghostwriters" || route.kind === "book-evaluation-style" || route.kind === "book-simulated-readers" || route.kind === "reader" || route.kind === "book-export" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "book-audit" || route.kind === "app-home") {
+  if (route.kind === "book" || route.kind === "book-dashboard" || route.kind === "book-autopilot" || route.kind === "book-director" || route.kind === "book-assets" || route.kind === "book-ghostwriters" || route.kind === "book-evaluation-style" || route.kind === "book-simulated-readers" || route.kind === "reader" || route.kind === "book-export" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "book-audit" || route.kind === "app-home") {
     return "notes.md";
   }
   return null;

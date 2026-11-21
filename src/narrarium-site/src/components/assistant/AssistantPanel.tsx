@@ -19,6 +19,7 @@ import {
   Minimize2,
   Paperclip,
   Pause,
+  Plane,
   Play,
   Search,
   Send,
@@ -69,6 +70,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AutopilotAssistantTab } from "@/components/autopilot/AutopilotAssistantTab";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -269,7 +271,7 @@ export function AssistantPanel() {
   const [diffMode, setDiffMode] = useState<Record<string, boolean>>({});
   const [previousContents, setPreviousContents] = useState<Record<string, string>>({});
   const [loadingDiffPath, setLoadingDiffPath] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"chat" | "history">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "history" | "autopilot">("chat");
   const [isMobile, setIsMobile] = useState(false);
   const [pendingDiffRevert, setPendingDiffRevert] = useState<PendingDiffRevert | null>(null);
   const [requestStatus, setRequestStatus] = useState("");
@@ -2642,16 +2644,19 @@ export function AssistantPanel() {
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "chat" | "history")} className="flex min-h-0 flex-1 flex-col">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "chat" | "history" | "autopilot")} className="flex min-h-0 flex-1 flex-col">
         <div className="border-b px-3 py-2">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="chat"><Bot className="mr-1.5 h-3.5 w-3.5" />{t("assistant.tabChat")}</TabsTrigger>
             <TabsTrigger value="history"><History className="mr-1.5 h-3.5 w-3.5" />{t("assistant.tabHistory")}</TabsTrigger>
+            <TabsTrigger value="autopilot"><Plane className="mr-1.5 h-3.5 w-3.5" />{t("autopilot.title")}</TabsTrigger>
           </TabsList>
         </div>
 
         {activeTab === "history" ? (
           <ScrollArea className="min-h-0 flex-1 px-3 py-3">{historyView}</ScrollArea>
+        ) : activeTab === "autopilot" ? (
+          <ScrollArea className="min-h-0 flex-1 px-3 py-3"><AutopilotAssistantTab onNavigate={closeAssistant} /></ScrollArea>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
