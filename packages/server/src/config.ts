@@ -63,8 +63,8 @@ export function assertBookId(bookId: string): string {
   return bookId;
 }
 
-/** The names Windows keeps for devices: a file or folder called like this (with any extension) cannot be created there. */
-const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+/** The names Windows keeps for devices (`com0` and `lpt0` too, as a Windows run showed): a file or folder called like this (with any extension) cannot be created there. */
+const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
 
 /**
  * The id of a book that is registered now. On top of `assertBookId` it refuses what a Windows computer cannot keep as a folder name
@@ -73,7 +73,7 @@ const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 export function assertNewBookId(bookId: string): string {
   assertBookId(bookId);
   if (bookId.startsWith(".") || /[. ]$/.test(bookId) || WINDOWS_DEVICE_NAME.test(bookId.split(".")[0])) {
-    throw new HttpError(400, "invalid_book", "Invalid book id: it may not start or end with a dot, nor be a name that Windows keeps for devices (con, prn, aux, nul, com1-9, lpt1-9), with or without an extension.");
+    throw new HttpError(400, "invalid_book", "Invalid book id: it may not start or end with a dot, nor be a name that Windows keeps for devices (con, prn, aux, nul, com0-9, lpt0-9), with or without an extension.");
   }
   return bookId;
 }

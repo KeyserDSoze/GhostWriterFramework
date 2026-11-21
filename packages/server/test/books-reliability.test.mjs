@@ -321,9 +321,9 @@ test("R13: a retry after a failed first clone starts clean and works", async () 
 // R14: ids that a Windows computer cannot keep
 // ---------------------------------------------------------------------------------------------
 
-const RESERVED = ["con", "CON", "prn", "aux", "nul", "NUL", "com1", "COM9", "lpt1", "LPT9", "con.txt", "NUL.md", "aux.tar.gz", "com1.x", "Lpt3.backup"];
+const RESERVED = ["con", "CON", "prn", "aux", "nul", "NUL", "com0", "com1", "COM9", "lpt0", "lpt1", "LPT9", "con.txt", "NUL.md", "aux.tar.gz", "com1.x", "Lpt3.backup", "LPT0.log"];
 const BAD_ENDINGS = ["a.", "book..", "...", "x.y."];
-const FINE = ["console", "auxiliary", "nullable", "com10", "lpt0", "com", "con-x", "my.book", "book_1", "a-b.c", "1984", "Z"];
+const FINE = ["console", "auxiliary", "nullable", "com10", "lpt10", "com", "con-x", "my.book", "book_1", "a-b.c", "1984", "Z"];
 
 test("R14: a new book id may not be a reserved device name, end with a dot, or start with one", async () => {
   await withServer(async (server, client) => {
@@ -339,7 +339,7 @@ test("R14: a new book id may not be a reserved device name, end with a dot, or s
   });
 });
 
-test("R14: books that were registered under such an id before keep working: listed, changed, removed", async () => {
+test("R14: books that were registered under such an id before keep working: listed, changed, removed", { skip: process.platform === "win32" && "Windows never let such a book be made, so none can be there from before" }, async () => {
   const dataDir = await temporary("narrarium-old-ids-");
   try {
     const now = new Date().toISOString();

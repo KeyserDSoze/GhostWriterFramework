@@ -13,6 +13,8 @@ const noTunnel = { findBinary: () => undefined, detectOtherConnectors: async () 
 const remove = (...directories) => Promise.all(directories.map((directory) => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })));
 const hostname = os.hostname();
 const legacyLabel = `narrarium-server@${hostname}`;
+// A configuration keeps a label to 80 characters when it reads it: a cloud runner's computer name is longer than the rest of that.
+const storedLabel = (label) => label.slice(0, 80);
 
 /** A server whose configuration was written by an earlier version: its label is the default one, with the computer's name in it. */
 async function withLegacyServer(run, label = legacyLabel, extra = {}) {
@@ -43,10 +45,10 @@ test("C23: the owner, signed in, still sees the label that is stored", async () 
   await withLegacyServer(async (server) => {
     const { token } = await server.auth.issue("owner's device", ["read"]);
     const session = await (await fetch(`${server.url}/api/v1/session`, { headers: { authorization: `Bearer ${token}` } })).json();
-    assert.equal(session.label, legacyLabel);
+    assert.equal(session.label, storedLabel(legacyLabel));
     const admin = await adminLogin(server);
-    assert.equal((await admin.call("GET", "/admin/api/status")).body.label, legacyLabel);
-    assert.equal(server.data.config.label, legacyLabel, "and nothing was rewritten on disk");
+    assert.equal((await admin.call("GET", "/admin/api/status")).body.label, storedLabel(legacyLabel));
+    assert.equal(server.data.config.label, storedLabel(legacyLabel), "and nothing was rewritten on disk");
   });
 });
 
@@ -55,7 +57,7 @@ test("C23: a label the owner chose is shown as chosen, also when it is not the d
     assert.equal((await (await fetch(`${server.url}/api/v1/info`)).json()).label, "Studio server");
   }, "Studio server");
   await withLegacyServer(async (server) => {
-    assert.equal((await (await fetch(`${server.url}/api/v1/info`)).json()).label, `${hostname} (my studio)`, "the owner put it there themselves");
+    assert.equal((await (await fetch(`${server.url}/api/v1/info`)).json()).label, storedLabel(`${hostname} (my studio)`), "the owner put it there themselves");
   }, `${hostname} (my studio)`);
 });
 
