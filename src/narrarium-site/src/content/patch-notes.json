@@ -1,5 +1,41 @@
 [
   {
+    "version": "0.79.0",
+    "date": "2026-11-21",
+    "en": {
+      "title": "Personal server: pairing, verified updates and a sturdier autopilot",
+      "summary": "Pair Narrarium with your personal server through its new admin panel, update the server from Narrarium to verified npm releases, and let the autopilot work with local reasoning models without ever approving an incomplete or cut reply.",
+      "changes": [
+        "Settings → Personal server pairs this device with a nine-digit code generated in the server's new admin panel (http://127.0.0.1:24243 on the server's computer); the owner approves the request there and can also allow the device to update the server. Pasting a client token remains available.",
+        "Narrarium checks the server's signed identity at every connection, shows its fingerprint and this device's permissions, and refuses a server whose key changed. Disconnect also revokes this device's token on the server.",
+        "The new Version and updates section installs a newer narrarium-server release from Narrarium: the server stops, installs the npm package only if it carries npm's signature and the provenance of the Narrarium publishing workflow, and restarts; if anything fails the previous version stays and the reason is shown. The Autopilot page shows a badge when an update is available.",
+        "After you send your AI configuration, the settings page lists the AI endpoints the server owner still has to approve in the admin panel; the server never calls endpoints that were not approved.",
+        "npx narrarium-server installs a verified copy of itself and runs under an update supervisor; its admin panel manages clients, approved networks, a dedicated Cloudflare connector for remote access and the admin code, and setup --autostart starts it automatically on Linux and macOS.",
+        "The autopilot no longer treats empty or incomplete replies from the director, specialists, plan review, impact analysis or final review as approval: it retries once, telling the model what was missing, then stops with an error.",
+        "Replies cut by the output limit, also while a model is still reasoning, are never saved; failed steps show their tokens and cost in the activity log and count toward the budget limit.",
+        "Local models in LM Studio and llama.cpp are now forced to answer with the requested tool in every feature, Copilot included, and JSON written in the reply text is accepted.",
+        "Autopilot prompts are never cut in the middle any more: a prompt larger than the context window configured for the routed models is refused with a clear message, and models without a configured window receive it whole.",
+        "The story so far is kept chapter by chapter in resumes/total.md, as sync_resume writes it, and never includes later chapters; plans shorter than requested are rejected, canon names match whole words only, the newest author rules are kept, and \"Mara\" no longer creates a duplicate of \"Mara Venturi\"."
+      ]
+    },
+    "it": {
+      "title": "Server personale: abbinamento, aggiornamenti verificati e un autopilot più solido",
+      "summary": "Abbina Narrarium al tuo server personale dal suo nuovo pannello di amministrazione, aggiorna il server da Narrarium alle release npm verificate e lascia che l'autopilot lavori con i modelli locali che ragionano senza approvare mai una risposta incompleta o tagliata.",
+      "changes": [
+        "Impostazioni → Server personale abbina questo dispositivo con un codice di nove cifre generato nel nuovo pannello di amministrazione del server (http://127.0.0.1:24243 sul computer del server); il proprietario approva la richiesta lì e può consentire al dispositivo anche di aggiornare il server. Incollare un token client resta possibile.",
+        "Narrarium verifica l'identità firmata del server a ogni connessione, mostra la sua impronta e i permessi di questo dispositivo, e rifiuta un server la cui chiave è cambiata. Scollega revoca anche il token di questo dispositivo sul server.",
+        "La nuova sezione Versione e aggiornamenti installa da Narrarium una release più recente di narrarium-server: il server si ferma, installa il pacchetto npm solo se ha la firma di npm e la provenienza del flusso di pubblicazione di Narrarium, e riparte; se qualcosa va storto resta la versione precedente e viene mostrato il motivo. La pagina Autopilot mostra un avviso quando c'è un aggiornamento.",
+        "Dopo l'invio della configurazione AI, la pagina delle impostazioni elenca gli endpoint AI che il proprietario del server deve ancora approvare nel pannello di amministrazione; il server non chiama mai endpoint non approvati.",
+        "npx narrarium-server installa una copia verificata di sé stesso e gira sotto un supervisore degli aggiornamenti; il suo pannello di amministrazione gestisce client, reti approvate, un connettore Cloudflare dedicato per l'accesso remoto e il codice amministratore, e setup --autostart lo avvia automaticamente su Linux e macOS.",
+        "L'autopilot non considera più un'approvazione le risposte vuote o incomplete di direttore, specialisti, revisione del piano, analisi d'impatto o revisione finale: riprova una volta spiegando al modello cosa mancava, poi si ferma con un errore.",
+        "Le risposte tagliate dal limite di output, anche mentre il modello sta ancora ragionando, non vengono mai salvate; i passi falliti mostrano token e costo nel registro delle attività e contano per il limite di budget.",
+        "I modelli locali in LM Studio e llama.cpp sono ora obbligati a rispondere con lo strumento richiesto in ogni funzione, Copilot incluso, e viene accettato anche il JSON scritto nel testo della risposta.",
+        "I prompt dell'autopilot non vengono più tagliati a metà: un prompt più grande della finestra di contesto configurata per i modelli instradati viene rifiutato con un messaggio chiaro, e i modelli senza finestra configurata lo ricevono intero.",
+        "La storia finora è conservata capitolo per capitolo in resumes/total.md, come la scrive sync_resume, e non include mai i capitoli successivi; i piani più corti del richiesto vengono rifiutati, i nomi del canone corrispondono solo a parole intere, si conservano le regole dell'autore più recenti e \"Mara\" non crea più un doppione di \"Mara Venturi\"."
+      ]
+    }
+  },
+  {
     "version": "0.78.0",
     "date": "2026-11-21",
     "en": {

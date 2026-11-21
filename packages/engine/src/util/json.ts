@@ -33,12 +33,18 @@ function matchingBracket(text: string, start: number): number {
 /**
  * Parse the JSON value contained in a model reply. Accepts code fences and leading prose,
  * and tries a bounded number of candidate start brackets before giving up.
+ * With `accept`, returns the first candidate the acceptor approves: a valid JSON value it
+ * rejects is skipped whole, so its nested values (for example the properties of a JSON
+ * schema the model echoed before answering) are never taken for the answer.
  */
-export function parseJsonReply(raw: string): unknown {
+export function parseJsonReply(raw: string, accept?: (value: unknown) => boolean): unknown {
   const text = (raw ?? "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
   if (!text) throw new StructuredReplyError("The model returned an empty reply where JSON was expected.");
+  let rejected = false;
   try {
-    return JSON.parse(text);
+    const value = JSON.parse(text);
+    if (!accept || accept(value)) return value;
+    rejected = true;
   } catch {
     // Fall through to candidate scanning.
   }
@@ -49,13 +55,18 @@ export function parseJsonReply(raw: string): unknown {
     attempts += 1;
     const end = matchingBracket(text, index);
     if (end < 0) continue;
+    let value: unknown;
     try {
-      return JSON.parse(text.slice(index, end + 1));
+      value = JSON.parse(text.slice(index, end + 1));
     } catch {
       // Try the next candidate.
+      continue;
     }
+    if (!accept || accept(value)) return value;
+    rejected = true;
+    index = end;
   }
-  throw new StructuredReplyError("The model reply is not valid JSON.");
+  throw new StructuredReplyError(rejected ? "The model reply contains JSON, but not an object with the expected fields." : "The model reply is not valid JSON.");
 }
 
 export function asRecord(value: unknown): Record<string, unknown> {

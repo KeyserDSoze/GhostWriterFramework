@@ -21,6 +21,7 @@ import i18n from "@/i18n";
 import { localDeviceId } from "@/account/deviceIdentity";
 import { createBrowserAi } from "@/autopilot/browserAi";
 import { LocalWorkingCopyMissingError, createBrowserBookStore } from "@/autopilot/browserStore";
+import { ServerIdentityError, verifiedServerInfo } from "@/autopilot/serverIdentity";
 import { autopilotChannel, emptyView, shareAutopilotEvent, useAutopilotStore, type AutopilotChannelMessage, type RelayedCommand } from "@/autopilot/store";
 import { resolveAuthoritativeBranch } from "@/github/branchResolution";
 import { getLocalRepository, localStatus } from "@/repository/localRepository";
@@ -97,10 +98,12 @@ function browserLabel(): string {
 /** Readable message for errors shown in the autopilot views. */
 export function describeAutopilotError(error: unknown): string {
   if (error instanceof LocalWorkingCopyMissingError) return i18n.t("autopilot.errors.workingCopy");
+  if (error instanceof ServerIdentityError) return i18n.t(`personalServer.identity.${error.reason}`);
   if (error instanceof ServerRequestError) {
     if (error.code === "unreachable") return i18n.t("autopilot.serverOffline");
     if (error.code === "book_not_found") return i18n.t("autopilot.where.serverBookMissing");
     if (error.code === "ai_not_configured") return `${error.message} ${i18n.t("personalServer.aiMissing")}`;
+    if (error.code === "maintenance") return i18n.t("personalServer.updates.maintenance");
   }
   if (error instanceof Error && error.name === "AiUnavailableError") return i18n.t("autopilot.errors.aiMissing");
   return error instanceof Error ? error.message : String(error);
@@ -541,7 +544,7 @@ class BrowserAutopilotRuntime {
     this.stream?.controller.abort();
     this.stream = null;
     if (!key) {
-      useAutopilotStore.getState().setServer({ status: "disabled", info: null, message: null, books: [] });
+      useAutopilotStore.getState().setServer({ status: "disabled", info: null, message: null, books: [], updates: null });
       return;
     }
     const controller = new AbortController();
@@ -563,9 +566,14 @@ class BrowserAutopilotRuntime {
       if (!client) return;
       useAutopilotStore.getState().setServer({ status: "connecting" });
       try {
-        const [info, books] = await Promise.all([client.info(), client.listBooks()]);
+        // The token is sent only to the server that proves the pinned identity.
+        const { info } = await verifiedServerInfo(client, settings().personalServer?.fingerprint);
+        const books = await client.listBooks();
         if (signal.aborted) return;
         useAutopilotStore.getState().setServer({ status: "online", info, message: null, books });
+        void client.updates().then((updates) => {
+          if (!signal.aborted) useAutopilotStore.getState().setServer({ updates });
+        }).catch(() => undefined);
         for (const summary of books) {
           if (settings().books.some((book) => book.id === summary.bookId)) useAutopilotStore.getState().patchView(summary.bookId, { server: summary });
         }
@@ -574,9 +582,9 @@ class BrowserAutopilotRuntime {
         if (!signal.aborted) useAutopilotStore.getState().setServer({ status: "offline", message: null });
       } catch (error) {
         if (signal.aborted) return;
-        const unauthorized = error instanceof ServerRequestError && error.status === 401;
-        useAutopilotStore.getState().setServer({ status: unauthorized ? "error" : "offline", message: describeAutopilotError(error) });
-        if (unauthorized) return;
+        const fatal = (error instanceof ServerRequestError && error.status === 401) || error instanceof ServerIdentityError;
+        useAutopilotStore.getState().setServer({ status: fatal ? "error" : "offline", message: describeAutopilotError(error) });
+        if (fatal) return;
       }
       await new Promise((resolve) => window.setTimeout(resolve, delay));
       delay = Math.min(30000, delay * 2);

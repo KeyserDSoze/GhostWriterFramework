@@ -415,7 +415,11 @@ function normalizePersonalServer(raw: unknown): AppSettings["personalServer"] {
   const source = raw as Record<string, unknown>;
   const url = typeof source.url === "string" ? source.url.trim() : "";
   const token = typeof source.token === "string" ? source.token.trim() : "";
-  return url || token ? { url, token } : undefined;
+  if (!url && !token) return undefined;
+  const serverId = typeof source.serverId === "string" && /^[0-9a-f-]{36}$/i.test(source.serverId) ? source.serverId : undefined;
+  const fingerprint = typeof source.fingerprint === "string" && /^[0-9a-f]{64}$/.test(source.fingerprint) ? source.fingerprint : undefined;
+  const clientLabel = typeof source.clientLabel === "string" && source.clientLabel.trim() ? source.clientLabel.trim().slice(0, 80) : undefined;
+  return { url, token, ...(serverId ? { serverId } : {}), ...(fingerprint ? { fingerprint } : {}), ...(clientLabel ? { clientLabel } : {}) };
 }
 
 function normalizeRoutingExecution(raw: unknown): AppSettings["routingExecution"] {

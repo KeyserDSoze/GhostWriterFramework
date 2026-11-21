@@ -20,7 +20,7 @@ npm install narrarium-engine
 | Readers | `readerPersonaSystemPrompt`, `mergeReaderPersonas`, `READER_EVALUATION_TOOL`, `chapterReaderText` |
 | Ghostwriters | `parseGhostwriter`, `ghostwriterPrompt` |
 | AI | `AiPort` (the only door to language models), `createFetchAi` (OpenAI, Azure OpenAI, GitHub Models), `resolveAiCandidates`, `pickAiRuntimeConfig` |
-| Personal server | `NarrariumServerClient`, `remoteBookStore`, protocol types, `ServerSentEventParser` |
+| Personal server | `NarrariumServerClient`, `pairWithServer`, `verifyServerIdentity`, `remoteBookStore`, protocol types (scopes, pairing, updates), `ServerSentEventParser` |
 | Sync | `planFileSync`, `syncBookStores` (three-way sync of two book stores) |
 | Testing | `narrarium-engine/testing`: `MemoryBookStore`, `seedBookFiles`, `createFakeAutopilotAi` |
 

@@ -6,7 +6,13 @@ import type { AutopilotEvent, AutopilotSnapshot, AutopilotStateSummary, Interven
 
 export const SERVER_API_VERSION = 1;
 export const DEFAULT_SERVER_PORT = 24242;
+/** Loopback port of the server's admin panel. */
+export const DEFAULT_ADMIN_PORT = 24243;
 export const SERVER_PACKAGE_NAME = "narrarium-server";
+
+/** Permissions of a client token. `update` (replace the server version) is granted only explicitly by the owner. */
+export const SERVER_SCOPES = ["read", "write", "run", "update"] as const;
+export type ServerScope = (typeof SERVER_SCOPES)[number];
 
 export interface ServerInfo {
   name: typeof SERVER_PACKAGE_NAME;
@@ -18,6 +24,14 @@ export interface ServerInfo {
   /** Whether `git` is available for GitHub-backed books. */
   git: boolean;
   features: string[];
+  /** Ed25519 public key of the server (SPKI DER, base64) and its SHA-256 fingerprint (hex). */
+  publicKey?: string;
+  fingerprint?: string;
+  /** Echo of the request nonce and the Ed25519 signature of `nonce\nserverId\npublicKey` (base64). */
+  nonce?: string;
+  signature?: string;
+  /** Started with `npx narrarium-server start`: the supervisor can install a new version on request. */
+  supervised?: boolean;
 }
 
 export interface ServerSession {
@@ -25,6 +39,60 @@ export interface ServerSession {
   label: string;
   clientLabel: string;
   clientId: string;
+  scopes: ServerScope[];
+}
+
+export interface PairingRequest {
+  /** Nine-digit code shown in the server's admin panel. */
+  code: string;
+  /** 64 hex characters chosen by the client; only its hash is kept by the server. */
+  nonce: string;
+  label: string;
+}
+
+export type PairingResult = { pending: true } | { token: string };
+
+export type ServerUpdateReason = "not_published" | "no_trusted_release" | "unavailable" | "up_to_date" | "no_supervisor" | "missing_scope";
+
+export interface ServerUpdateResult {
+  requestId: string;
+  state: "completed" | "failed";
+  /** `completed`, or why the update did not happen. */
+  outcome: "completed" | "failed" | "limited" | "stopping";
+  version: string;
+  fromVersion: string;
+  at: string;
+  message: string;
+}
+
+export interface ServerUpdateInfo {
+  packageName: typeof SERVER_PACKAGE_NAME;
+  installedVersion: string;
+  latestVersion?: string;
+  /** A newer release exists, signed by the npm registry and attested by the publishing workflow. */
+  available: boolean;
+  /** This client may ask for the update now. */
+  canRequest: boolean;
+  signed: boolean;
+  supervised: boolean;
+  hasUpdateScope: boolean;
+  reason?: ServerUpdateReason;
+  message: string;
+  lastUpdate?: ServerUpdateResult;
+  /** An update already requested and waiting for the supervisor. */
+  pending?: { version: string; requestedAt: string };
+}
+
+export interface ServerUpdateRequest {
+  version: string;
+  installedVersion: string;
+  confirmed: true;
+}
+
+export interface ServerUpdateAccepted {
+  accepted: true;
+  version: string;
+  message: string;
 }
 
 export type ServerBookStorage =
@@ -90,6 +158,8 @@ export interface ServerAiStatus {
   integrations: RedactedAiIntegration[];
   routedTasks: string[];
   updatedAt: string | null;
+  /** AI endpoint origins the server owner still has to approve in the admin panel before they can be called. */
+  pendingApproval?: string[];
 }
 
 export interface PutAiConfigRequest {
@@ -177,6 +247,55 @@ export function normalizeServerUrl(value: string): string {
 
 export function bookRoute(bookId: string, suffix = ""): string {
   return `/api/v1/books/${encodeURIComponent(bookId)}${suffix}`;
+}
+
+/** The text a server signs to prove its identity for one request. */
+export function serverIdentityMessage(nonce: string, serverId: string, publicKey: string): string {
+  return `${nonce}\n${serverId}\n${publicKey}`;
+}
+
+/** 64 random hex characters, used as identity and pairing nonces. */
+export function randomNonce(): string {
+  const bytes = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function base64Bytes(value: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(value);
+  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+export interface ServerIdentityCheck {
+  /** The signature was verified with Web Crypto. */
+  verified: boolean;
+  /** This runtime cannot verify Ed25519 signatures (only the fingerprint can be compared). */
+  unsupported?: boolean;
+  fingerprint: string;
+}
+
+/**
+ * Check that a signed `/api/v1/info` answer comes from the holder of the announced key: the
+ * fingerprint must match the key and the signature must cover this nonce. Throws when they do not.
+ */
+export async function verifyServerIdentity(info: ServerInfo, nonce: string): Promise<ServerIdentityCheck> {
+  if (!info.publicKey || !info.signature || !info.fingerprint || info.nonce !== nonce) throw new Error("The personal server did not prove its identity.");
+  const subtle = globalThis.crypto.subtle;
+  const keyBytes = base64Bytes(info.publicKey);
+  const digest = new Uint8Array(await subtle.digest("SHA-256", keyBytes));
+  const fingerprint = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  if (fingerprint !== info.fingerprint) throw new Error("The personal server's identity does not match its key.");
+  let key: CryptoKey;
+  try {
+    key = await subtle.importKey("spki", keyBytes, { name: "Ed25519" }, false, ["verify"]);
+  } catch {
+    return { verified: false, unsupported: true, fingerprint };
+  }
+  const valid = await subtle.verify({ name: "Ed25519" }, key, base64Bytes(info.signature), new TextEncoder().encode(serverIdentityMessage(nonce, info.serverId, info.publicKey)));
+  if (!valid) throw new Error("The personal server's identity signature is not valid.");
+  return { verified: true, fingerprint };
 }
 
 export type { AutopilotSnapshot };

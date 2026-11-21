@@ -6,18 +6,26 @@ import {
   ServerSentEventParser,
   bookRoute,
   normalizeServerUrl,
+  randomNonce,
+  verifyServerIdentity,
   type AskDirectorRequest,
   type AskDirectorResponse,
   type ErrorResponse,
   type EventsResponse,
+  type PairingRequest,
+  type PairingResult,
   type ReadFilesResponse,
   type RegisterBookRequest,
   type ServerAiStatus,
   type ServerBookSummary,
+  type ServerIdentityCheck,
   type ServerInfo,
   type ServerManifest,
   type ServerSession,
   type ServerStreamMessage,
+  type ServerUpdateAccepted,
+  type ServerUpdateInfo,
+  type ServerUpdateRequest,
 } from "./protocol.js";
 
 export class ServerRequestError extends Error {
@@ -89,12 +97,42 @@ export class NarrariumServerClient {
     }
   }
 
-  info(): Promise<ServerInfo> {
-    return this.request("GET", "/api/v1/info", undefined, { auth: false, timeoutMs: 10_000 });
+  info(nonce?: string): Promise<ServerInfo> {
+    return this.request("GET", `/api/v1/info${nonce ? `?nonce=${encodeURIComponent(nonce)}` : ""}`, undefined, { auth: false, timeoutMs: 10_000 });
+  }
+
+  /** Ask the server to sign a fresh nonce and check it (see `verifyServerIdentity`). */
+  async verifiedInfo(): Promise<{ info: ServerInfo; identity: ServerIdentityCheck }> {
+    const nonce = randomNonce();
+    const info = await this.info(nonce);
+    return { info, identity: await verifyServerIdentity(info, nonce) };
   }
 
   session(): Promise<ServerSession> {
     return this.request("GET", "/api/v1/session", undefined, { timeoutMs: 10_000 });
+  }
+
+  /** Revoke this client's own token: the device is disconnected from the server. */
+  forgetSession(): Promise<{ revoked: boolean }> {
+    return this.request("DELETE", "/api/v1/session", undefined, { timeoutMs: 10_000 });
+  }
+
+  /** First pairing step: send the code shown in the server's admin panel. */
+  requestPairing(request: PairingRequest): Promise<{ id: string }> {
+    return this.request("POST", "/api/v1/pairings", request, { auth: false, timeoutMs: 15_000 });
+  }
+
+  /** Poll a pairing until the owner approves it in the admin panel; the token is delivered once. */
+  pairingResult(id: string, nonce: string): Promise<PairingResult> {
+    return this.request("POST", `/api/v1/pairings/${encodeURIComponent(id)}/result`, { nonce }, { auth: false, timeoutMs: 15_000 });
+  }
+
+  updates(): Promise<ServerUpdateInfo> {
+    return this.request("GET", "/api/v1/updates", undefined, { timeoutMs: 30_000 });
+  }
+
+  requestUpdate(version: string, installedVersion: string): Promise<ServerUpdateAccepted> {
+    return this.request("POST", "/api/v1/updates", { version, installedVersion, confirmed: true } satisfies ServerUpdateRequest, { timeoutMs: 60_000 });
   }
 
   aiStatus(): Promise<ServerAiStatus> {
@@ -216,4 +254,43 @@ export function remoteBookStore(client: NarrariumServerClient, bookId: string): 
       }
     },
   };
+}
+
+export interface PairWithServerOptions {
+  baseUrl: string;
+  /** Nine-digit code generated in the server's admin panel. */
+  code: string;
+  /** Name of this client as the owner will see it. */
+  label: string;
+  signal?: AbortSignal;
+  /** Called once the code is accepted, while the owner has to approve the request. */
+  onWaitingApproval?: () => void;
+  pollMs?: number;
+  fetch?: typeof fetch;
+}
+
+/** Pair this client with a server: send the code, wait for the owner's approval, return the token. */
+export async function pairWithServer(options: PairWithServerOptions): Promise<string> {
+  const client = new NarrariumServerClient({ baseUrl: options.baseUrl, token: "", fetch: options.fetch });
+  const nonce = randomNonce();
+  const { id } = await client.requestPairing({ code: options.code.replace(/\D/g, ""), nonce, label: options.label.trim().slice(0, 80) || "Narrarium" });
+  options.onWaitingApproval?.();
+  const deadline = Date.now() + 5 * 60_000;
+  while (Date.now() < deadline) {
+    options.signal?.throwIfAborted();
+    const result = await client.pairingResult(id, nonce);
+    if ("token" in result) return result.token;
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(options.signal?.reason);
+      };
+      const timer = setTimeout(() => {
+        options.signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, options.pollMs ?? 2000);
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+  throw new ServerRequestError("The pairing expired before it was approved.", 408, "pairing_expired");
 }

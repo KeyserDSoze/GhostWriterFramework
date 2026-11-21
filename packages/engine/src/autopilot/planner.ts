@@ -256,6 +256,7 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
       if (chapter.imported) continue;
       const allWritten = chapter.scenes.length > 0 && chapter.scenes.every((scene) => scene.status !== "planned");
       if (chapter.status === "done" && !allWritten) chapter.status = chapter.scenes.length ? "writing" : "planned";
+      if (chapter.status === "review" && !allWritten) chapter.status = chapter.scenes.length ? "writing" : "planned";
       if (chapter.status === "planned" && chapter.scenes.length) chapter.status = allWritten ? "review" : "writing";
       if (chapter.status === "writing" && allWritten) chapter.status = "review";
     }
@@ -268,10 +269,12 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
   }
 
   if (state.revision?.targets && state.revision.cursor >= state.revision.targets.length) {
-    const affected = new Set(state.revision.targets.map((target) => target.chapterNumber));
+    const affected = new Set([...state.revision.targets.map((target) => target.chapterNumber), ...(state.revision.revisedChapters ?? [])]);
     for (const chapter of state.plan?.chapters ?? []) {
       if (!affected.has(chapter.number) || !chapter.scenes.length) continue;
-      chapter.status = "review";
+      // Only a chapter whose scenes are all written can be reviewed; the others finish writing first.
+      const allWritten = chapter.scenes.every((scene) => scene.status !== "planned");
+      chapter.status = allWritten ? "review" : "writing";
       chapter.skipReaders = true;
     }
     if (state.review && affected.has(state.review.chapterNumber)) state.review = null;

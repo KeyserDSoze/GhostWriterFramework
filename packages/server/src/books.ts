@@ -15,16 +15,12 @@ import {
   type ServerBookSummary,
   type ServerBookSync,
 } from "narrarium-engine";
-import { assertBookId, type DataDirectory, type ServerConfig, type StoredBook } from "./config.js";
+import { assertBookId, type DataDirectory, type StoredBook } from "./config.js";
+import { HttpError } from "./errors.js";
 import { FileBookStore } from "./fs-store.js";
 import { GitRepository } from "./git.js";
 
-export class HttpError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) {
-    super(message);
-    this.name = "HttpError";
-  }
-}
+export { HttpError };
 
 export interface BookRuntime {
   book: StoredBook;
@@ -66,8 +62,40 @@ function validStorage(storage: unknown): StoredBook["storage"] {
 export class BookRegistry {
   private readonly runtimes = new Map<string, BookRuntime>();
   private aiCache: { updatedAt: string | null; port: AiPort; configured: boolean } | null = null;
+  /** Set once an update is accepted: the server only finishes what it is doing and then restarts. */
+  private maintenance = false;
 
-  constructor(private readonly data: DataDirectory, private readonly config: ServerConfig, private readonly options: BookRegistryOptions) {}
+  constructor(private readonly data: DataDirectory, private readonly options: BookRegistryOptions) {}
+
+  get inMaintenance(): boolean {
+    return this.maintenance;
+  }
+
+  /** Refuse new work while an accepted update waits for the supervisor. */
+  assertNotInMaintenance(): void {
+    if (this.maintenance) throw new HttpError(503, "maintenance", "The server is about to restart for an update: try again in a minute.");
+  }
+
+  /**
+   * Accept an update only when no autopilot runs; from then on every new command is refused until
+   * the supervisor restarts the server. If `action` fails the server leaves maintenance.
+   */
+  async requestUpdate(action: () => Promise<void>): Promise<void> {
+    this.assertNotInMaintenance();
+    if (this.runningCount() > 0) throw new HttpError(409, "running", "Pause every autopilot on the server before updating it.");
+    this.maintenance = true;
+    try {
+      await action();
+    } catch (error) {
+      this.maintenance = false;
+      throw error;
+    }
+  }
+
+  /** The supervisor reported that the accepted update did not happen: accept work again. */
+  leaveMaintenance(): void {
+    this.maintenance = false;
+  }
 
   /** AI port reading the latest saved configuration on every call. */
   private readonly ai: AiPort = {
@@ -110,8 +138,8 @@ export class BookRegistry {
         store,
         ai: this.ai,
         host: "server",
-        hostLabel: this.config.label,
-        hostId: this.config.serverId,
+        hostLabel: this.data.config.label,
+        hostId: this.data.config.serverId,
         hooks: book.storage.kind === "github" && git ? {
           beforeStep: async () => {
             await this.refreshToken(book.bookId);
@@ -161,13 +189,16 @@ export class BookRegistry {
   }
 
   assertCanStart(): void {
-    if (this.runningCount() >= this.config.maxConcurrentRuns) {
-      throw new HttpError(429, "too_many_runs", `The server already runs ${this.config.maxConcurrentRuns} autopilots: pause one before starting another.`);
+    this.assertNotInMaintenance();
+    const max = this.data.config.maxConcurrentRuns;
+    if (this.runningCount() >= max) {
+      throw new HttpError(429, "too_many_runs", `The server already runs ${max} autopilots: pause one before starting another.`);
     }
   }
 
   async register(bookId: string, request: RegisterBookRequest): Promise<ServerBookSummary> {
     assertBookId(bookId);
+    this.assertNotInMaintenance();
     const title = typeof request.title === "string" && request.title.trim() ? request.title.trim().slice(0, 300) : bookId;
     const storage = validStorage(request.storage);
     const existing = this.runtimes.get(bookId);

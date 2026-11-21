@@ -1,5 +1,9 @@
 import type { AiJsonSchema, AiPort, AiUsage } from "../ai/types.js";
-import { AI_CAPABILITIES } from "../ai/types.js";
+import { AI_CAPABILITIES, AiProviderError } from "../ai/types.js";
+import { requireStructuredFields } from "../ai/structured.js";
+import { importedChapters } from "../autopilot/planner.js";
+import { parseAutopilotState } from "../autopilot/state.js";
+import { readStorySoFar } from "../autopilot/story-so-far.js";
 import {
   canonManifest,
   ghostwriterBlock,
@@ -11,7 +15,7 @@ import {
   readDocument,
   secretRules,
 } from "../book/context.js";
-import { AUTOPILOT_STATE_FILE, PLOT_FILE, STORY_DESIGN_FILE, TOTAL_RESUME_FILE, chapterResumePath, directorOpinionPath, readerSummaryPath, type EvaluationTarget } from "../book/paths.js";
+import { AUTOPILOT_STATE_FILE, PLOT_FILE, STORY_DESIGN_FILE, chapterResumePath, directorOpinionPath, readerSummaryPath, type EvaluationTarget } from "../book/paths.js";
 import { findChapter, findParagraph, loadBookSnapshot, type BookSnapshot } from "../book/snapshot.js";
 import type { BookStore } from "../book/store.js";
 import { frontmatterNumber, frontmatterString, parseMarkdown, renderMarkdown } from "../markdown/frontmatter.js";
@@ -216,21 +220,16 @@ async function bookMaterial(store: BookStore, snapshot: BookSnapshot): Promise<D
     const readerScore = summary ? frontmatterNumber(summary.document.frontmatter, "score") : undefined;
     return `- Chapter ${chapter.number} «${chapter.title}» (${chapter.paragraphs.length} scenes)${chapter.summary ? `: ${truncate(chapter.summary, 400)}` : ""}${readerScore ? ` — readers ${readerScore}/10` : ""}`;
   }));
-  const [design, resume, plot, autopilot] = await Promise.all([
+  const [design, plot, autopilot] = await Promise.all([
     readBody(store, STORY_DESIGN_FILE, 5000),
-    readBody(store, TOTAL_RESUME_FILE, 7000),
     readBody(store, PLOT_FILE, 4000),
     store.read(AUTOPILOT_STATE_FILE),
   ]);
-  let directorNotes = "";
-  if (autopilot) {
-    try {
-      const parsed = JSON.parse(autopilot.content) as { directorNotes?: unknown; constraints?: unknown };
-      directorNotes = [...asStringList(parsed.constraints, 30).map((entry) => `Author rule: ${entry}`), ...asStringList(parsed.directorNotes, 12).map((entry) => `Director note: ${entry}`)].join("\n");
-    } catch {
-      directorNotes = "";
-    }
-  }
+  const state = parseAutopilotState(autopilot?.content);
+  const resume = await readStorySoFar(store, { chapters: state?.plan?.chapters ?? importedChapters(snapshot), max: 7000 });
+  const directorNotes = state
+    ? [...state.constraints.slice(-30).map((entry) => `Author rule: ${entry}`), ...state.directorNotes.map((entry) => `Director note: ${entry}`)].join("\n")
+    : "";
   return {
     title: snapshot.book.title,
     sections: [
@@ -249,19 +248,20 @@ async function chapterMaterial(store: BookStore, snapshot: BookSnapshot, slug: s
   const chapter = findChapter(snapshot, slug);
   if (!chapter) throw new Error(`Chapter not found: ${slug}`);
   const paragraphs = await loadChapterParagraphs(store, chapter);
-  const [resume, readers, previous, design] = await Promise.all([
-    readBody(store, TOTAL_RESUME_FILE, 5000),
+  const [state, readers, previous, design] = await Promise.all([
+    store.read(AUTOPILOT_STATE_FILE).then((file) => parseAutopilotState(file?.content)),
     readBody(store, readerSummaryPath({ kind: "chapter", chapter: slug }), 3000),
     readBody(store, directorOpinionPath({ kind: "chapter", chapter: slug }), 2500),
     readBody(store, STORY_DESIGN_FILE, 2500),
   ]);
+  const resume = await readStorySoFar(store, { chapters: state?.plan?.chapters ?? importedChapters(snapshot), beforeChapter: chapter.number, max: 5000 });
   const ghostwriter = await loadGhostwriter(store, snapshot, chapter);
   return {
     title: `${chapter.number}. ${chapter.title}`,
     sections: [
       `CHAPTER ${chapter.number}: ${chapter.title}${chapter.summary ? `\nPlanned summary: ${chapter.summary}` : ""}`,
       design ? `STORY DESIGN (excerpt):\n${design}` : "",
-      resume ? `STORY SO FAR:\n${resume}` : "",
+      resume ? `STORY SO FAR (before this chapter):\n${resume}` : "",
       `CANON:\n${canonManifest(snapshot, { includeSecrets: false, max: 60 }) || "-"}`,
       `SECRETS AND REVEAL RULES:\n${await secretRules(store, snapshot, chapter.number) || "-"}`,
       `GHOSTWRITER:\n${ghostwriterBlock(ghostwriter)}`,
@@ -355,7 +355,10 @@ export async function askDirector(input: AskDirectorInput): Promise<AskDirectorR
     maxOutputTokens: 4000,
     signal: input.signal,
   });
-  const output = normalizeDirectorOpinionOutput(response.json);
+  // A reply cut by the output limit is never an opinion, also outside the autopilot.
+  if (response.truncated) throw new AiProviderError(`${[response.provider, response.model].filter(Boolean).join(" ") || "The model"}: the reply was cut by the output token limit. Nothing was applied.`, undefined, false, { truncated: true, usage: response.usage, cost: response.cost, model: response.model, provider: response.provider });
+  // A reply without a verdict must never become an opinion (nor close the book in the autopilot).
+  const output = normalizeDirectorOpinionOutput(requireStructuredFields(response.json, { verdict: "text", summary: "text" }, "The director's opinion"));
   const opinion: DirectorOpinion = {
     target: input.target,
     targetTitle: material.title,

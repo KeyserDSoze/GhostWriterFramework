@@ -387,6 +387,8 @@ The web app and the personal server share one autopilot (`narrarium-engine`): co
 npx narrarium-server
 ```
 
+The server keeps its API and its admin panel on `127.0.0.1` (ports 24242 and 24243). Narrarium pairs with it from **Settings → Personal server** with a code approved in the admin panel, checks its signed identity at every connection, and can update it to the latest verified npm release. For remote access the admin panel manages a dedicated Cloudflare connector; autostart is available on Linux (systemd) and macOS (launchd).
+
 ## Publishing
 
 The final public package set is:
@@ -409,6 +411,7 @@ Two workflows are included:
 
 - `.github/workflows/ci.yml`: runs build, validation, and tests on pushes and pull requests
 - `.github/workflows/publish-npm.yml`: auto-publishes bumped package versions on `main`, with manual dispatch and GitHub Release as fallbacks
+- `.github/workflows/server.yml` and `.github/workflows/publish-server-npm.yml`: personal server tests on Linux, Windows and macOS, and its tag-triggered npm release
 - `.github/workflows/deploy-vercel-mcp.yml`: deploys the public HTTP MCP endpoint to Vercel
 - `.github/workflows/deploy-docs-pages.yml`: builds and publishes the documentation site to GitHub Pages
 
@@ -418,18 +421,14 @@ Current production domains:
 - public MCP endpoint: `https://narrarium.space/mcp`
 - public MCP health: `https://narrarium.space/health`
 
-To enable npm publishing from GitHub:
+npm publishing uses npm Trusted Publishing (OIDC from GitHub Actions, no stored npm token, provenance on every version):
 
-1. Add the repository secret `NPM_TOKEN` using an npm Automation token
-2. Ensure the npm account behind the token can publish the chosen unscoped package names
+1. Publish the first version of a new package once by hand; npm can register a trusted publisher only on an existing package
+2. On npmjs.com register `publish-npm.yml` (environment `production`) as the package's trusted publisher; `narrarium-server` uses `publish-server-npm.yml` (environment `npm-publish`) and `narrarium-server-v<version>` tags
 3. Bump the package versions and merge that change to `main`
 
-On `main`, the publish workflow compares local package versions against npm and only publishes versions that are not already online.
-When it finds unpublished versions, it runs `npm run release:check` first, then publishes in dependency order.
-
-If GitHub Actions fails with `EOTP`, the token is not suitable for CI publish with 2FA enabled. Replace it with an npm Automation token or move this repo to npm Trusted Publishing.
-
-If GitHub Actions fails with `E404` while publishing `narrarium` or the other public packages, double-check the package names, registry, and authenticated npm account.
+On `main`, the publish workflow compares local package versions against npm and only publishes versions that are not already online. Packages not on npm yet are skipped with a warning.
+When it finds unpublished versions, it runs `npm run release:check` first, then publishes in dependency order. Details live in `docs/publishing.md`.
 
 For the Vercel deploy workflow, add this repository secret:
 

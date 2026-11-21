@@ -6,11 +6,18 @@ export interface GitResult {
 }
 
 export class GitError extends Error {
-  constructor(message: string, readonly stderr = "") {
+  /** A network failure or a timeout: the autopilot retries the step once (see the engine's retry rule). */
+  readonly retryable: boolean;
+
+  constructor(message: string, readonly stderr = "", retryable = false) {
     super(message);
     this.name = "GitError";
+    this.retryable = retryable;
   }
 }
+
+/** Failures of the connection to GitHub, not of the repository: worth one more try. */
+const TRANSIENT_GIT_FAILURE = /could not resolve host|temporary failure in name resolution|failed to connect|connection (?:timed out|refused|reset)|operation timed out|network is unreachable|early eof|remote end hung up|rpc failed|returned error: 5\d\d|internal server error|bad gateway|service unavailable|gnutls|ssl_connect|tls handshake/i;
 
 const AUTHOR = ["-c", "user.name=Narrarium Autopilot", "-c", "user.email=autopilot@narrarium.invalid"];
 
@@ -45,7 +52,8 @@ export function runGit(args: string[], options: { cwd?: string; token?: string; 
     execFile("git", args, { cwd: options.cwd, env: gitEnvironment(options.token), timeout: options.timeoutMs ?? 300_000, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
       if (error) {
         const detail = redact(String(stderr || error.message).trim(), options.token);
-        reject(new GitError(`git ${args[0]} failed: ${detail.split("\n").slice(-3).join(" ")}`, detail));
+        const timedOut = (error as { killed?: boolean }).killed === true;
+        reject(new GitError(`git ${args[0]} failed: ${detail.split("\n").slice(-3).join(" ")}`, detail, timedOut || TRANSIENT_GIT_FAILURE.test(detail)));
         return;
       }
       resolve({ stdout: String(stdout), stderr: String(stderr) });

@@ -492,10 +492,16 @@ export interface CopilotToolSettings {
 
 /** Connection to a personal Narrarium server started with `npx narrarium-server`. */
 export interface PersonalServerSettings {
-  /** Server address, e.g. http://127.0.0.1:24242 */
+  /** Server address, e.g. http://127.0.0.1:24242 or the server's public HTTPS address. */
   url: string;
-  /** Client token created by the server (`npx narrarium-server token create`). */
+  /** Client token, received by pairing or created in the server's admin panel. */
   token: string;
+  /** Identity pinned when this device paired or first connected: a server with another key is refused. */
+  serverId?: string;
+  /** SHA-256 fingerprint (hex) of the server's Ed25519 public key. */
+  fingerprint?: string;
+  /** Name of this device in the server's admin panel. */
+  clientLabel?: string;
 }
 
 export interface AppSettings {

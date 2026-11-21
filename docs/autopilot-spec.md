@@ -50,6 +50,15 @@ Chapters, paragraphs, canon entries, resumes and `plot.md` use the normal Narrar
 - **In the browser**: each step is a local commit in the book's working copy; GitHub books are published after every approved chapter. Only one tab runs a book at a time; other tabs follow it live and can pause it or send interventions.
 - **On the personal server** (`npx narrarium-server`): the autopilot keeps working with the browser closed. GitHub books travel through GitHub (the server pushes every step); local books are exchanged with a three-way file sync. The browser follows the server live.
 
+### The personal server
+
+- **Pairing and identity**: the browser pairs with a nine-digit code generated in the server's admin panel (`http://127.0.0.1:24243`) and approved there by the owner. Before sending its token, the browser asks the server to sign a fresh nonce with its Ed25519 key and compares the key's fingerprint with the one remembered at pairing.
+- **Permissions**: each client token carries `read`, `write`, `run` and, only when the owner allows it, `update`.
+- **Updates**: a client with `update` (or the admin panel) can ask the supervisor to install the latest npm release. The supervisor installs it only when it carries the npm registry signature and the provenance attestation of this repository's publishing workflow, and only when no autopilot is running. A failed installation keeps the previous version.
+- **Network**: the server listens on `127.0.0.1` only and calls only the AI endpoints approved by its owner. Remote access goes through HTTPS, for example the Cloudflare connector managed from the admin panel.
+
+See the [`narrarium-server` README](../packages/server/README.md) for commands, data folders and the release procedure.
+
 ## AI router tasks
 
 The autopilot uses the router tasks **Autopilot** (writing), **Director**, **Reader evaluation**, **Reader evaluation summary**, **Review** (specialists) and **Simple tasks**. Tasks without a route fall back to models tagged `default`. For long scenes, set the context window and the max output tokens of the models.

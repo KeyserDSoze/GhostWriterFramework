@@ -442,7 +442,14 @@ The **Autopilot** button next to Copilot shows what is happening now and opens a
 
 ## Personal server
 
-Run \`npx narrarium-server\` on your computer, then open **Settings → Personal server**, paste the address and the client token and send your AI configuration. On a book's Autopilot page choose **Move to my server**: the autopilot keeps working with the browser closed. GitHub books travel through GitHub; local books are synced file by file.
+Run \`npx narrarium-server\` on the computer that will keep your books (Node.js 22.14 or newer). It installs a copy verified on npm and opens an admin panel at \`http://127.0.0.1:24243\` on that computer; \`npx narrarium-server admin-code\` shows the code to sign in.
+
+1. In the admin panel choose **Generate a pairing code**.
+2. In **Settings → Personal server** type the nine digits and choose **Pair**, then approve the request in the admin panel. Tick **allow updates** if this device may update the server.
+3. Send your AI configuration and approve its AI endpoints in the admin panel.
+4. On a book's Autopilot page choose **Move to my server**: the autopilot keeps working with the browser closed. GitHub books travel through GitHub; local books are synced file by file.
+
+Narrarium checks the server's signed identity at every connection and refuses a server whose key changed. **Version and updates** in the same settings page shows when a newer verified release exists and installs it: the server stops, installs the package after checking its npm signature and provenance, and restarts; if anything fails the previous version stays. To use the server from other devices, publish it over HTTPS, for example with the Cloudflare connector in its admin panel.
 
 ## AI router
 
@@ -471,7 +478,14 @@ Il pulsante **Autopilot** accanto a Copilot mostra cosa sta succedendo e apre un
 
 ## Server personale
 
-Esegui \`npx narrarium-server\` sul tuo computer, poi apri **Impostazioni → Server personale**, incolla indirizzo e token client e invia la configurazione AI. Nella pagina Autopilot di un libro scegli **Sposta sul mio server**: l'autopilot continua anche a browser chiuso. I libri GitHub viaggiano tramite GitHub; quelli locali sono sincronizzati file per file.
+Esegui \`npx narrarium-server\` sul computer che custodirà i tuoi libri (Node.js 22.14 o successivo). Installa una copia verificata su npm e apre un pannello di amministrazione su \`http://127.0.0.1:24243\` su quel computer; \`npx narrarium-server admin-code\` mostra il codice per accedere.
+
+1. Nel pannello di amministrazione scegli **Genera un codice di abbinamento**.
+2. In **Impostazioni → Server personale** digita le nove cifre e scegli **Abbina**, poi approva la richiesta nel pannello. Spunta **consenti aggiornamenti** se questo dispositivo può aggiornare il server.
+3. Invia la configurazione AI e approva i suoi endpoint AI nel pannello di amministrazione.
+4. Nella pagina Autopilot di un libro scegli **Sposta sul mio server**: l'autopilot continua anche a browser chiuso. I libri GitHub viaggiano tramite GitHub; quelli locali sono sincronizzati file per file.
+
+Narrarium verifica l'identità firmata del server a ogni connessione e rifiuta un server la cui chiave è cambiata. **Versione e aggiornamenti** nella stessa pagina delle impostazioni mostra quando esiste una release verificata più recente e la installa: il server si ferma, installa il pacchetto dopo averne verificato firma npm e provenienza, e riparte; se qualcosa va storto resta la versione precedente. Per usare il server da altri dispositivi pubblicalo in HTTPS, per esempio con il connettore Cloudflare del suo pannello di amministrazione.
 
 ## Router AI
 

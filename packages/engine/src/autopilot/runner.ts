@@ -1,4 +1,4 @@
-import { AiProviderError, AiUnavailableError, type AiPort, type AiRequest, type AiResponse, type AiUsage } from "../ai/types.js";
+import { AiProviderError, AiReplyRejectedError, type AiPort, type AiRequest, type AiResponse, type AiUsage } from "../ai/types.js";
 import { activeReaders, isThinDocument, loadDirectorProfile, loadReaderPanel, readBody } from "../book/context.js";
 import { AUTOPILOT_ACTIVITY_FILE, AUTOPILOT_STATE_FILE, STORY_DESIGN_FILE } from "../book/paths.js";
 import { SnapshotCache, loadBookSnapshot, type BookSnapshot } from "../book/snapshot.js";
@@ -8,10 +8,13 @@ import type { ReaderPersonaProfile } from "../profiles/readers.js";
 import { abortError, isAbortError, sleep } from "../util/abort.js";
 import { randomId } from "../util/hash.js";
 import { StructuredReplyError } from "../util/json.js";
+import { currentRequest } from "../prompt/trust.js";
 import { isItalian, languageCode, tail } from "../util/text.js";
 import { advanceState, nextStep, phaseOf, type PlannerContext, type TaskDescriptor } from "./planner.js";
 import {
   MAX_INTERVENTIONS,
+  MAX_REVISION_NOTES,
+  capConstraints,
   createAutopilotState,
   normalizeBrief,
   normalizeOptions,
@@ -101,16 +104,22 @@ export function applyIntervention(state: AutopilotState, input: InterventionInpu
     status: input.scope === "next_step" ? "pending" : "applied",
     ...(input.scope === "next_step" ? {} : { appliedAt: at, appliedBy: "rules" }),
   };
-  if (input.scope !== "next_step" && !next.constraints.includes(text)) next.constraints.push(text);
+  if (input.scope !== "next_step" && !next.constraints.includes(text)) next.constraints = capConstraints([...next.constraints, text]);
   if (input.scope === "rewrite") {
     const written = next.plan?.chapters.some((chapter) => chapter.scenes.some((scene) => scene.status !== "planned"));
     if (written) {
-      next.revision = next.revision && next.revision.targets === null
-        ? { ...next.revision, instruction: `${next.revision.instruction}\n${text}` }
-        : { id: randomId("revision"), instruction: text, createdAt: at, targets: null, cursor: 0 };
+      const current = next.revision;
+      if (current && current.targets === null) {
+        next.revision = { ...current, instruction: `${current.instruction}\n${text}` };
+      } else {
+        // Chapters already rewritten by a revision in progress are still reviewed again at the end.
+        const revised = [...(current?.revisedChapters ?? []), ...(current?.targets ?? []).slice(0, current?.cursor ?? 0).map((target) => target.chapterNumber)];
+        const revisedChapters = [...new Set(revised)].sort((left, right) => left - right);
+        next.revision = { id: randomId("revision"), instruction: text, createdAt: at, targets: null, cursor: 0, ...(revisedChapters.length ? { revisedChapters } : {}) };
+      }
       next.finalDone = false;
     } else if (next.plan) {
-      next.plan = { ...next.plan, approved: false, awaitingAuthor: false, revisionNotes: [...next.plan.revisionNotes, text] };
+      next.plan = { ...next.plan, approved: false, awaitingAuthor: false, revisionNotes: [...next.plan.revisionNotes, text].slice(-MAX_REVISION_NOTES) };
     }
   }
   next.interventions = [...next.interventions, entry].slice(-MAX_INTERVENTIONS);
@@ -161,11 +170,70 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isRetryable(error: unknown): boolean {
-  if (error instanceof AiUnavailableError) return false;
-  if (error instanceof AiProviderError) return error.retryable || error.status === undefined;
+/**
+ * Closed list: only errors that declare themselves retryable (`retryable: true`, as
+ * `AiProviderError` does) repeat the step. A reply cut by the output limit never does (the same
+ * request ends the same way and is billed again), nor does an unclassified error (storage,
+ * configuration, state). Hosts can mark their own transient failures with the same flag.
+ */
+export function isRetryableError(error: unknown): boolean {
   if (error instanceof StructuredReplyError) return true;
-  return error instanceof Error && !isBookConflictError(error);
+  if (!error || typeof error !== "object") return false;
+  const flags = error as { retryable?: unknown; truncated?: unknown };
+  return flags.retryable === true && flags.truncated !== true;
+}
+
+const RETRY_NOTE_MAX = 500;
+
+/** What the retried request is told about a rejected reply: the reason, never the reply. At most 500 characters. */
+export function retryNoteFor(error: unknown): string | null {
+  if (!(error instanceof AiReplyRejectedError) && !(error instanceof StructuredReplyError)) return null;
+  const head = "The previous reply to this request was rejected because: ";
+  const foot = " Repeat the task following every instruction and the requested format.";
+  const reason = describeError(error).replace(/\s+/g, " ").trim().slice(0, RETRY_NOTE_MAX - head.length - foot.length);
+  return `${head}${reason}${foot}`;
+}
+
+/** AI usage of one step, including attempts whose reply was rejected. */
+interface StepSpend {
+  calls: number;
+  usage: AiUsage;
+  cost: number;
+  model?: string;
+  provider?: string;
+  currency?: string;
+}
+
+function newSpend(): StepSpend {
+  return { calls: 0, usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }, cost: 0 };
+}
+
+function recordSpend(spend: StepSpend, source: { usage?: AiUsage; cost?: number; model?: string; provider?: string; currency?: string }): void {
+  spend.calls += 1;
+  spend.model = source.model ?? spend.model;
+  spend.provider = source.provider ?? spend.provider;
+  spend.currency = source.currency ?? spend.currency;
+  if (source.usage) {
+    spend.usage.inputTokens += source.usage.inputTokens;
+    spend.usage.outputTokens += source.usage.outputTokens;
+    spend.usage.cachedInputTokens += source.usage.cachedInputTokens;
+  }
+  spend.cost += source.cost ?? 0;
+}
+
+function spentSomething(spend: StepSpend): boolean {
+  return spend.calls > 0 || spend.cost > 0 || spend.usage.inputTokens > 0 || spend.usage.outputTokens > 0;
+}
+
+function withSpend(stats: AutopilotState["stats"], spend: StepSpend): AutopilotState["stats"] {
+  return {
+    ...stats,
+    aiCalls: stats.aiCalls + spend.calls,
+    inputTokens: stats.inputTokens + spend.usage.inputTokens,
+    outputTokens: stats.outputTokens + spend.usage.outputTokens,
+    cost: stats.cost + spend.cost,
+    currency: spend.currency ?? stats.currency,
+  };
 }
 
 function taskKey(task: TaskDescriptor): string {
@@ -269,6 +337,8 @@ export class AutopilotRun {
     let failureRetries = 0;
     let lastSuccessKey = "";
     let successRepeats = 0;
+    /** Reason the previous attempt of a step was rejected, told to the same request of the retry. */
+    let retry: { key: string; label: string; note: string } | null = null;
     for (let steps = 0; ; steps += 1) {
       if (this.stopRequested) {
         state = await this.finish(state, "paused", null);
@@ -285,6 +355,8 @@ export class AutopilotRun {
       }
       if (latest.state) state = { ...latest.state, status: "running", runner: state.runner };
       let task: TaskDescriptor | null = null;
+      const spend = newSpend();
+      let lastLabel: string | undefined;
       const stepController = new AbortController();
       this.stepController = stepController;
       const onRunAbort = () => stepController.abort(this.controller.signal.reason);
@@ -312,6 +384,8 @@ export class AutopilotRun {
         task = step.task;
         const key = taskKey(task);
         if (key === lastSuccessKey && successRepeats >= 2) throw new Error(`The autopilot is not making progress on "${task.title}".`);
+        const correction = retry?.key === key ? retry : null;
+        retry = null;
         const notes = task.acceptsNotes ? pendingNotes(state) : [];
         const activity: AutopilotActivity = {
           id: randomId("activity"),
@@ -331,31 +405,28 @@ export class AutopilotRun {
         };
         this.current = activity;
         this.emit({ type: "task-started", activity });
-        const usage: AiUsage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
-        let cost = 0;
-        let calls = 0;
-        let model: string | undefined;
-        let provider: string | undefined;
-        let currency: string | undefined;
         let lastProgress = 0;
         const ai = async (request: Omit<AiRequest, "signal">): Promise<AiResponse> => {
+          lastLabel = request.label;
           const onText = request.json ? undefined : (text: string) => {
             const at = Date.now();
             if (text.length > 0 && at - lastProgress < 350) return;
             lastProgress = at;
             this.emit({ type: "task-progress", activityId: activity.id, characters: text.length, preview: tail(text, 700) });
           };
-          const response = await this.config.ai.complete({ ...request, signal: stepController.signal, onText: request.onText ?? onText });
-          calls += 1;
-          model = response.model ?? model;
-          provider = response.provider ?? provider;
-          currency = response.currency ?? currency;
-          if (response.usage) {
-            usage.inputTokens += response.usage.inputTokens;
-            usage.outputTokens += response.usage.outputTokens;
-            usage.cachedInputTokens += response.usage.cachedInputTokens;
+          const user = correction?.label === request.label ? `${request.user}\n\n${currentRequest(correction.note)}` : request.user;
+          let response: AiResponse;
+          try {
+            response = await this.config.ai.complete({ ...request, user, signal: stepController.signal, onText: request.onText ?? onText });
+          } catch (error) {
+            // A failed attempt may still have been billed: count what the provider reported.
+            if (error instanceof AiProviderError && (error.usage || error.cost !== undefined || error.model)) recordSpend(spend, error);
+            throw error;
           }
-          cost += response.cost ?? 0;
+          recordSpend(spend, response);
+          if (response.truncated) {
+            throw new AiProviderError(`${[response.provider, response.model].filter(Boolean).join(" ") || "The model"}: the reply was cut by the output token limit. Nothing was applied.`, undefined, false, { truncated: true });
+          }
           return response;
         };
         const working = structuredClone(state);
@@ -384,23 +455,15 @@ export class AutopilotRun {
           endedAt: finishedAt.toISOString(),
           summary: result.summary,
           changedPaths: changes.map((change) => change.path),
-          model,
-          provider,
-          usage,
-          cost: cost || undefined,
+          model: spend.model,
+          provider: spend.provider,
+          usage: spend.usage,
+          cost: spend.cost || undefined,
         };
         let next: AutopilotState = {
           ...working,
           interventions: working.interventions.map((entry) => applied.has(entry.id) ? { ...entry, status: "applied" as const, appliedAt: finishedAt.toISOString(), appliedBy: activity.id } : entry),
-          stats: {
-            ...working.stats,
-            tasks: working.stats.tasks + 1,
-            aiCalls: working.stats.aiCalls + calls,
-            inputTokens: working.stats.inputTokens + usage.inputTokens,
-            outputTokens: working.stats.outputTokens + usage.outputTokens,
-            cost: working.stats.cost + cost,
-            currency: currency ?? working.stats.currency,
-          },
+          stats: { ...withSpend(working.stats, spend), tasks: working.stats.tasks + 1 },
           runner: state.runner ? { ...state.runner, heartbeatAt: finishedAt.toISOString() } : null,
           lastError: null,
         };
@@ -443,9 +506,17 @@ export class AutopilotRun {
         const interrupted = this.interrupted && isAbortError(error) && !runAborted;
         this.interrupted = false;
         if (activity) {
-          const failed: AutopilotActivity = { ...activity, status: isAbortError(error) ? "cancelled" : "failed", endedAt: this.now().toISOString(), error: describeError(error) };
+          const spent = spentSomething(spend);
+          const failed: AutopilotActivity = {
+            ...activity,
+            status: isAbortError(error) ? "cancelled" : "failed",
+            endedAt: this.now().toISOString(),
+            error: describeError(error),
+            ...(spent ? { model: spend.model, provider: spend.provider, usage: spend.usage, cost: spend.cost || undefined } : {}),
+          };
           this.emit({ type: "task-finished", activity: failed });
-          await this.persistActivity(failed).catch(() => undefined);
+          const saved = await this.persistFailure(failed, spent ? spend : null).catch(() => null);
+          if (spent) state = { ...state, stats: saved?.stats ?? withSpend(state.stats, spend) };
         }
         if (interrupted) continue;
         if (runAborted || isAbortError(error)) {
@@ -457,8 +528,10 @@ export class AutopilotRun {
           this.emit({ type: "insight", tone: "warning", code: "conflictRetry", title: "The book changed during the step: repeating it on the latest version.", detail: describeError(error) });
           continue;
         }
-        if (isRetryable(error) && failureRetries < 1) {
+        if (isRetryableError(error) && failureRetries < 1) {
           failureRetries += 1;
+          const note = retryNoteFor(error);
+          if (task && note && lastLabel) retry = { key: taskKey(task), label: lastLabel, note };
           this.emit({ type: "insight", tone: "warning", code: "failureRetry", title: "The step failed: retrying once.", detail: describeError(error) });
           try {
             await sleep(this.config.retryDelayMs ?? 4000, this.controller.signal);
@@ -483,9 +556,24 @@ export class AutopilotRun {
     return state;
   }
 
-  private async persistActivity(activity: AutopilotActivity): Promise<void> {
-    const stored = await readStoredAutopilot(this.config.store);
-    await this.config.store.commit([activityChange([...stored.activities, activity], stored.activityHash)], `Autopilot: ${activity.title} (${activity.status})`);
+  /**
+   * Save a failed or cancelled step. What its AI calls cost is added to the state's statistics
+   * in the same commit, so the budget limit never under-counts rejected replies.
+   */
+  private async persistFailure(activity: AutopilotActivity, spend: StepSpend | null): Promise<AutopilotState | null> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const stored = await readStoredAutopilot(this.config.store);
+      const changes = [activityChange([...stored.activities, activity], stored.activityHash)];
+      const next = spend && stored.state ? stampState({ ...stored.state, stats: withSpend(stored.state.stats, spend) }, this.now()) : null;
+      if (next) changes.push(stateChange(next, stored.stateHash));
+      try {
+        await this.config.store.commit(changes, `Autopilot: ${activity.title} (${activity.status})`);
+        return next;
+      } catch (error) {
+        if (!isBookConflictError(error)) throw error;
+      }
+    }
+    return null;
   }
 
   /** Close the run with a final status, persisted together with any queued intervention. */

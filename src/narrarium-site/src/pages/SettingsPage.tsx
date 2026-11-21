@@ -272,7 +272,7 @@ export function SettingsPage() {
       ) : section === "speech" ? (
         <Section title={t("speech.title")} description={t("speech.browserOnlyDescription")} icon={<Volume2 className="h-4 w-4 shrink-0" />} defaultOpen><SpeechCardBody settings={settings} patchSettings={patchSettings} /></Section>
       ) : section === "server" ? (
-        <Section title={t("personalServer.title")} description={t("personalServer.description")} icon={<Server className="h-4 w-4 shrink-0" />} defaultOpen><PersonalServerSettingsBody settings={settings} patchSettings={patchSettings} /></Section>
+        <Section title={t("personalServer.title")} description={t("personalServer.description")} icon={<Server className="h-4 w-4 shrink-0" />} defaultOpen><PersonalServerSettingsBody settings={settings} patchSettings={patchSettings} onSave={handleSave} /></Section>
       ) : (
         <Section title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-4 w-4 shrink-0" />} defaultOpen><RepositorySettingsBody settings={settings} patchSettings={patchSettings} /></Section>
       )}

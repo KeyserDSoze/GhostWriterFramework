@@ -1,5 +1,5 @@
 import OpenAI, { AzureOpenAI } from "openai";
-import { completionTokenLimit } from "narrarium-engine";
+import { completionTokenLimit, forcedToolChoice, isEmptyToolArguments, parseStructuredText, splitReasoningBlock } from "narrarium-engine";
 import type { AIIntegration, AIPricing, AppSettings, ChatCapability, ChatModel } from "@/types/settings";
 import { chatDelta, useCostsStore } from "@/costs/costsStore";
 import { flattenLlmContent, useLlmDebugStore, type LlmDebugMessage } from "@/debug/llmDebugStore";
@@ -198,20 +198,80 @@ export interface LlmUsageReport {
   cost?: number;
 }
 
+/**
+ * How one provider attempt ended, reported only to callers that ask for it (the autopilot):
+ * the finish reason, how much reply text arrived and how many reasoning characters preceded it.
+ * The reasoning itself is never kept.
+ */
+export interface LlmFinishReport extends LlmUsageReport {
+  finishReason: string;
+  replyCharacters: number;
+  reasoningCharacters: number;
+}
+
+/** Characters of reasoning in a message or stream delta (`reasoning_content` or `reasoning`). */
+function reasoningLength(source: unknown): number {
+  if (!source || typeof source !== "object") return 0;
+  const { reasoning_content: content, reasoning } = source as { reasoning_content?: unknown; reasoning?: unknown };
+  return (typeof content === "string" ? content.length : 0) + (typeof reasoning === "string" ? reasoning.length : 0);
+}
+
+/** The deployed API version decides which `tool_choice` forms Azure OpenAI accepts. */
+function toolChoiceFor(integration: AIIntegration, toolName: string) {
+  return forcedToolChoice(integration.provider, integration.provider === "azure_openai" ? integration.apiVersion || "2024-10-21" : undefined, toolName);
+}
+
+/** JSON in a text reply, or undefined: models that ignore the forced tool often answer in the content. */
+function structuredTextOrUndefined(text: string, tool: ForcedToolDefinition): unknown {
+  try {
+    return parseStructuredText(text, tool);
+  } catch {
+    return undefined;
+  }
+}
+
+type ToolReplyMessage = { content?: unknown; tool_calls?: Array<{ function?: { arguments?: string } }> };
+
+/** The forced tool's arguments, else the JSON written in the content (also when the arguments are `{}`). */
+function forcedToolOutput(message: ToolReplyMessage | undefined, tool: ForcedToolDefinition): { output: unknown; raw: string } {
+  const args = message?.tool_calls?.find((call) => typeof call.function?.arguments === "string")?.function?.arguments;
+  const content = typeof message?.content === "string" ? message.content : "";
+  if (args && !isEmptyToolArguments(args)) {
+    try {
+      return { output: JSON.parse(args) as unknown, raw: args };
+    } catch (error) {
+      const recovered = structuredTextOrUndefined(args, tool);
+      if (recovered === undefined) throw error;
+      return { output: recovered, raw: args };
+    }
+  }
+  const fromContent = content.trim() ? structuredTextOrUndefined(content, tool) : undefined;
+  if (fromContent !== undefined) return { output: fromContent, raw: content };
+  if (args) return { output: JSON.parse(args) as unknown, raw: args };
+  throw new Error(`Model did not call forced tool ${tool.name}.`);
+}
+
 export async function completeText(
   integration: AIIntegration,
   messages: LlmMessage[],
   purpose: "writing" | "review" = "writing",
-  options: { accountScope: string | null; signal?: AbortSignal; capability?: ChatCapability; modelName?: string; label?: string; onText?: (text: string) => void; onUsage?: (usage: LlmUsageReport) => void; routeCandidateIndex?: number; usedFallback?: boolean; maxOutputTokens?: number; underlyingModel?: string },
+  options: { accountScope: string | null; signal?: AbortSignal; capability?: ChatCapability; modelName?: string; label?: string; onText?: (text: string) => void; onUsage?: (usage: LlmUsageReport) => void; onFinish?: (report: LlmFinishReport) => void; routeCandidateIndex?: number; usedFallback?: boolean; maxOutputTokens?: number; underlyingModel?: string },
 ): Promise<string> {
   const operation = beginAccountScopedAiOperation(options.signal, options.accountScope);
   let debugId = "";
   try {
   const { model, pricing } = resolveModelForCall(integration, purpose, options);
-  const reportUsage = (usage: unknown) => {
-    if (!options.onUsage) return;
+  const usageReport = (usage: unknown): LlmUsageReport => {
     const normalized = normalizeUsage(usage);
-    options.onUsage({ model, provider: integration.provider, integrationId: integration.id, ...normalized, cost: pricing ? chatDelta({ inputTokens: normalized.inputTokens, cachedTokens: normalized.cachedInputTokens, outputTokens: normalized.outputTokens }, pricing).chatCost : undefined });
+    return { model, provider: integration.provider, integrationId: integration.id, ...normalized, cost: pricing ? chatDelta({ inputTokens: normalized.inputTokens, cachedTokens: normalized.cachedInputTokens, outputTokens: normalized.outputTokens }, pricing).chatCost : undefined };
+  };
+  const reportUsage = (usage: unknown) => {
+    if (options.onUsage) options.onUsage(usageReport(usage));
+  };
+  const reportFinish = (usage: unknown, finishReason: string, text: string, reasoningCharacters: number) => {
+    if (!options.onFinish) return;
+    const inline = splitReasoningBlock(text);
+    options.onFinish({ ...usageReport(usage), finishReason, replyCharacters: inline.reply.trim().length, reasoningCharacters: reasoningCharacters + inline.reasoningCharacters });
   };
 
   const normalizedMessages = messages.map((message) => ({
@@ -241,18 +301,23 @@ export async function completeText(
         let text = "";
         let usage: unknown;
         let filtered = false;
+        let finishReason = "";
+        let reasoning = 0;
         for await (const chunk of stream) {
           const delta = chunk.choices?.[0]?.delta?.content ?? "";
+          reasoning += reasoningLength(chunk.choices?.[0]?.delta);
           if (delta) {
             text += delta;
             options.onText(text);
           }
           if (chunk.usage) usage = chunk.usage;
           if (chunk.choices?.some((choice) => choice.finish_reason === "content_filter")) filtered = true;
+          finishReason = chunk.choices?.find((choice) => choice.finish_reason)?.finish_reason ?? finishReason;
         }
         recordChatUsage(model, pricing, usage);
         reportUsage(usage);
         finishChatDebug(debugId, pricing, usage, text);
+        reportFinish(usage, finishReason, text, reasoning);
         if (filtered) throw new ContentFilteredCompletionError();
         return text;
       }
@@ -261,6 +326,7 @@ export async function completeText(
       reportUsage(response.usage);
       const text = response.choices[0]?.message?.content ?? "";
       finishChatDebug(debugId, pricing, response.usage, text);
+      reportFinish(response.usage, response.choices[0]?.finish_reason ?? "", text, reasoningLength(response.choices[0]?.message));
       if (response.choices[0]?.finish_reason === "content_filter") throw new ContentFilteredCompletionError();
       return text;
     }
@@ -276,18 +342,23 @@ export async function completeText(
         let text = "";
         let usage: unknown;
         let filtered = false;
+        let finishReason = "";
+        let reasoning = 0;
         for await (const chunk of stream) {
           const delta = chunk.choices?.[0]?.delta?.content ?? "";
+          reasoning += reasoningLength(chunk.choices?.[0]?.delta);
           if (delta) {
             text += delta;
             options.onText(text);
           }
           if (chunk.usage) usage = chunk.usage;
           if (chunk.choices?.some((choice) => choice.finish_reason === "content_filter")) filtered = true;
+          finishReason = chunk.choices?.find((choice) => choice.finish_reason)?.finish_reason ?? finishReason;
         }
         recordChatUsage(model, pricing, usage);
         reportUsage(usage);
         finishChatDebug(debugId, pricing, usage, text);
+        reportFinish(usage, finishReason, text, reasoning);
         if (filtered) throw new ContentFilteredCompletionError();
         return text;
       }
@@ -296,6 +367,7 @@ export async function completeText(
       reportUsage(response.usage);
       const text = response.choices[0]?.message?.content ?? "";
       finishChatDebug(debugId, pricing, response.usage, text);
+      reportFinish(response.usage, response.choices[0]?.finish_reason ?? "", text, reasoningLength(response.choices[0]?.message));
       if (response.choices[0]?.finish_reason === "content_filter") throw new ContentFilteredCompletionError();
       return text;
     }
@@ -319,7 +391,7 @@ export async function completeToolWith<T>(
   messages: LlmMessage[],
   capability: ChatCapability,
   tool: ForcedToolDefinition,
-  options: { accountScope: string | null; signal?: AbortSignal; label?: string; currency?: string; validate?: (output: unknown) => T; routeCandidateIndex?: number; usedFallback?: boolean; maxOutputTokens?: number; underlyingModel?: string },
+  options: { accountScope: string | null; signal?: AbortSignal; label?: string; currency?: string; validate?: (output: unknown) => T; onFinish?: (report: LlmFinishReport) => void; routeCandidateIndex?: number; usedFallback?: boolean; maxOutputTokens?: number; underlyingModel?: string },
 ): Promise<LlmResult<T>> {
   const operation = beginAccountScopedAiOperation(options.signal, options.accountScope);
   let debugId = "";
@@ -340,18 +412,23 @@ export async function completeToolWith<T>(
       model,
       messages: normalizedMessages as never,
       tools: [{ type: "function", function: tool }],
-      tool_choice: { type: "function", function: { name: tool.name } },
+      // Only one tool is sent: "required" forces it on llama.cpp and LM Studio too, which ignore the named form.
+      tool_choice: toolChoiceFor(integration, tool.name),
       ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel),
     } as never, { signal: operation.signal });
     const usage = response.usage;
     recordChatUsage(model, pricing, usage);
-    const call = (response as unknown as { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> }).choices?.[0]?.message?.tool_calls?.[0];
-    if (!call?.function?.arguments) throw new Error(`Model did not call forced tool ${tool.name}.`);
-    const parsed = JSON.parse(call.function.arguments) as unknown;
-    const output = options?.validate ? options.validate(parsed) : parsed as T;
     const normalized = normalizeUsage(usage);
     const cost = pricing ? chatDelta({ inputTokens: normalized.inputTokens, cachedTokens: normalized.cachedInputTokens, outputTokens: normalized.outputTokens }, pricing).chatCost : undefined;
-    finishChatDebug(debugId, pricing, usage, call.function.arguments);
+    const choice = (response as unknown as { choices?: Array<{ message?: ToolReplyMessage; finish_reason?: string | null }> }).choices?.[0];
+    if (options.onFinish) {
+      const toolText = choice?.message?.tool_calls?.map((call) => call.function?.arguments ?? "").join("") ?? "";
+      const inline = splitReasoningBlock(typeof choice?.message?.content === "string" ? choice.message.content : "");
+      options.onFinish({ model, provider: integration.provider, integrationId: integration.id, ...normalized, cost, finishReason: choice?.finish_reason ?? "", replyCharacters: (isEmptyToolArguments(toolText) ? "" : toolText).trim().length + inline.reply.trim().length, reasoningCharacters: reasoningLength(choice?.message) + inline.reasoningCharacters });
+    }
+    const { output: parsed, raw } = forcedToolOutput(choice?.message, tool);
+    const output = options?.validate ? options.validate(parsed) : parsed as T;
+    finishChatDebug(debugId, pricing, usage, raw);
     return {
       output,
       metadata: {
@@ -410,7 +487,7 @@ export async function classifyConfirmationWith(
     model,
     messages: [{ role: "user", content: framedRequest }],
     tools,
-    tool_choice: { type: "function", function: { name: CONFIRMATION_TOOL_DEFINITION.name } },
+    tool_choice: toolChoiceFor(integration, CONFIRMATION_TOOL_DEFINITION.name),
     ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel),
   };
 
@@ -420,8 +497,11 @@ export async function classifyConfirmationWith(
       : new OpenAI({ apiKey: integration.apiKey, baseURL: openAiBaseUrl(integration), dangerouslyAllowBrowser: true });
     const response = await client.chat.completions.create(body as never, { signal: operation.signal });
     recordChatUsage(model, pricing, (response as { usage?: unknown }).usage);
-    const call = (response as { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> }).choices?.[0]?.message?.tool_calls?.[0];
-    const args = call?.function?.arguments ? JSON.parse(call.function.arguments) : null;
+    const message = (response as { choices?: Array<{ message?: ToolReplyMessage }> }).choices?.[0]?.message;
+    const call = message?.tool_calls?.[0];
+    const args = (call?.function?.arguments
+      ? JSON.parse(call.function.arguments)
+      : typeof message?.content === "string" && message.content.trim() ? structuredTextOrUndefined(message.content, CONFIRMATION_TOOL_DEFINITION) : null) as { decision?: unknown } | null | undefined;
     const decision = args?.decision;
     const result = decision === "yes" || decision === "no" ? decision : "unclear";
     finishChatDebug(debugId, pricing, (response as { usage?: unknown }).usage, `decision: ${result}`);

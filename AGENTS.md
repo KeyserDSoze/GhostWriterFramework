@@ -32,6 +32,7 @@ Narrarium MCP already auto-refreshes `plot.md` and the resume files after final 
 - Patch notes must describe user-visible behavior and navigation, not only internal implementation details.
 - Never commit or push a Narrarium site version without a matching bilingual patch note. `npm run bms:build` enforces this rule.
 - After each versioned commit, push `main` and monitor the `Deploy Narrarium Site` GitHub Actions workflow until completion, unless the user explicitly requests otherwise.
+- `narrarium-server` is released only by pushing a `narrarium-server-v<version>` tag after bumping `packages/server/package.json` and `packages/server/src/version.ts` together; the `Publish narrarium-server` workflow publishes it through npm Trusted Publishing with provenance. Apart from the one-time bootstrap publish of `0.1.0` described in `packages/server/README.md`, never publish it by hand or add it back to the generic publish workflow: the server's updater installs only releases attested by that workflow.
 
 ## Canon discipline
 

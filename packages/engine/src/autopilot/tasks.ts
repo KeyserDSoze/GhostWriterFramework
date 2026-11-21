@@ -1,4 +1,5 @@
-import { AI_CAPABILITIES, type AiRequest, type AiResponse } from "../ai/types.js";
+import { requireStructuredFields, splitReasoningBlock } from "../ai/structured.js";
+import { AI_CAPABILITIES, AiReplyRejectedError, type AiRequest, type AiResponse } from "../ai/types.js";
 import {
   canonDetails,
   canonManifest,
@@ -32,6 +33,7 @@ import {
   readerEvaluationPath,
   readerSummaryPath,
   slugify,
+  type CanonKind,
 } from "../book/paths.js";
 import type { BookSnapshot, ChapterInfo } from "../book/snapshot.js";
 import type { BookFileChange, BookStore } from "../book/store.js";
@@ -69,6 +71,7 @@ import {
   writerSystemPrompt,
 } from "./prompts.js";
 import { MAX_DIRECTOR_NOTES } from "./state.js";
+import { STORY_SO_FAR_MAX_WORDS, STORY_SO_FAR_TARGET_WORDS, pruneStorySnapshots, readStorySoFar, renderTotalResumeBody, storySoFarExcess } from "./story-so-far.js";
 import type { AuthorIntervention, AutopilotPlan, AutopilotState, InsightTone, PlannedChapter, PlannedScene, ReviewDecision, ReviewFinding } from "./types.js";
 
 export type TaskAi = (request: Omit<AiRequest, "signal">) => Promise<AiResponse>;
@@ -183,9 +186,23 @@ function request(lines: Array<string | false | undefined | null>): string {
   return currentRequest(lines.filter((line): line is string => Boolean(line && line.trim())).join("\n\n"));
 }
 
+const MAX_NOTE_CHARACTERS = 400;
+
+/** Same note despite case, punctuation, quotes or spacing. */
+function noteKey(note: string): string {
+  return normalizeForMatch(note).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
 function mergeNotes(existing: string[], incoming: string[]): string[] {
   const merged = [...existing];
-  for (const note of incoming.map((entry) => entry.trim()).filter(Boolean)) if (!merged.includes(note)) merged.push(note);
+  const keys = new Set(merged.map(noteKey));
+  for (const raw of incoming) {
+    const note = truncate(raw.replace(/\s+/g, " ").trim(), MAX_NOTE_CHARACTERS);
+    const key = noteKey(note);
+    if (!key || keys.has(key)) continue;
+    keys.add(key);
+    merged.push(note);
+  }
   return merged.slice(-MAX_DIRECTOR_NOTES);
 }
 
@@ -193,6 +210,19 @@ function chapterOf(ctx: TaskContext): PlannedChapter {
   const chapter = ctx.state.plan?.chapters.find((entry) => entry.number === ctx.task.chapterNumber);
   if (!chapter) throw new Error(`Chapter ${ctx.task.chapterNumber} is not in the plan.`);
   return chapter;
+}
+
+/** The director's verdict, tolerant of "approved"/"revision" variants; anything else rejects the reply. */
+function verdictOf(value: unknown, subject: string): "approve" | "revise" {
+  const text = asString(value).toLowerCase();
+  if (/^approv/.test(text)) return "approve";
+  if (/^(?:revis|rived|rivist|rework|rewrite|riscriv|reject|respin)/.test(text)) return "revise";
+  throw new AiReplyRejectedError(`${subject} was rejected: the field "verdict" must be "approve" or "revise".`);
+}
+
+/** The story before a chapter (the whole book without one), keeping its most recent part. */
+function storySoFar(ctx: TaskContext, beforeChapter: number | undefined, max: number): Promise<string> {
+  return readStorySoFar(ctx.store, { chapters: ctx.state.plan?.chapters ?? importedChapters(ctx.snapshot), beforeChapter, max });
 }
 
 function sceneOf(chapter: PlannedChapter, number: number | undefined): PlannedScene {
@@ -206,20 +236,21 @@ function chapterFiles(ctx: TaskContext, chapter: PlannedChapter): ChapterInfo {
     ?? { slug: chapter.slug, number: chapter.number, title: chapter.title, pov: chapter.pov, path: chapterFilePath(chapter.slug), paragraphs: [] };
 }
 
-/** Strip wrappers models sometimes add around prose. */
+/** Strip wrappers models sometimes add around prose, including a leading reasoning block. */
 export function cleanProse(text: string): string {
-  let value = (text ?? "").trim();
+  let value = splitReasoningBlock((text ?? "").trim()).reply;
   value = value.replace(/^```[a-z]*\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
   const lines = value.split(/\r?\n/);
   while (lines.length && (/^#{1,6}\s/.test(lines[0].trim()) || /^(?:scene|scena)\s+\d+\s*[:.—-]/i.test(lines[0].trim()) || !lines[0].trim())) lines.shift();
   return lines.join("\n").trim();
 }
 
+/** Prose that cannot become a scene is rejected (and the step retried with the reason). */
 function assertProse(text: string, minimumWords: number): void {
-  if (!text.trim()) throw new Error("The model returned an empty scene.");
-  if (/^[{[]/.test(text.trim())) throw new Error("The model returned data instead of prose.");
+  if (!text.trim()) throw new AiReplyRejectedError("The model returned an empty scene.");
+  if (/^[{[]/.test(text.trim())) throw new AiReplyRejectedError("The model returned data instead of prose.");
   const words = countWords(text);
-  if (words < minimumWords) throw new Error(`The scene is too short (${words} words, at least ${minimumWords} expected): the reply was probably cut off.`);
+  if (words < minimumWords) throw new AiReplyRejectedError(`The scene is too short: ${words} words, at least ${minimumWords} expected.`);
 }
 
 function normalizeForMatch(text: string): string {
@@ -362,9 +393,8 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
     maxOutputTokens: 9000,
     temperature: 0.8,
   });
-  const output = asRecord(response.json);
+  const output = requireStructuredFields(response.json, { storyDesign: "text" }, "The concept");
   const storyDesign = asString(output.storyDesign);
-  if (!storyDesign) throw new Error("The concept has no story design.");
   const logline = asString(output.logline);
   const changes: Array<BookFileChange | null> = [];
   changes.push({
@@ -384,15 +414,24 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
     });
   }
   const created = new Set<string>();
+  const known: Array<{ kind: CanonKind; slug: string; names: string[] }> = ctx.snapshot.canon.map((entry) => ({ kind: entry.kind, slug: entry.slug, names: [entry.name, ...entry.aliases] }));
+  const counts = { character: 0, other: 0 };
   const create = (kind: "character" | "location" | "faction" | "secret", name: string, frontmatter: Record<string, unknown>, body: string) => {
+    // An entity that already exists under this name, an alias or (for characters) a first name is reused, never duplicated.
+    const existing = known.find((entry) => entry.kind === kind && sameCanonEntity(kind, name, entry.names));
+    if (existing) return existing.slug;
     const slug = slugify(name);
     const path = canonPath(kind, slug);
-    if (!slug || created.has(path) || ctx.snapshot.files.has(path)) return null;
+    if (!slug || created.has(path) || ctx.snapshot.files.has(path)) return slug || null;
     created.add(path);
+    known.push({ kind, slug, names: [name] });
+    if (kind === "character") counts.character += 1;
+    else counts.other += 1;
     const label = kind === "secret" ? { title: name } : { name };
     changes.push({ path, content: renderMarkdown({ type: kind, id: `${kind}:${slug}`, ...label, ...frontmatter, canon: "draft" }, body), expectedHash: null });
     return slug;
   };
+  const characterSlug = (name: string) => known.find((entry) => entry.kind === "character" && sameCanonEntity("character", name, entry.names))?.slug ?? slugify(name);
   const characters = asArray(output.characters).slice(0, 10).map(asRecord);
   for (const character of characters) {
     const name = asString(character.name);
@@ -419,7 +458,7 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
   for (const secret of asArray(output.secrets).slice(0, 8).map(asRecord)) {
     const title = asString(secret.title);
     if (!title) continue;
-    const holders = asStringList(secret.holders, 10).map((holder) => `character:${slugify(holder)}`);
+    const holders = asStringList(secret.holders, 10).map((holder) => `character:${characterSlug(holder)}`);
     const slug = create("secret", title, { holders, stakes: asString(secret.stakes) || undefined, status: "hidden" }, `# ${title}\n\n${asString(secret.truth)}`) ?? slugify(title);
     const revealChapter = asInteger(secret.revealChapter, 0, 0, 999);
     secrets.push({ slug, title, revealChapter: revealChapter || undefined });
@@ -427,22 +466,45 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
   ctx.state.concept = { done: true, generated: true, secrets };
   if (logline) ctx.insight("ok", logline);
   const summary = isItalian(ctx.language)
-    ? `${characters.length} personaggi, ${created.size - characters.length >= 0 ? created.size - characters.length : 0} altri elementi di canone, ${secrets.length} segreti.`
-    : `${characters.length} characters, ${Math.max(0, created.size - characters.length)} other canon entries, ${secrets.length} secrets.`;
+    ? `${counts.character} personaggi, ${counts.other} altri elementi di canone, ${secrets.length} segreti.`
+    : `${counts.character} characters, ${counts.other} other canon entries, ${secrets.length} secrets.`;
   return { changes: compact(changes), summary: logline ? `${logline} — ${summary}` : summary };
+}
+
+function normalizeName(name: string): string {
+  return name.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * Whether a proposed canon name is an entity that already exists: same name or alias once
+ * normalized, or, for characters, a lone first name matching the first word of a fuller name
+ * ("Mara" and "Mara Venturi"; not "Mara Rossi" and "Mara Venturi", nor a lone surname).
+ */
+export function sameCanonEntity(kind: CanonKind, name: string, existingNames: string[]): boolean {
+  const candidate = normalizeName(name);
+  if (!candidate) return false;
+  const names = existingNames.map(normalizeName).filter(Boolean);
+  if (names.includes(candidate)) return true;
+  if (kind !== "character") return false;
+  const firstWord = (value: string) => value.split(" ")[0];
+  return names.some((existing) => (!candidate.includes(" ") && firstWord(existing) === candidate) || (!existing.includes(" ") && firstWord(candidate) === existing));
 }
 
 // ─── Plan ───────────────────────────────────────────────────────────────────
 
 async function runPlan(ctx: TaskContext): Promise<TaskResult> {
-  const imported = importedChapters(ctx.snapshot);
   const previous = ctx.state.plan;
+  // Chapters already in the book keep what the autopilot knew about them (the synopsis saved when they closed).
+  const imported = importedChapters(ctx.snapshot).map((chapter) => {
+    const known = previous?.chapters.find((entry) => entry.slug === chapter.slug);
+    return known?.storySoFarAtClose ? { ...chapter, storySoFarAtClose: known.storySoFarAtClose, ...(known.score !== undefined ? { score: known.score } : {}) } : chapter;
+  });
   const startNumber = imported.length ? Math.max(...imported.map((chapter) => chapter.number)) + 1 : 1;
   const count = Math.max(1, ctx.state.brief.targetChapters - imported.length);
   const [design, context, resume] = await Promise.all([
     readBody(ctx.store, STORY_DESIGN_FILE, 6000),
     readBody(ctx.store, CONTEXT_FILE, 2500),
-    readBody(ctx.store, TOTAL_RESUME_FILE, 4000),
+    readStorySoFar(ctx.store, { chapters: imported, beforeChapter: startNumber, max: 4000 }),
   ]);
   const revising = Boolean(previous && previous.revisionNotes.length);
   const secretsPlan = ctx.state.concept.secrets.filter((secret) => secret.revealChapter).map((secret) => `- ${secret.title}: reveal in chapter ${secret.revealChapter}`).join("\n");
@@ -466,7 +528,7 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
       `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: true }) || "-"}`,
       secretsPlan ? `PLANNED REVEALS:\n${secretsPlan}` : "",
       imported.length ? `CHAPTERS ALREADY WRITTEN:\n${imported.map((chapter) => `${chapter.number}. ${chapter.title}${chapter.summary ? ` — ${chapter.summary}` : ""}`).join("\n")}` : "",
-      resume ? `STORY SO FAR:\n${resume}` : "",
+      resume ? `STORY SO FAR (before chapter ${startNumber}):\n${resume}` : "",
       revising ? `CURRENT PLAN:\n${planOutline(previous)}` : "",
       `DIRECTOR (the author's taste):\n${directorTaste(ctx.director)}`,
     ])}`,
@@ -474,8 +536,9 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
     maxOutputTokens: 9000,
     temperature: 0.7,
   });
-  const proposed = asArray(asRecord(response.json).chapters).map(asRecord).filter((chapter) => asString(chapter.title)).slice(0, count);
-  if (!proposed.length) throw new Error("The plan contains no chapters.");
+  const output = requireStructuredFields(response.json, { chapters: "list" }, "The chapter plan");
+  const proposed = asArray(output.chapters).map(asRecord).filter((chapter) => asString(chapter.title)).slice(0, count);
+  if (proposed.length < count) throw new AiReplyRejectedError(`The chapter plan has ${proposed.length} chapters with a title, but ${count} were requested (chapters ${startNumber}-${startNumber + count - 1}).`);
   const planned: PlannedChapter[] = proposed.map((chapter, index) => {
     const number = startNumber + index;
     const title = asString(chapter.title);
@@ -540,7 +603,7 @@ async function runPlanReader(ctx: TaskContext): Promise<TaskResult> {
     json: PLAN_REACTION_TOOL,
     maxOutputTokens: 1500,
   });
-  const output = asRecord(response.json);
+  const output = requireStructuredFields(response.json, { interest: "number" }, "The reader's reaction");
   const reaction = {
     slug: reader.slug,
     name: reader.name,
@@ -581,8 +644,9 @@ async function runPlanReview(ctx: TaskContext): Promise<TaskResult> {
     json: PLAN_REVIEW_TOOL,
     maxOutputTokens: 4000,
   });
-  const output = asRecord(response.json);
-  const verdict = asOneOf(output.verdict, ["approve", "revise"] as const, "approve");
+  // Without a verdict the plan is never approved by default.
+  const output = requireStructuredFields(response.json, { verdict: "text" }, "The director's plan review");
+  const verdict = verdictOf(output.verdict, "The director's plan review");
   const score = Math.round(asNumber(output.score, 7, 1, 10));
   const summaryText = asString(output.summary);
   const changesRequested = asArray(output.changes).map(asRecord)
@@ -640,7 +704,7 @@ async function runScenes(ctx: TaskContext): Promise<TaskResult> {
   const next = plan.chapters.find((entry) => entry.number === chapter.number + 1);
   const target = ctx.state.brief.scenesPerChapter;
   const [resume, design, secrets] = await Promise.all([
-    readBody(ctx.store, TOTAL_RESUME_FILE, 5000),
+    storySoFar(ctx, chapter.number, 5000),
     readBody(ctx.store, STORY_DESIGN_FILE, 2500),
     secretRules(ctx.store, ctx.snapshot, chapter.number),
   ]);
@@ -658,7 +722,7 @@ async function runScenes(ctx: TaskContext): Promise<TaskResult> {
       chapterPlanBlock(chapter),
       previous ? `PREVIOUS CHAPTER: ${previous.number}. ${previous.title}${previous.summary ? ` — ${previous.summary}` : ""}` : "",
       next ? `NEXT CHAPTER (to set up): ${next.number}. ${next.title}${next.summary ? ` — ${next.summary}` : ""}` : "",
-      resume ? `STORY SO FAR:\n${resume}` : "",
+      resume ? `STORY SO FAR (before this chapter):\n${resume}` : "",
       design ? `STORY DESIGN (excerpt):\n${design}` : "",
       `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: false }) || "-"}`,
       secrets ? `SECRETS AND REVEAL RULES:\n${secrets}` : "",
@@ -667,8 +731,9 @@ async function runScenes(ctx: TaskContext): Promise<TaskResult> {
     maxOutputTokens: 5000,
     temperature: 0.7,
   });
-  const scenes = asArray(asRecord(response.json).scenes).map(asRecord).filter((scene) => asString(scene.title)).slice(0, target + 2);
-  if (!scenes.length) throw new Error("The scene plan is empty.");
+  const output = requireStructuredFields(response.json, { scenes: "list" }, "The scene plan");
+  const scenes = asArray(output.scenes).map(asRecord).filter((scene) => asString(scene.title)).slice(0, target + 2);
+  if (!scenes.length) throw new AiReplyRejectedError("The scene plan has no scene with a title.");
   chapter.scenes = scenes.map((scene, index) => ({
     number: index + 1,
     title: asString(scene.title),
@@ -684,6 +749,24 @@ async function runScenes(ctx: TaskContext): Promise<TaskResult> {
   chapter.status = "writing";
   ctx.insight("info", isItalian(ctx.language) ? `Capitolo ${chapter.number}: ${chapter.scenes.length} scene` : `Chapter ${chapter.number}: ${chapter.scenes.length} scenes`, chapter.scenes.map((scene) => scene.title).join(" · "));
   return { changes: compact([ensureChapterFile(ctx, chapter), await planFileChange(ctx)]), summary: chapter.scenes.map((scene) => `${scene.number}. ${scene.title}`).join("; ") };
+}
+
+/** One or two sentences on what a scene does, for continuity; `null` when the summary call fails. */
+async function summarizeScene(ctx: TaskContext, chapter: PlannedChapter, scene: PlannedScene, prose: string): Promise<string | null> {
+  try {
+    const response = await ctx.ai({
+      capability: AI_CAPABILITIES.summary,
+      label: `autopilot:scene-summary:${chapter.number}.${scene.number}`,
+      system: continuitySystemPrompt(ctx.language),
+      user: `${request(["Summarize this scene in one or two sentences: what happens and what changes."])}\n\n${data([prose])}`,
+      json: SCENE_SUMMARY_TOOL,
+      maxOutputTokens: 400,
+    });
+    return asString(asRecord(response.json).summary) || null;
+  } catch (error) {
+    if (ctx.signal.aborted) throw error;
+    return null;
+  }
 }
 
 async function sceneNeighbors(ctx: TaskContext, chapter: PlannedChapter, scene: PlannedScene): Promise<{ previousEnding: string; nextOpening: string; writtenSummaries: string }> {
@@ -713,11 +796,11 @@ async function runWrite(ctx: TaskContext): Promise<TaskResult> {
   const [ghostwriter, context, resume, secrets, neighbors] = await Promise.all([
     loadGhostwriter(ctx.store, ctx.snapshot, info),
     readBody(ctx.store, CONTEXT_FILE, 2000),
-    readBody(ctx.store, TOTAL_RESUME_FILE, 5000),
+    storySoFar(ctx, chapter.number, 5000),
     secretRules(ctx.store, ctx.snapshot, chapter.number),
     sceneNeighbors(ctx, chapter, scene),
   ]);
-  const relevant = mentionedCanon(ctx.snapshot, [scene.characters.join(" "), scene.location ?? "", scene.beats.join(" "), scene.goal, scene.pov ?? ""].join(" "));
+  const relevant = mentionedCanon(ctx.snapshot, [scene.beats.join(" "), scene.goal, scene.summary ?? ""].join(" "), 12, [...scene.characters, scene.location ?? "", scene.pov ?? ""]);
   const words = ctx.state.brief.wordsPerScene;
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.writer,
@@ -733,7 +816,7 @@ async function runWrite(ctx: TaskContext): Promise<TaskResult> {
       `DIRECTOR (the author's taste):\n${directorTaste(ctx.director)}`,
       directorGuidance(ctx),
       context ? `WORLD CONTEXT:\n${context}` : "",
-      resume ? `STORY SO FAR:\n${resume}` : "",
+      resume ? `STORY SO FAR (before this chapter):\n${resume}` : "",
       chapterPlanBlock(chapter),
       neighbors.writtenSummaries ? `SCENES ALREADY WRITTEN IN THIS CHAPTER:\n${neighbors.writtenSummaries}` : "",
       neighbors.previousEnding ? `PREVIOUS SCENE ENDING (continue seamlessly):\n${neighbors.previousEnding}` : "",
@@ -747,20 +830,7 @@ async function runWrite(ctx: TaskContext): Promise<TaskResult> {
   });
   const prose = cleanProse(response.text);
   assertProse(prose, Math.min(150, Math.floor(words * 0.25)));
-  let summary = scene.summary ?? scene.goal;
-  try {
-    const summaryResponse = await ctx.ai({
-      capability: AI_CAPABILITIES.summary,
-      label: `autopilot:scene-summary:${chapter.number}.${scene.number}`,
-      system: continuitySystemPrompt(ctx.language),
-      user: `${request(["Summarize this scene in one or two sentences: what happens and what changes."])}\n\n${data([prose])}`,
-      json: SCENE_SUMMARY_TOOL,
-      maxOutputTokens: 400,
-    });
-    summary = asString(asRecord(summaryResponse.json).summary) || summary;
-  } catch (error) {
-    if (ctx.signal.aborted) throw error;
-  }
+  const summary = await summarizeScene(ctx, chapter, scene, prose) ?? scene.summary ?? scene.goal;
   const slug = paragraphSlug(scene.number, scene.title);
   const path = paragraphFilePath(chapter.slug, slug);
   const content = renderMarkdown(
@@ -797,7 +867,7 @@ async function runReader(ctx: TaskContext): Promise<TaskResult> {
   const reader = ctx.readerPanel.find((entry) => entry.slug === slug);
   if (!reader) return { changes: [], summary: "Reader not available." };
   const source = await chapterSource(ctx, chapter);
-  const resume = await readBody(ctx.store, TOTAL_RESUME_FILE, 3000);
+  const resume = await storySoFar(ctx, chapter.number, 3000);
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.reader,
     label: `reader-evaluation:${reader.slug}`,
@@ -810,7 +880,7 @@ async function runReader(ctx: TaskContext): Promise<TaskResult> {
     json: READER_EVALUATION_TOOL,
     maxOutputTokens: 2500,
   });
-  const output = normalizeReaderEvaluationOutput(response.json);
+  const output = normalizeReaderEvaluationOutput(requireStructuredFields(response.json, { score: "number" }, "The reader evaluation"));
   const path = readerEvaluationPath({ kind: "chapter", chapter: chapter.slug }, reader.slug);
   const updatedAt = ctx.now().toISOString();
   const change = await changeFor(ctx.store, path, (existing) => renderMarkdown({
@@ -863,7 +933,7 @@ async function runReadersSummary(ctx: TaskContext): Promise<TaskResult> {
     json: READER_SUMMARY_TOOL,
     maxOutputTokens: 2500,
   });
-  const output = asRecord(response.json);
+  const output = requireStructuredFields(response.json, { overallScore: "number" }, "The readers' summary");
   const overall = Math.round(asNumber(output.overallScore, 6, 1, 10) * 10) / 10;
   const path = readerSummaryPath({ kind: "chapter", chapter: chapter.slug });
   const updatedAt = ctx.now().toISOString();
@@ -944,9 +1014,11 @@ async function runSpecialists(ctx: TaskContext): Promise<TaskResult> {
     json: FINDINGS_TOOL,
     maxOutputTokens: 5000,
   });
+  // A reply without the findings list is not "no problems": it is rejected.
+  const output = requireStructuredFields(response.json, { findings: "list" }, "The specialists' review");
   const scenesByNumber = new Map(source.paragraphs.map((paragraph) => [paragraph.number, normalizeForMatch(paragraph.body)]));
   const whole = normalizeForMatch(text);
-  const findings: ReviewFinding[] = asArray(asRecord(response.json).findings).map(asRecord).slice(0, 12).map((finding, index) => {
+  const findings: ReviewFinding[] = asArray(output.findings).map(asRecord).slice(0, 12).map((finding, index) => {
     const sceneNumber = asInteger(finding.sceneNumber, 0, 0, 999);
     const evidence = asString(finding.evidence);
     const needle = normalizeForMatch(evidence);
@@ -971,7 +1043,7 @@ async function runSpecialists(ctx: TaskContext): Promise<TaskResult> {
     ctx.insight(finding.severity === "critical" ? "critical" : "warning", `${finding.category}${finding.sceneNumber ? ` · ${isItalian(ctx.language) ? "scena" : "scene"} ${finding.sceneNumber}` : ""}: ${truncate(finding.problem, 160)}`, finding.remediation);
   }
   if (!findings.length) ctx.insight("ok", isItalian(ctx.language) ? "Gli specialisti non trovano problemi" : "The specialists found no problems");
-  return { changes: [], summary: `${findings.length} findings (${critical} critical, ${major} major) — ${asString(asRecord(response.json).summary)}` };
+  return { changes: [], summary: `${findings.length} findings (${critical} critical, ${major} major) — ${asString(output.summary)}` };
 }
 
 function findingLine(finding: ReviewFinding): string {
@@ -988,7 +1060,7 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   const review = ctx.state.review!;
   const source = await chapterSource(ctx, chapter);
   const [resume, secrets, readersSummary] = await Promise.all([
-    readBody(ctx.store, TOTAL_RESUME_FILE, 4000),
+    storySoFar(ctx, chapter.number, 4000),
     secretRules(ctx.store, ctx.snapshot, chapter.number),
     review.readerScores.length ? readBody(ctx.store, readerSummaryPath({ kind: "chapter", chapter: chapter.slug }), 2500) : Promise.resolve(""),
   ]);
@@ -1012,7 +1084,7 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
       directorGuidance(ctx),
       chapterPlanBlock(chapter),
       `SCENE PLANS:\n${chapter.scenes.map((scene) => `- Scene ${scene.number} «${scene.title}»: ${scene.goal}`).join("\n")}`,
-      resume ? `STORY SO FAR:\n${resume}` : "",
+      resume ? `STORY SO FAR (before this chapter):\n${resume}` : "",
       secrets ? `SECRETS AND REVEAL RULES:\n${secrets}` : "",
       review.readerScores.length
         ? `SIMULATED READERS:\n${review.readerScores.map((score) => `- ${score.name} (weight ${ctx.director.readerWeights[score.slug] ?? 1}): ${score.score}/10. Main problem: ${score.mainProblem}. Priority: ${score.prioritySuggestion}`).join("\n")}`
@@ -1025,18 +1097,37 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
     json: CHAPTER_REVIEW_TOOL,
     maxOutputTokens: 6000,
   });
-  const output = asRecord(response.json);
+  const subject = "The director's chapter review";
+  const output = requireStructuredFields(response.json, { verdict: "text" }, subject);
+  const italian = isItalian(ctx.language);
+  const rawDecisions = asArray(output.decisions).map(asRecord);
+  const findingIds = review.findings.map((finding) => finding.id);
+  // Findings without decisions must never turn into a silent "all rejected, approved".
+  if (findingIds.length && !rawDecisions.length) {
+    throw new AiReplyRejectedError(`${subject} was rejected: the field "decisions" is missing or empty, but ${findingIds.length} findings need a decision (${findingIds.slice(0, 12).join(", ")}).`);
+  }
+  const idKey = (value: unknown) => asString(value).replace(/^\[|\]$/g, "").trim().toUpperCase();
+  const byId = new Map(rawDecisions.map((decision) => [idKey(decision.findingId), decision]));
+  if (findingIds.length && !findingIds.some((id) => byId.has(idKey(id)))) {
+    throw new AiReplyRejectedError(`${subject} was rejected: no decision refers to a finding id. Use the ids ${findingIds.slice(0, 12).join(", ")}.`);
+  }
+  const verdictGiven = verdictOf(output.verdict, subject);
   const writtenScenes = new Set(chapter.scenes.filter((scene) => scene.status !== "planned").map((scene) => scene.number));
-  const byId = new Map(asArray(output.decisions).map(asRecord).map((decision) => [asString(decision.findingId), decision]));
+  const undecided: string[] = [];
+  const unusable: string[] = [];
   const decisions: ReviewDecision[] = review.findings.map((finding) => {
-    const decision = byId.get(finding.id);
+    const decision = byId.get(idKey(finding.id));
+    if (!decision) undecided.push(finding.id);
     const action = decision ? asOneOf(decision.action, ["accept", "reject"] as const, "reject") : "reject";
     const remediation = asString(decision?.remediation) || (action === "accept" ? finding.remediation : "");
     const sceneNumber = asInteger(decision?.sceneNumber, 0, 0, 999) || finding.sceneNumber;
+    const applicable = action === "accept" && Boolean(remediation) && Boolean(sceneNumber) && writtenScenes.has(sceneNumber!);
+    if (action === "accept" && !applicable) unusable.push(finding.id);
     return {
       findingId: finding.id,
-      action: action === "accept" && remediation && sceneNumber && writtenScenes.has(sceneNumber) ? "accept" : "reject",
-      rationale: asString(decision?.rationale) || (decision ? "" : "No decision from the director: rejected by default."),
+      action: applicable ? "accept" : "reject",
+      rationale: asString(decision?.rationale)
+        || (!decision ? "No decision from the director: rejected by default." : action === "accept" && !applicable ? "Accepted without an applicable fix (remediation or written scene missing): not applied." : ""),
       remediation,
       sceneNumber: sceneNumber || undefined,
     };
@@ -1050,8 +1141,21 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   const accepted = decisions.filter((decision) => decision.action === "accept");
   const rejected = decisions.filter((decision) => decision.action === "reject");
   const score = Math.round(asNumber(output.score, 6, 1, 10) * 10) / 10;
-  let verdict = asOneOf(output.verdict, ["approve", "revise"] as const, accepted.length ? "revise" : "approve");
-  if (verdict === "revise" && !accepted.length) verdict = "approve";
+  let verdict = verdictGiven;
+  if (verdict === "revise" && !accepted.length) {
+    verdict = "approve";
+    ctx.insight("warning", italian
+      ? "Il direttore chiede una revisione senza correzioni applicabili: il capitolo è approvato così com'è."
+      : "The director asked for a revision without any applicable fix: the chapter is approved as it is.");
+  }
+  if (undecided.length) {
+    ctx.insight("warning", italian ? `Rilievi senza decisione del direttore, respinti: ${undecided.join(", ")}` : `Findings the director did not decide, rejected: ${undecided.join(", ")}`);
+  }
+  if (unusable.length) {
+    ctx.insight("warning", italian
+      ? `Correzioni accettate ma non applicabili (manca la correzione o la scena scritta), respinte: ${unusable.join(", ")}`
+      : `Fixes accepted without an applicable remediation or written scene, rejected: ${unusable.join(", ")}`);
+  }
   const summaryText = asString(output.summary);
   review.decisions = decisions;
   review.directorDone = true;
@@ -1073,7 +1177,6 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
       askedAt: ctx.now().toISOString(),
     };
   }
-  const italian = isItalian(ctx.language);
   const findingFor = (decision: ReviewDecision) => review.findings.find((finding) => finding.id === decision.findingId);
   const opinion: DirectorOpinion = {
     target: { kind: "chapter", chapter: chapter.slug },
@@ -1113,7 +1216,7 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   return { changes: compact([opinionChange]), summary: `${verdict} ${score}/10 — ${accepted.length} accepted, ${rejected.length} rejected. ${summaryText}` };
 }
 
-async function rewriteScene(ctx: TaskContext, chapter: PlannedChapter, scene: PlannedScene, instructions: string[], mode: "repair" | "revise"): Promise<{ change: BookFileChange; words: number }> {
+async function rewriteScene(ctx: TaskContext, chapter: PlannedChapter, scene: PlannedScene, instructions: string[], mode: "repair" | "revise"): Promise<{ change: BookFileChange; words: number; summary: string | null }> {
   if (!scene.path) throw new Error(`Scene ${chapter.number}.${scene.number} has no file.`);
   const loaded = await readDocument(ctx.store, scene.path);
   if (!loaded) throw new Error(`Scene file not found: ${scene.path}`);
@@ -1124,7 +1227,7 @@ async function rewriteScene(ctx: TaskContext, chapter: PlannedChapter, scene: Pl
     sceneNeighbors(ctx, chapter, scene),
   ]);
   const originalWords = countWords(loaded.document.body);
-  const relevant = mentionedCanon(ctx.snapshot, loaded.document.body, 10);
+  const relevant = mentionedCanon(ctx.snapshot, loaded.document.body, 10, [...scene.characters, scene.location ?? "", scene.pov ?? ""]);
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.writer,
     label: `autopilot:${mode}:${chapter.number}.${scene.number}`,
@@ -1152,9 +1255,13 @@ async function rewriteScene(ctx: TaskContext, chapter: PlannedChapter, scene: Pl
   });
   const prose = cleanProse(response.text);
   assertProse(prose, Math.max(60, Math.floor(originalWords * 0.5)));
+  // The summary must describe the scene as it is now: later chapters and reviews rely on it.
+  const summary = await summarizeScene(ctx, chapter, scene, prose);
+  const frontmatter = summary ? { ...loaded.document.frontmatter, summary } : loaded.document.frontmatter;
   return {
-    change: { path: scene.path, content: renderMarkdown(loaded.document.frontmatter, prose), expectedHash: loaded.file.hash },
+    change: { path: scene.path, content: renderMarkdown(frontmatter, prose), expectedHash: loaded.file.hash },
     words: countWords(prose),
+    summary,
   };
 }
 
@@ -1165,39 +1272,50 @@ async function runRepair(ctx: TaskContext): Promise<TaskResult> {
   const instructions = review.decisions.filter((decision) => decision.action === "accept" && decision.sceneNumber === scene.number).map((decision) => decision.remediation);
   review.repairQueue = review.repairQueue.filter((number) => number !== scene.number);
   if (!instructions.length) return { changes: [], summary: "No fix to apply." };
-  const { change, words } = await rewriteScene(ctx, chapter, scene, [...instructions, ...ctx.notes.map((note) => note.text)], "repair");
+  const { change, words, summary } = await rewriteScene(ctx, chapter, scene, [...instructions, ...ctx.notes.map((note) => note.text)], "repair");
   scene.revisions += 1;
   scene.words = words;
+  if (summary) scene.summary = summary;
   ctx.insight("ok", isItalian(ctx.language) ? `Scena ${chapter.number}.${scene.number} corretta (${instructions.length})` : `Scene ${chapter.number}.${scene.number} revised (${instructions.length})`, instructions.join(" · "));
   return { changes: [change], summary: `${instructions.length} fixes applied, ${words} words.` };
 }
 
 async function runConsolidate(ctx: TaskContext): Promise<TaskResult> {
   const chapter = chapterOf(ctx);
+  const plan = ctx.state.plan!;
   const review = ctx.state.review;
   const source = await chapterSource(ctx, chapter);
-  const resume = await readBody(ctx.store, TOTAL_RESUME_FILE, 7000);
+  // Built from the chapters before this one only: never from a resume that already covers this chapter or later ones.
+  const resume = await storySoFar(ctx, chapter.number, 7000);
+  const firstChapter = !plan.chapters.some((entry) => entry.number < chapter.number);
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.writer,
     label: `autopilot:consolidate:${chapter.number}`,
     system: continuitySystemPrompt(ctx.language),
     user: `${request([
       `Close chapter ${chapter.number} «${chapter.title}»: write its summary, its recap (one bullet per scene, in order), the continuity delta, and the updated story so far including this chapter.`,
+      `Keep the story so far under ${STORY_SO_FAR_TARGET_WORDS} words (hard limit: ${STORY_SO_FAR_MAX_WORDS}): compress the oldest chapters and keep the most recent ones more detailed.`,
     ])}\n\n${data([
       bookHeader(ctx),
       chapterPlanBlock(chapter),
-      resume ? `STORY SO FAR (before this chapter):\n${resume}` : "STORY SO FAR: this is the first chapter.",
+      resume
+        ? `STORY SO FAR (before this chapter):\n${resume}`
+        : firstChapter ? "STORY SO FAR: this is the first chapter." : "STORY SO FAR (before this chapter): not available.",
       `CHAPTER TEXT:\n${markedChapterText(source.paragraphs, 9000)}`,
     ])}`,
     json: CONSOLIDATION_TOOL,
     maxOutputTokens: 5000,
     temperature: 0.3,
   });
-  const output = asRecord(response.json);
+  const subject = "The chapter consolidation";
+  const output = requireStructuredFields(response.json, { summary: "text", storySoFar: "text" }, subject);
   const summary = asString(output.summary);
-  if (!summary) throw new Error("The chapter consolidation has no summary.");
   const recap = asString(output.recap) || summary;
-  const storySoFar = asString(output.storySoFar);
+  const storySoFarText = asString(output.storySoFar);
+  const excess = storySoFarExcess(storySoFarText);
+  if (excess) {
+    throw new AiReplyRejectedError(`${subject} was rejected: "storySoFar" is ${excess.words} words long, ${excess.over} words over the ${STORY_SO_FAR_MAX_WORDS}-word limit. Rewrite it under ${STORY_SO_FAR_TARGET_WORDS} words.`);
+  }
   const stateChanges = asRecord(output.stateChanges);
   const changes: Array<BookFileChange | null> = [];
   changes.push(await changeFor(ctx.store, chapterFilePath(chapter.slug), (existing) => existing
@@ -1211,16 +1329,19 @@ async function runConsolidate(ctx: TaskContext): Promise<TaskResult> {
     chapter: `chapter:${chapter.slug}`,
     state_changes: Object.keys(stateChanges).length ? stateChanges : undefined,
   }, `# Chapter Summary\n\n${recap}`)));
-  if (storySoFar) {
-    changes.push(await changeFor(ctx.store, TOTAL_RESUME_FILE, (existing) => renderMarkdown(
-      { ...(existing?.frontmatter ?? {}), type: "resume", id: "resume:total", title: "Total Resume" },
-      `# Book So Far\n\n${storySoFar}`,
-    )));
-  }
+  // One section per chapter, like Narrarium core: closing this chapter replaces only its own section.
+  changes.push(await changeFor(ctx.store, TOTAL_RESUME_FILE, (existing) => renderMarkdown(
+    { ...(existing?.frontmatter ?? {}), type: "resume", id: "resume:total", title: "Total Resume" },
+    renderTotalResumeBody(existing?.body ?? "", plan.chapters, { number: chapter.number, title: chapter.title, summary }),
+  )));
   chapter.summary = summary;
   chapter.status = "done";
   chapter.score = review?.score;
   chapter.skipReaders = undefined;
+  chapter.storySoFarAtClose = storySoFarText;
+  // Synopses saved by later chapters include the previous version of this one: they no longer apply.
+  for (const later of plan.chapters) if (later.number > chapter.number) later.storySoFarAtClose = undefined;
+  pruneStorySnapshots(plan.chapters);
   for (const scene of chapter.scenes) if (scene.status === "written") scene.status = "reviewed";
   ctx.state.review = null;
   changes.push(await renderPlot(ctx));
@@ -1255,13 +1376,19 @@ async function runImpact(ctx: TaskContext): Promise<TaskResult> {
     json: IMPACT_TOOL,
     maxOutputTokens: 3000,
   });
-  const output = asRecord(response.json);
+  const subject = "The revision impact";
+  // Without the targets list the author's revision would be silently ignored.
+  const output = requireStructuredFields(response.json, { targets: "list" }, subject);
+  const proposedTargets = asArray(output.targets).map(asRecord);
   const valid = new Set(written.map(({ chapter, scene }) => `${chapter.number}:${scene.number}`));
-  revision.targets = asArray(output.targets).map(asRecord)
+  revision.targets = proposedTargets
     .map((target) => ({ chapterNumber: asInteger(target.chapterNumber, 0, 0, 999), sceneNumber: asInteger(target.sceneNumber, 0, 0, 999), instruction: asString(target.instruction) || revision.instruction }))
     .filter((target, index, list) => valid.has(`${target.chapterNumber}:${target.sceneNumber}`) && list.findIndex((other) => other.chapterNumber === target.chapterNumber && other.sceneNumber === target.sceneNumber) === index)
     .sort((left, right) => left.chapterNumber - right.chapterNumber || left.sceneNumber - right.sceneNumber)
     .slice(0, 40);
+  if (proposedTargets.length && !revision.targets.length) {
+    throw new AiReplyRejectedError(`${subject} was rejected: none of its ${proposedTargets.length} targets is a written scene. Use the chapter and scene numbers of the WRITTEN SCENES list.`);
+  }
   revision.cursor = 0;
   ctx.insight(revision.targets.length ? "warning" : "info", isItalian(ctx.language) ? `${revision.targets.length} scene da riscrivere` : `${revision.targets.length} scenes to rewrite`, asString(output.summary));
   return { changes: [], summary: `${revision.targets.length} scenes — ${asString(output.summary)}` };
@@ -1272,9 +1399,10 @@ async function runRevise(ctx: TaskContext): Promise<TaskResult> {
   const target = revision.targets![revision.cursor];
   const chapter = chapterOf(ctx);
   const scene = sceneOf(chapter, ctx.task.sceneNumber);
-  const { change, words } = await rewriteScene(ctx, chapter, scene, [target.instruction, ...ctx.notes.map((note) => note.text)], "revise");
+  const { change, words, summary } = await rewriteScene(ctx, chapter, scene, [target.instruction, ...ctx.notes.map((note) => note.text)], "revise");
   scene.revisions += 1;
   scene.words = words;
+  if (summary) scene.summary = summary;
   revision.cursor += 1;
   ctx.insight("ok", isItalian(ctx.language) ? `Scena ${chapter.number}.${scene.number} riscritta` : `Scene ${chapter.number}.${scene.number} rewritten`, target.instruction);
   return { changes: [change], summary: `${words} words — ${target.instruction}` };

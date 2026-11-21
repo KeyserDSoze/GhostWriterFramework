@@ -94,6 +94,11 @@ export interface PlannedChapter {
   scenes: PlannedScene[];
   /** Final director score once the chapter is approved. */
   score?: number;
+  /**
+   * The story so far up to and including this chapter, written when the chapter closed. It is the
+   * "before" synopsis of the next chapter; a later re-consolidation of an earlier chapter clears it.
+   */
+  storySoFarAtClose?: string;
 }
 
 export interface ReaderReaction {
@@ -198,6 +203,8 @@ export interface RevisionRequest {
   /** `null` until the director has analyzed the impact. */
   targets: Array<{ chapterNumber: number; sceneNumber: number; instruction: string }> | null;
   cursor: number;
+  /** Chapters already rewritten by a revision this one replaced: they are reviewed again too. */
+  revisedChapters?: number[];
 }
 
 export interface AutopilotRunnerInfo {

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AutopilotActivity, AutopilotEvent, AutopilotSnapshot, AutopilotStateSummary, InterventionInput, ServerBookSummary, ServerInfo } from "narrarium-engine";
+import type { AutopilotActivity, AutopilotEvent, AutopilotSnapshot, AutopilotStateSummary, InterventionInput, ServerBookSummary, ServerInfo, ServerUpdateInfo } from "narrarium-engine";
 
 export type AutopilotHostKind = "browser" | "server";
 export type ServerConnectionStatus = "disabled" | "connecting" | "online" | "offline" | "error";
@@ -39,6 +39,8 @@ export interface ServerConnectionState {
   info: ServerInfo | null;
   message: string | null;
   books: ServerBookSummary[];
+  /** Release check made once per connection (a newer verified server version, if any). */
+  updates: ServerUpdateInfo | null;
 }
 
 interface AutopilotStoreState {
@@ -93,7 +95,7 @@ export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
   feed: initialFeed(),
   live: {},
   summaries: {},
-  server: { status: "disabled", info: null, message: null, books: [] },
+  server: { status: "disabled", info: null, message: null, books: [], updates: null },
   dockOpen: initialDockOpen(),
   dockTab: "live",
   setDockOpen: (open) => {

@@ -1,7 +1,8 @@
-import { getPublishPlan, writeGithubOutputs } from "./workspace-publish.mjs";
+import { firstPublishWarning, getPublishPlan, splitPublishPlan, writeGithubOutputs } from "./workspace-publish.mjs";
 
 const plan = await getPublishPlan();
-const unpublished = plan.filter((pkg) => !pkg.published);
+const { publish: unpublished, firstPublish } = splitPublishPlan(plan);
+for (const pkg of firstPublish) console.log(firstPublishWarning(pkg));
 
 if (unpublished.length === 0) {
   console.log("No unpublished workspace versions found.");

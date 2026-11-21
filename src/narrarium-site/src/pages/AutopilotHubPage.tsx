@@ -44,6 +44,9 @@ export function AutopilotHubPage() {
           <Server className="h-4 w-4 text-primary" />
           <span>{t("autopilot.hub.server")}</span>
           <Badge variant="outline">{t(`personalServer.status.${server.status}`)}</Badge>
+          {server.status === "online" && server.updates?.available && server.updates.latestVersion && (
+            <Badge className="border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300">{t("autopilot.hub.serverUpdate", { version: server.updates.latestVersion })}</Badge>
+          )}
         </Link>
       </div>
 

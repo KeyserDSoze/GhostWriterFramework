@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  AiProviderError,
+  AiReplyRejectedError,
   AutopilotSession,
   askDirector,
   listDirectorOpinions,
@@ -201,14 +203,14 @@ test("the director answers questions on a chapter and keeps the opinion in the b
 
 test("a failing provider is retried once, then the autopilot stops with a readable error", async () => {
   const store = new MemoryBookStore(seedBookFiles());
-  const failing = createFakeAutopilotAi({ failOn: { call: 1, error: new Error("temporary outage") } });
+  const failing = createFakeAutopilotAi({ failOn: { call: 1, error: new AiProviderError("temporary outage", 503, true) } });
   const { session: autopilot, events } = session(store, failing);
   const state = await runToEnd(autopilot, { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } });
   assert.equal(state.status, "completed");
   assert.ok(events.some((event) => event.type === "insight" && /retrying once/.test(event.title)));
 
   const broken = new MemoryBookStore(seedBookFiles());
-  const ai = { calls: [], async complete() { throw new Error("invalid api key"); } };
+  const ai = { calls: [], async complete() { throw new AiProviderError("invalid api key", 401, false); } };
   const { session: second } = session(broken, ai);
   const failed = await runToEnd(second, { brief: { idea: "x" } });
   assert.equal(failed.status, "error");
@@ -216,6 +218,25 @@ test("a failing provider is retried once, then the autopilot stops with a readab
   assert.equal(failed.lastError.task, "concept");
   const stored = parseAutopilotState(broken.files.get("autopilot/state.json"));
   assert.equal(stored.status, "error");
+});
+
+test("only errors that declare themselves retryable repeat a step", async () => {
+  for (const [error, retried] of [
+    [new Error("unclassified storage failure"), false],
+    [new AiProviderError("HTTP 400 — bad request", 400, false), false],
+    [new AiProviderError("network down", undefined, false), false],
+    [new AiProviderError("HTTP 503", 503, true), true],
+    [new AiReplyRejectedError("missing field"), true],
+    [Object.assign(new Error("git pull timed out"), { retryable: true }), true],
+    [new AiProviderError("cut by the output token limit", undefined, true, { truncated: true }), false],
+  ]) {
+    const store = new MemoryBookStore(seedBookFiles());
+    const ai = createFakeAutopilotAi({ failOn: { call: 1, error } });
+    const { session: autopilot, events } = session(store, ai);
+    const state = await runToEnd(autopilot, { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false } });
+    assert.equal(events.some((event) => event.type === "insight" && event.code === "failureRetry"), retried, error.message);
+    assert.equal(state.status, retried ? "paused" : "error", error.message);
+  }
 });
 
 test("interventions recorded while a step runs steer the next step, or restart the current one", async () => {

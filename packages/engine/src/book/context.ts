@@ -2,7 +2,7 @@ import { parseMarkdown, type MarkdownDocument } from "../markdown/frontmatter.js
 import { defaultDirector, parseDirector, type DirectorProfile } from "../profiles/director.js";
 import { ghostwriterPrompt, parseGhostwriter, type GhostwriterProfile } from "../profiles/ghostwriter.js";
 import { mergeReaderPersonas, parseReaderPersona, type ReaderPersonaProfile } from "../profiles/readers.js";
-import { truncate } from "../util/text.js";
+import { tail, truncate } from "../util/text.js";
 import { CANON_DIRECTORIES, DIRECTOR_FILE, chapterNumberFromSlug, type CanonKind } from "./paths.js";
 import type { BookSnapshot, CanonInfo, ChapterInfo, ParagraphInfo } from "./snapshot.js";
 import type { BookFileContent, BookStore } from "./store.js";
@@ -12,10 +12,14 @@ export async function readDocument(store: BookStore, path: string): Promise<{ fi
   return file ? { file, document: parseMarkdown(file.content) } : null;
 }
 
-/** Body of a Markdown file without frontmatter, truncated; empty string when missing. */
-export async function readBody(store: BookStore, path: string, max = 6000): Promise<string> {
+/**
+ * Body of a Markdown file without frontmatter, truncated; empty string when missing. With
+ * `keep: "end"` the most recent part survives the cut (for summaries that grow at the end).
+ */
+export async function readBody(store: BookStore, path: string, max = 6000, keep: "start" | "end" = "start"): Promise<string> {
   const loaded = await readDocument(store, path);
-  return loaded ? truncate(loaded.document.body, max) : "";
+  if (!loaded) return "";
+  return keep === "end" ? tail(loaded.document.body, max) : truncate(loaded.document.body, max);
 }
 
 /** True when a scaffolded document still has only headings, placeholders and template hints. */
@@ -130,13 +134,40 @@ export function canonDirectory(kind: CanonKind): string {
   return CANON_DIRECTORIES[kind];
 }
 
-/** Canon entries whose name or alias appears in the given text (for focused context). */
-export function mentionedCanon(snapshot: BookSnapshot, text: string, max = 12): CanonInfo[] {
-  const haystack = text.toLowerCase();
-  return snapshot.canon
-    .filter((entry) => entry.kind !== "secret")
-    .filter((entry) => [entry.name, ...entry.aliases].some((name) => name.length > 2 && haystack.includes(name.toLowerCase())))
-    .slice(0, max);
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Case-insensitive, whole-word Unicode match: "Eva" is found in "Eva smiled", never inside "aveva". */
+export function containsName(text: string, name: string): boolean {
+  const needle = name.trim().replace(/\s+/g, " ");
+  if (needle.length < 2) return false;
+  const pattern = escapeRegExp(needle).replace(/ /g, "\\s+");
+  return new RegExp(`(?<![\\p{L}\\p{N}_])${pattern}(?![\\p{L}\\p{N}_])`, "iu").test(text);
+}
+
+function canonNames(entry: CanonInfo): string[] {
+  return [entry.name, ...entry.aliases].map((name) => name.trim()).filter((name) => name.length > 2);
+}
+
+/**
+ * Canon entries relevant to a text, for focused context. Entries named explicitly (the scene's
+ * characters, location and point of view) come first, then those whose name or alias appears in
+ * the text as a whole word; the list is capped after that ordering.
+ */
+export function mentionedCanon(snapshot: BookSnapshot, text: string, max = 12, explicit: string[] = []): CanonInfo[] {
+  const candidates = snapshot.canon.filter((entry) => entry.kind !== "secret");
+  const output: CanonInfo[] = [];
+  const add = (entry: CanonInfo) => {
+    if (!output.includes(entry)) output.push(entry);
+  };
+  for (const reference of explicit.map((value) => value.trim()).filter(Boolean)) {
+    const named = candidates.filter((entry) => canonNames(entry).some((name) => name.toLowerCase() === reference.toLowerCase()));
+    const matches = named.length ? named : candidates.filter((entry) => canonNames(entry).some((name) => containsName(name, reference) || containsName(reference, name)));
+    matches.forEach(add);
+  }
+  for (const entry of candidates) if (canonNames(entry).some((name) => containsName(text, name))) add(entry);
+  return output.slice(0, max);
 }
 
 export async function canonDetails(store: BookStore, entries: CanonInfo[], maxBody = 700): Promise<string> {

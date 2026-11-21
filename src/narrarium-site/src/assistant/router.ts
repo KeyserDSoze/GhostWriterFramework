@@ -1,8 +1,8 @@
 import type { AIIntegration, AIPricing, AppSettings, ChatCapability, RoutingTarget, RoutingTaskKind, TaskRoute } from "@/types/settings";
-import { integrationChatModels, modelSupportsCapability, resolveReviewIntegration, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmMessage, type LlmResult, type LlmUsageReport } from "@/assistant/llm";
+import { integrationChatModels, modelSupportsCapability, resolveReviewIntegration, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmFinishReport, type LlmMessage, type LlmResult, type LlmUsageReport } from "@/assistant/llm";
 import { executeCompletionFallback } from "@/assistant/completionFallback";
 import { runWithCandidateTimeout } from "@/assistant/executionLimits";
-import { budgetLlmMessages, resolveModelTokenBudgets, textTokenUpperBound } from "@/assistant/promptBudget";
+import { budgetLlmMessages, likelyMessageTokens, likelyTextTokens, resolveModelTokenBudgets, textTokenUpperBound } from "@/assistant/promptBudget";
 import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/assistant/fallbackDisclosure";
 import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
 import { currentRequest } from "@/assistant/promptTrust";
@@ -47,6 +47,26 @@ export class CandidateInputBudgetError extends Error {
     super("Candidate input budget exhausted: the forced-tool schema and required message do not fit.");
     this.name = "CandidateInputBudgetError";
   }
+}
+
+/**
+ * With `overflow: "fail"` a prompt is never cut in the middle (an autopilot prompt would silently
+ * lose part of its data, such as findings). It is refused only when it clearly exceeds the context
+ * window configured for every routed model; a model with no configured window gets it whole and the
+ * provider answers if it is too long.
+ */
+export class PromptBudgetExceededError extends Error {
+  constructor(readonly estimatedTokens: number, readonly largestBudget: number) {
+    super(`The prompt (about ${estimatedTokens} tokens) is larger than the context window configured for every model routed to this task (largest input budget: ${largestBudget} tokens). Nothing was sent. Raise the models' "Context window tokens" in the AI settings if they support more, or route this task to a model with a larger context window.`);
+    this.name = "PromptBudgetExceededError";
+  }
+}
+
+/** How routed calls treat a prompt larger than a candidate's input budget. */
+export type PromptOverflow = "truncate" | "fail";
+
+function inputBudget(candidate: TaskCandidate, outputTokens: number | undefined, reservedTokens = 0): number {
+  return resolveModelTokenBudgets(candidate.maxInputTokens, outputTokens).inputTokens - reservedTokens;
 }
 
 function budgetForcedToolMessages(messages: LlmMessage[], candidate: TaskCandidate, tool: ForcedToolDefinition): LlmMessage[] {
@@ -313,7 +333,7 @@ export async function completeTextRouted(
   settings: AppSettings,
   messages: LlmMessage[],
   capability: ChatCapability,
-  options: { accountScope: string | null; signal?: AbortSignal; label?: string; onText?: (text: string) => void; onUsage?: (usage: LlmUsageReport) => void; preferred?: RoutingTarget; validateText?: (text: string) => void; fallbackMaxOutputTokens?: number },
+  options: { accountScope: string | null; signal?: AbortSignal; label?: string; onText?: (text: string) => void; onUsage?: (usage: LlmUsageReport) => void; onFinish?: (report: LlmFinishReport) => void; onAttempt?: (routeCandidateIndex: number) => void; overflow?: PromptOverflow; preferred?: RoutingTarget; validateText?: (text: string) => void; fallbackMaxOutputTokens?: number },
 ): Promise<string> {
   const operation = beginAccountScopedAiOperation(options?.signal, options?.accountScope);
   try {
@@ -324,21 +344,27 @@ export async function completeTextRouted(
     throw new NoCompletionCandidatesError();
   }
   const purpose = capability === "review" ? "review" : "writing";
-  const executable = candidates.map((candidate, routeCandidateIndex) => ({ ...candidate, routeCandidateIndex })).filter((candidate) => candidate.integration && candidate.model).map((candidate) => ({ ...candidate, integration: candidate.integration!, model: candidate.model!, label: `${candidate.integration!.provider}/${candidate.model!}` }));
-  if (!executable.length) throw new NoCompletionCandidatesError();
+  const outputBudget = (candidate: TaskCandidate) => candidate.maxOutputTokens ?? options.fallbackMaxOutputTokens;
+  const routable = candidates.map((candidate, routeCandidateIndex) => ({ ...candidate, routeCandidateIndex })).filter((candidate) => candidate.integration && candidate.model).map((candidate) => ({ ...candidate, integration: candidate.integration!, model: candidate.model!, label: `${candidate.integration!.provider}/${candidate.model!}` }));
+  if (!routable.length) throw new NoCompletionCandidatesError();
+  const estimated = likelyMessageTokens(messages);
+  const fits = (candidate: (typeof routable)[number]) => !candidate.maxInputTokens || estimated <= inputBudget(candidate, outputBudget(candidate));
+  const executable = options.overflow === "fail" ? routable.filter(fits) : routable;
+  if (!executable.length) throw new PromptBudgetExceededError(estimated, Math.max(...routable.map((candidate) => inputBudget(candidate, outputBudget(candidate)))));
   const total = createRoutingExecutionBudget(settings, operation.signal);
-  try { return await executeCompletionFallback({ candidates: executable, signal: total.signal, timeoutMs: (candidate) => candidate.integration.requestTimeoutMs, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: executable[index - 1], to: candidate, accountScope: operation.accountScope }); }, resetPartial: () => options?.onText?.(""), run: async (candidate, signal) => {
-      const outputBudget = candidate.maxOutputTokens ?? options.fallbackMaxOutputTokens;
-      const text = await completeText(candidate.integration, budgetLlmMessages(messages, candidate.maxInputTokens, outputBudget), purpose, {
+  try { return await executeCompletionFallback({ candidates: executable, signal: total.signal, timeoutMs: (candidate) => candidate.integration.requestTimeoutMs, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: executable[index - 1], to: candidate, accountScope: operation.accountScope }); options.onAttempt?.(candidate.routeCandidateIndex); }, resetPartial: () => options?.onText?.(""), run: async (candidate, signal) => {
+      const candidateOutput = outputBudget(candidate);
+      const text = await completeText(candidate.integration, options.overflow === "fail" ? messages : budgetLlmMessages(messages, candidate.maxInputTokens, candidateOutput), purpose, {
         modelName: candidate.model,
         capability,
         signal,
         label: options?.label,
         onText: options?.onText,
         onUsage: options?.onUsage,
+        onFinish: options?.onFinish,
         routeCandidateIndex: candidate.routeCandidateIndex,
         usedFallback: candidate.routeCandidateIndex > 0,
-        maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, outputBudget).outputTokens,
+        maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, candidateOutput).outputTokens,
         underlyingModel: candidate.underlyingModel,
         accountScope: operation.accountScope,
       });
@@ -355,7 +381,7 @@ export async function completeToolRouted<T>(
   messages: LlmMessage[],
   capability: ChatCapability,
   tool: ForcedToolDefinition,
-  options: { accountScope: string | null; signal?: AbortSignal; label?: string; validate?: (output: unknown) => T; fallbackMaxOutputTokens?: number },
+  options: { accountScope: string | null; signal?: AbortSignal; label?: string; validate?: (output: unknown) => T; fallbackMaxOutputTokens?: number; onFinish?: (report: LlmFinishReport) => void; onAttempt?: (routeCandidateIndex: number) => void; overflow?: PromptOverflow },
 ): Promise<LlmResult<T> & { metadata: RoutedLlmRunMetadata }> {
   const operation = beginAccountScopedAiOperation(options?.signal, options?.accountScope);
   try {
@@ -365,16 +391,29 @@ export async function completeToolRouted<T>(
     throw new NoCompletionCandidatesError();
   }
   let lastError: unknown = null;
+  let skippedForBudget = false;
+  let largestBudget = 0;
+  const estimated = likelyMessageTokens(messages);
+  const toolTokens = likelyTextTokens(JSON.stringify(tool)) + 8;
   const total = createRoutingExecutionBudget(settings, operation.signal);
   try {
   for (const [candidateIndex, candidate] of candidates.entries()) {
     total.signal.throwIfAborted();
     if (!candidate.integration || !candidate.model) continue;
+    const budgeted = options.fallbackMaxOutputTokens && candidate.maxOutputTokens === undefined ? { ...candidate, maxOutputTokens: options.fallbackMaxOutputTokens } : candidate;
+    if (options.overflow === "fail" && budgeted.maxInputTokens) {
+      const available = inputBudget(budgeted, budgeted.maxOutputTokens, toolTokens);
+      if (estimated > available) {
+        skippedForBudget = true;
+        largestBudget = Math.max(largestBudget, available);
+        continue;
+      }
+    }
     if (candidateIndex > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: candidates[candidateIndex - 1], to: candidate, accountScope: operation.accountScope });
+    options.onAttempt?.(candidateIndex);
     try {
-      const budgeted = options.fallbackMaxOutputTokens && candidate.maxOutputTokens === undefined ? { ...candidate, maxOutputTokens: options.fallbackMaxOutputTokens } : candidate;
-      const budgetedMessages = budgetForcedToolMessages(messages, budgeted, tool);
-      const result = await runWithCandidateTimeout((signal) => completeToolWith<T>(candidate.integration!, candidate.model!, candidate.pricing, budgetedMessages, capability, tool, { accountScope: operation.accountScope, signal, label: options.label, currency: settings.costCurrency, validate: options.validate, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, maxOutputTokens: resolveModelTokenBudgets(budgeted.maxInputTokens, budgeted.maxOutputTokens).outputTokens, underlyingModel: candidate.underlyingModel }), total.signal, candidate.integration.requestTimeoutMs);
+      const budgetedMessages = options.overflow === "fail" ? messages : budgetForcedToolMessages(messages, budgeted, tool);
+      const result = await runWithCandidateTimeout((signal) => completeToolWith<T>(candidate.integration!, candidate.model!, candidate.pricing, budgetedMessages, capability, tool, { accountScope: operation.accountScope, signal, label: options.label, currency: settings.costCurrency, validate: options.validate, onFinish: options.onFinish, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, maxOutputTokens: resolveModelTokenBudgets(budgeted.maxInputTokens, budgeted.maxOutputTokens).outputTokens, underlyingModel: candidate.underlyingModel }), total.signal, candidate.integration.requestTimeoutMs);
       return {
         ...result,
         output: options?.validate ? options.validate(result.output) : result.output as T,
@@ -385,7 +424,7 @@ export async function completeToolRouted<T>(
       lastError = err;
     }
   }
-  throw lastError ?? new Error("All AI candidates failed for this task.");
+  throw lastError ?? (skippedForBudget ? new PromptBudgetExceededError(estimated, largestBudget) : new Error("All AI candidates failed for this task."));
   } finally { total.dispose(); }
   } finally {
     operation.dispose();

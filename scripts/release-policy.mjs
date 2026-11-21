@@ -5,7 +5,6 @@ export const publishOrder = [
   "narrarium-astro-reader",
   "narrarium-mcp-server",
   "create-narrarium-book",
-  "narrarium-server",
 ];
 
 export function parseReleaseTag(tag) {

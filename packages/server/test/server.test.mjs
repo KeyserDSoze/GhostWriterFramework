@@ -1,55 +1,40 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, mkdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import http from "node:http";
 import { NarrariumServerClient, remoteBookStore, syncBookStores } from "narrarium-engine";
-import { MemoryBookStore, createFakeAutopilotAi, seedBookFiles } from "narrarium-engine/testing";
-import { SERVER_VERSION, startNarrariumServer } from "../dist/index.js";
+import { MemoryBookStore, seedBookFiles } from "narrarium-engine/testing";
+import { SERVER_VERSION, startNarrariumServer } from "../dist/testing.mjs";
+import { adminLogin, waitForStream, withServer } from "./helpers.mjs";
 
-async function withServer(run, extra = {}) {
-  const dataDir = await mkdtemp(path.join(os.tmpdir(), "narrarium-server-test-"));
-  const server = await startNarrariumServer({ dataDir, port: 0, ai: createFakeAutopilotAi(), ...extra });
-  try {
-    await run(server, new NarrariumServerClient({ baseUrl: server.url, token: server.initialToken ?? "" }), dataDir);
-  } finally {
-    await server.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
+function rawRequest(url, headers) {
+  return new Promise((resolve, reject) => {
+    const request = http.request(url, { headers }, (response) => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+    request.on("error", reject);
+    request.end();
+  });
 }
 
-/** Follow the live stream until `done(message)` returns true. */
-async function waitForStream(client, done, timeoutMs = 20000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const messages = [];
-  try {
-    await client.stream((message) => {
-      messages.push(message);
-      if (done(message)) controller.abort();
-    }, controller.signal);
-  } catch (error) {
-    if (error?.name !== "AbortError") throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-  return messages;
-}
-
-test("package version is exported", async () => {
+test("the package version is the one the server reports", async () => {
   const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(SERVER_VERSION, pkg.version);
 });
 
-test("the API is protected by tokens, origins and host checks", async () => {
+test("the API is protected by tokens, scopes, origins and host checks, and proves its identity", async () => {
   await withServer(async (server, client) => {
-    assert.ok(server.initialToken?.startsWith("nrs_"));
-    const info = await (await fetch(`${server.url}/api/v1/info`)).json();
+    const { info, identity } = await new NarrariumServerClient({ baseUrl: server.url, token: "" }).verifiedInfo();
     assert.equal(info.name, "narrarium-server");
+    assert.equal(identity.verified, true);
+    assert.equal(identity.fingerprint, server.data.fingerprint);
     assert.equal((await fetch(`${server.url}/api/v1/books`)).status, 401);
     assert.deepEqual(await client.listBooks(), []);
+    assert.deepEqual((await client.session()).scopes, ["read", "write", "run"]);
 
     const foreign = await fetch(`${server.url}/api/v1/info`, { headers: { origin: "https://evil.example" } });
     assert.equal(foreign.status, 403);
@@ -58,27 +43,20 @@ test("the API is protected by tokens, origins and host checks", async () => {
     const preflight = await fetch(`${server.url}/api/v1/books`, { method: "OPTIONS", headers: { origin: "https://narrarium.net", "access-control-request-method": "GET", "access-control-request-private-network": "true" } });
     assert.equal(preflight.status, 204);
     assert.equal(preflight.headers.get("access-control-allow-private-network"), "true");
-    const rebinding = await new Promise((resolve, reject) => {
-      const request = http.request(`${server.url}/api/v1/info`, { headers: { host: "attacker.example" } }, (response) => {
-        response.resume();
-        resolve(response.statusCode);
-      });
-      request.on("error", reject);
-      request.end();
-    });
-    assert.equal(rebinding, 421, "DNS rebinding through a foreign Host header is refused");
+    assert.equal(await rawRequest(`${server.url}/api/v1/info`, { host: "attacker.example" }), 421, "DNS rebinding through a foreign Host header is refused");
 
-    const created = await server.data.createToken("laptop");
-    const laptop = new NarrariumServerClient({ baseUrl: server.url, token: created.token });
-    assert.equal((await laptop.session()).clientLabel, "laptop");
-    await server.data.revokeToken(created.id);
-    await assert.rejects(() => laptop.session(), (error) => error.status === 401);
+    const reader = await server.auth.issue("reader", ["read"]);
+    const readOnly = new NarrariumServerClient({ baseUrl: server.url, token: reader.token });
+    assert.deepEqual(await readOnly.listBooks(), []);
+    await assert.rejects(() => readOnly.registerBook("b", { title: "x", storage: { kind: "local" } }), (error) => error.status === 403 && error.code === "scope");
+    await server.auth.revoke(reader.clientId);
+    await assert.rejects(() => readOnly.session(), (error) => error.status === 401);
   });
 });
 
 test("a second server cannot use the same data folder", async () => {
   await withServer(async (_server, _client, dataDir) => {
-    await assert.rejects(() => startNarrariumServer({ dataDir, port: 0 }), /already using/);
+    await assert.rejects(() => startNarrariumServer({ dataDir, port: 0, adminPort: 0 }), /already using/);
   });
 });
 
@@ -122,18 +100,28 @@ test("a local book is uploaded, written by the autopilot on the server and synce
   });
 });
 
-test("the autopilot refuses to start without an AI configuration", async () => {
-  await withServer(async (_server, client) => {
+test("AI keys and GitHub tokens are encrypted at rest and new AI endpoints wait for the owner's approval", async () => {
+  await withServer(async (server, client) => {
     await client.registerBook("book-2", { title: "No AI", storage: { kind: "local" } });
     await assert.rejects(() => client.startAutopilot("book-2"), (error) => error.status === 412 && error.code === "ai_not_configured");
-    const status = await client.putAiConfig({ aiIntegrations: [{ id: "a", name: "OpenAI", provider: "openai", apiKey: "sk-secret", chatModels: [{ id: "m", name: "gpt-4o", capabilities: ["default"] }] }] });
+    const status = await client.putAiConfig({ aiIntegrations: [{ id: "a", name: "OpenAI", provider: "openai", endpoint: "https://api.openai.com/v1", apiKey: "sk-secret-value", chatModels: [{ id: "m", name: "gpt-4o", capabilities: ["default"] }] }] });
     assert.equal(status.configured, true);
     assert.equal(status.integrations[0].hasApiKey, true);
-    assert.equal(JSON.stringify(status).includes("sk-secret"), false, "keys are never returned");
+    assert.deepEqual(status.pendingApproval, ["https://api.openai.com"]);
+    assert.equal(JSON.stringify(status).includes("sk-secret-value"), false, "keys are never returned");
+    const stored = await readFile(path.join(server.data.root, "private", "ai.json"), "utf8");
+    assert.equal(stored.includes("sk-secret-value"), false, "the AI configuration is encrypted on disk");
+    if (process.platform !== "win32") assert.equal((await stat(path.join(server.data.root, "private", "master.key"))).mode & 0o777, 0o600);
+
+    const admin = await adminLogin(server);
+    assert.deepEqual((await admin.call("GET", "/admin/api/status")).body.pendingAiBases, ["https://api.openai.com"]);
+    assert.equal((await admin.call("POST", "/admin/api/ai/approve", { bases: ["https://api.openai.com"] })).status, 200);
+    assert.equal((await client.aiStatus()).pendingApproval, undefined);
+    assert.deepEqual(server.allowedBases(), ["https://api.openai.com"]);
   }, { ai: undefined });
 });
 
-test("a GitHub book is cloned, written step by step and pushed", async () => {
+test("a GitHub book is cloned, written step by step and pushed; its token stays encrypted", async () => {
   const origin = await mkdtemp(path.join(os.tmpdir(), "narrarium-origin-"));
   const seed = await mkdtemp(path.join(os.tmpdir(), "narrarium-seed-"));
   try {
@@ -146,10 +134,11 @@ test("a GitHub book is cloned, written step by step and pushed", async () => {
     execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-C", seed, "add", "-A"]);
     execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-C", seed, "commit", "--quiet", "-m", "seed"]);
     execFileSync("git", ["-C", seed, "push", "--quiet", origin, "dev-author"]);
-    await withServer(async (_server, client) => {
-      const summary = await client.registerBook("gh-book", { title: "Remote", storage: { kind: "github", owner: "me", repo: "remote", branch: "dev-author" }, githubToken: "ghp_test" });
+    await withServer(async (server, client) => {
+      const summary = await client.registerBook("gh-book", { title: "Remote", storage: { kind: "github", owner: "me", repo: "remote", branch: "dev-author" }, githubToken: "ghp_test_secret" });
       assert.equal(summary.hasGithubToken, true);
       assert.equal(summary.lastSync.ok, true);
+      assert.equal((await readFile(path.join(server.data.root, "private", "book-tokens.json"), "utf8")).includes("ghp_test_secret"), false);
       await client.startAutopilot("gh-book", { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } });
       await waitForStream(client, (message) => message.event === "autopilot" && message.data.type === "run-ended");
       const snapshot = await client.autopilot("gh-book");

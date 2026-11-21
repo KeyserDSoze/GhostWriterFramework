@@ -36,6 +36,5 @@ function packageDirectory(name) {
     "narrarium-astro-reader": "astro-reader",
     "narrarium-mcp-server": "mcp-server",
     "create-narrarium-book": "create-narrarium-book",
-    "narrarium-server": "server",
   }[name];
 }

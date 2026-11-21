@@ -235,16 +235,17 @@ export const CHAPTER_REVIEW_TOOL: AiJsonSchema = {
       strengths: strings,
       decisions: {
         type: "array",
+        description: "One decision for EVERY finding, referring to it by its id.",
         items: {
           type: "object",
           properties: {
             findingId: string,
             action: { type: "string", enum: ["accept", "reject"] },
             rationale: string,
-            remediation: { ...string, description: "Precise, minimal instruction for the ghostwriter when accepted." },
-            sceneNumber: { type: "number" },
+            remediation: { ...string, description: "Precise, minimal instruction for the ghostwriter when accepted; empty when rejected." },
+            sceneNumber: { type: "number", description: "Number of the scene the fix applies to (the finding's scene)." },
           },
-          required: ["findingId", "action", "rationale"],
+          required: ["findingId", "action", "rationale", "remediation", "sceneNumber"],
         },
       },
       extraFixes: {
@@ -275,7 +276,7 @@ export const CONSOLIDATION_TOOL: AiJsonSchema = {
         type: "object",
         description: "Continuity delta: locations, knowledge_gain, inventory_add, inventory_remove, relationship_updates, conditions, open_loops_add, open_loops_resolved.",
       },
-      storySoFar: { ...string, description: "Markdown summary of the whole book up to and including this chapter (at most ~900 words)." },
+      storySoFar: { ...string, description: "Markdown summary of the whole book up to and including this chapter (under ~900 words; never above 1200)." },
     },
     required: ["summary", "recap", "stateChanges", "storySoFar"],
   },

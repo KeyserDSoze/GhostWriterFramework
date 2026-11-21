@@ -1,0 +1,83 @@
+name: Publish narrarium-server
+
+# The personal server is published by npm Trusted Publishing (OIDC, no stored token) with a
+# provenance attestation. Its updater installs only versions attested by this workflow, so every
+# release must come from here: push a tag `narrarium-server-v<version>` matching packages/server.
+on:
+  push:
+    tags:
+      - "narrarium-server-v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-server-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish narrarium-server
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    timeout-minutes: 30
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v7
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Require a recent npm for Trusted Publishing
+        run: |
+          npm install --global npm@12.0.2
+          npm --version
+          node --version
+
+      - name: Validate tag and package version
+        run: |
+          VERSION="${GITHUB_REF_NAME#narrarium-server-v}"
+          node -e 'const p = require("./packages/server/package.json"); if (p.name !== "narrarium-server" || p.version !== process.argv[1]) { console.error(`Tag ${process.env.GITHUB_REF_NAME} does not match ${p.name}@${p.version}.`); process.exit(1); }' "$VERSION"
+
+      - name: Install dependencies
+        run: npx --yes npm@12.0.2 ci --no-audit --no-fund
+
+      - name: Build the core and the engine bundled into the server
+        run: |
+          npm run build -w narrarium
+          npm run build -w narrarium-engine
+
+      - name: Test the engine
+        run: npm run test -w narrarium-engine
+
+      - name: Build and test the server
+        run: npm run test -w narrarium-server
+
+      - name: Inspect the npm package allowlist
+        working-directory: packages/server
+        run: |
+          npm pack --dry-run --json --ignore-scripts > "$RUNNER_TEMP/narrarium-server-pack.json"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const entries = Array.isArray(report) ? report : Object.values(report);
+            const paths = entries.flatMap((entry) => entry.files.map((file) => file.path));
+            for (const path of ["dist/cli.mjs", "dist/server.mjs", "package.json", "README.md"]) {
+              if (!paths.includes(path)) throw new Error(`Required file missing from the package: ${path}`);
+            }
+            const allowed = /^(?:dist\/(?:cli|server)\.mjs(?:\.map)?|package\.json|README\.md)$/;
+            const forbidden = paths.filter((path) => !allowed.test(path));
+            if (forbidden.length) throw new Error(`Files not allowed in the package: ${forbidden.join(", ")}`);
+            console.log(`${entries[0].name}@${entries[0].version}: ${paths.join(", ")}`);
+          ' "$RUNNER_TEMP/narrarium-server-pack.json"
+
+      # npm Trusted Publisher: repository KeyserDSoze/GhostWriterFramework, workflow
+      # publish-server-npm.yml, environment npm-publish. No NPM_TOKEN is used by this job.
+      - name: Publish with provenance
+        working-directory: packages/server
+        run: npm publish --access public --provenance

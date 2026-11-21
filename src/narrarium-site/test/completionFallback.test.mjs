@@ -72,6 +72,18 @@ test("total timeout exhaustion reports every candidate", async () => {
   }), (error) => error instanceof CompletionFallbackError && error.failures.length === 2 && error.message.includes("timed out"));
 });
 
+test("exhaustion keeps the kind of each failure, never its message", async () => {
+  await assert.rejects(executeCompletionFallback({ candidates, run: async (candidate) => {
+    if (candidate.label === "one") throw Object.assign(new Error("429 Bearer sk-live rate limited"), { name: "RateLimitError", status: 429 });
+    return "";
+  } }), (error) => {
+    assert.ok(error instanceof CompletionFallbackError);
+    assert.deepEqual(error.causes, [{ name: "RateLimitError", status: 429 }, { name: "Error" }]);
+    assert.ok(!JSON.stringify(error.causes).includes("sk-live"));
+    return true;
+  });
+});
+
 test("user cancellation settles immediately even when a provider ignores AbortSignal", async () => {
   const controller = new AbortController();
   const pending = executeCompletionFallback({

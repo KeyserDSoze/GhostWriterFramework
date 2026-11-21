@@ -34,6 +34,23 @@ export function estimateMessageTokens(messages: LlmMessage[]): number {
   }, 0);
 }
 
+/**
+ * Likely token count, about four characters per token. Unlike the upper bound it can be lower than
+ * the provider's count, so it only serves to refuse prompts that clearly cannot fit a known window.
+ */
+export function likelyTextTokens(value: string): number {
+  return Math.ceil(value.length / 4);
+}
+
+export function likelyMessageTokens(messages: LlmMessage[]): number {
+  return messages.reduce((total, message) => {
+    const contentTokens = typeof message.content === "string"
+      ? likelyTextTokens(message.content)
+      : message.content.reduce((sum, part) => sum + (part.type === "text" ? likelyTextTokens(part.text) : IMAGE_TOKENS), 0);
+    return total + MESSAGE_OVERHEAD_TOKENS + contentTokens;
+  }, 0);
+}
+
 function takeUtf8(value: string, maxBytes: number, fromEnd = false): string {
   const characters = Array.from(value);
   let bytes = 0;

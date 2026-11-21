@@ -23,6 +23,18 @@ import type {
 export const MAX_ACTIVITIES = 200;
 export const MAX_INTERVENTIONS = 100;
 export const MAX_DIRECTOR_NOTES = 12;
+export const MAX_CONSTRAINTS = 80;
+export const MAX_REVISION_NOTES = 40;
+
+/** A capped list keeps its newest entries: the author's latest rules matter most. */
+function newestList(value: unknown, max: number): string[] {
+  return asStringList(value, Number.MAX_SAFE_INTEGER).slice(-max);
+}
+
+/** Permanent author rules, newest kept when the cap is reached. */
+export function capConstraints(constraints: string[]): string[] {
+  return newestList(constraints, MAX_CONSTRAINTS);
+}
 
 export const DEFAULT_BRIEF: AutopilotBrief = {
   idea: "",
@@ -113,6 +125,7 @@ function normalizeChapter(value: unknown, index: number): PlannedChapter {
     skipReaders: source.skipReaders === true ? true : undefined,
     scenes: asArray(source.scenes).map(normalizeScene),
     score: typeof source.score === "number" ? source.score : undefined,
+    storySoFarAtClose: asString(source.storySoFarAtClose) || undefined,
   };
 }
 
@@ -123,7 +136,7 @@ function normalizePlan(value: unknown): AutopilotPlan | null {
     chapters: asArray(source.chapters).map(normalizeChapter).sort((left, right) => left.number - right.number),
     approved: asBoolean(source.approved, false),
     rounds: asInteger(source.rounds, 0, 0, 99),
-    revisionNotes: asStringList(source.revisionNotes, 40),
+    revisionNotes: newestList(source.revisionNotes, MAX_REVISION_NOTES),
     readerReactions: asArray(source.readerReactions).map((entry) => {
       const reaction = asRecord(entry);
       return {
@@ -236,6 +249,7 @@ function normalizeRevision(value: unknown): RevisionRequest | null {
   const source = asRecord(value);
   const instruction = asString(source.instruction);
   if (!instruction) return null;
+  const revisedChapters = [...new Set(asArray(source.revisedChapters).map((entry) => asInteger(entry, 0, 0, 999)).filter((entry) => entry > 0))].sort((left, right) => left - right);
   return {
     id: asString(source.id) || `revision-${Date.now()}`,
     instruction,
@@ -247,6 +261,7 @@ function normalizeRevision(value: unknown): RevisionRequest | null {
       })
       : null,
     cursor: asInteger(source.cursor, 0, 0, 9999),
+    ...(revisedChapters.length ? { revisedChapters } : {}),
   };
 }
 
@@ -312,9 +327,9 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
     review: normalizeReview(source.review),
     revision: normalizeRevision(source.revision),
     finalDone: asBoolean(source.finalDone, false),
-    constraints: asStringList(source.constraints, 80),
+    constraints: newestList(source.constraints, MAX_CONSTRAINTS),
     interventions: normalizeInterventions(source.interventions),
-    directorNotes: asStringList(source.directorNotes, MAX_DIRECTOR_NOTES),
+    directorNotes: newestList(source.directorNotes, MAX_DIRECTOR_NOTES),
     question: normalizeQuestion(source.question),
     runner: asString(runner.runId)
       ? {

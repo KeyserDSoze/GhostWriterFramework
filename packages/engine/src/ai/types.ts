@@ -52,10 +52,42 @@ export class AiUnavailableError extends Error {
   }
 }
 
+/** What a failed attempt already cost: the provider may bill a reply the engine rejects. */
+export interface AiProviderErrorDetails {
+  usage?: AiUsage;
+  cost?: number;
+  currency?: string;
+  model?: string;
+  provider?: string;
+  integrationId?: string;
+  /** The provider stopped because of the output token limit. */
+  truncated?: boolean;
+}
+
 export class AiProviderError extends Error {
-  constructor(message: string, readonly status?: number, readonly retryable = false) {
+  usage?: AiUsage;
+  cost?: number;
+  currency?: string;
+  model?: string;
+  provider?: string;
+  integrationId?: string;
+  truncated?: boolean;
+
+  constructor(message: string, readonly status?: number, readonly retryable = false, details: AiProviderErrorDetails = {}) {
     super(message);
     this.name = "AiProviderError";
+    Object.assign(this, details);
+  }
+}
+
+/**
+ * The provider answered, but the reply cannot be used (missing fields, not JSON, empty prose...).
+ * Always retryable: the retried request carries the reason, never the rejected reply.
+ */
+export class AiReplyRejectedError extends AiProviderError {
+  constructor(message: string, details: AiProviderErrorDetails = {}) {
+    super(message, undefined, true, details);
+    this.name = "AiReplyRejectedError";
   }
 }
 

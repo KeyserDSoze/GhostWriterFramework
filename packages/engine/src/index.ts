@@ -22,6 +22,7 @@ export * from "./ai/types.js";
 export * from "./ai/config.js";
 export * from "./ai/router.js";
 export * from "./ai/token-limit.js";
+export * from "./ai/structured.js";
 export * from "./ai/fetch-client.js";
 
 export * from "./director/opinion.js";
@@ -29,7 +30,8 @@ export * from "./director/opinion.js";
 export * from "./autopilot/types.js";
 export * from "./autopilot/state.js";
 export * from "./autopilot/planner.js";
-export { TASK_EXECUTORS, cleanProse, renderPlanMarkdown, type TaskContext, type TaskResult, type TaskAi } from "./autopilot/tasks.js";
+export * from "./autopilot/story-so-far.js";
+export { TASK_EXECUTORS, cleanProse, renderPlanMarkdown, sameCanonEntity, type TaskContext, type TaskResult, type TaskAi } from "./autopilot/tasks.js";
 export * from "./autopilot/runner.js";
 export * from "./autopilot/session.js";
 
